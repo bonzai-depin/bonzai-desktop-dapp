@@ -28,13 +28,6 @@ export default {
       },
     },
     {
-      name: "@electron-forge/maker-rpm",
-      executableName: "bonzai",
-      config: {
-        bin: "bonzai",
-      },
-    },
-    {
       name: "@electron-forge/maker-squirrel",
       executableName: "bonzai",
       config: {},

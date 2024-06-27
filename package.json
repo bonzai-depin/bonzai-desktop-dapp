@@ -44,6 +44,7 @@
     "vite-tsconfig-paths": "^4.2.1"
   },
   "dependencies": {
+    "appdmg": "^0.6.6",
     "electron-dl": "^4.0.0",
     "electron-squirrel-startup": "^1.0.0",
     "electron-store": "^8.1.0",
