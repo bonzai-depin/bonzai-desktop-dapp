@@ -26,7 +26,6 @@ export default {
       executableName: "bonzai",
       config: {
         bin: "bonzai",
-        icon: "./src/assets/logo",
       },
     },
     {
@@ -43,7 +42,7 @@ export default {
       config: {
         repository: {
           owner: "bonzai-depin",
-          name: "bonzai-desktop-dappbonzai-desktop-dapp",
+          name: "bonzai-desktop-dapp",
         },
         prerelease: false,
         draft: true,
