@@ -44,7 +44,6 @@
     "vite-tsconfig-paths": "^4.2.1"
   },
   "dependencies": {
-    "appdmg": "^0.6.6",
     "electron-dl": "^4.0.0",
     "electron-squirrel-startup": "^1.0.0",
     "electron-store": "^8.1.0",
@@ -54,5 +53,8 @@
     "uuid": "^9.0.1",
     "vite-plugin-static-copy": "^1.0.5",
     "vue": "^3.2.13"
+  },
+  "optionalDependencies": {
+    "appdmg": "^0.6.6"
   }
 }
