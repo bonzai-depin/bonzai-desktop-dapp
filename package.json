@@ -1,6 +1,6 @@
 {
   "name": "bonzai",
-  "productName": "BonzAI",
+  "productName": "bonzai",
   "version": "0.1.1",
   "description": "1-click Sovereign AI deployment, training & serving. This is BonzAI !",
   "main": ".vite/build/main.js",

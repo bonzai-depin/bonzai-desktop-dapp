@@ -3,12 +3,6 @@ on:
   release:
     types:
       - created
-    steps:
-      - name: Release
-        uses: softprops/action-gh-release@v1
-        with:
-          repository: bonzai-depin/bonzai-releases
-          token: ${{ secrets.GITHUB_TOKEN }}
 
 jobs:
   publish_on_linux:

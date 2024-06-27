@@ -11,6 +11,7 @@ export default {
       name: "@electron-forge/maker-dmg",
       executableName: "bonzai",
       config: {
+        bin: "bonzai",
         background: "./src/assets/background.png",
         format: "ULFO",
         iconSize: 192,
@@ -25,12 +26,15 @@ export default {
       executableName: "bonzai",
       config: {
         bin: "bonzai",
+        icon: "./src/assets/logo",
       },
     },
     {
       name: "@electron-forge/maker-squirrel",
       executableName: "bonzai",
-      config: {},
+      config: {
+        icon: "./src/assets/logo",
+      },
     },
   ],
   publishers: [
