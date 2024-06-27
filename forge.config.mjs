@@ -8,6 +8,7 @@ export default {
   makers: [
     {
       name: "@electron-forge/maker-dmg",
+      executableName: "BonzAI",
       config: {
         background: "./src/assets/background.png",
         format: "ULFO",
@@ -20,14 +21,17 @@ export default {
     },
     {
       name: "@electron-forge/maker-deb",
+      executableName: "BonzAI",
       config: {},
     },
     {
       name: "@electron-forge/maker-rpm",
+      executableName: "BonzAI",
       config: {},
     },
     {
       name: "@electron-forge/maker-squirrel",
+      executableName: "BonzAI",
       config: {},
     },
   ],
