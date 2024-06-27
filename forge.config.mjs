@@ -3,12 +3,13 @@ export default {
   defaultResolved: true,
   packagerConfig: {
     icon: "./src/assets/logo",
+    executableName: "bonzai",
   },
   rebuildConfig: {},
   makers: [
     {
       name: "@electron-forge/maker-dmg",
-      executableName: "BonzAI",
+      executableName: "bonzai",
       config: {
         background: "./src/assets/background.png",
         format: "ULFO",
@@ -21,17 +22,21 @@ export default {
     },
     {
       name: "@electron-forge/maker-deb",
-      executableName: "BonzAI",
-      config: {},
+      executableName: "bonzai",
+      config: {
+        bin: "bonzai",
+      },
     },
     {
       name: "@electron-forge/maker-rpm",
-      executableName: "BonzAI",
-      config: {},
+      executableName: "bonzai",
+      config: {
+        bin: "bonzai",
+      },
     },
     {
       name: "@electron-forge/maker-squirrel",
-      executableName: "BonzAI",
+      executableName: "bonzai",
       config: {},
     },
   ],
