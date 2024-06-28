@@ -25,7 +25,7 @@ jobs:
       - name: install dependencies
         run: npm install
       - name: build
-        run: npm run make
+        run: npm run make --arch=universal
 
   build_on_win:
     runs-on: windows-latest
