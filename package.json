@@ -28,6 +28,7 @@
     "@electron-forge/plugin-auto-unpack-natives": "^7.2.0",
     "@electron-forge/plugin-vite": "github:fozziethebeat/electron-forge-plugin-vite-esm#plugin-vite-esm",
     "@electron-forge/publisher-github": "^7.4.0",
+    "@types/markdown-it": "^14.1.2",
     "@typescript-eslint/eslint-plugin": "^6.13.1",
     "@typescript-eslint/parser": "^6.13.1",
     "@vitejs/plugin-vue": "^4.2.0",
@@ -52,7 +53,9 @@
     "update-electron-app": "^3.0.0",
     "uuid": "^9.0.1",
     "vite-plugin-static-copy": "^1.0.5",
-    "vue": "^3.2.13"
+    "vue": "^3.2.13",
+    "vue-clipboard3": "^2.0.0",
+    "vue-markdown-render": "^2.2.1"
   },
   "optionalDependencies": {
     "appdmg": "^0.6.6"

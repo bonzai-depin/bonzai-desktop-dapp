@@ -25,7 +25,20 @@ jobs:
       - name: install dependencies
         run: npm install
       - name: build
-        run: npm run make --arch=universal
+        run: npm run make
+
+  build_on_mac_intel:
+    runs-on: macos-latest
+    steps:
+      - run: python3 -m pip install setuptools --break-system-packages
+      - uses: actions/checkout@v2
+      - uses: actions/setup-node@master
+        with:
+          node-version: 20
+      - name: install dependencies
+        run: npm install
+      - name: build
+        run: npm run make -- --arch=x64
 
   build_on_win:
     runs-on: windows-latest

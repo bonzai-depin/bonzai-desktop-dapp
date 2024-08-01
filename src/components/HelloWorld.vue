@@ -196,9 +196,16 @@
             <ol class="chat" v-if="inferences && inferences.length > 0">
               <li v-for="inference in inferences">
                 <p class="question">{{ inference.question }}</p>
-                <p class="answer" style="white-space: pre-line">
-                  {{ inference.answer.text }}
-                </p>
+                <div class="answer" style="white-space: pre-line">
+                  <vue-markdown :source="inference.answer.text" />
+                  <button
+                    class="button is-medium is-success copy is-pulled-right"
+                    @click="copy(inference.answer.text)"
+                  >
+                    <span class="material-symbols-outlined">content_copy</span>
+                    Copy
+                  </button>
+                </div>
                 <span class="answer__id"># {{ inference.answer.id }}</span>
               </li>
             </ol>
@@ -319,9 +326,16 @@
             <ol class="chat" v-if="inferences">
               <li v-for="inference in inferences">
                 <p class="question">{{ inference.question }}</p>
-                <p class="answer" style="white-space: pre-line">
-                  {{ inference.answer.text }}
-                </p>
+                <div class="answer" style="white-space: pre-line">
+                  <vue-markdown :source="inference.answer.text" />
+                  <button
+                    class="button is-medium is-success copy is-pulled-right"
+                    @click="copy(inference.answer.text)"
+                  >
+                    <span class="material-symbols-outlined">content_copy</span>
+                    Copy
+                  </button>
+                </div>
               </li>
             </ol>
           </div>
@@ -334,9 +348,14 @@
 <script>
 import { ref, reactive, toRaw } from "vue";
 import { v4 as uuid } from "uuid";
+import VueMarkdown from "vue-markdown-render";
+import useClipboard from "vue-clipboard3";
 
 export default {
   name: "HelloWorld",
+  components: {
+    VueMarkdown,
+  },
   setup() {
     const isLoading = ref(false);
     const isModel = ref(false);
@@ -357,12 +376,33 @@ export default {
         filename: "phi.gguf",
         filesize: "2.39 GB",
       },
+      yi: {
+        modelname: "Yi 6B",
+        modeldesc: `A 6B parameters LLM model built by 01.AI. Trained on 3T multilingual corpus, the Yi series models are the strongest Chinese / English bilingual models worldwide.`,
+        url: "https://huggingface.co/TheBloke/Yi-6B-200K-GGUF/resolve/main/yi-6b-200k.Q4_K_M.gguf",
+        filename: "yi.gguf",
+        filesize: "3.67 GB",
+      },
       llama2: {
         modelname: "LLaMA 2 7B",
         modeldesc: `A 7B parameters LLM model built by Meta.`,
         url: "https://huggingface.co/TheBloke/Llama-2-7B-Chat-GGUF/resolve/main/llama-2-7b-chat.Q4_K_M.gguf",
         filename: "llama2.gguf",
         filesize: "4.08 GB",
+      },
+      llama3: {
+        modelname: "LLaMA 3.1 8B",
+        modeldesc: `A 8B parameters LLM model built by Meta.`,
+        url: "https://huggingface.co/lmstudio-community/Meta-Llama-3.1-8B-Instruct-GGUF/resolve/main/Meta-Llama-3.1-8B-Instruct-Q4_K_M.gguf",
+        filename: "llama3.gguf",
+        filesize: "4.92 GB",
+      },
+      mistral: {
+        modelname: "Mistral 7B",
+        modeldesc: `A 7B parameters LLM model built by Mistral AI, the French OpenAI.`,
+        url: "https://huggingface.co/TheBloke/Mistral-7B-Instruct-v0.2-GGUF/resolve/main/mistral-7b-instruct-v0.2.Q4_K_M.gguf",
+        filename: "llama2.gguf",
+        filesize: "4.37 GB",
       },
     });
 
@@ -440,6 +480,17 @@ export default {
       }
     };
 
+    const { toClipboard } = useClipboard();
+
+    const copy = async (answer) => {
+      try {
+        await toClipboard(answer);
+        console.log("Answered copied to clipboard.");
+      } catch (e) {
+        console.error(e);
+      }
+    };
+
     return {
       isLoading,
       isModel,
@@ -455,6 +506,7 @@ export default {
       sendMessage,
       inferences,
       resetChat,
+      copy,
     };
   },
   async mounted() {
@@ -467,7 +519,7 @@ export default {
 </script>
 
 <!-- Add "scoped" attribute to limit CSS to this component only -->
-<style scoped>
+<style>
 @import url("https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:opsz,wght,FILL,GRAD@20..48,100..700,0..1,-50..200");
 
 .material-symbols-outlined {
@@ -639,7 +691,7 @@ h2 {
 }
 
 p {
-  margin-bottom: 3em !important;
+  margin-bottom: 3em;
   font-size: 24px;
   color: #fff;
   text-align: justify;
@@ -668,12 +720,21 @@ p.question {
   backdrop-filter: blur(6px);
 }
 
-p.answer {
+div.answer {
   border: 1px solid rgba(255, 255, 255, 0.25);
   padding: 1em;
   box-shadow: -8px 8px 0 rgba(57, 213, 130, 0.25);
   border-radius: 4px;
   backdrop-filter: blur(6px);
+  background: rgba(255, 255, 255, 0.1);
+
+  strong {
+    color: rgba(57, 213, 130, 0.75);
+  }
+}
+
+div.answer p {
+  margin-bottom: 0 !important;
 }
 
 span.answer__id {
