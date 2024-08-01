@@ -32,7 +32,20 @@ jobs:
       - name: publish
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: npm run publish --arch=universal
+        run: npm run publish
+
+  publish_on_mac_intel:
+    runs-on: macos-latest
+    steps:
+      - run: python3 -m pip install setuptools --break-system-packages
+      - uses: actions/checkout@v2
+      - uses: actions/setup-node@master
+        with:
+          node-version: 20
+      - name: install dependencies
+        run: npm install
+      - name: build
+        run: npm run publish -- --arch=x64
 
   publish_on_win:
     runs-on: windows-latest
