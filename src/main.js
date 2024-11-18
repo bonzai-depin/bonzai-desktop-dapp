@@ -1,10 +1,13 @@
 import { BrowserWindow, app, ipcMain, protocol, screen, shell } from "electron";
 import Store from "electron-store";
 import fs from "fs";
+import si from "systeminformation";
 import { LlamaChatSession, LlamaContext, LlamaModel } from "node-llama-cpp";
 import path from "path";
 import { fileURLToPath, pathToFileURL } from "url";
 import { download } from "electron-dl";
+import { unlink } from "node:fs";
+import child_process from "child_process";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -95,7 +98,15 @@ app.on("ready", async () => {
   const { width, height } = screen.getPrimaryDisplay().workAreaSize;
 
   createWindow(width, height);
+
+  // develop
+  child_process.spawn("python", ["./src/server/diffuser.py"]);
+
+  // packaging
+  // child_process.spawn('./dist/diffuser/diffuser');
 });
+
+ipcMain.handle("system-information", systemInformation);
 
 /**
  * Checks if a LLama Model exists
@@ -103,6 +114,8 @@ app.on("ready", async () => {
 ipcMain.handle("model-check", checkModel);
 
 ipcMain.handle("model-download", downloadModel);
+
+ipcMain.handle("model-delete", deleteModel);
 
 /**
  * Loads a LLama Model
@@ -129,6 +142,25 @@ app.on("activate", () => {
     createWindow();
   }
 });
+
+/**
+ * Checks the model cache dir and delete the model if available.
+ */
+async function systemInformation() {
+  const ram = await si.mem();
+  const vram = await si.graphics();
+
+  const systemValues = {
+    ram: ram.total,
+    vram: vram,
+  };
+
+  console.log("ram", ram.total);
+  console.log("vram", vram);
+  console.log("systemValues", systemValues);
+
+  return systemValues;
+}
 
 /**
  * Initialize the model configuration on the first run.
@@ -160,6 +192,21 @@ async function downloadModel(event, url, filename) {
     console.error("Download failed:", error);
     return false;
   }
+}
+
+/**
+ * Checks the model cache dir and delete the model if available.
+ */
+function deleteModel(event, modelname) {
+  console.log('app.getPath("userData")', app.getPath("userData"));
+  console.log("modelname", modelname);
+  const modelPath = path.join(app.getPath("userData"), "models", modelname);
+
+  unlink(modelPath, (err) => {
+    if (err) throw err;
+    console.log("Model was deleted");
+  });
+  return true;
 }
 
 /**

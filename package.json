@@ -1,7 +1,7 @@
 {
   "name": "bonzai",
   "productName": "bonzai",
-  "version": "0.1.1",
+  "version": "0.3.0",
   "description": "1-click Sovereign AI deployment, training & serving. This is BonzAI !",
   "main": ".vite/build/main.js",
   "type": "module",
@@ -50,6 +50,7 @@
     "electron-store": "^8.1.0",
     "node-llama-cpp": "^2.8.0",
     "openai": "^4.20.1",
+    "systeminformation": "^5.23.5",
     "update-electron-app": "^3.0.0",
     "uuid": "^9.0.1",
     "vite-plugin-static-copy": "^1.0.5",
