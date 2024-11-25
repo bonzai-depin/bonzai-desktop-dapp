@@ -1,12 +1,24 @@
 <template>
-  <pre>{{ mySystem }}</pre>
   <div class="columns">
     <div class="column is-4 is-paddingless">
       <div class="models tabs">
         <ul class="models__list">
           <li class="models__list-item model bonzai has-text-left">
             <div class="shade"></div>
-            <div class="logo"></div>
+            <div class="logo">
+              <span
+                v-if="systemValues.value"
+                class="system tag is-info is-large is-pulled-right"
+              >
+                <span
+                  class="material-symbols-outlined is-size-1 mr-2"
+                  style="font-size: 32px !important"
+                >
+                  memory
+                </span>
+                {{ ((systemValues.value.ram + systemValues.value.vram) / 1024 ** 3).toFixed(0) }} GB Memory
+              </span>
+            </div>
           </li>
           <li
             class="models__list-item model chat"
@@ -86,20 +98,15 @@ export default {
     const modelMode = ref("chat");
     const systemValues = ref({});
 
-    const mySystem = async () => {
-      const mySystemValues = await window.electronAPI.systemInformation();
-      systemValues.value = mySystemValues;
-      return mySystemValues;
-    };
-
     return {
-      mySystem,
+      systemValues,
       modelMode,
     };
   },
   async mounted() {
-    const systemReady = await this.mySystem();
-    console.log("Ready to start, sir.", systemReady);
+    const mySystemValues = await window.electronAPI.systemInformation();
+    this.systemValues.value = mySystemValues;
+    console.log("Ready to start, sir.", this.systemValues);
   },
 };
 </script>
@@ -149,6 +156,13 @@ body {
   -webkit-user-select: none;
   -webkit-app-region: no-drag;
   overflow: hidden;
+}
+
+.system {
+  position: absolute;
+  top: 20px;
+  right: 8px;
+  z-index: 777;
 }
 
 .button {

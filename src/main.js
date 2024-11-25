@@ -100,8 +100,13 @@ app.on("ready", async () => {
   createWindow(width, height);
 
   // develop
-  child_process.spawn("python", ["./src/server/diffuser.py"]);
-
+  // try {
+  //   await child_process.spawn("python", ["./src/server/diffuser.py"]);
+  //   return true;
+  // } catch (error) {
+  //   console.error("Server start failed:", error);
+  //   return false;
+  // }
   // packaging
   // child_process.spawn('./dist/diffuser/diffuser');
 });
@@ -152,12 +157,9 @@ async function systemInformation() {
 
   const systemValues = {
     ram: ram.total,
-    vram: vram,
+    gpu: vram.controllers[0].model,
+    vram: vram.controllers[0].vram,
   };
-
-  console.log("ram", ram.total);
-  console.log("vram", vram);
-  console.log("systemValues", systemValues);
 
   return systemValues;
 }
