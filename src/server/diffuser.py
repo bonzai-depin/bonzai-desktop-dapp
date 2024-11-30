@@ -3,15 +3,15 @@
 
 from flask import Flask, request
 import torch
-from diffusers import FluxPipeline, AutoPipelineForText2Image, DiffusionPipeline, StableAudioPipeline
-import soundfile as sf
-import scipy
-import os
-# os.environ['FOOBAR']='True'
-import resource, sys
-# resource.setrlimit(resource.RLIMIT_STACK, (4096, 4096)) 
-from huggingface_hub import login
+from diffusers import FluxPipeline, AutoPipelineForText2Image, DiffusionPipeline, CogVideoXImageToVideoPipeline
+from diffusers.utils import export_to_video, load_image
 
+import torchaudio
+from einops import rearrange
+from stable_audio_tools import get_pretrained_model
+from stable_audio_tools.inference.generation import generate_diffusion_cond
+
+import sys
 
 app = Flask(__name__)
 
@@ -29,8 +29,12 @@ def hello():
 
 @app.route('/download', methods=['POST'])
 def download_model():
-    pipe = FluxPipeline.from_pretrained("black-forest-labs/FLUX.1-schnell", torch_dtype=torch.bfloat16)
+    payload = request.json
+    repository=payload['repository']
+    pipe = FluxPipeline.from_pretrained(repository, torch_dtype=torch.bfloat16)
     pipe.save_pretrained(".")
+    
+    return 200
 
 @app.route('/image/flux', methods=['POST'])
 def get_image():
@@ -51,34 +55,25 @@ def get_image():
         num_inference_steps=4,
         max_sequence_length=256,
     ).images[0]
-    image.save("flux.png")
+    image.save("image_max_quality.png")
     
     return {'prompt': prompt}, 201
 
-
-@app.route('/image/sd', methods=['POST'])
-def get_image_sd():
+@app.route('/image/turbo', methods=['POST'])
+def get_image_turbo():
     pipe = AutoPipelineForText2Image.from_pretrained("stabilityai/sdxl-turbo", torch_dtype=torch.float16, variant="fp16")
     pipe.to(get_device())
 
     payload = request.json
     prompt=payload['prompt']
 
-    image = pipe(prompt=prompt, num_inference_steps=8, guidance_scale=0.0).images[0]
-    image.save("sd.png")
-    
-    # pipex4 = StableDiffusionUpscalePipeline.from_pretrained("stabilityai/stable-diffusion-x4-upscaler", torch_dtype=torch.float16)
-    # pipex4.to(get_device())
-    
-    # low_res_image = image.resize((256, 256))
-
-    # upscaled_image = pipex4(prompt=prompt, image=low_res_image).images[0]
-    # upscaled_image.save("sd_4x.png")
+    image = pipe(prompt=prompt, num_inference_steps=3, guidance_scale=1).images[0]
+    image.save("image_turbo.png")
     
     return {'prompt': prompt}, 201
 
-@app.route('/image/sdxl', methods=['POST'])
-def get_image_sdxl():
+@app.route('/image/quality', methods=['POST'])
+def get_image_quality():
     base = AutoPipelineForText2Image.from_pretrained("stabilityai/stable-diffusion-xl-base-1.0", torch_dtype=torch.float16, variant="fp16")
     base.to(get_device())
 
@@ -112,43 +107,52 @@ def get_image_sdxl():
         image=image,
     ).images[0]
     
-    image.save("sd_refined.png")
+    image.save("image_quality.png")
     
     return {'prompt': prompt}, 201
 
+@app.route('/music', methods=['POST'])
+def get_sound():
+    # Download model
+    model, model_config = get_pretrained_model("stabilityai/stable-audio-open-1.0")
+    sample_rate = model_config["sample_rate"]
+    sample_size = model_config["sample_size"]
 
-@app.route('/music/sfx', methods=['POST'])
-def get_sfx():
-    login("REMOVED_HF_TOKEN")
-    sys.setrecursionlimit(100000000)
+    model = model.to(get_device())
     payload = request.json
     prompt=payload['prompt']
-    pipe = StableAudioPipeline.from_pretrained("stabilityai/stable-audio-open-1.0", torch_dtype=torch.float16).to(get_device())
+    
+    # Set up text and timing conditioning
+    conditioning = [{
+        "prompt": prompt,
+        "seconds_start": 0, 
+        "seconds_total": 47
+    }]
 
-    # define the prompts
-    prompt = prompt
-    negative_prompt = "Low quality."
+    # Generate stereo audio
+    output = generate_diffusion_cond(
+        model,
+        steps=500,
+        cfg_scale=10,
+        conditioning=conditioning,
+        sample_size=sample_size,
+        sigma_min=0.3,
+        sigma_max=500,
+        sampler_type="dpmpp-3m-sde",
+        device=get_device()
+    )
 
-    # set the seed for generator
-    generator = torch.Generator(get_device()).manual_seed(0)
+    # Rearrange audio batch to a single sequence
+    output = rearrange(output, "b d n -> d (b n)")
 
-    # run the generation
-    audio = pipe(
-        prompt,
-        negative_prompt=negative_prompt,
-        num_inference_steps=2,
-        audio_end_in_s=5.0,
-        num_waveforms_per_prompt=3,
-        generator=generator,
-    ).audios
-
-    output = audio[0].T.float().cpu().numpy()
-    sf.write("sfx.wav", output, pipe.vae.sampling_rate)
-
+    # Peak normalize, clip, convert to int16, and save to file
+    output = output.to(torch.float32).div(torch.max(torch.abs(output))).clamp(-1, 1).mul(32767).to(torch.int16).cpu()
+    torchaudio.save("music.wav", output, sample_rate)
+    
     return {'prompt': prompt}, 201
 
 if __name__ == "__main__":
-    print('oh hello')
+    print('Welcome to BonzAI!')
     #time.sleep(5)
-    app.run(host='127.0.0.1', port=11000)
+    app.run(host='127.0.0.1', port=22222)
     
