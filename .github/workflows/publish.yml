@@ -17,8 +17,7 @@ jobs:
       - name: Set up Python (Linux x64)
         uses: actions/setup-python@v4
         with:
-          python-version: '3.12.x'           # SciPy wheels exist for 3.12 :contentReference[oaicite:2]{index=2}
-          allow-prereleases: false           # 3.12 is final, no prereleases needed :contentReference[oaicite:3]{index=3}
+          python-version: '3.12.x'
 
       - name: Install Python deps & PyInstaller
         run: |
@@ -60,9 +59,8 @@ jobs:
       - name: Set up Python (macOS ARM64)
         uses: actions/setup-python@v4
         with:
-          python-version: '3.12.x'           # wheels for macOS ARM64 :contentReference[oaicite:4]{index=4}
-          allow-prereleases: false
-          architecture: 'arm64'              # explicit ARM64 interpreter :contentReference[oaicite:5]{index=5}
+          python-version: '3.12.x'
+          architecture: 'arm64'
 
       - name: Install Python deps & PyInstaller
         run: |
@@ -81,9 +79,9 @@ jobs:
 
       - name: Decode & Import App Certificate
         env:
-          CERT_BASE64:           ${{ secrets.MAC_APP_CERT_BASE64 }}
-          CERT_PASS:             ${{ secrets.MAC_APP_CERT_PASSWORD }}
-          KEYCHAIN_PW:           ${{ secrets.KEYCHAIN_PASSWORD }}
+          CERT_BASE64: ${{ secrets.MAC_APP_CERT_BASE64 }}
+          CERT_PASS:   ${{ secrets.MAC_APP_CERT_PASSWORD }}
+          KEYCHAIN_PW: ${{ secrets.KEYCHAIN_PASSWORD }}
         run: |
           echo "$CERT_BASE64" | base64 --decode > app.p12
           security create-keychain -p "$KEYCHAIN_PW" build.keychain
@@ -135,8 +133,7 @@ jobs:
       - name: Set up Python (macOS x64)
         uses: actions/setup-python@v4
         with:
-          python-version: '3.12.x'           # wheels for macOS x86–64 :contentReference[oaicite:6]{index=6}
-          allow-prereleases: false
+          python-version: '3.12.x'
           architecture: 'x64'
 
       - name: Install Python deps & PyInstaller
@@ -156,9 +153,9 @@ jobs:
 
       - name: Decode & Import App Certificate
         env:
-          CERT_BASE64:           ${{ secrets.MAC_APP_CERT_BASE64 }}
-          CERT_PASS:             ${{ secrets.MAC_APP_CERT_PASSWORD }}
-          KEYCHAIN_PW:           ${{ secrets.KEYCHAIN_PASSWORD }}
+          CERT_BASE64: ${{ secrets.MAC_APP_CERT_BASE64 }}
+          CERT_PASS:   ${{ secrets.MAC_APP_CERT_PASSWORD }}
+          KEYCHAIN_PW: ${{ secrets.KEYCHAIN_PASSWORD }}
         run: |
           echo "$CERT_BASE64" | base64 --decode > app.p12
           security create-keychain -p "$KEYCHAIN_PW" build.keychain
@@ -210,8 +207,7 @@ jobs:
       - name: Set up Python (Windows x64)
         uses: actions/setup-python@v4
         with:
-          python-version: '3.12.x'           # wheels for Windows x64 :contentReference[oaicite:7]{index=7}
-          allow-prereleases: false
+          python-version: '3.12.x'
 
       - name: Install Python deps & PyInstaller
         run: |
@@ -221,11 +217,11 @@ jobs:
       - name: Build Python binary (Windows x64)
         run: |
           mkdir binaries\${{ env.OS_KEY }}-${{ env.ARCH_KEY }}
-          pyinstaller ^
-            --onefile ^
-            --distpath binaries\${{ env.OS_KEY }}-${{ env.ARCH_KEY }} ^
-            --workpath build ^
-            --specpath build ^
+          pyinstaller `
+            --onefile `
+            --distpath binaries\${{ env.OS_KEY }}-${{ env.ARCH_KEY }} `
+            --workpath build `
+            --specpath build `
             $MAIN_PY_FILE
 
       - name: Set up Node.js
