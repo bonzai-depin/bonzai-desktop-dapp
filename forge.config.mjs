@@ -90,7 +90,7 @@ export default {
     },
   ],
   hooks: {
-    packageAfterCopy: async (buildPath, electronVersion, platform, arch) => {
+    packageAfterCopy: async (_config, buildPath, electronVersion, platform, arch) => {
       // now buildPath is a string you can join on
       const resourcesPath = platform === "darwin"
         // on macOS .app bundles, resources live under Contents/Resources
