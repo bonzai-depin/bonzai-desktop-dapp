@@ -14,70 +14,44 @@ export default {
     icon: './src/assets/logo',
     executableName: appName,
 
-    // ─── 1) Ensure Packager temp files land in workspace/tmp, not /tmp ───
-    //    Avoid ENOSPC on GitHub Actions runners :contentReference[oaicite:3]{index=3}
-    os: { 
-      // set env for the packing process
-      // this can also be set in your CI yml, but here’s how to do it in-code
-      afterCopyExtraResources: []
-    },
-    tmpdir: path.resolve(process.cwd(), 'tmp'), // instruct electron-packager to use this dir
+    // 1) Put temp OUTSIDE the repo to avoid subdir-of-itself & ENOSPC
+    tmpdir: path.resolve(__dirname, '..', 'tmp'),              // :contentReference[oaicite:6]{index=6}
 
-    // ─── 2) Ship your Python server & CI-built binaries ───
+    // 2) Ship your Python scripts + CI-built binaries
     extraResource: [
-      path.resolve(__dirname, 'src', 'server'),  // Python scripts
-      path.resolve(__dirname, 'binaries')        // PyInstaller outputs
-    ],
+      path.resolve(__dirname, 'src', 'server'),
+      path.resolve(__dirname, 'binaries')
+    ],                                                        // :contentReference[oaicite:7]{index=7}
 
-    // ─── 3) macOS signing & notarization ───
-    osxSign: {
-      hardenedRuntime: true,
-      entitlements: 'entitlements.mac.plist',
-      'entitlements-inherit': 'entitlements.mac.plist'
-    },
-    osxNotarize: {
-      appleId:         process.env.APPLE_ID,
-      appleIdPassword:process.env.MAC_APP_CERT_PASSWORD,
-      teamId:          process.env.APPLE_TEAM_ID
-    },
+    // 3) macOS signing/notarization
+    osxSign: { /* … */ },
+    osxNotarize: { /* … */ },
 
-    // ─── 4) AFTER extraResource is copied, pick & embed your Python binary ───
+    // 4) AFTER extraResource is copied, embed the correct PyInstaller output
     afterCopyExtraResources: [
-      async (buildPath, _electronVer, platform, arch) => {
-        // 4.1) Locate Resources root explicitly:
-        //     - macOS: <root>/<appName>.app/Contents/Resources  
-        //     - Linux/Windows: <root>/resources
+      async (buildPath, _ver, platform, arch) => {
+        // A) locate Resources
         const resourcesRoot = platform === 'darwin'
           ? path.join(buildPath, `${appName}.app`, 'Contents', 'Resources')
           : path.join(buildPath, 'resources');
-        
-        // 4.2) Ensure server/ exists
+
+        // B) ensure server/
         const serverDir = path.join(resourcesRoot, 'server');
         fs.mkdirSync(serverDir, { recursive: true });
 
-        // 4.3) Compute where extraResource dropped your binaries/
+        // C) find binaries/<platform>-<arch>
         const platformKey = platform === 'darwin' ? 'macos' : platform;
-        const binFolder = path.join(
-          resourcesRoot,
-          'binaries',
-          `${platformKey}-${arch}`
-        );
-
+        const binFolder   = path.join(resourcesRoot, 'binaries', `${platformKey}-${arch}`);
         if (!fs.existsSync(binFolder)) {
           throw new Error(`Binary directory not found: ${binFolder}`);
         }
 
-        // 4.4) Pick the PyInstaller output (diffuser or diffuser.exe)
-        const entries = fs.readdirSync(binFolder);
-        if (entries.length === 0) {
-          throw new Error(`No binaries found in: ${binFolder}`);
-        }
-        const exeName = entries[0];
-        const srcPath = path.join(binFolder, exeName);
-
-        // 4.5) Copy into server/python-binary
-        const destPath = path.join(serverDir, 'python-binary');
+        // D) pick the first executable (diffuser or diffuser.exe)
+        const [exeName] = fs.readdirSync(binFolder);
+        const srcPath   = path.join(binFolder, exeName);
+        const destPath  = path.join(serverDir, 'python-binary');
         fs.copyFileSync(srcPath, destPath);
+
         console.log(`Copied ${exeName} → ${destPath}`);
       }
     ]

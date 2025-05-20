@@ -173,14 +173,15 @@ jobs:
           pip install pyinstaller
 
       - name: Build Python binary (Windows x64)
+        shell: pwsh
         run: |
-          mkdir binaries\${{ env.OS_KEY }}-${{ env.ARCH_KEY }}
+          New-Item -ItemType Directory binaries\${{ env.OS_KEY }}-${{ env.ARCH_KEY }} -Force
           pyinstaller `
             --onefile `
             --distpath binaries\${{ env.OS_KEY }}-${{ env.ARCH_KEY }} `
             --workpath build `
             --specpath build `
-            $MAIN_PY_FILE
+            $env:MAIN_PY_FILE   # PowerShell syntax :contentReference[oaicite:12]{index=12}
 
       - name: Set up Node.js
         uses: actions/setup-node@v3
