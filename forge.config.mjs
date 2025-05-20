@@ -3,23 +3,33 @@ import { fileURLToPath } from 'node:url';
 import path             from 'node:path';
 import fs               from 'node:fs';
 
-// Recreate __dirname in ESM
 const __filename = fileURLToPath(import.meta.url);
 const __dirname  = path.dirname(__filename);
+
+// your app name must match your executableName
+const appName = 'bonzai';
 
 export default {
   packagerConfig: {
     icon: './src/assets/logo',
-    executableName: 'bonzai',
+    executableName: appName,
 
-    // ─── 1. Ship BOTH your server scripts AND your CI-built binaries folder ───
-    // Use absolute paths so Packager finds them on disk.
+    // ─── 1) Ensure Packager temp files land in workspace/tmp, not /tmp ───
+    //    Avoid ENOSPC on GitHub Actions runners :contentReference[oaicite:3]{index=3}
+    os: { 
+      // set env for the packing process
+      // this can also be set in your CI yml, but here’s how to do it in-code
+      afterCopyExtraResources: []
+    },
+    tmpdir: path.resolve(process.cwd(), 'tmp'), // instruct electron-packager to use this dir
+
+    // ─── 2) Ship your Python server & CI-built binaries ───
     extraResource: [
-      path.resolve(__dirname, 'src', 'server'),       // Python scripts :contentReference[oaicite:2]{index=2}
-      path.resolve(__dirname, 'binaries')             // PyInstaller outputs :contentReference[oaicite:3]{index=3}
+      path.resolve(__dirname, 'src', 'server'),  // Python scripts
+      path.resolve(__dirname, 'binaries')        // PyInstaller outputs
     ],
 
-    // ─── macOS Signing & Notarization ───
+    // ─── 3) macOS signing & notarization ───
     osxSign: {
       hardenedRuntime: true,
       entitlements: 'entitlements.mac.plist',
@@ -27,50 +37,48 @@ export default {
     },
     osxNotarize: {
       appleId:         process.env.APPLE_ID,
-      appleIdPassword: process.env.MAC_APP_CERT_PASSWORD,
+      appleIdPassword:process.env.MAC_APP_CERT_PASSWORD,
       teamId:          process.env.APPLE_TEAM_ID
     },
 
-    // ─── 2. AFTER those extraResource items land in Resources/, run this hook ───
+    // ─── 4) AFTER extraResource is copied, pick & embed your Python binary ───
     afterCopyExtraResources: [
-      /**
-       * @param {string} buildPath   macOS: …/YourApp.app/Contents/Resources/app  
-       *                             Win/Linux: …/yourApp-unpacked  
-       * @param {string} electronVer Electron version  
-       * @param {'darwin'|'win32'|'linux'} platform  
-       * @param {string} arch        'x64' | 'arm64' | etc.
-       */
       async (buildPath, _electronVer, platform, arch) => {
-        // 2.1 Locate the Resources root
+        // 4.1) Locate Resources root explicitly:
+        //     - macOS: <root>/<appName>.app/Contents/Resources  
+        //     - Linux/Windows: <root>/resources
         const resourcesRoot = platform === 'darwin'
-          ? path.dirname(buildPath)                // …/YourApp.app/Contents/Resources :contentReference[oaicite:4]{index=4}
-          : path.join(buildPath, 'resources');     // …/yourApp-unpacked/resources
-
-        // 2.2 Ensure server folder exists
+          ? path.join(buildPath, `${appName}.app`, 'Contents', 'Resources')
+          : path.join(buildPath, 'resources');
+        
+        // 4.2) Ensure server/ exists
         const serverDir = path.join(resourcesRoot, 'server');
-        fs.mkdirSync(serverDir, { recursive: true });  // make server/ 
+        fs.mkdirSync(serverDir, { recursive: true });
 
-        // 2.3 Compute where Packager put your binaries/
-        //      It will live at Resources/binaries because of extraResource above
+        // 4.3) Compute where extraResource dropped your binaries/
         const platformKey = platform === 'darwin' ? 'macos' : platform;
-        const binFolder   = path.join(resourcesRoot, 'binaries', `${platformKey}-${arch}`);
+        const binFolder = path.join(
+          resourcesRoot,
+          'binaries',
+          `${platformKey}-${arch}`
+        );
 
         if (!fs.existsSync(binFolder)) {
           throw new Error(`Binary directory not found: ${binFolder}`);
         }
 
-        // 2.4 Pick up whatever file PyInstaller emitted
+        // 4.4) Pick the PyInstaller output (diffuser or diffuser.exe)
         const entries = fs.readdirSync(binFolder);
         if (entries.length === 0) {
           throw new Error(`No binaries found in: ${binFolder}`);
         }
-        const exeName = entries[0];  // e.g. 'diffuser' or 'diffuser.exe' 
+        const exeName = entries[0];
         const srcPath = path.join(binFolder, exeName);
 
-        // 2.5 Copy into server/python-binary
+        // 4.5) Copy into server/python-binary
         const destPath = path.join(serverDir, 'python-binary');
         fs.copyFileSync(srcPath, destPath);
-        console.log(`Copied ${exeName} from ${srcPath} → ${destPath}`);
+        console.log(`Copied ${exeName} → ${destPath}`);
       }
     ]
   },
@@ -85,7 +93,7 @@ export default {
         window: { width: 1000, height: 560 }
       }
     },
-    { name: '@electron-forge/maker-deb',    config: { bin: 'bonzai' } },
+    { name: '@electron-forge/maker-deb', config: { bin: appName } },
     { name: '@electron-forge/maker-squirrel', config: { icon: './src/assets/logo' } }
   ],
 
@@ -105,12 +113,10 @@ export default {
       name: '@electron-forge/plugin-vite',
       config: {
         build: [
-          { entry: 'src/main.js',   config: 'vite.main.config.ts'   },
-          { entry: 'src/preload.js',config: 'vite.preload.config.ts' }
+          { entry: 'src/main.js',    config: 'vite.main.config.ts'   },
+          { entry: 'src/preload.js', config: 'vite.preload.config.ts' }
         ],
-        renderer: [
-          { name: 'main_window', config: 'vite.renderer.config.ts' }
-        ]
+        renderer: [ { name: 'main_window', config: 'vite.renderer.config.ts' } ]
       }
     }
   ]
