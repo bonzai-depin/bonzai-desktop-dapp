@@ -4,50 +4,160 @@ on: [push, pull_request]
 jobs:
   build_on_linux:
     runs-on: ubuntu-latest
+    env:
+      MAIN_PY_FILE: src/server/diffuser.py
+      OS_KEY:        linux
+      ARCH_KEY:      x64
     steps:
       - uses: actions/checkout@v2
-      - uses: actions/setup-node@master
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: 3.10
+
+      - name: Install Python deps & PyInstaller
+        run: |
+          pip install -r requirements.txt
+          pip install pyinstaller
+
+      - name: Build Python binary (Linux x64)
+        run: |
+          mkdir -p binaries/${{ env.OS_KEY }}-${{ env.ARCH_KEY }}
+          pyinstaller \
+            --onefile \
+            --distpath binaries/${{ env.OS_KEY }}-${{ env.ARCH_KEY }} \
+            --workpath build \
+            --specpath build \
+            $MAIN_PY_FILE
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v3
         with:
           node-version: 20
-      - name: install dependencies
+
+      - name: Install dependencies
         run: npm install
-      - name: build
+
+      - name: Build Electron app
         run: npm run make
 
   build_on_mac:
     runs-on: macos-latest
+    env:
+      MAIN_PY_FILE: src/server/diffuser.py
+      OS_KEY:        macos
+      ARCH_KEY:      arm64
     steps:
-      - run: python3 -m pip install setuptools --break-system-packages
       - uses: actions/checkout@v2
-      - uses: actions/setup-node@master
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: 3.10
+
+      - name: Install Python deps & PyInstaller
+        run: |
+          pip install -r requirements.txt
+          pip install pyinstaller
+
+      - name: Build Python binary (macOS arm64)
+        run: |
+          mkdir -p binaries/${{ env.OS_KEY }}-${{ env.ARCH_KEY }}
+          pyinstaller \
+            --onefile \
+            --distpath binaries/${{ env.OS_KEY }}-${{ env.ARCH_KEY }} \
+            --workpath build \
+            --specpath build \
+            $MAIN_PY_FILE
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v3
         with:
           node-version: 20
-      - name: install dependencies
+
+      - name: Install dependencies
         run: npm install
-      - name: build
+
+      - name: Build Electron app (arm64)
         run: npm run make
 
   build_on_mac_intel:
     runs-on: macos-latest
+    env:
+      MAIN_PY_FILE: src/server/diffuser.py
+      OS_KEY:        macos
+      ARCH_KEY:      x64
     steps:
-      - run: python3 -m pip install setuptools --break-system-packages
       - uses: actions/checkout@v2
-      - uses: actions/setup-node@master
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: 3.10
+
+      - name: Install Python deps & PyInstaller
+        run: |
+          pip install -r requirements.txt
+          pip install pyinstaller
+
+      - name: Build Python binary (macOS x64)
+        run: |
+          mkdir -p binaries/${{ env.OS_KEY }}-${{ env.ARCH_KEY }}
+          pyinstaller \
+            --onefile \
+            --distpath binaries/${{ env.OS_KEY }}-${{ env.ARCH_KEY }} \
+            --workpath build \
+            --specpath build \
+            $MAIN_PY_FILE
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v3
         with:
           node-version: 20
-      - name: install dependencies
+
+      - name: Install dependencies
         run: npm install
-      - name: build
+
+      - name: Build Electron app (x64)
         run: npm run make -- --arch=x64
 
   build_on_win:
     runs-on: windows-latest
+    env:
+      MAIN_PY_FILE: src/server/diffuser.py
+      OS_KEY:        windows
+      ARCH_KEY:      x64
     steps:
       - uses: actions/checkout@v2
-      - uses: actions/setup-node@master
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: 3.10
+
+      - name: Install Python deps & PyInstaller
+        run: |
+          pip install -r requirements.txt
+          pip install pyinstaller
+
+      - name: Build Python binary (Windows x64)
+        run: |
+          mkdir binaries\${{ env.OS_KEY }}-${{ env.ARCH_KEY }}
+          pyinstaller ^
+            --onefile ^
+            --distpath binaries\${{ env.OS_KEY }}-${{ env.ARCH_KEY }} ^
+            --workpath build ^
+            --specpath build ^
+            $MAIN_PY_FILE
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v3
         with:
           node-version: 20
-      - name: install dependencies
+
+      - name: Install dependencies
         run: npm install
-      - name: build
+
+      - name: Build Electron app
         run: npm run make
