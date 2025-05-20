@@ -69,35 +69,41 @@ export default {
 
   hooks: {
     /**
-     * packageAfterCopy signature:
-     *   (forgeConfig, buildPath, electronVer, platform, arch)
+     * packageAfterCopy(forgeConfig, buildPath, electronVer, platform, arch)
      */
-    packageAfterCopy: async (_forgeConfig, buildPath, _electronVer, platform, arch) => {
-      // 1) Locate the Resources root in the bundled app
-      //    On macOS: buildPath = …/YourApp.app/Contents/Resources/app
-      //    On win/linux: buildPath = …/<yourApp>-unpacked
+    packageAfterCopy: async (_forgeConfig, buildPath, _ver, platform, arch) => {
+      // 1) Determine the Resources root inside the bundle
       const resourcesRoot = platform === 'darwin'
-        ? path.dirname(buildPath)                   // …/YourApp.app/Contents/Resources
-        : path.join(buildPath, 'resources');        // …/yourApp-unpacked/resources
+        ? path.dirname(buildPath)               // …/YourApp.app/Contents/Resources
+        : path.join(buildPath, 'resources');    // …/yourApp-unpacked/resources
 
-      // 2) Ensure your server folder exists
+      // 2) Create server folder
       const serverDir = path.join(resourcesRoot, 'server');
       fs.mkdirSync(serverDir, { recursive: true });
 
-      // 3) Compute the directory name where PyInstaller put your binary:
-      //    we use `<platformKey>-<arch>` to match your CI output folder.
-      //    On macOS that becomes `macos-arm64` or `macos-x64`,
-      //    on Linux `linux-x64`, on Windows `windows-x64`, etc.
+      // 3) Compute the CI-built directory name (e.g. macos-x64, macos-arm64, linux-x64, windows-x64)
       const platformKey = platform === 'darwin' ? 'macos' : platform;
-      const binDir      = `${platformKey}-${arch}`;
-      const binName     = platform === 'win32' ? 'python.exe' : 'python';
+      const binDir      = path.join(resourcesRoot, 'binaries', `${platformKey}-${arch}`);
 
-      const binSrc = path.join(resourcesRoot, 'binaries', binDir, binName);
-      if (!fs.existsSync(binSrc)) {
-        throw new Error(`Python binary not found at: ${binSrc}`);
+      if (!fs.existsSync(binDir)) {
+        throw new Error(`Binary directory not found: ${binDir}`);
       }
 
-      // 4) Copy it into your app’s server folder
+      // 4) Dynamically pick the first file in that directory
+      const files = fs.readdirSync(binDir);  // synchronous read :contentReference[oaicite:3]{index=3}
+      if (files.length === 0) {
+        throw new Error(`No files found in binary directory: ${binDir}`);
+      }
+      // assume the executable is the only file (or first)
+      const binName = files[0];
+      const binSrc  = path.join(binDir, binName);
+
+      // 5) Final existence check
+      if (!fs.existsSync(binSrc)) {
+        throw new Error(`Executable not found at: ${binSrc}`);
+      }
+
+      // 6) Copy into your app’s server folder
       const binDest = path.join(serverDir, 'python-binary');
       fs.copyFileSync(binSrc, binDest);
       console.log(`Copied Python binary from ${binSrc} → ${binDest}`);
