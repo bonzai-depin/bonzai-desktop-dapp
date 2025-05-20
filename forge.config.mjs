@@ -106,12 +106,6 @@ export default {
   
       console.log(`Packaging for platform: ${platform}, arch: ${arch}`);
 
-      // Determine target platform and architecture
-      const platform = process.platform; // "darwin", "win32", "linux"
-      const arch = process.arch; // "x64", "arm64", etc.
-
-      console.log(`Packaging for platform: ${platform}, architecture: ${arch}`);
-
       let binarySourcePath;
       let binaryTargetPath = path.join(serverDir, "python-binary");
 
