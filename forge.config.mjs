@@ -3,7 +3,7 @@ import { fileURLToPath } from 'node:url';
 import path             from 'node:path';
 import fs               from 'node:fs';
 
-// Re-create __dirname in ESM
+// Recreate __dirname in ESM
 const __filename = fileURLToPath(import.meta.url);
 const __dirname  = path.dirname(__filename);
 
@@ -12,46 +12,46 @@ export default {
     icon: './src/assets/logo',
     executableName: 'bonzai',
 
-    // ─── Ship these folders into Contents/Resources ───
+    // ─── 1. Ship BOTH your server scripts AND your CI-built binaries folder ───
+    // Use absolute paths so Packager finds them on disk.
     extraResource: [
-      'src/server',  // your Python script(s)
-      'binaries'     // your CI‐built PyInstaller binaries
+      path.resolve(__dirname, 'src', 'server'),       // Python scripts :contentReference[oaicite:2]{index=2}
+      path.resolve(__dirname, 'binaries')             // PyInstaller outputs :contentReference[oaicite:3]{index=3}
     ],
 
-    // ─── Electron Builder‐style signing/notarization for macOS ───
+    // ─── macOS Signing & Notarization ───
     osxSign: {
       hardenedRuntime: true,
       entitlements: 'entitlements.mac.plist',
       'entitlements-inherit': 'entitlements.mac.plist'
     },
     osxNotarize: {
-      appleId:        process.env.APPLE_ID,
-      appleIdPassword:process.env.MAC_APP_CERT_PASSWORD,
-      teamId:         process.env.APPLE_TEAM_ID
+      appleId:         process.env.APPLE_ID,
+      appleIdPassword: process.env.MAC_APP_CERT_PASSWORD,
+      teamId:          process.env.APPLE_TEAM_ID
     },
 
-    // ─── AFTER the extraResource above are copied in, run this hook ───
+    // ─── 2. AFTER those extraResource items land in Resources/, run this hook ───
     afterCopyExtraResources: [
       /**
-       * Fired after extraResource folders are in Resources.
-       *
-       * @param {string} buildPath   …/YourApp.app/Contents/Resources/app   (macOS)
-       *                             or …/yourApp-unpacked                  (win/linux)
-       * @param {string} electronVer Electron version string
-       * @param {'darwin'|'win32'|'linux'} platform
-       * @param {string} arch        e.g. 'x64' | 'arm64'
+       * @param {string} buildPath   macOS: …/YourApp.app/Contents/Resources/app  
+       *                             Win/Linux: …/yourApp-unpacked  
+       * @param {string} electronVer Electron version  
+       * @param {'darwin'|'win32'|'linux'} platform  
+       * @param {string} arch        'x64' | 'arm64' | etc.
        */
-      async (buildPath, electronVer, platform, arch) => {
-        // 1. Determine the root of Resources/
+      async (buildPath, _electronVer, platform, arch) => {
+        // 2.1 Locate the Resources root
         const resourcesRoot = platform === 'darwin'
-          ? path.dirname(buildPath)               // …/YourApp.app/Contents/Resources
-          : path.join(buildPath, 'resources');    // …/yourApp-unpacked/resources
+          ? path.dirname(buildPath)                // …/YourApp.app/Contents/Resources :contentReference[oaicite:4]{index=4}
+          : path.join(buildPath, 'resources');     // …/yourApp-unpacked/resources
 
-        // 2. Ensure a server folder exists
+        // 2.2 Ensure server folder exists
         const serverDir = path.join(resourcesRoot, 'server');
-        fs.mkdirSync(serverDir, { recursive: true });
+        fs.mkdirSync(serverDir, { recursive: true });  // make server/ 
 
-        // 3. Locate the CI output folder: binaries/<platformKey>-<arch>
+        // 2.3 Compute where Packager put your binaries/
+        //      It will live at Resources/binaries because of extraResource above
         const platformKey = platform === 'darwin' ? 'macos' : platform;
         const binFolder   = path.join(resourcesRoot, 'binaries', `${platformKey}-${arch}`);
 
@@ -59,18 +59,17 @@ export default {
           throw new Error(`Binary directory not found: ${binFolder}`);
         }
 
-        // 4. Read whichever file PyInstaller produced (e.g. "diffuser" or "diffuser.exe")
+        // 2.4 Pick up whatever file PyInstaller emitted
         const entries = fs.readdirSync(binFolder);
         if (entries.length === 0) {
           throw new Error(`No binaries found in: ${binFolder}`);
         }
-        const exeName = entries[0];
+        const exeName = entries[0];  // e.g. 'diffuser' or 'diffuser.exe' 
         const srcPath = path.join(binFolder, exeName);
 
-        // 5. Copy into server/python-binary
+        // 2.5 Copy into server/python-binary
         const destPath = path.join(serverDir, 'python-binary');
         fs.copyFileSync(srcPath, destPath);
-
         console.log(`Copied ${exeName} from ${srcPath} → ${destPath}`);
       }
     ]
@@ -86,14 +85,8 @@ export default {
         window: { width: 1000, height: 560 }
       }
     },
-    {
-      name: '@electron-forge/maker-deb',
-      config: { bin: 'bonzai' }
-    },
-    {
-      name: '@electron-forge/maker-squirrel',
-      config: { icon: './src/assets/logo' }
-    }
+    { name: '@electron-forge/maker-deb',    config: { bin: 'bonzai' } },
+    { name: '@electron-forge/maker-squirrel', config: { icon: './src/assets/logo' } }
   ],
 
   publishers: [
