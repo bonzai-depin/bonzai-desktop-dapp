@@ -105,7 +105,7 @@ export default {
       fs.mkdirSync(serverDir, { recursive: true });
   
       // Copy the Python script
-      const pythonScriptPath = path.resolve(__dirname, "server/diffuser.py");
+      const pythonScriptPath = path.resolve(__dirname, "src/server/diffuser.py");
       fs.copyFileSync(pythonScriptPath, path.join(serverDir, "diffuser.py"));
   
       console.log(`Packaging for platform: ${platform}, arch: ${arch}`);
