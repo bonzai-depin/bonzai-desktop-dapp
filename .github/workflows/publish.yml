@@ -7,31 +7,83 @@ on:
 jobs:
   publish_on_linux:
     runs-on: ubuntu-latest
+    env:
+      MAIN_PY_FILE: src/server/diffuser.py
+      OS_KEY:        linux
+      ARCH_KEY:      x64
     steps:
       - uses: actions/checkout@v3
-      - uses: actions/setup-node@master
+
+      - name: Set up Python (Linux x64)
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.14'
+          allow-prereleases: true
+
+      - name: Install Python deps & PyInstaller
+        run: |
+          pip install -r requirements.txt
+          pip install pyinstaller
+
+      - name: Build Python binary (Linux x64)
+        run: |
+          mkdir -p binaries/${{ env.OS_KEY }}-${{ env.ARCH_KEY }}
+          pyinstaller \
+            --onefile \
+            --distpath binaries/${{ env.OS_KEY }}-${{ env.ARCH_KEY }} \
+            --workpath build \
+            --specpath build \
+            $MAIN_PY_FILE
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v3
         with:
           node-version: 20
-      - name: install dependencies
+
+      - name: Install Node dependencies
         run: npm ci
-      - name: publish
+
+      - name: Publish Linux build
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: npm run publish
 
   publish_on_mac:
     runs-on: macos-latest
+    env:
+      MAIN_PY_FILE: src/server/diffuser.py
+      OS_KEY:        macos
+      ARCH_KEY:      arm64
     steps:
-      - run: python3 -m pip install setuptools --break-system-packages
       - uses: actions/checkout@v3
-      - uses: actions/setup-node@master
+
+      - name: Set up Python (macOS ARM64)
+        uses: actions/setup-python@v4
         with:
-          node-version: 20
+          python-version: '3.14'
+          allow-prereleases: true
+          architecture: 'arm64'
+
+      - name: Install Python deps & PyInstaller
+        run: |
+          pip install -r requirements.txt
+          pip install pyinstaller
+
+      - name: Build Python binary (macOS ARM64)
+        run: |
+          mkdir -p binaries/${{ env.OS_KEY }}-${{ env.ARCH_KEY }}
+          pyinstaller \
+            --onefile \
+            --distpath binaries/${{ env.OS_KEY }}-${{ env.ARCH_KEY }} \
+            --workpath build \
+            --specpath build \
+            $MAIN_PY_FILE
+
       - name: Decode & Import App Certificate
         env:
-          CERT_BASE64: ${{ secrets.MAC_APP_CERT_BASE64 }}
-          CERT_PASS:   ${{ secrets.MAC_APP_CERT_PASSWORD }}
-          KEYCHAIN_PW: ${{ secrets.KEYCHAIN_PASSWORD }}
+          CERT_BASE64:         ${{ secrets.MAC_APP_CERT_BASE64 }}
+          CERT_PASS:           ${{ secrets.MAC_APP_CERT_PASSWORD }}
+          KEYCHAIN_PW:         ${{ secrets.KEYCHAIN_PASSWORD }}
         run: |
           echo "$CERT_BASE64" | base64 --decode > app.p12
           security create-keychain -p "$KEYCHAIN_PW" build.keychain
@@ -40,6 +92,7 @@ jobs:
           security set-keychain-settings -t 3600 -u build.keychain
           security default-keychain -s build.keychain
           security unlock-keychain -p "$KEYCHAIN_PW" build.keychain
+
       - name: Decode & Import Installer Certificate
         env:
           CERT_BASE64: ${{ secrets.MAC_INSTALLER_CERT_BASE64 }}
@@ -51,33 +104,63 @@ jobs:
 
       - name: Expose Apple Credentials
         run: |
-          echo "APPLE_ID=${{ secrets.APPLE_ID }}" >> $GITHUB_ENV
+          echo "APPLE_ID=${{ secrets.APPLE_ID }}"       >> $GITHUB_ENV
           echo "APPLE_TEAM_ID=${{ secrets.APPLE_TEAM_ID }}" >> $GITHUB_ENV
-      - name: install dependencies
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v3
+        with:
+          node-version: 20
+
+      - name: Install Node dependencies
         run: npm ci
-      - name: publish
+
+      - name: Publish macOS ARM64 build
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          APPLE_ID: ${{ secrets.APPLE_ID }}
-          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
-          MAC_APP_CERT_PASSWORD: ${{ secrets.MAC_APP_CERT_PASSWORD }}
-          MAC_INSTALLER_CERT_PASSWORD: ${{ secrets.MAC_INSTALLER_CERT_PASSWORD }}
-          KEYCHAIN_PASSWORD: ${{ secrets.KEYCHAIN_PASSWORD }}
+          GITHUB_TOKEN:               ${{ secrets.GITHUB_TOKEN }}
+          APPLE_ID:                   ${{ secrets.APPLE_ID }}
+          APPLE_TEAM_ID:              ${{ secrets.APPLE_TEAM_ID }}
+          MAC_APP_CERT_PASSWORD:      ${{ secrets.MAC_APP_CERT_PASSWORD }}
+          MAC_INSTALLER_CERT_PASSWORD:  ${{ secrets.MAC_INSTALLER_CERT_PASSWORD }}
+          KEYCHAIN_PASSWORD:          ${{ secrets.KEYCHAIN_PASSWORD }}
         run: npm run publish
 
   publish_on_mac_intel:
     runs-on: macos-latest
+    env:
+      MAIN_PY_FILE: src/server/diffuser.py
+      OS_KEY:        macos
+      ARCH_KEY:      x64
     steps:
-      - run: python3 -m pip install setuptools --break-system-packages
       - uses: actions/checkout@v3
-      - uses: actions/setup-node@master
+
+      - name: Set up Python (macOS x64)
+        uses: actions/setup-python@v4
         with:
-          node-version: 20
+          python-version: '3.14'
+          allow-prereleases: true
+          architecture: 'x64'
+
+      - name: Install Python deps & PyInstaller
+        run: |
+          pip install -r requirements.txt
+          pip install pyinstaller
+
+      - name: Build Python binary (macOS x64)
+        run: |
+          mkdir -p binaries/${{ env.OS_KEY }}-${{ env.ARCH_KEY }}
+          pyinstaller \
+            --onefile \
+            --distpath binaries/${{ env.OS_KEY }}-${{ env.ARCH_KEY }} \
+            --workpath build \
+            --specpath build \
+            $MAIN_PY_FILE
+
       - name: Decode & Import App Certificate
         env:
-          CERT_BASE64: ${{ secrets.MAC_APP_CERT_BASE64 }}
-          CERT_PASS:   ${{ secrets.MAC_APP_CERT_PASSWORD }}
-          KEYCHAIN_PW: ${{ secrets.KEYCHAIN_PASSWORD }}
+          CERT_BASE64:         ${{ secrets.MAC_APP_CERT_BASE64 }}
+          CERT_PASS:           ${{ secrets.MAC_APP_CERT_PASSWORD }}
+          KEYCHAIN_PW:         ${{ secrets.KEYCHAIN_PASSWORD }}
         run: |
           echo "$CERT_BASE64" | base64 --decode > app.p12
           security create-keychain -p "$KEYCHAIN_PW" build.keychain
@@ -86,6 +169,7 @@ jobs:
           security set-keychain-settings -t 3600 -u build.keychain
           security default-keychain -s build.keychain
           security unlock-keychain -p "$KEYCHAIN_PW" build.keychain
+
       - name: Decode & Import Installer Certificate
         env:
           CERT_BASE64: ${{ secrets.MAC_INSTALLER_CERT_BASE64 }}
@@ -97,30 +181,66 @@ jobs:
 
       - name: Expose Apple Credentials
         run: |
-          echo "APPLE_ID=${{ secrets.APPLE_ID }}" >> $GITHUB_ENV
+          echo "APPLE_ID=${{ secrets.APPLE_ID }}"       >> $GITHUB_ENV
           echo "APPLE_TEAM_ID=${{ secrets.APPLE_TEAM_ID }}" >> $GITHUB_ENV
-      - name: install dependencies
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v3
+        with:
+          node-version: 20
+
+      - name: Install Node dependencies
         run: npm ci
-      - name: publish
+
+      - name: Publish macOS x64 build
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          APPLE_ID: ${{ secrets.APPLE_ID }}
-          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
-          MAC_APP_CERT_PASSWORD: ${{ secrets.MAC_APP_CERT_PASSWORD }}
-          MAC_INSTALLER_CERT_PASSWORD: ${{ secrets.MAC_INSTALLER_CERT_PASSWORD }}
-          KEYCHAIN_PASSWORD: ${{ secrets.KEYCHAIN_PASSWORD }}
+          GITHUB_TOKEN:               ${{ secrets.GITHUB_TOKEN }}
+          APPLE_ID:                   ${{ secrets.APPLE_ID }}
+          APPLE_TEAM_ID:              ${{ secrets.APPLE_TEAM_ID }}
+          MAC_APP_CERT_PASSWORD:      ${{ secrets.MAC_APP_CERT_PASSWORD }}
+          MAC_INSTALLER_CERT_PASSWORD:  ${{ secrets.MAC_INSTALLER_CERT_PASSWORD }}
+          KEYCHAIN_PASSWORD:          ${{ secrets.KEYCHAIN_PASSWORD }}
         run: npm run publish -- --arch=x64
 
   publish_on_win:
     runs-on: windows-latest
+    env:
+      MAIN_PY_FILE: src/server/diffuser.py
+      OS_KEY:        windows
+      ARCH_KEY:      x64
     steps:
       - uses: actions/checkout@v3
-      - uses: actions/setup-node@master
+
+      - name: Set up Python (Windows x64)
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.14'
+          allow-prereleases: true
+
+      - name: Install Python deps & PyInstaller
+        run: |
+          pip install -r requirements.txt
+          pip install pyinstaller
+
+      - name: Build Python binary (Windows x64)
+        run: |
+          mkdir binaries\${{ env.OS_KEY }}-${{ env.ARCH_KEY }}
+          pyinstaller ^
+            --onefile ^
+            --distpath binaries\${{ env.OS_KEY }}-${{ env.ARCH_KEY }} ^
+            --workpath build ^
+            --specpath build ^
+            $MAIN_PY_FILE
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v3
         with:
           node-version: 20
-      - name: install dependencies
+
+      - name: Install Node dependencies
         run: npm ci
-      - name: publish
+
+      - name: Publish Windows build
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: npm run publish

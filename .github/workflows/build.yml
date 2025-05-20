@@ -11,10 +11,11 @@ jobs:
     steps:
       - uses: actions/checkout@v2
 
-      - name: Set up Python
+      - name: Set up Python (Linux x64)
         uses: actions/setup-python@v4
         with:
-          python-version: 3.10
+          python-version: '3.14'         # pick up 3.14.x or alpha/beta :contentReference[oaicite:1]{index=1}
+          allow-prereleases: true        # allow pre-releases if no GA available :contentReference[oaicite:2]{index=2}
 
       - name: Install Python deps & PyInstaller
         run: |
@@ -43,6 +44,7 @@ jobs:
         run: npm run make
 
   build_on_mac:
+    # ARM64 macOS runner
     runs-on: macos-latest
     env:
       MAIN_PY_FILE: src/server/diffuser.py
@@ -51,17 +53,19 @@ jobs:
     steps:
       - uses: actions/checkout@v2
 
-      - name: Set up Python
+      - name: Set up Python (macOS ARM64)
         uses: actions/setup-python@v4
         with:
-          python-version: 3.10
+          python-version: '3.14'
+          allow-prereleases: true
+          architecture: 'arm64'          # explicitly request ARM64 interpreter :contentReference[oaicite:3]{index=3}
 
       - name: Install Python deps & PyInstaller
         run: |
           pip install -r requirements.txt
           pip install pyinstaller
 
-      - name: Build Python binary (macOS arm64)
+      - name: Build Python binary (macOS ARM64)
         run: |
           mkdir -p binaries/${{ env.OS_KEY }}-${{ env.ARCH_KEY }}
           pyinstaller \
@@ -79,10 +83,11 @@ jobs:
       - name: Install dependencies
         run: npm install
 
-      - name: Build Electron app (arm64)
+      - name: Build Electron app (ARM64)
         run: npm run make
 
   build_on_mac_intel:
+    # Intel macOS runner
     runs-on: macos-latest
     env:
       MAIN_PY_FILE: src/server/diffuser.py
@@ -91,10 +96,12 @@ jobs:
     steps:
       - uses: actions/checkout@v2
 
-      - name: Set up Python
+      - name: Set up Python (macOS x64)
         uses: actions/setup-python@v4
         with:
-          python-version: 3.10
+          python-version: '3.14'
+          allow-prereleases: true
+          architecture: 'x64'            # explicitly request x64 interpreter
 
       - name: Install Python deps & PyInstaller
         run: |
@@ -131,10 +138,11 @@ jobs:
     steps:
       - uses: actions/checkout@v2
 
-      - name: Set up Python
+      - name: Set up Python (Windows x64)
         uses: actions/setup-python@v4
         with:
-          python-version: 3.10
+          python-version: '3.14'
+          allow-prereleases: true        # Windows uses host arch by default
 
       - name: Install Python deps & PyInstaller
         run: |
