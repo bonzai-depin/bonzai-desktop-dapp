@@ -90,14 +90,21 @@ export default {
     },
   ],
   hooks: {
-    packageAfterCopy: async (config) => {
-      const resourcesPath = path.join(config.outputDir, "resources");
+    packageAfterCopy: async (buildPath, electronVersion, platform, arch) => {
+      // now buildPath is a string you can join on
+      const resourcesPath = platform === "darwin"
+        // on macOS .app bundles, resources live under Contents/Resources
+        ? path.join(buildPath, "Contents", "Resources")
+        : path.join(buildPath, "resources");
+  
       const serverDir = path.join(resourcesPath, "server");
       fs.mkdirSync(serverDir, { recursive: true });
-
+  
       // Copy the Python script
       const pythonScriptPath = path.resolve(__dirname, "server/diffuser.py");
       fs.copyFileSync(pythonScriptPath, path.join(serverDir, "diffuser.py"));
+  
+      console.log(`Packaging for platform: ${platform}, arch: ${arch}`);
 
       // Determine target platform and architecture
       const platform = process.platform; // "darwin", "win32", "linux"
