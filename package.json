@@ -45,12 +45,16 @@
     "vite-tsconfig-paths": "^4.2.1"
   },
   "dependencies": {
+    "axios": "^1.7.9",
     "electron-dl": "^4.0.0",
     "electron-squirrel-startup": "^1.0.0",
     "electron-store": "^8.1.0",
-    "node-llama-cpp": "^2.8.0",
+    "ffmpeg-static-electron-forge": "^1.1.7",
+    "node-llama-cpp": "^3.7.0",
     "openai": "^4.20.1",
+    "ps-tree": "^1.2.0",
     "systeminformation": "^5.23.5",
+    "three": "^0.174.0",
     "update-electron-app": "^3.0.0",
     "uuid": "^9.0.1",
     "vite-plugin-static-copy": "^1.0.5",

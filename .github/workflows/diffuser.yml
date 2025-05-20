@@ -22,6 +22,28 @@ jobs:
       with:
         python-version: 3.10.x
 
+    # ──────────────── Extra deps ────────────────
+    - name: Install Diffusers & PESQ
+      run: |
+        pip install git+https://github.com/huggingface/diffusers.git
+        pip install https://github.com/vBaiCai/python-pesq/archive/master.zip
+
+    - name: Install nightly PyTorch (macOS)
+      if: runner.os == 'macOS'
+      run: |
+        pip install --no-cache-dir --upgrade --pre \
+          torch torchvision torchaudio \
+          --index-url https://download.pytorch.org/whl/nightly/cpu
+
+    - name: Install nightly PyTorch (Linux/Windows)
+      if: runner.os != 'macOS'
+      run: |
+        pip install --no-cache-dir --upgrade --pre \
+          torch torchvision torchaudio \
+          --index-url https://download.pytorch.org/whl/nightly/cu128
+          # for GPU support you can swap `cpu` with e.g. `cu118`
+
+    # ──────────────── Your existing steps ────────────────
     - name: Install Python dependencies
       run: |
         pip install -r requirements.txt

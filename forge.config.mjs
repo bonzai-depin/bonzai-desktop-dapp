@@ -1,9 +1,26 @@
+import path from "path";
+import fs from "fs";
+
 export default {
   buildIdentifier: "esm",
   defaultResolved: true,
   packagerConfig: {
     icon: "./src/assets/logo",
     executableName: "bonzai",
+    extraResource: [
+      // Resources will be added dynamically in hooks
+    ],
+    osxSign: {
+      // defaults auto-detect your Developer ID Application cert
+      hardenedRuntime: true, // required for Hardened Runtime
+      entitlements: "entitlements.mac.plist",
+      "entitlements-inherit": "entitlements.mac.plist",
+    },
+    osxNotarize: {
+      appleId: process.env.APPLE_ID,
+      appleIdPassword: process.env.MAC_APP_CERT_PASSWORD,
+      teamId: process.env.APPLE_TEAM_ID,
+    },
   },
   rebuildConfig: {},
   makers: [
@@ -53,13 +70,8 @@ export default {
     {
       name: "@electron-forge/plugin-vite",
       config: {
-        // `build` can specify multiple entry builds, which can be Main
-        // process, Preload scripts, Worker process, etc.  If you are familiar
-        // with Vite configuration, it will look really familiar.
         build: [
           {
-            // `entry` is just an alias for `build.lib.entry` in the
-            // corresponding file of `config`.
             entry: "src/main.js",
             config: "vite.main.config.ts",
           },
@@ -77,4 +89,53 @@ export default {
       },
     },
   ],
+  hooks: {
+    packageAfterCopy: async (config) => {
+      const resourcesPath = path.join(config.outputDir, "resources");
+      const serverDir = path.join(resourcesPath, "server");
+      fs.mkdirSync(serverDir, { recursive: true });
+
+      // Copy the Python script
+      const pythonScriptPath = path.resolve(__dirname, "server/diffuser.py");
+      fs.copyFileSync(pythonScriptPath, path.join(serverDir, "diffuser.py"));
+
+      // Determine target platform and architecture
+      const platform = process.platform; // "darwin", "win32", "linux"
+      const arch = process.arch; // "x64", "arm64", etc.
+
+      console.log(`Packaging for platform: ${platform}, architecture: ${arch}`);
+
+      let binarySourcePath;
+      let binaryTargetPath = path.join(serverDir, "python-binary");
+
+      if (platform === "darwin") {
+        if (arch === "x64") {
+          binarySourcePath = path.resolve(
+            __dirname,
+            "binaries/mac-intel/python"
+          );
+        } else if (arch === "arm64") {
+          binarySourcePath = path.resolve(__dirname, "binaries/mac-arm/python");
+        }
+      } else if (platform === "win32") {
+        binarySourcePath = path.resolve(
+          __dirname,
+          "binaries/windows/python.exe"
+        );
+      } else if (platform === "linux") {
+        binarySourcePath = path.resolve(__dirname, "binaries/linux/python");
+      }
+
+      if (!binarySourcePath) {
+        throw new Error(
+          `Unsupported platform or architecture: ${platform} ${arch}`
+        );
+      }
+
+      // Copy the Python binary
+      fs.copyFileSync(binarySourcePath, binaryTargetPath);
+
+      console.log(`Copied Python binary to ${binaryTargetPath}`);
+    },
+  },
 };

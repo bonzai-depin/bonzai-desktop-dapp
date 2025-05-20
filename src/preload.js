@@ -2,6 +2,8 @@
 // https://www.electronjs.org/docs/latest/tutorial/process-model#preload-scripts
 const { contextBridge, ipcRenderer } = require("electron");
 contextBridge.exposeInMainWorld("electronAPI", {
+  startServer: () => ipcRenderer.invoke("start-server"),
+  stopServer: () => ipcRenderer.invoke("stop-server"),
   systemInformation: () => ipcRenderer.invoke("system-information"),
   checkModel: (modelname) => ipcRenderer.invoke("model-check", modelname),
   downloadModel: (url, filename) =>

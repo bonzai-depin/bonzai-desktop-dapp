@@ -1,22 +1,28 @@
 <template>
   <div class="columns">
     <div class="column is-4 is-paddingless">
-      <div class="models tabs">
+      <div class="models tabs menu">
         <ul class="models__list">
           <li class="models__list-item model bonzai has-text-left">
             <div class="shade"></div>
             <div class="logo">
               <span
                 v-if="systemValues.value"
-                class="system tag is-info is-large is-pulled-right"
+                class="system tag is-info is-large is-pulled-right memory fira-sans-condensed-black-italic is-size-2"
               >
                 <span
                   class="material-symbols-outlined is-size-1 mr-2"
-                  style="font-size: 32px !important"
+                  style="font-size: 50px !important"
                 >
                   memory
                 </span>
-                {{ ((systemValues.value.ram + systemValues.value.vram) / 1024 ** 3).toFixed(0) }} GB Memory
+                {{
+                  (
+                    (systemValues.value.ram + systemValues.value.vram) /
+                    1024 ** 3
+                  ).toFixed(0)
+                }}
+                GB
               </span>
             </div>
           </li>
@@ -45,21 +51,23 @@
               </h1>
             </a>
           </li>
-          <li class="models__list-item model video disabled">
+          <li
+            class="models__list-item model video"
+            :class="{ 'is-active': modelMode == 'video' }"
+            @click="modelMode = 'video'"
+          >
             <a>
               <h1>
                 <span class="material-symbols-outlined is-size-1">movie</span>
                 Video
               </h1>
             </a>
-            <div class="level">
-              <div class="tags has-addons level-item">
-                <span class="tag">Coming</span>
-                <span class="tag is-primary">Soon</span>
-              </div>
-            </div>
           </li>
-          <li class="models__list-item model music disabled">
+          <li
+            class="models__list-item model music"
+            :class="{ 'is-active': modelMode == 'music' }"
+            @click="modelMode = 'music'"
+          >
             <a>
               <h1>
                 <span class="material-symbols-outlined is-size-1">
@@ -68,18 +76,42 @@
                 Music
               </h1>
             </a>
-            <div class="level">
-              <div class="tags has-addons level-item">
-                <span class="tag">Coming</span>
-                <span class="tag is-primary">Soon</span>
-              </div>
-            </div>
+          </li>
+          <li
+            class="models__list-item model three"
+            :class="{ 'is-active': modelMode == '3D' }"
+            @click="modelMode = '3D'"
+          >
+            <a>
+              <h1>
+                <span class="material-symbols-outlined is-size-1">
+                  3d_rotation
+                </span>
+                Game
+              </h1>
+            </a>
+          </li>
+          <li
+            class="models__list-item model agent"
+            :class="{ 'is-active': modelMode == 'agent' }"
+            @click="modelMode = 'agent'"
+          >
+            <a>
+              <h1>
+                <span class="material-symbols-outlined is-size-1">hub</span>
+                Smart Agents
+              </h1>
+            </a>
           </li>
         </ul>
       </div>
     </div>
     <GenerativeText v-if="modelMode == 'chat'" />
     <GenerativeImage v-if="modelMode == 'image'" />
+    <GenerativeVideo v-if="modelMode == 'video'" />
+    <GenerativeMusic v-if="modelMode == 'music'" />
+    <Generative3D v-if="modelMode == '3D'" />
+    <SmartAgent v-if="modelMode == 'agent'" />
   </div>
 </template>
 
@@ -87,12 +119,20 @@
 import { ref } from "vue";
 import GenerativeText from "./components/GenerativeText.vue";
 import GenerativeImage from "./components/GenerativeImage.vue";
+import GenerativeVideo from "./components/GenerativeVideo.vue";
+import GenerativeMusic from "./components/GenerativeMusic.vue";
+import Generative3D from "./components/Generative3D.vue";
+import SmartAgent from "./components/SmartAgent.vue";
 
 export default {
   name: "App",
   components: {
     GenerativeText,
     GenerativeImage,
+    GenerativeVideo,
+    GenerativeMusic,
+    Generative3D,
+    SmartAgent,
   },
   setup() {
     const modelMode = ref("chat");
@@ -241,62 +281,62 @@ body {
   }
 }
 
-.tabs {
+.tabs.menu {
   width: 100%;
 }
 
-.tabs ul {
+.tabs.menu ul {
   -webkit-flex-direction: column;
   flex-direction: column;
 }
 
-.tabs ul li {
+.tabs.menu ul li {
   transition: 400ms ease-in;
   transform: translate3d(0, 0, 0);
   box-shadow: 10px 0 25px #000;
   cursor: pointer;
 }
 
-.tabs li + li {
+.tabs.menu li + li {
   width: 100%;
   margin-left: 0;
 }
 
-.tabs li.is-active {
+.tabs.menu li.is-active {
   width: 100%;
   font-family: "Fira Sans", sans-serif;
   font-weight: 100;
   font-style: normal;
 }
 
-.tabs li.is-active a {
+.tabs.menu li.is-active a {
   border-bottom-color: #fff;
   color: #fff;
 }
 
-.tabs li:not(.is-active) {
+.tabs.menu li:not(.is-active) {
   filter: grayscale(100%);
   transition: 400ms ease-in;
   transform: translate3d(0, 0, 0);
 }
 
-.tabs li:not(.is-active):hover {
+.tabs.menu li:not(.is-active):hover {
   filter: none;
 }
 
-.tabs li.disabled {
+.tabs.menu li.disabled {
   filter: grayscale(100%) !important;
   cursor: not-allowed !important;
 }
 
-.tabs li a {
+.tabs.menu li a {
   justify-content: left;
   border: none;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
 }
 
-.tabs li a h1 {
+.tabs.menu li a h1 {
   color: #fff;
   font-size: 48px;
   font-weight: 100;
@@ -304,45 +344,65 @@ body {
   border: none;
 }
 
-.tabs li.bonzai {
+.tabs.menu li.bonzai {
   /* aspect-ratio: 16/9; */
-  height: 20vh;
+  height: 10vh;
   width: 100%;
   background: #61378e;
   border-bottom: 10vh solid #61378e;
   filter: none !important;
 }
 
-.tabs li.bonzai .logo {
-  height: 20vh;
+.tabs.menu li.bonzai .logo {
+  margin: 5px;
+  height: 10vh;
   width: 100%;
   background: url("https://www.bonzai.sh/bonzai_logo-full.png") no-repeat;
   background-size: contain;
 }
 
-.tabs li.chat {
+.tabs.menu li.bonzai .memory {
+  height: 7vh;
+}
+
+.tabs.menu li.chat {
   /* aspect-ratio: 16/9; */
-  height: 20vh;
+  height: 15vh;
   background: url("https://www.bonzai.sh/bonzai_chat.jpg") no-repeat;
   background-size: cover;
 }
 
-.tabs li.image {
-  height: 20vh;
+.tabs.menu li.image {
+  height: 15vh;
   background: url("https://www.bonzai.sh/bonzai_image.jpg") no-repeat;
   background-size: cover;
 }
 
-.tabs li.video {
-  height: 20vh;
+.tabs.menu li.video {
+  height: 15vh;
   background: url("https://www.bonzai.sh/bonzai_video.jpg") no-repeat;
   background-size: cover;
 }
 
-.tabs li.music {
-  height: 20vh;
+.tabs.menu li.music {
+  height: 15vh;
   background: url("https://www.bonzai.sh/bonzai_music.jpg") no-repeat;
   background-size: cover;
+}
+
+.tabs.menu li.three {
+  height: 15vh;
+  background: url("assets/bonzai_3d.jpg") no-repeat;
+  background-size: cover;
+  background-position: center center;
+}
+
+.tabs.menu li.agent {
+  height: 15vh;
+  background: url("https://www.bonzai.sh/bonzai_agent.jpg") no-repeat;
+
+  background-size: cover;
+  background-position: bottom center;
 }
 
 p.question {
