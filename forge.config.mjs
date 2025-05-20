@@ -70,45 +70,34 @@ export default {
   hooks: {
     /**
      * packageAfterCopy signature:
-     *   (forgeConfig: Object,
-     *    buildPath:   string,
-     *    electronVer: string,
-     *    platform:    'darwin'|'win32'|'linux',
-     *    arch:        'x64'|'arm64'|…)
+     *   (forgeConfig, buildPath, electronVer, platform, arch)
      */
     packageAfterCopy: async (_forgeConfig, buildPath, _electronVer, platform, arch) => {
-      // ─── locate the Resources folder ───
-      // on macOS buildPath = .../YourApp.app/Contents/Resources/app
-      // so go up one: .../YourApp.app/Contents/Resources
+      // 1) Locate the Resources root in the bundled app
+      //    On macOS: buildPath = …/YourApp.app/Contents/Resources/app
+      //    On win/linux: buildPath = …/<yourApp>-unpacked
       const resourcesRoot = platform === 'darwin'
-        ? path.dirname(buildPath)
-        : // on Windows/Linux buildPath = .../yourApp-unpacked
-          path.join(buildPath, 'resources');
+        ? path.dirname(buildPath)                   // …/YourApp.app/Contents/Resources
+        : path.join(buildPath, 'resources');        // …/yourApp-unpacked/resources
 
+      // 2) Ensure your server folder exists
       const serverDir = path.join(resourcesRoot, 'server');
       fs.mkdirSync(serverDir, { recursive: true });
 
-      // ─── copy your Python script (already in extraResource) ───
-      // we shipped it into resources/server/diffuser.py
-      console.log(`Copying diffuser.py → ${serverDir}`);
-      // no-op if you rely on extraResource
+      // 3) Compute the directory name where PyInstaller put your binary:
+      //    we use `<platformKey>-<arch>` to match your CI output folder.
+      //    On macOS that becomes `macos-arm64` or `macos-x64`,
+      //    on Linux `linux-x64`, on Windows `windows-x64`, etc.
+      const platformKey = platform === 'darwin' ? 'macos' : platform;
+      const binDir      = `${platformKey}-${arch}`;
+      const binName     = platform === 'win32' ? 'python.exe' : 'python';
 
-      // ─── pick & copy the correct binary ───
-      let binSrc;
-      if (platform === 'darwin') {
-        binSrc = arch === 'x64'
-          ? path.join(resourcesRoot, 'binaries', 'mac-intel', 'python')
-          : path.join(resourcesRoot, 'binaries', 'mac-arm',   'python');
-      } else if (platform === 'win32') {
-        binSrc = path.join(resourcesRoot, 'binaries', 'windows', 'python.exe');
-      } else {
-        binSrc = path.join(resourcesRoot, 'binaries', 'linux',   'python');
-      }
-
+      const binSrc = path.join(resourcesRoot, 'binaries', binDir, binName);
       if (!fs.existsSync(binSrc)) {
         throw new Error(`Python binary not found at: ${binSrc}`);
       }
 
+      // 4) Copy it into your app’s server folder
       const binDest = path.join(serverDir, 'python-binary');
       fs.copyFileSync(binSrc, binDest);
       console.log(`Copied Python binary from ${binSrc} → ${binDest}`);
