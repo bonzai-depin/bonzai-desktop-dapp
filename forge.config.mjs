@@ -13,8 +13,8 @@ export default {
     executableName: 'bonzai',
     // ship both your Python script & binaries into the app's Resources folder
     extraResource: [
-      { from: path.resolve(__dirname, 'src', 'server'), to: 'server' },
-      { from: path.resolve(__dirname, 'binaries'),      to: 'binaries' },
+      'src/server',  // copy your Python script
+      'binaries'     // copy the entire binaries/ folder
     ],
     osxSign: {
       hardenedRuntime: true,
