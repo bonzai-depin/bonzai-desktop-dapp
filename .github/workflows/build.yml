@@ -14,8 +14,7 @@ jobs:
       - name: Set up Python (Linux x64)
         uses: actions/setup-python@v4
         with:
-          python-version: '3.14'         # pick up 3.14.x or alpha/beta :contentReference[oaicite:1]{index=1}
-          allow-prereleases: true        # allow pre-releases if no GA available :contentReference[oaicite:2]{index=2}
+          python-version: '3.13.x'
 
       - name: Install Python deps & PyInstaller
         run: |
@@ -37,14 +36,13 @@ jobs:
         with:
           node-version: 20
 
-      - name: Install dependencies
+      - name: Install Node dependencies
         run: npm install
 
       - name: Build Electron app
         run: npm run make
 
   build_on_mac:
-    # ARM64 macOS runner
     runs-on: macos-latest
     env:
       MAIN_PY_FILE: src/server/diffuser.py
@@ -56,9 +54,8 @@ jobs:
       - name: Set up Python (macOS ARM64)
         uses: actions/setup-python@v4
         with:
-          python-version: '3.14'
-          allow-prereleases: true
-          architecture: 'arm64'          # explicitly request ARM64 interpreter :contentReference[oaicite:3]{index=3}
+          python-version: '3.13.x'
+          architecture: 'arm64'
 
       - name: Install Python deps & PyInstaller
         run: |
@@ -80,14 +77,13 @@ jobs:
         with:
           node-version: 20
 
-      - name: Install dependencies
+      - name: Install Node dependencies
         run: npm install
 
       - name: Build Electron app (ARM64)
         run: npm run make
 
   build_on_mac_intel:
-    # Intel macOS runner
     runs-on: macos-latest
     env:
       MAIN_PY_FILE: src/server/diffuser.py
@@ -99,9 +95,8 @@ jobs:
       - name: Set up Python (macOS x64)
         uses: actions/setup-python@v4
         with:
-          python-version: '3.14'
-          allow-prereleases: true
-          architecture: 'x64'            # explicitly request x64 interpreter
+          python-version: '3.13.x'
+          architecture: 'x64'
 
       - name: Install Python deps & PyInstaller
         run: |
@@ -123,7 +118,7 @@ jobs:
         with:
           node-version: 20
 
-      - name: Install dependencies
+      - name: Install Node dependencies
         run: npm install
 
       - name: Build Electron app (x64)
@@ -141,8 +136,7 @@ jobs:
       - name: Set up Python (Windows x64)
         uses: actions/setup-python@v4
         with:
-          python-version: '3.14'
-          allow-prereleases: true        # Windows uses host arch by default
+          python-version: '3.13.x'
 
       - name: Install Python deps & PyInstaller
         run: |
@@ -152,11 +146,11 @@ jobs:
       - name: Build Python binary (Windows x64)
         run: |
           mkdir binaries\${{ env.OS_KEY }}-${{ env.ARCH_KEY }}
-          pyinstaller ^
-            --onefile ^
-            --distpath binaries\${{ env.OS_KEY }}-${{ env.ARCH_KEY }} ^
-            --workpath build ^
-            --specpath build ^
+          pyinstaller `
+            --onefile `
+            --distpath binaries\${{ env.OS_KEY }}-${{ env.ARCH_KEY }} `
+            --workpath build `
+            --specpath build `
             $MAIN_PY_FILE
 
       - name: Set up Node.js
@@ -164,7 +158,7 @@ jobs:
         with:
           node-version: 20
 
-      - name: Install dependencies
+      - name: Install Node dependencies
         run: npm install
 
       - name: Build Electron app

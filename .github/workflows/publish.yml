@@ -17,8 +17,8 @@ jobs:
       - name: Set up Python (Linux x64)
         uses: actions/setup-python@v4
         with:
-          python-version: '3.14'
-          allow-prereleases: true
+          python-version: '3.12.x'           # SciPy wheels exist for 3.12 :contentReference[oaicite:2]{index=2}
+          allow-prereleases: false           # 3.12 is final, no prereleases needed :contentReference[oaicite:3]{index=3}
 
       - name: Install Python deps & PyInstaller
         run: |
@@ -60,9 +60,9 @@ jobs:
       - name: Set up Python (macOS ARM64)
         uses: actions/setup-python@v4
         with:
-          python-version: '3.14'
-          allow-prereleases: true
-          architecture: 'arm64'
+          python-version: '3.12.x'           # wheels for macOS ARM64 :contentReference[oaicite:4]{index=4}
+          allow-prereleases: false
+          architecture: 'arm64'              # explicit ARM64 interpreter :contentReference[oaicite:5]{index=5}
 
       - name: Install Python deps & PyInstaller
         run: |
@@ -81,14 +81,13 @@ jobs:
 
       - name: Decode & Import App Certificate
         env:
-          CERT_BASE64:         ${{ secrets.MAC_APP_CERT_BASE64 }}
-          CERT_PASS:           ${{ secrets.MAC_APP_CERT_PASSWORD }}
-          KEYCHAIN_PW:         ${{ secrets.KEYCHAIN_PASSWORD }}
+          CERT_BASE64:           ${{ secrets.MAC_APP_CERT_BASE64 }}
+          CERT_PASS:             ${{ secrets.MAC_APP_CERT_PASSWORD }}
+          KEYCHAIN_PW:           ${{ secrets.KEYCHAIN_PASSWORD }}
         run: |
           echo "$CERT_BASE64" | base64 --decode > app.p12
           security create-keychain -p "$KEYCHAIN_PW" build.keychain
-          security import app.p12 -k build.keychain -P "$CERT_PASS" \
-            -T /usr/bin/codesign
+          security import app.p12 -k build.keychain -P "$CERT_PASS" -T /usr/bin/codesign
           security set-keychain-settings -t 3600 -u build.keychain
           security default-keychain -s build.keychain
           security unlock-keychain -p "$KEYCHAIN_PW" build.keychain
@@ -99,8 +98,7 @@ jobs:
           CERT_PASS:   ${{ secrets.MAC_INSTALLER_CERT_PASSWORD }}
         run: |
           echo "$CERT_BASE64" | base64 --decode > installer.p12
-          security import installer.p12 -k build.keychain -P "$CERT_PASS" \
-            -T /usr/bin/codesign
+          security import installer.p12 -k build.keychain -P "$CERT_PASS" -T /usr/bin/codesign
 
       - name: Expose Apple Credentials
         run: |
@@ -137,8 +135,8 @@ jobs:
       - name: Set up Python (macOS x64)
         uses: actions/setup-python@v4
         with:
-          python-version: '3.14'
-          allow-prereleases: true
+          python-version: '3.12.x'           # wheels for macOS x86–64 :contentReference[oaicite:6]{index=6}
+          allow-prereleases: false
           architecture: 'x64'
 
       - name: Install Python deps & PyInstaller
@@ -158,14 +156,13 @@ jobs:
 
       - name: Decode & Import App Certificate
         env:
-          CERT_BASE64:         ${{ secrets.MAC_APP_CERT_BASE64 }}
-          CERT_PASS:           ${{ secrets.MAC_APP_CERT_PASSWORD }}
-          KEYCHAIN_PW:         ${{ secrets.KEYCHAIN_PASSWORD }}
+          CERT_BASE64:           ${{ secrets.MAC_APP_CERT_BASE64 }}
+          CERT_PASS:             ${{ secrets.MAC_APP_CERT_PASSWORD }}
+          KEYCHAIN_PW:           ${{ secrets.KEYCHAIN_PASSWORD }}
         run: |
           echo "$CERT_BASE64" | base64 --decode > app.p12
           security create-keychain -p "$KEYCHAIN_PW" build.keychain
-          security import app.p12 -k build.keychain -P "$CERT_PASS" \
-            -T /usr/bin/codesign
+          security import app.p12 -k build.keychain -P "$CERT_PASS" -T /usr/bin/codesign
           security set-keychain-settings -t 3600 -u build.keychain
           security default-keychain -s build.keychain
           security unlock-keychain -p "$KEYCHAIN_PW" build.keychain
@@ -176,8 +173,7 @@ jobs:
           CERT_PASS:   ${{ secrets.MAC_INSTALLER_CERT_PASSWORD }}
         run: |
           echo "$CERT_BASE64" | base64 --decode > installer.p12
-          security import installer.p12 -k build.keychain -P "$CERT_PASS" \
-            -T /usr/bin/codesign
+          security import installer.p12 -k build.keychain -P "$CERT_PASS" -T /usr/bin/codesign
 
       - name: Expose Apple Credentials
         run: |
@@ -214,8 +210,8 @@ jobs:
       - name: Set up Python (Windows x64)
         uses: actions/setup-python@v4
         with:
-          python-version: '3.14'
-          allow-prereleases: true
+          python-version: '3.12.x'           # wheels for Windows x64 :contentReference[oaicite:7]{index=7}
+          allow-prereleases: false
 
       - name: Install Python deps & PyInstaller
         run: |
