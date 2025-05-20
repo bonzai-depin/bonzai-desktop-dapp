@@ -39,9 +39,6 @@ sentencepiece==0.2.0
 soundfile==0.13.1
 sympy==1.13.1
 tokenizers==0.21.0
-torch==2.7.0.dev20250204
-torchaudio==2.6.0.dev20250204
-torchvision==0.22.0.dev20250204
 tqdm==4.67.1
 trampoline==0.1.2
 transformers==4.48.1

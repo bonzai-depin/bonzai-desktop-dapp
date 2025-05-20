@@ -19,6 +19,12 @@ jobs:
         with:
           python-version: '3.12.x'
 
+      - name: Install nightly PyTorch (CUDA 12.8)
+        run: |
+          pip install --no-cache-dir --upgrade --pre \
+            torch torchvision torchaudio \
+            --index-url https://download.pytorch.org/whl/nightly/cu128
+
       - name: Install Python deps & PyInstaller
         run: |
           pip install -r requirements.txt
@@ -61,6 +67,12 @@ jobs:
         with:
           python-version: '3.12.x'
           architecture: 'arm64'
+
+      - name: Install nightly PyTorch (CPU)
+        run: |
+          pip install --no-cache-dir --upgrade --pre \
+            torch torchvision torchaudio \
+            --index-url https://download.pytorch.org/whl/nightly/cpu
 
       - name: Install Python deps & PyInstaller
         run: |
@@ -136,6 +148,12 @@ jobs:
           python-version: '3.12.x'
           architecture: 'x64'
 
+      - name: Install nightly PyTorch (CPU)
+        run: |
+          pip install --no-cache-dir --upgrade --pre \
+            torch torchvision torchaudio \
+            --index-url https://download.pytorch.org/whl/nightly/cpu
+
       - name: Install Python deps & PyInstaller
         run: |
           pip install -r requirements.txt
@@ -208,6 +226,12 @@ jobs:
         uses: actions/setup-python@v4
         with:
           python-version: '3.12.x'
+
+      - name: Install nightly PyTorch (CUDA 12.8)
+        run: |
+          pip install --no-cache-dir --upgrade --pre `
+            torch torchvision torchaudio `
+            --index-url https://download.pytorch.org/whl/nightly/cu128
 
       - name: Install Python deps & PyInstaller
         run: |
