@@ -48,7 +48,7 @@
               Download
               <span
                 class="filesize"
-                style="font-size: 15px; top: -20px; right: -25px"
+                style="font-size: 15px; top: -20px; right: -25px; text-shadow: none;"
               >
                 {{ currentModel.filesize }}
               </span>
@@ -119,7 +119,7 @@
                   <span class="material-symbols-outlined mr-2">
                     shopping_cart
                   </span>
-                  Buy Tokens
+                  Buy BONZAI
                 </a>
               </div>
             </div>
@@ -130,7 +130,7 @@
               {{ currentModel.modelname }}
             </span>
             to Peers to earn
-            <span class="fira-sans-condensed-black-italic">$BONZAI</span>
+            <span class="fira-sans-condensed-black-italic">$ETH</span>
             .
           </p>
         </div>
@@ -351,12 +351,33 @@ export default {
     const openModel = ref(false);
     const openChat = ref(false);
     const availableModels = ref({
-      tinyllama: {
-        modelname: "TinyLLaMa 1.1B",
-        modeldesc: `Small Language Model packing a punch. TinyLLaMa aims to pre-train a 1.1B LLaMa model on 3T tokens. A good place to get started with BonzAI, after a quick 783 MB download.`,
-        url: "https://huggingface.co/TheBloke/TinyLlama-1.1B-Chat-v1.0-GGUF/resolve/main/tinyllama-1.1b-chat-v1.0.Q5_K_M.gguf",
-        filename: "tinyllama.gguf",
-        filesize: "783 MB",
+      deepseek_1_5_B: {
+        modelname: "DeepSeek R1 1.5B",
+        modeldesc: `A 1.5B parameters dense model distilled from DeepSeek-R1, based on popular open source model Qwen. DeepSeek-R1 achieves performance comparable to OpenAI-o1 across math, code, and reasoning tasks.`,
+        url: "https://huggingface.co/TheBloke/Mistral-7B-Instruct-v0.2-GGUF/resolve/main/mistral-7b-instruct-v0.2.Q4_K_M.gguf",
+        filename: "DeepSeek-R1-Distill-Qwen-1.5B-Q6_K.gguf",
+        filesize: "1.46 GB",
+      },
+      deepseek_7_B: {
+        modelname: "DeepSeek R1 7B",
+        modeldesc: `A 7B parameters dense model distilled from DeepSeek-R1, based on popular open source model Qwen. DeepSeek-R1 achieves performance comparable to OpenAI-o1 across math, code, and reasoning tasks.`,
+        url: "https://huggingface.co/TheBloke/Mistral-7B-Instruct-v0.2-GGUF/resolve/main/mistral-7b-instruct-v0.2.Q4_K_M.gguf",
+        filename: "DeepSeek-R1-Distill-Qwen-7B-Q6_K.gguf",
+        filesize: "6.25 GB",
+      },
+      deepseek_14_B: {
+        modelname: "DeepSeek R1 14B",
+        modeldesc: `A 14B parameters dense model distilled from DeepSeek-R1, based on popular open source model Qwen. DeepSeek-R1 achieves performance comparable to OpenAI-o1 across math, code, and reasoning tasks.`,
+        url: "https://huggingface.co/TheBloke/Mistral-7B-Instruct-v0.2-GGUF/resolve/main/mistral-7b-instruct-v0.2.Q4_K_M.gguf",
+        filename: "DeepSeek-R1-Distill-Qwen-14B-Q6_K.gguf",
+        filesize: "12.12 GB",
+      },
+      deepseek_32_B: {
+        modelname: "DeepSeek R1 32B",
+        modeldesc: `A 32B parameters dense model distilled from DeepSeek-R1, based on popular open source model Qwen. DeepSeek-R1 achieves performance comparable to OpenAI-o1 across math, code, and reasoning tasks.`,
+        url: "https://huggingface.co/TheBloke/Mistral-7B-Instruct-v0.2-GGUF/resolve/main/mistral-7b-instruct-v0.2.Q4_K_M.gguf",
+        filename: "DeepSeek-R1-Distill-Qwen-32B-Q6_K.gguf",
+        filesize: "26.89 GB",
       },
       phi: {
         modelname: "Phi 3.8B",
@@ -364,13 +385,6 @@ export default {
         url: "https://huggingface.co/microsoft/Phi-3-mini-4k-instruct-gguf/resolve/main/Phi-3-mini-4k-instruct-q4.gguf",
         filename: "phi.gguf",
         filesize: "2.39 GB",
-      },
-      yi: {
-        modelname: "Yi 6B",
-        modeldesc: `A 6B parameters LLM model built by 01.AI. Trained on 3T multilingual corpus, the Yi series models are the strongest Chinese / English bilingual models worldwide.`,
-        url: "https://huggingface.co/TheBloke/Yi-6B-200K-GGUF/resolve/main/yi-6b-200k.Q4_K_M.gguf",
-        filename: "yi.gguf",
-        filesize: "3.67 GB",
       },
       llama2: {
         modelname: "LLaMA 2 7B",
@@ -396,11 +410,11 @@ export default {
     });
 
     const currentModel = ref({
-      modelname: "TinyLLaMa 1.1B",
-      modeldesc: `Small Language Model packing a punch. TinyLLaMa aims to pre-train a 1.1B LLaMa model on 3T tokens. A good place to get started with BonzAI, after a quick 783 MB download.`,
-      url: "https://huggingface.co/TheBloke/TinyLlama-1.1B-Chat-v1.0-GGUF/resolve/main/tinyllama-1.1b-chat-v1.0.Q5_K_M.gguf",
-      filename: "tinyllama.gguf",
-      filesize: "783 MB",
+      modelname: "DeepSeek R1 1.5B",
+        modeldesc: `A 1.5B parameters dense model distilled from DeepSeek-R1, based on popular open source model Qwen. DeepSeek-R1 achieves performance comparable to OpenAI-o1 across math, code, and reasoning tasks.`,
+        url: "https://huggingface.co/TheBloke/Mistral-7B-Instruct-v0.2-GGUF/resolve/main/mistral-7b-instruct-v0.2.Q4_K_M.gguf",
+        filename: "DeepSeek-R1-Distill-Qwen-1.5B-Q6_K.gguf",
+        filesize: "1.46 GB",
     });
 
     const pickModel = async (model) => {

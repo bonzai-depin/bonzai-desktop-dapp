@@ -1,64 +1,200 @@
-name: Release
-on:
-  release:
-    types:
-      - created 
+name: Build
+on: [push, pull_request]
 
 jobs:
-  publish_on_linux:
+  build_on_linux:
+    name: Build on Linux x64
     runs-on: ubuntu-latest
+    env:
+      MAIN_PY_FILE: src/server/diffuser.py
+      OS_KEY:        linux
+      ARCH_KEY:      x64
+
     steps:
-      - uses: actions/checkout@v2
-      - uses: actions/setup-node@master
+      - name: Checkout code
+        uses: actions/checkout@v3
+
+      - name: Install OpenBLAS & pkg-config
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libopenblas-dev pkg-config
+
+      - name: Set up Python (Linux x64)
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.12.x'       # SciPy wheels available for 3.12 :contentReference[oaicite:3]{index=3}
+
+      - name: Install nightly PyTorch (CUDA 12.8)
+        run: |
+          pip install --no-cache-dir --upgrade --pre \
+            torch torchvision torchaudio \
+            --index-url https://download.pytorch.org/whl/nightly/cu128
+
+      - name: Install Python deps & PyInstaller
+        run: |
+          pip install -r requirements.txt
+          pip install pyinstaller
+
+      - name: Build Python binary (Linux x64)
+        run: |
+          mkdir -p binaries/${{ env.OS_KEY }}-${{ env.ARCH_KEY }}
+          pyinstaller --onefile \
+            --distpath binaries/${{ env.OS_KEY }}-${{ env.ARCH_KEY }} \
+            --workpath $RUNNER_TEMP/pybuild-${{ env.OS_KEY }}-${{ env.ARCH_KEY }} \
+            --specpath $RUNNER_TEMP/pybuild-${{ env.OS_KEY }}-${{ env.ARCH_KEY }} \
+            ${{ env.MAIN_PY_FILE }}                 # move intermediate files out of repo :contentReference[oaicite:4]{index=4}
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v3
         with:
           node-version: 20
-      - name: install dependencies
-        run: npm install
-      - name: publish
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: npm run publish
 
-  publish_on_mac:
+      - name: Install dependencies
+        run: npm install
+
+      - name: Build Electron app
+        run: npm run make
+
+  build_on_mac:
+    name: Build on macOS ARM64
     runs-on: macos-latest
+    env:
+      MAIN_PY_FILE: src/server/diffuser.py
+      OS_KEY:        macos
+      ARCH_KEY:      arm64
+
     steps:
-      - run: python3 -m pip install setuptools --break-system-packages
-      - uses: actions/checkout@v2
-      - uses: actions/setup-node@master
+      - uses: actions/checkout@v3
+
+      - name: Set up Python (macOS ARM64)
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.12.x'
+          architecture: 'arm64'
+
+      - name: Install nightly PyTorch (CPU)
+        run: |
+          pip install --no-cache-dir --upgrade --pre \
+            torch torchvision torchaudio \
+            --index-url https://download.pytorch.org/whl/nightly/cpu
+
+      - name: Install Python deps & PyInstaller
+        run: |
+          pip install -r requirements.txt
+          pip install pyinstaller
+
+      - name: Build Python binary (macOS ARM64)
+        run: |
+          mkdir -p binaries/${{ env.OS_KEY }}-${{ env.ARCH_KEY }}
+          pyinstaller --onefile \
+            --distpath binaries/${{ env.OS_KEY }}-${{ env.ARCH_KEY }} \
+            --workpath $RUNNER_TEMP/pybuild-${{ env.OS_KEY }}-${{ env.ARCH_KEY }} \
+            --specpath $RUNNER_TEMP/pybuild-${{ env.OS_KEY }}-${{ env.ARCH_KEY }} \
+            ${{ env.MAIN_PY_FILE }}
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v3
         with:
           node-version: 20
-      - name: install dependencies
-        run: npm install
-      - name: publish
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: npm run publish
 
-  publish_on_mac_intel:
+      - name: Install dependencies
+        run: npm install
+
+      - name: Build Electron app (ARM64)
+        run: npm run make
+
+  build_on_mac_intel:
+    name: Build on macOS x64
     runs-on: macos-latest
+    env:
+      MAIN_PY_FILE: src/server/diffuser.py
+      OS_KEY:        macos
+      ARCH_KEY:      x64
+
     steps:
-      - run: python3 -m pip install setuptools --break-system-packages
-      - uses: actions/checkout@v2
-      - uses: actions/setup-node@master
+      - uses: actions/checkout@v3
+
+      - name: Set up Python (macOS x64)
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.12.x'
+          architecture: 'x64'
+
+      - name: Install nightly PyTorch (CPU)
+        run: |
+          pip install --no-cache-dir --upgrade --pre \
+            torch torchvision torchaudio \
+            --index-url https://download.pytorch.org/whl/nightly/cpu
+
+      - name: Install Python deps & PyInstaller
+        run: |
+          pip install -r requirements.txt
+          pip install pyinstaller
+
+      - name: Build Python binary (macOS x64)
+        run: |
+          mkdir -p binaries/${{ env.OS_KEY }}-${{ env.ARCH_KEY }}
+          pyinstaller --onefile \
+            --distpath binaries/${{ env.OS_KEY }}-${{ env.ARCH_KEY }} \
+            --workpath $RUNNER_TEMP/pybuild-${{ env.OS_KEY }}-${{ env.ARCH_KEY }} \
+            --specpath $RUNNER_TEMP/pybuild-${{ env.OS_KEY }}-${{ env.ARCH_KEY }} \
+            ${{ env.MAIN_PY_FILE }}
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v3
         with:
           node-version: 20
-      - name: install dependencies
-        run: npm install
-      - name: publish
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: npm run publish -- --arch=x64
 
-  publish_on_win:
+      - name: Install dependencies
+        run: npm install
+
+      - name: Build Electron app (x64)
+        run: npm run make -- --arch=x64
+
+  build_on_win:
+    name: Build on Windows x64
     runs-on: windows-latest
+    env:
+      MAIN_PY_FILE: src/server/diffuser.py
+      OS_KEY:        windows
+      ARCH_KEY:      x64
+
     steps:
-      - uses: actions/checkout@v2
-      - uses: actions/setup-node@master
+      - uses: actions/checkout@v3
+
+      - name: Set up Python (Windows x64)
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.12.x'
+
+      - name: Install nightly PyTorch (CUDA 12.8)
+        run: |
+          pip install --no-cache-dir --upgrade --pre `
+            torch torchvision torchaudio `
+            --index-url https://download.pytorch.org/whl/nightly/cu128
+
+      - name: Install Python deps & PyInstaller
+        run: |
+          pip install -r requirements.txt
+          pip install pyinstaller
+
+      - name: Build Python binary (Windows x64)
+        shell: pwsh                                       # Windows shell to use $env:RUNNER_TEMP :contentReference[oaicite:5]{index=5}
+        run: |
+          New-Item -ItemType Directory binaries\${{ env.OS_KEY }}-${{ env.ARCH_KEY }} -Force
+          pyinstaller --onefile `
+            --distpath binaries\${{ env.OS_KEY }}-${{ env.ARCH_KEY }} `
+            --workpath $env:RUNNER_TEMP\pybuild-${{ env.OS_KEY }}-${{ env.ARCH_KEY }} `
+            --specpath $env:RUNNER_TEMP\pybuild-${{ env.OS_KEY }}-${{ env.ARCH_KEY }} `
+            $env:MAIN_PY_FILE
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v3
         with:
           node-version: 20
-      - name: install dependencies
+
+      - name: Install dependencies
         run: npm install
-      - name: publish
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: npm run publish
+
+      - name: Build Electron app
+        run: npm run make

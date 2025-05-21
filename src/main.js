@@ -1,16 +1,137 @@
 import { BrowserWindow, app, ipcMain, protocol, screen, shell } from "electron";
 import Store from "electron-store";
+import os from "os";
 import fs from "fs";
 import si from "systeminformation";
-import { LlamaChatSession, LlamaContext, LlamaModel } from "node-llama-cpp";
+import psTree from "ps-tree";
+import { getLlama, LlamaChatSession } from "node-llama-cpp";
 import path from "path";
 import { fileURLToPath, pathToFileURL } from "url";
 import { download } from "electron-dl";
 import { unlink } from "node:fs";
 import child_process from "child_process";
 
+const llama = await getLlama();
+
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
+
+const PY_DIST_FOLDER = "../dist"; // python distributable folder
+const PY_MODULE = "diffuser.py"; // the name of the main module
+let subpy = null;
+
+const isRunningInBundle = () => {
+  return fs.existsSync(path.join(__dirname, PY_DIST_FOLDER));
+};
+
+const getPythonScriptPath = () => {
+  const devScript = path.join(__dirname, PY_MODULE);
+  const prodScript = path.join(process.resourcesPath, "server", "diffuser.py");
+  const prodBinary = path.join(
+    process.resourcesPath,
+    "server",
+    "python-binary"
+  );
+
+  return {
+    script: isRunningInBundle() ? prodScript : devScript,
+    binary: isRunningInBundle() ? prodBinary : "python",
+  };
+};
+
+const killPort = (port = 65000) => {
+  try {
+    if (process.platform === "win32") {
+      child_process.execSync(
+        `for /f "tokens=5" %a in ('netstat -aon ^| find ":${port}" ^| find "LISTENING"') do taskkill /f /pid %a`
+      );
+    } else {
+      child_process.execSync(`lsof -ti:${port} | xargs kill -9`);
+    }
+    console.log(`[killPort] Successfully killed any process on port ${port}`);
+  } catch (err) {
+    console.log(
+      `[killPort] No process found or failed to kill: ${err.message}`
+    );
+  }
+};
+
+const startPythonSubprocess = () => {
+  killPort(65000);
+  const { script, binary } = getPythonScriptPath(); // Updated to return both script and binary paths
+  const port = 65000; // Match Flask port
+
+  console.log(`Starting diffuser... Script: ${script}, Binary: ${binary}`);
+
+  if (isRunningInBundle()) {
+    console.log("Diffuser runs in bundle mode!");
+    subpy = child_process.execFile(binary, [script, `--port=${port}`]);
+  } else {
+    console.log("Diffuser runs in development mode!");
+    subpy = child_process.spawn(binary, [script, `--port=${port}`]);
+  }
+
+  // Attach event listeners to capture stdout and stderr
+  if (subpy) {
+    subpy.stdout.on("data", (data) => console.log(`Python stdout: ${data}`));
+    subpy.stderr.on("data", (data) => console.error(`Python stderr: ${data}`));
+
+    subpy.on("close", (code) => {
+      console.log(`Python subprocess exited with code ${code}`);
+    });
+
+    subpy.on("error", (err) => {
+      console.error(`Failed to start Python subprocess: ${err}`);
+    });
+  } else {
+    console.error("Failed to start Python subprocess: subpy is null.");
+  }
+};
+
+const killPythonSubprocess = (main_pid) => {
+  console.log("Killing diffuser...");
+  const python_script_name = path.basename(getPythonScriptPath());
+  let cleanup_completed = false;
+  psTree(main_pid, function (err, children) {
+    let python_pids = children
+      .filter(function (el) {
+        return el.COMMAND == python_script_name;
+      })
+      .map(function (p) {
+        return p.PID;
+      });
+    // kill all the spawned python processes
+    python_pids.forEach(function (pid) {
+      process.kill(pid);
+    });
+    subpy = null;
+    cleanup_completed = true;
+  });
+  return new Promise(function (resolve, reject) {
+    (function waitForSubProcessCleanup() {
+      if (cleanup_completed) return resolve();
+      setTimeout(waitForSubProcessCleanup, 30);
+    })();
+  });
+};
+
+const checkPythonServer = async (url) => {
+  return new Promise((resolve, reject) => {
+    const checkInterval = setInterval(() => {
+      fetch(url)
+        .then(() => {
+          clearInterval(checkInterval);
+          resolve(true);
+        })
+        .catch(() => console.log("Waiting for Python server..."));
+    }, 1000);
+
+    setTimeout(() => {
+      clearInterval(checkInterval);
+      reject(new Error("Python server did not start."));
+    }, 15000);
+  });
+};
 
 /**
  * If we want to present local images, we have to register a local protocol and
@@ -96,8 +217,19 @@ const createWindow = async (width, height) => {
 // Some APIs can only be used after this event occurs.
 app.on("ready", async () => {
   const { width, height } = screen.getPrimaryDisplay().workAreaSize;
+  const flaskURL = "http://127.0.0.1:65000";
+  startPythonSubprocess();
 
-  createWindow(width, height);
+  try {
+    await checkPythonServer(flaskURL);
+    console.log("Python server is running!");
+    await createWindow(width, height);
+  } catch (error) {
+    console.error("Failed to start Python server:", error);
+    app.quit();
+  }
+
+  // createWindow(width, height);
 
   // develop
   // try {
@@ -110,6 +242,10 @@ app.on("ready", async () => {
   // packaging
   // child_process.spawn('./dist/diffuser/diffuser');
 });
+
+ipcMain.handle("start-server", startPythonSubprocess);
+
+ipcMain.handle("stop-server", killPythonSubprocess);
 
 ipcMain.handle("system-information", systemInformation);
 
@@ -136,17 +272,36 @@ ipcMain.handle("model-chat", chat);
 // explicitly with Cmd + Q.
 app.on("window-all-closed", () => {
   if (process.platform !== "darwin") {
-    app.quit();
+    let main_process_pid = process.pid;
+    killPythonSubprocess(main_process_pid).then(() => {
+      app.quit();
+    });
   }
 });
 
 app.on("activate", () => {
   // On OS X it's common to re-create a window in the app when the
   // dock icon is clicked and there are no other windows open.
+  if (subpy == null) {
+    startPythonSubprocess();
+  }
+
   if (BrowserWindow.getAllWindows().length === 0) {
     createWindow();
   }
 });
+
+function getLocalIP() {
+  const nets = os.networkInterfaces();
+  for (const name of Object.keys(nets)) {
+    for (const net of nets[name]) {
+      if (net.family === "IPv4" && !net.internal) {
+        return net.address;
+      }
+    }
+  }
+  return "127.0.0.1";
+}
 
 /**
  * Checks the model cache dir and delete the model if available.
@@ -155,10 +310,14 @@ async function systemInformation() {
   const ram = await si.mem();
   const vram = await si.graphics();
 
+  const ip = getLocalIP();
+  console.log(`Flask API should be accessible at: http://${ip}:65000`);
+
   const systemValues = {
     ram: ram.total,
     gpu: vram.controllers[0].model,
     vram: vram.controllers[0].vram,
+    ip: ip,
   };
 
   return systemValues;
@@ -181,8 +340,6 @@ if (!modelDir) {
  */
 async function downloadModel(event, url, filename) {
   const win = BrowserWindow.getFocusedWindow();
-  // const url =
-  //   "https://huggingface.co/microsoft/Phi-3-mini-4k-instruct-gguf/resolve/main/Phi-3-mini-4k-instruct-q4.gguf";
   console.log('app.getPath("userData")', app.getPath("userData"));
   try {
     await download(win, url, {
@@ -214,14 +371,26 @@ function deleteModel(event, modelname) {
 /**
  * Checks the model cache dir and loads a model if available.
  */
-function loadModel(event, modelname) {
+async function loadModel(event, modelname) {
   const modelPath = path.join(app.getPath("userData"), "models", modelname);
 
-  model = new LlamaModel({
+  const model = await llama.loadModel({
     modelPath: modelPath,
   });
-  modelContext = new LlamaContext({ model });
-  modelSession = new LlamaChatSession({ context: modelContext });
+  modelContext = await model.createContext();
+  modelSession = new LlamaChatSession({
+    contextSequence: modelContext.getSequence(),
+  });
+  return true;
+}
+
+function checkModel(event, modelname) {
+  const modelPath = path.join(app.getPath("userData"), "models", modelname);
+
+  if (!fs.existsSync(modelPath)) {
+    console.error("Model file not found:", modelPath);
+    return false;
+  }
   return true;
 }
 
@@ -237,14 +406,4 @@ async function chat(event, userMessage) {
   // Note: We could do streaming here but node-llama-cpp doesn't expose a
   // streaming interface.
   return assistantMessage;
-}
-
-function checkModel(event, modelname) {
-  const modelPath = path.join(app.getPath("userData"), "models", modelname);
-
-  if (!fs.existsSync(modelPath)) {
-    console.error("Model file not found:", modelPath);
-    return false;
-  }
-  return true;
 }

@@ -1,53 +1,148 @@
-name: Build
-on: [push, pull_request]
+name: Build & Comment Artifacts
+
+on:
+  pull_request:
 
 jobs:
-  build_on_linux:
+  build:
+    name: Build Python & Electron
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        include:
+          - os: ubuntu-latest
+            os_key: linux
+            arch: x64
+          - os: macos-latest
+            os_key: macos
+            arch: arm64
+          - os: macos-latest
+            os_key: macos
+            arch: x64
+          - os: windows-latest
+            os_key: windows
+            arch: x64
+
+    env:
+      MAIN_PY_FILE: src/server/diffuser.py
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+
+      # ─── FREE UP SPACE ON LINUX ──────────────────────────────────────
+      # This removes large preinstalled toolchains to reclaim several GB 
+      - name: Free up disk space (Linux)
+        if: matrix.os_key == 'linux'
+        run: |
+          sudo rm -rf /usr/share/dotnet
+          sudo rm -rf /opt/ghc
+          sudo rm -rf "/usr/local/share/boost"
+          sudo rm -rf "$AGENT_TOOLSDIRECTORY"    # $AGENT_TOOLSDIRECTORY holds toolcache :contentReference[oaicite:0]{index=0}
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.12.x'
+          # on macOS only: select arm64 or x64
+          architecture: ${{ matrix.os_key == 'macos' && matrix.arch || '' }}
+
+      # ─── Install extra deps & PyInstaller ───
+      - name: Install Diffusers & PESQ + PyInstaller (macOS/Linux)
+        if: runner.os != 'Windows'
+        shell: bash
+        run: |
+          pip install git+https://github.com/huggingface/diffusers.git
+          pip install https://github.com/vBaiCai/python-pesq/archive/master.zip
+          if [[ "${{ runner.os }}" == "macOS" ]]; then
+            pip install --no-cache-dir --upgrade --pre \
+              torch torchvision torchaudio \
+              --index-url https://download.pytorch.org/whl/nightly/cpu
+          else
+            pip install --no-cache-dir --upgrade --pre \
+              torch torchvision torchaudio \
+              --index-url https://download.pytorch.org/whl/nightly/cu128
+          fi
+          pip install -r requirements.txt
+          pip install pyinstaller
+
+      - name: Install Diffusers & PESQ + PyInstaller (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          pip install git+https://github.com/huggingface/diffusers.git
+          pip install https://github.com/vBaiCai/python-pesq/archive/master.zip
+          pip install --no-cache-dir --upgrade --pre `
+            torch torchvision torchaudio `
+            --index-url https://download.pytorch.org/whl/nightly/cu128
+          pip install -r requirements.txt
+          pip install pyinstaller
+
+      # ─── Build Python binary ───
+      - name: Build Python binary (macOS/Linux)
+        if: runner.os != 'Windows'
+        shell: bash
+        run: |
+          mkdir -p binaries/${{ matrix.os_key }}-${{ matrix.arch }}
+          pyinstaller --onefile \
+            --distpath binaries/${{ matrix.os_key }}-${{ matrix.arch }} \
+            --workpath $RUNNER_TEMP/pybuild-${{ matrix.os_key }}-${{ matrix.arch }} \
+            --specpath $RUNNER_TEMP/pybuild-${{ matrix.os_key }}-${{ matrix.arch }} \
+            $MAIN_PY_FILE
+
+      - name: Build Python binary (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory binaries\${{ matrix.os_key }}-${{ matrix.arch }} -Force
+          pyinstaller --onefile `
+            --distpath binaries\${{ matrix.os_key }}-${{ matrix.arch }} `
+            --workpath $env:RUNNER_TEMP\pybuild-${{ matrix.os_key }}-${{ matrix.arch }} `
+            --specpath $env:RUNNER_TEMP\pybuild-${{ matrix.os_key }}-${{ matrix.arch }} `
+            $env:MAIN_PY_FILE
+
+      # ─── Build Electron app ───
+      - name: Set up Node.js
+        uses: actions/setup-node@v3
+        with:
+          node-version: 20
+
+      - name: Install Node dependencies
+        run: npm install
+
+      - name: Build Electron app
+        shell: bash
+        run: |
+          if [[ "${{ matrix.os_key }}" == "macos" && "${{ matrix.arch }}" == "x64" ]]; then
+            npm run make -- --arch=x64
+          else
+            npm run make
+          fi
+
+      # ─── Upload Python binary artifact ───
+      - name: Upload Python binary artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: python-${{ matrix.os_key }}-${{ matrix.arch }}
+          path: binaries/${{ matrix.os_key }}-${{ matrix.arch }}/
+
+  comment:
+    name: Comment PR with Artifacts Link
+    needs: build
     runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v2
-      - uses: actions/setup-node@master
-        with:
-          node-version: 20
-      - name: install dependencies
-        run: npm install
-      - name: build
-        run: npm run make
 
-  build_on_mac:
-    runs-on: macos-latest
     steps:
-      - run: python3 -m pip install setuptools --break-system-packages
-      - uses: actions/checkout@v2
-      - uses: actions/setup-node@master
+      - name: Comment on PR
+        uses: actions/github-script@v6
         with:
-          node-version: 20
-      - name: install dependencies
-        run: npm install
-      - name: build
-        run: npm run make
-
-  build_on_mac_intel:
-    runs-on: macos-latest
-    steps:
-      - run: python3 -m pip install setuptools --break-system-packages
-      - uses: actions/checkout@v2
-      - uses: actions/setup-node@master
-        with:
-          node-version: 20
-      - name: install dependencies
-        run: npm install
-      - name: build
-        run: npm run make -- --arch=x64
-
-  build_on_win:
-    runs-on: windows-latest
-    steps:
-      - uses: actions/checkout@v2
-      - uses: actions/setup-node@master
-        with:
-          node-version: 20
-      - name: install dependencies
-        run: npm install
-      - name: build
-        run: npm run make
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            const { owner, repo } = context.repo;
+            const pr = context.payload.pull_request.number;
+            const url = `https://github.com/${owner}/${repo}/suites/${context.runId}/artifacts`;
+            await github.rest.issues.createComment({
+              owner,
+              repo,
+              issue_number: pr,
+              body: `🔧 **Build artifacts are ready!**\n\nDownload here: ${url}`
+            });
