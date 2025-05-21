@@ -1,17 +1,16 @@
-name: Build & Attach Executables
-
-on:
-  push:
-  pull_request:
+# .github/workflows/build.yml
+name: Build
+on: [push, pull_request]
 
 jobs:
   build_on_linux:
-    name: Build on Linux
+    name: Build on Linux x64
     runs-on: ubuntu-latest
     env:
       MAIN_PY_FILE: src/server/diffuser.py
       OS_KEY:        linux
       ARCH_KEY:      x64
+
     steps:
       - name: Checkout code
         uses: actions/checkout@v3
@@ -24,7 +23,7 @@ jobs:
       - name: Set up Python (Linux x64)
         uses: actions/setup-python@v4
         with:
-          python-version: '3.12.x'       # SciPy wheels available 
+          python-version: '3.12.x'       # SciPy wheels available for 3.12 :contentReference[oaicite:1]{index=1}
 
       - name: Install nightly PyTorch (CUDA 12.8)
         run: |
@@ -42,9 +41,9 @@ jobs:
           mkdir -p binaries/${{ env.OS_KEY }}-${{ env.ARCH_KEY }}
           pyinstaller --onefile \
             --distpath binaries/${{ env.OS_KEY }}-${{ env.ARCH_KEY }} \
-            --workpath build \
-            --specpath build \
-            $MAIN_PY_FILE
+            --workpath $RUNNER_TEMP/pybuild-${{ env.OS_KEY }}-${{ env.ARCH_KEY }} \
+            --specpath $RUNNER_TEMP/pybuild-${{ env.OS_KEY }}-${{ env.ARCH_KEY }} \
+            ${{ env.MAIN_PY_FILE }}                 # move intermediate files out of repo :contentReference[oaicite:2]{index=2}
 
       - name: Set up Node.js
         uses: actions/setup-node@v3
@@ -57,22 +56,22 @@ jobs:
       - name: Build Electron app
         run: npm run make
 
-      - name: Upload Linux executable
+      - name: Upload Linux Python binary artifact
         uses: actions/upload-artifact@v4
         with:
-          name: executables-${{ matrix.os_key }}
-          path: binaries/linux-x64/  # PyInstaller onefile output :contentReference[oaicite:3]{index=3}
+          name: python-${{ env.OS_KEY }}-${{ env.ARCH_KEY }}
+          path: binaries/linux-x64/diffuser        # downloadable from the workflow run :contentReference[oaicite:3]{index=3}
 
-  build_on_mac:
+  build_on_mac_arm:
     name: Build on macOS ARM64
     runs-on: macos-latest
     env:
       MAIN_PY_FILE: src/server/diffuser.py
       OS_KEY:        macos
       ARCH_KEY:      arm64
+
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v3
+      - uses: actions/checkout@v3
 
       - name: Set up Python (macOS ARM64)
         uses: actions/setup-python@v4
@@ -96,9 +95,9 @@ jobs:
           mkdir -p binaries/${{ env.OS_KEY }}-${{ env.ARCH_KEY }}
           pyinstaller --onefile \
             --distpath binaries/${{ env.OS_KEY }}-${{ env.ARCH_KEY }} \
-            --workpath build \
-            --specpath build \
-            $MAIN_PY_FILE
+            --workpath $RUNNER_TEMP/pybuild-${{ env.OS_KEY }}-${{ env.ARCH_KEY }} \
+            --specpath $RUNNER_TEMP/pybuild-${{ env.OS_KEY }}-${{ env.ARCH_KEY }} \
+            ${{ env.MAIN_PY_FILE }}
 
       - name: Set up Node.js
         uses: actions/setup-node@v3
@@ -111,22 +110,22 @@ jobs:
       - name: Build Electron app (ARM64)
         run: npm run make
 
-      - name: Upload macOS ARM64 executable
+      - name: Upload macOS ARM64 Python binary artifact
         uses: actions/upload-artifact@v4
         with:
-          name: executables-${{ matrix.os_key }}
-          path: binaries/macos-arm64/  # matches CI output :contentReference[oaicite:4]{index=4}
+          name: python-${{ env.OS_KEY }}-${{ env.ARCH_KEY }}
+          path: binaries/macos-arm64/diffuser
 
-  build_on_mac_intel:
+  build_on_mac_x64:
     name: Build on macOS x64
     runs-on: macos-latest
     env:
       MAIN_PY_FILE: src/server/diffuser.py
       OS_KEY:        macos
       ARCH_KEY:      x64
+
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v3
+      - uses: actions/checkout@v3
 
       - name: Set up Python (macOS x64)
         uses: actions/setup-python@v4
@@ -150,9 +149,9 @@ jobs:
           mkdir -p binaries/${{ env.OS_KEY }}-${{ env.ARCH_KEY }}
           pyinstaller --onefile \
             --distpath binaries/${{ env.OS_KEY }}-${{ env.ARCH_KEY }} \
-            --workpath build \
-            --specpath build \
-            $MAIN_PY_FILE
+            --workpath $RUNNER_TEMP/pybuild-${{ env.OS_KEY }}-${{ env.ARCH_KEY }} \
+            --specpath $RUNNER_TEMP/pybuild-${{ env.OS_KEY }}-${{ env.ARCH_KEY }} \
+            ${{ env.MAIN_PY_FILE }}
 
       - name: Set up Node.js
         uses: actions/setup-node@v3
@@ -165,11 +164,11 @@ jobs:
       - name: Build Electron app (x64)
         run: npm run make -- --arch=x64
 
-      - name: Upload macOS x64 executable
+      - name: Upload macOS x64 Python binary artifact
         uses: actions/upload-artifact@v4
         with:
-          name: executables-${{ matrix.os_key }}
-          path: binaries/macos-x64/
+          name: python-${{ env.OS_KEY }}-${{ env.ARCH_KEY }}
+          path: binaries/macos-x64/diffuser
 
   build_on_win:
     name: Build on Windows x64
@@ -178,9 +177,9 @@ jobs:
       MAIN_PY_FILE: src/server/diffuser.py
       OS_KEY:        windows
       ARCH_KEY:      x64
+
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v3
+      - uses: actions/checkout@v3
 
       - name: Set up Python (Windows x64)
         uses: actions/setup-python@v4
@@ -199,15 +198,14 @@ jobs:
           pip install pyinstaller
 
       - name: Build Python binary (Windows x64)
-        shell: pwsh
+        shell: pwsh                                       # use PowerShell for $env var :contentReference[oaicite:4]{index=4}
         run: |
           New-Item -ItemType Directory binaries\${{ env.OS_KEY }}-${{ env.ARCH_KEY }} -Force
-          pyinstaller `
-            --onefile `
+          pyinstaller --onefile `
             --distpath binaries\${{ env.OS_KEY }}-${{ env.ARCH_KEY }} `
-            --workpath build `
-            --specpath build `
-            $env:MAIN_PY_FILE   # PowerShell syntax :contentReference[oaicite:5]{index=5}
+            --workpath $env:RUNNER_TEMP\pybuild-${{ env.OS_KEY }}-${{ env.ARCH_KEY }} `
+            --specpath $env:RUNNER_TEMP\pybuild-${{ env.OS_KEY }}-${{ env.ARCH_KEY }} `
+            $env:MAIN_PY_FILE
 
       - name: Set up Node.js
         uses: actions/setup-node@v3
@@ -220,37 +218,8 @@ jobs:
       - name: Build Electron app
         run: npm run make
 
-      - name: Upload Windows executable
+      - name: Upload Windows x64 Python binary artifact
         uses: actions/upload-artifact@v4
         with:
-          name: executables-${{ matrix.os_key }}
-          path: binaries/windows-x64/
-
-  comment-artifacts:
-    name: Comment PR with artifacts link
-    needs:
-      - build_on_linux
-      - build_on_mac
-      - build_on_mac_intel
-      - build_on_win
-    runs-on: ubuntu-latest
-    if: ${{ github.event_name == 'pull_request' }}
-
-    steps:
-      - name: Post comment with artifacts URL
-        uses: actions/github-script@v6
-        with:
-          github-token: ${{ secrets.GITHUB_TOKEN }}
-          script: |
-            const { owner, repo } = context.repo;
-            const runId = context.runId;
-            const pr = context.payload.pull_request.number;
-            // Artifacts page for this run:
-            const url = `https://github.com/${owner}/${repo}/suites/${runId}/artifacts`;
-            await github.rest.issues.createComment({
-              owner,
-              repo,
-              issue_number: pr,
-              body: `✅ **Build & Package Complete!**  
-              Download your executables here: ${url}`
-            });
+          name: python-${{ env.OS_KEY }}-${{ env.ARCH_KEY }}
+          path: binaries/windows-x64/diffuser.exe
