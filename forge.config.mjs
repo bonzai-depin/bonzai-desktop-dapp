@@ -18,10 +18,7 @@ export default {
     // tmpdir: path.resolve(__dirname, "..", "tmp"), // :contentReference[oaicite:6]{index=6}
     tmpdir: process.env.RUNNER_TEMP,
     // 2) Ship your Python scripts + CI-built binaries
-    extraResource: [
-      path.resolve(__dirname, "src", "server"),
-      path.resolve(__dirname, "binaries"),
-    ], // :contentReference[oaicite:7]{index=7}
+    extraResource: [path.resolve(__dirname, "src", "server")], // :contentReference[oaicite:7]{index=7}
 
     // 3) macOS signing/notarization
     osxSign: {
@@ -34,25 +31,27 @@ export default {
     // 4) AFTER extraResource is copied, embed the correct PyInstaller output
     afterCopyExtraResources: [
       async (buildPath, _ver, platform, arch) => {
-        // A) locate Resources
+        // A) locate Resources root
         const resourcesRoot =
           platform === "darwin"
             ? path.join(buildPath, `${appName}.app`, "Contents", "Resources")
             : path.join(buildPath, "resources");
 
-        // B) ensure server/
+        // B) ensure server folder exists
         const serverDir = path.join(resourcesRoot, "server");
         fs.mkdirSync(serverDir, { recursive: true });
 
-        // C) find binaries/<platform>-<arch>
+        // C) pick platform key matching your build folder
         const platformKey =
           platform === "darwin"
             ? "macos"
             : platform === "win32"
             ? "windows"
-            : platform;
-        const binFolder = path.join(
-          resourcesRoot,
+            : "linux";
+
+        // D) locate only that arch’s binary folder
+        const binFolder = path.resolve(
+          __dirname,
           "binaries",
           `${platformKey}-${arch}`
         );
@@ -60,7 +59,7 @@ export default {
           throw new Error(`Binary directory not found: ${binFolder}`);
         }
 
-        // D) pick the first executable (diffuser or diffuser.exe)
+        // E) copy just the first file (diffuser or diffuser.exe)
         const [exeName] = fs.readdirSync(binFolder);
         const srcPath = path.join(binFolder, exeName);
         const destPath = path.join(serverDir, "python-binary");
