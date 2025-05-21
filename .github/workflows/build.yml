@@ -5,7 +5,7 @@ on:
 
 jobs:
   build:
-    name: Build Python Binaries & Electron App
+    name: Build Python & Electron
     runs-on: ${{ matrix.os }}
     strategy:
       matrix:
@@ -13,19 +13,15 @@ jobs:
           - os: ubuntu-latest
             os_key: linux
             arch: x64
-            shell: bash
           - os: macos-latest
             os_key: macos
             arch: arm64
-            shell: bash
           - os: macos-latest
             os_key: macos
             arch: x64
-            shell: bash
           - os: windows-latest
             os_key: windows
             arch: x64
-            shell: pwsh
 
     env:
       MAIN_PY_FILE: src/server/diffuser.py
@@ -38,73 +34,82 @@ jobs:
         uses: actions/setup-python@v4
         with:
           python-version: '3.12.x'
-          architecture: ${{ matrix.arch }}
+          # on macOS only: select arm64 or x64
+          architecture: ${{ matrix.os_key == 'macos' && matrix.arch || '' }}
 
-      - name: Install extra deps & PyInstaller
-        shell: ${{ matrix.shell }}
+      # ─── Install extra deps & PyInstaller ───
+      - name: Install Diffusers & PESQ + PyInstaller (macOS/Linux)
+        if: runner.os != 'Windows'
+        shell: bash
         run: |
-          # Diffusers & PESQ
           pip install git+https://github.com/huggingface/diffusers.git
           pip install https://github.com/vBaiCai/python-pesq/archive/master.zip
-
-          # nightly PyTorch
-          if (${{ matrix.shell }} -eq 'pwsh') {
-            pip install --no-cache-dir --upgrade --pre `
-              torch torchvision torchaudio `
+          if [[ "${{ runner.os }}" == "macOS" ]]; then
+            pip install --no-cache-dir --upgrade --pre \
+              torch torchvision torchaudio \
+              --index-url https://download.pytorch.org/whl/nightly/cpu
+          else
+            pip install --no-cache-dir --upgrade --pre \
+              torch torchvision torchaudio \
               --index-url https://download.pytorch.org/whl/nightly/cu128
-          } else
-            if [[ "${{ runner.os }}" == "macOS" ]]; then
-              pip install --no-cache-dir --upgrade --pre \
-                torch torchvision torchaudio \
-                --index-url https://download.pytorch.org/whl/nightly/cpu
-            else
-              pip install --no-cache-dir --upgrade --pre \
-                torch torchvision torchaudio \
-                --index-url https://download.pytorch.org/whl/nightly/cu128
-            fi
           fi
-
-          # your app deps + PyInstaller
           pip install -r requirements.txt
           pip install pyinstaller
 
-      - name: Build Python binary
-        shell: ${{ matrix.shell }}
+      - name: Install Diffusers & PESQ + PyInstaller (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
         run: |
-          $dist = "binaries/${{ matrix.os_key }}-${{ matrix.arch }}"
-          if (${{ matrix.shell }} -eq 'pwsh') {
-            New-Item -ItemType Directory $dist -Force
-            pyinstaller --onefile `
-              --distpath $dist `
-              --workpath $env:RUNNER_TEMP\pybuild-${{ matrix.os_key }}-${{ matrix.arch }} `
-              --specpath $env:RUNNER_TEMP\pybuild-${{ matrix.os_key }}-${{ matrix.arch }} `
-              $env:MAIN_PY_FILE
-          } else {
-            mkdir -p $dist
-            pyinstaller --onefile \
-              --distpath $dist \
-              --workpath $RUNNER_TEMP/pybuild-${{ matrix.os_key }}-${{ matrix.arch }} \
-              --specpath $RUNNER_TEMP/pybuild-${{ matrix.os_key }}-${{ matrix.arch }} \
-              $MAIN_PY_FILE
-          }
+          pip install git+https://github.com/huggingface/diffusers.git
+          pip install https://github.com/vBaiCai/python-pesq/archive/master.zip
+          pip install --no-cache-dir --upgrade --pre `
+            torch torchvision torchaudio `
+            --index-url https://download.pytorch.org/whl/nightly/cu128
+          pip install -r requirements.txt
+          pip install pyinstaller
 
-      - name: Set up Node.js & build Electron
+      # ─── Build Python binary ───
+      - name: Build Python binary (macOS/Linux)
+        if: runner.os != 'Windows'
+        shell: bash
+        run: |
+          mkdir -p binaries/${{ matrix.os_key }}-${{ matrix.arch }}
+          pyinstaller --onefile \
+            --distpath binaries/${{ matrix.os_key }}-${{ matrix.arch }} \
+            --workpath $RUNNER_TEMP/pybuild-${{ matrix.os_key }}-${{ matrix.arch }} \
+            --specpath $RUNNER_TEMP/pybuild-${{ matrix.os_key }}-${{ matrix.arch }} \
+            $MAIN_PY_FILE
+
+      - name: Build Python binary (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory binaries\${{ matrix.os_key }}-${{ matrix.arch }} -Force
+          pyinstaller --onefile `
+            --distpath binaries\${{ matrix.os_key }}-${{ matrix.arch }} `
+            --workpath $env:RUNNER_TEMP\pybuild-${{ matrix.os_key }}-${{ matrix.arch }} `
+            --specpath $env:RUNNER_TEMP\pybuild-${{ matrix.os_key }}-${{ matrix.arch }} `
+            $env:MAIN_PY_FILE
+
+      # ─── Build Electron app ───
+      - name: Set up Node.js
         uses: actions/setup-node@v3
         with:
           node-version: 20
 
-      - name: Install Node deps
+      - name: Install Node dependencies
         run: npm install
 
       - name: Build Electron app
         shell: bash
         run: |
-          if [[ "${{ matrix.os }}" == "macos-latest" && "${{ matrix.arch }}" == "x64" ]]; then
+          if [[ "${{ matrix.os_key }}" == "macos" && "${{ matrix.arch }}" == "x64" ]]; then
             npm run make -- --arch=x64
           else
             npm run make
           fi
 
+      # ─── Upload Python binary artifact ───
       - name: Upload Python binary artifact
         uses: actions/upload-artifact@v4
         with:
@@ -123,13 +128,11 @@ jobs:
           github-token: ${{ secrets.GITHUB_TOKEN }}
           script: |
             const { owner, repo } = context.repo;
-            const runId = context.runId;
             const pr = context.payload.pull_request.number;
-            const url = `https://github.com/${owner}/${repo}/suites/${runId}/artifacts`;
+            const url = `https://github.com/${owner}/${repo}/suites/${context.runId}/artifacts`;
             await github.rest.issues.createComment({
               owner,
               repo,
               issue_number: pr,
-              body: `🔧 **Build artifacts are ready!**  
-              Download the Python binaries here: ${url}`
+              body: `🔧 **Build artifacts are ready!**\n\nDownload here: ${url}`
             });
