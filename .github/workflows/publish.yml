@@ -1,24 +1,28 @@
-name: Release
-on:
-  release:
-    types: [created]
+name: Build
+on: [push, pull_request]
 
 jobs:
-  publish_on_linux:
-    name: Publish on Linux (x64)
+  build_on_linux:
+    name: Build on Linux x64
     runs-on: ubuntu-latest
     env:
       MAIN_PY_FILE: src/server/diffuser.py
       OS_KEY:        linux
       ARCH_KEY:      x64
+
     steps:
       - name: Checkout code
         uses: actions/checkout@v3
 
+      - name: Install OpenBLAS & pkg-config
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libopenblas-dev pkg-config
+
       - name: Set up Python (Linux x64)
         uses: actions/setup-python@v4
         with:
-          python-version: '3.12.x'            # use 3.12 wheels to avoid SciPy source builds :contentReference[oaicite:1]{index=1}
+          python-version: '3.12.x'       # SciPy wheels available for 3.12 :contentReference[oaicite:3]{index=3}
 
       - name: Install nightly PyTorch (CUDA 12.8)
         run: |
@@ -36,41 +40,31 @@ jobs:
           mkdir -p binaries/${{ env.OS_KEY }}-${{ env.ARCH_KEY }}
           pyinstaller --onefile \
             --distpath binaries/${{ env.OS_KEY }}-${{ env.ARCH_KEY }} \
-            --workpath build \
-            --specpath build \
-            $MAIN_PY_FILE
-
-      - name: Upload Python binary to Release
-        uses: actions/upload-release-asset@v1
-        with:
-          upload_url: ${{ github.event.release.upload_url }}    # target this new Release :contentReference[oaicite:2]{index=2}
-          asset_path: binaries/linux-x64/diffuser               # path to the onefile binary
-          asset_name: diffuser-linux-x64                         # name in the Release UI
-          asset_content_type: application/octet-stream
+            --workpath $RUNNER_TEMP/pybuild-${{ env.OS_KEY }}-${{ env.ARCH_KEY }} \
+            --specpath $RUNNER_TEMP/pybuild-${{ env.OS_KEY }}-${{ env.ARCH_KEY }} \
+            ${{ env.MAIN_PY_FILE }}                 # move intermediate files out of repo :contentReference[oaicite:4]{index=4}
 
       - name: Set up Node.js
         uses: actions/setup-node@v3
         with:
           node-version: 20
 
-      - name: Install Node dependencies
-        run: npm ci
+      - name: Install dependencies
+        run: npm install
 
-      - name: Publish Linux build
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: npm run publish                              # Electron-forge publisher attaches installers 
+      - name: Build Electron app
+        run: npm run make
 
-  publish_on_mac_arm:
-    name: Publish on macOS (ARM64)
+  build_on_mac:
+    name: Build on macOS ARM64
     runs-on: macos-latest
     env:
       MAIN_PY_FILE: src/server/diffuser.py
       OS_KEY:        macos
       ARCH_KEY:      arm64
+
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v3
+      - uses: actions/checkout@v3
 
       - name: Set up Python (macOS ARM64)
         uses: actions/setup-python@v4
@@ -94,72 +88,31 @@ jobs:
           mkdir -p binaries/${{ env.OS_KEY }}-${{ env.ARCH_KEY }}
           pyinstaller --onefile \
             --distpath binaries/${{ env.OS_KEY }}-${{ env.ARCH_KEY }} \
-            --workpath build \
-            --specpath build \
-            $MAIN_PY_FILE
-
-      - name: Upload Python binary to Release (ARM64)
-        uses: actions/upload-release-asset@v1
-        with:
-          upload_url: ${{ github.event.release.upload_url }}  
-          asset_path: binaries/macos-arm64/diffuser
-          asset_name: diffuser-macos-arm64
-          asset_content_type: application/octet-stream
-
-      - name: Decode & Import App Certificate
-        env:
-          CERT_BASE64: ${{ secrets.MAC_APP_CERT_BASE64 }}
-          CERT_PASS:   ${{ secrets.MAC_APP_CERT_PASSWORD }}
-          KEYCHAIN_PW: ${{ secrets.KEYCHAIN_PASSWORD }}
-        run: |
-          echo "$CERT_BASE64" | base64 --decode > app.p12
-          security create-keychain -p "$KEYCHAIN_PW" build.keychain
-          security import app.p12 -k build.keychain -P "$CERT_PASS" -T /usr/bin/codesign
-          security set-keychain-settings -t 3600 -u build.keychain
-          security default-keychain -s build.keychain
-          security unlock-keychain -p "$KEYCHAIN_PW" build.keychain
-
-      - name: Decode & Import Installer Certificate
-        env:
-          CERT_BASE64: ${{ secrets.MAC_INSTALLER_CERT_BASE64 }}
-          CERT_PASS:   ${{ secrets.MAC_INSTALLER_CERT_PASSWORD }}
-        run: |
-          echo "$CERT_BASE64" | base64 --decode > installer.p12
-          security import installer.p12 -k build.keychain -P "$CERT_PASS" -T /usr/bin/codesign
-
-      - name: Expose Apple Credentials
-        run: |
-          echo "APPLE_ID=${{ secrets.APPLE_ID }}"       >> $GITHUB_ENV
-          echo "APPLE_TEAM_ID=${{ secrets.APPLE_TEAM_ID }}" >> $GITHUB_ENV
+            --workpath $RUNNER_TEMP/pybuild-${{ env.OS_KEY }}-${{ env.ARCH_KEY }} \
+            --specpath $RUNNER_TEMP/pybuild-${{ env.OS_KEY }}-${{ env.ARCH_KEY }} \
+            ${{ env.MAIN_PY_FILE }}
 
       - name: Set up Node.js
         uses: actions/setup-node@v3
         with:
           node-version: 20
 
-      - name: Install Node dependencies
-        run: npm ci
+      - name: Install dependencies
+        run: npm install
 
-      - name: Publish macOS ARM64 build
-        env:
-          GITHUB_TOKEN:                ${{ secrets.GITHUB_TOKEN }}
-          APPLE_ID:                    ${{ secrets.APPLE_ID }}
-          APPLE_TEAM_ID:               ${{ secrets.APPLE_TEAM_ID }}
-          MAC_APP_CERT_PASSWORD:       ${{ secrets.MAC_APP_CERT_PASSWORD }}
-          MAC_INSTALLER_CERT_PASSWORD: ${{ secrets.MAC_INSTALLER_CERT_PASSWORD }}
-          KEYCHAIN_PASSWORD:           ${{ secrets.KEYCHAIN_PASSWORD }}
-        run: npm run publish
+      - name: Build Electron app (ARM64)
+        run: npm run make
 
-  publish_on_mac_x64:
-    name: Publish on macOS (x64)
+  build_on_mac_intel:
+    name: Build on macOS x64
     runs-on: macos-latest
     env:
       MAIN_PY_FILE: src/server/diffuser.py
       OS_KEY:        macos
       ARCH_KEY:      x64
+
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v3
+      - uses: actions/checkout@v3
 
       - name: Set up Python (macOS x64)
         uses: actions/setup-python@v4
@@ -183,72 +136,31 @@ jobs:
           mkdir -p binaries/${{ env.OS_KEY }}-${{ env.ARCH_KEY }}
           pyinstaller --onefile \
             --distpath binaries/${{ env.OS_KEY }}-${{ env.ARCH_KEY }} \
-            --workpath build \
-            --specpath build \
-            $MAIN_PY_FILE
-
-      - name: Upload Python binary to Release (x64)
-        uses: actions/upload-release-asset@v1
-        with:
-          upload_url: ${{ github.event.release.upload_url }}
-          asset_path: binaries/macos-x64/diffuser
-          asset_name: diffuser-macos-x64
-          asset_content_type: application/octet-stream
-
-      - name: Decode & Import App Certificate
-        env:
-          CERT_BASE64: ${{ secrets.MAC_APP_CERT_BASE64 }}
-          CERT_PASS:   ${{ secrets.MAC_APP_CERT_PASSWORD }}
-          KEYCHAIN_PW: ${{ secrets.KEYCHAIN_PASSWORD }}
-        run: |
-          echo "$CERT_BASE64" | base64 --decode > app.p12
-          security create-keychain -p "$KEYCHAIN_PW" build.keychain
-          security import app.p12 -k build.keychain -P "$CERT_PASS" -T /usr/bin/codesign
-          security set-keychain-settings -t 3600 -u build.keychain
-          security default-keychain -s build.keychain
-          security unlock-keychain -p "$KEYCHAIN_PW" build.keychain
-
-      - name: Decode & Import Installer Certificate
-        env:
-          CERT_BASE64: ${{ secrets.MAC_INSTALLER_CERT_BASE64 }}
-          CERT_PASS:   ${{ secrets.MAC_INSTALLER_CERT_PASSWORD }}
-        run: |
-          echo "$CERT_BASE64" | base64 --decode > installer.p12
-          security import installer.p12 -k build.keychain -P "$CERT_PASS" -T /usr/bin/codesign
-
-      - name: Expose Apple Credentials
-        run: |
-          echo "APPLE_ID=${{ secrets.APPLE_ID }}"       >> $GITHUB_ENV
-          echo "APPLE_TEAM_ID=${{ secrets.APPLE_TEAM_ID }}" >> $GITHUB_ENV
+            --workpath $RUNNER_TEMP/pybuild-${{ env.OS_KEY }}-${{ env.ARCH_KEY }} \
+            --specpath $RUNNER_TEMP/pybuild-${{ env.OS_KEY }}-${{ env.ARCH_KEY }} \
+            ${{ env.MAIN_PY_FILE }}
 
       - name: Set up Node.js
         uses: actions/setup-node@v3
         with:
           node-version: 20
 
-      - name: Install Node dependencies
-        run: npm ci
+      - name: Install dependencies
+        run: npm install
 
-      - name: Publish macOS x64 build
-        env:
-          GITHUB_TOKEN:                ${{ secrets.GITHUB_TOKEN }}
-          APPLE_ID:                    ${{ secrets.APPLE_ID }}
-          APPLE_TEAM_ID:               ${{ secrets.APPLE_TEAM_ID }}
-          MAC_APP_CERT_PASSWORD:       ${{ secrets.MAC_APP_CERT_PASSWORD }}
-          MAC_INSTALLER_CERT_PASSWORD: ${{ secrets.MAC_INSTALLER_CERT_PASSWORD }}
-          KEYCHAIN_PASSWORD:           ${{ secrets.KEYCHAIN_PASSWORD }}
-        run: npm run publish -- --arch=x64
+      - name: Build Electron app (x64)
+        run: npm run make -- --arch=x64
 
-  publish_on_win:
-    name: Publish on Windows (x64)
+  build_on_win:
+    name: Build on Windows x64
     runs-on: windows-latest
     env:
       MAIN_PY_FILE: src/server/diffuser.py
       OS_KEY:        windows
       ARCH_KEY:      x64
+
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v3
+      - uses: actions/checkout@v3
 
       - name: Set up Python (Windows x64)
         uses: actions/setup-python@v4
@@ -267,33 +179,22 @@ jobs:
           pip install pyinstaller
 
       - name: Build Python binary (Windows x64)
-        shell: pwsh
+        shell: pwsh                                       # Windows shell to use $env:RUNNER_TEMP :contentReference[oaicite:5]{index=5}
         run: |
           New-Item -ItemType Directory binaries\${{ env.OS_KEY }}-${{ env.ARCH_KEY }} -Force
-          pyinstaller `
-            --onefile `
+          pyinstaller --onefile `
             --distpath binaries\${{ env.OS_KEY }}-${{ env.ARCH_KEY }} `
-            --workpath build `
-            --specpath build `
-            $env:MAIN_PY_FILE   # PowerShell syntax :contentReference[oaicite:4]{index=4}
-
-      - name: Upload Python binary to Release (Windows)
-        uses: actions/upload-release-asset@v1
-        with:
-          upload_url: ${{ github.event.release.upload_url }}
-          asset_path: binaries/windows-x64/diffuser.exe
-          asset_name: diffuser-windows-x64.exe
-          asset_content_type: application/octet-stream
+            --workpath $env:RUNNER_TEMP\pybuild-${{ env.OS_KEY }}-${{ env.ARCH_KEY }} `
+            --specpath $env:RUNNER_TEMP\pybuild-${{ env.OS_KEY }}-${{ env.ARCH_KEY }} `
+            $env:MAIN_PY_FILE
 
       - name: Set up Node.js
         uses: actions/setup-node@v3
         with:
           node-version: 20
 
-      - name: Install Node dependencies
-        run: npm ci
+      - name: Install dependencies
+        run: npm install
 
-      - name: Publish Windows build
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: npm run publish
+      - name: Build Electron app
+        run: npm run make
