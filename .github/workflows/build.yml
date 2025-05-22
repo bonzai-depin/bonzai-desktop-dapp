@@ -87,7 +87,6 @@ jobs:
           pyinstaller \
             --distpath binaries/${{ matrix.os_key }}-${{ matrix.arch }} \
             --workpath $RUNNER_TEMP/pybuild-${{ matrix.os_key }}-${{ matrix.arch }} \
-            --specpath $RUNNER_TEMP/pybuild-${{ matrix.os_key }}-${{ matrix.arch }} \
             diffuser.spec
 
       - name: Build Python binary (Windows)
@@ -98,7 +97,6 @@ jobs:
           pyinstaller `
             --distpath binaries\${{ matrix.os_key }}-${{ matrix.arch }} `
             --workpath $env:RUNNER_TEMP\pybuild-${{ matrix.os_key }}-${{ matrix.arch }} `
-            --specpath $env:RUNNER_TEMP\pybuild-${{ matrix.os_key }}-${{ matrix.arch }} `
             diffuser.spec
 
       # ─── Build Electron app ───
