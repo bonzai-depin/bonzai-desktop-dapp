@@ -38,72 +38,65 @@ export default {
     // 4) AFTER extraResource is copied, embed the correct PyInstaller output
     afterCopyExtraResources: [
       async (buildPath, _ver, platform, arch) => {
-        // A) locate Resources root
-        const resourcesRoot =
-          platform === "darwin"
-            ? path.join(buildPath, `${appName}.app`, "Contents", "Resources")
-            : path.join(buildPath, "resources");
+        // 1) Determine the root Resources folder:
+        const resourcesRoot = platform === "darwin"
+          ? path.join(buildPath, `${appName}.app`, "Contents", "Resources")
+          : path.join(buildPath, "resources");
 
-        // B) ensure server folder exists
+        // 2) Ensure server/ exists for your Flask script + binary:
         const serverDir = path.join(resourcesRoot, "server");
         fs.mkdirSync(serverDir, { recursive: true });
 
-        // C) platform key
-        const platformKey =
-          platform === "darwin"
-            ? "macos"
-            : platform === "win32"
-            ? "windows"
-            : "linux";
-
-        // D) top-level binary folder in repo
-        let current = path.resolve(
-          __dirname,
+        // 3) Build the path to where GitHub Actions put your bin:
+        const platformKey = platform === "darwin" ? "macos"
+                           : platform === "win32"  ? "windows"
+                           : "linux";
+        const binFolder = path.join(
+          resourcesRoot,
           "binaries",
           `${platformKey}-${arch}`
         );
-        if (!fs.existsSync(current)) {
-          throw new Error(`Binary directory not found: ${current}`);
+
+        if (!fs.existsSync(binFolder)) {
+          throw new Error(`Binary directory not found: ${binFolder}`);
         }
 
-        // E) descend if there’s exactly one subfolder (e.g. 'diffuser')
-        if (fs.statSync(current).isDirectory()) {
-          const entries = fs.readdirSync(current);
-          if (
-            entries.length === 1 &&
-            fs.statSync(path.join(current, entries[0])).isDirectory()
-          ) {
-            current = path.join(current, entries[0]);
-          }
+        // 4) Find the single executable inside that folder:
+        const files = fs
+          .readdirSync(binFolder)
+          .filter(name =>
+            fs.statSync(path.join(binFolder, name)).isFile()
+          );
+
+        if (files.length === 0) {
+          throw new Error(`No files found in ${binFolder}`);
         }
 
-        // F) pick the actual executable file
-        const entries = fs
-          .readdirSync(current)
-          .filter((e) => fs.statSync(path.join(current, e)).isFile());
-        if (entries.length === 0) {
-          throw new Error(`No files found in ${current}`);
-        }
-
+        // 5) Pick .exe on Windows, or the bare name on macOS/Linux:
         let exeName;
         if (platform === "win32") {
-          // On Windows, look for diffuser.exe
-          exeName = entries.find((e) => e.toLowerCase().endsWith(".exe"));
-          if (!exeName) throw new Error(`No .exe found in ${current}`);
-        } else {
-          // On macOS/Linux, always pick the literal "diffuser"
-          if (!entries.includes("diffuser")) {
-            throw new Error(`"diffuser" not found in ${current}: ${entries}`);
+          exeName = files.find(f => f.toLowerCase().endsWith(".exe"));
+          if (!exeName) {
+            throw new Error(`No .exe found in ${binFolder}: ${files}`);
           }
-          exeName = "diffuser";
+        } else {
+          // assume exactly one file like "diffuser"
+          if (files.length > 1) {
+            console.warn(
+              `Multiple files in ${binFolder}, defaulting to first:`,
+              files
+            );
+          }
+          exeName = files[0];
         }
 
-        const srcPath = path.join(current, exeName);
+        // 6) Copy it into server/python-binary for your Electron app to spawn:
+        const srcPath  = path.join(binFolder, exeName);
         const destPath = path.join(serverDir, "python-binary");
         fs.copyFileSync(srcPath, destPath);
 
         console.log(`Copied ${srcPath} → ${destPath}`);
-      },
+      }
     ],
   },
 
