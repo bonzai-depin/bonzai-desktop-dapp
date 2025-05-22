@@ -91,21 +91,14 @@ pyz = PYZ(
 exe = EXE(
     pyz,
     a.scripts,
-    exclude_binaries=True,
+    a.binaries,
+    a.zipfiles,
+    a.datas,
     name='diffuser',           # must be non-None to avoid the TypeError 
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,
     upx=True,
     console=True,              # or False if you don’t need a console
-)
-
-coll = COLLECT(
-    exe,
-    a.binaries,
-    a.zipfiles,
-    a.datas,
-    strip=False,
-    upx=True,
-    name='diffuser',           # name of the output folder
+    runtime_tmpdir=None,
 )

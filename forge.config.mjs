@@ -11,6 +11,8 @@ const appName = "bonzai";
 
 export default {
   packagerConfig: {
+    // Keep python binary out of asar so it can be signed
+    asarUnpack: ["server/python-binary"],
     icon: "./src/assets/logo",
     executableName: appName,
 
@@ -23,9 +25,9 @@ export default {
     // 3) macOS signing/notarization
     osxSign: {
       hardenedRuntime: true,
-      entitlements: 'entitlements.mac.plist',
-      'entitlements-inherit': 'entitlements.mac.plist',
-      gatekeeperAssess: true,         // ← ensures nested code is checked
+      entitlements: "entitlements.mac.plist",
+      "entitlements-inherit": "entitlements.mac.plist",
+      gatekeeperAssess: true, // ← ensures nested code is checked
     },
     osxNotarize: {
       appleId: process.env.APPLE_ID,
@@ -41,43 +43,52 @@ export default {
           platform === "darwin"
             ? path.join(buildPath, `${appName}.app`, "Contents", "Resources")
             : path.join(buildPath, "resources");
-    
+
         // B) ensure server folder exists
         const serverDir = path.join(resourcesRoot, "server");
         fs.mkdirSync(serverDir, { recursive: true });
-    
+
         // C) platform key
         const platformKey =
-          platform === "darwin" ? "macos"
-          : platform === "win32" ? "windows"
-          : "linux";
-    
+          platform === "darwin"
+            ? "macos"
+            : platform === "win32"
+            ? "windows"
+            : "linux";
+
         // D) top-level binary folder in repo
-        let current = path.resolve(__dirname, "binaries", `${platformKey}-${arch}`);
+        let current = path.resolve(
+          __dirname,
+          "binaries",
+          `${platformKey}-${arch}`
+        );
         if (!fs.existsSync(current)) {
           throw new Error(`Binary directory not found: ${current}`);
         }
-    
+
         // E) descend if there’s exactly one subfolder (e.g. 'diffuser')
         if (fs.statSync(current).isDirectory()) {
           const entries = fs.readdirSync(current);
-          if (entries.length === 1 && fs.statSync(path.join(current, entries[0])).isDirectory()) {
+          if (
+            entries.length === 1 &&
+            fs.statSync(path.join(current, entries[0])).isDirectory()
+          ) {
             current = path.join(current, entries[0]);
           }
         }
-    
+
         // F) pick the actual executable file
-        const entries = fs.readdirSync(current).filter(e =>
-          fs.statSync(path.join(current, e)).isFile()
-        );
+        const entries = fs
+          .readdirSync(current)
+          .filter((e) => fs.statSync(path.join(current, e)).isFile());
         if (entries.length === 0) {
           throw new Error(`No files found in ${current}`);
         }
-    
+
         let exeName;
         if (platform === "win32") {
           // On Windows, look for diffuser.exe
-          exeName = entries.find(e => e.toLowerCase().endsWith(".exe"));
+          exeName = entries.find((e) => e.toLowerCase().endsWith(".exe"));
           if (!exeName) throw new Error(`No .exe found in ${current}`);
         } else {
           // On macOS/Linux, always pick the literal "diffuser"
@@ -86,15 +97,14 @@ export default {
           }
           exeName = "diffuser";
         }
-    
+
         const srcPath = path.join(current, exeName);
         const destPath = path.join(serverDir, "python-binary");
         fs.copyFileSync(srcPath, destPath);
-    
+
         console.log(`Copied ${srcPath} → ${destPath}`);
       },
     ],
-    
   },
 
   makers: [

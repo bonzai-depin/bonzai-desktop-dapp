@@ -86,8 +86,7 @@ jobs:
           pyinstaller --onefile \
             --distpath binaries/${OS_KEY}-${ARCH_KEY} \
             --workpath $RUNNER_TEMP/pybuild-${OS_KEY}-${ARCH_KEY} \
-            --specpath $RUNNER_TEMP/pybuild-${OS_KEY}-${ARCH_KEY} \
-            $MAIN_PY_FILE
+            diffuser.spec
 
       - name: Build Python binary (Windows)
         if: runner.os == 'Windows'
@@ -97,7 +96,6 @@ jobs:
           pyinstaller --onefile `
             --distpath binaries\${OS_KEY}-${ARCH_KEY} `
             --workpath $env:RUNNER_TEMP\pybuild-${OS_KEY}-${ARCH_KEY} `
-            --specpath $env:RUNNER_TEMP\pybuild-${OS_KEY}-${ARCH_KEY} `
             $env:MAIN_PY_FILE
 
       # ─── macOS: Sign & Notarize Python binary ───────────────────────
@@ -155,13 +153,13 @@ jobs:
       - name: Install Node dependencies
         run: npm install
 
-      - name: Build Electron app
-        run: |
-          if [[ "${OS_KEY}" == "macos" && "${ARCH_KEY}" == "x64" ]]; then
-            npm run make -- --arch=x64
-          else
-            npm run make
-          fi
+      - name: Build Electron (macOS x64)
+        if: matrix.os_key == 'macos' && matrix.arch == 'x64'
+        run: npm run make -- --arch=x64
+
+      - name: Build Electron (non-macOS-x64)
+        if: ${{ !(matrix.os_key == 'macos' && matrix.arch == 'x64') }}
+        run: npm run make
 
       # ─── Upload Python binary artifact ─────────────────────────────
       - name: Upload Python binary artifact
