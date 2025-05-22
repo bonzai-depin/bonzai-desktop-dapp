@@ -47,49 +47,49 @@ export default {
           : platform === "win32" ? "windows"
           : "linux";
     
-        // D) find the top-level binary folder in your repo (not the temp path)
-        const binFolder = path.resolve(
-          __dirname,
-          "binaries",
-          `${platformKey}-${arch}`
-        );
-        if (!fs.existsSync(binFolder)) {
-          throw new Error(`Binary directory not found: ${binFolder}`);
+        // D) top-level binary folder in repo
+        let current = path.resolve(__dirname, "binaries", `${platformKey}-${arch}`);
+        if (!fs.existsSync(current)) {
+          throw new Error(`Binary directory not found: ${current}`);
         }
     
-        // E) drill down if necessary
-        let current = binFolder;
-        let stat = fs.statSync(current);
-        if (stat.isDirectory()) {
+        // E) descend if there’s exactly one subfolder (e.g. 'diffuser')
+        if (fs.statSync(current).isDirectory()) {
           const entries = fs.readdirSync(current);
-    
-          // if there’s exactly one subfolder (e.g. 'diffuser'), descend into it
           if (entries.length === 1 && fs.statSync(path.join(current, entries[0])).isDirectory()) {
             current = path.join(current, entries[0]);
           }
         }
     
-        // F) now look for the actual .exe (Windows) or file (elsewhere)
-        let srcPath;
-        const finalEntries = fs.readdirSync(current);
-        if (platform === "win32") {
-          const exe = finalEntries.find(e => e.toLowerCase().endsWith(".exe"));
-          if (!exe) throw new Error(`No .exe found in ${current}`);
-          srcPath = path.join(current, exe);
-        } else {
-          // macOS/Linux: pick the single file
-          if (finalEntries.length !== 1) {
-            throw new Error(`Expected one file in ${current}, found: ${finalEntries}`);
-          }
-          srcPath = path.join(current, finalEntries[0]);
+        // F) pick the actual executable file
+        const entries = fs.readdirSync(current).filter(e =>
+          fs.statSync(path.join(current, e)).isFile()
+        );
+        if (entries.length === 0) {
+          throw new Error(`No files found in ${current}`);
         }
     
-        // G) copy it
+        let exeName;
+        if (platform === "win32") {
+          // On Windows, look for diffuser.exe
+          exeName = entries.find(e => e.toLowerCase().endsWith(".exe"));
+          if (!exeName) throw new Error(`No .exe found in ${current}`);
+        } else {
+          // On macOS/Linux, always pick the literal "diffuser"
+          if (!entries.includes("diffuser")) {
+            throw new Error(`"diffuser" not found in ${current}: ${entries}`);
+          }
+          exeName = "diffuser";
+        }
+    
+        const srcPath = path.join(current, exeName);
         const destPath = path.join(serverDir, "python-binary");
         fs.copyFileSync(srcPath, destPath);
+    
         console.log(`Copied ${srcPath} → ${destPath}`);
       },
-    ],    
+    ],
+    
   },
 
   makers: [
