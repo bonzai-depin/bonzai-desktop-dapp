@@ -31,7 +31,7 @@ jobs:
         uses: actions/checkout@v3
 
       # ─── FREE UP SPACE ON LINUX ──────────────────────────────────────
-      # This removes large preinstalled toolchains to reclaim several GB 
+      # This removes large preinstalled toolchains to reclaim several GB
       - name: Free up disk space (Linux)
         if: matrix.os_key == 'linux'
         run: |
@@ -43,7 +43,7 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@v4
         with:
-          python-version: '3.12.x'
+          python-version: "3.12.x"
           # on macOS only: select arm64 or x64
           architecture: ${{ matrix.os_key == 'macos' && matrix.arch || '' }}
 
@@ -53,6 +53,7 @@ jobs:
         shell: bash
         run: |
           pip install git+https://github.com/huggingface/diffusers.git
+          pip install -r requirements.txt
           pip install https://github.com/vBaiCai/python-pesq/archive/master.zip
           if [[ "${{ runner.os }}" == "macOS" ]]; then
             pip install --no-cache-dir --upgrade --pre \
@@ -63,7 +64,6 @@ jobs:
               torch torchvision torchaudio \
               --index-url https://download.pytorch.org/whl/nightly/cu128
           fi
-          pip install -r requirements.txt
           pip install pyinstaller
 
       - name: Install Diffusers & PESQ + PyInstaller (Windows)
@@ -71,11 +71,11 @@ jobs:
         shell: pwsh
         run: |
           pip install git+https://github.com/huggingface/diffusers.git
+          pip install -r requirements.txt
           pip install https://github.com/vBaiCai/python-pesq/archive/master.zip
           pip install --no-cache-dir --upgrade --pre `
             torch torchvision torchaudio `
             --index-url https://download.pytorch.org/whl/nightly/cu128
-          pip install -r requirements.txt
           pip install pyinstaller
 
       # ─── Build Python binary ───
@@ -84,22 +84,22 @@ jobs:
         shell: bash
         run: |
           mkdir -p binaries/${{ matrix.os_key }}-${{ matrix.arch }}
-          pyinstaller --onefile \
+          pyinstaller \
             --distpath binaries/${{ matrix.os_key }}-${{ matrix.arch }} \
             --workpath $RUNNER_TEMP/pybuild-${{ matrix.os_key }}-${{ matrix.arch }} \
             --specpath $RUNNER_TEMP/pybuild-${{ matrix.os_key }}-${{ matrix.arch }} \
-            $MAIN_PY_FILE
+            diffuser.spec
 
       - name: Build Python binary (Windows)
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
           New-Item -ItemType Directory binaries\${{ matrix.os_key }}-${{ matrix.arch }} -Force
-          pyinstaller --onefile `
+          pyinstaller `
             --distpath binaries\${{ matrix.os_key }}-${{ matrix.arch }} `
             --workpath $env:RUNNER_TEMP\pybuild-${{ matrix.os_key }}-${{ matrix.arch }} `
             --specpath $env:RUNNER_TEMP\pybuild-${{ matrix.os_key }}-${{ matrix.arch }} `
-            $env:MAIN_PY_FILE
+            diffuser.spec
 
       # ─── Build Electron app ───
       - name: Set up Node.js

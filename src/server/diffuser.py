@@ -28,8 +28,6 @@ from transformers import T5EncoderModel, T5Tokenizer, CLIPVisionModel
 
 import torchaudio
 from einops import rearrange
-from stable_audio_tools import get_pretrained_model
-from stable_audio_tools.inference.generation import generate_diffusion_cond
 import soundfile as sf
 
 # from PIL import Image
@@ -297,46 +295,6 @@ def get_image_turbo():
     base64image = base64.b64encode(buffered.getvalue()).decode('utf-8')
     
     return {'prompt': prompt, 'image': base64image}, 201
-
-@app.route('/music', methods=['POST'])
-def get_sound():
-    # Download model
-    model, model_config = get_pretrained_model("stabilityai/stable-audio-open-1.0")
-    sample_rate = model_config["sample_rate"]
-    sample_size = model_config["sample_size"]
-
-    model = model.to(get_device())
-    payload = request.json
-    prompt=payload['prompt']
-    
-    # Set up text and timing conditioning
-    conditioning = [{
-        "prompt": prompt,
-        "seconds_start": 0, 
-        "seconds_total": 47
-    }]
-
-    # Generate stereo audio
-    output = generate_diffusion_cond(
-        model,
-        steps=500,
-        cfg_scale=10,
-        conditioning=conditioning,
-        sample_size=sample_size,
-        sigma_min=0.3,
-        sigma_max=500,
-        sampler_type="dpmpp-3m-sde",
-        device=get_device()
-    )
-
-    # Rearrange audio batch to a single sequence
-    output = rearrange(output, "b d n -> d (b n)")
-
-    # Peak normalize, clip, convert to int16, and save to file
-    output = output.to(torch.float32).div(torch.max(torch.abs(output))).clamp(-1, 1).mul(32767).to(torch.int16).cpu()
-    torchaudio.save("music.wav", output, sample_rate)
-    
-    return {'prompt': prompt}, 201
 
 
 # @app.route('/video/quality', methods=['POST'])

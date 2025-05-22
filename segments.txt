@@ -1,5 +1,0 @@
-file '/Users/wilhempujar/Development/bonzai-desktop-dapp/segment_0.mp4'
-file '/Users/wilhempujar/Development/bonzai-desktop-dapp/segment_1.mp4'
-file '/Users/wilhempujar/Development/bonzai-desktop-dapp/segment_2.mp4'
-file '/Users/wilhempujar/Development/bonzai-desktop-dapp/segment_3.mp4'
-file '/Users/wilhempujar/Development/bonzai-desktop-dapp/segment_4.mp4'
