@@ -59,9 +59,26 @@ export default {
           throw new Error(`Binary directory not found: ${binFolder}`);
         }
 
-        // E) copy just the first file (diffuser or diffuser.exe)
-        const [exeName] = fs.readdirSync(binFolder);
-        const srcPath = path.join(binFolder, exeName);
+        // Determine the source path:
+        let srcPath = binFolder;
+        const stat = fs.statSync(binFolder);
+        if (stat.isDirectory()) {
+          // Drill in: expect exactly one entry (the folder or file)
+          const entries = fs.readdirSync(binFolder);
+          if (entries.length !== 1) {
+            throw new Error(
+              `Expected one entry in ${binFolder}, found: ${entries}`
+            );
+          }
+          const entry = entries[0];
+          // If that entry is itself a folder, look inside once more
+          const candidate = path.join(binFolder, entry);
+          const cstat = fs.statSync(candidate);
+          srcPath = cstat.isDirectory()
+            ? path.join(candidate, entry) // nested folder/executable
+            : candidate; // direct file
+        }
+
         const destPath = path.join(serverDir, "python-binary");
         fs.copyFileSync(srcPath, destPath);
 
