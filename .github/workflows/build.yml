@@ -83,7 +83,7 @@ jobs:
         if: runner.os != 'Windows'
         run: |
           mkdir -p binaries/${OS_KEY}-${ARCH_KEY}
-          pyinstaller --onefile \
+          pyinstaller \
             --distpath binaries/${OS_KEY}-${ARCH_KEY} \
             --workpath $RUNNER_TEMP/pybuild-${OS_KEY}-${ARCH_KEY} \
             diffuser.spec
@@ -93,10 +93,10 @@ jobs:
         shell: pwsh
         run: |
           New-Item -ItemType Directory binaries\${OS_KEY}-${ARCH_KEY} -Force
-          pyinstaller --onefile `
+          pyinstaller `
             --distpath binaries\${OS_KEY}-${ARCH_KEY} `
             --workpath $env:RUNNER_TEMP\pybuild-${OS_KEY}-${ARCH_KEY} `
-            $env:MAIN_PY_FILE
+            diffuser.spec
 
       # ─── macOS: Sign & Notarize Python binary ───────────────────────
       - name: Create & unlock keychain (macOS)
