@@ -126,7 +126,7 @@ jobs:
         if: matrix.os_key == 'macos'
         run: |
           BIN_PATH="binaries/${OS_KEY}-${ARCH_KEY}/diffuser"
-          codesign --timestamp --options runtime \
+          codesign --force --deep --timestamp --options runtime \
             --sign "Developer ID Application: ${APPLE_ID}" \
             "$BIN_PATH"                                       :contentReference[oaicite:3]{index=3}
 
