@@ -22,10 +22,15 @@ export default {
 
     // 3) macOS signing/notarization
     osxSign: {
-      /* … */
+      hardenedRuntime: true,
+      entitlements: 'entitlements.mac.plist',
+      'entitlements-inherit': 'entitlements.mac.plist',
+      gatekeeperAssess: true,         // ← ensures nested code is checked
     },
     osxNotarize: {
-      /* … */
+      appleId: process.env.APPLE_ID,
+      appleIdPassword: process.env.APPLE_APP_SPECIFIC_PASSWORD,
+      teamId: process.env.APPLE_TEAM_ID,
     },
 
     // 4) AFTER extraResource is copied, embed the correct PyInstaller output

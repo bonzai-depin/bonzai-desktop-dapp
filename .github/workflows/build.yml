@@ -25,13 +25,15 @@ jobs:
 
     env:
       MAIN_PY_FILE: src/server/diffuser.py
+      # Reuse the same vars as Release:
+      OS_KEY:        ${{ matrix.os_key }}
+      ARCH_KEY:      ${{ matrix.arch }}
 
     steps:
       - name: Checkout code
         uses: actions/checkout@v3
 
       # ─── FREE UP SPACE ON LINUX ──────────────────────────────────────
-      # This removes large preinstalled toolchains to reclaim several GB
       - name: Free up disk space (Linux)
         if: matrix.os_key == 'linux'
         run: |
@@ -44,16 +46,13 @@ jobs:
         uses: actions/setup-python@v4
         with:
           python-version: "3.12.x"
-          # on macOS only: select arm64 or x64
           architecture: ${{ matrix.os_key == 'macos' && matrix.arch || '' }}
 
-      # ─── Install extra deps & PyInstaller ───
-      - name: Install Diffusers & PESQ + PyInstaller (macOS/Linux)
+      # ─── Install Diffusers, PESQ, torch & PyInstaller ──────────────
+      - name: Install python deps & PyInstaller (macOS/Linux)
         if: runner.os != 'Windows'
-        shell: bash
         run: |
           pip install git+https://github.com/huggingface/diffusers.git
-          pip install -r requirements.txt
           pip install https://github.com/vBaiCai/python-pesq/archive/master.zip
           if [[ "${{ runner.os }}" == "macOS" ]]; then
             pip install --no-cache-dir --upgrade --pre \
@@ -64,43 +63,91 @@ jobs:
               torch torchvision torchaudio \
               --index-url https://download.pytorch.org/whl/nightly/cu128
           fi
+          pip install -r requirements.txt
           pip install pyinstaller
 
-      - name: Install Diffusers & PESQ + PyInstaller (Windows)
+      - name: Install python deps & PyInstaller (Windows)
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
           pip install git+https://github.com/huggingface/diffusers.git
-          pip install -r requirements.txt
           pip install https://github.com/vBaiCai/python-pesq/archive/master.zip
           pip install --no-cache-dir --upgrade --pre `
             torch torchvision torchaudio `
             --index-url https://download.pytorch.org/whl/nightly/cu128
+          pip install -r requirements.txt
           pip install pyinstaller
 
-      # ─── Build Python binary ───
+      # ─── Build Python binary ────────────────────────────────────────
       - name: Build Python binary (macOS/Linux)
         if: runner.os != 'Windows'
-        shell: bash
         run: |
-          mkdir -p binaries/${{ matrix.os_key }}-${{ matrix.arch }}
-          pyinstaller \
-            --distpath binaries/${{ matrix.os_key }}-${{ matrix.arch }} \
-            --workpath $RUNNER_TEMP/pybuild-${{ matrix.os_key }}-${{ matrix.arch }} \
-            diffuser.spec
+          mkdir -p binaries/${OS_KEY}-${ARCH_KEY}
+          pyinstaller --onefile \
+            --distpath binaries/${OS_KEY}-${ARCH_KEY} \
+            --workpath $RUNNER_TEMP/pybuild-${OS_KEY}-${ARCH_KEY} \
+            --specpath $RUNNER_TEMP/pybuild-${OS_KEY}-${ARCH_KEY} \
+            $MAIN_PY_FILE
 
       - name: Build Python binary (Windows)
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
-          New-Item -ItemType Directory binaries\${{ matrix.os_key }}-${{ matrix.arch }} -Force
-          pyinstaller `
-            --distpath binaries\${{ matrix.os_key }}-${{ matrix.arch }} `
-            --workpath $env:RUNNER_TEMP\pybuild-${{ matrix.os_key }}-${{ matrix.arch }} `
-            diffuser.spec
+          New-Item -ItemType Directory binaries\${OS_KEY}-${ARCH_KEY} -Force
+          pyinstaller --onefile `
+            --distpath binaries\${OS_KEY}-${ARCH_KEY} `
+            --workpath $env:RUNNER_TEMP\pybuild-${OS_KEY}-${ARCH_KEY} `
+            --specpath $env:RUNNER_TEMP\pybuild-${OS_KEY}-${ARCH_KEY} `
+            $env:MAIN_PY_FILE
 
-      # ─── Build Electron app ───
-      - name: Set up Node.js
+      # ─── macOS: Sign & Notarize Python binary ───────────────────────
+      - name: Create & unlock keychain (macOS)
+        if: matrix.os_key == 'macos'
+        run: |
+          security create-keychain -p "$KEYCHAIN_PASSWORD" build.keychain
+          security default-keychain -s build.keychain
+          security unlock-keychain -p "$KEYCHAIN_PASSWORD" build.keychain
+          security set-keychain-settings -lut 3600 build.keychain      # timeout 1h :contentReference[oaicite:1]{index=1}
+
+      - name: Import Developer ID cert (macOS)
+        if: matrix.os_key == 'macos'
+        env:
+          MAC_CERT_BASE64:        ${{ secrets.MAC_APP_CERT_BASE64 }}
+          MAC_CERT_PASSWORD:      ${{ secrets.MAC_APP_CERT_PASSWORD }}
+          KEYCHAIN_PASSWORD:      ${{ secrets.KEYCHAIN_PASSWORD }}
+        run: |
+          echo "$MAC_CERT_BASE64" | base64 --decode > /tmp/app.p12
+          security import /tmp/app.p12 \
+            -k ~/Library/Keychains/build.keychain \
+            -P "$MAC_CERT_PASSWORD" \
+            -T /usr/bin/codesign                                 :contentReference[oaicite:2]{index=2}
+
+      - name: Code-sign Python binary (macOS)
+        if: matrix.os_key == 'macos'
+        run: |
+          BIN_PATH="binaries/${OS_KEY}-${ARCH_KEY}/diffuser"
+          codesign --timestamp --options runtime \
+            --sign "Developer ID Application: ${APPLE_ID}" \
+            "$BIN_PATH"                                       :contentReference[oaicite:3]{index=3}
+
+      - name: Package & Notarize Python binary (macOS)
+        if: matrix.os_key == 'macos'
+        env:
+          APPLE_ID:                    ${{ secrets.APPLE_ID }}
+          APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
+          APPLE_TEAM_ID:               ${{ secrets.APPLE_TEAM_ID }}
+        run: |
+          # package into .zip for notarization
+          ZIP_NAME="py-${OS_KEY}-${ARCH_KEY}.zip"
+          zip -j "$ZIP_NAME" "binaries/${OS_KEY}-${ARCH_KEY}/diffuser"
+          xcrun notarytool submit "$ZIP_NAME" \
+            --wait \
+            --apple-id "$APPLE_ID" \
+            --password "$APPLE_APP_SPECIFIC_PASSWORD" \
+            --team-id "$APPLE_TEAM_ID"                       :contentReference[oaicite:4]{index=4}
+
+      # ─── Build Electron app ────────────────────────────────────────
+      - name: Setup Node.js
         uses: actions/setup-node@v3
         with:
           node-version: 20
@@ -109,23 +156,24 @@ jobs:
         run: npm install
 
       - name: Build Electron app
-        shell: bash
         run: |
-          if [[ "${{ matrix.os_key }}" == "macos" && "${{ matrix.arch }}" == "x64" ]]; then
+          if [[ "${OS_KEY}" == "macos" && "${ARCH_KEY}" == "x64" ]]; then
             npm run make -- --arch=x64
           else
             npm run make
           fi
 
-      # ─── Upload Python binary artifact ───
+      # ─── Upload Python binary artifact ─────────────────────────────
       - name: Upload Python binary artifact
         uses: actions/upload-artifact@v4
         with:
-          name: python-${{ matrix.os_key }}-${{ matrix.arch }}
-          path: binaries/${{ matrix.os_key }}-${{ matrix.arch }}/
+          name: python-${OS_KEY}-${ARCH_KEY}
+          path: |
+            binaries/${OS_KEY}-${ARCH_KEY}/
+            py-${OS_KEY}-${ARCH_KEY}.zip
 
   comment:
-    name: Comment PR with Artifacts Link
+    name: Comment PR with Artifacts Links
     needs: build
     runs-on: ubuntu-latest
 
@@ -136,11 +184,16 @@ jobs:
           github-token: ${{ secrets.GITHUB_TOKEN }}
           script: |
             const { owner, repo } = context.repo;
-            const pr = context.payload.pull_request.number;
-            const url = `https://github.com/${owner}/${repo}/suites/${context.runId}/artifacts`;
-            await github.rest.issues.createComment({
-              owner,
-              repo,
-              issue_number: pr,
-              body: `🔧 **Build artifacts are ready!**\n\nDownload here: ${url}`
+            const runId = context.runId;                                               // :contentReference[oaicite:5]{index=5}
+            const resp = await github.actions.listWorkflowRunArtifacts({
+              owner, repo, run_id: runId                                             // :contentReference[oaicite:6]{index=6}
             });
+            const lines = resp.data.artifacts.map(a => {
+              const url = `https://github.com/${owner}/${repo}/actions/runs/${runId}/artifacts/${a.id}`;
+              return `- [${a.name}](${url})`;
+            });
+            await github.rest.issues.createComment({
+              owner, repo,
+              issue_number: context.payload.pull_request.number,
+              body: ['🔧 **Build artifacts are ready!**', '', ...lines].join('\n')
+            });                                                                         :contentReference[oaicite:7]{index=7}
