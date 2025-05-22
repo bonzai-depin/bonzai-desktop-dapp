@@ -20,8 +20,10 @@ export default {
     // tmpdir: path.resolve(__dirname, "..", "tmp"), // :contentReference[oaicite:6]{index=6}
     tmpdir: process.env.RUNNER_TEMP,
     // 2) Ship your Python scripts + CI-built binaries
-    extraResource: [path.resolve(__dirname, "src", "server")], // :contentReference[oaicite:7]{index=7}
-
+    extraResource: [
+      path.resolve(__dirname, "src", "server"),
+      path.resolve(__dirname, "binaries")
+    ],
     // 3) macOS signing/notarization
     osxSign: {
       hardenedRuntime: true,
