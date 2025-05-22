@@ -36,20 +36,18 @@ export default {
           platform === "darwin"
             ? path.join(buildPath, `${appName}.app`, "Contents", "Resources")
             : path.join(buildPath, "resources");
-
+    
         // B) ensure server folder exists
         const serverDir = path.join(resourcesRoot, "server");
         fs.mkdirSync(serverDir, { recursive: true });
-
-        // C) pick platform key matching your build folder
+    
+        // C) platform key
         const platformKey =
-          platform === "darwin"
-            ? "macos"
-            : platform === "win32"
-            ? "windows"
-            : "linux";
-
-        // D) locate only that arch’s binary folder
+          platform === "darwin" ? "macos"
+          : platform === "win32" ? "windows"
+          : "linux";
+    
+        // D) find the top-level binary folder in your repo (not the temp path)
         const binFolder = path.resolve(
           __dirname,
           "binaries",
@@ -58,44 +56,40 @@ export default {
         if (!fs.existsSync(binFolder)) {
           throw new Error(`Binary directory not found: ${binFolder}`);
         }
-
-        // Determine the source path:
-        let srcPath = binFolder;
-        const stat = fs.statSync(binFolder);
+    
+        // E) drill down if necessary
+        let current = binFolder;
+        let stat = fs.statSync(current);
         if (stat.isDirectory()) {
-          // Drill in: expect exactly one entry (the folder or file)
-          const entries = fs.readdirSync(binFolder);
-          if (platform === "win32") {
-            // On Windows, look specifically for the .exe
-            const exeEntry = entries.find((e) =>
-              e.toLowerCase().endsWith(".exe")
-            );
-            if (!exeEntry) {
-              throw new Error(`No .exe found in ${binFolder}`);
-            }
-            srcPath = path.join(binFolder, exeEntry);
-          } else {
-            // On mac/linux, expect exactly one file/folder
-            if (entries.length !== 1) {
-              throw new Error(
-                `Expected one entry in ${binFolder}, found: ${entries}`
-              );
-            }
-            const entry = entries[0];
-            const candidate = path.join(binFolder, entry);
-            const cstat = fs.statSync(candidate);
-            srcPath = cstat.isDirectory()
-              ? path.join(candidate, entry) // nested folder/executable
-              : candidate; // direct file
+          const entries = fs.readdirSync(current);
+    
+          // if there’s exactly one subfolder (e.g. 'diffuser'), descend into it
+          if (entries.length === 1 && fs.statSync(path.join(current, entries[0])).isDirectory()) {
+            current = path.join(current, entries[0]);
           }
         }
-
+    
+        // F) now look for the actual .exe (Windows) or file (elsewhere)
+        let srcPath;
+        const finalEntries = fs.readdirSync(current);
+        if (platform === "win32") {
+          const exe = finalEntries.find(e => e.toLowerCase().endsWith(".exe"));
+          if (!exe) throw new Error(`No .exe found in ${current}`);
+          srcPath = path.join(current, exe);
+        } else {
+          // macOS/Linux: pick the single file
+          if (finalEntries.length !== 1) {
+            throw new Error(`Expected one file in ${current}, found: ${finalEntries}`);
+          }
+          srcPath = path.join(current, finalEntries[0]);
+        }
+    
+        // G) copy it
         const destPath = path.join(serverDir, "python-binary");
         fs.copyFileSync(srcPath, destPath);
-
         console.log(`Copied ${srcPath} → ${destPath}`);
       },
-    ],
+    ],    
   },
 
   makers: [
