@@ -61,28 +61,27 @@ export default {
 
         // Determine the source path:
         let srcPath = binFolder;
-        const stat = fs.statSync(binFolder);
-        if (stat.isDirectory()) {
-          // Drill in: expect exactly one entry (the folder or file)
+        const stats = fs.statSync(binFolder);
+        if (stats.isDirectory()) {
+          // List entries inside that folder
           const entries = fs.readdirSync(binFolder);
-          if (entries.length !== 1) {
-            throw new Error(
-              `Expected one entry in ${binFolder}, found: ${entries}`
-            );
+          if (entries.length === 0) {
+            throw new Error(`No files in binary folder: ${binFolder}`);
           }
-          const entry = entries[0];
-          // If that entry is itself a folder, look inside once more
-          const candidate = path.join(binFolder, entry);
-          const cstat = fs.statSync(candidate);
-          srcPath = cstat.isDirectory()
-            ? path.join(candidate, entry) // nested folder/executable
-            : candidate; // direct file
+  
+          // Pick the first file matching an executable pattern
+          // On Windows: *.exe, on others: no extension or match name
+          const execEntry = entries.find(e =>
+            platform === 'win32' ? e.toLowerCase().endsWith('.exe') : !e.includes('.')
+          ) || entries[0];
+  
+          srcPath = path.join(binFolder, execEntry);
         }
-
-        const destPath = path.join(serverDir, "python-binary");
+  
+        // Copy that single file into server/python-binary
+        const destPath = path.join(serverDir, 'python-binary');
         fs.copyFileSync(srcPath, destPath);
-
-        console.log(`Copied ${srcPath} → ${destPath}`);
+        console.log(`Copied binary from ${srcPath} → ${destPath}`);
       },
     ],
   },
