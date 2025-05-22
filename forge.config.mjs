@@ -82,7 +82,7 @@ export default {
         const destPath = path.join(serverDir, "python-binary");
         fs.copyFileSync(srcPath, destPath);
 
-        console.log(`Copied ${exeName} → ${destPath}`);
+        console.log(`Copied ${srcPath} → ${destPath}`);
       },
     ],
   },
