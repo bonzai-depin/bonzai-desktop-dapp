@@ -98,14 +98,5 @@ exe = EXE(
     strip=False,
     upx=True,
     console=True,              # or False if you don’t need a console
-)
-
-coll = COLLECT(
-    exe,
-    a.binaries,
-    a.zipfiles,
-    a.datas,
-    strip=False,
-    upx=True,
-    name='diffuser',           # name of the output folder
+    onefile=True
 )
