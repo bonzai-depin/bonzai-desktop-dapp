@@ -10,9 +10,9 @@ jobs:
     strategy:
       matrix:
         include:
-          # - os: ubuntu-latest
-          #   os_key: linux
-          #   arch: x64
+          - os: ubuntu-latest
+            os_key: linux
+            arch: x64
           - os: macos-latest
             os_key: macos
             arch: arm64
@@ -124,7 +124,7 @@ jobs:
         if: matrix.os_key == 'macos'
         run: |
           BIN_PATH="binaries/${OS_KEY}-${ARCH_KEY}/diffuser"
-          codesign --force --deep --timestamp --options runtime \
+          codesign --force --timestamp --options runtime \
             --sign "Developer ID Application: ${APPLE_ID}" \
             "$BIN_PATH"                                       :contentReference[oaicite:3]{index=3}
 
