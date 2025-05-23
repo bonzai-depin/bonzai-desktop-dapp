@@ -1,0 +1,113 @@
+# .github/workflows/sign-and-notarize.yml
+name: Sign & Notarize Existing Electron Builds
+
+on:
+  workflow_run:
+    workflows: ["Build & Comment Artifacts"]
+    types: [completed]
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  sign-macos:
+    if: >
+      github.event.workflow_run.conclusion == 'success' &&
+      matrix.os == 'macos'
+    runs-on: macos-latest
+    strategy:
+      matrix:
+        os: [macos-latest]
+        arch: [x64, arm64]
+
+    steps:
+      - name: Download unsigned artifacts
+        uses: actions/download-artifact@v3
+        with:
+          workflow: Build & Comment Artifacts
+          # adjust names to match your artifact names
+          path: unsigned/
+
+      - name: Set up Apple credentials
+        run: |
+          echo "${{ secrets.APPLE_ID_P12 }}" | base64 -d > /tmp/certs.p12
+          security create-keychain -p "$KEYCHAIN_PASSWORD" build.keychain
+          security default-keychain -s build.keychain
+          security unlock-keychain -p "$KEYCHAIN_PASSWORD" build.keychain
+          security import /tmp/certs.p12 \
+            -P "${{ secrets.MAC_APP_CERT_PASSWORD }}" \
+            -T /usr/bin/codesign
+      - name: Sign & notarize with action-macos-sign-notarize
+        uses: toitlang/action-macos-sign-notarize@v1.2.0
+        with:
+          certificate-path: /tmp/certs.p12
+          certificate-password: ${{ secrets.MAC_APP_CERT_PASSWORD }}
+          username: ${{ secrets.APPLE_ID }}
+          password: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
+          apple-team-id: ${{ secrets.APPLE_TEAM_ID }}
+          app-path: unsigned/my-electron-app-${{ matrix.arch }}.app
+      - name: Re-upload signed macOS bundle
+        uses: actions/upload-artifact@v3
+        with:
+          name: signed-macos-${{ matrix.arch }}
+          path: unsigned/my-electron-app-${{ matrix.arch }}.app
+
+  sign-windows:
+    if: >
+      github.event.workflow_run.conclusion == 'success' &&
+      matrix.os == 'windows'
+    runs-on: windows-latest
+    strategy:
+      matrix:
+        os: [windows-latest]
+        arch: [x64]
+
+    steps:
+      - name: Download unsigned artifacts
+        uses: actions/download-artifact@v3
+        with:
+          workflow: Build & Comment Artifacts
+          path: unsigned\
+
+      - name: Install Cert to Windows store
+        run: |
+          echo "${{ secrets.WINDOWS_PFX }}" | Out-File cert.pfx -Encoding Byte
+          $securePwd = ConvertTo-SecureString "${{ secrets.WINDOWS_CERT_PASSWORD }}" -AsPlainText -Force
+          Import-PfxCertificate -FilePath cert.pfx -CertStoreLocation cert:\CurrentUser\My -Password $securePwd
+
+      - name: Sign Electron exe
+        run: |
+          $exe = Join-Path unsigned\my-electron-app-${{ matrix.arch }}\MyApp.exe
+          signtool sign /fd SHA256 /a /f cert.pfx /p "${{ secrets.WINDOWS_CERT_PASSWORD }}" $exe
+      - name: Sign nested Python binary
+        run: |
+          $pyExe = Join-Path unsigned\my-electron-app-${{ matrix.arch }}\resources\server\diffuser.exe
+          signtool sign /fd SHA256 /a /f cert.pfx /p "${{ secrets.WINDOWS_CERT_PASSWORD }}" $pyExe
+
+      - name: Re-upload signed Windows bundle
+        uses: actions/upload-artifact@v3
+        with:
+          name: signed-windows-${{ matrix.arch }}
+          path: unsigned\my-electron-app-${{ matrix.arch }}\
+
+  sign-linux:
+    if: github.event.workflow_run.conclusion == 'success' && matrix.os == 'linux'
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Download unsigned artifacts
+        uses: actions/download-artifact@v3
+        with:
+          workflow: Build & Comment Artifacts
+          path: unsigned/
+
+      - name: (Optional) GPG-sign Linux binary
+        run: |
+          # you can gpg-sign here if desired
+
+      - name: Re-upload Linux bundle
+        uses: actions/upload-artifact@v3
+        with:
+          name: signed-linux-${{ matrix.arch }}
+          path: unsigned/my-electron-app-${{ matrix.arch }}/

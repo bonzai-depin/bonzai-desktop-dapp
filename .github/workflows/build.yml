@@ -38,7 +38,7 @@ jobs:
           sudo rm -rf /usr/share/dotnet
           sudo rm -rf /opt/ghc
           sudo rm -rf "/usr/local/share/boost"
-          sudo rm -rf "$AGENT_TOOLSDIRECTORY"    # $AGENT_TOOLSDIRECTORY holds toolcache :contentReference[oaicite:0]{index=0}
+          sudo rm -rf "$AGENT_TOOLSDIRECTORY"
 
       - name: Set up Python
         uses: actions/setup-python@v4

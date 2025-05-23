@@ -4,92 +4,63 @@ import path from "node:path";
 import fs from "node:fs";
 
 const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
+const __dirname  = path.dirname(__filename);
 
-// your app name must match your executableName
-const appName = "bonzai";
+// ─── 1) Determine which binary to ship ──────────────────────────────
+const appName     = "bonzai";
+const platformKey = process.platform === "darwin"
+  ? "macos"
+  : process.platform === "win32"
+    ? "windows"
+    : "linux";
+const archKey     = process.arch;                // "x64" or "arm64"
+const binName     = process.platform === "win32" 
+  ? "diffuser.exe" 
+  : "diffuser";
+
+// Path to the single one-file PyInstaller binary built by your CI:
+const binSource = path.resolve(
+  __dirname,
+  "binaries",
+  `${platformKey}-${archKey}`,
+  binName
+);
+if (!fs.existsSync(binSource)) {
+  throw new Error(`Python binary not found at: ${binSource}`);
+}
 
 export default {
   packagerConfig: {
+    // ─── avoid subdir-of-itself & ENOSPC by using runner temp ───────
+    tmpdir: process.env.RUNNER_TEMP,                                  :contentReference[oaicite:0]{index=0}
+
+    // ─── app metadata & icons ────────────────────────────────────────
     icon: "./src/assets/logo",
     executableName: appName,
 
-    // 1) Put temp OUTSIDE the repo to avoid subdir-of-itself & ENOSPC
-    // tmpdir: path.resolve(__dirname, "..", "tmp"), // :contentReference[oaicite:6]{index=6}
-    tmpdir: process.env.RUNNER_TEMP,
-    // 2) Ship your Python scripts + CI-built binaries
-    extraResource: [path.resolve(__dirname, "src", "server")], // :contentReference[oaicite:7]{index=7}
+    // ─── copy only your server sources + the one binary ─────────────
+    extraResource: [
+      // your Flask / Python scripts
+      { from: path.resolve(__dirname, "src", "server"), to: "server" },
+      // exactly the one-file binary
+      { from: binSource, to: "server/python-binary" }
+    ],
 
-    // 3) macOS signing/notarization
+    // ─── keep python-binary unpacked so codesign/notarize see it ─────
+    asarUnpack: ["server/python-binary"],
+
+    // ─── macOS signing & notarization (will sign both app & nested exe) ─
     osxSign: {
-      /* … */
+      hardenedRuntime: true,
+      entitlements: "entitlements.mac.plist",
+      "entitlements-inherit": "entitlements.mac.plist",
+      gatekeeperAssess: true
     },
     osxNotarize: {
-      /* … */
-    },
-
-    // 4) AFTER extraResource is copied, embed the correct PyInstaller output
-    afterCopyExtraResources: [
-      async (buildPath, _ver, platform, arch) => {
-        // A) locate Resources root
-        const resourcesRoot =
-          platform === "darwin"
-            ? path.join(buildPath, `${appName}.app`, "Contents", "Resources")
-            : path.join(buildPath, "resources");
-    
-        // B) ensure server folder exists
-        const serverDir = path.join(resourcesRoot, "server");
-        fs.mkdirSync(serverDir, { recursive: true });
-    
-        // C) platform key
-        const platformKey =
-          platform === "darwin" ? "macos"
-          : platform === "win32" ? "windows"
-          : "linux";
-    
-        // D) top-level binary folder in repo
-        let current = path.resolve(__dirname, "binaries", `${platformKey}-${arch}`);
-        if (!fs.existsSync(current)) {
-          throw new Error(`Binary directory not found: ${current}`);
-        }
-    
-        // E) descend if there’s exactly one subfolder (e.g. 'diffuser')
-        if (fs.statSync(current).isDirectory()) {
-          const entries = fs.readdirSync(current);
-          if (entries.length === 1 && fs.statSync(path.join(current, entries[0])).isDirectory()) {
-            current = path.join(current, entries[0]);
-          }
-        }
-    
-        // F) pick the actual executable file
-        const entries = fs.readdirSync(current).filter(e =>
-          fs.statSync(path.join(current, e)).isFile()
-        );
-        if (entries.length === 0) {
-          throw new Error(`No files found in ${current}`);
-        }
-    
-        let exeName;
-        if (platform === "win32") {
-          // On Windows, look for diffuser.exe
-          exeName = entries.find(e => e.toLowerCase().endsWith(".exe"));
-          if (!exeName) throw new Error(`No .exe found in ${current}`);
-        } else {
-          // On macOS/Linux, always pick the literal "diffuser"
-          if (!entries.includes("diffuser")) {
-            throw new Error(`"diffuser" not found in ${current}: ${entries}`);
-          }
-          exeName = "diffuser";
-        }
-    
-        const srcPath = path.join(current, exeName);
-        const destPath = path.join(serverDir, "python-binary");
-        fs.copyFileSync(srcPath, destPath);
-    
-        console.log(`Copied ${srcPath} → ${destPath}`);
-      },
-    ],
-    
+      appleId: process.env.APPLE_ID,
+      appleIdPassword: process.env.APPLE_APP_SPECIFIC_PASSWORD,
+      teamId: process.env.APPLE_TEAM_ID
+    }
   },
 
   makers: [
@@ -99,14 +70,11 @@ export default {
         background: "./src/assets/background.png",
         format: "ULFO",
         iconSize: 192,
-        window: { width: 1000, height: 560 },
-      },
+        window: { width: 1000, height: 560 }
+      }
     },
-    { name: "@electron-forge/maker-deb", config: { bin: appName } },
-    {
-      name: "@electron-forge/maker-squirrel",
-      config: { icon: "./src/assets/logo" },
-    },
+    { name: "@electron-forge/maker-deb",    config: { bin: appName } },
+    { name: "@electron-forge/maker-squirrel", config: { icon: "./src/assets/logo" } }
   ],
 
   publishers: [
@@ -115,9 +83,9 @@ export default {
       config: {
         repository: { owner: "bonzai-depin", name: "bonzai-desktop-dapp" },
         prerelease: false,
-        draft: true,
-      },
-    },
+        draft: true
+      }
+    }
   ],
 
   plugins: [
@@ -125,11 +93,11 @@ export default {
       name: "@electron-forge/plugin-vite",
       config: {
         build: [
-          { entry: "src/main.js", config: "vite.main.config.ts" },
-          { entry: "src/preload.js", config: "vite.preload.config.ts" },
+          { entry: "src/main.js",    config: "vite.main.config.ts"    },
+          { entry: "src/preload.js", config: "vite.preload.config.ts" }
         ],
-        renderer: [{ name: "main_window", config: "vite.renderer.config.ts" }],
-      },
-    },
-  ],
+        renderer: [{ name: "main_window", config: "vite.renderer.config.ts" }]
+      }
+    }
+  ]
 };
