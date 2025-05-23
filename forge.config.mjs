@@ -6,48 +6,56 @@ import fs from "node:fs";
 const __filename = fileURLToPath(import.meta.url);
 const __dirname  = path.dirname(__filename);
 
-// Determine the binary file for this OS/arch
+// 1) Determine current platform & arch:
 const platformKey = process.platform === "darwin"
   ? "macos"
   : process.platform === "win32"
     ? "windows"
     : "linux";
-const arch = process.arch;
-const binName = process.platform === "win32" ? "diffuser.exe" : "diffuser";
+const archKey = process.arch;  // x64 or arm64
+
+// 2) Decide expected binary name:
+const binName = process.platform === "win32"
+  ? "diffuser.exe"
+  : "diffuser";
+
+// 3) Resolve its source path in your repo:
 const binSource = path.resolve(
   __dirname,
   "binaries",
-  `${platformKey}-${arch}`,
+  `${platformKey}-${archKey}`,
   binName
 );
 if (!fs.existsSync(binSource)) {
-  throw new Error(`Expected Python binary at ${binSource}`);
+  throw new Error(`Python binary not found at: ${binSource}`);
 }
 
 export default {
   packagerConfig: {
-    // 1) Use runner temp for all ephemeral data
-    tmpdir: process.env.RUNNER_TEMP,
+    // ─── Use runner temp to avoid ENOSPC & subdir-of-itself ───
+    tmpdir: process.env.RUNNER_TEMP,                           
 
-    // 2) App icon & name
+    // ─── App metadata ────────────────────────────────────────
     icon: "./src/assets/logo",
     executableName: "bonzai",
 
-    // 3) Only ship server scripts + the one correct binary
-    extraResource: [
-      { from: path.resolve(__dirname, "src", "server"), to: "server" },
-      { from: binSource,                          to: "server/python-binary" }
+    // ─── CORRECT key for extra resources ─────────────────────
+    extraResources: [
+      // copy your Flask scripts
+      { from: path.resolve(__dirname, "src", "server"), to: "server" },  
+      // copy exactly the one-file binary
+      { from: binSource,                            to: "server/python-binary" }
     ],
 
-    // 4) Prevent Python binary from being packed into app.asar
-    asarUnpack: ["server/python-binary"],
+    // ─── Unpack the binary so it lives outside the ASAR ────────
+    asarUnpack: ["server/python-binary"],                         
 
-    // 5) macOS signing & notarization (applies to unpacked binary too)
+    // ─── macOS signing/notarization (affects unpacked binary too) ──
     osxSign: {
       hardenedRuntime: true,
       entitlements: "entitlements.mac.plist",
       "entitlements-inherit": "entitlements.mac.plist",
-      gatekeeperAssess: true,
+      gatekeeperAssess: true,  // ensure nested code is gatekeeper-checked
     },
     osxNotarize: {
       appleId: process.env.APPLE_ID,
@@ -66,7 +74,7 @@ export default {
         window: { width: 1000, height: 560 },
       },
     },
-    { name: "@electron-forge/maker-deb", config: { bin: "bonzai" } },
+    { name: "@electron-forge/maker-deb",     config: { bin: "bonzai" } },
     { name: "@electron-forge/maker-squirrel", config: { icon: "./src/assets/logo" } },
   ],
 
