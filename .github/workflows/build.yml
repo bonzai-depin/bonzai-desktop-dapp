@@ -1,7 +1,7 @@
-# .github/workflows/build.yml
 name: Build & Comment Artifacts
 
-on: pull_request
+on:
+  pull_request:
 
 jobs:
   build:
@@ -25,81 +25,91 @@ jobs:
 
     env:
       MAIN_PY_FILE: src/server/diffuser.py
-      OS_KEY:        ${{ matrix.os_key }}
-      ARCH_KEY:      ${{ matrix.arch }}
-      APPLE_ID:                   ${{ secrets.APPLE_ID }}
-      APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
-      APPLE_TEAM_ID:              ${{ secrets.APPLE_TEAM_ID }}
-      MAC_APP_CERT_PASSWORD:      ${{ secrets.MAC_APP_CERT_PASSWORD }}
-      MAC_INSTALLER_CERT_PASSWORD:  ${{ secrets.MAC_INSTALLER_CERT_PASSWORD }}
-      KEYCHAIN_PASSWORD:          ${{ secrets.KEYCHAIN_PASSWORD }}
 
     steps:
-      - uses: actions/checkout@v3
+      - name: Checkout code
+        uses: actions/checkout@v3
 
-      # ── free up space on Linux runners ───────────────────────────────
+      # ─── FREE UP SPACE ON LINUX ──────────────────────────────────────
+      # This removes large preinstalled toolchains to reclaim several GB
       - name: Free up disk space (Linux)
         if: matrix.os_key == 'linux'
-        run: sudo rm -rf /usr/share/dotnet /opt/ghc "/usr/local/share/boost" "$AGENT_TOOLSDIRECTORY"
+        run: |
+          sudo rm -rf /usr/share/dotnet
+          sudo rm -rf /opt/ghc
+          sudo rm -rf "/usr/local/share/boost"
+          sudo rm -rf "$AGENT_TOOLSDIRECTORY"    # $AGENT_TOOLSDIRECTORY holds toolcache :contentReference[oaicite:0]{index=0}
 
-      # ── Python + PyInstaller deps ───────────────────────────────────
       - name: Set up Python
         uses: actions/setup-python@v4
         with:
-          python-version: '3.12.x'
+          python-version: "3.12.x"
+          # on macOS only: select arm64 or x64
           architecture: ${{ matrix.os_key == 'macos' && matrix.arch || '' }}
 
-      - name: Install Python deps & PyInstaller
+      # ─── Install extra deps & PyInstaller ───
+      - name: Install Diffusers & PESQ + PyInstaller (macOS/Linux)
         if: runner.os != 'Windows'
+        shell: bash
         run: |
           pip install git+https://github.com/huggingface/diffusers.git
+          pip install -r requirements.txt
           pip install https://github.com/vBaiCai/python-pesq/archive/master.zip
           if [[ "${{ runner.os }}" == "macOS" ]]; then
-            pip install --pre --upgrade \
+            pip install --no-cache-dir --upgrade --pre \
               torch torchvision torchaudio \
               --index-url https://download.pytorch.org/whl/nightly/cpu
           else
-            pip install --pre --upgrade \
+            pip install --no-cache-dir --upgrade --pre \
               torch torchvision torchaudio \
               --index-url https://download.pytorch.org/whl/nightly/cu128
           fi
-          pip install -r requirements.txt pyinstaller
+          pip install pyinstaller
 
-      - name: Install Python deps & PyInstaller (Windows)
+      - name: Install Diffusers & PESQ + PyInstaller (Windows)
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
-          pip install git+https://github.com/huggingface/diffusers.git `
-          pip install --pre --upgrade torch torchvision torchaudio --index-url https://download.pytorch.org/whl/nightly/cu128 `
-          pip install -r requirements.txt `
+          pip install git+https://github.com/huggingface/diffusers.git
+          pip install -r requirements.txt
+          pip install https://github.com/vBaiCai/python-pesq/archive/master.zip
+          pip install --no-cache-dir --upgrade --pre `
+            torch torchvision torchaudio `
+            --index-url https://download.pytorch.org/whl/nightly/cu128
           pip install pyinstaller
 
-      # ── Build one-file Python binary ────────────────────────────────
+      # ─── Build Python binary ───
       - name: Build Python binary (macOS/Linux)
         if: runner.os != 'Windows'
+        shell: bash
         run: |
-          mkdir -p binaries/${OS_KEY}-${ARCH_KEY}
+          mkdir -p binaries/${{ matrix.os_key }}-${{ matrix.arch }}
           pyinstaller \
-            --distpath binaries/${OS_KEY}-${ARCH_KEY} \
-            --workpath $RUNNER_TEMP/pybuild-${OS_KEY}-${ARCH_KEY} \
+            --distpath binaries/${{ matrix.os_key }}-${{ matrix.arch }} \
+            --workpath $RUNNER_TEMP/pybuild-${{ matrix.os_key }}-${{ matrix.arch }} \
             diffuser.spec
 
       - name: Build Python binary (Windows)
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
-          New-Item -ItemType Directory binaries\${OS_KEY}-${ARCH_KEY} -Force
-          pyinstaller --distpath binaries\${OS_KEY}-${ARCH_KEY} `
-                      --workpath $env:RUNNER_TEMP\pybuild-${OS_KEY}-${ARCH_KEY} `
-                      diffuser.spec
+          New-Item -ItemType Directory binaries\${{ matrix.os_key }}-${{ matrix.arch }} -Force
+          pyinstaller `
+            --distpath binaries\${{ matrix.os_key }}-${{ matrix.arch }} `
+            --workpath $env:RUNNER_TEMP\pybuild-${{ matrix.os_key }}-${{ matrix.arch }} `
+            diffuser.spec
 
-      # ── Build & sign/notarize via Forge ────────────────────────────
-      - uses: actions/setup-node@v3
-        with: { node-version: 20 }
+      # ─── Build Electron app ───
+      - name: Set up Node.js
+        uses: actions/setup-node@v3
+        with:
+          node-version: 20
 
-      - run: npm ci
+      - name: Install Node dependencies
+        run: npm install
 
-      - name: Build Electron
+      - name: Build Electron app
+        shell: bash
         run: |
           if [[ "${{ matrix.os_key }}" == "macos" && "${{ matrix.arch }}" == "x64" ]]; then
             npm run make -- --arch=x64
@@ -107,11 +117,12 @@ jobs:
             npm run make
           fi
 
-      # ── Upload only the Python artifact ─────────────────────────────
-      - uses: actions/upload-artifact@v4
+      # ─── Upload Python binary artifact ───
+      - name: Upload Python binary artifact
+        uses: actions/upload-artifact@v4
         with:
-          name: python-${OS_KEY}-${ARCH_KEY}
-          path: binaries/${OS_KEY}-${ARCH_KEY}/
+          name: python-${{ matrix.os_key }}-${{ matrix.arch }}
+          path: binaries/${{ matrix.os_key }}-${{ matrix.arch }}/
 
   comment:
     needs: build
