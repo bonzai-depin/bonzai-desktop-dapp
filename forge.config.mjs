@@ -5,57 +5,82 @@ import fs from "node:fs";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname  = path.dirname(__filename);
-
-// 1) Determine current platform & arch:
-const platformKey = process.platform === "darwin"
-  ? "macos"
-  : process.platform === "win32"
-    ? "windows"
-    : "linux";
-const archKey = process.arch;  // x64 or arm64
-
-// 2) Decide expected binary name:
-const binName = process.platform === "win32"
-  ? "diffuser.exe"
-  : "diffuser";
-
-// 3) Resolve its source path in your repo:
-const binSource = path.resolve(
-  __dirname,
-  "binaries",
-  `${platformKey}-${archKey}`,
-  binName
-);
-if (!fs.existsSync(binSource)) {
-  throw new Error(`Python binary not found at: ${binSource}`);
-}
+const appName    = "bonzai";
 
 export default {
   packagerConfig: {
-    // ─── Use runner temp to avoid ENOSPC & subdir-of-itself ───
-    tmpdir: process.env.RUNNER_TEMP,                           
+    // avoid ENOSPC & “subdir of itself”
+    tmpdir: process.env.RUNNER_TEMP,
 
-    // ─── App metadata ────────────────────────────────────────
     icon: "./src/assets/logo",
-    executableName: "bonzai",
+    executableName: appName,
 
-    // ─── CORRECT key for extra resources ─────────────────────
+    // ship your Flask scripts + the entire binaries folder
     extraResources: [
-      // copy your Flask scripts
-      { from: path.resolve(__dirname, "src", "server"), to: "server" },  
-      // copy exactly the one-file binary
-      { from: binSource,                            to: "server/python-binary" }
+      { from: path.resolve(__dirname, "src", "server"), to: "server"  },
+      { from: path.resolve(__dirname, "binaries"),       to: "binaries" }
     ],
 
-    // ─── Unpack the binary so it lives outside the ASAR ────────
-    asarUnpack: ["server/python-binary"],                         
+    // leave the one-file binary unpacked so codesign can see it
+    asarUnpack: ["server/python-binary"],
 
-    // ─── macOS signing/notarization (affects unpacked binary too) ──
-    osxSign: {},
+    // minimal sign + notarize config
+    osxSign: {},  
     osxNotarize: {
-      appleId: process.env.APPLE_ID,
-      appleIdPassword: process.env.APPLE_APP_SPECIFIC_PASSWORD,
-      teamId: process.env.APPLE_TEAM_ID,
+      appleId:             process.env.APPLE_ID,
+      appleIdPassword:     process.env.APPLE_APP_SPECIFIC_PASSWORD,
+      teamId:              process.env.APPLE_TEAM_ID,
+    },
+  },
+
+  // after extraResources land in Resources (or resources/)
+  // find the right binary for this platform+arch and copy to server/python-binary
+  hooks: {
+    packageAfterCopy: async (_config, buildPath, _electronVersion, platform, arch) => {
+      // Resources root differs on macOS vs others:
+      const resourcesRoot = platform === "darwin"
+        ? path.join(buildPath, `${appName}.app`, "Contents", "Resources")
+        : path.join(buildPath, "resources");
+
+      const serverDir = path.join(resourcesRoot, "server");
+      fs.mkdirSync(serverDir, { recursive: true });
+
+      // map Node’s platform+arch to your binaries folder
+      const platformKey = platform === "darwin" ? "macos"
+                        : platform === "win32"  ? "windows"
+                        : "linux";
+      const binFolder = path.resolve(
+        __dirname,
+        "binaries",
+        `${platformKey}-${arch}`
+      );
+      if (!fs.existsSync(binFolder)) {
+        throw new Error(`Binary directory not found: ${binFolder}`);
+      }
+
+      // pick out the single executable file
+      const files = fs.readdirSync(binFolder).filter(f => {
+        const full = path.join(binFolder, f);
+        return fs.statSync(full).isFile();
+      });
+      if (files.length === 0) {
+        throw new Error(`No files in binary folder: ${binFolder}`);
+      }
+
+      // choose .exe on Windows, or literal “diffuser” on macOS/Linux
+      let exeName;
+      if (platform === "win32") {
+        exeName = files.find(f => f.toLowerCase().endsWith(".exe"));
+        if (!exeName) throw new Error(`No .exe in ${binFolder}`);
+      } else {
+        exeName = files.find(f => f === "diffuser");
+        if (!exeName) throw new Error(`"diffuser" missing in ${binFolder}`);
+      }
+
+      const src = path.join(binFolder, exeName);
+      const dest = path.join(serverDir, "python-binary");
+      fs.copyFileSync(src, dest);
+      console.log(`Copied ${src} → ${dest}`);
     },
   },
 
@@ -64,12 +89,12 @@ export default {
       name: "@electron-forge/maker-dmg",
       config: {
         background: "./src/assets/background.png",
-        format: "ULFO",
-        iconSize: 192,
-        window: { width: 1000, height: 560 },
+        format:     "ULFO",
+        iconSize:   192,
+        window:     { width: 1000, height: 560 },
       },
     },
-    { name: "@electron-forge/maker-deb",     config: { bin: "bonzai" } },
+    { name: "@electron-forge/maker-deb",     config: { bin: appName } },
     { name: "@electron-forge/maker-squirrel", config: { icon: "./src/assets/logo" } },
   ],
 
@@ -79,7 +104,7 @@ export default {
       config: {
         repository: { owner: "bonzai-depin", name: "bonzai-desktop-dapp" },
         prerelease: false,
-        draft: true,
+        draft:      true,
       },
     },
   ],
