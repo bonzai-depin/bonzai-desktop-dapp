@@ -51,12 +51,7 @@ export default {
     asarUnpack: ["server/python-binary"],                         
 
     // ─── macOS signing/notarization (affects unpacked binary too) ──
-    osxSign: {
-      hardenedRuntime: true,
-      entitlements: "entitlements.mac.plist",
-      "entitlements-inherit": "entitlements.mac.plist",
-      gatekeeperAssess: true,  // ensure nested code is gatekeeper-checked
-    },
+    osxSign: {},
     osxNotarize: {
       appleId: process.env.APPLE_ID,
       appleIdPassword: process.env.APPLE_APP_SPECIFIC_PASSWORD,

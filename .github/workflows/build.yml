@@ -27,17 +27,22 @@ jobs:
       MAIN_PY_FILE: src/server/diffuser.py
       OS_KEY:        ${{ matrix.os_key }}
       ARCH_KEY:      ${{ matrix.arch }}
+      APPLE_ID:                   ${{ secrets.APPLE_ID }}
+      APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
+      APPLE_TEAM_ID:              ${{ secrets.APPLE_TEAM_ID }}
+      MAC_APP_CERT_PASSWORD:      ${{ secrets.MAC_APP_CERT_PASSWORD }}
+      MAC_INSTALLER_CERT_PASSWORD:  ${{ secrets.MAC_INSTALLER_CERT_PASSWORD }}
+      KEYCHAIN_PASSWORD:          ${{ secrets.KEYCHAIN_PASSWORD }}
 
     steps:
       - uses: actions/checkout@v3
 
-      # Free up space on Linux runners
+      # ── free up space on Linux runners ───────────────────────────────
       - name: Free up disk space (Linux)
         if: matrix.os_key == 'linux'
-        run: |
-          sudo rm -rf /usr/share/dotnet /opt/ghc "/usr/local/share/boost" "$AGENT_TOOLSDIRECTORY"
+        run: sudo rm -rf /usr/share/dotnet /opt/ghc "/usr/local/share/boost" "$AGENT_TOOLSDIRECTORY"
 
-      # Install Python & dependencies
+      # ── Python + PyInstaller deps ───────────────────────────────────
       - name: Set up Python
         uses: actions/setup-python@v4
         with:
@@ -50,11 +55,11 @@ jobs:
           pip install git+https://github.com/huggingface/diffusers.git
           pip install https://github.com/vBaiCai/python-pesq/archive/master.zip
           if [[ "${{ runner.os }}" == "macOS" ]]; then
-            pip install --no-cache-dir --upgrade --pre \
+            pip install --pre --upgrade \
               torch torchvision torchaudio \
               --index-url https://download.pytorch.org/whl/nightly/cpu
           else
-            pip install --no-cache-dir --upgrade --pre \
+            pip install --pre --upgrade \
               torch torchvision torchaudio \
               --index-url https://download.pytorch.org/whl/nightly/cu128
           fi
@@ -66,12 +71,11 @@ jobs:
         run: |
           pip install git+https://github.com/huggingface/diffusers.git `
                       https://github.com/vBaiCai/python-pesq/archive/master.zip `
-                      --no-cache-dir --upgrade --pre `
-                      torch torchvision torchaudio `
+                      --pre --upgrade torch torchvision torchaudio `
                       --index-url https://download.pytorch.org/whl/nightly/cu128
           pip install -r requirements.txt pyinstaller
 
-      # Build one-file Python binary
+      # ── Build one-file Python binary ────────────────────────────────
       - name: Build Python binary (macOS/Linux)
         if: runner.os != 'Windows'
         run: |
@@ -90,14 +94,11 @@ jobs:
                       --workpath $env:RUNNER_TEMP\pybuild-${OS_KEY}-${ARCH_KEY} `
                       diffuser.spec
 
-      # Build & sign/notarize Electron app via Forge
-      - name: Setup Node.js
-        uses: actions/setup-node@v3
-        with:
-          node-version: 20
+      # ── Build & sign/notarize via Forge ────────────────────────────
+      - uses: actions/setup-node@v3
+        with: { node-version: 20 }
 
-      - name: Install Node dependencies
-        run: npm ci
+      - run: npm ci
 
       - name: Build Electron
         run: |
@@ -106,16 +107,18 @@ jobs:
           else
             npm run make
           fi
+        env:
+          APPLE_ID:                   ${{ secrets.APPLE_ID }}
+          APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
+          APPLE_TEAM_ID:               ${{ secrets.APPLE_TEAM_ID }}
 
-      # Upload only the Python binary artifact
-      - name: Upload Python artifact
-        uses: actions/upload-artifact@v4
+      # ── Upload only the Python artifact ─────────────────────────────
+      - uses: actions/upload-artifact@v4
         with:
           name: python-${OS_KEY}-${ARCH_KEY}
           path: binaries/${OS_KEY}-${ARCH_KEY}/
 
   comment:
-    name: Comment PR with Artifacts Links
     needs: build
     runs-on: ubuntu-latest
     steps:
@@ -125,15 +128,12 @@ jobs:
           script: |
             const { owner, repo } = context.repo;
             const runId = context.runId;
-            const resp = await github.actions.listWorkflowRunArtifacts({
-              owner, repo, run_id: runId
-            });
+            const resp = await github.actions.listWorkflowRunArtifacts({ owner, repo, run_id: runId });
             const lines = resp.data.artifacts.map(a => {
-              const url = `https://github.com/${owner}/${repo}/actions/runs/${runId}/artifacts/${a.id}`;
-              return `- [${a.name}](${url})`;
+              const u = `https://github.com/${owner}/${repo}/actions/runs/${runId}/artifacts/${a.id}`;
+              return `- [${a.name}](${u})`;
             });
             await github.rest.issues.createComment({
-              owner, repo,
-              issue_number: context.payload.pull_request.number,
-              body: ['🔧 **Build artifacts are ready!**','', ...lines].join('\n')
+              owner, repo, issue_number: context.payload.pull_request.number,
+              body: ['🔧 **Build artifacts are ready!**','','…', ...lines].join('\n')
             });
