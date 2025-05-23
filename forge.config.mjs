@@ -23,14 +23,6 @@ export default {
 
     // leave the one-file binary unpacked so codesign can see it
     asarUnpack: ["server/python-binary"],
-
-    // minimal sign + notarize config
-    osxSign: {},  
-    osxNotarize: {
-      appleId:             process.env.APPLE_ID,
-      appleIdPassword:     process.env.APPLE_APP_SPECIFIC_PASSWORD,
-      teamId:              process.env.APPLE_TEAM_ID,
-    },
   },
 
   // after extraResources land in Resources (or resources/)

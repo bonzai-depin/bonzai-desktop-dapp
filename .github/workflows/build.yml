@@ -34,7 +34,7 @@ jobs:
       MAC_APP_CERT_PASSWORD:      ${{ secrets.MAC_APP_CERT_PASSWORD }}
       MAC_INSTALLER_CERT_PASSWORD:  ${{ secrets.MAC_INSTALLER_CERT_PASSWORD }}
       KEYCHAIN_PASSWORD:          ${{ secrets.KEYCHAIN_PASSWORD }}
-      
+
     steps:
       - name: Checkout code
         uses: actions/checkout@v3
@@ -87,38 +87,64 @@ jobs:
             --index-url https://download.pytorch.org/whl/nightly/cu128
           pip install pyinstaller
 
-      # ─── Build Python binary ───
-      - name: Build Python binary (macOS/Linux)
-        if: runner.os != 'Windows'
+      # ── Build one-file Python binary ────────────────────────────────
+      - name: Build Python binary
         shell: bash
         run: |
-          mkdir -p binaries/${{ matrix.os_key }}-${{ matrix.arch }}
+          mkdir -p binaries/${OS_KEY}-${ARCH_KEY}
           pyinstaller \
-            --distpath binaries/${{ matrix.os_key }}-${{ matrix.arch }} \
-            --workpath $RUNNER_TEMP/pybuild-${{ matrix.os_key }}-${{ matrix.arch }} \
+            --distpath binaries/${OS_KEY}-${ARCH_KEY} \
+            --workpath $RUNNER_TEMP/pybuild-${OS_KEY}-${ARCH_KEY} \
             diffuser.spec
 
-      - name: Build Python binary (Windows)
-        if: runner.os == 'Windows'
-        shell: pwsh
+      # ── On macOS: codesign & notarize the Python binary ─────────────
+      - name: Create & unlock keychain (macOS)
+        if: matrix.os_key == 'macos'
         run: |
-          New-Item -ItemType Directory binaries\${{ matrix.os_key }}-${{ matrix.arch }} -Force
-          pyinstaller `
-            --distpath binaries\${{ matrix.os_key }}-${{ matrix.arch }} `
-            --workpath $env:RUNNER_TEMP\pybuild-${{ matrix.os_key }}-${{ matrix.arch }} `
-            diffuser.spec
+          security create-keychain -p "$KEYCHAIN_PASSWORD" build.keychain
+          security default-keychain -s build.keychain
+          security unlock-keychain -p "$KEYCHAIN_PASSWORD" build.keychain
+          security set-keychain-settings -lut 3600 build.keychain
 
-      # ─── Build Electron app ───
-      - name: Set up Node.js
-        uses: actions/setup-node@v3
-        with:
-          node-version: 20
+      - name: Import Developer ID cert (macOS)
+        if: matrix.os_key == 'macos'
+        run: |
+          echo "${MAC_APP_CERT_BASE64}" | base64 -d > /tmp/app.p12
+          security import /tmp/app.p12 \
+            -k ~/Library/Keychains/build.keychain \
+            -P "$MAC_APP_CERT_PASSWORD" \
+            -T /usr/bin/codesign
 
-      - name: Install Node dependencies
-        run: npm install
+      - name: Codesign Python binary (macOS)
+        if: matrix.os_key == 'macos'
+        run: |
+          BIN="binaries/${OS_KEY}-${ARCH_KEY}/diffuser"
+          codesign --force --options runtime --timestamp \
+            --sign "Developer ID Application: ${APPLE_ID}" "$BIN"
 
-      - name: Build Electron app
+      - name: Zip & Notarize Python binary (macOS)
+        if: matrix.os_key == 'macos'
+        run: |
+          ZIP="py-${OS_KEY}-${ARCH_KEY}.zip"
+          zip -j "$ZIP" "binaries/${OS_KEY}-${ARCH_KEY}/diffuser"
+          xcrun notarytool submit "$ZIP" --wait \
+            --apple-id "$APPLE_ID" \
+            --password "$APPLE_APP_SPECIFIC_PASSWORD" \
+            --team-id "$APPLE_TEAM_ID"
+
+      # ── Build Electron app (with its nested binary) ─────────────────
+      - uses: actions/setup-node@v3
+        with: { node-version: 20 }
+
+      - name: Install Node deps
+        run: npm ci
+
+      - name: Build & Sign/Notarize Electron
         shell: bash
+        env:
+          # reuse the same Apple creds for Forge
+          ELECTRON_BUILDER_ALLOW_UNRESOLVED_DEPENDENCIES: true
+          CSC_NAME: "Developer ID Application: ${APPLE_ID}"
         run: |
           if [[ "${{ matrix.os_key }}" == "macos" && "${{ matrix.arch }}" == "x64" ]]; then
             npm run make -- --arch=x64
@@ -126,12 +152,11 @@ jobs:
             npm run make
           fi
 
-      # ─── Upload Python binary artifact ───
-      - name: Upload Python binary artifact
-        uses: actions/upload-artifact@v4
+      # ── Upload the Python artifact (for debugging) ───────────────────
+      - uses: actions/upload-artifact@v4
         with:
-          name: python-${{ matrix.os_key }}-${{ matrix.arch }}
-          path: binaries/${{ matrix.os_key }}-${{ matrix.arch }}/
+          name: python-${OS_KEY}-${ARCH_KEY}
+          path: binaries/${OS_KEY}-${ARCH_KEY}/
 
   comment:
     needs: build
