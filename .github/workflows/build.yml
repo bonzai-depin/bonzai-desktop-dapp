@@ -70,10 +70,9 @@ jobs:
         shell: pwsh
         run: |
           pip install git+https://github.com/huggingface/diffusers.git `
-                      https://github.com/vBaiCai/python-pesq/archive/master.zip `
-                      --pre --upgrade torch torchvision torchaudio `
-                      --index-url https://download.pytorch.org/whl/nightly/cu128
-          pip install -r requirements.txt pyinstaller
+          pip install --pre --upgrade torch torchvision torchaudio --index-url https://download.pytorch.org/whl/nightly/cu128 `
+          pip install -r requirements.txt `
+          pip install pyinstaller
 
       # ── Build one-file Python binary ────────────────────────────────
       - name: Build Python binary (macOS/Linux)
