@@ -1,8 +1,7 @@
 # .github/workflows/build.yml
 name: Build & Comment Artifacts
 
-on:
-  pull_request:
+on: pull_request
 
 jobs:
   build:
@@ -36,60 +35,48 @@ jobs:
       KEYCHAIN_PASSWORD:          ${{ secrets.KEYCHAIN_PASSWORD }}
 
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v3
+      - uses: actions/checkout@v3
 
-      # ─── FREE UP SPACE ON LINUX ──────────────────────────────────────
-      # This removes large preinstalled toolchains to reclaim several GB
+      # ── free up space on Linux runners ───────────────────────────────
       - name: Free up disk space (Linux)
         if: matrix.os_key == 'linux'
-        run: |
-          sudo rm -rf /usr/share/dotnet
-          sudo rm -rf /opt/ghc
-          sudo rm -rf "/usr/local/share/boost"
-          sudo rm -rf "$AGENT_TOOLSDIRECTORY"    # $AGENT_TOOLSDIRECTORY holds toolcache :contentReference[oaicite:0]{index=0}
+        run: sudo rm -rf /usr/share/dotnet /opt/ghc "/usr/local/share/boost" "$AGENT_TOOLSDIRECTORY"
 
+      # ── Python + PyInstaller deps ───────────────────────────────────
       - name: Set up Python
         uses: actions/setup-python@v4
         with:
-          python-version: "3.12.x"
-          # on macOS only: select arm64 or x64
+          python-version: '3.12.x'
           architecture: ${{ matrix.os_key == 'macos' && matrix.arch || '' }}
 
-      # ─── Install extra deps & PyInstaller ───
-      - name: Install Diffusers & PESQ + PyInstaller (macOS/Linux)
+      - name: Install Python deps & PyInstaller
         if: runner.os != 'Windows'
-        shell: bash
         run: |
           pip install git+https://github.com/huggingface/diffusers.git
-          pip install -r requirements.txt
           pip install https://github.com/vBaiCai/python-pesq/archive/master.zip
           if [[ "${{ runner.os }}" == "macOS" ]]; then
-            pip install --no-cache-dir --upgrade --pre \
+            pip install --pre --upgrade \
               torch torchvision torchaudio \
               --index-url https://download.pytorch.org/whl/nightly/cpu
           else
-            pip install --no-cache-dir --upgrade --pre \
+            pip install --pre --upgrade \
               torch torchvision torchaudio \
               --index-url https://download.pytorch.org/whl/nightly/cu128
           fi
-          pip install pyinstaller
+          pip install -r requirements.txt pyinstaller
 
-      - name: Install Diffusers & PESQ + PyInstaller (Windows)
+      - name: Install Python deps & PyInstaller (Windows)
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
-          pip install git+https://github.com/huggingface/diffusers.git
-          pip install -r requirements.txt
-          pip install https://github.com/vBaiCai/python-pesq/archive/master.zip
-          pip install --no-cache-dir --upgrade --pre `
-            torch torchvision torchaudio `
-            --index-url https://download.pytorch.org/whl/nightly/cu128
+          pip install git+https://github.com/huggingface/diffusers.git `
+          pip install --pre --upgrade torch torchvision torchaudio --index-url https://download.pytorch.org/whl/nightly/cu128 `
+          pip install -r requirements.txt `
           pip install pyinstaller
 
       # ── Build one-file Python binary ────────────────────────────────
-      - name: Build Python binary
-        shell: bash
+      - name: Build Python binary (macOS/Linux)
+        if: runner.os != 'Windows'
         run: |
           mkdir -p binaries/${OS_KEY}-${ARCH_KEY}
           pyinstaller \
@@ -97,54 +84,22 @@ jobs:
             --workpath $RUNNER_TEMP/pybuild-${OS_KEY}-${ARCH_KEY} \
             diffuser.spec
 
-      # ── On macOS: codesign & notarize the Python binary ─────────────
-      - name: Create & unlock keychain (macOS)
-        if: matrix.os_key == 'macos'
+      - name: Build Python binary (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
         run: |
-          security create-keychain -p "$KEYCHAIN_PASSWORD" build.keychain
-          security default-keychain -s build.keychain
-          security unlock-keychain -p "$KEYCHAIN_PASSWORD" build.keychain
-          security set-keychain-settings -lut 3600 build.keychain
+          New-Item -ItemType Directory binaries\${OS_KEY}-${ARCH_KEY} -Force
+          pyinstaller --distpath binaries\${OS_KEY}-${ARCH_KEY} `
+                      --workpath $env:RUNNER_TEMP\pybuild-${OS_KEY}-${ARCH_KEY} `
+                      diffuser.spec
 
-      - name: Import Developer ID cert (macOS)
-        if: matrix.os_key == 'macos'
-        run: |
-          echo "${MAC_APP_CERT_BASE64}" | base64 -d > /tmp/app.p12
-          security import /tmp/app.p12 \
-            -k ~/Library/Keychains/build.keychain \
-            -P "$MAC_APP_CERT_PASSWORD" \
-            -T /usr/bin/codesign
-
-      - name: Codesign Python binary (macOS)
-        if: matrix.os_key == 'macos'
-        run: |
-          BIN="binaries/${OS_KEY}-${ARCH_KEY}/diffuser"
-          codesign --force --options runtime --timestamp \
-            --sign "Developer ID Application: ${APPLE_ID}" "$BIN"
-
-      - name: Zip & Notarize Python binary (macOS)
-        if: matrix.os_key == 'macos'
-        run: |
-          ZIP="py-${OS_KEY}-${ARCH_KEY}.zip"
-          zip -j "$ZIP" "binaries/${OS_KEY}-${ARCH_KEY}/diffuser"
-          xcrun notarytool submit "$ZIP" --wait \
-            --apple-id "$APPLE_ID" \
-            --password "$APPLE_APP_SPECIFIC_PASSWORD" \
-            --team-id "$APPLE_TEAM_ID"
-
-      # ── Build Electron app (with its nested binary) ─────────────────
+      # ── Build & sign/notarize via Forge ────────────────────────────
       - uses: actions/setup-node@v3
         with: { node-version: 20 }
 
-      - name: Install Node deps
-        run: npm ci
+      - run: npm ci
 
-      - name: Build & Sign/Notarize Electron
-        shell: bash
-        env:
-          # reuse the same Apple creds for Forge
-          ELECTRON_BUILDER_ALLOW_UNRESOLVED_DEPENDENCIES: true
-          CSC_NAME: "Developer ID Application: ${APPLE_ID}"
+      - name: Build Electron
         run: |
           if [[ "${{ matrix.os_key }}" == "macos" && "${{ matrix.arch }}" == "x64" ]]; then
             npm run make -- --arch=x64
@@ -152,7 +107,7 @@ jobs:
             npm run make
           fi
 
-      # ── Upload the Python artifact (for debugging) ───────────────────
+      # ── Upload only the Python artifact ─────────────────────────────
       - uses: actions/upload-artifact@v4
         with:
           name: python-${OS_KEY}-${ARCH_KEY}

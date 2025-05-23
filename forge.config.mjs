@@ -22,7 +22,7 @@ export default {
     ],
 
     // leave the one-file binary unpacked so codesign can see it
-    asarUnpack: ["server/python-binary"],
+    // asarUnpack: ["server/python-binary"],
   },
 
   // after extraResources land in Resources (or resources/)
