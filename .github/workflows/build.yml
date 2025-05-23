@@ -10,9 +10,9 @@ jobs:
     strategy:
       matrix:
         include:
-          - os: ubuntu-latest
-            os_key: linux
-            arch: x64
+          # - os: ubuntu-latest
+          #   os_key: linux
+          #   arch: x64
           - os: macos-latest
             os_key: macos
             arch: arm64
@@ -182,9 +182,9 @@ jobs:
           github-token: ${{ secrets.GITHUB_TOKEN }}
           script: |
             const { owner, repo } = context.repo;
-            const runId = context.runId;                                               // :contentReference[oaicite:5]{index=5}
+            const runId = context.runId;
             const resp = await github.actions.listWorkflowRunArtifacts({
-              owner, repo, run_id: runId                                             // :contentReference[oaicite:6]{index=6}
+              owner, repo, run_id: runId
             });
             const lines = resp.data.artifacts.map(a => {
               const url = `https://github.com/${owner}/${repo}/actions/runs/${runId}/artifacts/${a.id}`;
@@ -194,4 +194,4 @@ jobs:
               owner, repo,
               issue_number: context.payload.pull_request.number,
               body: ['🔧 **Build artifacts are ready!**', '', ...lines].join('\n')
-            });                                                                         :contentReference[oaicite:7]{index=7}
+            });
