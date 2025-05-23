@@ -4,21 +4,20 @@ import path from "node:path";
 import fs from "node:fs";
 
 const __filename = fileURLToPath(import.meta.url);
-const __dirname  = path.dirname(__filename);
+const __dirname = path.dirname(__filename);
 
 // ─── 1) Determine which binary to ship ──────────────────────────────
-const appName     = "bonzai";
-const platformKey = process.platform === "darwin"
-  ? "macos"
-  : process.platform === "win32"
+const appName = "bonzai";
+const platformKey =
+  process.platform === "darwin"
+    ? "macos"
+    : process.platform === "win32"
     ? "windows"
     : "linux";
-const archKey     = process.arch;                // "x64" or "arm64"
-const binName     = process.platform === "win32" 
-  ? "diffuser.exe" 
-  : "diffuser";
+const archKey = process.arch; // "x64" or "arm64"
+const binName = process.platform === "win32" ? "diffuser.exe" : "diffuser";
 
-// Path to the single one-file PyInstaller binary built by your CI:
+// Path to the one-file PyInstaller binary (built by your CI):
 const binSource = path.resolve(
   __dirname,
   "binaries",
@@ -31,36 +30,34 @@ if (!fs.existsSync(binSource)) {
 
 export default {
   packagerConfig: {
-    // ─── avoid subdir-of-itself & ENOSPC by using runner temp ───────
-    tmpdir: process.env.RUNNER_TEMP,                                  :contentReference[oaicite:0]{index=0}
+    //  Avoid writing temp files inside your workspace to prevent ENOSPC
+    tmpdir: process.env.RUNNER_TEMP,
 
-    // ─── app metadata & icons ────────────────────────────────────────
+    // App metadata
     icon: "./src/assets/logo",
     executableName: appName,
 
-    // ─── copy only your server sources + the one binary ─────────────
+    // Only copy in your server code + the one-file binary
     extraResource: [
-      // your Flask / Python scripts
       { from: path.resolve(__dirname, "src", "server"), to: "server" },
-      // exactly the one-file binary
-      { from: binSource, to: "server/python-binary" }
+      { from: binSource, to: "server/python-binary" },
     ],
 
-    // ─── keep python-binary unpacked so codesign/notarize see it ─────
+    // Keep the binary unpacked so codesign/notarize sees it
     asarUnpack: ["server/python-binary"],
 
-    // ─── macOS signing & notarization (will sign both app & nested exe) ─
+    // macOS signing & notarization
     osxSign: {
       hardenedRuntime: true,
       entitlements: "entitlements.mac.plist",
       "entitlements-inherit": "entitlements.mac.plist",
-      gatekeeperAssess: true
+      gatekeeperAssess: true,
     },
     osxNotarize: {
       appleId: process.env.APPLE_ID,
       appleIdPassword: process.env.APPLE_APP_SPECIFIC_PASSWORD,
-      teamId: process.env.APPLE_TEAM_ID
-    }
+      teamId: process.env.APPLE_TEAM_ID,
+    },
   },
 
   makers: [
@@ -70,11 +67,14 @@ export default {
         background: "./src/assets/background.png",
         format: "ULFO",
         iconSize: 192,
-        window: { width: 1000, height: 560 }
-      }
+        window: { width: 1000, height: 560 },
+      },
     },
-    { name: "@electron-forge/maker-deb",    config: { bin: appName } },
-    { name: "@electron-forge/maker-squirrel", config: { icon: "./src/assets/logo" } }
+    { name: "@electron-forge/maker-deb", config: { bin: appName } },
+    {
+      name: "@electron-forge/maker-squirrel",
+      config: { icon: "./src/assets/logo" },
+    },
   ],
 
   publishers: [
@@ -83,9 +83,9 @@ export default {
       config: {
         repository: { owner: "bonzai-depin", name: "bonzai-desktop-dapp" },
         prerelease: false,
-        draft: true
-      }
-    }
+        draft: true,
+      },
+    },
   ],
 
   plugins: [
@@ -93,11 +93,11 @@ export default {
       name: "@electron-forge/plugin-vite",
       config: {
         build: [
-          { entry: "src/main.js",    config: "vite.main.config.ts"    },
-          { entry: "src/preload.js", config: "vite.preload.config.ts" }
+          { entry: "src/main.js", config: "vite.main.config.ts" },
+          { entry: "src/preload.js", config: "vite.preload.config.ts" },
         ],
-        renderer: [{ name: "main_window", config: "vite.renderer.config.ts" }]
-      }
-    }
-  ]
+        renderer: [{ name: "main_window", config: "vite.renderer.config.ts" }],
+      },
+    },
+  ],
 };
