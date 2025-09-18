@@ -38,6 +38,12 @@ except Exception:
         class HfHubHTTPError(Exception):
             pass
 
+# Validate .safetensors integrity to catch truncated files early
+try:
+    from safetensors import safe_open as _safetensors_open  # type: ignore
+except Exception:
+    _safetensors_open = None
+
 # ---- Diffusers (only what we actually use for endpoints)
 from diffusers import (
     DiffusionPipeline,
@@ -65,10 +71,8 @@ USER_DATA_PATH = user_data_dir("bonzai", "BonzAI")
 MODEL_DIR = Path(USER_DATA_PATH) / "models"
 MODEL_DIR.mkdir(parents=True, exist_ok=True)
 
-# Make HF store everything under our folder (predictable) & disable Rust/Xet transports
+# Make HF store everything under our folder (predictable)
 os.environ["HF_HOME"] = str(MODEL_DIR / "hf")
-os.environ.setdefault("HF_HUB_ENABLE_HF_TRANSFER", "0")  # force Python downloader
-os.environ.setdefault("HF_HUB_ENABLE_XET", "0")
 os.environ.setdefault("HF_HUB_DISABLE_TELEMETRY", "1")
 
 LOCAL_ONLY = bool(int(os.getenv("BONZAI_LOCAL_ONLY", "1")))
@@ -92,6 +96,12 @@ def ws_downloads_url() -> str:
 
 def ws_generation_url() -> str:
     return request.host_url.replace("http://", "ws://").replace("https://", "wss://") + "generation"
+
+def _tid_repo(repo_id: str) -> str:
+    return hashlib.md5(f"repo:{repo_id}".encode()).hexdigest()[:16]
+
+def _tid_file(repo_id: str, rel_path: str) -> str:
+    return hashlib.md5(f"file:{repo_id}:{rel_path}".encode()).hexdigest()[:16]
 
 # -------------------------- Devices & memory helpers --------------------------
 class DeviceManager:
@@ -250,11 +260,7 @@ class DownloadManager:
     def emit(self, pipeline_id: str):
         pl = self.pipelines.get(pipeline_id)
         if pl:
-            socketio.emit(
-                "download_progress",
-                {"pipeline": pl.to_dict()},
-                namespace="/downloads",
-            )
+            socketio.emit("download_progress", {"pipeline": pl.to_dict()}, namespace="/downloads")
 
     def new(self, name: str) -> PipelineDownload:
         pid = hashlib.md5(f"{name}_{time.time()}".encode()).hexdigest()[:16]
@@ -263,25 +269,49 @@ class DownloadManager:
             self.pipelines[pid] = pl
         return pl
 
-    def add_repo_task(self, pl: PipelineDownload, repo_id: str, total_estimate: int = 0) -> str:
+    # --- Idempotent creation helpers (prevents duplicate rows) ---
+    def _ensure_repo_container(self, pl: PipelineDownload, repo_id: str, total_estimate: int = 0) -> str:
+        for tid, t in pl.tasks.items():
+            if t.kind == "repo" and t.name == repo_id:
+                if total_estimate and not t.total_bytes:
+                    t.total_bytes = int(total_estimate)
+                return tid
         tid = hashlib.md5(f"{repo_id}_{time.time()}".encode()).hexdigest()[:16]
+        pl.tasks[tid] = DownloadTask(task_id=tid, kind="repo", name=repo_id, total_bytes=int(total_estimate))
+        return tid
+
+    def _ensure_file_task(self, pl: PipelineDownload, title: str, size: int = 0) -> str:
+        for tid, t in pl.tasks.items():
+            if t.kind == "file" and t.name == title:
+                if size and not t.total_bytes:
+                    t.total_bytes = int(size)
+                return tid
+        tid = hashlib.md5(f"{title}_{time.time()}".encode()).hexdigest()[:16]
+        pl.tasks[tid] = DownloadTask(task_id=tid, kind="file", name=title, total_bytes=int(size))
+        return tid
+
+    # Backwards compat shims
+    # def add_repo_task(self, pl: PipelineDownload, repo_id: str, total_estimate: int = 0) -> str:
+    #     return self._ensure_repo_container(pl, repo_id, total_estimate)
+
+    def add_repo_task(self, pl: PipelineDownload, repo_id: str, total_estimate: int = 0) -> str:
+        tid = _tid_repo(repo_id)
+        # idempotent: if it exists, just update the known total (if better) and return
+        t = pl.tasks.get(tid)
+        if t:
+            if total_estimate and total_estimate > t.total_bytes:
+                t.total_bytes = int(total_estimate)
+            return tid
+
         pl.tasks[tid] = DownloadTask(
-            task_id=tid,
-            kind="repo",
-            name=repo_id,
-            total_bytes=int(total_estimate),
+            task_id=tid, kind="repo", name=repo_id, total_bytes=int(total_estimate)
         )
         return tid
 
+
     def add_file_task(self, pl: PipelineDownload, filename: str, size: int) -> str:
-        tid = hashlib.md5(f"{filename}_{time.time()}".encode()).hexdigest()[:16]
-        pl.tasks[tid] = DownloadTask(
-            task_id=tid,
-            kind="file",
-            name=filename,
-            total_bytes=int(size),
-        )
-        return tid
+        title = filename
+        return self._ensure_file_task(pl, title, size)
 
     def set_status(self, pl: PipelineDownload, status: str):
         pl.status = status
@@ -410,18 +440,21 @@ def _resolve_remote_size(url: str, headers: Dict[str, str]) -> int:
         pass
     return 0
 
-# Try multiple listing APIs to avoid empty trees from certain backends
+
 def _list_required_remote_files(repo_id: str, allow_patterns: Optional[List[str]] = None) -> List[Dict[str, Any]]:
+    """
+    Returns [{'path': 'unet/diffusion_pytorch_model.bin', 'size': int_or_0}, ...]
+    Tries multiple Hub APIs; fills unknown sizes via HEAD/Range.
+    """
     api = HfApi(token=_hf_token())
     files: List[Dict[str, Any]] = []
 
     def _match(p: str) -> bool:
         return True if not allow_patterns else any(fnmatch(p, pat) for pat in allow_patterns)
 
-    # 1) list_repo_tree(expand=True)
+    # Try 1: list_repo_tree(expand=True)
     try:
-        items = api.list_repo_tree(repo_id=repo_id, repo_type="model", revision="main",
-                                   recursive=True, expand=True)
+        items = api.list_repo_tree(repo_id=repo_id, repo_type="model", revision="main", recursive=True, expand=True)
         for it in items or []:
             if getattr(it, "type", None) == "file" and _match(it.path):
                 size = int(getattr(it, "size", 0) or 0)
@@ -429,12 +462,11 @@ def _list_required_remote_files(repo_id: str, allow_patterns: Optional[List[str]
     except Exception:
         pass
 
-    # 2) get_paths_info(recursive=True, expand=True)
+    # Try 2: get_paths_info(recursive=True)
     if not files:
         try:
             infos = api.get_paths_info(repo_id=repo_id, repo_type="model",
-                                       paths=[""], revision="main",
-                                       expand=True, recursive=True)
+                                       paths=[""], revision="main", expand=True, recursive=True)
             for info in infos or []:
                 if getattr(info, "type", "") == "file" and _match(info.path):
                     size = int(getattr(info, "size", 0) or 0)
@@ -442,7 +474,7 @@ def _list_required_remote_files(repo_id: str, allow_patterns: Optional[List[str]
         except Exception:
             pass
 
-    # 3) list_repo_files (paths only)
+    # Try 3: list_repo_files (paths only)
     if not files:
         try:
             paths = api.list_repo_files(repo_id=repo_id, repo_type="model", revision="main")
@@ -455,7 +487,7 @@ def _list_required_remote_files(repo_id: str, allow_patterns: Optional[List[str]
     if not files:
         return []
 
-    # Fill unknown sizes via HEAD/Range
+    # Fill sizes where missing
     headers = {"Authorization": f"Bearer {_hf_token()}"} if _hf_token() else {}
     for f in files:
         if f["size"] > 0:
@@ -467,27 +499,47 @@ def _list_required_remote_files(repo_id: str, allow_patterns: Optional[List[str]
             pass
     return files
 
+
 class RemoteListingUnavailable(Exception):
     pass
+
+def _is_valid_safetensors(p: Path) -> bool:
+    if _safetensors_open is None:
+        # If library missing, fall back to non-empty check
+        try:
+            return p.exists() and p.stat().st_size > 0
+        except Exception:
+            return False
+    try:
+        # Will raise if header/metadata is corrupted or file incomplete
+        with _safetensors_open(str(p), framework="pt") as f:
+            # touch metadata to force validation
+            _ = f.keys()
+        return True
+    except Exception:
+        return False
+
 
 def _manifest_and_needs(repo_id: str, allow_patterns: Optional[List[str]] = None):
     """
     Returns (manifest, needs_list_of_paths).
-    If every remote listing path failed AND the repo is not OK locally,
-    raise RemoteListingUnavailable so the caller can snapshot as a fallback.
+    If *every* remote listing path failed AND the repo is not OK locally,
+    raise RemoteListingUnavailable so the caller can fallback to snapshot.
+
+    A file is “needed” if:
+      - it is missing locally, or
+      - remote size known and size differs, or
+      - remote size unknown but local file is zero, or
+      - it looks like a weights file (.safetensors) but fails integrity check.
     """
     manifest = _list_required_remote_files(repo_id, allow_patterns=allow_patterns)
     root = repo_local_dir(repo_id)
     needs: List[str] = []
 
-    # Local completeness snapshot
-    local = _repo_completeness(repo_id)
-
+    local_spec = _repo_completeness(repo_id)
     if not manifest:
-        if not local.get("ok", False):
-            raise RemoteListingUnavailable(
-                f"Remote listing empty for {repo_id} (HTTP OK)."
-            )
+        if not local_spec.get("ok", False):
+            raise RemoteListingUnavailable(f"Remote listing empty for {repo_id} (HTTP OK).")
         return [], []
 
     for f in manifest:
@@ -495,20 +547,32 @@ def _manifest_and_needs(repo_id: str, allow_patterns: Optional[List[str]] = None
         rsz = int(f.get("size") or 0)
         lp = root / rel
         if not lp.exists():
-            needs.append(rel); continue
+            needs.append(rel)
+            continue
+
         try:
             lsz = lp.stat().st_size
         except Exception:
-            needs.append(rel); continue
+            needs.append(rel)
+            continue
 
-        if rsz > 0:
-            if lsz != rsz:
-                needs.append(rel)
-        else:
-            if lsz <= 0:
-                needs.append(rel)
+        # Size mismatch when known
+        if rsz > 0 and lsz != rsz:
+            needs.append(rel)
+            continue
+
+        # Unknown remote size but zero local → need
+        if rsz == 0 and lsz <= 0:
+            needs.append(rel)
+            continue
+
+        # Integrity validation for safetensors
+        if rel.endswith(".safetensors") and not _is_valid_safetensors(lp):
+            logger.warning("[integrity] %s: invalid safetensors; re-fetching", rel)
+            needs.append(rel)
 
     return manifest, needs
+
 
 def _estimate_repo_size(repo_id: str, allow_patterns: Optional[List[str]] = None) -> int:
     try:
@@ -556,14 +620,15 @@ WEIGHT_GLOBS = [
 def _has_any_weights(path: Path) -> bool:
     if not path.exists():
         return False
-    for pat in WEIGHT_GLOBS:
-        if any((x for x in path.glob(pat) if _nonzero(x))):
+    # First, try any valid safetensors (robust against partial files)
+    for x in path.rglob("*.safetensors"):
+        if _is_valid_safetensors(x):
             return True
-    for child in path.glob("*"):
-        if child.is_dir():
-            for pat in WEIGHT_GLOBS:
-                if any((x for x in child.glob(pat) if _nonzero(x))):
-                    return True
+    # Then, any other weight file non-empty
+    for pat in ["pytorch_model.bin", "diffusion_pytorch_model.bin", "tf_model.h5", "flax_model.msgpack"]:
+        for x in path.rglob(pat):
+            if _nonzero(x):
+                return True
     return False
 
 def _tokenizer_ok(root: Path, name: str = "tokenizer") -> bool:
@@ -578,7 +643,7 @@ REPO_SPECS = {
     "black-forest-labs/FLUX.1-dev": {
         "must_files": ["model_index.json"],
         "must_tokenizers": ["tokenizer", "tokenizer_2"],
-        "must_weight_dirs": [],
+        "must_weight_dirs": [],  # transformer via local GGUF
         "extra_dirs": ["scheduler", "text_encoder", "text_encoder_2"],
     },
     "stabilityai/stable-diffusion-xl-base-1.0": {
@@ -651,7 +716,8 @@ def _repo_completeness(repo_id: str) -> Dict[str, Any]:
 
     for d in spec.get("extra_dirs", []):
         dp = root / d
-        if not dp.exists() or not any(_nonzero(x) for x in dp.rglob("*") if x.is_file()):
+        # require some non-empty file under each dir (prevents empty shells)
+        if not dp.exists() or not any(x.is_file() and _nonzero(x) for x in dp.rglob("*")):
             report["missing"].append(f"{d}/")
 
     if not report["missing"] and REPO_SPECS.get(repo_id) is None:
@@ -709,7 +775,6 @@ def _repo_readiness(repo_id: str) -> Dict[str, Any]:
         status["ok"] = bool(local["ok"] and remote_missing == 0)
     return status
 
-# ---- Multi-repo readiness guard (drop-in replacement for _repo_ready_or_409) ----
 def _repos_ready_or_resp(*repo_ids: str) -> Optional[tuple]:
     statuses = []
     needs_auth = False
@@ -800,56 +865,48 @@ def _plan_for(pipeline: str) -> Dict[str, Any]:
         raise ValueError(f"Unknown pipeline '{pipeline}'")
     return plan
 
-# ----------------------- URL/Per-file download helpers ------------------------
+# ----------------------- Per-file HF download (tracked) -----------------------
 def _stream_file_task(pl: PipelineDownload, tid: str, url: str, dest: Path):
-    """Stream a single arbitrary URL to disk with progress (for GGUF etc.)."""
     dest.parent.mkdir(parents=True, exist_ok=True)
     tmp = dest.with_suffix(dest.suffix + ".part")
+    resume_from = tmp.stat().st_size if tmp.exists() else 0
+
+    if resume_from > 0:
+        download_manager.update_progress(pl, tid, done=resume_from, total=None)
+    download_manager.mark_downloading(pl, tid)
 
     try:
-        # Determine remote size
-        total = 0
-        try:
-            r_head = requests.head(url, allow_redirects=True, timeout=20)
-            total = int(r_head.headers.get("content-length", "0") or "0")
-        except Exception:
-            total = 0
-
-        download_manager.mark_downloading(pl, tid)
-        if total > 0:
-            download_manager.update_progress(pl, tid, done=0, total=total)
-
-        # Resume if partial
-        resume_from = tmp.stat().st_size if tmp.exists() else 0
-        headers = {}
-        if resume_from > 0:
-            headers["Range"] = f"bytes={resume_from}-"
-            download_manager.update_progress(pl, tid, done=resume_from, total=total if total > 0 else None)
-
-        with requests.get(url, stream=True, headers=headers, timeout=60) as r:
+        with requests.get(url, stream=True, timeout=60) as r:
             r.raise_for_status()
             mode = "ab" if resume_from > 0 else "wb"
             done = resume_from
+            total = int(r.headers.get("content-length", 0)) or None
+            if total:
+                download_manager.update_progress(pl, tid, done=done, total=total)
             with open(tmp, mode) as f:
                 for chunk in r.iter_content(chunk_size=1 << 20):
                     if not chunk:
                         continue
                     f.write(chunk)
                     done += len(chunk)
-                    download_manager.update_progress(pl, tid, done=done, total=total if total > 0 else None)
-
+                    download_manager.update_progress(pl, tid, done=done, total=total)
         tmp.replace(dest)
-        if total > 0:
+        if dest.suffix == ".safetensors" and not _is_valid_safetensors(dest):
+            raise RuntimeError("Downloaded GGUF/weights file failed integrity check")
+        if total:
             download_manager.update_progress(pl, tid, done=total, total=total)
         download_manager.mark_completed(pl, tid)
     except Exception as e:
-        logger.exception("[stream] file download failed: %s", url)
         download_manager.mark_failed(pl, tid, str(e))
     finally:
         download_manager.finalize_if_done(pl)
 
+
 def _stream_hf_file_task(pl: PipelineDownload, tid: str, repo_id: str, rel_path: str, remote_size: int):
-    """Stream a single HF repo file (supports resume) with progress into our repo folder."""
+    """
+    Stream a single HF file to disk with progress.
+    Writes to <dest>.part and moves to final name on completion.
+    """
     root = repo_local_dir(repo_id)
     dest = root / rel_path
     tmp = dest.with_suffix(dest.suffix + ".part")
@@ -860,11 +917,13 @@ def _stream_hf_file_task(pl: PipelineDownload, tid: str, repo_id: str, rel_path:
 
     download_manager.mark_downloading(pl, tid)
 
+    # If partial file exists, resume from there
     resume_from = tmp.stat().st_size if tmp.exists() else 0
     if remote_size > 0:
         download_manager.update_progress(pl, tid, done=resume_from, total=remote_size)
 
     try:
+        # Make the HTTP request (support resume)
         req_headers = dict(headers)
         if resume_from > 0:
             req_headers["Range"] = f"bytes={resume_from}-"
@@ -874,15 +933,21 @@ def _stream_hf_file_task(pl: PipelineDownload, tid: str, repo_id: str, rel_path:
             mode = "ab" if resume_from > 0 else "wb"
             done = resume_from
             total = remote_size if remote_size > 0 else None
+
             with open(tmp, mode) as f:
-                for chunk in r.iter_content(chunk_size=1 << 20):
+                for chunk in r.iter_content(chunk_size=1 << 20):  # 1 MiB
                     if not chunk:
                         continue
                     f.write(chunk)
                     done += len(chunk)
                     download_manager.update_progress(pl, tid, done=done, total=total)
 
+        # Move into place
         tmp.replace(dest)
+        # Validate safetensors files to catch truncation
+        if dest.suffix == ".safetensors" and not _is_valid_safetensors(dest):
+            raise RuntimeError(f"Corrupted safetensors after download: {rel_path}")
+
         if remote_size > 0:
             download_manager.update_progress(pl, tid, done=remote_size, total=remote_size)
         download_manager.mark_completed(pl, tid)
@@ -892,17 +957,21 @@ def _stream_hf_file_task(pl: PipelineDownload, tid: str, repo_id: str, rel_path:
     finally:
         download_manager.finalize_if_done(pl)
 
-def _prefetch_repo_files_task(pl: PipelineDownload, repo_id: str, allow_patterns: Optional[List[str]], max_workers: int = 4):
+def _prefetch_repo_files_task(
+    pl: PipelineDownload,
+    repo_id: str,
+    allow_patterns: Optional[List[str]],
+    max_workers: int = 4,
+):
     """
-    Strict per-file downloader:
-      - Enumerate manifest + needs
-      - Create one task per needed file (emitted to UI immediately)
-      - Stream in parallel
-      - Update a container 'repo' row by file-count as a coarse summary
+    Per-file streaming for a repo. Creates one container "repo" row + N "file" rows.
+    Idempotent task creation prevents duplicates, and we emit immediately so the
+    frontend lists every file at once.
     """
     root = repo_local_dir(repo_id)
     root.mkdir(parents=True, exist_ok=True)
 
+    # Container row (one per repo)
     container_tid = download_manager.add_repo_task(pl, repo_id, total_estimate=0)
     download_manager.mark_downloading(pl, container_tid)
 
@@ -929,20 +998,40 @@ def _prefetch_repo_files_task(pl: PipelineDownload, repo_id: str, allow_patterns
         download_manager.finalize_if_done(pl)
         return
 
-    # Build per-file tasks & emit
+    # Create individual file tasks (idempotent) and emit list immediately
     path_to_size = {f["path"]: int(f.get("size") or 0) for f in manifest}
     file_tids: Dict[str, str] = {}
+    # for rel in needs:
+    #     size = path_to_size.get(rel, 0)
+    #     title = f"{repo_id}/{rel}"
+    #     tid = download_manager._ensure_file_task(pl, title, size)
+    #     if size > 0:
+    #         download_manager.update_progress(pl, tid, done=0, total=size)
+    #     file_tids[rel] = tid
     for rel in needs:
         size = path_to_size.get(rel, 0)
         title = f"{repo_id}/{rel}"
-        tid = hashlib.md5(f"{title}_{time.time()}".encode()).hexdigest()[:16]
-        pl.tasks[tid] = DownloadTask(task_id=tid, kind="file", name=title, total_bytes=size, status="pending")
-        if size > 0:
-            download_manager.update_progress(pl, tid, done=0, total=size)
-        file_tids[rel] = tid
+        tid = _tid_file(repo_id, rel)
+
+        # If task exists, update totals; else create it
+        existing = pl.tasks.get(tid)
+        if existing:
+            if size and size > existing.total_bytes:
+                existing.total_bytes = int(size)
+            # Don't reset progress/status here; just ensure totals are correct.
+        else:
+            pl.tasks[tid] = DownloadTask(
+                task_id=tid,
+                kind="file",
+                name=title,
+                total_bytes=int(size),
+                status="pending",
+            )
+            if size > 0:
+                download_manager.update_progress(pl, tid, done=0, total=size)
     download_manager.emit(pl.pipeline_id)
 
-    # Stream with a pool
+    # Stream in parallel
     def _one(rel_path: str):
         _stream_hf_file_task(pl, file_tids[rel_path], repo_id, rel_path, path_to_size.get(rel_path, 0))
 
@@ -953,7 +1042,7 @@ def _prefetch_repo_files_task(pl: PipelineDownload, repo_id: str, allow_patterns
             completed += 1
             download_manager.update_progress(pl, container_tid, done=completed, total=len(needs))
 
-    # Validate after
+    # Validate final state
     _, needs_after = _manifest_and_needs(repo_id, allow_patterns=allow_patterns)
     if needs_after:
         preview = needs_after[:6]
@@ -965,11 +1054,17 @@ def _prefetch_repo_files_task(pl: PipelineDownload, repo_id: str, allow_patterns
 
     download_manager.finalize_if_done(pl)
 
-# Snapshot fallback with moving total
+
+# ----------------------- Snapshot prefetch (fallback only) --------------------
 def _prefetch_repo_snapshot_task(pl: PipelineDownload, tid: str, repo_id: str, allow_patterns: Optional[List[str]]):
+    """
+    Fallback when Hub listing is unavailable: snapshot_download with moving-total
+    progress based on bytes present under the repo.
+    """
     root = repo_local_dir(repo_id)
     root.mkdir(parents=True, exist_ok=True)
 
+    # Build manifest once (best-effort sizes for progress)
     manifest = _list_required_remote_files(repo_id, allow_patterns=allow_patterns)
 
     def _bytes_done_for_manifest() -> int:
@@ -986,13 +1081,12 @@ def _prefetch_repo_snapshot_task(pl: PipelineDownload, tid: str, repo_id: str, a
 
     initial_total = sum(int(f.get("size") or 0) for f in manifest)
     done0 = _bytes_done_for_manifest()
-    moving_total = max(initial_total, done0 + max(32 * 1024 * 1024, int(done0 * 0.10))) if initial_total <= done0 else initial_total
+    moving_total = max(initial_total, done0 + max(32 * 1024 * 1024, int(done0 * 0.10)))
 
     download_manager.mark_downloading(pl, tid)
     download_manager.update_progress(pl, tid, done=done0, total=moving_total)
 
     stop_flag = {"stop": False}
-
     def _poll():
         nonlocal moving_total
         while not stop_flag["stop"]:
@@ -1022,7 +1116,6 @@ def _prefetch_repo_snapshot_task(pl: PipelineDownload, tid: str, repo_id: str, a
         )
         stop_flag["stop"] = True
         poll_th.join(timeout=1.0)
-
         final_done = _bytes_done_for_manifest()
         final_total = max(final_done, moving_total, 1)
         download_manager.update_progress(pl, tid, done=final_done, total=final_total)
@@ -1087,34 +1180,41 @@ def pipelines_prefetch():
     # Queue repo downloads (prefer per-file; fallback to snapshot)
     for rid in plan.get("repos_to_fetch", []):
         st = _repo_readiness(rid)
-        # If remote not accessible (auth/terms/offline) AND not already OK, skip; CTA handled by /plan
         if st.get("missing") is None and not st.get("ok", False):
             logger.warning("[prefetch] skipping %s due to remote inaccessibility", rid)
             continue
-        # Already complete → nothing to fetch
         if st.get("ok", False):
+            # create a completed container row so UI shows it as done (no duplicates)
+            container_tid = download_manager.add_repo_task(pl, rid, total_estimate=1)
+            download_manager.update_progress(pl, container_tid, done=1, total=1)
+            download_manager.mark_completed(pl, container_tid)
             continue
 
         pats = allow_patterns_for_repo(rid)
         try:
             manifest, needs = _manifest_and_needs(rid, allow_patterns=pats)
             if needs:
-                total_est = _estimate_repo_size(rid, allow_patterns=pats)
-                tid = download_manager.add_repo_task(pl, repo_id=rid, total_estimate=total_est)
+                # Container + per-file tasks
+                container_tid = download_manager.add_repo_task(pl, rid, total_estimate=len(needs))
+                # Emit container immediately (even before file rows) for snappy UI
+                download_manager.emit(pl.pipeline_id)
                 threading.Thread(
-                    target=_prefetch_repo_files_task,  # strict per-file streaming
+                    target=_prefetch_repo_files_task,
                     args=(pl, rid, pats),
                     daemon=True,
                 ).start()
             else:
-                continue
-        except RemoteListingUnavailable as e:
-            logger.error("[files] %s: %s", rid, str(e))
+                # no needs -> mark as completed
+                container_tid = download_manager.add_repo_task(pl, rid, total_estimate=1)
+                download_manager.update_progress(pl, container_tid, done=1, total=1)
+                download_manager.mark_completed(pl, container_tid)
+        except RemoteListingUnavailable:
+            # Fallback to snapshot mode for this repo
             total_est = _estimate_repo_size(rid, allow_patterns=pats)
-            tid = download_manager.add_repo_task(pl, repo_id=rid, total_estimate=total_est)
+            container_tid = download_manager.add_repo_task(pl, rid, total_estimate=total_est)
             threading.Thread(
-                target=_prefetch_repo_snapshot_task,  # byte-based moving-target progress
-                args=(pl, tid, rid, pats),
+                target=_prefetch_repo_snapshot_task,
+                args=(pl, container_tid, rid, pats),
                 daemon=True,
             ).start()
 
@@ -1127,12 +1227,15 @@ def pipelines_prefetch():
         dest = MODEL_DIR / name
         try:
             if dest.exists() and dest.stat().st_size > 0:
+                # add a completed row so UI shows it
+                tid = download_manager.add_file_task(pl, filename=name, size=dest.stat().st_size)
+                download_manager.update_progress(pl, tid, done=dest.stat().st_size, total=dest.stat().st_size)
+                download_manager.mark_completed(pl, tid)
                 continue
         except Exception:
             pass
         if not url:
             continue
-
         tid = download_manager.add_file_task(pl, filename=name, size=0)
         threading.Thread(
             target=_stream_file_task,
@@ -1154,7 +1257,6 @@ def pipelines_prefetch():
             },
         }), 200
 
-    # Actively downloading
     download_manager.set_status(pl, "downloading")
     logger.info("[prefetch] started pipeline %s for %s", pl.pipeline_id, pipeline)
     return jsonify({
@@ -1197,7 +1299,7 @@ def _ensure_flux_ready() -> Optional[tuple]:
             "missing": str(gguf),
             "hint": 'Run /pipelines/prefetch {"pipeline":"flux"}.',
         }), 409
-    guard = _repos_ready_or_resp("black-forest-labs/FLUX.1-dev")
+    guard = _repos_ready_or_resp(FLUX_REPO)
     if guard: return guard
     return None
 
@@ -1223,7 +1325,7 @@ def image_quality_flux():
         ).to(device)
 
         pipe = FluxPipeline.from_pretrained(
-            str(repo_local_dir("black-forest-labs/FLUX.1-dev")),
+            str(repo_local_dir(FLUX_REPO)),
             transformer=transformer,
             torch_dtype=torch.bfloat16,
             local_files_only=True,
@@ -1264,7 +1366,7 @@ def image_intermediate_sdxl():
     if not prompt:
         return jsonify({"error": "Prompt is required"}), 400
 
-    guard = _repos_ready_or_resp("stabilityai/stable-diffusion-xl-base-1.0", "stabilityai/stable-diffusion-xl-refiner-1.0")
+    guard = _repos_ready_or_resp(SDXL_BASE_REPO, SDXL_REFINER_REPO)
     if guard: return guard
 
     gen_id = genbus.new("sdxl_intermediate", {"endpoint": "/image/intermediate", "prompt": prompt})
@@ -1273,7 +1375,7 @@ def image_intermediate_sdxl():
         dtype = DeviceManager.get_dtype(device)
 
         base = DiffusionPipeline.from_pretrained(
-            str(repo_local_dir("stabilityai/stable-diffusion-xl-base-1.0")),
+            str(repo_local_dir(SDXL_BASE_REPO)),
             torch_dtype=dtype, use_safetensors=True, variant="fp16", local_files_only=True
         ).to(device)
 
@@ -1290,7 +1392,7 @@ def image_intermediate_sdxl():
         ).images
 
         refiner = StableDiffusionXLImg2ImgPipeline.from_pretrained(
-            str(repo_local_dir("stabilityai/stable-diffusion-xl-refiner-1.0")),
+            str(repo_local_dir(SDXL_REFINER_REPO)),
             text_encoder_2=base.text_encoder_2, vae=base.vae,
             torch_dtype=dtype, use_safetensors=True, variant="fp16", local_files_only=True
         ).to(device)
@@ -1327,7 +1429,7 @@ def image_turbo_sdxl():
     if not prompt:
         return jsonify({"error": "Prompt is required"}), 400
 
-    guard = _repos_ready_or_resp("stabilityai/sdxl-turbo")
+    guard = _repos_ready_or_resp(SDXL_TURBO_REPO)
     if guard: return guard
 
     gen_id = genbus.new("sdxl_turbo", {"endpoint": "/image/turbo", "prompt": prompt})
@@ -1335,7 +1437,7 @@ def image_turbo_sdxl():
         device = DeviceManager.get_device()
         dtype = DeviceManager.get_dtype(device)
         pipe = AutoPipelineForText2Image.from_pretrained(
-            str(repo_local_dir("stabilityai/sdxl-turbo")), torch_dtype=dtype, variant="fp16", local_files_only=True
+            str(repo_local_dir(SDXL_TURBO_REPO)), torch_dtype=dtype, variant="fp16", local_files_only=True
         ).to(device)
 
         def cb(step, timestep, latents):
@@ -1372,14 +1474,14 @@ def ltx_image_to_video():
     if not prompt:
         return jsonify({"error": "Prompt is required"}), 400
 
-    guard = _repos_ready_or_resp("Lightricks/LTX-Video")
+    guard = _repos_ready_or_resp(LTX_REPO)
     if guard: return guard
 
     gen_id = genbus.new("ltx_i2v", {"endpoint": "/image/video", "prompt": prompt})
     try:
         device = DeviceManager.get_device()
         dtype = torch.bfloat16 if device.type != "mps" else torch.float16
-        root = repo_local_dir("Lightricks/LTX-Video")
+        root = repo_local_dir(LTX_REPO)
 
         pipe = LTXConditionPipeline.from_pretrained(
             str(root), torch_dtype=dtype, local_files_only=True, use_safetensors=True
@@ -1442,14 +1544,14 @@ def hunyuan_video():
     if not prompt:
         return jsonify({"error": "Prompt is required"}), 400
 
-    guard = _repos_ready_or_resp("TencentARC/HunyuanVideo")
+    guard = _repos_ready_or_resp(HUNYUAN_REPO)
     if guard: return guard
 
     gen_id = genbus.new("hunyuan_video", {"endpoint": "/video/max", "prompt": prompt})
     try:
         device = DeviceManager.get_device()
         dtype = torch.bfloat16 if device.type != "mps" else torch.float16
-        root = repo_local_dir("TencentARC/HunyuanVideo")
+        root = repo_local_dir(HUNYUAN_REPO)
 
         pipe = HunyuanVideoPipeline.from_pretrained(
             str(root), torch_dtype=dtype, local_files_only=True
@@ -1484,7 +1586,7 @@ def music_stable_audio():
     if not prompt:
         return jsonify({"error": "Prompt is required"}), 400
 
-    guard = _repos_ready_or_resp("stabilityai/stable-audio-open-1.0")
+    guard = _repos_ready_or_resp(STABLE_AUDIO_REPO)
     if guard: return guard
 
     gen_id = genbus.new("music", {"endpoint": "/music", "prompt": prompt})
@@ -1516,8 +1618,6 @@ def health():
     })
 
 logger.info(f"HF_HOME={os.environ.get('HF_HOME')}")
-logger.info(f"HF_HUB_ENABLE_HF_TRANSFER={os.environ.get('HF_HUB_ENABLE_HF_TRANSFER')}")
-logger.info(f"HF_HUB_ENABLE_XET={os.environ.get('HF_HUB_ENABLE_XET')}")
 logger.info(f"HF token present? {bool(_hf_token())}")
 
 if __name__ == "__main__":
