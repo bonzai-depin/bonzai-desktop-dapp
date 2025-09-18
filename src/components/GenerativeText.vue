@@ -48,7 +48,25 @@
               Download
               <span
                 class="filesize"
-                style="font-size: 15px; top: -20px; right: -25px; text-shadow: none;"
+                style="
+                  font-size: 15px;
+                  top: -20px;
+                  right: -25px;
+                  text-shadow: none;
+                "
+                v-if="downloadProgress"
+              >
+                {{ downloadProgress }}%
+              </span>
+              <span
+                v-else
+                class="filesize"
+                style="
+                  font-size: 15px;
+                  top: -20px;
+                  right: -25px;
+                  text-shadow: none;
+                "
               >
                 {{ currentModel.filesize }}
               </span>
@@ -130,7 +148,7 @@
               {{ currentModel.modelname }}
             </span>
             to Peers to earn
-            <span class="fira-sans-condensed-black-italic">$ETH</span>
+            <span class="fira-sans-condensed-black-italic">$TAO</span>
             .
           </p>
         </div>
@@ -346,6 +364,7 @@ export default {
     GenerativeImage,
   },
   setup() {
+    const downloadProgress = ref(0);
     const isLoading = ref(false);
     const isModel = ref(false);
     const openModel = ref(false);
@@ -407,14 +426,20 @@ export default {
         filename: "llama2.gguf",
         filesize: "4.37 GB",
       },
+      qwen_coder: {
+        modelname: "Qwen Coder 3 30B",
+        modeldesc: `A 30B parameters LLM model dedicated to code generation, built by Alibaba.`,
+        filename: "Qwen3-Coder-30B-A3B-Instruct-Q3_K_S.gguf",
+        filesize: "13.29 GB",
+      }
     });
 
     const currentModel = ref({
       modelname: "DeepSeek R1 1.5B",
-        modeldesc: `A 1.5B parameters dense model distilled from DeepSeek-R1, based on popular open source model Qwen. DeepSeek-R1 achieves performance comparable to OpenAI-o1 across math, code, and reasoning tasks.`,
-        url: "https://huggingface.co/TheBloke/Mistral-7B-Instruct-v0.2-GGUF/resolve/main/mistral-7b-instruct-v0.2.Q4_K_M.gguf",
-        filename: "DeepSeek-R1-Distill-Qwen-1.5B-Q6_K.gguf",
-        filesize: "1.46 GB",
+      modeldesc: `A 1.5B parameters dense model distilled from DeepSeek-R1, based on popular open source model Qwen. DeepSeek-R1 achieves performance comparable to OpenAI-o1 across math, code, and reasoning tasks.`,
+      url: "https://huggingface.co/TheBloke/Mistral-7B-Instruct-v0.2-GGUF/resolve/main/mistral-7b-instruct-v0.2.Q4_K_M.gguf",
+      filename: "DeepSeek-R1-Distill-Qwen-1.5B-Q6_K.gguf",
+      filesize: "1.46 GB",
     });
 
     const pickModel = async (model) => {
@@ -430,8 +455,20 @@ export default {
 
     const downloadModel = async (url, filename) => {
       isLoading.value = true;
-      const success = await window.electronAPI.downloadModel(url, filename);
+
       console.log("Now downloading model...", url, filename);
+      downloadProgress.value = 0;
+
+      window.electronAPI.onDownloadProgress((e, data) => {
+        if (data.filename === currentModel.value.filename) {
+          downloadProgress.value = Math.round(data.percent * 100);
+        }
+      });
+
+      const success = await window.electronAPI.downloadModel(url, filename);
+      isLoading.value = false;
+      downloadProgress.value = 0;
+
       if (success) {
         isModel.value = true;
         console.log("Model download success!");
@@ -510,6 +547,7 @@ export default {
     };
 
     return {
+      downloadProgress,
       isLoading,
       isModel,
       availableModels,

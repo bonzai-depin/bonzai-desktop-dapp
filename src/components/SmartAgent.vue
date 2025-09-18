@@ -4,52 +4,62 @@
     <div class="models__deployment-install">
       <div class="columns">
         <div class="column is-12 p-5">
-          <div class="level">
+          <!-- Header with Title and Stake BONZAI -->
+          <div class="level mb-5">
             <div class="level-left">
-              <div class="level-item">
-                <h1 class="fira-sans-condensed-black-italic">
-                  <span
-                    class="material-symbols-outlined mr-2"
-                    style="font-size: 64px !important"
-                  >
-                    hub
-                  </span>
-                  Smart Agents
-                </h1>
-              </div>
+              <h1
+                class="fira-sans-condensed-black-italic is-size-1 has-text-white"
+              >
+                <span
+                  class="material-symbols-outlined mr-2"
+                  style="font-size: 64px"
+                >
+                  hub
+                </span>
+                Smart Agents
+              </h1>
             </div>
             <div class="level-right">
-              <div class="level-item">
-                <button class="button chat is-warning is-large">
-                  <span class="material-symbols-outlined is-size-3 mr-2">
-                    send_money
-                  </span>
-                  STAKE BONZAI
-                </button>
-              </div>
+              <button
+                class="button is-info is-large is-outlined fira-sans-condensed-black-italic"
+              >
+                <span class="material-symbols-outlined mr-2">
+                  shopping_cart
+                </span>
+                Buy BONZAI
+              </button>
             </div>
           </div>
-          <div class="tabs is-large is-fullwidth">
+
+          <!-- Tabs -->
+          <div class="tabs is-large is-fullwidth mb-5">
             <ul>
-              <li class="is-active">
-                <a class="fira-sans-condensed-black-italic">
-                  <span class="material-symbols-outlined is-size-1 mr-2 mb-2">
+              <li :class="{ 'is-active': activeTab === 'buy' }">
+                <a
+                  @click.prevent="activeTab = 'buy'"
+                  class="fira-sans-condensed-black-italic"
+                >
+                  <span class="material-symbols-outlined mr-2">
                     shopping_cart
                   </span>
                   Buy
                 </a>
               </li>
-              <li>
-                <a class="fira-sans-condensed-black-italic">
-                  <span class="material-symbols-outlined is-size-1 mr-2 mb-2">
-                    storefront
-                  </span>
+              <li :class="{ 'is-active': activeTab === 'sell' }">
+                <a
+                  @click.prevent="activeTab = 'sell'"
+                  class="fira-sans-condensed-black-italic"
+                >
+                  <span class="material-symbols-outlined mr-2">storefront</span>
                   Sell
                 </a>
               </li>
-              <li>
-                <a class="fira-sans-condensed-black-italic">
-                  <span class="material-symbols-outlined is-size-1 mr-2 mb-2">
+              <li :class="{ 'is-active': activeTab === 'run' }">
+                <a
+                  @click.prevent="activeTab = 'run'"
+                  class="fira-sans-condensed-black-italic"
+                >
+                  <span class="material-symbols-outlined mr-2">
                     auto_read_play
                   </span>
                   Run
@@ -57,68 +67,103 @@
               </li>
             </ul>
           </div>
-          <div class="models__activity--payouts">
-            <div class="columns">
-              <div class="column is-12">
-                <div
-                  class="columns is-8 is-multiline control mb-5 has-text-left"
-                >
-                <div class="bonzai__agent column is-4">
-                    <input
-                      v-model="mode"
-                      :value="'agent_chat_network_bittensor'"
-                      id="agent_chat_network_bittensor"
-                      type="radio"
-                      name="mode"
-                      checked
-                    />
-                    <label for="agent_chat_network_bittensor" class="radio">
-                      <span
-                        class="material-symbols-outlined"
-                        style="font-size: 32px !important"
-                      >
-                        analytics
-                      </span>
-                      Copy Swap
-                      <div class="tags has-addons">
+
+          <!-- BUY TAB -->
+          <div v-if="activeTab === 'buy'">
+            <!-- Copy Swap Example -->
+            <div class="models__activity--payouts">
+              <div class="columns">
+                <div class="column is-12">
+                  <div
+                    class="columns is-8 is-multiline control mb-5 has-text-left"
+                  >
+                    <div class="bonzai__agent column is-4">
+                      <input
+                        v-model="mode"
+                        :value="'agent_chat_network_bittensor'"
+                        id="agent_chat_network_bittensor"
+                        type="radio"
+                        name="mode"
+                        checked
+                      />
+                      <label for="agent_chat_network_bittensor" class="radio">
                         <span
-                          class="tag partner fira-sans-condensed-black-italic"
+                          class="material-symbols-outlined"
+                          style="font-size: 32px !important"
                         >
-                          Arbitrum
+                          analytics
                         </span>
-                        <span
-                          class="tag is-info partner fira-sans-condensed-black-italic"
-                        >
-                          Online
-                        </span>
-                      </div>
-                    </label>
-                  </div>
-                  <div class="bonzai__agent column is-8">
-                    <div class="control has-text-right">
-                      <button class="button chat is-success is-medium">
-                        <span class="material-symbols-outlined is-size-3 mr-2">
-                          shopping_cart
-                        </span>
-                        Buy
+                        Copy Swap
                         <div class="tags has-addons">
                           <span
-                            class="tag is-warning partner fira-sans-condensed-black-italic"
+                            class="tag partner fira-sans-condensed-black-italic"
                           >
-                            0.1 ETH
+                            Arbitrum
+                          </span>
+                          <span
+                            class="tag is-info partner fira-sans-condensed-black-italic"
+                          >
+                            Online
                           </span>
                         </div>
-                      </button>
+                      </label>
                     </div>
-                  </div>
-                  <ol class="bonzai__agent column is-12 description ">
-                    <hr />
-                    <li><p><span class="fira-sans-condensed-black-italic mr-2">Step 1.</span>Spot the top perfoming onchain assets.</p></li>
-                    <li><p><span class="fira-sans-condensed-black-italic mr-2">Step 2.</span>Spot the top performing traders in Step 1.</p></li>
-                    <li><p><span class="fira-sans-condensed-black-italic mr-2">Step 3.</span>Spot the latest onchain swaps of the top performing traders in Step 2.</p></li>
-                    <li><p><span class="fira-sans-condensed-black-italic mr-2">Step 4.</span>Copy the latest onchain swaps spotted in Step 3.</p></li>
-                  </ol>
-                  <!-- <div class="bonzai__agent column is-4">
+                    <div class="bonzai__agent column is-8">
+                      <div class="control has-text-right">
+                        <button class="button chat is-success is-medium">
+                          <span
+                            class="material-symbols-outlined is-size-3 mr-2"
+                          >
+                            shopping_cart
+                          </span>
+                          Buy
+                          <div class="tags has-addons">
+                            <span
+                              class="tag is-warning partner fira-sans-condensed-black-italic"
+                            >
+                              0.1 ETH
+                            </span>
+                          </div>
+                        </button>
+                      </div>
+                    </div>
+                    <ol class="bonzai__agent column is-12 description">
+                      <hr />
+                      <li>
+                        <p>
+                          <span class="fira-sans-condensed-black-italic mr-2">
+                            Step 1.
+                          </span>
+                          Spot the top perfoming onchain assets.
+                        </p>
+                      </li>
+                      <li>
+                        <p>
+                          <span class="fira-sans-condensed-black-italic mr-2">
+                            Step 2.
+                          </span>
+                          Spot the top performing traders in Step 1.
+                        </p>
+                      </li>
+                      <li>
+                        <p>
+                          <span class="fira-sans-condensed-black-italic mr-2">
+                            Step 3.
+                          </span>
+                          Spot the latest onchain swaps of the top performing
+                          traders in Step 2.
+                        </p>
+                      </li>
+                      <li>
+                        <p>
+                          <span class="fira-sans-condensed-black-italic mr-2">
+                            Step 4.
+                          </span>
+                          Copy the latest onchain swaps spotted in Step 3.
+                        </p>
+                      </li>
+                    </ol>
+                    <!-- <div class="bonzai__agent column is-4">
                     <input
                       v-model="mode"
                       :value="'agent_chat_code_solidity'"
@@ -221,43 +266,415 @@
                       </button>
                     </div>
                   </div> -->
+                  </div>
+                </div>
+              </div>
+            </div>
+            <!-- Listed Agents -->
+            <div
+              class="bonzai__agent column is-4"
+              v-for="(agent, idx) in agentList"
+              :key="idx"
+            >
+              <h3 class="title is-5 has-text-white">{{ agent.name }}</h3>
+              <p class="has-text-white">{{ agent.description }}</p>
+              <p class="is-size-7 mt-2 has-text-white">
+                Endpoint:
+                <code>{{ agent.endpoint }}</code>
+              </p>
+              <div class="buttons mt-3">
+                <button class="button is-success" @click="buyAccess(agent)">
+                  <span class="material-symbols-outlined mr-2">
+                    shopping_cart
+                  </span>
+                  Buy Access
+                </button>
+                <button class="button is-info" @click="executeAgent(agent)">
+                  <span class="material-symbols-outlined mr-2">play_arrow</span>
+                  Run Agent
+                </button>
+              </div>
+            </div>
+          </div>
+
+          <!-- SELL TAB -->
+          <div v-if="activeTab === 'sell'">
+            <div class="models__activity--payouts">
+              <div class="bonzai__agent">
+                <div class="columns">
+                  <div class="field column is-5">
+                    <label
+                      class="label has-text-white has-text-left fira-sans-condensed-black-italic"
+                    >
+                      Name *
+                    </label>
+                    <div class="control">
+                      <input
+                        class="input is-large"
+                        v-model="agentForm.name"
+                        placeholder="Name your Smart Agent"
+                      />
+                    </div>
+                  </div>
+                  <div class="field column is-5">
+                    <label
+                      class="label has-text-white has-text-left fira-sans-condensed-black-italic"
+                    >
+                      ERC20 Token
+                    </label>
+                    <div class="control">
+                      <input
+                        class="input is-large"
+                        v-model="agentForm.agentToken"
+                        placeholder="0x..."
+                      />
+                    </div>
+                  </div>
+                  <div class="field column is-2">
+                    <label
+                      class="label has-text-white has-text-left fira-sans-condensed-black-italic"
+                    >
+                      Price in Token
+                    </label>
+                    <div class="control">
+                      <input
+                        class="input is-large"
+                        v-model.number="agentForm.price"
+                        placeholder="0"
+                      />
+                    </div>
+                  </div>
+                </div>
+                <div class="field">
+                  <label
+                    class="label has-text-white has-text-left fira-sans-condensed-black-italic"
+                  >
+                    Description *
+                  </label>
+                  <div class="control">
+                    <textarea
+                      class="textarea is-large"
+                      v-model="agentForm.description"
+                      placeholder="Describe your Smart Agent"
+                    ></textarea>
+                  </div>
+                </div>
+                <div class="models__activity--payouts has-text-right p-5 mt-5">
+                  <label
+                    class="label has-text-white has-text-left fira-sans-condensed-black-italic"
+                  >
+                    Agentic Workflow *
+                  </label>
+                  <div
+                    v-for="(step, idx) in agentForm.steps"
+                    :key="idx"
+                    class="box mb-3"
+                  >
+                    <div class="field">
+                      <label
+                        class="label has-text-white fira-sans-condensed-black-italic"
+                      >
+                        Step {{ idx + 1 }} Task
+                      </label>
+                      <div class="control">
+                        <input
+                          class="input"
+                          v-model="step.task"
+                          placeholder="e.g. generate_json"
+                        />
+                      </div>
+                    </div>
+                    <div class="field mt-3">
+                      <label
+                        class="label has-text-white fira-sans-condensed-black-italic"
+                      >
+                        Endpoint
+                      </label>
+                      <div class="control">
+                        <input
+                          class="input"
+                          v-model="step.endpoint"
+                          placeholder="/llm/json"
+                        />
+                      </div>
+                    </div>
+                    <div class="field mt-3">
+                      <label
+                        class="label has-text-white fira-sans-condensed-black-italic"
+                      >
+                        Input Expression
+                      </label>
+                      <div class="control">
+                        <input
+                          class="input"
+                          v-model="step.input"
+                          placeholder="e.g. form.prompt or previousTask.result"
+                        />
+                      </div>
+                    </div>
+                    <div class="control mt-3 has-text-right">
+                      <button
+                        class="button is-danger is-small"
+                        @click="removeStep(idx)"
+                      >
+                        Remove
+                      </button>
+                    </div>
+                  </div>
+                  <div class="control has-text-left">
+                    <button
+                      class="button is-info is-medium"
+                      @click="openSteps = true"
+                    >
+                      <span class="material-symbols-outlined mr-2">add</span>
+                      Add Step
+                    </button>
+                  </div>
+                </div>
+                <hr class="mt-5 mb-5" />
+                <div class="control mt-4 has-text-right">
+                  <button
+                    class="button is-success is-large"
+                    @click="openRegistryWindow()"
+                  >
+                    <span class="material-symbols-outlined mr-2">
+                      rocket_launch
+                    </span>
+                    List Agent
+                    <div class="tags has-addons">
+                      <span
+                        class="tag is-warning partner fira-sans-condensed-black-italic"
+                      >
+                        50K BONZAI
+                      </span>
+                    </div>
+                  </button>
                 </div>
               </div>
             </div>
           </div>
-          <!-- <div class="models__activity--payouts mt-5">
-            <div class="columns is-multiline">
-              <div class="column is-12 has-text-left">
-                <div class="level">
-                  <div class="level-left">
-                    <div class="level-item">
-                      <h2
-                        class="fira-sans-condensed-black-italic has-text-left mt-0"
-                      >
-                        <span class="material-symbols-outlined is-size-1 mr-2">
-                          automation
-                        </span>
-                        My Agents
-                      </h2>
-                    </div>
-                  </div>
-                </div>
-              </div>
-              <div class="column is-12 has-text-left">
-                <p>
-                  Hire
-                  <span class="fira-sans-condensed-black-italic">
-                    your 1st smart agent
+
+          <!-- RUN TAB -->
+          <div v-if="activeTab === 'run'">
+            <div v-if="purchasedAgents.length === 0" class="has-text-white">
+              You haven't purchased any agents yet.
+            </div>
+            <div
+              class="bonzai__agent column is-4"
+              v-for="(agent, idx) in purchasedAgents"
+              :key="idx"
+            >
+              <h3 class="title is-5 has-text-white">{{ agent.name }}</h3>
+              <button class="button is-info mt-2" @click="executeAgent(agent)">
+                <span class="material-symbols-outlined mr-2">play_arrow</span>
+                Run {{ agent.name }}
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="models__deployment-use" v-if="openSteps">
+      <div class="columns">
+        <div class="column is-12 p-5">
+          <div class="level">
+            <div class="level-left">
+              <div class="level-item">
+                <h1 class="fira-sans-condensed-black-italic">
+                  <span
+                    class="material-symbols-outlined mr-2"
+                    style="font-size: 92px !important"
+                  >
+                    chat
                   </span>
-                  to start
-                  <span class="fira-sans-condensed-black-italic">
-                    automating your life
-                  </span>
-                  .
-                </p>
+                  Agentic Tasks
+                </h1>
               </div>
             </div>
-          </div> -->
+            <div class="level-right">
+              <div class="level-item">
+                <button
+                  class="button is-outlined is-info is-large fira-sans-condensed-black-italic ml-5"
+                  @click="openSteps = false"
+                >
+                  <span class="material-symbols-outlined is-size-1">Close</span>
+                </button>
+              </div>
+            </div>
+          </div>
+          <ul class="bonzai__agent-steps columns is-multiline">
+            <div class="column is-6">
+              <h1
+                class="fira-sans-condensed-black-italic has-text-left is-size-3"
+              >
+                Mode
+              </h1>
+            </div>
+            <div class="column is-6">
+              <h1
+                class="fira-sans-condensed-black-italic has-text-left is-size-3"
+              >
+                Reasoning
+              </h1>
+            </div>
+            <li class="column is-3">
+              <div class="bonzai__agent-steps--item">
+                <span
+                  class="material-symbols-outlined mr-2"
+                  style="font-size: 92px !important"
+                >
+                  sweep
+                </span>
+                <h2
+                  class="fira-sans-condensed-black-italic has-text-centered is-size-4"
+                >
+                  One-Pass
+                </h2>
+              </div>
+            </li>
+            <li class="column is-3">
+              <div class="bonzai__agent-steps--item">
+                <span
+                  class="material-symbols-outlined mr-2"
+                  style="font-size: 92px !important"
+                >
+                  checklist
+                </span>
+                <h2
+                  class="fira-sans-condensed-black-italic has-text-centered is-size-4"
+                >
+                  Multi-Pass
+                </h2>
+              </div>
+            </li>
+            <li class="column is-3">
+              <div class="bonzai__agent-steps--item">
+                <span
+                  class="material-symbols-outlined mr-2"
+                  style="font-size: 92px !important"
+                >
+                  visibility_lock
+                </span>
+                <h2
+                  class="fira-sans-condensed-black-italic has-text-centered is-size-4"
+                >
+                  Offline
+                </h2>
+              </div>
+            </li>
+            <li class="column is-3">
+              <div class="bonzai__agent-steps--item">
+                <span
+                  class="material-symbols-outlined mr-2"
+                  style="font-size: 92px !important"
+                >
+                  public
+                </span>
+                <h2
+                  class="fira-sans-condensed-black-italic has-text-centered is-size-4"
+                >
+                  Online
+                </h2>
+              </div>
+            </li>
+            <div class="column is-12">
+              <h1
+                class="fira-sans-condensed-black-italic has-text-left is-size-3"
+              >
+                Generation
+              </h1>
+            </div>
+            <li class="column is-2">
+              <div class="bonzai__agent-steps--item pt-6">
+                <span
+                  class="material-symbols-outlined mr-2"
+                  style="font-size: 64px !important"
+                >
+                  chat
+                </span>
+                <h2
+                  class="fira-sans-condensed-black-italic has-text-centered is-size-5"
+                >
+                  Script
+                </h2>
+              </div>
+            </li>
+            <li class="column is-2">
+              <div class="bonzai__agent-steps--item pt-6">
+                <span
+                  class="material-symbols-outlined mr-2"
+                  style="font-size: 64px !important"
+                >
+                  image
+                </span>
+                <h2
+                  class="fira-sans-condensed-black-italic has-text-centered is-size-5"
+                >
+                  Picture
+                </h2>
+              </div>
+            </li>
+            <li class="column is-2">
+              <div class="bonzai__agent-steps--item pt-6">
+                <span
+                  class="material-symbols-outlined mr-2"
+                  style="font-size: 64px !important"
+                >
+                  movie
+                </span>
+                <h2
+                  class="fira-sans-condensed-black-italic has-text-centered is-size-5"
+                >
+                  Motion
+                </h2>
+              </div>
+            </li>
+            <li class="column is-2">
+              <div class="bonzai__agent-steps--item pt-6">
+                <span
+                  class="material-symbols-outlined mr-2"
+                  style="font-size: 64px !important"
+                >
+                  mic
+                </span>
+                <h2
+                  class="fira-sans-condensed-black-italic has-text-centered is-size-5"
+                >
+                  Speech
+                </h2>
+              </div>
+            </li>
+            <li class="column is-2">
+              <div class="bonzai__agent-steps--item pt-6">
+                <span
+                  class="material-symbols-outlined mr-2"
+                  style="font-size: 64px !important"
+                >
+                  headphones
+                </span>
+                <h2
+                  class="fira-sans-condensed-black-italic has-text-centered is-size-5"
+                >
+                  Soundtrack
+                </h2>
+              </div>
+            </li>
+            <li class="column is-2">
+              <div class="bonzai__agent-steps--item pt-6">
+                <span
+                  class="material-symbols-outlined mr-2"
+                  style="font-size: 64px !important"
+                >
+                  3d_rotation
+                </span>
+                <h2
+                  class="fira-sans-condensed-black-italic has-text-centered is-size-5"
+                >
+                  Asset
+                </h2>
+              </div>
+            </li>
+          </ul>
         </div>
       </div>
     </div>
@@ -265,132 +682,71 @@
 </template>
 
 <script>
-import { ref, reactive, toRaw } from "vue";
-import { v4 as uuid } from "uuid";
-import VueMarkdown from "vue-markdown-render";
-import useClipboard from "vue-clipboard3";
+import { ref, reactive, onMounted } from "vue";
 
 export default {
   name: "SmartAgent",
-  components: {
-    VueMarkdown,
-  },
   setup() {
-    const mode = ref("chat");
-    const quality = ref("sd");
-    const isLoading = ref(false);
-    const isModel = ref(false);
-    const openModel = ref(false);
-    const openChat = ref(false);
-    const availableModels = ref({
-      flux: {
-        modelname: "Flux.1-schnell",
-        modeldesc: `A 12 billion parameter rectified flow transformer capable of generating images from text descriptions.`,
-        url: "https://huggingface.co/black-forest-labs/FLUX.1-schnell",
-        filename: "flux.gguf",
-        filesize: "25 GB",
-      },
+    const activeTab = ref("buy");
+    const agentForm = reactive({
+      name: "",
+      description: "",
+      endpoint: "",
+      agentToken: "",
+      price: 0,
     });
+    const agentList = ref([]);
+    const purchasedAgents = ref([]);
+    const openSteps = ref(false);
+    const exampleAgent = {
+      /* ... example data ... */
+    };
 
-    const currentModel = ref({
-      modelname: "Flux.1-schnell",
-      modeldesc: `A 12 billion parameter rectified flow transformer capable of generating images from text descriptions.`,
-      url: "https://huggingface.co/black-forest-labs/FLUX.1-schnell",
-      filename: "flux.gguf",
-      filesize: "25 GB",
+    // Open a standalone browser window for registry interactions
+    const openRegistryWindow = () => {
+      window.electronAPI.openWindow({
+        url: "https://app.bonzai.sh/registry",
+        width: 800,
+        height: 600,
+      });
+    };
+
+    const buyAccess = (agent) => {
+      // Open external purchase page in browser
+      window.electronAPI.openExternal(
+        `https://app.bonzai.sh/purchase/${agent.id}`
+      );
+    };
+
+    const executeAgent = async (agent) => {
+      const res = await fetch(agent.endpoint, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ prompt: "example prompt" }),
+      });
+      const data = await res.json();
+      alert(`Result: ${JSON.stringify(data)}`);
+    };
+
+    onMounted(async () => {
+      // Fetch registry agents list from API
+      const res = await fetch("https://api.bonzai.sh/registry/agents");
+      agentList.value = await res.json();
+      // Fetch purchased agents
+      const bought = await window.electronAPI.getPurchasedAgents();
+      purchasedAgents.value = bought;
     });
-
-    const pickModel = async (model) => {
-      currentModel.value = { ...model };
-      await isModelAvailable(model.filename);
-    };
-
-    const isModelAvailable = async (filename) => {
-      const isModelAvailable = await window.electronAPI.checkModel(filename);
-      isModel.value = isModelAvailable;
-      return isModel;
-    };
-
-    const loadModel = async (filename) => {
-      await window.electronAPI.loadModel(filename);
-    };
-
-    const inferences = reactive([]);
-
-    const hasCopy = reactive([]);
-
-    const initialState = {
-      prompt: "",
-    };
-
-    const form = reactive({ ...initialState });
-
-    function resetForm() {
-      Object.assign(form, initialState);
-    }
-
-    function resetChat() {
-      inferences.splice(0);
-    }
-
-    const sendMessage = async (prompt) => {
-      isLoading.value = true;
-
-      try {
-        // Inference
-        const assistantResult = await window.electronAPI.chat(form.prompt);
-
-        const assistantMessage = {
-          id: uuid(),
-          text: assistantResult,
-          // role: MessageRole.Assistant,
-        };
-
-        console.log("prompt", assistantMessage);
-        inferences.push({ question: prompt, answer: assistantMessage });
-        resetForm();
-        isLoading.value = false;
-      } catch (e) {
-        isLoading.value = false;
-      }
-    };
-
-    const { toClipboard } = useClipboard();
-
-    const copy = async (answer) => {
-      try {
-        await toClipboard(answer);
-        console.log("Answered copied to clipboard.");
-      } catch (e) {
-        console.error(e);
-      }
-    };
 
     return {
-      mode,
-      quality,
-      isLoading,
-      isModel,
-      availableModels,
-      currentModel,
-      isModelAvailable,
-      pickModel,
-      loadModel,
-      openModel,
-      openChat,
-      form,
-      sendMessage,
-      inferences,
-      resetChat,
-      copy,
-      hasCopy,
+      activeTab,
+      agentForm,
+      openSteps,
+      agentList,
+      purchasedAgents,
+      openRegistryWindow,
+      buyAccess,
+      executeAgent,
     };
-  },
-  async mounted() {
-    const readyToPrompt = await this.isModelAvailable(
-      this.currentModel.filename
-    );
-    console.log("Ready to prompt, sir.", readyToPrompt);
   },
 };
 </script>
@@ -581,12 +937,14 @@ form {
   position: relative;
 }
 
-.input {
+.input,
+textarea {
   color: #fff;
   background: rgba(255, 255, 255, 0.1);
   box-shadow: 8px 8px 0 rgba(97, 55, 142, 0.66);
   transition: 200ms ease-in;
   transform: translate3d(0, 0, 0);
+  resize: none;
 }
 
 ::placeholder {
@@ -612,7 +970,24 @@ input[type="radio"] {
   display: none;
 }
 
-.bonzai__agent {
+.bonzai__agent-steps--item {
+  padding: 1em;
+  color: rgba(255, 255, 255, 1);
+  height: 20vh;
+  border: 1px solid rgba(255, 255, 255, 0.33);
+  background: rgba(255, 255, 255, 0.1);
+  border-radius: 1vh;
+  transition: 200ms ease-in;
+  transform: translate3d(0, 0, 0);
+}
+
+.bonzai__agent-steps--item:hover {
+  border: 1px solid rgba(57, 213, 130, 0.75);
+  background: rgba(57, 213, 130, 0.1);
+  border-width: 1px 1px 2em 1px;
+  cursor: pointer;
+  transition: 200ms ease-in;
+  transform: translate3d(0, 0, 0);
 }
 
 input[type="radio"] + label {

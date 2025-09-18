@@ -20,6 +20,10 @@ export default defineConfig({
           src: resolve(__dirname, "src/server/diffuser.py"),
           dest: "", // Copies to the root of the `.vite/build` directory
         },
+                {
+          src: resolve(__dirname, "src/template.jinja"),
+          dest: "", // Copies to the root of the `.vite/build` directory
+        },
       ],
     }),
   ],
