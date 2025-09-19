@@ -196,7 +196,7 @@
                 <!-- READINESS CTA -->
                 <div
                   v-if="showUpdateCTA"
-                  class="notification is-danger"
+                  class="notification is-danger mb-6 mt-6"
                   style="margin-bottom: 1rem"
                 >
                   <p class="mb-2">
@@ -230,7 +230,7 @@
                     </span>
 
                     <!-- Auth -->
-                    <span v-if="readiness.authRequired">
+                    <!-- <span v-if="readiness.authRequired">
                       <br />
                       <strong>Authentication required</strong>
                       <span v-if="readiness.authRepos.length">
@@ -250,7 +250,7 @@
                       <code>HUGGINGFACE_HUB_TOKEN</code>
                       ) in the server environment and ensure you’ve accepted the
                       model terms for these repos. Then restart the server.
-                    </span>
+                    </span> -->
 
                     <!-- Notes -->
                     <span v-if="readiness.notes.length">
@@ -318,12 +318,14 @@
                     >
                       {{ Math.round(downloads.progress) }}%
                       <button
-                        v-if="downloads.pipeline?.status === 'failed'"
-                        class="button is-small is-link is-warning ml-2"
-                        @click="retryCurrentPipeline"
-                        :disabled="!downloads.pipelineId"
+                        class="button is-small is-danger mr-4 cancel p-1"
+                        @click="cancelCurrentPipeline"
+                        :disabled="
+                          !downloads.pipelineId ||
+                          downloads.status === 'completed'
+                        "
                       >
-                        Retry
+                        <span class="material-symbols-outlined">cancel</span>
                       </button>
                     </span>
                   </p>
@@ -334,15 +336,6 @@
                   >
                     {{ Math.round(downloads.progress) }}%
                   </progress>
-                  <!-- <button
-                    class="button is-small is-danger mr-4"
-                    @click="cancelCurrentPipeline"
-                    :disabled="
-                      !downloads.pipelineId || downloads.status === 'completed'
-                    "
-                  >
-                    Cancel
-                  </button> -->
                   <div
                     v-if="downloads.pipeline?.tasks"
                     style="max-height: 180px; overflow: auto"
@@ -1191,5 +1184,11 @@ ol.chat {
 }
 ol.chat li {
   position: relative;
+}
+
+.cancel {
+  position: absolute;
+  top: -3em;
+  right: -6em;
 }
 </style>

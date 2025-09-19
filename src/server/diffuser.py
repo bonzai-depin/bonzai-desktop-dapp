@@ -51,6 +51,7 @@ from diffusers import (
     FluxPipeline,
     FluxTransformer2DModel,
     GGUFQuantizationConfig,
+    StableDiffusionXLPipeline,
     StableDiffusionXLImg2ImgPipeline,
     FlowMatchEulerDiscreteScheduler,
     HunyuanVideoPipeline,
@@ -643,7 +644,7 @@ REPO_SPECS = {
     "black-forest-labs/FLUX.1-dev": {
         "must_files": ["model_index.json"],
         "must_tokenizers": ["tokenizer", "tokenizer_2"],
-        "must_weight_dirs": [],  # transformer via local GGUF
+        "must_weight_dirs": [],
         "extra_dirs": ["scheduler", "text_encoder", "text_encoder_2"],
     },
     "stabilityai/stable-diffusion-xl-base-1.0": {
@@ -652,11 +653,12 @@ REPO_SPECS = {
         "must_weight_dirs": ["unet", "vae"],
         "extra_dirs": ["text_encoder", "text_encoder_2"],
     },
+    # ✅ FIXED: refiner does not require tokenizers/text_encoders locally
     "stabilityai/stable-diffusion-xl-refiner-1.0": {
         "must_files": ["model_index.json"],
-        "must_tokenizers": ["tokenizer", "tokenizer_2"],
-        "must_weight_dirs": ["unet", "vae"],
-        "extra_dirs": ["text_encoder", "text_encoder_2"],
+        "must_tokenizers": [],                 # was ["tokenizer", "tokenizer_2"] — remove
+        "must_weight_dirs": ["unet", "vae"],   # correct: needs UNet & VAE
+        "extra_dirs": [],                      # was ["text_encoder", "text_encoder_2"] — remove
     },
     "stabilityai/sdxl-turbo": {
         "must_files": ["model_index.json"],
@@ -1356,63 +1358,249 @@ def image_quality_flux():
 
 @app.route("/image/intermediate", methods=["POST"])
 def image_intermediate_sdxl():
+    # silence tokenizer spam (optional, safe)
+    try:
+        import logging as _logging
+        _logging.getLogger("transformers.tokenization_utils_base").setLevel(_logging.ERROR)
+    except Exception:
+        pass
+
     data = request.json or {}
-    prompt = (data.get("prompt") or "").strip()
-    negative_prompt = data.get("negative_prompt", "bad anatomy, extra hands, worst quality")
-    h = int(data.get("height", 1024)); w = int(data.get("width", 1024))
-    steps_base = int(data.get("steps_base", 30)); steps_ref = int(data.get("steps_refiner", 20))
-    denoise_split = float(data.get("denoising_split", 0.9))
+    prompt = data.get("prompt", "")
+    negative_prompt = data.get(
+        "negative_prompt",
+        "bad anatomy, extra hands, extra legs, extra fingers, poorly drawn face, fused face, "
+        "cloned face, worst feet, extra feet, fused feet, missing fingers, extra fingers, "
+        "bad fingers, long fingers, short fingers, horn, extra eyes, huge eyes, distorted facial "
+        "features, missing eyes, distorted eyes, weird eyes, ugly face"
+    )
+    height = int(data.get("height", 1024))
+    width  = int(data.get("width", 1024))
+
+    # single-file (optional) + LoRA (your snippet semantics)
+    ckpt_filename = data.get("ckpt", "cyberrealistic.safetensors")
+    lora = data.get("lora", "cyberrealistic.safetensors")
+    lora_strength = float(data.get("lora_strength", 1.0))
+
+    steps_base = int(data.get("steps_base", 50))
+    steps_ref  = int(data.get("steps_refiner", 50))
+    denoising_split = float(data.get("denoising_split", 0.9))
     cb_steps = int(data.get("callback_steps", 5))
+
     if not prompt:
         return jsonify({"error": "Prompt is required"}), 400
 
+    # local-only guard using your existing helper
     guard = _repos_ready_or_resp(SDXL_BASE_REPO, SDXL_REFINER_REPO)
-    if guard: return guard
+    if guard:
+        return guard
 
     gen_id = genbus.new("sdxl_intermediate", {"endpoint": "/image/intermediate", "prompt": prompt})
+
     try:
         device = DeviceManager.get_device()
-        dtype = DeviceManager.get_dtype(device)
+        dtype  = DeviceManager.get_dtype(device)
 
-        base = DiffusionPipeline.from_pretrained(
-            str(repo_local_dir(SDXL_BASE_REPO)),
-            torch_dtype=dtype, use_safetensors=True, variant="fp16", local_files_only=True
-        ).to(device)
+        # -------- Load SDXL base (single-file if present, else repo) --------
+        base = None
+        try:
+            ckpt_path = (MODEL_DIR / ckpt_filename).resolve()
+            if ckpt_path.exists() and ckpt_path.stat().st_size > 0 and ckpt_path.suffix.lower() == ".safetensors":
+                try:
+                    base = StableDiffusionXLPipeline.from_single_file(
+                        str(ckpt_path), torch_dtype=dtype, use_safetensors=True, local_files_only=True
+                    ).to(device)
+                    logger.info(f"[sdxl] Loaded base from single-file checkpoint: {ckpt_path.name}")
+                except Exception as e:
+                    logger.warning(f"[sdxl] Single-file load failed, will fall back to repo: {e}")
+        except Exception:
+            pass
 
-        def cb1(step, timestep, latents):
+        if base is None:
+            base_root = repo_local_dir(SDXL_BASE_REPO)
+            base = StableDiffusionXLPipeline.from_pretrained(
+                str(base_root),
+                torch_dtype=dtype,
+                use_safetensors=True,
+                variant="fp16",
+                local_files_only=True,
+            ).to(device)
+
+        # -------- Apply LoRA to base (your snippet, with safe fallbacks) --------
+        if lora:
+            try:
+                lora_path = MODEL_DIR / lora
+                if lora_path.exists() and lora_path.stat().st_size > 0:
+                    try:
+                        base.load_lora_weights(str(lora_path))
+                        try:
+                            base.set_adapters(["default"], adapter_weights=[lora_strength])
+                        except Exception:
+                            try:
+                                base.fuse_lora(lora_scale=lora_strength)
+                            except Exception:
+                                pass
+                        logger.info(f"[sdxl] LoRA applied to base: {lora_path.name} (strength={lora_strength})")
+                    except Exception as e1:
+                        try:
+                            base.unet.load_attn_procs(str(lora_path))
+                            try:
+                                base.fuse_lora(lora_scale=lora_strength)
+                            except Exception:
+                                pass
+                            logger.info(f"[sdxl] UNet attn_procs LoRA applied to base: {lora_path.name} (strength={lora_strength})")
+                        except Exception:
+                            logger.warning(f"[sdxl] Skipping base LoRA: {e1}")
+            except Exception as e:
+                logger.warning(f"[sdxl] Skipping base LoRA: {e}")
+
+        # Optional speedup on CUDA
+        try:
+            if device.type == "cuda":
+                base.unet = torch.compile(base.unet, mode="reduce-overhead", fullgraph=True)
+        except Exception:
+            pass
+
+        # -------- Compel to exceed 77-token limit --------
+        from compel import Compel, ReturnedEmbeddingsType
+
+        def _make_compel(pipe):
+            tok_list, enc_list, requires_pooled = [], [], []
+            te1, tok1 = getattr(pipe, "text_encoder", None), getattr(pipe, "tokenizer", None)
+            te2, tok2 = getattr(pipe, "text_encoder_2", None), getattr(pipe, "tokenizer_2", None)
+            if te1 is not None and tok1 is not None:
+                tok_list.append(tok1); enc_list.append(te1); requires_pooled.append(False)
+            if te2 is not None and tok2 is not None:
+                tok_list.append(tok2); enc_list.append(te2); requires_pooled.append(True)
+            if not tok_list:
+                raise RuntimeError("Pipeline lacks text encoders/tokenizers required for Compel.")
+            return Compel(
+                tokenizer=tok_list,
+                text_encoder=enc_list,
+                returned_embeddings_type=ReturnedEmbeddingsType.PENULTIMATE_HIDDEN_STATES_NON_NORMALIZED,
+                requires_pooled=requires_pooled,
+                truncate_long_prompts=False,
+            )
+
+        def _pad_seq_len(a: torch.Tensor, b: torch.Tensor):
+            if a.shape[1] == b.shape[1]:
+                return a, b
+            max_len = max(a.shape[1], b.shape[1])
+
+            def pad(t):
+                if t.shape[1] == max_len:
+                    return t
+                pad_len = max_len - t.shape[1]
+                pad_tensor = torch.zeros(t.shape[0], pad_len, t.shape[2], dtype=t.dtype, device=t.device)
+                return torch.cat([t, pad_tensor], dim=1)
+
+            return pad(a), pad(b)
+
+        compel_base = _make_compel(base)
+        with torch.inference_mode():
+            prompt_embeds_base, pooled_base = compel_base(prompt)
+            neg_embeds_base, neg_pooled_base = compel_base(negative_prompt)
+            prompt_embeds_base, neg_embeds_base = _pad_seq_len(prompt_embeds_base, neg_embeds_base)
+
+        def cb_base(step, timestep, latents):
             genbus.progress(gen_id, "base_sampling", int(step), steps_base)
 
+        # -------- Base pass → latents --------
         latents = base(
-            prompt=prompt, negative_prompt=negative_prompt,
-            width=w, height=h,
+            prompt_embeds=prompt_embeds_base,
+            pooled_prompt_embeds=pooled_base,
+            negative_prompt_embeds=neg_embeds_base,
+            negative_pooled_prompt_embeds=neg_pooled_base,
             num_inference_steps=steps_base,
-            denoising_end=denoise_split,
+            denoising_end=denoising_split,
             output_type="latent",
-            callback=cb1, callback_steps=cb_steps,
+            width=width,
+            height=height,
+            callback=cb_base,
+            callback_steps=cb_steps,
         ).images
 
+        # -------- Refiner --------
+        ref_root = repo_local_dir(SDXL_REFINER_REPO)
         refiner = StableDiffusionXLImg2ImgPipeline.from_pretrained(
-            str(repo_local_dir(SDXL_REFINER_REPO)),
-            text_encoder_2=base.text_encoder_2, vae=base.vae,
-            torch_dtype=dtype, use_safetensors=True, variant="fp16", local_files_only=True
+            str(ref_root),
+            text_encoder_2=getattr(base, "text_encoder_2", None),
+            vae=getattr(base, "vae", None),
+            torch_dtype=dtype,
+            use_safetensors=True,
+            variant="fp16",
+            local_files_only=True,
         ).to(device)
 
-        def cb2(step, timestep, latents_):
+        # (Best-effort) apply the same LoRA to the refiner UNet
+        if lora:
+            try:
+                lora_path = MODEL_DIR / lora
+                if lora_path.exists() and lora_path.stat().st_size > 0:
+                    try:
+                        refiner.load_lora_weights(str(lora_path))
+                        try:
+                            refiner.set_adapters(["default"], adapter_weights=[lora_strength])
+                        except Exception:
+                            try:
+                                refiner.fuse_lora(lora_scale=lora_strength)
+                            except Exception:
+                                pass
+                        logger.info(f"[sdxl] LoRA applied to refiner: {lora_path.name} (strength={lora_strength})")
+                    except Exception as e1:
+                        try:
+                            refiner.unet.load_attn_procs(str(lora_path))
+                            try:
+                                refiner.fuse_lora(lora_scale=lora_strength)
+                            except Exception:
+                                pass
+                            logger.info(f"[sdxl] UNet attn_procs LoRA applied to refiner: {lora_path.name} (strength={lora_strength})")
+                        except Exception:
+                            logger.info(f"[sdxl] Refiner LoRA not applied (often fine): {e1}")
+            except Exception:
+                pass
+
+        try:
+            if device.type == "cuda":
+                refiner.unet = torch.compile(refiner.unet, mode="reduce-overhead", fullgraph=True)
+        except Exception:
+            pass
+
+        compel_ref = _make_compel(refiner)
+        with torch.inference_mode():
+            prompt_embeds_ref, pooled_ref = compel_ref(prompt)
+            neg_embeds_ref, neg_pooled_ref = compel_ref(negative_prompt)
+            prompt_embeds_ref, neg_embeds_ref = _pad_seq_len(prompt_embeds_ref, neg_embeds_ref)
+
+        def cb_ref(step, timestep, latents_):
             genbus.progress(gen_id, "refine_sampling", int(step), steps_ref)
 
         image = refiner(
             image=latents,
-            prompt=prompt, negative_prompt=negative_prompt,
+            prompt_embeds=prompt_embeds_ref,
+            pooled_prompt_embeds=pooled_ref,
+            negative_prompt_embeds=neg_embeds_ref,
+            negative_pooled_prompt_embeds=neg_pooled_ref,
             num_inference_steps=steps_ref,
-            denoising_start=denoise_split,
+            denoising_start=denoising_split,
             output_type="pil",
-            callback=cb2, callback_steps=cb_steps,
+            callback=cb_ref,
+            callback_steps=cb_steps,
         ).images[0]
 
-        buf = BytesIO(); image.save(buf, format="PNG")
-        b64 = base64.b64encode(buf.getvalue()).decode("utf-8")
+        buf = BytesIO()
+        image.save(buf, format="PNG")
+        encoded = base64.b64encode(buf.getvalue()).decode("utf-8")
+
         genbus.finish(gen_id, {"ok": True})
-        return jsonify({"prompt": prompt, "image": b64, "generation_id": gen_id, "generation_websocket_url": ws_generation_url()}), 201
+        return jsonify({
+            "prompt": prompt,
+            "negative_prompt": negative_prompt,
+            "image": encoded,
+            "generation_id": gen_id,
+            "generation_websocket_url": ws_generation_url()
+        }), 201
+
     except Exception as e:
         logger.exception("SDXL intermediate failed")
         genbus.error(gen_id, str(e))
