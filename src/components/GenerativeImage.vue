@@ -204,7 +204,6 @@
                       Model Download Required
                     </strong>
 
-                    <!-- Repo problems: incomplete / zero-bytes / out-of-sync -->
                     <span v-if="readiness.missingRepos.length">
                       <ul style="margin-top: 0.5rem">
                         <li v-for="d in readiness.repoDetails" :key="d.repo">
@@ -214,14 +213,10 @@
                             deployed_code
                           </span>
                           {{ d.repo }}
-                          <!-- <span class="notification is-warning is-size-5 p-2" v-if="d.root">
-                            <small>{{ d.root }}</small>
-                          </span> -->
                         </li>
                       </ul>
                     </span>
 
-                    <!-- GGUF -->
                     <span v-if="readiness.missingGguf">
                       <span class="material-symbols-outlined is-size-3 mr-1">
                         deployed_code
@@ -229,30 +224,6 @@
                       {{ readiness.ggufName || "Unknown (server-configured)" }}
                     </span>
 
-                    <!-- Auth -->
-                    <!-- <span v-if="readiness.authRequired">
-                      <br />
-                      <strong>Authentication required</strong>
-                      <span v-if="readiness.authRepos.length">
-                        — for:
-                        <code
-                          v-for="r in readiness.authRepos"
-                          :key="r"
-                          class="ml-1"
-                        >
-                          {{ r }}
-                        </code>
-                      </span>
-                      <br />
-                      Set
-                      <code>HF_TOKEN</code>
-                      (or
-                      <code>HUGGINGFACE_HUB_TOKEN</code>
-                      ) in the server environment and ensure you’ve accepted the
-                      model terms for these repos. Then restart the server.
-                    </span> -->
-
-                    <!-- Notes -->
                     <span v-if="readiness.notes.length">
                       <br />
                       Notes:
@@ -269,7 +240,6 @@
                       class="button is-warning mr-5"
                       @click="prefetchForMode"
                       :disabled="downloads.active || readiness.authRequired"
-                      title="(Re)download required files"
                     >
                       <span class="material-symbols-outlined mr-1">
                         download
@@ -337,28 +307,28 @@
                     {{ Math.round(downloads.progress) }}%
                   </progress>
                   <div
-                    v-if="downloads.pipeline?.tasks"
+                    v-if="downloadTaskList.length"
                     style="max-height: 180px; overflow: auto"
                   >
                     <ul>
                       <li
-                        v-for="(task, tid) in downloads.pipeline.tasks"
-                        :key="tid"
+                        v-for="t in downloadTaskList"
+                        :key="t.task_id"
                         class="is-size-7 columns"
                       >
                         <div class="column has-text-left">
                           <span class="material-symbols-outlined is-size-6">
                             deployed_code
                           </span>
-                          {{ task.filename }} —
+                          {{ t.filename }} —
                           <span class="fira-sans-condensed-black-italic">
-                            {{ task.status }}
+                            {{ t.status }}
                           </span>
                         </div>
                         <div
                           class="column is-2 fira-sans-condensed-black-italic has-text-right"
                         >
-                          {{ Math.round(task.progress) }}%
+                          {{ Math.round(t.progress) }}%
                         </div>
                       </li>
                     </ul>
@@ -514,8 +484,8 @@ export default {
     // ------------ readiness ---------------
     const readiness = reactive({
       ok: true,
-      missingRepos: [], // array of repo ids
-      repoDetails: [], // [{ repo, missing, root }]
+      missingRepos: [],
+      repoDetails: [],
       missingGguf: false,
       ggufName: null,
       notes: [],
@@ -562,37 +532,128 @@ export default {
       pipelineId: null,
       progress: 0,
       status: "pending",
-      pipeline: null,
+      pipeline: { tasks: {} },
       wsUrl: null,
     });
     const downloadsSocket = ref(null);
+    const lastDlEventAt = ref(0);
+    let httpPollTimer = null;
+
+    const normalizeToHttp = (u) =>
+      (u || WS_DL).replace(/^ws(s)?:\/\//i, (_, s) => `http${s ? "s" : ""}://`);
+
+    const mergeTask = (dst, src) => {
+      if (!dst) return { ...src };
+      const out = { ...dst, ...src };
+      // monotonic progress
+      if (
+        typeof dst.progress === "number" &&
+        typeof src.progress === "number"
+      ) {
+        out.progress = Math.max(dst.progress || 0, src.progress || 0);
+      }
+      // keep best known sizes
+      if (
+        typeof dst.downloaded_size === "number" &&
+        typeof src.downloaded_size === "number"
+      ) {
+        out.downloaded_size = Math.max(
+          dst.downloaded_size,
+          src.downloaded_size
+        );
+      }
+      if (
+        typeof dst.total_size === "number" &&
+        typeof src.total_size === "number"
+      ) {
+        out.total_size = Math.max(dst.total_size, src.total_size);
+      }
+      return out;
+    };
+
+    const applyPipelineUpdate = (p) => {
+      if (!p) return;
+      downloads.pipelineId = p.pipeline_id || downloads.pipelineId;
+      downloads.status = p.status || downloads.status || "downloading";
+      // monotonic total progress
+      const nextPct = Number(p.total_progress || 0);
+      downloads.progress = Math.max(Number(downloads.progress || 0), nextPct);
+
+      // merge tasks in place to avoid list flicker
+      const existing = downloads.pipeline?.tasks || {};
+      const incoming = p.tasks || {};
+      const merged = { ...existing };
+      for (const [tid, t] of Object.entries(incoming)) {
+        merged[tid] = mergeTask(existing[tid], t);
+      }
+      downloads.pipeline = {
+        ...(downloads.pipeline || {}),
+        ...p,
+        tasks: merged,
+      };
+      downloads.active = !["completed", "failed", "cancelled"].includes(
+        downloads.status
+      );
+    };
 
     const ensureDownloadsSocket = (base = WS_DL) => {
-      if (
-        downloadsSocket.value &&
-        downloadsSocket.value.connected &&
-        downloads.wsUrl === base
-      )
-        return;
+      const url = normalizeToHttp(base);
       if (downloadsSocket.value) {
         try {
           downloadsSocket.value.disconnect();
         } catch {}
       }
-      downloads.wsUrl = base;
-      downloadsSocket.value = io(base, {
-        transports: ["polling", "websocket"],
+      downloads.wsUrl = url;
+      downloadsSocket.value = io(url, {
+        path: "/socket.io",
+        transports: ["websocket", "polling"],
+        withCredentials: false,
       });
+
+      downloadsSocket.value.on("connect", () => {
+        if (downloads.pipelineId) {
+          downloadsSocket.value.emit("subscribe", {
+            pipeline_id: downloads.pipelineId,
+          });
+        }
+      });
+
+      downloadsSocket.value.on("connect_error", (err) =>
+        console.warn("[downloads] connect_error", err?.message || err)
+      );
+      downloadsSocket.value.on("error", (err) =>
+        console.warn("[downloads] error", err)
+      );
+
       downloadsSocket.value.on("download_progress", ({ pipeline }) => {
+        lastDlEventAt.value = Date.now();
         if (!pipeline) return;
-        downloads.pipeline = pipeline;
-        downloads.pipelineId = pipeline.pipeline_id;
-        downloads.progress = pipeline.total_progress || 0;
-        downloads.status = pipeline.status || "downloading";
-        downloads.active = !["completed", "failed", "cancelled"].includes(
-          downloads.status
-        );
+        applyPipelineUpdate(pipeline);
       });
+    };
+
+    const kickHttpPollIfStale = (pipelineId) => {
+      if (httpPollTimer) clearInterval(httpPollTimer);
+      httpPollTimer = setInterval(async () => {
+        const idleMs = Date.now() - lastDlEventAt.value;
+        if (idleMs < 1500) return; // socket is alive; skip poll
+        try {
+          const { data } = await axios.get(
+            `${API_BASE}/downloads/status/${pipelineId}`
+          );
+          if (data) {
+            applyPipelineUpdate(data);
+            if (!downloads.active) {
+              clearInterval(httpPollTimer);
+              httpPollTimer = null;
+            }
+          }
+        } catch (e) {
+          // stop polling on persistent error
+          clearInterval(httpPollTimer);
+          httpPollTimer = null;
+        }
+      }, 1000);
     };
 
     const connectAndSubscribe = (pipelineId, websocketUrl) => {
@@ -600,21 +661,23 @@ export default {
       ensureDownloadsSocket(websocketUrl || WS_DL);
       downloads.active = true;
       downloads.pipelineId = pipelineId;
-      downloads.progress = 0;
-      downloads.status = "downloading";
+      // do NOT zero out progress here (prevents flicker)
+      downloads.status = downloads.status || "downloading";
       try {
         downloadsSocket.value.emit("subscribe", { pipeline_id: pipelineId });
       } catch {}
+      // start poll only as fallback if socket is quiet
+      kickHttpPollIfStale(pipelineId);
     };
 
     const startDownloadTracking = (pipelineId, websocketUrl) => {
       connectAndSubscribe(pipelineId, websocketUrl);
-      const t = setInterval(async () => {
+      const watchdog = setInterval(async () => {
         if (!downloads.active && downloads.status !== "failed") {
-          clearInterval(t);
+          clearInterval(watchdog);
           await probeCurrentMode();
         }
-        if (downloads.status === "failed") clearInterval(t);
+        if (downloads.status === "failed") clearInterval(watchdog);
       }, 1000);
     };
 
@@ -648,27 +711,12 @@ export default {
     };
 
     // ------------ readiness helpers -------
-    const resetReadiness = () => {
-      readiness.ok = true;
-      readiness.repos = [];
-      readiness.missingReposDetailed = [];
-      readiness.missingGguf = false;
-      readiness.ggufName = null;
-      readiness.notes = [];
-      readiness.authRequired = false;
-      readiness.authRepos = [];
-      generation.blocked = false;
-    };
-
     const applyPlanToReadiness = (data) => {
       const repos = Array.isArray(data?.repos) ? data.repos : [];
-
-      // consider incomplete if ok===false OR numeric missing > 0
       const incomplete = repos.filter(
         (r) =>
           r && (r.ok === false || (Number.isFinite(r.missing) && r.missing > 0))
       );
-
       readiness.missingRepos = [
         ...new Set(incomplete.map((r) => r.repo).filter(Boolean)),
       ];
@@ -677,21 +725,17 @@ export default {
         missing: Number.isFinite(r.missing) ? r.missing : null,
         root: r.root || null,
       }));
-
       const ggufs = Array.isArray(data?.gguf_status) ? data.gguf_status : [];
       const missG = ggufs.find((g) => g && g.configured && !g.exists);
       readiness.missingGguf = !!missG;
       readiness.ggufName = missG
         ? (missG.path || missG.name || "").split("/").pop()
         : null;
-
       readiness.authRequired = !!data?.auth_required;
       readiness.authRepos = Array.isArray(data?.auth_repos)
         ? data.auth_repos
         : [];
       readiness.notes = Array.isArray(data?.notes) ? data.notes : [];
-
-      // trust server ok, but also force false if we detected missing/incomplete items
       const serverOk = !!data?.ok;
       readiness.ok =
         serverOk &&
@@ -721,25 +765,21 @@ export default {
       generation.blocked = true;
       const rs = res?.data?.repo_status;
       if (rs?.repo) {
-        // incoming 409 carries either a list of specific missing items or just that it's incomplete.
         const missingCount = Array.isArray(rs?.missing)
           ? rs.missing.length
           : typeof rs?.missing === "number"
           ? rs.missing
           : 1;
         const exists = typeof rs?.exists === "boolean" ? rs.exists : true;
-        // Add/merge into detailed list
         const key = rs.repo;
-        const idx = readiness.missingReposDetailed.findIndex(
-          (x) => x.repo === key
-        );
         const entry = {
           repo: key,
           missing: Math.max(1, missingCount),
           root: rs.root || null,
         };
-        if (idx >= 0) readiness.missingReposDetailed[idx] = entry;
-        else readiness.missingReposDetailed.push(entry);
+        const idx = readiness.repoDetails.findIndex((x) => x.repo === key);
+        if (idx >= 0) readiness.repoDetails[idx] = entry;
+        else readiness.repoDetails.push(entry);
         if (!exists)
           readiness.notes.push(`${key}: repository not found locally`);
       }
@@ -747,9 +787,7 @@ export default {
       if (hint) readiness.notes.push(hint);
     };
 
-    // ------------ proactive readiness -----
     const probeCurrentMode = async () => {
-      // reset
       readiness.ok = true;
       readiness.missingRepos = [];
       readiness.repoDetails = [];
@@ -768,11 +806,9 @@ export default {
           { pipeline, deep_validate: true },
           { validateStatus: () => true }
         );
-
         if (status >= 200 && status < 300) {
           applyPlanToReadiness(data);
         } else {
-          // non-2xx: don't hide CTA; add a note and keep ok=false so CTA shows
           readiness.ok = false;
           readiness.notes = [`Planner returned HTTP ${status}.`];
         }
@@ -810,10 +846,7 @@ export default {
           return;
         }
 
-        if (res.status === 403) {
-          apply403ToReadiness(res);
-          return;
-        }
+        if (res.status === 403) return apply403ToReadiness(res);
         if (res.status === 409) {
           apply409ToReadiness(res);
           await probeCurrentMode();
@@ -830,8 +863,17 @@ export default {
     // ------------ generation socket -------
     const genSocket = ref(null);
     const ensureGenerationSocket = (base = WS_GEN) => {
-      if (genSocket.value && genSocket.value.connected) return;
-      genSocket.value = io(base, { transports: ["polling", "websocket"] });
+      if (genSocket.value) return;
+      genSocket.value = io(base, {
+        path: "/socket.io",
+        transports: ["websocket", "polling"],
+      });
+
+      genSocket.value.on("connect_error", (err) =>
+        console.warn("[gen] connect_error", err?.message || err)
+      );
+      genSocket.value.on("error", (err) => console.warn("[gen] error", err));
+
       genSocket.value.on("gen_started", ({ generation_id }) => {
         Object.assign(generation, {
           id: generation_id,
@@ -847,8 +889,14 @@ export default {
           if (generation.id && generation_id && generation_id !== generation.id)
             return;
           generation.stage = stage || generation.stage;
-          if (typeof pct === "number") generation.pct = pct;
-          else if (total) generation.pct = (Number(step) / Number(total)) * 100;
+          if (typeof pct === "number")
+            generation.pct = Math.max(generation.pct, pct);
+          else if (total)
+            generation.pct = Math.max(
+              generation.pct,
+              (Number(step) / Number(total)) * 100
+            );
+          if (!generation.active) generation.active = true;
         }
       );
       genSocket.value.on("gen_finished", ({ generation_id }) => {
@@ -895,10 +943,7 @@ export default {
           return;
         }
 
-        if (res.status === 403) {
-          apply403ToReadiness(res);
-          return;
-        }
+        if (res.status === 403) return apply403ToReadiness(res);
         if (res.status === 409) {
           apply409ToReadiness(res);
           await probeCurrentMode();
@@ -933,7 +978,14 @@ export default {
         payload.lora = "cyberrealistic-xl-v6.safetensors";
 
       const url = `${API_BASE}${endpointForMode(mode.value)}`;
+
       ensureGenerationSocket();
+      Object.assign(generation, {
+        active: true,
+        stage: "starting",
+        pct: 0,
+        error: null,
+      });
 
       const onSuccess = async (response) => {
         if (response?.data?.image || response?.data?.video_path) {
@@ -976,7 +1028,32 @@ export default {
         );
       } catch {}
     };
-    const loadHistory = async () => {
+
+    // --------- derived: stable ordered task list
+    const downloadTaskList = computed(() => {
+      const tasks = downloads.pipeline?.tasks || {};
+      const arr = Object.values(tasks);
+      const order = {
+        downloading: 0,
+        pending: 1,
+        completed: 2,
+        failed: 3,
+        cancelled: 4,
+      };
+      return arr
+        .map((t) => ({ ...t }))
+        .sort((a, b) => {
+          const sa = order[a.status] ?? 99;
+          const sb = order[b.status] ?? 99;
+          if (sa !== sb) return sa - sb;
+          return (b.progress || 0) - (a.progress || 0);
+        });
+    });
+
+    // ------------ lifecycle ----------------
+    onMounted(async () => {
+      ensureGenerationSocket();
+      await resumeActiveDownloadIfAny();
       try {
         const saved = await window.electronAPI?.store?.get?.(
           "imageInferences",
@@ -985,13 +1062,6 @@ export default {
         if (Array.isArray(saved))
           saved.forEach((item) => inferences.push(item));
       } catch {}
-    };
-
-    // ------------ lifecycle ----------------
-    onMounted(async () => {
-      ensureGenerationSocket();
-      await resumeActiveDownloadIfAny();
-      await loadHistory();
       await probeCurrentMode();
     });
     onBeforeUnmount(() => {
@@ -999,6 +1069,10 @@ export default {
         try {
           downloadsSocket.value.disconnect();
         } catch {}
+      }
+      if (httpPollTimer) {
+        clearInterval(httpPollTimer);
+        httpPollTimer = null;
       }
       if (genSocket.value?.connected) {
         try {
@@ -1015,7 +1089,6 @@ export default {
     );
 
     return {
-      // state
       mode,
       quality,
       form,
@@ -1026,7 +1099,7 @@ export default {
       showUpdateCTA,
       generation,
       downloads,
-      // actions
+      downloadTaskList,
       sendMessage,
       copy,
       downloadImage,
@@ -1185,7 +1258,6 @@ ol.chat {
 ol.chat li {
   position: relative;
 }
-
 .cancel {
   position: absolute;
   top: -3em;

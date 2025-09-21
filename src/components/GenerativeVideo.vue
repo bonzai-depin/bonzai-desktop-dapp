@@ -1,3 +1,4 @@
+<!-- GenerativeVideo.vue -->
 <template>
   <div class="background"></div>
   <div class="models__deployment column is-8 is-paddingless">
@@ -55,7 +56,7 @@
           <div class="models__activity--payouts">
             <div class="columns">
               <div class="column is-12">
-                <!-- MODE/QUALITY TOGGLES (same names as Image view) -->
+                <!-- MODE/QUALITY TOGGLES -->
                 <div class="control mb-5 has-text-left">
                   <input
                     v-model="mode"
@@ -235,6 +236,18 @@
                     >
                       {{ Math.round(downloads.progress || 0) }}%
                       <button
+                        class="button is-small is-warning mr-4 retry p-1"
+                        @click="retryCurrentPipeline"
+                        :disabled="
+                          !downloads.pipelineId ||
+                          downloads.status === 'completed'
+                        "
+                      >
+                        <span class="material-symbols-outlined">
+                          restart_alt
+                        </span>
+                      </button>
+                      <button
                         class="button is-small is-danger mr-4 cancel p-1"
                         @click="cancelCurrentPipeline"
                         :disabled="
@@ -254,28 +267,28 @@
                     {{ Math.round(downloads.progress || 0) }}%
                   </progress>
                   <div
-                    v-if="downloads.pipeline?.tasks"
+                    v-if="downloadTaskList.length"
                     style="max-height: 180px; overflow: auto"
                   >
                     <ul>
                       <li
-                        v-for="(task, tid) in downloads.pipeline.tasks"
-                        :key="tid"
+                        v-for="t in downloadTaskList"
+                        :key="t.task_id"
                         class="is-size-7 columns"
                       >
                         <div class="column has-text-left">
                           <span class="material-symbols-outlined is-size-6">
                             deployed_code
                           </span>
-                          {{ task.filename }} —
+                          {{ t.filename }} —
                           <span class="fira-sans-condensed-black-italic">
-                            {{ task.status }}
+                            {{ t.status }}
                           </span>
                         </div>
                         <div
                           class="column is-2 fira-sans-condensed-black-italic has-text-right"
                         >
-                          {{ Math.round(task.progress || 0) }}%
+                          {{ Math.round(t.progress || 0) }}%
                         </div>
                       </li>
                     </ul>
@@ -283,32 +296,28 @@
                 </div>
 
                 <!-- IMAGE PICKER + GENERATE -->
-                <div class="notification" style="margin-bottom: 1rem">
-                  <div class="is-flex is-align-items-center is-flex-wrap-wrap">
-                    <div class="file has-name is-medium mr-3">
-                      <label class="file-label">
-                        <input
-                          class="file-input"
-                          type="file"
-                          accept="image/*"
-                          @change="onImagePicked"
-                        />
-                        <span class="file-cta">
-                          <span class="file-icon">
-                            <span class="material-symbols-outlined">image</span>
-                          </span>
-                          <span class="file-label">Browse...</span>
+                <div class="notification p4 preview">
+                  <div class="file is-fullwidth is-medium">
+                    <label class="file-label">
+                      <input
+                        class="file-input"
+                        type="file"
+                        accept="image/*"
+                        @change="onImagePicked"
+                      />
+                      <span class="file-cta">
+                        <span class="file-icon">
+                          <span class="material-symbols-outlined">image</span>
                         </span>
-                        <span class="file-name" v-if="pickedImageName">
-                          {{ pickedImageName }}
-                        </span>
-                      </label>
-                    </div>
+                        <span class="file-label">Browse...</span>
+                      </span>
+                    </label>
                   </div>
 
                   <div class="mt-4" v-if="imagePreviewUrl">
                     <img
                       :src="imagePreviewUrl"
+                      class="preview"
                       alt="preview"
                       style="width: 100%; border-radius: 4px"
                     />
@@ -330,7 +339,7 @@
                       <button
                         class="button is-warning is-large pl-2 is-fullwidth"
                         :disabled="isLoading || !hasAnyImage"
-                        @click="sendMessage('image-to-video')"
+                        @click="sendMessage(form.prompt)"
                         title="Generate video from image"
                       >
                         <span class="material-symbols-outlined is-size-2 mr-1">
@@ -446,11 +455,9 @@ const WS_GEN = `${API_BASE}/generation`;
 
 export default {
   name: "GenerativeVideo",
-  props: {
-    existingImageBase64: { type: String, default: "" },
-  },
+  props: { existingImageBase64: { type: String, default: "" } },
   setup(props) {
-    // --------- basic state (same names as Image view)
+    // --------- basic state
     const mode = ref("turbo");
     const quality = ref("sd");
     const isLoading = ref(false);
@@ -488,39 +495,85 @@ export default {
         readiness.missingGguf
     );
 
-    // --------- pipeline/endpoint maps (fixed for video)
+    // --------- pipeline/endpoint (fixed for video)
     const endpointForMode = () => "/image/video";
     const pipelineForMode = () => "ltx_video";
 
-    // --------- downloads (polling only sockets)
+    // --------- downloads (socket-first, poll as fallback)
     const downloads = reactive({
       active: false,
       pipelineId: null,
       progress: 0,
       status: "pending",
-      pipeline: null,
+      pipeline: { tasks: {} },
       wsUrl: null,
     });
     const downloadsSocket = ref(null);
+    const lastDlEventAt = ref(0);
+    let httpPollTimer = null;
 
     const socketOpts = {
-      transports: ["polling"], // force polling; avoid websocket upgrade
-      upgrade: false,
+      transports: ["websocket", "polling"],
+      upgrade: true,
       forceNew: true,
       timeout: 10000,
       reconnection: true,
       reconnectionAttempts: 60,
       reconnectionDelay: 1000,
+      path: "/socket.io",
+    };
+
+    const mergeTask = (dst, src) => {
+      if (!dst) return { ...src };
+      const out = { ...dst, ...src };
+      if (
+        typeof dst.progress === "number" &&
+        typeof src.progress === "number"
+      ) {
+        out.progress = Math.max(dst.progress || 0, src.progress || 0);
+      }
+      if (
+        typeof dst.downloaded_size === "number" &&
+        typeof src.downloaded_size === "number"
+      ) {
+        out.downloaded_size = Math.max(
+          dst.downloaded_size,
+          src.downloaded_size
+        );
+      }
+      if (
+        typeof dst.total_size === "number" &&
+        typeof src.total_size === "number"
+      ) {
+        out.total_size = Math.max(dst.total_size, src.total_size);
+      }
+      return out;
+    };
+
+    const applyPipelineUpdate = (p) => {
+      if (!p) return;
+      downloads.pipelineId = p.pipeline_id || downloads.pipelineId;
+      downloads.status = p.status || downloads.status || "downloading";
+      const nextPct = Number(p.total_progress || 0);
+      downloads.progress = Math.max(Number(downloads.progress || 0), nextPct);
+
+      const existing = downloads.pipeline?.tasks || {};
+      const incoming = p.tasks || {};
+      const merged = { ...existing };
+      for (const [tid, t] of Object.entries(incoming)) {
+        merged[tid] = mergeTask(existing[tid], t);
+      }
+      downloads.pipeline = {
+        ...(downloads.pipeline || {}),
+        ...p,
+        tasks: merged,
+      };
+      downloads.active = !["completed", "failed", "cancelled"].includes(
+        downloads.status
+      );
     };
 
     const ensureDownloadsSocket = (base = WS_DL) => {
-      if (
-        downloadsSocket.value &&
-        downloadsSocket.value.connected &&
-        downloads.wsUrl === base
-      ) {
-        return;
-      }
       if (downloadsSocket.value) {
         try {
           downloadsSocket.value.disconnect();
@@ -528,16 +581,50 @@ export default {
       }
       downloads.wsUrl = base;
       downloadsSocket.value = io(base, socketOpts);
-      downloadsSocket.value.on("download_progress", ({ pipeline }) => {
-        if (!pipeline) return;
-        downloads.pipeline = pipeline;
-        downloads.pipelineId = pipeline.pipeline_id;
-        downloads.progress = pipeline.total_progress || 0;
-        downloads.status = pipeline.status || "downloading";
-        downloads.active = !["completed", "failed", "cancelled"].includes(
-          downloads.status
-        );
+
+      downloadsSocket.value.on("connect", () => {
+        if (downloads.pipelineId) {
+          downloadsSocket.value.emit("subscribe", {
+            pipeline_id: downloads.pipelineId,
+          });
+        }
       });
+
+      downloadsSocket.value.on("download_progress", ({ pipeline }) => {
+        lastDlEventAt.value = Date.now();
+        if (!pipeline) return;
+        applyPipelineUpdate(pipeline);
+      });
+
+      downloadsSocket.value.on("connect_error", (e) =>
+        console.warn("[downloads] connect_error", e?.message || e)
+      );
+      downloadsSocket.value.on("error", (e) =>
+        console.warn("[downloads] error", e)
+      );
+    };
+
+    const kickHttpPollIfStale = (pipelineId) => {
+      if (httpPollTimer) clearInterval(httpPollTimer);
+      httpPollTimer = setInterval(async () => {
+        const idleMs = Date.now() - lastDlEventAt.value;
+        if (idleMs < 1500) return; // socket still talking
+        try {
+          const { data } = await axios.get(
+            `${API_BASE}/downloads/status/${pipelineId}`
+          );
+          if (data) {
+            applyPipelineUpdate(data);
+            if (!downloads.active) {
+              clearInterval(httpPollTimer);
+              httpPollTimer = null;
+            }
+          }
+        } catch {
+          clearInterval(httpPollTimer);
+          httpPollTimer = null;
+        }
+      }, 1000);
     };
 
     const connectAndSubscribe = (pipelineId, websocketUrl) => {
@@ -545,11 +632,12 @@ export default {
       ensureDownloadsSocket(websocketUrl || WS_DL);
       downloads.active = true;
       downloads.pipelineId = pipelineId;
-      downloads.progress = 0;
-      downloads.status = "downloading";
+      // don't zero progress
+      downloads.status = downloads.status || "downloading";
       try {
         downloadsSocket.value.emit("subscribe", { pipeline_id: pipelineId });
       } catch {}
+      kickHttpPollIfStale(pipelineId);
     };
 
     const startDownloadTracking = (pipelineId, websocketUrl) => {
@@ -703,7 +791,7 @@ export default {
       }
     };
 
-    // --- CTA action: identical behavior to Image view ---
+    // --- CTA action
     const prefetchForMode = async () => {
       const pipeline = pipelineForMode(); // "ltx_video"
       try {
@@ -749,7 +837,7 @@ export default {
       }
     };
 
-    // --------- generation socket (polling only)
+    // --------- generation socket
     const genSocket = ref(null);
     const ensureGenerationSocket = (base = WS_GEN) => {
       if (genSocket.value && genSocket.value.connected) return;
@@ -769,8 +857,13 @@ export default {
           if (generation.id && generation_id && generation_id !== generation.id)
             return;
           generation.stage = stage || generation.stage;
-          if (typeof pct === "number") generation.pct = pct;
-          else if (total) generation.pct = (Number(step) / Number(total)) * 100;
+          if (typeof pct === "number")
+            generation.pct = Math.max(generation.pct, pct);
+          else if (total)
+            generation.pct = Math.max(
+              generation.pct,
+              (Number(step) / Number(total)) * 100
+            );
         }
       );
       genSocket.value.on("gen_finished", ({ generation_id }) => {
@@ -789,7 +882,7 @@ export default {
       });
     };
 
-    // --------- request wrapper (same as Image)
+    // --------- request wrapper
     const requestWithDownloadTracking = async (url, payload, onSuccess) => {
       try {
         isLoading.value = true;
@@ -869,19 +962,16 @@ export default {
         reader.readAsDataURL(file);
       });
 
-    // --------- actions (same name: sendMessage)
-    const sendMessage = async () => {
+    // --------- actions
+    const sendMessage = async (prompt) => {
+      if (!prompt) return;
       if (!hasAnyImage.value) return;
 
-      const sizes = {
-        sd: [480, 832],
-        hd: [720, 1280],
-        fhd: [1080, 1920],
-      };
+      const sizes = { sd: [480, 832], hd: [720, 1280], fhd: [1080, 1920] };
       const [h, w] = sizes[quality.value] || sizes.sd;
 
       const payload = {
-        prompt: "image-to-video",
+        prompt: prompt,
         height: h,
         width: w,
         frames: 96,
@@ -889,11 +979,9 @@ export default {
         steps_gen: 30,
         steps_refine: 10,
         callback_steps: 1,
+        image_base64:
+          uploadedImageBase64.value || (props.existingImageBase64 || "").trim(),
       };
-
-      const chosen =
-        uploadedImageBase64.value || (props.existingImageBase64 || "").trim();
-      if (chosen) payload.image_base64 = chosen;
 
       const url = `${API_BASE}${endpointForMode()}`;
       ensureGenerationSocket();
@@ -957,6 +1045,27 @@ export default {
       } catch {}
     };
 
+    // --------- derived: stable ordered task list
+    const downloadTaskList = computed(() => {
+      const tasks = downloads.pipeline?.tasks || {};
+      const arr = Object.values(tasks);
+      const order = {
+        downloading: 0,
+        pending: 1,
+        completed: 2,
+        failed: 3,
+        cancelled: 4,
+      };
+      return arr
+        .map((t) => ({ ...t }))
+        .sort((a, b) => {
+          const sa = order[a.status] ?? 99;
+          const sb = order[b.status] ?? 99;
+          if (sa !== sb) return sa - sb;
+          return (b.progress || 0) - (a.progress || 0);
+        });
+    });
+
     // --------- lifecycle
     onMounted(async () => {
       ensureGenerationSocket();
@@ -969,6 +1078,10 @@ export default {
         try {
           downloadsSocket.value.disconnect();
         } catch {}
+      }
+      if (httpPollTimer) {
+        clearInterval(httpPollTimer);
+        httpPollTimer = null;
       }
       if (genSocket.value?.connected) {
         try {
@@ -996,6 +1109,8 @@ export default {
       showUpdateCTA,
       generation,
       downloads,
+      // derived
+      downloadTaskList,
       // i2v helpers
       onImagePicked,
       pickedImageName,
@@ -1026,6 +1141,12 @@ export default {
   right: 1em;
   z-index: 1;
   opacity: 0.9;
+}
+.notification {
+  padding: 1.25rem 1.5rem 1.25rem 1.5rem;
+}
+.preview {
+  box-shadow: 8px 8px 0 rgba(97, 55, 142, 0.66);
 }
 .material-symbols-outlined {
   font-variation-settings: "FILL" 0, "wght" 100, "GRAD" -25, "opsz" 48;
@@ -1149,10 +1270,21 @@ ol.chat {
 ol.chat li {
   position: relative;
 }
-
+.retry {
+  position: absolute;
+  top: -3em;
+  right: 2.75em;
+  opacity: 0.5;
+}
+.retry:hover,
+.cancel:hover {
+  box-shadow: none;
+  opacity: 1;
+}
 .cancel {
   position: absolute;
   top: -3em;
-  right: -6em;
+  right: -1.25em;
+  opacity: 0.5;
 }
 </style>
