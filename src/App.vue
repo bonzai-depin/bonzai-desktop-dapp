@@ -55,6 +55,7 @@
             class="models__list-item model video"
             :class="{ 'is-active': modelMode == 'video' }"
             @click="modelMode = 'video'"
+            :existingImageBase64="videoImageBase64"
           >
             <a>
               <h1>
@@ -151,10 +152,18 @@ export default {
   setup() {
     const modelMode = ref("chat");
     const systemValues = ref({});
+        const videoImageBase64 = ref("");
+
+    const goAnimateToVideo = (b64) => {
+      videoImageBase64.value = b64 || "";
+      modelMode.value = "video"; // switch view
+    };
 
     return {
       systemValues,
       modelMode,
+            videoImageBase64,
+      goAnimateToVideo,
     };
   },
   async mounted() {

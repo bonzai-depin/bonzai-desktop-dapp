@@ -1,4 +1,3 @@
-<!-- GenerativeVideo.vue -->
 <template>
   <div class="background"></div>
   <div class="models__deployment column is-8 is-paddingless">
@@ -323,6 +322,7 @@
                     />
                   </div>
                 </div>
+
                 <form ref="promptForm" @submit.prevent>
                   <div class="columns">
                     <div class="column is-8">
@@ -368,62 +368,57 @@
                       :src="fileUrl(inference.answer.data.video_path)"
                       controls
                       style="
-                        width: 100%;
+                        width: 100vh;
                         border: 1px solid rgba(255, 255, 255, 1);
                         border-radius: 4px;
                       "
                     ></video>
-                    <hr />
-                    <button
-                      class="button is-medium is-success copy is-pulled-right ml-5 mr-0 p-0 pl-1 pr-1"
-                      @click="downloadVideo(index)"
-                      title="Save video"
-                    >
-                      <span class="material-symbols-outlined is-size-2">
-                        save
-                      </span>
-                    </button>
-                    <button
-                      class="button is-medium is-danger is-pulled-right ml-2 p-0 pl-1 pr-1"
-                      @click="removeInference(index)"
-                      title="Remove this result"
-                    >
-                      <span class="material-symbols-outlined is-size-2">
-                        delete
-                      </span>
-                    </button>
-                    <button
-                      class="button is-medium is-success copy is-pulled-left p-0 pl-1 pr-1"
-                      @click="copy(inference?.answer?.data?.video_path || '')"
-                    >
-                      <span
-                        class="material-symbols-outlined is-size-2"
-                        v-if="!hasCopy[index]"
+                    <div class="pb-5 mb-5 mt-5">
+                      <button
+                        class="button is-medium is-success copy is-pulled-right ml-5 mr-0 p-0 pl-1 pr-1"
+                        @click="downloadVideo(index)"
+                        title="Save video"
                       >
-                        content_copy
-                      </span>
-                      <span class="material-symbols-outlined is-size-2" v-else>
-                        check
-                      </span>
-                    </button>
-                    <button
-                      disabled
-                      class="button is-medium is-warning copy is-pulled-left ml-5 pl-2"
-                    >
-                      <span class="material-symbols-outlined is-size-2 mr-1">
-                        token
-                      </span>
-                      Mint
-                    </button>
-                    <button
-                      disabled
-                      class="button is-medium is-warning copy is-pulled-left ml-5 pl-2"
-                    >
-                      <span class="material-symbols-outlined is-size-2 mr-1">
-                        edit_square
-                      </span>
-                      Edit
-                    </button>
+                        <span class="material-symbols-outlined is-size-2">
+                          save
+                        </span>
+                      </button>
+                      <button
+                        class="button is-medium is-danger is-pulled-right ml-2 p-0 pl-1 pr-1"
+                        @click="removeInference(index)"
+                        title="Remove this result"
+                      >
+                        <span class="material-symbols-outlined is-size-2">
+                          delete
+                        </span>
+                      </button>
+                      <button
+                        class="button is-medium is-success copy is-pulled-left p-0 pl-1 pr-1"
+                        @click="copy(inference?.answer?.data?.video_path || '')"
+                      >
+                        <span
+                          class="material-symbols-outlined is-size-2"
+                          v-if="!hasCopy[index]"
+                        >
+                          content_copy
+                        </span>
+                        <span
+                          class="material-symbols-outlined is-size-2"
+                          v-else
+                        >
+                          check
+                        </span>
+                      </button>
+                      <button
+                        disabled
+                        class="button is-medium is-warning copy is-pulled-left ml-5 pl-2"
+                      >
+                        <span class="material-symbols-outlined is-size-2 mr-1">
+                          token
+                        </span>
+                        Mint
+                      </button>
+                    </div>
                   </div>
                 </li>
               </ol>
@@ -495,9 +490,35 @@ export default {
         readiness.missingGguf
     );
 
-    // --------- pipeline/endpoint (fixed for video)
-    const endpointForMode = () => "/image/video";
-    const pipelineForMode = () => "ltx_video";
+    // --- WAN helpers ---
+    // Snap a dimension to the nearest multiple of 64 (keeps aspect if you start with a 16:9/4:3 map)
+    const snap64 = (v) => {
+      const m = 64;
+      const down = Math.floor(v / m) * m;
+      const up = Math.ceil(v / m) * m;
+      // prefer rounding that stays within [256, 1024] typical sweet-spot
+      const candidate = Math.abs(v - down) <= Math.abs(up - v) ? down : up;
+      return Math.max(256, Math.min(1024, candidate));
+    };
+
+    // WAN requires (num_frames - 1) % 4 === 0, i.e. 1,5,9,13,...
+    const toWanFrames = (n) => {
+      const k = Math.round((n - 1) / 4);
+      return Math.max(5, 1 + 4 * k); // minimum useful sequence is 5
+    };
+
+    // --------- pipeline/endpoint updated for turbo(LTX) vs quality(WAN)
+    const endpointForMode = () =>
+      mode.value === "turbo" ? "/image/video/turbo" : "/image/video/quality";
+    const pipelineForMode = () =>
+      mode.value === "turbo" ? "ltx_video" : "wan_video";
+
+    // WAN requires (num_frames - 1) % 4 === 0
+    const normalizeFramesForWan = (frames) => {
+      const n = Math.max(5, Number(frames) || 5);
+      const k = Math.round((n - 1) / 4);
+      return 1 + 4 * k;
+    };
 
     // --------- downloads (socket-first, poll as fallback)
     const downloads = reactive({
@@ -560,9 +581,8 @@ export default {
       const existing = downloads.pipeline?.tasks || {};
       const incoming = p.tasks || {};
       const merged = { ...existing };
-      for (const [tid, t] of Object.entries(incoming)) {
+      for (const [tid, t] of Object.entries(incoming))
         merged[tid] = mergeTask(existing[tid], t);
-      }
       downloads.pipeline = {
         ...(downloads.pipeline || {}),
         ...p,
@@ -608,7 +628,7 @@ export default {
       if (httpPollTimer) clearInterval(httpPollTimer);
       httpPollTimer = setInterval(async () => {
         const idleMs = Date.now() - lastDlEventAt.value;
-        if (idleMs < 1500) return; // socket still talking
+        if (idleMs < 1500) return;
         try {
           const { data } = await axios.get(
             `${API_BASE}/downloads/status/${pipelineId}`
@@ -632,7 +652,6 @@ export default {
       ensureDownloadsSocket(websocketUrl || WS_DL);
       downloads.active = true;
       downloads.pipelineId = pipelineId;
-      // don't zero progress
       downloads.status = downloads.status || "downloading";
       try {
         downloadsSocket.value.emit("subscribe", { pipeline_id: pipelineId });
@@ -687,7 +706,6 @@ export default {
         (r) =>
           r && (r.ok === false || (Number.isFinite(r.missing) && r.missing > 0))
       );
-
       readiness.missingRepos = [
         ...new Set(incomplete.map((r) => r.repo).filter(Boolean)),
       ];
@@ -696,20 +714,17 @@ export default {
         missing: Number.isFinite(r.missing) ? r.missing : null,
         root: r.root || null,
       }));
-
       const ggufs = Array.isArray(data?.gguf_status) ? data.gguf_status : [];
       const missG = ggufs.find((g) => g && g.configured && !g.exists);
       readiness.missingGguf = !!missG;
       readiness.ggufName = missG
         ? (missG.path || missG.name || "").split("/").pop()
         : null;
-
       readiness.authRequired = !!data?.auth_required;
       readiness.authRepos = Array.isArray(data?.auth_repos)
         ? data.auth_repos
         : [];
       readiness.notes = Array.isArray(data?.notes) ? data.notes : [];
-
       const serverOk = !!data?.ok;
       readiness.ok =
         serverOk &&
@@ -742,8 +757,8 @@ export default {
         const missingCount = Array.isArray(rs?.missing)
           ? rs.missing.length
           : typeof rs?.missing === "number"
-          ? rs.missing
-          : 1;
+            ? rs.missing
+            : 1;
         const exists = typeof rs?.exists === "boolean" ? rs.exists : true;
         const entry = {
           repo: rs.repo,
@@ -772,16 +787,14 @@ export default {
       generation.blocked = false;
 
       const pipeline = pipelineForMode();
-
       try {
         const { data, status } = await axios.post(
           `${API_BASE}/pipelines/plan`,
           { pipeline, deep_validate: true },
           { validateStatus: () => true }
         );
-        if (status >= 200 && status < 300) {
-          applyPlanToReadiness(data);
-        } else {
+        if (status >= 200 && status < 300) applyPlanToReadiness(data);
+        else {
           readiness.ok = false;
           readiness.notes = [`Planner returned HTTP ${status}.`];
         }
@@ -793,7 +806,7 @@ export default {
 
     // --- CTA action
     const prefetchForMode = async () => {
-      const pipeline = pipelineForMode(); // "ltx_video"
+      const pipeline = pipelineForMode();
       try {
         const res = await axios.post(
           `${API_BASE}/pipelines/prefetch`,
@@ -820,10 +833,7 @@ export default {
           return;
         }
 
-        if (res.status === 403) {
-          apply403ToReadiness(res);
-          return;
-        }
+        if (res.status === 403) return apply403ToReadiness(res);
         if (res.status === 409) {
           apply409ToReadiness(res);
           await probeCurrentMode();
@@ -910,10 +920,7 @@ export default {
           return;
         }
 
-        if (res.status === 403) {
-          apply403ToReadiness(res);
-          return;
-        }
+        if (res.status === 403) return apply403ToReadiness(res);
         if (res.status === 409) {
           apply409ToReadiness(res);
           await probeCurrentMode();
@@ -967,21 +974,53 @@ export default {
       if (!prompt) return;
       if (!hasAnyImage.value) return;
 
-      const sizes = { sd: [480, 832], hd: [720, 1280], fhd: [1080, 1920] };
-      const [h, w] = sizes[quality.value] || sizes.sd;
-
-      const payload = {
-        prompt: prompt,
-        height: h,
-        width: w,
-        frames: 96,
-        fps: 24,
-        steps_gen: 30,
-        steps_refine: 10,
-        callback_steps: 1,
-        image_base64:
-          uploadedImageBase64.value || (props.existingImageBase64 || "").trim(),
+      // sizes tuned to server examples
+      const sizeMaps = {
+        turbo: { sd: [480, 640], hd: [720, 1280], fhd: [1080, 1920] }, // LTX likes 2:3~ish; HxW
+        quality: { sd: [480, 640], hd: [720, 1152], fhd: [1080, 1728] }, // WAN example dims; HxW
       };
+      const pick = sizeMaps[mode.value] || sizeMaps.turbo;
+      const [h, w] = pick[quality.value] || pick.sd;
+
+      // sensible defaults matching server
+      let frames = mode.value === "turbo" ? 48 : 65;
+      let payload;
+
+      if (mode.value === "quality") {
+        // WAN
+        frames = normalizeFramesForWan(frames);
+        payload = {
+          prompt,
+          height: h,
+          width: w,
+          frames,
+          fps: 24,
+          steps: 30,
+          callback_steps: 1,
+          auto_download: true,
+          image_base64:
+            uploadedImageBase64.value ||
+            (props.existingImageBase64 || "").trim(),
+        };
+      } else {
+        // LTX
+        payload = {
+          prompt,
+          height: h,
+          width: w,
+          frames, // LTX is fine with 96 by default
+          fps: 12,
+          steps_gen: 20,
+          steps_refine: 5,
+          decode_timestep: 0.05,
+          image_cond_noise_scale: 0.025,
+          callback_steps: 1,
+          auto_download: true,
+          image_base64:
+            uploadedImageBase64.value ||
+            (props.existingImageBase64 || "").trim(),
+        };
+      }
 
       const url = `${API_BASE}${endpointForMode()}`;
       ensureGenerationSocket();
@@ -989,7 +1028,7 @@ export default {
       const onSuccess = async (response) => {
         if (response?.data?.video_path) {
           inferences.push({
-            question: "image-to-video",
+            question: `${mode.value}-i2v`,
             answer: response,
             id: uuid(),
           });
@@ -1149,7 +1188,11 @@ export default {
   box-shadow: 8px 8px 0 rgba(97, 55, 142, 0.66);
 }
 .material-symbols-outlined {
-  font-variation-settings: "FILL" 0, "wght" 100, "GRAD" -25, "opsz" 48;
+  font-variation-settings:
+    "FILL" 0,
+    "wght" 100,
+    "GRAD" -25,
+    "opsz" 48;
   border-radius: 100%;
 }
 .columns {

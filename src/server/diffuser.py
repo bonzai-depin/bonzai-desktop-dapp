@@ -35,6 +35,8 @@ from flask_cors import CORS
 from flask_socketio import SocketIO, emit, join_room
 from fnmatch import fnmatch
 
+import shutil, stat, subprocess
+
 # ---- Hugging Face
 from huggingface_hub import HfApi, hf_hub_url, snapshot_download
 
@@ -72,39 +74,75 @@ from diffusers import (
 from diffusers.pipelines.ltx.pipeline_ltx_condition import LTXVideoCondition
 from diffusers.utils import export_to_video, load_image, load_video
 
-def get_ffmpeg_binary_path():
-    base_dir = os.path.join("node_modules", "ffmpeg-static-electron-forge", "dist", "bin")
+def _user_bin_dir() -> str:
+    d = os.path.join(user_data_dir("bonzai", "BonzAI"), "bin")
+    os.makedirs(d, exist_ok=True)
+    return d
+
+def _platform_tag():
     system = platform.system().lower()
-    machine = platform.machine().lower()
-
-    # Normalize common architectures
-    arch = {
-        "x86_64": "x64",
-        "amd64": "x64",
-        "arm64": "arm64",
-        "aarch64": "arm64"
-    }.get(machine, machine)
-
-    # Platform-specific directory
-    if system == "darwin":
-        platform_dir = f"darwin/{arch}"
-    elif system == "linux":
-        platform_dir = f"linux/{arch}"
-    elif system == "windows":
-        platform_dir = f"win32/{arch}"
+    arch = platform.machine().lower()
+    arch = {"x86_64":"x64","amd64":"x64","arm64":"arm64","aarch64":"arm64"}.get(arch, arch)
+    if system == "darwin":   plat = f"darwin/{arch}"; exe = "ffmpeg"
+    elif system == "linux":  plat = f"linux/{arch}";  exe = "ffmpeg"
+    elif system == "windows":plat = f"win32/{arch}";  exe = "ffmpeg.exe"
     else:
         raise RuntimeError(f"Unsupported platform: {system}/{arch}")
+    return plat, exe
 
-    ffmpeg_path = os.path.join(base_dir, platform_dir, "ffmpeg")
+def _npm_ffmpeg_source_path() -> str:
+    plat, exe = _platform_tag()
+    p = os.path.join("node_modules","ffmpeg-static-electron-forge","dist","bin", plat, exe)
+    if not os.path.isfile(p):
+        raise FileNotFoundError(f"Bundled ffmpeg not found at {p}")
+    return p
 
-    if system == "windows":
-        ffmpeg_path += ".exe"
+def _dest_ffmpeg_path() -> str:
+    _, exe = _platform_tag()
+    return os.path.join(_user_bin_dir(), exe)
 
-    if not os.path.isfile(ffmpeg_path):
-        raise FileNotFoundError(f"FFmpeg binary not found at: {ffmpeg_path}")
+def _make_executable_and_clear_quarantine(path: str):
+    try:
+        st = os.stat(path)
+        os.chmod(path, st.st_mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
+    except Exception:
+        pass
+    # clear macOS quarantine (no-op elsewhere)
+    try:
+        subprocess.run(["xattr","-dr","com.apple.quarantine", path], check=False, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    except Exception:
+        pass
 
-    return ffmpeg_path
+def get_ffmpeg_binary_path() -> str:
+    src = _npm_ffmpeg_source_path()
+    dst = _dest_ffmpeg_path()
 
+    # If source lives inside an asar path or lacks +x/quarantine, we *always* copy.
+    # Copy bytes -> no xattrs/quarantine carried over.
+    try:
+        # Re-copy if dst missing or src newer (simple mtime check)
+        need_copy = True
+        if os.path.isfile(dst):
+            try:
+                need_copy = os.path.getmtime(src) > os.path.getmtime(dst)
+            except Exception:
+                need_copy = False  # fallback: keep existing
+        if need_copy:
+            with open(src, "rb") as fsrc, open(dst, "wb") as fdst:
+                shutil.copyfileobj(fsrc, fdst, length=1<<20)
+    except Exception as e:
+        raise RuntimeError(f"Failed to stage ffmpeg to app bin: {e}")
+
+    _make_executable_and_clear_quarantine(dst)
+
+    if not (os.path.isfile(dst) and os.access(dst, os.X_OK)):
+        raise PermissionError(f"Staged ffmpeg not executable at {dst}")
+
+    # force everything in this process to use our staged ffmpeg
+    os.environ["IMAGEIO_FFMPEG_EXE"] = dst
+    return dst
+
+# keep this
 os.environ["IMAGEIO_FFMPEG_EXE"] = get_ffmpeg_binary_path()
 
 # ------------------------------ Logging & paths ------------------------------
@@ -458,11 +496,31 @@ def _hunyuan_patterns() -> List[str]:
     return ["model_index.json", "scheduler/**", "tokenizer/**", "transformer/**", "vae/**"]
 
 def _ltx_patterns() -> List[str]:
+    # Only 2B is needed. Include the files at repo root so the manifest sees them.
     return [
-        "ltxv-2b-0.9.8-distilled-fp8.safetensors",
-        "ltxv-spatial-upscaler-0.9.8.safetensors",
         "model_index.json",
+        # 2B distilled FP8 base weights (lives at repo root)
+        "ltxv-2b-0.9.8-distilled-fp8.safetensors",
+        # Upscaler ckpt is also mirrored in the main repo; include if present
+        "ltxv-spatial-upscaler-0.9.8.safetensors",
+        # common subfolders
         "media/**", "scheduler/**", "text_encoder/**", "tokenizer/**", "transformer/**", "vae/**",
+    ]
+
+def _wan_patterns() -> List[str]:
+    return [
+        "model_index.json",
+        "scheduler/**",
+        "tokenizer/**",      # keep, some forks include this
+        "processor/**",      # WAN uses this
+        "text_encoder/**",
+        "transformer/**",
+        "vae/**",
+        "**/*.json",
+        "**/*.safetensors",
+        "**/*.bin",
+        "**/*.model",        # sentencepiece
+        "**/*.txt",
     ]
 
 def allow_patterns_for_repo(repo_id: str) -> Optional[List[str]]:
@@ -475,18 +533,21 @@ def allow_patterns_for_repo(repo_id: str) -> Optional[List[str]]:
     ):
         return _sdxl_patterns()
     if repo_id == "Lightricks/LTX-Video":
-        return [
-            "model_index.json",
-            "media/**", "scheduler/**", "text_encoder/**", "tokenizer/**", "transformer/**", "vae/**",
-        ]
+        # IMPORTANT: include root-level 2B fp8 & upscaler files so they
+        # show up in the remote manifest and get downloaded when missing
+        return _ltx_patterns()
     if repo_id == "linoyts/LTX-Video-spatial-upscaler-0.9.8":
+        # allow the root ckpt too (some mirrors place it at repo root)
         return [
             "model_index.json",
+            "ltxv-spatial-upscaler-0.9.8.safetensors",
             "latent_upsampler/**",
             "vae/**",
         ]
     if repo_id == "TencentARC/HunyuanVideo":
         return _hunyuan_patterns()
+    if repo_id == "Wan-AI/Wan2.2-TI2V-5B-Diffusers":
+        return _wan_patterns()
     return None
 
 # ---------------------- Remote manifest & helpers -----------------------------
@@ -623,6 +684,106 @@ def _manifest_and_needs(repo_id: str, allow_patterns: Optional[List[str]] = None
 
     return manifest, needs
 
+# ---- UNIFIED INVENTORY (single source of truth for plan & prefetch) ----------
+@dataclass
+class FileEntry:
+    path: str
+    remote_size: int
+    local_size: int
+    status: str  # "ok" | "missing" | "incomplete" | "invalid"
+
+def _classify_file(rel: str, remote_size: int, local_path: Path) -> FileEntry:
+    try:
+        if not local_path.exists():
+            return FileEntry(rel, int(remote_size or 0), 0, "missing")
+        lsz = local_path.stat().st_size
+    except Exception:
+        return FileEntry(rel, int(remote_size or 0), 0, "missing")
+
+    # size-based checks
+    if remote_size > 0 and lsz != remote_size:
+        return FileEntry(rel, int(remote_size or 0), int(lsz or 0), "incomplete")
+    if remote_size == 0 and lsz <= 0:
+        return FileEntry(rel, 0, 0, "missing")
+
+    # integrity check for .safetensors
+    if rel.endswith(".safetensors"):
+        if not _is_valid_safetensors(local_path):
+            return FileEntry(rel, int(remote_size or 0), int(lsz or 0), "invalid")
+
+    return FileEntry(rel, int(remote_size or 0), int(lsz or 0), "ok")
+
+
+def build_repo_inventory(repo_id: str, allow_patterns: Optional[List[str]] = None) -> Dict[str, Any]:
+    """
+    Canonical view of a repo vs local:
+      - remote manifest (with sizes guaranteed when possible)
+      - per-file classification: ok / missing / incomplete / invalid
+      - needs: list of rel paths needing download (missing/incomplete/invalid)
+      - ok: True iff no needs and minimum required local layout satisfied
+    If the remote listing is unavailable AND local is not OK -> remote_accessible=False.
+    """
+    root = repo_local_dir(repo_id)
+    local_spec = _repo_completeness(repo_id)
+
+    manifest = _list_required_remote_files(repo_id, allow_patterns=allow_patterns)
+    remote_accessible = True
+    if not manifest:
+        # Remote listing empty/failed; we keep parity with your earlier behavior
+        if not local_spec.get("ok", False):
+            remote_accessible = False  # we cannot assert needs list
+        # If local is OK but manifest empty, treat as OK (nothing to do)
+
+    files: List[FileEntry] = []
+    needs: List[str] = []
+
+    if manifest:
+        # Normal path: we can classify each required remote file
+        for f in manifest:
+            rel = f["path"]
+            rsz = int(f.get("size") or 0)
+            lp = root / rel
+            fe = _classify_file(rel, rsz, lp)
+            files.append(fe)
+            if fe.status in ("missing", "incomplete", "invalid"):
+                needs.append(rel)
+    else:
+        # No manifest: we can't list per-file needs; rely on local completeness
+        files = []
+        needs = []  # unknown; plan/prefetch will fallback
+
+    summary = {
+        "total": len(files),
+        "ok": sum(1 for x in files if x.status == "ok"),
+        "missing": sum(1 for x in files if x.status == "missing"),
+        "incomplete": sum(1 for x in files if x.status == "incomplete"),
+        "invalid": sum(1 for x in files if x.status == "invalid"),
+    }
+
+    # Final ok = local spec ok OR (remote files known and needs empty)
+    if manifest:
+        ok = (len(needs) == 0)
+        missing_count = len(needs)
+    else:
+        ok = bool(local_spec.get("ok", False))
+        # we can’t compute missing files count; keep 1 if not ok to trigger UI
+        missing_count = 0 if ok else 1
+
+    return {
+        "repo": repo_id,
+        "root": str(root),
+        "exists": root.exists(),
+        "remote_accessible": remote_accessible,
+        "files": [fe.__dict__ for fe in files],
+        "needs": needs,
+        "summary": summary,
+        "ok": ok,
+        # expose the old “missing” and “missing_list” for UI backward-compat
+        "missing": missing_count if remote_accessible else None,
+        "missing_list": local_spec.get("missing", []),
+    }
+
+
 # PART 4/5
 
 def _estimate_repo_size(repo_id: str, allow_patterns: Optional[List[str]] = None) -> int:
@@ -666,11 +827,24 @@ def _has_any_weights(path: Path) -> bool:
     return False
 
 def _tokenizer_ok(root: Path, name: str = "tokenizer") -> bool:
-    return (
+    ok = (
         _nonzero(root / f"{name}.json")
         or _nonzero(root / name / "tokenizer.json")
         or (_nonzero(root / f"{name}/vocab.json") and _nonzero(root / f"{name}/merges.txt"))
         or (_nonzero(root / "vocab.json") and _nonzero(root / "merges.txt"))
+    )
+    if ok:
+        return True
+    # WAN-style processor (SentencePiece or similar)
+    proc = root / "processor"
+    return any(
+        _nonzero(proc / fn)
+        for fn in (
+            "tokenizer.json",
+            "spiece.model",
+            "sentencepiece.bpe.model",
+            "vocab.txt",
+        )
     )
 
 REPO_SPECS = {
@@ -723,6 +897,13 @@ REPO_SPECS = {
         "must_files": ["model_index.json"],
         "must_tokenizers": [],
         "must_weight_dirs": ["latent_upsampler", "vae"],
+    },
+    "Wan-AI/Wan2.2-TI2V-5B-Diffusers": {
+        "must_files": ["model_index.json"],
+        "must_tokenizers": [],  # WAN uses processor/ (SentencePiece), not tokenizer/
+        "must_weight_dirs": ["transformer", "vae", "text_encoder"],
+        "extra_dirs": ["scheduler"],  # <-- drop "processor" from hard requirements
+        "fallback_any_weights": True,
     },
 }
 
@@ -794,29 +975,17 @@ def _remote_missing_or_mismatch(repo_id: str, allow_patterns: Optional[List[str]
     return missing
 
 def _repo_readiness(repo_id: str) -> Dict[str, Any]:
-    local = _repo_completeness(repo_id)
     pats = allow_patterns_for_repo(repo_id)
-    remote_missing = _remote_missing_or_mismatch(repo_id, allow_patterns=pats)
-
-    status = {
-        "repo": repo_id,
-        "root": local["root"],
-        "exists": local["exists"],
-        "ok": False,
-        "missing": None if remote_missing is None else int(remote_missing if local["ok"] else max(1, remote_missing)),
-        "missing_list": local["missing"],
+    inv = build_repo_inventory(repo_id, allow_patterns=pats)
+    # keep the same shape as before so the frontend doesn't break
+    return {
+        "repo": inv["repo"],
+        "root": inv["root"],
+        "exists": inv["exists"],
+        "ok": bool(inv["ok"]),
+        "missing": inv["missing"],          # int or None (auth/offline)
+        "missing_list": inv["missing_list"],
     }
-
-    if local["ok"]:
-        status["ok"] = True
-        status["missing"] = 0
-        return status
-
-    if remote_missing is None:
-        status["ok"] = bool(local["ok"])
-    else:
-        status["ok"] = bool(local["ok"] and remote_missing == 0)
-    return status
 
 def _repos_ready_or_resp(*repo_ids: str) -> Optional[tuple]:
     statuses = []
@@ -849,6 +1018,7 @@ def _repos_ready_or_resp(*repo_ids: str) -> Optional[tuple]:
         }), 409
 
     return jsonify({"error": "Unknown readiness state", "repos": statuses}), 409
+
 
 # --------------------------- Per-file streamers -------------------------------
 def _stream_file_task(pl: PipelineDownload, tid: str, url: str, dest: Path):
@@ -1120,7 +1290,7 @@ LTX_REPO          = "Lightricks/LTX-Video"
 LTX_UPSAMPLER_REPO = "linoyts/LTX-Video-spatial-upscaler-0.9.8"
 HUNYUAN_REPO      = "TencentARC/HunyuanVideo"
 STABLE_AUDIO_REPO = "stabilityai/stable-audio-open-1.0"
-WAN_REPO          = "deepseek-ai/WAN"  # placeholder
+WAN_REPO          = "Wan-AI/Wan2.2-TI2V-5B-Diffusers"
 
 # Optional GGUFs
 FLUX_GGUF_NAME = os.getenv("FLUX_GGUF_FILENAME", "flux1-dev-Q8_0.gguf").strip()
@@ -1159,8 +1329,9 @@ def _plan_for(pipeline: str) -> Dict[str, Any]:
         if HUNYUAN_GGUF_NAME:
             plan["single_files"].append({"name": HUNYUAN_GGUF_NAME, "url": HUNYUAN_GGUF_URL, "optional": True})
         plan["gguf_status"] = [_gguf_status(HUNYUAN_GGUF_NAME)]
-    elif pipeline in ("wan", "wan_video"):
+    elif pipeline in ("wan", "wan_video", "wan_2_2"):
         plan["repos_to_fetch"] = [WAN_REPO]
+        plan["gguf_status"] = []   # none for Wan
         if WAN_GGUF_NAME:
             plan["single_files"].append({"name": WAN_GGUF_NAME, "url": WAN_GGUF_URL, "optional": True})
         plan["gguf_status"] = [_gguf_status(WAN_GGUF_NAME)]
@@ -1179,39 +1350,84 @@ def _start_prefetch_pipeline(pipeline: str) -> Dict[str, Any]:
     download_manager.set_status(pl, "downloading")
     download_manager.emit(pl.pipeline_id)
 
+    # Track repos that were skipped because remote is inaccessible (auth/terms/offline)
+    inaccessible_repos: List[str] = []
+
     # Queue repo downloads (prefer per-file; fallback to snapshot)
     for rid in plan.get("repos_to_fetch", []):
-        st = _repo_readiness(rid)
-        if st.get("missing") is None and not st.get("ok", False):
-            logger.warning("[prefetch] skipping %s due to remote inaccessibility", rid)
-            continue
-        if st.get("ok", False):
-            continue
-
         pats = allow_patterns_for_repo(rid)
-        try:
-            manifest, needs = _manifest_and_needs(rid, allow_patterns=pats)
-        except RemoteListingUnavailable:
+        inv = build_repo_inventory(rid, allow_patterns=pats)
+
+        if inv["missing"] is None and not inv["ok"]:
+            # Remote inaccessible (auth / terms / offline). Don’t start tasks.
+            logger.warning("[prefetch] skipping %s due to remote inaccessibility", rid)
+            inaccessible_repos.append(rid)
+            continue
+
+        if inv["ok"]:
+            # Nothing needed for this repo
+            continue
+
+        if inv["needs"]:
+            # Per-file tasks (deterministic IDs)
+            container_tid = download_manager.add_repo_task(pl, repo_id=rid, total_estimate=len(inv["needs"]))
+            download_manager.mark_downloading(pl, container_tid)
+
+            # Create all file tasks up-front so the UI has a list immediately
+            remote_sizes = {f["path"]: int(f["remote_size"] or 0) for f in inv["files"]}
+            for rel in inv["needs"]:
+                tid = _tid_file(rid, rel)  # deterministic ID
+                size = remote_sizes.get(rel, 0)
+                title = f"{rid}/{rel}"
+                pl.tasks[tid] = DownloadTask(task_id=tid, kind="file", name=title, total_bytes=size, status="pending")
+                if size > 0:
+                    download_manager.update_progress(pl, tid, done=0, total=size)
+
+            download_manager.emit(pl.pipeline_id)
+
+            # Run per-file downloaders
+            def _wrap(rel_path: str):
+                tid = _tid_file(rid, rel_path)
+                try:
+                    download_manager.mark_downloading(pl, tid)
+                    _stream_hf_file_task(pl, tid, rid, rel_path, remote_sizes.get(rel_path, 0))
+                except Exception as e:
+                    logger.exception(f"[files] worker crashed: {rid}/{rel_path}")
+                    download_manager.mark_failed(pl, tid, str(e))
+
+            from concurrent.futures import ThreadPoolExecutor, as_completed
+            completed = 0
+            total_files = len(inv["needs"])
+            with ThreadPoolExecutor(max_workers=4) as ex:
+                futs = [ex.submit(_wrap, rel) for rel in inv["needs"]]
+                for fut in as_completed(futs):
+                    try:
+                        fut.result()
+                    except Exception:
+                        pass
+                    completed += 1
+                    download_manager.update_progress(pl, container_tid, done=completed, total=total_files)
+
+            # Container state
+            states = {t.status for tid, t in pl.tasks.items() if t.kind == "file" and t.name.startswith(f"{rid}/")}
+            if "failed" in states:
+                download_manager.mark_failed(pl, container_tid, "Some files failed.")
+            else:
+                download_manager.mark_completed(pl, container_tid)
+
+            download_manager.finalize_if_done(pl)
+        else:
+            # No per-file list (manifest empty) and repo not ok -> snapshot fallback
             total_est = _estimate_repo_size(rid, allow_patterns=pats)
             tid = download_manager.add_repo_task(pl, repo_id=rid, total_estimate=total_est)
             socketio.start_background_task(_prefetch_repo_snapshot_task, pl, tid, rid, pats)
-            continue
-        except Exception:
-            total_est = _estimate_repo_size(rid, allow_patterns=pats)
-            tid = download_manager.add_repo_task(pl, repo_id=rid, total_estimate=total_est)
-            socketio.start_background_task(_prefetch_repo_snapshot_task, pl, tid, rid, pats)
-            continue
-
-        if not needs:
-            continue
-
-        socketio.start_background_task(_prefetch_repo_files_task, pl, rid, pats, 4)
 
     # Queue GGUF/single files
     for f in plan.get("single_files", []):
         name = (f.get("name") or "").strip()
         url = (f.get("url") or "").strip()
-        if not name: continue
+        if not name:
+            continue
         dest = MODEL_DIR / name
         try:
             if dest.exists() and dest.stat().st_size > 0:
@@ -1221,10 +1437,28 @@ def _start_prefetch_pipeline(pipeline: str) -> Dict[str, Any]:
                 continue
         except Exception:
             pass
-        if not url: continue
+        if not url:
+            continue
         tid = download_manager.add_file_task(pl, filename=name, size=0)
         socketio.start_background_task(_stream_file_task, pl, tid, url, dest)
 
+    # ---------- Harmonize with /pipelines/plan ----------
+    # If nothing to do AND at least one repo is inaccessible -> 403 (auth/terms/offline)
+    if not pl.tasks and inaccessible_repos:
+        download_manager.set_status(pl, "failed")
+        return {
+            "http_status": 403,
+            "json": {
+                "error": "Repository not accessible (auth/terms or offline).",
+                "plan": plan,
+                "pipeline_id": pl.pipeline_id,
+                "download_websocket_url": downloads_url(),
+                "auth_repos": inaccessible_repos,
+                "hint": "Set HF_TOKEN (or HUGGINGFACE_HUB_TOKEN) and accept model card terms; or check network.",
+            },
+        }
+
+    # If nothing to do and nothing inaccessible -> everything present (200)
     if not pl.tasks:
         download_manager.set_status(pl, "completed")
         return {
@@ -1235,7 +1469,7 @@ def _start_prefetch_pipeline(pipeline: str) -> Dict[str, Any]:
                 "pipelines_started": [],
                 "download_websocket_url": downloads_url(),
                 "details": {"plan": plan, "download_pipelines": [], "notes": []},
-            }
+            },
         }
 
     logger.info("[prefetch] started pipeline %s for %s", pl.pipeline_id, pipeline)
@@ -1251,7 +1485,7 @@ def _start_prefetch_pipeline(pipeline: str) -> Dict[str, Any]:
                 "download_pipelines": [{"kind": "mixed", "pipeline_id": pl.pipeline_id}],
                 "notes": [],
             },
-        }
+        },
     }
 
 # ------------------------------ REST: plan/prefetch ----------------------------
@@ -1267,10 +1501,19 @@ def pipelines_plan():
     except ValueError as e:
         return jsonify({"error": str(e)}), 400
 
-    repos_status, auth_repos = [], []
+    deep = bool(data.get("deep_validate", False))
+
+    repos_status, auth_repos, repo_inventories = [], [], []
     for rid in plan.get("repos_to_fetch", []):
+        # use unified readiness (ok/missing)
         st = _repo_readiness(rid)
         repos_status.append(st)
+
+        # for agreement & debugging, include full inventory when requested
+        if deep:
+            pats = allow_patterns_for_repo(rid)
+            repo_inventories.append(build_repo_inventory(rid, allow_patterns=pats))
+
         if st.get("missing") is None and not st.get("ok", False):
             auth_repos.append(rid)
 
@@ -1287,7 +1530,10 @@ def pipelines_plan():
     if auth_repos:
         resp["auth_required"] = True
         resp["auth_repos"] = auth_repos
+    if deep:
+        resp["inventories"] = repo_inventories  # per-file truth your UI can show
     return jsonify(resp), 200
+
 
 @app.route("/pipelines/prefetch", methods=["POST"])
 def pipelines_prefetch():
@@ -1672,41 +1918,144 @@ def image_turbo_sdxl():
 
 # ------------------------------ Generation: LTX i2v --------------------------
 
-def _round_for_vae(h: int, w: int, pipe) -> tuple[int, int]:
-    ratio = getattr(pipe, "vae_spatial_compression_ratio", 8)
-    return h - (h % ratio), w - (w % ratio)
+def _sanitize_frames_for_video(frames, target_size=None):
+    """
+    Accepts a list of PIL.Image.Image OR np.ndarray frames.
+    Returns (list_of_uint8_arrays, (W, H)) where each array is contiguous
+    with shape (H, W, 3) and identical, even dimensions.
+    """
+    import numpy as np
+    from PIL import Image
+
+    frames = list(frames or [])
+    if not frames:
+        raise RuntimeError("No frames to write")
+
+    # Decide W,H (note: PIL .size -> (W, H))
+    if target_size is not None:
+        W, H = int(target_size[0]), int(target_size[1])
+    else:
+        f0 = frames[0]
+        if hasattr(f0, "size"):  # PIL-like
+            W, H = f0.size
+        else:
+            arr0 = np.asarray(f0)
+            if arr0.ndim == 3 and arr0.shape[2] in (1, 3, 4):
+                H, W = arr0.shape[0], arr0.shape[1]
+            else:
+                raise RuntimeError("Unexpected frame shape; expected (H,W,C).")
+
+    # yuv420p needs even dims
+    W -= (W % 2)
+    H -= (H % 2)
+    if W <= 0 or H <= 0:
+        raise RuntimeError("Computed invalid even dimensions for video.")
+
+    out = []
+    for fr in frames:
+        # convert to PIL for uniform resize/convert path
+        if hasattr(fr, "convert"):  # PIL
+            img = fr
+        else:
+            arr = np.asarray(fr)
+            if arr.ndim == 2:  # gray => RGB
+                arr = np.stack([arr] * 3, axis=-1)
+            elif arr.ndim == 3 and arr.shape[2] == 4:  # RGBA => RGB
+                arr = arr[..., :3]
+            img = Image.fromarray(arr.astype(np.uint8), mode="RGB")
+
+        if img.mode != "RGB":
+            img = img.convert("RGB")
+        if img.size != (W, H):
+            img = img.resize((W, H), Image.BICUBIC)
+
+        arr = np.asarray(img, dtype=np.uint8)
+        if arr.ndim != 3 or arr.shape[2] != 3:
+            arr = np.stack([arr] * 3, axis=-1)
+        out.append(np.ascontiguousarray(arr))
+
+    return out, (W, H)
+
+
+def _write_video_h264_safe(out_path, frames, fps, gen_id=None, target_size=None):
+    import tempfile, subprocess, shutil
+    from PIL import Image
+
+    arrs, (W, H) = _sanitize_frames_for_video(frames, target_size=target_size)
+    tmp_dir = tempfile.mkdtemp(prefix="bonzai_frames_")
+    try:
+        # save sanitised frames as numbered PNGs
+        for idx, arr in enumerate(arrs, 1):
+            Image.fromarray(arr).save(os.path.join(tmp_dir, f"{idx:05d}.png"))
+            if gen_id and (idx % max(1, len(arrs)//10) == 0):
+                genbus.progress(gen_id, "encode_video", idx, len(arrs))
+                socketio.sleep(0)
+
+        ffmpeg = get_ffmpeg_binary_path()
+        cmd = [
+            ffmpeg, "-y",
+            "-framerate", str(fps),
+            "-i", os.path.join(tmp_dir, "%05d.png"),
+            "-c:v", "libx264",
+            "-pix_fmt", "yuv420p",
+            "-vf", f"scale={W}:{H}",
+            out_path,
+        ]
+        subprocess.run(cmd, check=True)
+    finally:
+        shutil.rmtree(tmp_dir, ignore_errors=True)
+
+        
+def _load_wan_pipeline(device: torch.device):
+    from diffusers import WanImageToVideoPipeline
+
+    repo_root = repo_local_dir(WAN_REPO)
+
+    # dtype per backend
+    if device.type == "cuda":
+        dtype = torch.float16
+    elif device.type == "mps":
+        dtype = torch.float16
+    else:
+        dtype = torch.float32  # CPU
+
+    # Load the whole pipeline (most robust with custom classes)
+    pipe = WanImageToVideoPipeline.from_pretrained(
+        str(repo_root),
+        torch_dtype=dtype,
+        local_files_only=True,
+    )
+
+    # Memory savers
+    if device.type == "cuda":
+        # offload largest parts to CPU when idle
+        try:
+            pipe.enable_model_cpu_offload()
+        except Exception:
+            pipe.enable_sequential_cpu_offload()
+    else:
+        # MPS/CPU
+        pipe.enable_attention_slicing()
+        try:
+            pipe.vae.enable_slicing()
+        except Exception:
+            pass
+
+    return pipe.to(device), dtype
 
 def _img_b64_to_pil(b64: str) -> Image.Image:
     raw = base64.b64decode(b64)
     return Image.open(io.BytesIO(raw)).convert("RGB")
 
-def _make_condition_video_from_image(img: Image.Image, n_frames: int = 8) -> np.ndarray:
-    """
-    Create a tiny 'video' tensor by repeating the image n_frames times.
-    Shape: (T, H, W, 3), dtype=uint8. This avoids single-frame MP4 I/O.
-    """
-    arr = np.array(img, copy=False)
-    # ensure HWC uint8
-    if arr.dtype != np.uint8:
-        arr = arr.astype(np.uint8)
-    return np.stack([arr] * max(2, n_frames), axis=0)
-
-@app.route("/image/video", methods=["POST"])
+@app.route("/image/video/turbo", methods=["POST"])
 def ltx_image_to_video():
     """
-    Image -> Video using LTX (aligned with HF example), but:
-    - Condition video built in-memory (no imageio/ffmpeg).
-    - Scheduler dynamic shifting disabled to avoid 'mu' requirement.
-    - Same repos/download/progress logic as the rest of the server.
+    Image -> Video using LTX (aligned with HF example), but the heavy work runs
+    in a Socket.IO background task so progress events flush in real time.
+    - Condition video built in-memory (no imageio/ffmpeg read).
+    - Dynamic shifting disabled to avoid 'mu' kwarg requirement on some versions.
+    - Keeps local repo readiness checks, stage progress, and 201 return shape.
     """
-    import io, os, time, base64
-    import numpy as np
-    from PIL import Image
-    import torch
-    from diffusers import LTXConditionPipeline, LTXLatentUpsamplePipeline
-    from diffusers.pipelines.ltx.pipeline_ltx_condition import LTXVideoCondition
-    from diffusers.utils import load_image  # used for URL case only
-
     data = request.get_json(silent=True) or {}
     prompt = (data.get("prompt") or "").strip()
     neg = data.get("negative_prompt", "worst quality, inconsistent motion, blurry, jitter, artifacts")
@@ -1716,7 +2065,6 @@ def ltx_image_to_video():
     frames     = int(data.get("frames", 96))
     fps        = int(data.get("fps", 24))
 
-    # HF example defaults
     steps_gen  = int(data.get("steps_gen", 30))     # part 1
     steps_ref  = int(data.get("steps_refine", 10))  # part 3
     decode_ts  = float(data.get("decode_timestep", 0.05))
@@ -1732,7 +2080,7 @@ def ltx_image_to_video():
     if not image_b64 and not image_url:
         return jsonify({"error": "Provide 'image_base64' or 'image_url'"}), 400
 
-    # Make sure weights are present locally or trigger your downloader
+    # Ensure weights locally (or kick off downloader)
     guard = _repos_ready_or_resp(LTX_REPO, LTX_UPSAMPLER_REPO)
     if guard:
         if auto_dl:
@@ -1745,126 +2093,346 @@ def ltx_image_to_video():
         "ltx_i2v",
         {"stage": "starting", "pct": 0, "frames": frames, "fps": fps, "w": expected_w, "h": expected_h},
     )
+
+    # Shared state between the background task and this request greenlet
+    state = {"done": False, "error": None, "out_path": None}
+
+    def _run_job():
+        import base64, io, os, time
+        import numpy as np
+        from PIL import Image
+        import torch
+        from diffusers import LTXConditionPipeline, LTXLatentUpsamplePipeline
+        from diffusers.pipelines.ltx.pipeline_ltx_condition import LTXVideoCondition
+        from diffusers.utils import load_image, export_to_video
+
+        try:
+            device = DeviceManager.get_device()
+            dtype = torch.bfloat16 if device.type in ("cuda", "mps") else torch.float32
+            generator = torch.Generator(device=device)
+            if isinstance(seed, int):
+                generator.manual_seed(seed)
+
+            base_dir = repo_local_dir(LTX_REPO)
+            ups_dir  = repo_local_dir(LTX_UPSAMPLER_REPO)
+
+            pipe = LTXConditionPipeline.from_pretrained(
+                str(base_dir), torch_dtype=dtype, local_files_only=True, use_safetensors=True
+            ).to(device)
+            pipe.scheduler.register_to_config(use_dynamic_shifting=False)
+
+            pipe_ups = LTXLatentUpsamplePipeline.from_pretrained(
+                str(ups_dir), vae=pipe.vae, torch_dtype=dtype, local_files_only=True, use_safetensors=True
+            ).to(device)
+            
+
+            try:
+                pipe.vae.enable_tiling()
+            except Exception:
+                pass
+
+            def round_for_vae(h: int, w: int) -> tuple[int, int]:
+                ratio = getattr(pipe, "vae_spatial_compression_ratio", 8)
+                return h - (h % ratio), w - (w % ratio)
+
+            # --- Stage 1: prepare condition (in-memory tiny "video")
+            genbus.progress(gen_id, "prepare_condition", 1, 5)
+            if image_url:
+                im = load_image(image_url).convert("RGB")
+            else:
+                raw = base64.b64decode(image_b64)
+                im = Image.open(io.BytesIO(raw)).convert("RGB")
+
+            arr = np.array(im, dtype=np.uint8)
+            cond_vid = np.stack([arr, arr], axis=0)  # [T=2, H, W, 3]
+            condition = LTXVideoCondition(video=cond_vid, frame_index=0)
+
+            # --- Stage 2: base generation at 2/3 scale
+            downscale = 2.0 / 3.0
+            dh, dw = int(expected_h * downscale), int(expected_w * downscale)
+            dh, dw = round_for_vae(dh, dw)
+
+            genbus.progress(gen_id, "generate_base", 2, 5)
+            out_base = pipe(
+                conditions=[condition],
+                prompt=prompt,
+                negative_prompt=neg,
+                width=dw,
+                height=dh,
+                num_frames=frames,
+                num_inference_steps=steps_gen,
+                generator=generator if isinstance(seed, int) else None,
+                output_type="latent",
+            )
+            latents = out_base.frames  # latent video
+
+            # --- Stage 3: latent upsample (2x spatial)
+            genbus.progress(gen_id, "upsample_latents", 3, 5)
+            up_latents = pipe_ups(
+                latents=latents,
+                output_type="latent",
+            ).frames
+            uh, uw = dh * 2, dw * 2
+
+            # --- Stage 4: light refinement at upscaled size
+            genbus.progress(gen_id, "refine_frames", 4, 5)
+            out_ref = pipe(
+                conditions=[condition],
+                prompt=prompt,
+                negative_prompt=neg,
+                width=uw,
+                height=uh,
+                num_frames=frames,
+                denoise_strength=0.4,
+                num_inference_steps=steps_ref,
+                latents=up_latents,
+                decode_timestep=decode_ts,
+                image_cond_noise_scale=img_noise,
+                generator=generator if isinstance(seed, int) else None,
+                output_type="pil",
+            ).frames[0]
+
+            # --- Stage 5: sanitize + encode to H.264 safely
+            genbus.progress(gen_id, "encode_video", 1, 5)
+            out_name = f"_ltx_{int(time.time())}.mp4"
+            out_path = os.path.join(os.getcwd(), out_name)
+
+            # lock to requested (width,height) and let the writer sanitize
+            _write_video_h264_safe(
+                out_path,
+                out_ref,                 # pass PIL frames directly
+                fps=fps,
+                gen_id=gen_id,
+                target_size=(expected_w, expected_h),
+            )
+
+            genbus.progress(gen_id, "encode_video", 5, 5)
+            genbus.finish(gen_id, {"video_path": out_path})
+            state["out_path"] = out_path
+
+        except Exception as e:
+            logger.exception("LTX image->video failed")
+            genbus.error(gen_id, str(e))
+            state["error"] = str(e)
+        finally:
+            try:
+                DeviceManager.free_memory()
+            except Exception:
+                pass
+            state["done"] = True
+
+    # Run the job in a background greenlet so progress emits flush while we wait
+    socketio.start_background_task(_run_job)
+
+    # Keep the HTTP request open and yield to the hub until done
+    while not state["done"]:
+        socketio.sleep(0.25)
+
+    if state["error"]:
+        return jsonify({"error": state["error"]}), 500
+
+    return jsonify({"ok": True, "video_path": state["out_path"]}), 201
+   
+
+@app.route("/image/video/quality", methods=["POST"])
+def wan_image_to_video():
+    """
+    Wan 2.2 TI2V 5B — Image->Video
+    - Uses your repo-ready checks + prefetch
+    - Emits stage progress (prepare -> generate -> encode)
+    - Memory-optimized per device
+    """
+    data = request.get_json(silent=True) or {}
+    prompt = (data.get("prompt") or "").strip()
+    neg = data.get("negative_prompt", "worst quality, inconsistent motion, blur, jitter, distorted")
+
+    if not prompt:
+        return jsonify({"error": "Missing 'prompt'"}), 400
+
+    image_b64 = (data.get("image_base64") or "").strip()
+    image_url = (data.get("image_url") or "").strip()
+    if not image_b64 and not image_url:
+        return jsonify({"error": "Provide 'image_base64' or 'image_url'"}), 400
+
+    height = int(data.get("height", 480))
+    width  = int(data.get("width", 704))   # Wan example dims
+    frames = int(data.get("frames", 65))   # be conservative for 16 GB
+    steps  = int(data.get("steps", 30))
+    fps    = int(data.get("fps", 24))
+    seed   = data.get("seed", None)
+    auto_dl = bool(data.get("auto_download", False))
+
+    # Ensure Wan repo ready (or trigger prefetch)
+    guard = _repos_ready_or_resp(WAN_REPO)
+    if guard:
+        if auto_dl:
+            started = _start_prefetch_pipeline("wan")
+            return jsonify(started["json"]), started["http_status"]
+        return guard
+
+    gen_id = genbus.new("wan_i2v", {"endpoint": "/image/video", "w": width, "h": height, "frames": frames, "fps": fps})
+
+    # background job so Socket.IO ticks flush
+    state = {"done": False, "error": None, "out_path": None}
+    def _run():
+        try:
+            from diffusers.utils import load_image
+            import numpy as np
+            from PIL import Image
+
+            # Load input image
+            if image_url:
+                img = load_image(image_url).convert("RGB")
+            else:
+                img = _img_b64_to_pil(image_b64)
+
+            device = DeviceManager.get_device()
+            pipe, dtype = _load_wan_pipeline(device)
+
+            # Prepare generator
+            generator = torch.Generator(device=device)
+            if isinstance(seed, int):
+                generator.manual_seed(seed)
+
+            # Stage: prepare
+            genbus.progress(gen_id, "prepare_input", 1, 4)
+
+            # Stage: generate video
+            genbus.progress(gen_id, "generate_video", 2, 4)
+            out = pipe(
+                image=img,
+                prompt=prompt,
+                negative_prompt=neg,
+                width=width,
+                height=height,
+                num_frames=frames,
+                num_inference_steps=steps,
+                generator=generator if isinstance(seed, int) else None,
+                output_type="pil",          # return frames as PIL
+            )
+            frames_pil = out.frames[0]
+            if not frames_pil:
+                raise RuntimeError("Wan returned no frames")
+
+            # Stage: encode
+            genbus.progress(gen_id, "encode_video", 3, 4)
+            out_path = os.path.join(os.getcwd(), f"wan_{int(time.time())}.mp4")
+            _write_video_h264_safe(
+                out_path,
+                frames_pil,              # pass PIL frames directly
+                fps=fps,
+                gen_id=gen_id,
+                target_size=(width, height),
+            )
+
+            genbus.finish(gen_id, {"video_path": out_path})
+            state["out_path"] = out_path
+
+        except Exception as e:
+            logger.exception("Wan i2v failed")
+            genbus.error(gen_id, str(e))
+            state["error"] = str(e)
+        finally:
+            try: DeviceManager.free_memory()
+            except Exception: pass
+            state["done"] = True
+
+    socketio.start_background_task(_run)
+    while not state["done"]:
+        socketio.sleep(0.25)
+
+    if state["error"]:
+        return jsonify({"error": state["error"]}), 500
+    return jsonify({"ok": True, "video_path": state["out_path"], "generation_websocket_url": generation_url()}), 201
+
+@app.route("/video", methods=["POST"])
+def wan_text_to_image():
+    """
+    Use Wan 2.2 TI2V 5B to produce a single image.
+    - If an input image is provided, it conditions like TI2V.
+    - Otherwise text-only (short clip) and we return the first frame.
+    """
+    data = request.get_json(silent=True) or {}
+    prompt = (data.get("prompt") or "").strip()
+    neg = data.get("negative_prompt", "worst quality, blur, artifacts")
+    if not prompt:
+        return jsonify({"error": "Prompt is required"}), 400
+
+    image_b64 = (data.get("image_base64") or "").strip()
+    image_url = (data.get("image_url") or "").strip()
+
+    height = int(data.get("height", 480))
+    width  = int(data.get("width", 704))
+    frames = int(data.get("frames", 17))   # small count, keeps memory down
+    steps  = int(data.get("steps", 20))
+    seed   = data.get("seed", None)
+    auto_dl = bool(data.get("auto_download", False))
+
+    guard = _repos_ready_or_resp(WAN_REPO)
+    if guard:
+        if auto_dl:
+            started = _start_prefetch_pipeline("wan")
+            return jsonify(started["json"]), started["http_status"]
+        return guard
+
+    gen_id = genbus.new("wan_t2i", {"endpoint": "/video", "w": width, "h": height, "frames": frames})
+
     try:
+        from diffusers.utils import load_image
+        from PIL import Image
+
+        # optional conditioning image
+        img = None
+        if image_url:
+            img = load_image(image_url).convert("RGB")
+        elif image_b64:
+            img = _img_b64_to_pil(image_b64)
+
         device = DeviceManager.get_device()
-        dtype = torch.bfloat16 if device.type in ("cuda", "mps") else torch.float32
+        pipe, dtype = _load_wan_pipeline(device)
+
         generator = torch.Generator(device=device)
         if isinstance(seed, int):
             generator.manual_seed(seed)
 
-        base_dir = repo_local_dir(LTX_REPO)
-        ups_dir  = repo_local_dir(LTX_UPSAMPLER_REPO)
-
-        pipe = LTXConditionPipeline.from_pretrained(
-            str(base_dir), torch_dtype=dtype, local_files_only=True, use_safetensors=True
-        ).to(device)
-
-        # --- CRITICAL FIX: disable dynamic shifting to avoid 'mu' requirement ---
-        try:
-            pipe.scheduler.register_to_config(use_dynamic_shifting=False)
-        except Exception:
-            pass
-
-        pipe_ups = LTXLatentUpsamplePipeline.from_pretrained(
-            str(ups_dir), vae=pipe.vae, torch_dtype=dtype, local_files_only=True, use_safetensors=True
-        ).to(device)
-
-        try:
-            pipe.vae.enable_tiling()
-        except Exception:
-            pass
-
-        # Helper: round dims to multiples of VAE compression ratio (from HF docs)
-        def round_for_vae(h: int, w: int) -> tuple[int, int]:
-            ratio = getattr(pipe, "vae_spatial_compression_ratio", 8)
-            return h - (h % ratio), w - (w % ratio)
-
-        # --- Build condition video IN-MEMORY (avoid ffmpeg/imageio) ---
-        # LTXVideoCondition accepts an np.ndarray video of shape [T, H, W, 3] (uint8)
-        genbus.progress(gen_id, "prepare_condition", 1, 5)
-        if image_url:
-            im = load_image(image_url).convert("RGB")
-        else:
-            raw = base64.b64decode(image_b64)
-            im = Image.open(io.BytesIO(raw)).convert("RGB")
-
-        cond_arr = np.array(im, dtype=np.uint8)              # [H, W, 3]
-        cond_vid = np.stack([cond_arr, cond_arr], axis=0)    # [T=2, H, W, 3] -> “video-like” tensor
-        condition = LTXVideoCondition(video=cond_vid, frame_index=0)
-
-        # --- Part 1: generate at 2/3 scale (HF example) ---
-        downscale = 2.0 / 3.0
-        dh, dw = int(expected_h * downscale), int(expected_w * downscale)
-        dh, dw = round_for_vae(dh, dw)
-
-        genbus.progress(gen_id, "generate_base", 2, 5)
-        out_base = pipe(
-            conditions=[condition],
+        genbus.progress(gen_id, "generate_frames", 1, 2)
+        out = pipe(
+            image=img,                     # None => text-only
             prompt=prompt,
             negative_prompt=neg,
-            width=dw,
-            height=dh,
+            width=width,
+            height=height,
             num_frames=frames,
-            num_inference_steps=steps_gen,
-            generator=generator if isinstance(seed, int) else None,
-            output_type="latent",
-        )
-        latents = out_base.frames  # latent video
-
-        # --- Part 2: latent upsample (2x spatial) ---
-        genbus.progress(gen_id, "upsample_latents", 3, 5)
-        up_latents = pipe_ups(
-            latents=latents,
-            output_type="latent",
-        ).frames
-        uh, uw = dh * 2, dw * 2
-
-        # --- Part 3: brief denoise refinement at upscaled size ---
-        genbus.progress(gen_id, "refine_frames", 4, 5)
-        out_ref = pipe(
-            conditions=[condition],
-            prompt=prompt,
-            negative_prompt=neg,
-            width=uw,
-            height=uh,
-            num_frames=frames,
-            denoise_strength=0.4,              # effectively ~4/10 steps
-            num_inference_steps=steps_ref,
-            latents=up_latents,
-            decode_timestep=decode_ts,
-            image_cond_noise_scale=img_noise,
+            num_inference_steps=steps,
             generator=generator if isinstance(seed, int) else None,
             output_type="pil",
         )
-        frames_pil = out_ref.frames[0]
+        frames_pil = out.frames[0]
         if not frames_pil:
-            raise RuntimeError("LTX returned no frames")
+            raise RuntimeError("Wan returned no frames")
 
-        # --- Part 4: final resize to requested size & encode ---
-        genbus.progress(gen_id, "encode_video", 5, 5)
-        frames_pil = [fr.resize((expected_w, expected_h), Image.BICUBIC) for fr in frames_pil]
+        # take first frame as image
+        image = frames_pil[0]
+        genbus.progress(gen_id, "encode_image", 2, 2)
 
-        out_name = f"_ltx_{int(time.time())}.mp4"
-        out_path = os.path.join(os.getcwd(), out_name)
-
-        # Use diffusers' writer (good defaults); no ffmpeg read is needed anymore.
-        from diffusers.utils import export_to_video
-        export_to_video(frames_pil, out_path, fps=fps)
-
-        genbus.finish(gen_id, {"video_path": out_path})
-        return jsonify({"ok": True, "video_path": out_path}), 201
+        buf = BytesIO()
+        image.save(buf, format="PNG")
+        b64 = base64.b64encode(buf.getvalue()).decode("utf-8")
+        genbus.finish(gen_id, {"ok": True})
+        return jsonify({
+            "prompt": prompt,
+            "image": b64,
+            "generation_id": gen_id,
+            "generation_websocket_url": generation_url()
+        }), 201
 
     except Exception as e:
-        logger.exception("LTX image->video failed")
+        logger.exception("Wan t2i failed")
         genbus.error(gen_id, str(e))
         return jsonify({"error": str(e)}), 500
     finally:
-        try:
-            DeviceManager.free_memory()
-        except Exception:
-            pass
-
-      
+        DeviceManager.free_memory()
+   
 # ------------------------------ Generation: Hunyuan ---------------------------
 @app.route("/video/max", methods=["POST"])
 def hunyuan_video():

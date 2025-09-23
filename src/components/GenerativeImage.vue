@@ -433,7 +433,7 @@
                       </button>
                       <button
                         class="button is-medium is-warning copy is-pulled-left ml-5 pl-2"
-                        @click="copy(inference.question)"
+                        @click="animate(inference)"
                       >
                         <span class="material-symbols-outlined is-size-2 mr-1">
                           animation
@@ -466,7 +466,11 @@ import useClipboard from "vue-clipboard3";
 import axios from "axios";
 import { io } from "socket.io-client";
 
-const API_BASE = "http://127.0.0.1:65000";
+const API_BASE =
+  (typeof process !== "undefined" && process.env?.VITE_API_BASE) ||
+  (window?.electronAPI?.env && window.electronAPI.env.API_BASE) ||
+  "http://127.0.0.1:65000";
+
 const WS_DL = `${API_BASE}/downloads`;
 const WS_GEN = `${API_BASE}/generation`;
 
@@ -512,19 +516,14 @@ export default {
       blocked: false,
     });
 
-    // ------------ pipeline/endpoint maps --
-    const endpointForMode = (m) =>
-      m === "quality"
-        ? "/image/quality"
-        : m === "intermediate"
-        ? "/image/intermediate"
-        : "/image/turbo";
+    // ------------ pipeline/endpoint maps (v2 unified) --
+    const endpointForMode = () => `/generate/image`;
     const pipelineForMode = (m) =>
       m === "quality"
         ? "flux"
         : m === "intermediate"
-        ? "sdxl_intermediate"
-        : "sdxl_turbo";
+          ? "sdxl_intermediate"
+          : "sdxl_turbo";
 
     // ------------ downloads state/socket --
     const downloads = reactive({
@@ -545,14 +544,12 @@ export default {
     const mergeTask = (dst, src) => {
       if (!dst) return { ...src };
       const out = { ...dst, ...src };
-      // monotonic progress
       if (
         typeof dst.progress === "number" &&
         typeof src.progress === "number"
       ) {
         out.progress = Math.max(dst.progress || 0, src.progress || 0);
       }
-      // keep best known sizes
       if (
         typeof dst.downloaded_size === "number" &&
         typeof src.downloaded_size === "number"
@@ -575,11 +572,9 @@ export default {
       if (!p) return;
       downloads.pipelineId = p.pipeline_id || downloads.pipelineId;
       downloads.status = p.status || downloads.status || "downloading";
-      // monotonic total progress
       const nextPct = Number(p.total_progress || 0);
       downloads.progress = Math.max(Number(downloads.progress || 0), nextPct);
 
-      // merge tasks in place to avoid list flicker
       const existing = downloads.pipeline?.tasks || {};
       const incoming = p.tasks || {};
       const merged = { ...existing };
@@ -636,7 +631,7 @@ export default {
       if (httpPollTimer) clearInterval(httpPollTimer);
       httpPollTimer = setInterval(async () => {
         const idleMs = Date.now() - lastDlEventAt.value;
-        if (idleMs < 1500) return; // socket is alive; skip poll
+        if (idleMs < 1500) return;
         try {
           const { data } = await axios.get(
             `${API_BASE}/downloads/status/${pipelineId}`
@@ -648,8 +643,7 @@ export default {
               httpPollTimer = null;
             }
           }
-        } catch (e) {
-          // stop polling on persistent error
+        } catch {
           clearInterval(httpPollTimer);
           httpPollTimer = null;
         }
@@ -661,12 +655,10 @@ export default {
       ensureDownloadsSocket(websocketUrl || WS_DL);
       downloads.active = true;
       downloads.pipelineId = pipelineId;
-      // do NOT zero out progress here (prevents flicker)
       downloads.status = downloads.status || "downloading";
       try {
         downloadsSocket.value.emit("subscribe", { pipeline_id: pipelineId });
       } catch {}
-      // start poll only as fallback if socket is quiet
       kickHttpPollIfStale(pipelineId);
     };
 
@@ -768,8 +760,8 @@ export default {
         const missingCount = Array.isArray(rs?.missing)
           ? rs.missing.length
           : typeof rs?.missing === "number"
-          ? rs.missing
-          : 1;
+            ? rs.missing
+            : 1;
         const exists = typeof rs?.exists === "boolean" ? rs.exists : true;
         const key = rs.repo;
         const entry = {
@@ -860,7 +852,7 @@ export default {
       }
     };
 
-    // ------------ generation socket -------
+    // ------------ generation socket (v2: same events) -------
     const genSocket = ref(null);
     const ensureGenerationSocket = (base = WS_GEN) => {
       if (genSocket.value) return;
@@ -961,9 +953,18 @@ export default {
     };
 
     // ------------ actions -----------------
+    // const emit = defineEmits(["animate-to-video"]);
+
+    function animate(inference) {
+      const b64 = inference?.answer?.data?.image || "";
+      if (!b64) return;
+      // pass raw base64 (without data: prefix) – GenerativeVideo expects this
+      emit("animate-to-video", b64);
+    }
+
     const sendMessage = async (prompt) => {
       if (!prompt) return;
-      const payload = { prompt, auto_download: true };
+      const payload = { prompt, auto_download: true, mode: mode.value };
       const sizes = {
         sd: [480, 640],
         hd: [720, 1280],
@@ -976,8 +977,9 @@ export default {
       payload.width = w;
       if (mode.value === "intermediate")
         payload.lora = "cyberrealistic-xl-v6.safetensors";
+      payload.pipeline = pipelineForMode(mode.value);
 
-      const url = `${API_BASE}${endpointForMode(mode.value)}`;
+      const url = `${API_BASE}${endpointForMode()}`;
 
       ensureGenerationSocket();
       Object.assign(generation, {
@@ -988,7 +990,7 @@ export default {
       });
 
       const onSuccess = async (response) => {
-        if (response?.data?.image || response?.data?.video_path) {
+        if (response?.data?.image) {
           inferences.push({ question: prompt, answer: response, id: uuid() });
           try {
             await window.electronAPI?.store?.set?.(
@@ -1108,6 +1110,7 @@ export default {
       cancelCurrentPipeline,
       retryCurrentPipeline,
       probeCurrentMode,
+      animate,
     };
   },
 };
@@ -1125,7 +1128,11 @@ export default {
   opacity: 0.9;
 }
 .material-symbols-outlined {
-  font-variation-settings: "FILL" 0, "wght" 100, "GRAD" -25, "opsz" 48;
+  font-variation-settings:
+    "FILL" 0,
+    "wght" 100,
+    "GRAD" -25,
+    "opsz" 48;
   border-radius: 100%;
 }
 .columns {
