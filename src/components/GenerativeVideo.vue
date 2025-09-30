@@ -165,10 +165,16 @@
                       </ul>
                     </span>
                     <span v-if="readiness.missingGguf">
-                      <span class="material-symbols-outlined is-size-3 mr-1">
-                        deployed_code
-                      </span>
-                      {{ readiness.ggufName || "Unknown (server-configured)" }}
+                      <ul>
+                        <li v-for="gguf in readiness.ggufNames">
+                          <span
+                            class="material-symbols-outlined is-size-3 mr-1"
+                          >
+                            deployed_code
+                          </span>
+                          {{ gguf }}
+                        </li>
+                      </ul>
                     </span>
                     <span v-if="readiness.notes.length">
                       <br />
@@ -192,16 +198,6 @@
                         download
                       </span>
                       Download Now
-                    </button>
-                    <button
-                      class="button is-info"
-                      @click="probeCurrentMode"
-                      :disabled="downloads.active"
-                    >
-                      <span class="material-symbols-outlined mr-1">
-                        refresh
-                      </span>
-                      Refresh
                     </button>
                   </div>
                 </div>
@@ -511,7 +507,7 @@ export default {
     const endpointForMode = () =>
       mode.value === "turbo" ? "/image/video/turbo" : "/image/video/quality";
     const pipelineForMode = () =>
-      mode.value === "turbo" ? "ltx_video" : "wan_video";
+      mode.value === "turbo" ? "ltx_video" : "wan_fp8";
 
     // WAN requires (num_frames - 1) % 4 === 0
     const normalizeFramesForWan = (frames) => {
@@ -701,30 +697,46 @@ export default {
 
     // --------- readiness helpers
     const applyPlanToReadiness = (data) => {
+      // Extract repos data
       const repos = Array.isArray(data?.repos) ? data.repos : [];
-      const incomplete = repos.filter(
+      // Identify incomplete repos (missing or not OK)
+      const incompleteRepos = repos.filter(
         (r) =>
           r && (r.ok === false || (Number.isFinite(r.missing) && r.missing > 0))
       );
+
+      // Save all missing repo names (unique)
       readiness.missingRepos = [
-        ...new Set(incomplete.map((r) => r.repo).filter(Boolean)),
+        ...new Set(incompleteRepos.map((r) => r.repo).filter(Boolean)),
       ];
-      readiness.repoDetails = incomplete.map((r) => ({
+
+      // Save details of each missing/incomplete repo
+      readiness.repoDetails = incompleteRepos.map((r) => ({
         repo: r.repo,
         missing: Number.isFinite(r.missing) ? r.missing : null,
         root: r.root || null,
       }));
+
+      // Extract GGUF statuses
       const ggufs = Array.isArray(data?.gguf_status) ? data.gguf_status : [];
-      const missG = ggufs.find((g) => g && g.configured && !g.exists);
-      readiness.missingGguf = !!missG;
-      readiness.ggufName = missG
-        ? (missG.path || missG.name || "").split("/").pop()
-        : null;
+      // Gather all missing GGUFs
+      const missingGgufs = ggufs.filter((g) => g && g.configured && !g.exists);
+      readiness.missingGguf = missingGgufs.length > 0;
+      // Save the list of missing GGUF filenames (not just one)
+      readiness.ggufNames = missingGgufs.map((g) =>
+        (g.path || g.name || "").split("/").pop()
+      );
+
+      // Handle authentication requirements
       readiness.authRequired = !!data?.auth_required;
       readiness.authRepos = Array.isArray(data?.auth_repos)
         ? data.auth_repos
         : [];
+
+      // Save any notes
       readiness.notes = Array.isArray(data?.notes) ? data.notes : [];
+
+      // Mark overall readiness ok only if everything is present and no auth needed
       const serverOk = !!data?.ok;
       readiness.ok =
         serverOk &&
@@ -1008,13 +1020,9 @@ export default {
           prompt,
           height: h,
           width: w,
-          frames, // LTX is fine with 96 by default
+          frames: 49, // LTX is fine with 96 by default
           fps: 12,
-          steps_gen: 20,
-          steps_refine: 5,
-          decode_timestep: 0.05,
-          image_cond_noise_scale: 0.025,
-          callback_steps: 1,
+          steps: 25,
           auto_download: true,
           image_base64:
             uploadedImageBase64.value ||

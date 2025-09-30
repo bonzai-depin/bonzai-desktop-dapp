@@ -163,6 +163,9 @@
                         </p>
                       </li>
                     </ol>
+                    <hr />
+                    <h2 class="fira-sans-condensed-black-italic mr-2 is-size-4">Powered by</h2>
+                    <img src="https://cdn.prod.website-files.com/60118ca18674407b85935203/64f6f41dcae1161d9e6a7b43_White.svg" />
                     <!-- <div class="bonzai__agent column is-4">
                     <input
                       v-model="mode"

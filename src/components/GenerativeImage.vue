@@ -162,11 +162,11 @@
                     <input
                       v-model="quality"
                       :value="'2k'"
-                      id="mode_quality_2k"
+                      id="mode_quality_2k_bar"
                       type="radio"
                       name="mode_quality"
                     />
-                    <label for="mode_quality_2k" class="radio quality">
+                    <label for="mode_quality_2k_bar" class="radio quality">
                       <span
                         class="material-symbols-outlined"
                         style="font-size: 32px !important"
@@ -178,11 +178,11 @@
                     <input
                       v-model="quality"
                       :value="'4k'"
-                      id="mode_quality_4k"
+                      id="mode_quality_4k_bar"
                       type="radio"
                       name="mode_quality"
                     />
-                    <label for="mode_quality_4k" class="radio quality">
+                    <label for="mode_quality_4k_bar" class="radio quality">
                       <span
                         class="material-symbols-outlined"
                         style="font-size: 32px !important"
@@ -193,9 +193,11 @@
                   </span>
                 </div>
 
-                <!-- READINESS CTA -->
+                <!-- <pre>{{ readiness.currentMode }} vs {{ mode }}</pre> -->
+
+                <!-- READINESS CTA (only for current mode) -->
                 <div
-                  v-if="showUpdateCTA"
+                  v-if="showUpdateCTA && readiness.currentMode == mode"
                   class="notification is-danger mb-6 mt-6"
                   style="margin-bottom: 1rem"
                 >
@@ -203,7 +205,7 @@
                     <strong class="fira-sans-condensed-black-italic">
                       Model Download Required
                     </strong>
-
+                    <hr />
                     <span v-if="readiness.missingRepos.length">
                       <ul style="margin-top: 0.5rem">
                         <li v-for="d in readiness.repoDetails" :key="d.repo">
@@ -240,21 +242,12 @@
                       class="button is-warning mr-5"
                       @click="prefetchForMode"
                       :disabled="downloads.active || readiness.authRequired"
+                      title="(Re)download required files for this mode"
                     >
                       <span class="material-symbols-outlined mr-1">
                         download
                       </span>
                       Download Now
-                    </button>
-                    <button
-                      class="button is-info"
-                      @click="probeCurrentMode"
-                      :disabled="downloads.active"
-                    >
-                      <span class="material-symbols-outlined mr-1">
-                        refresh
-                      </span>
-                      Refresh
                     </button>
                   </div>
                 </div>
@@ -269,9 +262,9 @@
                   {{ generation.error }}
                 </div>
 
-                <!-- DOWNLOAD PROGRESS -->
+                <!-- DOWNLOAD PROGRESS: only show if pipeline matches current mode -->
                 <div
-                  v-if="downloads.active"
+                  v-if="downloads.active && downloadMatchesMode"
                   class="notification is-info"
                   style="margin-bottom: 1.25rem"
                 >
@@ -342,8 +335,8 @@
                     type="text"
                     placeholder="Describe your image and press enter to generate..."
                     v-model="form.prompt"
-                    @keyup.enter="sendMessage(form.prompt)"
-                    :disabled="isLoading"
+                    @keyup.enter="canGenerate && sendMessage(form.prompt)"
+                    :disabled="isLoading || !canGenerate"
                   />
                   <button
                     class="button chat is-loading is-outlined is-info is-large is-fullwidth"
@@ -423,17 +416,10 @@
                         Mint
                       </button>
                       <button
-                        disabled
-                        class="button is-medium is-warning copy is-pulled-left ml-5 pl-2"
-                      >
-                        <span class="material-symbols-outlined is-size-2 mr-1">
-                          edit_square
-                        </span>
-                        Edit
-                      </button>
-                      <button
                         class="button is-medium is-warning copy is-pulled-left ml-5 pl-2"
                         @click="animate(inference)"
+                        :disabled="!inference?.answer?.data?.image"
+                        title="Animate this image"
                       >
                         <span class="material-symbols-outlined is-size-2 mr-1">
                           animation
@@ -446,6 +432,9 @@
               </div>
             </div>
           </div>
+
+          <!-- (Optional) Debug -->
+          <!-- <pre>{{ readiness }}</pre> -->
         </div>
       </div>
     </div>
@@ -477,6 +466,9 @@ const WS_GEN = `${API_BASE}/generation`;
 export default {
   name: "GenerativeImage",
   setup() {
+    // ------------ navigation -------------
+    // const router = useRouter();
+
     // ------------ basic state -------------
     const mode = ref("turbo");
     const quality = ref("sd");
@@ -484,6 +476,8 @@ export default {
     const form = reactive({ prompt: "" });
     const inferences = reactive([]);
     const hasCopy = reactive([]);
+    const isPlanning = ref(false);
+    const isPrefetching = ref(false);
 
     // ------------ readiness ---------------
     const readiness = reactive({
@@ -495,6 +489,7 @@ export default {
       notes: [],
       authRequired: false,
       authRepos: [],
+      currentMode: null,
     });
 
     const showUpdateCTA = computed(
@@ -504,6 +499,11 @@ export default {
         !readiness.ok ||
         readiness.missingRepos.length > 0 ||
         readiness.missingGguf
+    );
+
+    // canGenerate: disable prompt when repo not ready for this mode
+    const canGenerate = computed(
+      () => readiness.ok && !readiness.authRequired && !generation.active
     );
 
     // ------------ generation --------------
@@ -516,14 +516,15 @@ export default {
       blocked: false,
     });
 
-    // ------------ pipeline/endpoint maps (v2 unified) --
-    const endpointForMode = () => `/generate/image`;
+    // ------------ pipeline/endpoint maps --
+    const endpointForMode = () => `/image`;
     const pipelineForMode = (m) =>
       m === "quality"
-        ? "flux"
+        ? "flux_krea"
         : m === "intermediate"
           ? "sdxl_intermediate"
           : "sdxl_turbo";
+    const currentPipeline = computed(() => pipelineForMode(mode.value));
 
     // ------------ downloads state/socket --
     const downloads = reactive({
@@ -540,6 +541,12 @@ export default {
 
     const normalizeToHttp = (u) =>
       (u || WS_DL).replace(/^ws(s)?:\/\//i, (_, s) => `http${s ? "s" : ""}://`);
+
+    const downloadMatchesMode = computed(() => {
+      const name = downloads?.pipeline?.pipeline_name || "";
+      // We expect DownloadManager.new(f"prefetch:{pipeline}")
+      return name.endsWith(`:${currentPipeline.value}`);
+    });
 
     const mergeTask = (dst, src) => {
       if (!dst) return { ...src };
@@ -763,17 +770,16 @@ export default {
             ? rs.missing
             : 1;
         const exists = typeof rs?.exists === "boolean" ? rs.exists : true;
-        const key = rs.repo;
         const entry = {
-          repo: key,
+          repo: rs.repo,
           missing: Math.max(1, missingCount),
           root: rs.root || null,
         };
-        const idx = readiness.repoDetails.findIndex((x) => x.repo === key);
+        const idx = readiness.repoDetails.findIndex((x) => x.repo === rs.repo);
         if (idx >= 0) readiness.repoDetails[idx] = entry;
         else readiness.repoDetails.push(entry);
         if (!exists)
-          readiness.notes.push(`${key}: repository not found locally`);
+          readiness.notes.push(`${rs.repo}: repository not found locally`);
       }
       const hint = res?.data?.hint;
       if (hint) readiness.notes.push(hint);
@@ -790,9 +796,11 @@ export default {
       readiness.authRepos = [];
       generation.blocked = false;
 
-      const pipeline = pipelineForMode(mode.value);
+      const pipeline = currentPipeline.value;
+      readiness.currentMode = mode.value;
 
       try {
+        isPlanning.value = true;
         const { data, status } = await axios.post(
           `${API_BASE}/pipelines/plan`,
           { pipeline, deep_validate: true },
@@ -804,16 +812,19 @@ export default {
           readiness.ok = false;
           readiness.notes = [`Planner returned HTTP ${status}.`];
         }
+        isPlanning.value = false;
       } catch (e) {
         readiness.ok = false;
         readiness.notes = [e?.message || "Network error while planning"];
+        isPlanning.value = false;
       }
     };
 
     // ------------ CTA action --------------
     const prefetchForMode = async () => {
-      const pipeline = pipelineForMode(mode.value);
+      const pipeline = currentPipeline.value;
       try {
+        isPrefetching.value = true;
         const res = await axios.post(
           `${API_BASE}/pipelines/prefetch`,
           { pipeline, deep_validate: true },
@@ -845,14 +856,16 @@ export default {
           return;
         }
 
+        isPrefetching.value = false;
         generation.error =
           res?.data?.error || `Prefetch failed (${res.status})`;
       } catch (e) {
+        isPrefetching.value = false;
         generation.error = e?.message || "Network error";
       }
     };
 
-    // ------------ generation socket (v2: same events) -------
+    // ------------ generation socket -------
     const genSocket = ref(null);
     const ensureGenerationSocket = (base = WS_GEN) => {
       if (genSocket.value) return;
@@ -907,6 +920,62 @@ export default {
       });
     };
 
+    // ------------ actions -----------------
+    function animate(inference) {
+      const b64 = inference?.answer?.data?.image || "";
+      if (!b64) return;
+      // Navigate to video page with image prefilled
+      router.push({
+        name: "GenerativeVideo",
+        query: { image: b64 },
+      });
+    }
+
+    const sendMessage = async (prompt) => {
+      if (!prompt) return;
+      if (!canGenerate.value) return;
+
+      const payload = { prompt, auto_download: true, mode: mode.value };
+      const sizes = {
+        sd: [480, 640],
+        hd: [720, 1280],
+        fhd: [1080, 1920],
+        "2k": [1440, 2560],
+        "4k": [2160, 4096],
+      };
+      const [h, w] = sizes[quality.value] || sizes.sd;
+      payload.height = h;
+      payload.width = w;
+      if (mode.value === "intermediate")
+        payload.lora = "cyberrealistic-xl-v6.safetensors";
+      payload.pipeline = currentPipeline.value;
+
+      const url = `${API_BASE}${endpointForMode()}/${mode.value}`;
+
+      ensureGenerationSocket();
+      Object.assign(generation, {
+        active: true,
+        stage: "starting",
+        pct: 0,
+        error: null,
+      });
+
+      const onSuccess = async (response) => {
+        if (response?.data?.image) {
+          inferences.push({ question: prompt, answer: response, id: uuid() });
+          try {
+            await window.electronAPI?.store?.set?.(
+              "imageInferences",
+              JSON.parse(JSON.stringify(inferences))
+            );
+          } catch {}
+          form.prompt = "";
+        }
+      };
+
+      await requestWithDownloadTracking(url, payload, onSuccess);
+    };
+
     // ------------ request wrapper ---------
     const requestWithDownloadTracking = async (url, payload, onSuccess) => {
       try {
@@ -950,59 +1019,6 @@ export default {
       } finally {
         isLoading.value = false;
       }
-    };
-
-    // ------------ actions -----------------
-    // const emit = defineEmits(["animate-to-video"]);
-
-    function animate(inference) {
-      const b64 = inference?.answer?.data?.image || "";
-      if (!b64) return;
-      // pass raw base64 (without data: prefix) – GenerativeVideo expects this
-      emit("animate-to-video", b64);
-    }
-
-    const sendMessage = async (prompt) => {
-      if (!prompt) return;
-      const payload = { prompt, auto_download: true, mode: mode.value };
-      const sizes = {
-        sd: [480, 640],
-        hd: [720, 1280],
-        fhd: [1080, 1920],
-        "2k": [1440, 2560],
-        "4k": [2160, 4096],
-      };
-      const [h, w] = sizes[quality.value] || sizes.sd;
-      payload.height = h;
-      payload.width = w;
-      if (mode.value === "intermediate")
-        payload.lora = "cyberrealistic-xl-v6.safetensors";
-      payload.pipeline = pipelineForMode(mode.value);
-
-      const url = `${API_BASE}${endpointForMode()}`;
-
-      ensureGenerationSocket();
-      Object.assign(generation, {
-        active: true,
-        stage: "starting",
-        pct: 0,
-        error: null,
-      });
-
-      const onSuccess = async (response) => {
-        if (response?.data?.image) {
-          inferences.push({ question: prompt, answer: response, id: uuid() });
-          try {
-            await window.electronAPI?.store?.set?.(
-              "imageInferences",
-              JSON.parse(JSON.stringify(inferences))
-            );
-          } catch {}
-          form.prompt = "";
-        }
-      };
-
-      await requestWithDownloadTracking(url, payload, onSuccess);
     };
 
     const { toClipboard } = useClipboard();
@@ -1097,11 +1113,17 @@ export default {
       isLoading,
       inferences,
       hasCopy,
+      // readiness
       readiness,
+      canGenerate,
       showUpdateCTA,
+      // generation
       generation,
+      // downloads
       downloads,
       downloadTaskList,
+      downloadMatchesMode,
+      // actions
       sendMessage,
       copy,
       downloadImage,
