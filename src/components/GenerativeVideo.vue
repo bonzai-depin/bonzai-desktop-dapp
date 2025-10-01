@@ -214,7 +214,7 @@
 
                 <!-- DOWNLOAD PROGRESS -->
                 <div
-                  v-if="downloads && downloads.active"
+                  v-if="downloads && downloads.active && Math.round(downloads.progress) != 100"
                   class="notification is-info"
                   style="margin-bottom: 1.25rem"
                 >

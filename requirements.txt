@@ -23,7 +23,6 @@ curated-tokenizers==0.0.9
 curated-transformers==0.1.1
 cymem==2.0.11
 decorator==5.2.1
-diffusers @ git+https://github.com/huggingface/diffusers.git@bb1d9a8b7523819b1846053616ddfecc3b857f6b
 dlinfo==2.0.0
 docopt==0.6.2
 einops==0.8.0
@@ -92,7 +91,6 @@ Pygments==2.19.1
 pyinstaller==6.13.0
 pyinstaller-hooks-contrib==2025.4
 pyparsing==3.2.3
-pypesq @ https://github.com/vBaiCai/python-pesq/archive/master.zip#sha256=fba27c3d95e8f72fed7c55f675ce6057a64b26a1a67a2e469df2804cca69b8cc
 python-dateutil==2.9.0.post0
 python-engineio==4.12.2
 python-socketio==5.13.0
@@ -123,9 +121,6 @@ stack-data==0.6.3
 sympy==1.13.3
 thinc==8.3.6
 tokenizers==0.21.0
-torch==2.9.0.dev20250821
-torchaudio==2.8.0.dev20250821
-torchvision==0.24.0.dev20250821
 tqdm==4.67.1
 traitlets==5.14.3
 trampoline==0.1.2

@@ -8,6 +8,8 @@ from __future__ import annotations
 import os, re, gc, io, time, json, base64, logging, threading, hashlib, platform
 from io import BytesIO
 from pathlib import Path
+from datetime import datetime, date
+from decimal import Decimal
 from dataclasses import dataclass, field
 from typing import Optional, Dict, Any, List
 
@@ -67,6 +69,46 @@ from diffusers.models import AutoencoderKL
 
 # Optional model classes (we probe dynamically for GGUF)
 from importlib import import_module
+
+def _json_sanitize(obj):
+    """
+    Recursively convert objects that Flask's JSON provider can't handle into
+    JSON-serializable forms. Handles: Path, set, tuple, Decimal, datetime/date.
+    """
+    # Fast path for common primitives
+    if obj is None or isinstance(obj, (bool, int, float, str)):
+        return obj
+
+    # Path -> str
+    if isinstance(obj, Path):
+        return str(obj)
+
+    # datetime/date -> ISO string
+    if isinstance(obj, (datetime, date)):
+        return obj.isoformat()
+
+    # Decimal -> float (or str if you prefer exact)
+    if isinstance(obj, Decimal):
+        return float(obj)
+
+    # dict: sanitize values
+    if isinstance(obj, dict):
+        return {str(k): _json_sanitize(v) for k, v in obj.items()}
+
+    # list/tuple: keep list type for JSON
+    if isinstance(obj, (list, tuple)):
+        return [_json_sanitize(v) for v in obj]
+
+    # set -> list
+    if isinstance(obj, set):
+        return [_json_sanitize(v) for v in obj]
+
+    # objects with __dict__ (avoid surprises)
+    if hasattr(obj, "__dict__"):
+        return _json_sanitize(vars(obj))
+
+    # fallback: string representation
+    return str(obj)
 
 # ------------------------------ Logging & paths ------------------------------
 logging.basicConfig(level=logging.INFO,
@@ -450,7 +492,7 @@ def allow_patterns_for_repo(repo_id: str) -> Optional[List[str]]:
         return _ltx_patterns_strict()
     if repo_id == LTX_UPSAMPLER_REPO:
         return _ltx_upscaler_patterns()
-    if repo_id == WAN2_1_REPO:
+    if repo_id == WAN_REPO:
         return _wan2_patterns()
     return None
 
@@ -808,21 +850,44 @@ LTX_REPO = "Lightricks/LTX-Video"
 LTX_UPSAMPLER_REPO = "linoyts/LTX-Video-spatial-upscaler-0.9.8"
 WAN_REPO = "Wan-AI/Wan2.2-TI2V-5B-Diffusers"
 
-# New Wan 2.1 diffusers repo
-WAN2_1_REPO = "Wan-AI/Wan2.1-I2V-14B-480P-Diffusers"
+# --- WAN 2.1 (official diffusers repo + calcuis single-file FP8/GGUF) ---
 
-# Only these two files will be downloaded from calcuis/wan-gguf (or your chosen mirror):
-WAN_FP8_GGUF_NAME = os.getenv("WAN_FP8_GGUF_NAME", "wan2.1-i2v-14b-480p-q2_k.gguf").strip()
-WAN_FP8_GGUF_URL  = os.getenv(
-    "WAN_FP8_GGUF_URL",
-    "https://huggingface.co/calcuis/wan-gguf/resolve/main/wan2.1-i2v-14b-480p-q2_k.gguf",
-).strip()
+WAN_DIFFUSERS_REPO = "Wan-AI/Wan2.1-I2V-14B-480P-Diffusers"
 
-WAN_FP8_VAE_NAME  = os.getenv("WAN_FP8_VAE_NAME", "wan_2.1_vae_fp8_e4m3fn.safetensors").strip()
-WAN_FP8_VAE_URL   = os.getenv(
-    "WAN_FP8_VAE_URL",
-    "https://huggingface.co/calcuis/wan-gguf/resolve/main/wan_2.1_vae_fp8_e4m3fn.safetensors",
-).strip()
+# Source repo for the 4 single files
+WAN_FP8_SRC_REPO = "calcuis/wan-gguf"
+WAN_FP8_BASE_URL = f"https://huggingface.co/{WAN_FP8_SRC_REPO}/resolve/main"
+
+# Exact filenames we need from calcuis
+WAN_FP8_GGUF_NAME = "wan2.1-i2v-14b-480p-q2_k.gguf"          # transformer (GGUF)
+WAN_FP8_VAE_NAME  = "wan_2.1_vae_fp8_e4m3fn.safetensors"     # VAE (FP8)
+
+# If you still want to show T5/CLIP in the CTA (not used by the diffusers pipeline):
+WAN_FP8_TEXT_NAME = "t5xxl_um_fp8_e4m3fn_scaled.safetensors" # (optional)
+WAN_FP8_CLIP_NAME = "clip_vision_h_fp8_e4m3fn.safetensors"   # (optional)
+
+# Build the URLs (these were missing -> NameError)
+WAN_FP8_GGUF_URL = f"{WAN_FP8_BASE_URL}/{WAN_FP8_GGUF_NAME}"
+WAN_FP8_VAE_URL  = f"{WAN_FP8_BASE_URL}/{WAN_FP8_VAE_NAME}"
+WAN_FP8_TEXT_URL = f"{WAN_FP8_BASE_URL}/{WAN_FP8_TEXT_NAME}"
+WAN_FP8_CLIP_URL = f"{WAN_FP8_BASE_URL}/{WAN_FP8_CLIP_NAME}"
+
+# List exactly what you want to download (controls the CTA)
+# If you DON'T want T5/CLIP in CTA, keep only the first two entries.
+WAN_FP8_REQUIRED_FILES = [
+    {"name": WAN_FP8_GGUF_NAME, "url": WAN_FP8_GGUF_URL, "optional": False},
+    {"name": WAN_FP8_VAE_NAME,  "url": WAN_FP8_VAE_URL,  "optional": False},
+    # {"name": WAN_FP8_TEXT_NAME, "url": WAN_FP8_TEXT_URL, "optional": True},
+    # {"name": WAN_FP8_CLIP_NAME, "url": WAN_FP8_CLIP_URL, "optional": True},
+]
+
+# Strict size checks to auto-purge wrong artifacts (e.g., wrong 17GB file)
+WAN_EXPECTED_SIZES = {
+    "wan2.1-i2v-14b-480p-q2_k.gguf":         7_925_939_584,  # ~7.93 GB (Q2_K)
+    "wan_2.1_vae_fp8_e4m3fn.safetensors":      126_914_115,
+    "t5xxl_um_fp8_e4m3fn_scaled.safetensors": 6_735_906_897,  # optional
+    "clip_vision_h_fp8_e4m3fn.safetensors":     632_142_537,  # optional
+}
 
 # GGUF single files (MANDATORY)
 # You can override via env if you mirror these
@@ -883,49 +948,233 @@ def _plan_for(pipeline: str) -> Dict[str, Any]:
         plan["repos_to_fetch"] = [LTX_REPO, LTX_UPSAMPLER_REPO]
         plan["single_files"] = []       # the two .safetensors are in the repo root; not standalone
         plan["gguf_status"] = []
-    elif pipeline in ("wan_video", "wan_fp8", "wan"):
-        # Only the diffusers repo and two single files
-        plan["repos_to_fetch"] = [WAN2_1_REPO]
-        plan["single_files"] = [
-            {"name": WAN_FP8_GGUF_NAME, "url": WAN_FP8_GGUF_URL, "optional": False},
-            {"name": WAN_FP8_VAE_NAME,  "url": WAN_FP8_VAE_URL,  "optional": False},
-        ]
-        plan["gguf_status"] = [
-            _gguf_status(WAN_FP8_GGUF_NAME),
-            _gguf_status(WAN_FP8_VAE_NAME),
-        ]
+    elif pipeline == "wan_fp8":
+        # Build gguf_status from exactly the files we require
+        gguf_status = []
+        for item in WAN_FP8_REQUIRED_FILES:
+            name = item["name"]
+            p = (MODEL_DIR / name)
+            gguf_status.append({
+                "configured": True,
+                "exists": p.exists(),
+                "path": str(p),
+                "size": p.stat().st_size if p.exists() else 0,
+            })
+
+        # Only one repo to fetch fully: the official diffusers repo
+        diff_root = repo_local_dir(WAN_DIFFUSERS_REPO)
+        repo_ok = bool(diff_root and Path(diff_root).exists())
+
+        plan = {
+            "pipeline": "wan_fp8",
+            "repos_to_fetch": [WAN_DIFFUSERS_REPO],  # only this repo
+            "single_files": WAN_FP8_REQUIRED_FILES,  # only the allowed filenames
+            "notes": [],
+        }
+
+        # Build 'repos' section to drive your CTA (do not include calcuis inventory)
+        repos = [{
+            "repo": WAN_DIFFUSERS_REPO,
+            "root": diff_root or str(Path(MODEL_DIR) / "repos" / WAN_DIFFUSERS_REPO.replace("/", "__")),
+            "exists": repo_ok,
+            "ok": repo_ok,
+            "missing": 0 if repo_ok else 1,
+            "missing_list": [] if repo_ok else ["<entire repo>"],
+        }]
+
+        # Server OK if repo exists and all single files exist with expected size
+        singles_ok = True
+        for item in WAN_FP8_REQUIRED_FILES:
+            name = item["name"]
+            p = (MODEL_DIR / name)
+            exp = WAN_EXPECTED_SIZES.get(name)
+            if not p.exists() or (exp is not None and p.stat().st_size != exp):
+                singles_ok = False
+                break
+
+        ok = repo_ok and singles_ok
+
+        return {
+            "ok": ok,
+            "plan": plan,
+            "repos": repos,
+            "gguf_status": gguf_status,
+            "notes": [] if ok else ["Missing repo or single-file artifacts."],
+        }
     else:
         raise ValueError(f"Unknown pipeline '{pipeline}'")
     return plan
 
-def _ensure_files_present_or_start(plan_name: str, auto_download: bool = False) -> Optional[tuple]:
-    plan = _plan_for(plan_name)
-    # Check classic repos
-    missing_repo_resp = None
-    for rid in plan.get("repos_to_fetch", []):
-        guard = _repos_ready_or_resp(rid)
-        if guard: missing_repo_resp = guard
-    # Check GGUF files
-    missing_gguf = []
-    for f in plan.get("single_files", []):
-        name = (f.get("name") or "").strip()
-        if not name: continue
-        p = MODEL_DIR / name
-        if not (p.exists() and p.stat().st_size > 0): missing_gguf.append(name)
+import os, shutil, tempfile, requests
+from pathlib import Path
 
-    if not missing_repo_resp and not missing_gguf:
+# Expect you already have MODEL_DIR, repo_local_dir(), _prefetch_repo(), etc.
+# MODEL_DIR should be the flat directory where you place single-file artifacts.
+# repo_local_dir(WAN_DIFFUSERS_REPO) should ensure the entire repo exists.
+
+def _hf_resolve_url(repo: str, filename: str) -> str:
+    return f"https://huggingface.co/{repo}/resolve/main/{filename}?download=1"
+
+def _download_strict_file(dest_dir: Path, repo: str, name: str, expected_size: int) -> Path:
+    """
+    Download <name> from HF <repo> to dest_dir, verify exact size.
+    If existing file has wrong size, delete it and re-download.
+    """
+    dest_dir.mkdir(parents=True, exist_ok=True)
+    dest = dest_dir / name
+
+    # If exists, verify exact size
+    if dest.exists():
+        sz = dest.stat().st_size
+        if sz == expected_size:
+            return dest
+        dest.unlink(missing_ok=True)  # wrong-size -> purge
+
+    url = _hf_resolve_url(repo, name)
+    headers = {
+        "Accept": "*/*",
+        "Accept-Encoding": "identity",
+        "User-Agent": "bonzai-wan-downloader/1.0",
+    }
+    with requests.get(url, stream=True, headers=headers, timeout=90) as r:
+        r.raise_for_status()
+        cl = r.headers.get("Content-Length")
+        if cl is not None and int(cl) != expected_size:
+            raise RuntimeError(
+                f"Remote Content-Length {cl} != expected {expected_size} for {name} ({repo})."
+            )
+        with tempfile.NamedTemporaryFile("wb", delete=False, dir=str(dest_dir)) as tmp:
+            try:
+                for chunk in r.iter_content(chunk_size=1024 * 1024):
+                    if chunk:
+                        tmp.write(chunk)
+                tmp.flush()
+                os.fsync(tmp.fileno())
+                tmp_path = Path(tmp.name)
+            except Exception:
+                Path(tmp.name).unlink(missing_ok=True)
+                raise
+
+    actual = tmp_path.stat().st_size
+    if actual != expected_size:
+        tmp_path.unlink(missing_ok=True)
+        raise RuntimeError(
+            f"Downloaded size {actual} != expected {expected_size} for {name} ({repo})."
+        )
+    shutil.move(str(tmp_path), dest)
+    return dest
+
+def _ensure_repo_present_or_prefetch(repo: str, auto_download: bool):
+    """
+    Ensure the entire diffusers repo exists locally. Uses your existing helpers.
+    Returns an error Flask response if it must start a background prefetch.
+    """
+    root = repo_local_dir(repo)
+    if root and Path(root).exists():
+        return None  # already present
+    # Ask your existing prefetcher to fetch the WHOLE repo (not selective)
+    return _prefetch_repo(repo, auto_download=auto_download)
+
+def _ensure_wan_fp8_files(auto_download: bool):
+    missing = []
+    wrong = []
+    for item in WAN_FP8_REQUIRED_FILES:
+        name = item["name"]
+        exp = WAN_EXPECTED_SIZES.get(name)
+        path = MODEL_DIR / name
+        if not path.exists():
+            missing.append(item)
+        elif exp is not None and path.stat().st_size != exp:
+            wrong.append((item, path.stat().st_size, exp))
+
+    if wrong:
+        # purge wrong-sized
+        for item, got, exp in wrong:
+            (MODEL_DIR / item["name"]).unlink(missing_ok=True)
+            missing.append(item)
+
+    if missing and not auto_download:
+        return jsonify({
+            "ok": False,
+            "notes": ["Required WAN FP8/GGUF files missing"],
+            "missing_files": [m["name"] for m in missing],
+        }), 409
+
+    # Download missing now (strict content-length)
+    for item in missing:
+        _download_strict_file(MODEL_DIR, WAN_FP8_SRC_REPO, item["name"], WAN_EXPECTED_SIZES[item["name"]])
+
+    return None
+
+def _ensure_files_present_or_start(pipeline: str, auto_download: bool = False):
+    """
+    Ensures all artifacts for a given pipeline exist locally (and are valid).
+    If anything is missing and auto_download is False, returns a 409 JSON that the UI
+    can use to show a CTA. If auto_download is True, kicks off prefetch and returns its JSON.
+    """
+    # --- Special case: WAN FP8 (Diffusers repo + strict single-file checks)
+    if pipeline == "wan_fp8":
+        # 1) Ensure the official diffusers repo is present
+        guard = _ensure_repo_present_or_prefetch(WAN_DIFFUSERS_REPO, auto_download)
+        if guard:
+            return guard
+
+        # 2) Ensure the two single files (strict size, auto-purge wrong ones)
+        guard = _ensure_wan_fp8_files(auto_download)
+        if guard:
+            return guard
+
+        # All good for WAN FP8
         return None
 
-    if auto_download:
-        started = _start_prefetch_pipeline(plan_name)
-        return jsonify(started["json"]), started["http_status"]
+    # --- Generic fallback for other pipelines
+    plan = _plan_for(pipeline)
 
-    # Build a helpful error explaining what's missing
+    # Repos: fail fast on the first missing
+    for repo_id in plan.get("repos_to_fetch", []):
+        guard = _repos_ready_or_resp(repo_id)  # returns a JSON/HTTP tuple if missing
+        if guard:
+            if auto_download:
+                started = _start_prefetch_pipeline(pipeline)
+                return jsonify(started["json"]), started.get("http_status", 202)
+            return guard  # already a useful JSON/HTTP tuple
+
+    # Files: collect all missing/invalid
+    missing_files = []
+    for f in plan.get("single_files", []):
+        name = (f.get("name") or "").strip()
+        if not name:
+            continue
+        p = MODEL_DIR / name
+
+        # If we have an expected size, enforce strict match; else just existence.
+        expected = WAN_EXPECTED_SIZES.get(name) if "WAN_EXPECTED_SIZES" in globals() else None
+        if not p.exists():
+            missing_files.append({"name": name, "reason": "missing"})
+        else:
+            size = p.stat().st_size
+            if expected is not None and size != expected:
+                # auto-purge wrong-sized files to avoid partial/corrupt state
+                try:
+                    p.unlink()
+                except Exception:
+                    pass
+                missing_files.append({"name": name, "reason": f"size_mismatch got={size} expected={expected}"})
+
+    if not missing_files:
+        return None  # everything is ready
+
+    if auto_download:
+        started = _start_prefetch_pipeline(pipeline)
+        return jsonify(started["json"]), started.get("http_status", 202)
+
+    # Build a helpful 409 for the UI CTA
     return jsonify({
         "error": "Assets missing",
         "repos": [ _repo_readiness(r) for r in plan.get("repos_to_fetch", []) ],
-        "missing_files": missing_gguf,
-        "hint": f'Run /pipelines/prefetch with pipeline="{plan_name}" (or set auto_download:true).'
+        "missing_files": [mf["name"] for mf in missing_files],
+        "reasons": missing_files,  # optional: keeps per-file reason for debugging
+        "hint": f'Run /pipelines/prefetch with pipeline="{pipeline}" (or set auto_download:true).'
     }), 409
 
 def _estimate_repo_size(repo_id: str, allow_patterns: Optional[List[str]] = None) -> int:
@@ -1072,7 +1321,7 @@ def pipelines_plan():
     if auth_repos:
         resp["auth_required"] = True; resp["auth_repos"] = auth_repos
     if deep: resp["inventories"] = repo_inventories
-    return jsonify(resp), 200
+    return jsonify(_json_sanitize(resp)), 200
 
 @app.route("/pipelines/prefetch", methods=["POST"])
 def pipelines_prefetch():
@@ -1570,6 +1819,7 @@ def image_kontext_i2i():
         ).to(device)
 
         init_img = load_image(image_url).convert("RGB") if image_url else _img_b64_to_pil(image_b64)
+        init_img = preprocess_image(init_img)
 
         def cb(step, timestep, latents):
             genbus.progress(gen_id, "sampling", int(step), steps)
@@ -1770,11 +2020,23 @@ def _load_wan_pipeline_shell(device: torch.device, compute_dtype: torch.dtype):
         except Exception: pass
     return pipe.to(device)
 
+def preprocess_image(img: Image.Image, quality=25, noise_std=2.5):
+    # JPEG compression
+    buf = io.BytesIO()
+    img.save(buf, format='JPEG', quality=quality)
+    buf.seek(0)
+    compressed = Image.open(buf).convert('RGB')
+    # Add Gaussian noise
+    arr = np.array(compressed).astype(np.float32)
+    noise = np.random.normal(scale=noise_std, size=arr.shape)
+    noisy = np.clip(arr + noise, 0, 255).astype(np.uint8)
+    return Image.fromarray(noisy)
+
 @app.route("/image/video/quality", methods=["POST"])
 def wan_image_to_video():
     data = request.get_json(silent=True) or {}
     prompt = (data.get("prompt") or "").strip()
-    neg    = data.get("negative_prompt", "worst quality, inconsistent motion, blur, jitter, distorted")
+    neg = data.get("negative_prompt", "worst quality, inconsistent motion, blur, jitter, distorted")
     if not prompt:
         return jsonify({"error": "Missing 'prompt'"}), 400
 
@@ -1783,105 +2045,113 @@ def wan_image_to_video():
     if not image_b64 and not image_url:
         return jsonify({"error": "Provide 'image_base64' or 'image_url'"}), 400
 
-    height = int(data.get("height", 480))
-    width  = int(data.get("width", 704))
-    frames = int(data.get("frames", 65))
-    steps  = int(data.get("steps", 30))
-    fps    = int(data.get("fps", 24))
-    seed   = data.get("seed")
-    auto_dl = bool(data.get("auto_download", False))
+    max_area = int(data.get("max_area", 480 * 832))  # Wan example logic
+    frames   = int(data.get("frames", 81))
+    steps    = int(data.get("steps", 30))
+    fps      = int(data.get("fps", 16))
+    guidance = float(data.get("guidance_scale", 5.0))
+    seed     = data.get("seed", None)
+    auto_dl  = bool(data.get("auto_download", False))
 
-    # Ensure local diffusers repo and override files are available
-    guard = _ensure_files_present_or_start("wan_video", auto_download=auto_dl)
-    if guard:
-        return guard
+    # Ensure the repo and single files are present (and correct-sized)
+    guard = _ensure_files_present_or_start("wan_fp8", auto_download=auto_dl)
+    if guard: return guard
 
-    gen_id = genbus.new("wan_i2v", {"endpoint": "/image/video/quality", "w": width, "h": height, "frames": frames, "fps": fps})
-    state = {"done": False, "error": None, "out_path": None}
+    gen_id = genbus.new("wan_i2v", {
+        "endpoint": "/image/video/quality",
+        "frames": frames, "fps": fps
+    })
 
-    def _run():
+    try:
+        device = DeviceManager.get_device()
+        # bfloat16 is typical for WAN on GPU; keep model weights native where we override.
+        compute_dtype = torch.bfloat16 if device.type in ("cuda", "mps") else torch.float32
+
+        # Load official pipeline from the full repo
+        base_root = repo_local_dir(WAN_DIFFUSERS_REPO)
+        pipe = WanImageToVideoPipeline.from_pretrained(
+            str(base_root),
+            torch_dtype=compute_dtype,
+            local_files_only=True,
+            use_safetensors=True,
+        ).to(device)
+
+        # --- Override VAE from FP8 safetensors (keep native dtype; do not force-cast) ---
         try:
-            device = DeviceManager.get_device()
-            compute_dtype = torch.bfloat16 if device.type in ("cuda", "mps") else torch.float32
-
-            # 1) Load the base pipeline from the official 2.1 diffusers repo
-            pipe = WanImageToVideoPipeline.from_pretrained(
-                str(repo_local_dir(WAN2_1_REPO)),
-                torch_dtype=compute_dtype,
-                local_files_only=True,
-                use_safetensors=True,
-            ).to(device)
-
-            # 2) Override the VAE with the fp8 version (loaded in fp32)
+            vae_path = MODEL_DIR / WAN_FP8_VAE_NAME
+            # Prefer a single-file loader if supported; otherwise fall back to repo VAE.
+            # Many recent diffusers builds support from_single_file for VAE:
             vae = AutoencoderKLWan.from_single_file(
-                str(MODEL_DIR / WAN_FP8_VAE_NAME),
-                torch_dtype=torch.float32,
-                local_files_only=True,
+                str(vae_path),
+                torch_dtype=torch.float32,   # leave compute dtype for kernels; weights may be upcast internally
+                local_files_only=True
             ).to(device)
             pipe.vae = vae
+        except Exception as e:
+            logger.warning(f"[wan_fp8] Could not override VAE from {WAN_FP8_VAE_NAME}: {e}")
 
-            # 3) Override the transformer with your gguf (quantised) model
-            transformer = load_transformer_from_gguf(
-                MODEL_DIR / WAN_FP8_GGUF_NAME, compute_dtype
-            )
+        # --- Override transformer from GGUF (quantized) ---
+        try:
+            gguf_path = MODEL_DIR / WAN_FP8_GGUF_NAME
+            transformer = load_transformer_from_gguf(gguf_path, compute_dtype)
             if transformer is not None:
                 pipe.transformer = transformer.to(device)
-
-            # 4) Load the input image (either from URL or base64)
-            from diffusers.utils import load_image
-            img = load_image(image_url).convert("RGB") if image_url else _img_b64_to_pil(image_b64)
-
-            # Prepare generator if seed provided
-            generator = torch.Generator(device=device) if isinstance(seed, int) else None
-            if generator is not None:
-                generator.manual_seed(seed)
-
-            # Stage: generate video
-            genbus.progress(gen_id, "generate_video", 1, 3)
-            out = pipe(
-                image=img,
-                prompt=prompt,
-                negative_prompt=neg,
-                height=height,
-                width=width,
-                num_frames=frames,
-                num_inference_steps=steps,
-                generator=generator,
-                output_type="pil",
-            )
-            frames_pil = out.frames[0]
-            if not frames_pil:
-                raise RuntimeError("Wan returned no frames")
-
-            # Stage: encode video (H.264 yuv420p)
-            genbus.progress(gen_id, "encode_video", 2, 3)
-            out_name = f"wan_{int(time.time())}.mp4"
-            out_path = os.path.join(os.getcwd(), out_name)
-            _write_video_h264_safe(out_path, frames_pil, fps=fps, gen_id=gen_id, target_size=(width, height))
-
-            genbus.finish(gen_id, {"video_path": out_path})
-            state["out_path"] = out_path
-
+            else:
+                logger.warning("[wan_fp8] GGUF transformer load returned None; using repo transformer.")
         except Exception as e:
-            logger.exception("Wan i2v failed")
-            genbus.error(gen_id, str(e))
-            state["error"] = str(e)
-        finally:
-            try:
-                DeviceManager.free_memory()
-            except Exception:
-                pass
-            state["done"] = True
+            logger.warning(f"[wan_fp8] Could not load GGUF transformer: {e}")
 
-    # run background task and wait
-    socketio.start_background_task(_run)
-    while not state["done"]:
-        socketio.sleep(0.25)
+        # ---- Prepare input image ----
+        if image_url:
+            init_img = load_image(image_url).convert("RGB")
+        else:
+            raw = base64.b64decode(image_b64)
+            init_img = Image.open(io.BytesIO(raw)).convert("RGB")
 
-    if state["error"]:
-        return jsonify({"error": state["error"]}), 500
-    return jsonify({"ok": True, "video_path": state["out_path"], "generation_websocket_url": generation_url()}), 201
+        # Wan size logic: keep aspect, snap to VAE multiple
+        aspect = init_img.height / init_img.width
+        mod = getattr(pipe, "vae_scale_factor_spatial", 8) * getattr(pipe.transformer.config, "patch_size", [1,8])[1]
+        h = int(np.sqrt(max_area * aspect)) // mod * mod
+        w = int(np.sqrt(max_area / aspect)) // mod * mod
+        init_img = init_img.resize((w, h))
 
+        generator = None
+        if isinstance(seed, int):
+            generator = torch.Generator(device=device).manual_seed(seed)
+
+        # ---- Generate frames ----
+        genbus.progress(gen_id, "generate_video", 1, 2)
+        out = pipe(
+            image=init_img,
+            prompt=prompt,
+            negative_prompt=neg,
+            height=h, width=w,
+            num_frames=frames,
+            num_inference_steps=steps,
+            guidance_scale=guidance,
+            generator=generator,
+        )
+
+        # Always unwrap nested list
+        frames_pil = out.frames[0] if hasattr(out, "frames") else out
+        if not isinstance(frames_pil, (list, tuple)) or len(frames_pil) == 0:
+            raise RuntimeError("WAN pipeline returned no frames")
+
+        # ---- Encode via safe H.264 path (PNG -> ffmpeg yuv420p) ----
+        genbus.progress(gen_id, "encode_video", 2, 2)
+        out_path = os.path.join(os.getcwd(), f"wan_{int(time.time())}.mp4")
+        _write_video_h264_safe(out_path, frames_pil, fps=fps, gen_id=gen_id, target_size=(w, h))
+
+        genbus.finish(gen_id, {"video_path": out_path})
+        return jsonify({"ok": True, "video_path": out_path, "generation_websocket_url": generation_url()}), 201
+
+    except Exception as e:
+        logger.exception("Wan i2v failed")
+        genbus.error(gen_id, str(e))
+        return jsonify({"error": str(e)}), 500
+    finally:
+        try: DeviceManager.free_memory()
+        except Exception: pass
 
 # PART 5/5
 
