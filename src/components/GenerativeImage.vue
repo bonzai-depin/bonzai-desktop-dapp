@@ -193,8 +193,6 @@
                   </span>
                 </div>
 
-                <!-- <pre>{{ readiness.currentMode }} vs {{ mode }}</pre> -->
-
                 <!-- READINESS CTA (only for current mode) -->
                 <div
                   v-if="showUpdateCTA && readiness.currentMode == mode"
@@ -205,7 +203,6 @@
                     <strong class="fira-sans-condensed-black-italic">
                       Model Download Required
                     </strong>
-                    <hr />
                     <span v-if="readiness.missingRepos.length">
                       <ul style="margin-top: 0.5rem">
                         <li v-for="d in readiness.repoDetails" :key="d.repo">
@@ -263,8 +260,9 @@
                 </div>
 
                 <!-- DOWNLOAD PROGRESS: only show if pipeline matches current mode -->
+                <!-- DOWNLOAD PROGRESS -->
                 <div
-                  v-if="downloads.active && downloadMatchesMode"
+                  v-if="downloads && downloads.active"
                   class="notification is-info"
                   style="margin-bottom: 1.25rem"
                 >
@@ -279,14 +277,28 @@
                     <span
                       class="fira-sans-condensed-black-italic is-pulled-right is-size-1"
                     >
-                      {{ Math.round(downloads.progress) }}%
+                      {{ Math.round(downloads.total_progress || 0) }}%
                       <button
-                        class="button is-small is-danger mr-4 cancel p-1"
+                        class="button is-small is-warning retry p-1"
+                        @click="retryCurrentPipeline"
+                        :disabled="
+                          !downloads.pipelineId ||
+                          downloads.status === 'completed'
+                        "
+                        title="Retry failed/blocked pipeline"
+                      >
+                        <span class="material-symbols-outlined">
+                          restart_alt
+                        </span>
+                      </button>
+                      <button
+                        class="button is-small is-danger cancel p-1"
                         @click="cancelCurrentPipeline"
                         :disabled="
                           !downloads.pipelineId ||
                           downloads.status === 'completed'
                         "
+                        title="Cancel current pipeline"
                       >
                         <span class="material-symbols-outlined">cancel</span>
                       </button>
@@ -294,10 +306,10 @@
                   </p>
                   <progress
                     class="progress is-success is-large"
-                    :value="downloads.progress"
+                    :value="downloads.progress || 0"
                     max="100"
                   >
-                    {{ Math.round(downloads.progress) }}%
+                    {{ Math.round(downloads.progress || 0) }}%
                   </progress>
                   <div
                     v-if="downloadTaskList.length"
@@ -321,7 +333,7 @@
                         <div
                           class="column is-2 fira-sans-condensed-black-italic has-text-right"
                         >
-                          {{ Math.round(t.progress) }}%
+                          {{ Math.round(t.progress || 0) }}%
                         </div>
                       </li>
                     </ul>
@@ -466,9 +478,6 @@ const WS_GEN = `${API_BASE}/generation`;
 export default {
   name: "GenerativeImage",
   setup() {
-    // ------------ navigation -------------
-    // const router = useRouter();
-
     // ------------ basic state -------------
     const mode = ref("turbo");
     const quality = ref("sd");
@@ -476,8 +485,9 @@ export default {
     const form = reactive({ prompt: "" });
     const inferences = reactive([]);
     const hasCopy = reactive([]);
-    const isPlanning = ref(false);
-    const isPrefetching = ref(false);
+
+    // controller for abortable /plan calls (parity w/ Video view)
+    const planReq = reactive({ controller: null, seq: 0 });
 
     // ------------ readiness ---------------
     const readiness = reactive({
@@ -501,7 +511,6 @@ export default {
         readiness.missingGguf
     );
 
-    // canGenerate: disable prompt when repo not ready for this mode
     const canGenerate = computed(
       () => readiness.ok && !readiness.authRequired && !generation.active
     );
@@ -530,24 +539,34 @@ export default {
     const downloads = reactive({
       active: false,
       pipelineId: null,
-      progress: 0,
+      progress: 0, // visual bar (kept in sync with total_progress)
+      total_progress: 0, // authoritative % (server or tasks-computed)
       status: "pending",
       pipeline: { tasks: {} },
       wsUrl: null,
     });
+
     const downloadsSocket = ref(null);
     const lastDlEventAt = ref(0);
     let httpPollTimer = null;
 
-    const normalizeToHttp = (u) =>
-      (u || WS_DL).replace(/^ws(s)?:\/\//i, (_, s) => `http${s ? "s" : ""}://`);
+    const socketOpts = {
+      transports: ["websocket", "polling"],
+      upgrade: true,
+      forceNew: true,
+      timeout: 10000,
+      reconnection: true,
+      reconnectionAttempts: 60,
+      reconnectionDelay: 1000,
+      path: "/socket.io",
+    };
 
     const downloadMatchesMode = computed(() => {
       const name = downloads?.pipeline?.pipeline_name || "";
-      // We expect DownloadManager.new(f"prefetch:{pipeline}")
       return name.endsWith(`:${currentPipeline.value}`);
     });
 
+    // ---- helpers to merge and compute byte-weighted progress (parity w/ Video)
     const mergeTask = (dst, src) => {
       if (!dst) return { ...src };
       const out = { ...dst, ...src };
@@ -562,25 +581,41 @@ export default {
         typeof src.downloaded_size === "number"
       ) {
         out.downloaded_size = Math.max(
-          dst.downloaded_size,
-          src.downloaded_size
+          dst.downloaded_size || 0,
+          src.downloaded_size || 0
         );
       }
       if (
         typeof dst.total_size === "number" &&
         typeof src.total_size === "number"
       ) {
-        out.total_size = Math.max(dst.total_size, src.total_size);
+        out.total_size = Math.max(dst.total_size || 0, src.total_size || 0);
       }
       return out;
+    };
+
+    const computeTotalFromTasks = (tasksObj) => {
+      const tasks = Object.values(tasksObj || {});
+      if (!tasks.length) return 0;
+      let totalBytes = 0,
+        doneBytes = 0;
+      for (const t of tasks) {
+        const tot = Number(t.total_size || 0);
+        const done = Number(t.downloaded_size || 0);
+        if (tot > 0) {
+          totalBytes += tot;
+          doneBytes += Math.min(done, tot);
+        }
+      }
+      if (totalBytes > 0) return (doneBytes / totalBytes) * 100;
+      const sumPct = tasks.reduce((s, t) => s + Number(t.progress || 0), 0);
+      return sumPct / tasks.length;
     };
 
     const applyPipelineUpdate = (p) => {
       if (!p) return;
       downloads.pipelineId = p.pipeline_id || downloads.pipelineId;
       downloads.status = p.status || downloads.status || "downloading";
-      const nextPct = Number(p.total_progress || 0);
-      downloads.progress = Math.max(Number(downloads.progress || 0), nextPct);
 
       const existing = downloads.pipeline?.tasks || {};
       const incoming = p.tasks || {};
@@ -593,24 +628,34 @@ export default {
         ...p,
         tasks: merged,
       };
+
+      const serverPct = Number(p.total_progress ?? 0);
+      const tasksPct = computeTotalFromTasks(merged);
+      let next =
+        Number.isFinite(serverPct) && serverPct > 0 ? serverPct : tasksPct;
+
+      // Don't show 100% until every task is finished (prevents the "100% while tasks pending" bug)
+      const anyActive = Object.values(merged).some((t) =>
+        ["downloading", "pending"].includes(t.status)
+      );
+      if (anyActive) next = Math.min(next, 99.9);
+
+      downloads.total_progress = next;
+      downloads.progress = next;
+
       downloads.active = !["completed", "failed", "cancelled"].includes(
         downloads.status
       );
     };
 
     const ensureDownloadsSocket = (base = WS_DL) => {
-      const url = normalizeToHttp(base);
       if (downloadsSocket.value) {
         try {
           downloadsSocket.value.disconnect();
         } catch {}
       }
-      downloads.wsUrl = url;
-      downloadsSocket.value = io(url, {
-        path: "/socket.io",
-        transports: ["websocket", "polling"],
-        withCredentials: false,
-      });
+      downloads.wsUrl = base;
+      downloadsSocket.value = io(base, socketOpts);
 
       downloadsSocket.value.on("connect", () => {
         if (downloads.pipelineId) {
@@ -620,18 +665,18 @@ export default {
         }
       });
 
-      downloadsSocket.value.on("connect_error", (err) =>
-        console.warn("[downloads] connect_error", err?.message || err)
-      );
-      downloadsSocket.value.on("error", (err) =>
-        console.warn("[downloads] error", err)
-      );
-
       downloadsSocket.value.on("download_progress", ({ pipeline }) => {
         lastDlEventAt.value = Date.now();
         if (!pipeline) return;
         applyPipelineUpdate(pipeline);
       });
+
+      downloadsSocket.value.on("connect_error", (e) =>
+        console.warn("[downloads] connect_error", e?.message || e)
+      );
+      downloadsSocket.value.on("error", (e) =>
+        console.warn("[downloads] error", e)
+      );
     };
 
     const kickHttpPollIfStale = (pipelineId) => {
@@ -671,12 +716,12 @@ export default {
 
     const startDownloadTracking = (pipelineId, websocketUrl) => {
       connectAndSubscribe(pipelineId, websocketUrl);
-      const watchdog = setInterval(async () => {
+      const t = setInterval(async () => {
         if (!downloads.active && downloads.status !== "failed") {
-          clearInterval(watchdog);
+          clearInterval(t);
           await probeCurrentMode();
         }
-        if (downloads.status === "failed") clearInterval(watchdog);
+        if (downloads.status === "failed") clearInterval(t);
       }, 1000);
     };
 
@@ -697,15 +742,32 @@ export default {
     const cancelCurrentPipeline = async () => {
       if (!downloads.pipelineId) return;
       try {
-        await axios.post(
-          `${API_BASE}/downloads/cancel/${downloads.pipelineId}`
+        const { status } = await axios.post(
+          `${API_BASE}/downloads/cancel/${downloads.pipelineId}`,
+          {},
+          { validateStatus: () => true }
         );
+        if (status === 200) {
+          downloads.status = "cancelled";
+          downloads.active = false;
+        }
       } catch {}
     };
+
     const retryCurrentPipeline = async () => {
       if (!downloads.pipelineId) return;
       try {
-        await axios.post(`${API_BASE}/downloads/retry/${downloads.pipelineId}`);
+        const { data, status } = await axios.post(
+          `${API_BASE}/downloads/retry/${downloads.pipelineId}`,
+          {},
+          { validateStatus: () => true }
+        );
+        if (status === 202 && data?.pipeline_id) {
+          startDownloadTracking(
+            data.pipeline_id,
+            data.websocket_url || downloads.wsUrl || WS_DL
+          );
+        }
       } catch {}
     };
 
@@ -725,11 +787,11 @@ export default {
         root: r.root || null,
       }));
       const ggufs = Array.isArray(data?.gguf_status) ? data.gguf_status : [];
-      const missG = ggufs.find((g) => g && g.configured && !g.exists);
-      readiness.missingGguf = !!missG;
-      readiness.ggufName = missG
-        ? (missG.path || missG.name || "").split("/").pop()
-        : null;
+      const missG = ggufs.filter((g) => g && g.configured && !g.exists);
+      readiness.missingGguf = missG.length > 0;
+      readiness.ggufNames = missG.map((g) =>
+        (g.path || g.name || "").split("/").pop()
+      );
       readiness.authRequired = !!data?.auth_required;
       readiness.authRepos = Array.isArray(data?.auth_repos)
         ? data.auth_repos
@@ -799,24 +861,40 @@ export default {
       const pipeline = currentPipeline.value;
       readiness.currentMode = mode.value;
 
+      // cancel a previous /plan in-flight (match Video view)
       try {
-        isPlanning.value = true;
+        planReq.controller?.abort();
+      } catch {}
+      const controller = new AbortController();
+      planReq.controller = controller;
+      const mySeq = ++planReq.seq;
+
+      try {
         const { data, status } = await axios.post(
           `${API_BASE}/pipelines/plan`,
           { pipeline, deep_validate: true },
-          { validateStatus: () => true }
+          { signal: controller.signal, validateStatus: () => true }
         );
+
+        if (mySeq !== planReq.seq) return; // stale response
+
         if (status >= 200 && status < 300) {
           applyPlanToReadiness(data);
         } else {
           readiness.ok = false;
           readiness.notes = [`Planner returned HTTP ${status}.`];
         }
-        isPlanning.value = false;
       } catch (e) {
-        readiness.ok = false;
-        readiness.notes = [e?.message || "Network error while planning"];
-        isPlanning.value = false;
+        const aborted =
+          e?.code === "ERR_CANCELED" ||
+          e?.name === "CanceledError" ||
+          e?.message === "canceled";
+        if (!aborted) {
+          readiness.ok = false;
+          readiness.notes = [e?.message || "Network error while planning"];
+        }
+      } finally {
+        if (planReq.controller === controller) planReq.controller = null;
       }
     };
 
@@ -824,7 +902,6 @@ export default {
     const prefetchForMode = async () => {
       const pipeline = currentPipeline.value;
       try {
-        isPrefetching.value = true;
         const res = await axios.post(
           `${API_BASE}/pipelines/prefetch`,
           { pipeline, deep_validate: true },
@@ -835,7 +912,8 @@ export default {
           const started = Array.isArray(res.data?.pipelines_started)
             ? res.data.pipelines_started
             : [];
-          const pid = started[started.length - 1] || null;
+          const pid =
+            started[started.length - 1] || res.data?.pipeline_id || null;
           const ws =
             res.data?.download_websocket_url ||
             res.data?.websocket_url ||
@@ -856,11 +934,9 @@ export default {
           return;
         }
 
-        isPrefetching.value = false;
         generation.error =
           res?.data?.error || `Prefetch failed (${res.status})`;
       } catch (e) {
-        isPrefetching.value = false;
         generation.error = e?.message || "Network error";
       }
     };
@@ -868,16 +944,8 @@ export default {
     // ------------ generation socket -------
     const genSocket = ref(null);
     const ensureGenerationSocket = (base = WS_GEN) => {
-      if (genSocket.value) return;
-      genSocket.value = io(base, {
-        path: "/socket.io",
-        transports: ["websocket", "polling"],
-      });
-
-      genSocket.value.on("connect_error", (err) =>
-        console.warn("[gen] connect_error", err?.message || err)
-      );
-      genSocket.value.on("error", (err) => console.warn("[gen] error", err));
+      if (genSocket.value && genSocket.value.connected) return;
+      genSocket.value = io(base, socketOpts);
 
       genSocket.value.on("gen_started", ({ generation_id }) => {
         Object.assign(generation, {
@@ -901,7 +969,6 @@ export default {
               generation.pct,
               (Number(step) / Number(total)) * 100
             );
-          if (!generation.active) generation.active = true;
         }
       );
       genSocket.value.on("gen_finished", ({ generation_id }) => {
@@ -921,16 +988,6 @@ export default {
     };
 
     // ------------ actions -----------------
-    function animate(inference) {
-      const b64 = inference?.answer?.data?.image || "";
-      if (!b64) return;
-      // Navigate to video page with image prefilled
-      router.push({
-        name: "GenerativeVideo",
-        query: { image: b64 },
-      });
-    }
-
     const sendMessage = async (prompt) => {
       if (!prompt) return;
       if (!canGenerate.value) return;
@@ -1021,6 +1078,7 @@ export default {
       }
     };
 
+    // ------------ utils -------------------
     const { toClipboard } = useClipboard();
     const copy = async (txt) => {
       try {
@@ -1107,6 +1165,7 @@ export default {
     );
 
     return {
+      // state
       mode,
       quality,
       form,
@@ -1132,12 +1191,10 @@ export default {
       cancelCurrentPipeline,
       retryCurrentPipeline,
       probeCurrentMode,
-      animate,
     };
   },
 };
 </script>
-
 <style scoped>
 @import url("https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:opsz,wght,FILL,GRAD@20..48,100..700,0..1,-50..200");
 
@@ -1287,9 +1344,21 @@ ol.chat {
 ol.chat li {
   position: relative;
 }
+.retry {
+  position: absolute;
+  top: -3em;
+  right: 2.75em;
+  opacity: 0.5;
+}
+.retry:hover,
+.cancel:hover {
+  box-shadow: none;
+  opacity: 1;
+}
 .cancel {
   position: absolute;
   top: -3em;
-  right: -6em;
+  right: -1.25em;
+  opacity: 0.5;
 }
 </style>

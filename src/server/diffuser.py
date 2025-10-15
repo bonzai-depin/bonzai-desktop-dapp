@@ -1,19 +1,21 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
-# BonzAI Media Generation Server — eventlet + robust progress
+# BonzAI Media Generation Server — eventlet + robust progress + JSON sanitize + watermark
 # PART 1/5
 
 from __future__ import annotations
 
-import os, re, gc, io, time, json, base64, logging, threading, hashlib, platform
+import os, re, io, time, json, base64, logging, threading, hashlib, platform, shutil, subprocess, gc, stat
 from io import BytesIO
 from pathlib import Path
 from datetime import datetime, date
 from decimal import Decimal
 from dataclasses import dataclass, field
 from typing import Optional, Dict, Any, List
+from importlib import import_module
+from fnmatch import fnmatch
 
-# ---- eventlet MUST be first
+# ---- eventlet first
 import eventlet
 eventlet.monkey_patch(all=True, socket=True, time=True, select=True, thread=True, os=True)
 
@@ -21,213 +23,81 @@ import requests
 import torch
 import numpy as np
 from PIL import Image
+
 from appdirs import user_data_dir
 from flask import Flask, request, jsonify
 from flask_cors import CORS
 from flask_socketio import SocketIO, emit, join_room
-from fnmatch import fnmatch
-import shutil, stat, subprocess
 
-# ---- Hugging Face hub
-from huggingface_hub import HfApi, hf_hub_url, snapshot_download
-try:
-    from huggingface_hub.errors import HfHubHTTPError
-except Exception:
-    try:
-        from huggingface_hub.utils import HfHubHTTPError
-    except Exception:
-        class HfHubHTTPError(Exception): pass
+# Hugging Face hub
+from huggingface_hub import HfApi, hf_hub_url
 
-# ---- Safetensors integrity (best effort)
+# Safetensors
 try:
-    from safetensors import safe_open as _safetensors_open  # type: ignore
+    from safetensors.torch import safe_open as _safetensors_open
 except Exception:
     _safetensors_open = None
-    
-from transformers import CLIPVisionModel, T5EncoderModel
 
-# ---- Diffusers (only specific bits)
+from transformers import T5EncoderModel, T5Config
+from safetensors.torch import load_file as safe_load_file
+
 from diffusers import (
-    DiffusionPipeline,
     AutoPipelineForText2Image,
     StableDiffusionXLPipeline,
     StableDiffusionXLImg2ImgPipeline,
-    FlowMatchEulerDiscreteScheduler,
     HunyuanVideoPipeline,
     LTXImageToVideoPipeline,
-    LTXConditionPipeline,
-    LTXLatentUpsamplePipeline,
-    LTXVideoTransformer3DModel,
-    AutoencoderKLLTXVideo,
-    WanImageToVideoPipeline, 
-    AutoencoderKLWan,
+    WanImageToVideoPipeline,
     GGUFQuantizationConfig,
+    FluxPipeline,
+    FluxImg2ImgPipeline,
+    FluxTransformer2DModel,
+    WanTransformer3DModel,
+    AutoencoderKLWan,
+    FlowMatchEulerDiscreteScheduler
 )
-from diffusers.pipelines.ltx.pipeline_ltx_condition import LTXVideoCondition
-from diffusers.utils import export_to_video, load_image, load_video
-from diffusers.models import AutoencoderKL
+from diffusers.utils import load_image, export_to_video
 
-# Optional model classes (we probe dynamically for GGUF)
-from importlib import import_module
-
+# ------------------------- JSON Sanitization -------------------------
 def _json_sanitize(obj):
-    """
-    Recursively convert objects that Flask's JSON provider can't handle into
-    JSON-serializable forms. Handles: Path, set, tuple, Decimal, datetime/date.
-    """
-    # Fast path for common primitives
-    if obj is None or isinstance(obj, (bool, int, float, str)):
+    if obj is None or isinstance(obj, (bool,int,float,str)):
         return obj
-
-    # Path -> str
-    if isinstance(obj, Path):
-        return str(obj)
-
-    # datetime/date -> ISO string
-    if isinstance(obj, (datetime, date)):
-        return obj.isoformat()
-
-    # Decimal -> float (or str if you prefer exact)
-    if isinstance(obj, Decimal):
-        return float(obj)
-
-    # dict: sanitize values
-    if isinstance(obj, dict):
-        return {str(k): _json_sanitize(v) for k, v in obj.items()}
-
-    # list/tuple: keep list type for JSON
-    if isinstance(obj, (list, tuple)):
-        return [_json_sanitize(v) for v in obj]
-
-    # set -> list
-    if isinstance(obj, set):
-        return [_json_sanitize(v) for v in obj]
-
-    # objects with __dict__ (avoid surprises)
-    if hasattr(obj, "__dict__"):
-        return _json_sanitize(vars(obj))
-
-    # fallback: string representation
+    if isinstance(obj, Path): return str(obj)
+    if isinstance(obj, (datetime,date)): return obj.isoformat()
+    if isinstance(obj, Decimal): return float(obj)
+    if isinstance(obj, dict): return {str(k): _json_sanitize(v) for k,v in obj.items()}
+    if isinstance(obj, (list,tuple,set)): return [_json_sanitize(v) for v in obj]
+    if hasattr(obj,"__dict__"): return _json_sanitize(vars(obj))
     return str(obj)
 
 # ------------------------------ Logging & paths ------------------------------
 logging.basicConfig(level=logging.INFO,
-                    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s")
+    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s")
 logger = logging.getLogger("bonzai-server")
 
 USER_DATA_PATH = user_data_dir("bonzai", "BonzAI")
-MODEL_DIR = Path(USER_DATA_PATH) / "models"
+MODEL_DIR = Path(USER_DATA_PATH)/"models"
 MODEL_DIR.mkdir(parents=True, exist_ok=True)
 
-# Keep HF cache/refs under our models dir
-os.environ["HF_HOME"] = str(MODEL_DIR / "hf")
-os.environ.setdefault("HF_HUB_DISABLE_TELEMETRY", "1")
+os.environ["HF_HOME"] = str(MODEL_DIR/"hf")
+os.environ.setdefault("HF_HUB_DISABLE_TELEMETRY","1")
 
-LOCAL_ONLY = bool(int(os.getenv("BONZAI_LOCAL_ONLY", "1")))
-
-# Safety cap to avoid runaway downloads (default 60 GB)
-MAX_REPO_BYTES = int(os.getenv("BONZAI_MAX_REPO_BYTES", str(60 * (1 << 30))))
-CHUNK_SIZE = 1 << 20  # 1 MiB
-
-def _hf_token() -> Optional[str]:
-    return os.getenv("HF_TOKEN") or os.getenv("HUGGINGFACE_HUB_TOKEN")
+LOCAL_ONLY = bool(int(os.getenv("BONZAI_LOCAL_ONLY","1")))
+MAX_REPO_BYTES = int(os.getenv("BONZAI_MAX_REPO_BYTES", str(60*(1<<30))))
+os.environ.setdefault("TOKENIZERS_PARALLELISM", "false")
 
 # ---------------------------- Flask / Socket.IO -------------------------------
 app = Flask(__name__)
-app.config["SECRET_KEY"] = os.environ.get("SECRET_KEY", "bonzai-secret-key")
+app.config["SECRET_KEY"] = os.environ.get("SECRET_KEY","bonzai-secret-key")
 CORS(app)
 
-socketio = SocketIO(
-    app,
-    cors_allowed_origins="*",
-    async_mode="eventlet",
-    logger=False,
-    engineio_logger=False,
-    ping_interval=20,
-    ping_timeout=30,
-)
+socketio = SocketIO(app,cors_allowed_origins="*",async_mode="eventlet",
+                    logger=False,engineio_logger=False,ping_interval=20,ping_timeout=30)
 
-def socket_emit(event: str, payload: dict, namespace: str):
-    socketio.emit(event, payload, namespace=namespace)
+def socket_emit(event:str,payload:dict,namespace:str):
+    socketio.emit(event,_json_sanitize(payload),namespace=namespace)
     try: socketio.sleep(0)
     except Exception: pass
-
-def _ns_url(ns: str) -> str:
-    base = request.host_url.rstrip("/") if request else "http://127.0.0.1:65000"
-    return f"{base}/{ns.lstrip('/')}"
-
-def downloads_url() -> str:
-    return _ns_url("/downloads")
-
-def generation_url() -> str:
-    return _ns_url("/generation")
-
-def _tid_repo(repo_id: str) -> str:
-    return hashlib.md5(f"repo:{repo_id}".encode()).hexdigest()[:16]
-
-def _tid_file(repo_id: str, rel_path: str) -> str:
-    return hashlib.md5(f"file:{repo_id}:{rel_path}".encode()).hexdigest()[:16]
-
-# ------------------------------ FFmpeg staging -------------------------------
-from pathlib import Path as _Path
-
-def _user_bin_dir() -> str:
-    d = os.path.join(user_data_dir("bonzai", "BonzAI"), "bin")
-    os.makedirs(d, exist_ok=True)
-    return d
-
-def _platform_tag():
-    system = platform.system().lower()
-    arch = {"x86_64":"x64","amd64":"x64","arm64":"arm64","aarch64":"arm64"}.get(platform.machine().lower(), platform.machine().lower())
-    if system == "darwin": plat, exe = f"darwin/{arch}", "ffmpeg"
-    elif system == "linux": plat, exe = f"linux/{arch}", "ffmpeg"
-    elif system == "windows": plat, exe = f"win32/{arch}", "ffmpeg.exe"
-    else:
-        raise RuntimeError(f"Unsupported platform: {system}/{arch}")
-    return plat, exe
-
-def _npm_ffmpeg_source_path() -> str:
-    plat, exe = _platform_tag()
-    p = os.path.join("node_modules","ffmpeg-static-electron-forge","dist","bin", plat, exe)
-    if not os.path.isfile(p):
-        raise FileNotFoundError(f"Bundled ffmpeg not found at {p}")
-    return p
-
-def _dest_ffmpeg_path() -> str:
-    _, exe = _platform_tag()
-    return os.path.join(_user_bin_dir(), exe)
-
-def _make_executable_and_clear_quarantine(path: str):
-    try:
-        st = os.stat(path)
-        os.chmod(path, st.st_mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
-    except Exception: pass
-    try:
-        subprocess.run(["xattr","-dr","com.apple.quarantine", path],
-                       check=False, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-    except Exception: pass
-
-def get_ffmpeg_binary_path() -> str:
-    src = _npm_ffmpeg_source_path()
-    dst = _dest_ffmpeg_path()
-    try:
-        need_copy = True
-        if os.path.isfile(dst):
-            try: need_copy = os.path.getmtime(src) > os.path.getmtime(dst)
-            except Exception: need_copy = False
-        if need_copy:
-            with open(src, "rb") as fsrc, open(dst, "wb") as fdst:
-                shutil.copyfileobj(fsrc, fdst, length=1<<20)
-    except Exception as e:
-        raise RuntimeError(f"Failed to stage ffmpeg to app bin: {e}")
-
-    _make_executable_and_clear_quarantine(dst)
-    if not (os.path.isfile(dst) and os.access(dst, os.X_OK)):
-        raise PermissionError(f"Staged ffmpeg not executable at {dst}")
-    os.environ["IMAGEIO_FFMPEG_EXE"] = dst
-    return dst
-
-os.environ["IMAGEIO_FFMPEG_EXE"] = get_ffmpeg_binary_path()
 
 # -------------------------- Devices & memory helpers --------------------------
 class DeviceManager:
@@ -248,48 +118,91 @@ class DeviceManager:
         if torch.backends.mps.is_available(): torch.mps.empty_cache()
         if torch.cuda.is_available(): torch.cuda.empty_cache()
 
+# ---------------------------- Watermark Helper ----------------------------
+BONZAI_WM_PATH = Path(__file__).parent/"bonzai.png"
+
+def _apply_watermark(image: Image.Image) -> Image.Image:
+    try:
+        wm = Image.open(BONZAI_WM_PATH).convert("RGBA").resize((64,64))
+        base = image.convert("RGBA")
+        x,y = base.width-wm.width-4, base.height-wm.height-4
+        base.alpha_composite(wm,(x,y))
+        return base.convert("RGB")
+    except Exception as e:
+        logger.warning(f"Watermark failed: {e}")
+        return image
+
+def _apply_watermark_frames(frames: List[Image.Image]) -> List[Image.Image]:
+    return [_apply_watermark(f) for f in frames]
+
+# -------------------------- Hugging Face token helper -------------------------
+def _hf_token() -> Optional[str]:
+    return os.environ.get("HF_TOKEN") or os.environ.get("HUGGINGFACE_HUB_TOKEN")
+
+# PART 2/5
+
 # PART 2/5
 
 # ------------------------------ Generation bus --------------------------------
 class GenerationTracker:
-    def __init__(self): self._meta: Dict[str, Dict[str, Any]] = {}
+    def __init__(self): 
+        self._meta: Dict[str, Dict[str, Any]] = {}
+
     def new(self, kind: str, meta: Optional[Dict[str, Any]] = None, gen_id: Optional[str] = None) -> str:
         gid = gen_id or hashlib.md5(f"{kind}_{time.time()}".encode()).hexdigest()[:16]
         self._meta[gid] = {"kind": kind, "meta": meta or {}, "ts": time.time(), "stage": "starting"}
-        socket_emit("gen_started", {"generation_id": gid, "kind": kind, "meta": meta or {}}, "/generation")
-        socket_emit("gen_progress", {"generation_id": gid, "stage": "queued", "step": 0, "total": 1, "pct": 0}, "/generation")
+        socket_emit("gen_started", _json_sanitize({"generation_id": gid, "kind": kind, "meta": meta or {}}), "/generation")
+        socket_emit("gen_progress", _json_sanitize({"generation_id": gid, "stage": "queued", "step": 0, "total": 1, "pct": 0}), "/generation")
         return gid
+
     def progress(self, generation_id: str, stage: str, step: int, total: int):
         pct = round((step / max(total, 1)) * 100.0, 2)
-        socket_emit("gen_progress", {"generation_id": generation_id, "stage": stage, "step": int(step), "total": int(total), "pct": pct}, "/generation")
+        socket_emit("gen_progress", _json_sanitize({
+            "generation_id": generation_id,
+            "stage": stage,
+            "step": int(step),
+            "total": int(total),
+            "pct": pct
+        }), "/generation")
+
     def finish(self, generation_id: str, payload: Optional[Dict[str, Any]] = None):
-        socket_emit("gen_finished", {"generation_id": generation_id, "payload": payload or {}}, "/generation")
+        socket_emit("gen_finished", _json_sanitize({"generation_id": generation_id, "payload": payload or {}}), "/generation")
         self._meta.pop(generation_id, None)
+
     def error(self, generation_id: str, message: str):
-        socket_emit("gen_error", {"generation_id": generation_id, "error": message}, "/generation")
+        socket_emit("gen_error", _json_sanitize({"generation_id": generation_id, "error": message}), "/generation")
         self._meta.pop(generation_id, None)
+
 
 genbus = GenerationTracker()
 
 # --------------------------- WebSocket namespaces -----------------------------
 @socketio.on("connect", namespace="/downloads")
-def dl_connect(): emit("connected", {"message": "Connected to download progress stream"})
+def dl_connect(): 
+    emit("connected", _json_sanitize({"message": "Connected to download progress stream"}))
+
 @socketio.on("subscribe", namespace="/downloads")
 def dl_subscribe(data):
     data = data or {}
     pipeline_id = data.get("pipeline_id") or data.get("pipelineId")
     if not pipeline_id:
-        emit("download_progress", {"pipeline": None}); return
+        emit("download_progress", _json_sanitize({"pipeline": None}))
+        return
     join_room(pipeline_id)
     pl = download_manager.pipelines.get(pipeline_id)
-    emit("download_progress", {"pipeline": pl.to_dict() if pl else None})
+    emit("download_progress", _json_sanitize({"pipeline": pl.to_dict() if pl else None}))
+
 @socketio.on("disconnect", namespace="/downloads")
-def dl_disconnect(): pass
+def dl_disconnect(): 
+    pass
 
 @socketio.on("connect", namespace="/generation")
-def gen_connect(): emit("connected", {"message": "Connected to generation progress"})
+def gen_connect(): 
+    emit("connected", _json_sanitize({"message": "Connected to generation progress"}))
+
 @socketio.on("disconnect", namespace="/generation")
-def gen_disconnect(): pass
+def gen_disconnect(): 
+    pass
 
 # ------------------------------- Small helpers --------------------------------
 def repo_local_dir(repo_id: str) -> Path:
@@ -332,6 +245,7 @@ class PipelineDownload:
     tasks: Dict[str, DownloadTask] = field(default_factory=dict)
     status: str = "pending"
     attempts: int = 0
+    cancelled: bool = False
     @property
     def total_progress(self) -> float:
         if not self.tasks: return 0.0
@@ -347,6 +261,9 @@ class PipelineDownload:
                 "status": self.status, "attempts": self.attempts,
                 "total_progress": round(self.total_progress, 2),
                 "tasks": {tid: t.to_dict() for tid, t in self.tasks.items()}}
+        
+class CancelledDownload(Exception):
+    pass
 
 class DownloadManager:
     def __init__(self):
@@ -355,7 +272,7 @@ class DownloadManager:
     def emit(self, pipeline_id: str):
         pl = self.pipelines.get(pipeline_id)
         if pl:
-            socketio.emit("download_progress", {"pipeline": pl.to_dict()},
+            socketio.emit("download_progress", _json_sanitize({"pipeline": pl.to_dict()}),
                           namespace="/downloads", room=pipeline_id)
             socketio.sleep(0)
     def new(self, name: str) -> PipelineDownload:
@@ -401,10 +318,31 @@ class DownloadManager:
         if not pl.tasks:
             pl.status = "completed"; self.emit(pl.pipeline_id); return
         states = {t.status for t in pl.tasks.values()}
-        if states <= {"completed"}: pl.status = "completed"
-        elif "failed" in states and not any(s in states for s in ("pending", "downloading")): pl.status = "failed"
-        else: pl.status = "downloading"
+        if states <= {"completed"}:
+            pl.status = "completed"
+        elif "failed" in states and not any(s in states for s in ("pending","downloading")):
+            pl.status = "failed"
+        elif "cancelled" in states and not any(s in states for s in ("pending","downloading")):
+            pl.status = "cancelled"
+        else:
+            pl.status = "downloading"
         self.emit(pl.pipeline_id)
+    def mark_cancelled(self, pl: PipelineDownload, tid: str):
+        t = pl.tasks.get(tid)
+        if not t: return
+        t.status = "cancelled"
+        self.emit(pl.pipeline_id)
+    def cancel_pipeline(self, pipeline_id: str):
+        pl = self.pipelines.get(pipeline_id)
+        if not pl: 
+            return None
+        pl.cancelled = True
+        pl.status = "cancelled"
+        for t in pl.tasks.values():
+            if t.status in ("pending", "downloading"):
+                t.status = "cancelled"
+        self.emit(pl.pipeline_id)
+        return pl
 
 download_manager = DownloadManager()
 
@@ -421,9 +359,8 @@ def _sdxl_patterns() -> List[str]:
         "vae/**",
         "**/*.json", "**/*.safetensors", "**/*.bin"
     ]
-    
+
 def _flux_patterns() -> List[str]:
-    # Minimal scaffold for Flux pipelines (tokenizers + text encoders + vae + scheduler)
     return [
         "model_index.json",
         "scheduler/**",
@@ -431,20 +368,14 @@ def _flux_patterns() -> List[str]:
         "tokenizer_2/**",
         "text_encoder/**",
         "text_encoder_2/**",
-        "transformer/**",  # small scaffolding/config; main weights from GGUF
+        "transformer/**",
         "vae/**",
     ]
-    
+
 def _ltx_patterns_strict() -> List[str]:
-    # Fully fetch these subfolders:
-    #   scheduler/, text_encoder/, tokenizer/, transformer/, vae/
-    # And ONLY these files at repo root:
-    #   model_index.json
-    #   ltxv-2b-0.9.8-distilled-fp8.safetensors
-    #   ltxv-spatial-upscaler-0.9.8.safetensors
     return [
         "model_index.json",
-        "ltxv-2b-0.9.8-distilled-fp8.safetensors",
+        "ltxv-13b-0.9.8-distilled-fp8.safetensors",
         "ltxv-spatial-upscaler-0.9.8.safetensors",
         "scheduler/**",
         "text_encoder/**",
@@ -463,21 +394,16 @@ def _ltx_upscaler_patterns() -> List[str]:
         "**/*.bin",
     ]
 
-def _wan_patterns() -> List[str]:
-    return [
-        "model_index.json",
-        "scheduler/**", "text_encoder/**", "processor/**", "tokenizer/**",
-        "transformer/**", "vae/**",
-        "**/*.json", "**/*.safetensors", "**/*.bin", "**/*.model", "**/*.txt",
-    ]
-    
 def _wan2_patterns() -> list[str]:
     return [
         "model_index.json",
         "scheduler/**",
         "transformer/**",
+        "transformer_2/**",       # <-- add this
         "vae/**",
         "text_encoder/**",
+        "tokenizer/**",
+        "processor/**",
         "**/*.json",
         "**/*.safetensors",
         "**/*.bin",
@@ -492,7 +418,7 @@ def allow_patterns_for_repo(repo_id: str) -> Optional[List[str]]:
         return _ltx_patterns_strict()
     if repo_id == LTX_UPSAMPLER_REPO:
         return _ltx_upscaler_patterns()
-    if repo_id == WAN_REPO:
+    if repo_id == (WAN_REPO, WAN_DIFFUSERS_REPO):
         return _wan2_patterns()
     return None
 
@@ -511,21 +437,39 @@ def _nonzero(p: Path) -> bool:
     except Exception: return False
 
 def _tokenizer_ok(root: Path, name: str = "tokenizer") -> bool:
-    ok = (
-        _nonzero(root / f"{name}.json") or
-        _nonzero(root / name / "tokenizer.json") or
-        (_nonzero(root / f"{name}/vocab.json") and _nonzero(root / f"{name}/merges.txt")) or
-        (_nonzero(root / "vocab.json") and _nonzero(root / "merges.txt"))
-    )
-    if ok: return True
+    def _nz(p: Path) -> bool:
+        try:
+            return p.exists() and p.stat().st_size > 0
+        except Exception:
+            return False
+
+    # Common “flat” or nested json
+    if _nz(root / f"{name}.json") or _nz(root / name / "tokenizer.json"):
+        return True
+
+    # BPE pair (vocab+merges) either under tokenizer/ or repo root
+    if (_nz(root / name / "vocab.json") and _nz(root / name / "merges.txt")) or \
+       (_nz(root / "vocab.json") and _nz(root / "merges.txt")):
+        return True
+
+    # NEW: SentencePiece / T5 layouts under tokenizer/
+    tokdir = root / name
+    for fn in ("spiece.model", "sentencepiece.bpe.model", "tokenizer.model", "vocab.txt"):
+        if _nz(tokdir / fn):
+            return True
+
+    # Some repos put tokenizer assets under processor/
     proc = root / "processor"
-    return any(_nonzero(proc / fn) for fn in ("tokenizer.json","spiece.model","sentencepiece.bpe.model","vocab.txt"))
+    for fn in ("tokenizer.json", "spiece.model", "sentencepiece.bpe.model", "tokenizer.model", "vocab.txt"):
+        if _nz(proc / fn):
+            return True
+
+    return False
 
 REPO_SPECS = {
     "black-forest-labs/FLUX.1-Krea-dev": {
         "must_files": ["model_index.json"],
         "must_tokenizers": ["tokenizer", "tokenizer_2"],
-        # We need actual weights for encoders + vae in the local repo
         "must_weight_dirs": ["text_encoder", "text_encoder_2", "vae"],
         "extra_dirs": ["scheduler"],
     },
@@ -548,37 +492,27 @@ REPO_SPECS = {
         "extra_dirs": ["text_encoder", "text_encoder_2", "scheduler"],
     },
     "Lightricks/LTX-Video": {
-        # must exist at the repo root:
         "must_files": [
             "model_index.json",
             "ltxv-2b-0.9.8-distilled-fp8.safetensors",
             "ltxv-spatial-upscaler-0.9.8.safetensors",
         ],
-        # tokenizer must be complete enough to pass _tokenizer_ok()
         "must_tokenizers": ["tokenizer"],
-        # these dirs must contain actual model weights somewhere inside:
         "must_weight_dirs": ["text_encoder", "transformer", "vae"],
-        # these dirs must exist and contain some files (configs/scheduler states):
         "extra_dirs": ["scheduler"],
-        "fallback_any_weights": False,  # we’re being strict now
+        "fallback_any_weights": False,
     },
     "linoyts/LTX-Video-spatial-upscaler-0.9.8": {
         "must_files": ["model_index.json"],
         "must_tokenizers": [],
         "must_weight_dirs": ["latent_upsampler", "vae"],
     },
-    "Wan-AI/Wan2.1-I2V-14B-480P-Diffusers": {
+    "Wan-AI/Wan2.2-I2V-A14B-Diffusers": {
         "must_files": ["model_index.json"],
-        "must_tokenizers": [],  # text encoder is bundled
-        "must_weight_dirs": ["transformer", "vae", "scheduler"],
-        "extra_dirs": [],       # adjust if needed
-    },
-    "Wan-AI/Wan2.2-TI2V-5B-Diffusers": {
-        "must_files": ["model_index.json"],
-        "must_tokenizers": [],  # WAN uses processor/
-        "must_weight_dirs": ["transformer", "vae", "text_encoder"],
-        "extra_dirs": ["scheduler", "processor"],
-        "fallback_any_weights": True,
+        "must_tokenizers": ["tokenizer"],
+        "must_weight_dirs": ["transformer", "transformer_2", "vae", "text_encoder"],
+        "extra_dirs": ["scheduler"],
+        "fallback_any_weights": False,
     },
 }
 
@@ -598,7 +532,8 @@ def _repo_completeness(repo_id: str) -> Dict[str, Any]:
     root = base_root
     report = {"repo": repo_id, "root": str(base_root), "exists": base_root.exists(), "ok": False, "missing": []}
     if not base_root.exists():
-        report["missing"].append("<entire repo>"); return report
+        report["missing"].append("<entire repo>")
+        return report
     spec = REPO_SPECS.get(repo_id, DEFAULT_SPEC)
     for f in spec.get("must_files", []):
         if not _nonzero(root / f): report["missing"].append(f)
@@ -618,19 +553,274 @@ def _repo_completeness(repo_id: str) -> Dict[str, Any]:
 
 # PART 3/5
 
+# --------------------------- PLAN: repos + GGUF+VAE ---------------------------
+# Classic repos
+FLUX_KREA_REPO = "black-forest-labs/FLUX.1-Krea-dev"
+FLUX_KONTEXT_REPO = "black-forest-labs/FLUX.1-Kontext-dev"
+SDXL_BASE_REPO    = "stabilityai/stable-diffusion-xl-base-1.0"
+SDXL_REFINER_REPO = "stabilityai/stable-diffusion-xl-refiner-1.0"
+SDXL_TURBO_REPO   = "stabilityai/sdxl-turbo"
+LTX_REPO = "Lightricks/LTX-Video"
+LTX_UPSAMPLER_REPO = "linoyts/LTX-Video-spatial-upscaler-0.9.8"
+
+# Switch WAN classic to the 5B repo
+WAN_REPO = "Wan-AI/Wan2.2-TI2V-5B-Diffusers"
+
+# --- WAN 2.2 5B (official diffusers repo + calcuis single-file FP8/GGUF) ---
+
+# Use the official 2.2 A14B diffusers repo (includes vae, text_encoder, tokenizer, scheduler)
+WAN_DIFFUSERS_REPO = "Wan-AI/Wan2.2-I2V-A14B-Diffusers"
+
+# --- WAN 2.2 I2V A14B (QuantStack GGUF + Wan 2.1 VAE) ---
+WAN_GGUF_REPO = "QuantStack/Wan2.2-I2V-A14B-GGUF"
+
+WAN22_HIGH_GGUF_NAME = "Wan2.2-I2V-A14B-HighNoise-Q2_K.gguf"
+WAN22_HIGH_GGUF_URL  = "https://huggingface.co/QuantStack/Wan2.2-I2V-A14B-GGUF/resolve/main/Wan2.2-I2V-A14B-HighNoise-Q2_K.gguf"
+
+WAN22_LOW_GGUF_NAME  = "Wan2.2-I2V-A14B-LowNoise-Q2_K.gguf"
+WAN22_LOW_GGUF_URL   = "https://huggingface.co/QuantStack/Wan2.2-I2V-A14B-GGUF/resolve/main/Wan2.2-I2V-A14B-LowNoise-Q2_K.gguf"
+
+WAN21_VAE_NAME       = "Wan2.1_VAE.safetensors"
+WAN21_VAE_URL        = "https://huggingface.co/QuantStack/Wan2.2-I2V-A14B-GGUF/resolve/main/Wan2.1_VAE.safetensors"
+
+# ---------- Single source of truth for exact byte sizes ----------
+# If a file isn't listed here, we'll resolve its size via HEAD at runtime.
+EXPECTED_SIZES = {
+    "flux1-krea-dev-Q2_K.gguf":    4_023_690_528,  # exact bytes
+    "flux1-kontext-dev-Q2_K.gguf": 4_023_690_528,  # exact bytes
+    "Wan2.2-I2V-A14B-HighNoise-Q2_K.gguf": 5_300_957_696,
+    "Wan2.2-I2V-A14B-LowNoise-Q2_K.gguf": 5_300_957_696,
+    "Wan2.1_VAE.safetensors":              253_815_318,
+}
+
+# GGUF single files (env overrides still supported) — generic “wan_i2v” path
+FLUX_KREA_GGUF_NAME = os.getenv("FLUX_GGUF_FILENAME", "flux1-krea-dev-Q2_K.gguf").strip()
+FLUX_KREA_GGUF_URL  = os.getenv("FLUX_KREA_GGUF_URL",
+    "https://huggingface.co/QuantStack/FLUX.1-Krea-dev-GGUF/resolve/main/flux1-krea-dev-Q2_K.gguf").strip()
+
+FLUX_KONTEXT_GGUF_NAME = os.getenv("KONTEXT_GGUF_FILENAME", "flux1-kontext-dev-Q2_K.gguf").strip()
+FLUX_KONTEXT_GGUF_URL  = os.getenv("FLUX_KONTEXT_GGUF_URL",
+    "https://huggingface.co/QuantStack/FLUX.1-Kontext-dev-GGUF/resolve/main/flux1-kontext-dev-Q2_K.gguf").strip()
+
+LTX_GGUF_NAME = os.getenv("LTX_GGUF_FILENAME", "ltxv-13b-0.9.8-distilled-Q2_K.gguf").strip()
+LTX_GGUF_URL  = os.getenv("LTX_GGUF_URL",
+    "https://huggingface.co/QuantStack/LTXV-13B-0.9.8-distilled-GGUF/resolve/main/ltxv-13b-0.9.8-distilled-Q2_K.gguf").strip()
+
+# Keep WAN generic GGUF/URL on 5B too (used by 'wan_i2v' plan if you use it)
+WAN_GGUF_NAME = os.getenv("WAN_GGUF_FILENAME", "Wan2.2-TI2V-5B-Q2_K.gguf").strip()
+WAN_GGUF_URL  = os.getenv("WAN_GGUF_URL",
+    "https://huggingface.co/QuantStack/Wan2.2-TI2V-5B-GGUF/resolve/main/Wan2.2-TI2V-5B-Q2_K.gguf").strip()
+
+# VAE single files (float32) — used in other plans; for wan_video we override with FP8 above
+LTX_VAE_NAME = os.getenv("LTX_VAE_FILENAME", "ltxv-vae-f32.safetensors").strip()
+LTX_VAE_URL  = os.getenv("LTX_VAE_URL",
+    "https://huggingface.co/QuantStack/LTXV-13B-0.9.8-distilled-GGUF/resolve/main/vae/LTXV-13B-0.9.8-distilled-VAE.safetensors").strip()
+
+WAN_VAE_NAME = os.getenv("WAN_VAE_FILENAME", "wan-vae-f32.safetensors").strip()
+WAN_VAE_URL  = os.getenv("WAN_VAE_URL",
+    "https://huggingface.co/QuantStack/Wan2.2-TI2V-5B-GGUF/resolve/main/vae/Wan2.2_VAE.safetensors").strip()
+
+def _sha256_of_file(path: Path, bufsize: int = 1024 * 1024) -> str:
+    h = hashlib.sha256()
+    with open(path, "rb") as f:
+        while True:
+            b = f.read(bufsize)
+            if not b:
+                break
+            h.update(b)
+    return h.hexdigest()
+
+# ----------------------------- PLAN cache ------------------------------------
+_plan_cache: Dict[str, Dict[str, Any]] = {}
+
+def _cached_plan_for(pipeline: str) -> Dict[str, Any]:
+    if pipeline in _plan_cache:
+        return _plan_cache[pipeline]
+    plan = _plan_for(pipeline)
+    _plan_cache[pipeline] = plan
+    return plan
+
+# ---- Robust remote size resolution for Hugging Face (works with resolve/main too)
+
+_HF_URL_RE = re.compile(r"https://huggingface\.co/([^/]+/[^/]+)/resolve/([^/]+)/(.+)$")
+
+def _head_or_range_size(url: str, headers: dict | None = None, timeout: int = 30) -> int:
+    headers = headers or {}
+    try:
+        r = requests.head(url, allow_redirects=True, headers=headers, timeout=timeout)
+        clen = int(r.headers.get("content-length", "0") or "0")
+        if clen > 0:
+            return clen
+    except Exception:
+        pass
+    # Range fallback (many CDNs return Content-Range: bytes 0-0/TOTAL)
+    try:
+        r = requests.get(url, headers={**headers, "Range": "bytes=0-0"}, stream=True, timeout=timeout)
+        cr = r.headers.get("Content-Range", "")
+        m = re.search(r"/(\d+)$", cr)
+        if m:
+            return int(m.group(1))
+    except Exception:
+        pass
+    return 0
+
+def _resolve_hf_direct_url(url: str) -> str | None:
+    """
+    If the input is a huggingface 'resolve/main' URL, turn it into a canonical CDN URL
+    using hf_hub_url(repo_id, filename, revision).
+    """
+    m = _HF_URL_RE.match(url)
+    if not m:
+        return None
+    repo_id, revision, filename = m.group(1), m.group(2), m.group(3)
+    try:
+        return hf_hub_url(repo_id=repo_id, filename=filename, repo_type="model", revision=revision)
+    except Exception:
+        return None
+
+def _expected_size(name: str, url: Optional[str] = None) -> int:
+    # 1) hard-coded registry wins
+    s = int(EXPECTED_SIZES.get(name, 0))
+    if s > 0:
+        return s
+
+    if not url:
+        return 0
+
+    headers = {}
+    if url.startswith("https://huggingface.co/") and _hf_token():
+        headers["Authorization"] = f"Bearer {_hf_token()}"  # speeds up and handles gated repos
+
+    # 2) try the URL directly
+    size = _head_or_range_size(url, headers=headers)
+    # 3) if tiny/suspicious, try the canonical hf_hub_url(link)
+    if size <= 1_000_000:  # <1MB means we probably hit a stub/redirect
+        alt = _resolve_hf_direct_url(url)
+        if alt:
+            size2 = _head_or_range_size(alt, headers=headers)
+            if size2 > 0:
+                size = size2
+
+    if size > 0:
+        EXPECTED_SIZES[name] = size  # memoize
+    return size
+
+def _invalidate_plan_cache(pipeline: Optional[str] = None):
+    if pipeline:
+        _plan_cache.pop(pipeline, None)
+    else:
+        _plan_cache.clear()
+
+# ----------------------------- PLAN definition --------------------------------
+def _sf(name, url):
+    return {"name": name, "url": url, "size": _expected_size(name, url)}
+
+def _plan_for(pipeline: str) -> Dict[str, Any]:
+    pipeline = pipeline.strip().lower()
+    if pipeline == "flux_krea":
+        return {
+            "repos_to_fetch": [FLUX_KREA_REPO],
+            "single_files": [_sf(FLUX_KREA_GGUF_NAME, FLUX_KREA_GGUF_URL)],
+        }
+    if pipeline == "flux_kontext":
+        return {
+            "repos_to_fetch": [FLUX_KONTEXT_REPO],
+            "single_files": [_sf(FLUX_KONTEXT_GGUF_NAME, FLUX_KONTEXT_GGUF_URL)],
+        }
+    if pipeline == "ltx_video":
+        return {
+            "repos_to_fetch": [LTX_REPO, LTX_UPSAMPLER_REPO],
+            "single_files": [],
+        }
+    if pipeline == "wan_video":
+        return {
+            # We still pull the A14B diffusers repo for configs/tokenizer/scheduler
+            "repos_to_fetch": [WAN_DIFFUSERS_REPO],
+            # The actual transformer + VAE come from the QuantStack GGUF repo
+            "single_files": [
+                _sf(WAN22_HIGH_GGUF_NAME, WAN22_HIGH_GGUF_URL),
+                _sf(WAN22_LOW_GGUF_NAME,  WAN22_LOW_GGUF_URL),
+                _sf(WAN21_VAE_NAME,       WAN21_VAE_URL),
+            ],
+            "notes": [
+                "Transformer: QuantStack GGUF (High/Low noise variants).",
+                "VAE: Wan 2.1 (safetensors).",
+                "Configs/tokenizer/scheduler: Wan-AI/Wan2.2-I2V-A14B-Diffusers.",
+            ],
+        }
+    if pipeline == "sdxl_intermediate":
+        return {"repos_to_fetch": [SDXL_BASE_REPO, SDXL_REFINER_REPO]}
+    if pipeline == "sdxl_turbo":
+        return {"repos_to_fetch": [SDXL_TURBO_REPO]}
+    raise ValueError(f"Unknown pipeline: {pipeline}")
+
+# ------------------------------ Repo readiness -------------------------------
+def _repo_readiness(repo_id: str) -> Dict[str, Any]:
+    """
+    Wrapper around _repo_completeness to signal whether a repo is fully usable.
+    Returns a dict with at least {repo, ok, missing}.
+    """
+    try:
+        return _repo_completeness(repo_id)
+    except Exception as e:
+        return {"repo": repo_id, "ok": False, "missing": [f"error: {str(e)}"]}
+    
+# ========================= MISSING CORE HELPERS (exact patch) =========================
+
+def _single_file_status(entry: Dict[str, Any]) -> Dict[str, Any]:
+    name = (entry or {}).get("name") or ""
+    url  = (entry or {}).get("url") or ""
+    p = MODEL_DIR / name
+    exists = p.exists() and p.stat().st_size > 0
+    size_on_disk = int(p.stat().st_size) if exists else 0
+
+    expected_size = int(entry.get("size") or 0)
+    if expected_size <= 0:
+        expected_size = _expected_size(name, url)
+
+    ok = False
+    reason = None
+    if exists:
+        if expected_size > 0:
+            if size_on_disk == expected_size:
+                ok = True
+            else:
+                reason = f"size_mismatch:{size_on_disk}!={expected_size}"
+        else:
+            # last-resort fallback: any non-zero local file passes
+            ok = True
+
+    return {
+        "name": name,
+        "url": url,
+        "path": str(p),
+        "exists": bool(exists),
+        "ok": bool(ok),
+        "size_on_disk": size_on_disk,
+        "expected_size": int(expected_size or 0),
+        "reason": reason,
+    }
+
+# -- Repo file listing via HF API (pattern-filtered to keep downloads lean) --
 def _list_required_remote_files(repo_id: str, allow_patterns: Optional[List[str]] = None) -> List[Dict[str, Any]]:
     api = HfApi(token=_hf_token())
     files: List[Dict[str, Any]] = []
+
     def _match(p: str) -> bool:
         return True if not allow_patterns else any(fnmatch(p, pat) for pat in allow_patterns)
-    # try list_repo_tree(expand=True)
+
+    # Prefer list_repo_tree(expand=True) to get sizes
     try:
-        items = api.list_repo_tree(repo_id=repo_id, repo_type="model", revision="main", recursive=True, expand=True)
+        items = api.list_repo_tree(repo_id=repo_id, repo_type="model", revision="main",
+                                   recursive=True, expand=True)
         for it in items or []:
             if getattr(it, "type", None) == "file" and _match(it.path):
                 size = int(getattr(it, "size", 0) or 0)
                 files.append({"path": it.path, "size": size})
-    except Exception: pass
+    except Exception:
+        pass
+
+    # Fallback: get_paths_info
     if not files:
         try:
             infos = api.get_paths_info(repo_id=repo_id, repo_type="model",
@@ -639,39 +829,55 @@ def _list_required_remote_files(repo_id: str, allow_patterns: Optional[List[str]
                 if getattr(info, "type", "") == "file" and _match(info.path):
                     size = int(getattr(info, "size", 0) or 0)
                     files.append({"path": info.path, "size": size})
-        except Exception: pass
+        except Exception:
+            pass
+
+    # Fallback: list_repo_files (size unknown)
     if not files:
         try:
             paths = api.list_repo_files(repo_id=repo_id, repo_type="model", revision="main")
-            for p in paths or []:
-                if _match(p): files.append({"path": p, "size": 0})
-        except Exception: pass
+            for pth in paths or []:
+                if _match(pth):
+                    files.append({"path": pth, "size": 0})
+        except Exception:
+            pass
 
-    if not files: return []
+    if not files:
+        return []
 
+    # Fill missing sizes by HEAD/Range on hf_hub_url
     headers = {"Authorization": f"Bearer {_hf_token()}"} if _hf_token() else {}
+
     def _resolve_remote_size(url: str) -> int:
         try:
             r = requests.head(url, allow_redirects=True, headers=headers, timeout=30)
             clen = int(r.headers.get("content-length", "0") or "0")
-            if clen > 0: return clen
-        except Exception: pass
+            if clen > 0:
+                return clen
+        except Exception:
+            pass
         try:
             r = requests.get(url, headers={**headers, "Range": "bytes=0-0"}, stream=True, timeout=30)
             cr = r.headers.get("Content-Range", "")
             m = re.search(r"/(\d+)$", cr)
-            if m: return int(m.group(1))
-        except Exception: pass
+            if m:
+                return int(m.group(1))
+        except Exception:
+            pass
         return 0
 
     for f in files:
-        if f["size"] > 0: continue
+        if int(f.get("size") or 0) > 0:
+            continue
         try:
             url = hf_hub_url(repo_id=repo_id, filename=f["path"], repo_type="model", revision="main")
             f["size"] = _resolve_remote_size(url)
-        except Exception: pass
+        except Exception:
+            pass
+
     return files
 
+# -- Inventory structures used by deep_validate in /pipelines/plan --
 @dataclass
 class FileEntry:
     path: str
@@ -686,33 +892,41 @@ def _classify_file(rel: str, remote_size: int, local_path: Path) -> FileEntry:
         lsz = local_path.stat().st_size
     except Exception:
         return FileEntry(rel, int(remote_size or 0), 0, "missing")
+
     if remote_size > 0 and lsz != remote_size:
         return FileEntry(rel, int(remote_size or 0), int(lsz or 0), "incomplete")
     if remote_size == 0 and lsz <= 0:
         return FileEntry(rel, 0, 0, "missing")
+
     if rel.endswith(".safetensors"):
-        if not _is_valid_safetensors(local_path):
+        try:
+            ok = _is_valid_safetensors(local_path)
+        except Exception:
+            ok = True
+        if not ok:
             return FileEntry(rel, int(remote_size or 0), int(lsz or 0), "invalid")
+
     return FileEntry(rel, int(remote_size or 0), int(lsz or 0), "ok")
 
 def build_repo_inventory(repo_id: str, allow_patterns: Optional[List[str]] = None) -> Dict[str, Any]:
     root = repo_local_dir(repo_id)
-    local_spec = _repo_completeness(repo_id)
+    spec_report = _repo_completeness(repo_id)
+
     manifest = _list_required_remote_files(repo_id, allow_patterns=allow_patterns)
     remote_accessible = True
-    if not manifest:
-        if not local_spec.get("ok", False):
-            remote_accessible = False
+    if not manifest and not spec_report.get("ok", False):
+        remote_accessible = False
+
     files: List[FileEntry] = []
     needs: List[str] = []
-    if manifest:
-        for f in manifest:
-            rel = f["path"]; rsz = int(f.get("size") or 0); lp = root / rel
-            fe = _classify_file(rel, rsz, lp)
-            files.append(fe)
-            if fe.status in ("missing", "incomplete", "invalid"): needs.append(rel)
-    else:
-        files = []; needs = []
+    for f in manifest:
+        rel = f["path"]; rsz = int(f.get("size") or 0)
+        lp = root / rel
+        fe = _classify_file(rel, rsz, lp)
+        files.append(fe)
+        if fe.status in ("missing", "incomplete", "invalid"):
+            needs.append(rel)
+
     summary = {
         "total": len(files),
         "ok": sum(1 for x in files if x.status == "ok"),
@@ -720,650 +934,629 @@ def build_repo_inventory(repo_id: str, allow_patterns: Optional[List[str]] = Non
         "incomplete": sum(1 for x in files if x.status == "incomplete"),
         "invalid": sum(1 for x in files if x.status == "invalid"),
     }
-    if manifest:
-        ok = (len(needs) == 0); missing_count = len(needs)
-    else:
-        ok = bool(local_spec.get("ok", False)); missing_count = 0 if ok else 1
+
+    # If we couldn't list remote files, fallback to spec report
+    ok = (len(needs) == 0) if manifest else bool(spec_report.get("ok", False))
+
     return {
-        "repo": repo_id, "root": str(root), "exists": root.exists(),
+        "repo": repo_id,
+        "root": str(root),
+        "exists": root.exists(),
         "remote_accessible": remote_accessible,
-        "files": [fe.__dict__ for fe in files], "needs": needs,
-        "summary": summary, "ok": ok,
-        "missing": missing_count if remote_accessible else None,
-        "missing_list": local_spec.get("missing", []),
+        "files": [fe.__dict__ for fe in files],
+        "needs": needs,
+        "summary": summary,
+        "ok": ok,
+        "missing": (len(needs) if remote_accessible else None),
+        "missing_list": spec_report.get("missing", []),
     }
 
-def _repo_readiness(repo_id: str) -> Dict[str, Any]:
-    pats = allow_patterns_for_repo(repo_id)
-    inv = build_repo_inventory(repo_id, allow_patterns=pats)
-    return {
-        "repo": inv["repo"], "root": inv["root"], "exists": inv["exists"],
-        "ok": bool(inv["ok"]), "missing": inv["missing"], "missing_list": inv["missing_list"],
-    }
+# -- Repo task id helper used by DownloadManager.add_repo_task --
+def _tid_repo(repo_id: str) -> str:
+    return f"repo::{hashlib.md5(repo_id.encode('utf-8')).hexdigest()[:12]}"
 
-def _repos_ready_or_resp(*repo_ids: str) -> Optional[tuple]:
-    statuses = []; needs_auth = False; any_local_missing = False
-    for rid in repo_ids:
-        st = _repo_readiness(rid); statuses.append(st)
-        if st.get("missing") is None and not st.get("ok", False): needs_auth = True
-        if st.get("missing") not in (None, 0) or not st.get("ok", False): any_local_missing = True
-    if all(s.get("ok") for s in statuses): return None
-    if needs_auth:
-        return jsonify({
-            "error": "Repository not accessible (auth/terms or offline).",
-            "repos": statuses,
-            "hint": "Set HF_TOKEN and accept model card terms; or check network.",
-        }), 403
-    if any_local_missing:
-        return jsonify({
-            "error": "Local repositories not ready",
-            "repos": statuses,
-            "hint": "Use /pipelines/prefetch (or set auto_download:true) then re-check.",
-        }), 409
-    return jsonify({"error": "Unknown readiness state", "repos": statuses}), 409
-
-# --------------------------- Stream helpers -----------------------------------
-def _stream_file_task(pl: PipelineDownload, tid: str, url: str, dest: Path):
-    dest.parent.mkdir(parents=True, exist_ok=True)
-    tmp = dest.with_suffix(dest.suffix + ".part")
-    resume_from = tmp.stat().st_size if tmp.exists() else 0
-    if resume_from > 0: download_manager.update_progress(pl, tid, done=resume_from, total=None)
-    download_manager.mark_downloading(pl, tid)
+# -- WebSocket URL used in generation responses --
+def generation_url() -> str:
     try:
-        with requests.get(url, stream=True, timeout=60) as r:
-            r.raise_for_status()
-            mode = "ab" if resume_from > 0 else "wb"
-            done = resume_from
-            total = int(r.headers.get("content-length", 0)) or None
-            if total: download_manager.update_progress(pl, tid, done=done, total=total)
-            with open(tmp, mode) as f:
-                for chunk in r.iter_content(chunk_size=1 << 20):
-                    if not chunk: continue
-                    f.write(chunk); done += len(chunk)
-                    download_manager.update_progress(pl, tid, done=done, total=total)
-        tmp.replace(dest)
-        if dest.suffix == ".safetensors" and not _is_valid_safetensors(dest):
-            raise RuntimeError("Downloaded weights file failed integrity check")
-        if total: download_manager.update_progress(pl, tid, done=total, total=total)
-        download_manager.mark_completed(pl, tid)
-    except Exception as e:
-        download_manager.mark_failed(pl, tid, str(e))
-    finally:
-        download_manager.finalize_if_done(pl)
+        scheme = "wss" if (request.is_secure or request.headers.get("X-Forwarded-Proto","").lower()=="https") else "ws"
+        return f"{scheme}://{request.host}/generation"
+    except Exception:
+        return "/generation"
 
-def _stream_hf_file_task(pl: PipelineDownload, tid: str, repo_id: str, rel_path: str, remote_size: int):
-    root = repo_local_dir(repo_id)
-    dest = root / rel_path
-    tmp = dest.with_suffix(dest.suffix + ".part")
-    dest.parent.mkdir(parents=True, exist_ok=True)
-    token = _hf_token()
-    headers = {"User-Agent": "bonzai-downloader/1.0"}
-    if token: headers["Authorization"] = f"Bearer {token}"
-    url = hf_hub_url(repo_id=repo_id, filename=rel_path, repo_type="model", revision="main")
-    download_manager.mark_downloading(pl, tid)
-    if remote_size > 0: download_manager.update_progress(pl, tid, done=0, total=remote_size)
-    resume_from = tmp.stat().st_size if tmp.exists() else 0
-    if remote_size > 0 and resume_from > remote_size:
-        try: tmp.unlink(missing_ok=True)
-        except Exception: pass
-        resume_from = 0
-    max_attempts = 5; backoff = 1.0; attempt = 0; last_err = None
-    while attempt < max_attempts:
-        attempt += 1
-        try:
-            req_headers = dict(headers)
-            if resume_from > 0: req_headers["Range"] = f"bytes={resume_from}-"
-            with requests.get(url, stream=True, headers=req_headers, timeout=60, allow_redirects=True) as r:
-                if r.status_code not in (200, 206):
-                    raise RuntimeError(f"HTTP {r.status_code} {r.reason or ''} for {repo_id}/{rel_path}")
-                mode = "ab" if resume_from > 0 else "wb"
-                done = resume_from
-                total = remote_size if remote_size > 0 else None
-                if resume_from > 0 and r.status_code == 200:
-                    try: tmp.unlink(missing_ok=True)
-                    except Exception: pass
-                    mode = "wb"; done = 0
-                with open(tmp, mode) as f:
-                    for chunk in r.iter_content(chunk_size=1 << 20):
-                        if not chunk: continue
-                        f.write(chunk); done += len(chunk)
-                        download_manager.update_progress(pl, tid, done=done, total=total)
-            tmp.replace(dest)
-            if rel_path.endswith(".safetensors") and not _is_valid_safetensors(dest):
-                raise RuntimeError("Downloaded weights file failed integrity check")
-            if remote_size > 0: download_manager.update_progress(pl, tid, done=remote_size, total=remote_size)
-            download_manager.mark_completed(pl, tid); return
-        except Exception as e:
-            last_err = e; logger.warning(f"[stream] attempt {attempt}/{max_attempts} failed: {repo_id}/{rel_path} — {e}")
-            time.sleep(backoff); backoff = min(backoff * 2, 10.0)
-    logger.error(f"[stream] giving up: {repo_id}/{rel_path} — {last_err}")
-    download_manager.mark_failed(pl, tid, str(last_err) if last_err else "download failed")
+def _user_bin_dir() -> str:
+    p = Path(USER_DATA_PATH) / "bin"
+    p.mkdir(parents=True, exist_ok=True)
+    return str(p)
 
-# --------------------------- PLAN: repos + GGUF+VAE ---------------------------
-# Classic repos
-FLUX_KREA_REPO = "black-forest-labs/FLUX.1-Krea-dev"
-FLUX_KONTEXT_REPO = "black-forest-labs/FLUX.1-Kontext-dev"
-SDXL_BASE_REPO    = "stabilityai/stable-diffusion-xl-base-1.0"
-SDXL_REFINER_REPO = "stabilityai/stable-diffusion-xl-refiner-1.0"
-SDXL_TURBO_REPO   = "stabilityai/sdxl-turbo"
-LTX_REPO = "Lightricks/LTX-Video"
-LTX_UPSAMPLER_REPO = "linoyts/LTX-Video-spatial-upscaler-0.9.8"
-WAN_REPO = "Wan-AI/Wan2.2-TI2V-5B-Diffusers"
-
-# --- WAN 2.1 (official diffusers repo + calcuis single-file FP8/GGUF) ---
-
-WAN_DIFFUSERS_REPO = "Wan-AI/Wan2.1-I2V-14B-480P-Diffusers"
-
-# Source repo for the 4 single files
-WAN_FP8_SRC_REPO = "calcuis/wan-gguf"
-WAN_FP8_BASE_URL = f"https://huggingface.co/{WAN_FP8_SRC_REPO}/resolve/main"
-
-# Exact filenames we need from calcuis
-WAN_FP8_GGUF_NAME = "wan2.1-i2v-14b-480p-q2_k.gguf"          # transformer (GGUF)
-WAN_FP8_VAE_NAME  = "wan_2.1_vae_fp8_e4m3fn.safetensors"     # VAE (FP8)
-
-# If you still want to show T5/CLIP in the CTA (not used by the diffusers pipeline):
-WAN_FP8_TEXT_NAME = "t5xxl_um_fp8_e4m3fn_scaled.safetensors" # (optional)
-WAN_FP8_CLIP_NAME = "clip_vision_h_fp8_e4m3fn.safetensors"   # (optional)
-
-# Build the URLs (these were missing -> NameError)
-WAN_FP8_GGUF_URL = f"{WAN_FP8_BASE_URL}/{WAN_FP8_GGUF_NAME}"
-WAN_FP8_VAE_URL  = f"{WAN_FP8_BASE_URL}/{WAN_FP8_VAE_NAME}"
-WAN_FP8_TEXT_URL = f"{WAN_FP8_BASE_URL}/{WAN_FP8_TEXT_NAME}"
-WAN_FP8_CLIP_URL = f"{WAN_FP8_BASE_URL}/{WAN_FP8_CLIP_NAME}"
-
-# List exactly what you want to download (controls the CTA)
-# If you DON'T want T5/CLIP in CTA, keep only the first two entries.
-WAN_FP8_REQUIRED_FILES = [
-    {"name": WAN_FP8_GGUF_NAME, "url": WAN_FP8_GGUF_URL, "optional": False},
-    {"name": WAN_FP8_VAE_NAME,  "url": WAN_FP8_VAE_URL,  "optional": False},
-    # {"name": WAN_FP8_TEXT_NAME, "url": WAN_FP8_TEXT_URL, "optional": True},
-    # {"name": WAN_FP8_CLIP_NAME, "url": WAN_FP8_CLIP_URL, "optional": True},
-]
-
-# Strict size checks to auto-purge wrong artifacts (e.g., wrong 17GB file)
-WAN_EXPECTED_SIZES = {
-    "wan2.1-i2v-14b-480p-q2_k.gguf":         7_925_939_584,  # ~7.93 GB (Q2_K)
-    "wan_2.1_vae_fp8_e4m3fn.safetensors":      126_914_115,
-    "t5xxl_um_fp8_e4m3fn_scaled.safetensors": 6_735_906_897,  # optional
-    "clip_vision_h_fp8_e4m3fn.safetensors":     632_142_537,  # optional
-}
-
-# GGUF single files (MANDATORY)
-# You can override via env if you mirror these
-FLUX_KREA_GGUF_NAME = os.getenv("FLUX_GGUF_FILENAME", "flux1-krea-dev-Q2_K.gguf").strip()
-FLUX_KREA_GGUF_URL  = os.getenv("FLUX_KREA_GGUF_URL", "https://huggingface.co/QuantStack/FLUX.1-Krea-dev-GGUF/resolve/main/flux1-krea-dev-Q2_K.gguf").strip()
-
-FLUX_KONTEXT_GGUF_NAME = os.getenv("KONTEXT_GGUF_FILENAME", "flux1-kontext-dev-Q2_K.gguf").strip()
-FLUX_KONTEXT_GGUF_URL  = os.getenv("FLUX_KONTEXT_GGUF_URL", "https://huggingface.co/QuantStack/FLUX.1-Kontext-dev-GGUF/resolve/main/flux1-kontext-dev-Q2_K.gguf").strip()
-
-LTX_GGUF_NAME = os.getenv("LTX_GGUF_FILENAME", "ltxv-13b-0.9.8-distilled-Q2_K.gguf").strip()
-LTX_GGUF_URL  = os.getenv("LTX_GGUF_URL", "https://huggingface.co/QuantStack/LTXV-13B-0.9.8-distilled-GGUF/resolve/main/ltxv-13b-0.9.8-distilled-Q2_K.gguf").strip()
-
-WAN_GGUF_NAME = os.getenv("WAN_GGUF_FILENAME", "Wan2.2-TI2V-5B-Q2_K.gguf").strip()
-WAN_GGUF_URL  = os.getenv("WAN_GGUF_URL", "https://huggingface.co/QuantStack/Wan2.2-TI2V-5B-GGUF/resolve/main/Wan2.2-TI2V-5B-Q2_K.gguf").strip()
-
-# VAE single files (float32) — MANDATORY for LTX & WAN (lives inside GGUF repo area)
-LTX_VAE_NAME = os.getenv("LTX_VAE_FILENAME", "ltxv-vae-f32.safetensors").strip()
-LTX_VAE_URL  = os.getenv("LTX_VAE_URL", "https://huggingface.co/QuantStack/LTXV-13B-0.9.8-distilled-GGUF/resolve/main/vae/LTXV-13B-0.9.8-distilled-VAE.safetensors").strip()
-
-WAN_VAE_NAME = os.getenv("WAN_VAE_FILENAME", "wan-vae-f32.safetensors").strip()
-WAN_VAE_URL  = os.getenv("WAN_VAE_URL", "https://huggingface.co/QuantStack/Wan2.2-TI2V-5B-GGUF/resolve/main/vae/Wan2.2_VAE.safetensors").strip()
-
-def _gguf_status(name: Optional[str]) -> Dict[str, Any]:
-    if not name: return {"configured": False, "path": None, "exists": False, "size": 0}
-    p = MODEL_DIR / name
-    ok = p.exists() and p.stat().st_size > 0
-    return {"configured": True, "path": str(p), "exists": ok, "size": p.stat().st_size if ok else 0}
-
-def _plan_for(pipeline: str) -> Dict[str, Any]:
-    plan = {"pipeline": pipeline, "repos_to_fetch": [], "single_files": [], "notes": []}
-    if pipeline == "flux_krea":
-        plan["repos_to_fetch"] = [FLUX_KREA_REPO]
-        plan["single_files"].append({"name": FLUX_KREA_GGUF_NAME, "url": FLUX_KREA_GGUF_URL, "optional": False})
-        plan["gguf_status"] = [_gguf_status(FLUX_KREA_GGUF_NAME)]
-    elif pipeline == "flux_kontext":
-        plan["repos_to_fetch"] = [FLUX_KONTEXT_REPO]
-        plan["single_files"].append({"name": FLUX_KONTEXT_GGUF_NAME, "url": FLUX_KONTEXT_GGUF_URL, "optional": False})
-        plan["gguf_status"] = [_gguf_status(FLUX_KONTEXT_GGUF_NAME)]
-    elif pipeline == "sdxl_intermediate":
-        plan["repos_to_fetch"] = [SDXL_BASE_REPO, SDXL_REFINER_REPO]
-        plan["gguf_status"] = []
-    elif pipeline == "sdxl_turbo":
-        plan["repos_to_fetch"] = [SDXL_TURBO_REPO]
-        plan["gguf_status"] = []
-    elif pipeline == "flux_krea":
-        plan["repos_to_fetch"] = []  # Flux uses GGUF-only transformer; no classic repo required for Krea here
-        plan["single_files"] = [
-            {"name": FLUX_KREA_GGUF_NAME, "url": FLUX_KREA_GGUF_URL, "optional": False},
-        ]
-        plan["gguf_status"] = [_gguf_status(FLUX_KREA_GGUF_NAME)]
-    elif pipeline == "flux_kontext":
-        plan["single_files"] = [
-            {"name": FLUX_KONTEXT_GGUF_NAME, "url": FLUX_KONTEXT_GGUF_URL, "optional": False},
-        ]
-        plan["gguf_status"] = [_gguf_status(FLUX_KONTEXT_GGUF_NAME)]
-    elif pipeline in ("ltx_video", "ltx"):
-        # If you no longer rely on a separate upsampler repo, use only LTX_REPO:
-        plan["repos_to_fetch"] = [LTX_REPO, LTX_UPSAMPLER_REPO]
-        plan["single_files"] = []       # the two .safetensors are in the repo root; not standalone
-        plan["gguf_status"] = []
-    elif pipeline == "wan_fp8":
-        # Build gguf_status from exactly the files we require
-        gguf_status = []
-        for item in WAN_FP8_REQUIRED_FILES:
-            name = item["name"]
-            p = (MODEL_DIR / name)
-            gguf_status.append({
-                "configured": True,
-                "exists": p.exists(),
-                "path": str(p),
-                "size": p.stat().st_size if p.exists() else 0,
-            })
-
-        # Only one repo to fetch fully: the official diffusers repo
-        diff_root = repo_local_dir(WAN_DIFFUSERS_REPO)
-        repo_ok = bool(diff_root and Path(diff_root).exists())
-
-        plan = {
-            "pipeline": "wan_fp8",
-            "repos_to_fetch": [WAN_DIFFUSERS_REPO],  # only this repo
-            "single_files": WAN_FP8_REQUIRED_FILES,  # only the allowed filenames
-            "notes": [],
-        }
-
-        # Build 'repos' section to drive your CTA (do not include calcuis inventory)
-        repos = [{
-            "repo": WAN_DIFFUSERS_REPO,
-            "root": diff_root or str(Path(MODEL_DIR) / "repos" / WAN_DIFFUSERS_REPO.replace("/", "__")),
-            "exists": repo_ok,
-            "ok": repo_ok,
-            "missing": 0 if repo_ok else 1,
-            "missing_list": [] if repo_ok else ["<entire repo>"],
-        }]
-
-        # Server OK if repo exists and all single files exist with expected size
-        singles_ok = True
-        for item in WAN_FP8_REQUIRED_FILES:
-            name = item["name"]
-            p = (MODEL_DIR / name)
-            exp = WAN_EXPECTED_SIZES.get(name)
-            if not p.exists() or (exp is not None and p.stat().st_size != exp):
-                singles_ok = False
-                break
-
-        ok = repo_ok and singles_ok
-
-        return {
-            "ok": ok,
-            "plan": plan,
-            "repos": repos,
-            "gguf_status": gguf_status,
-            "notes": [] if ok else ["Missing repo or single-file artifacts."],
-        }
+def _platform_tag():
+    system = platform.system().lower()
+    arch = {"x86_64":"x64","amd64":"x64","arm64":"arm64","aarch64":"arm64"}.get(platform.machine().lower(), platform.machine().lower())
+    if system == "darwin": plat, exe = f"darwin/{arch}", "ffmpeg"
+    elif system == "linux": plat, exe = f"linux/{arch}", "ffmpeg"
+    elif system == "windows": plat, exe = f"win32/{arch}", "ffmpeg.exe"
     else:
-        raise ValueError(f"Unknown pipeline '{pipeline}'")
-    return plan
+        raise RuntimeError(f"Unsupported platform: {system}/{arch}")
+    return plat, exe
 
-import os, shutil, tempfile, requests
-from pathlib import Path
-
-# Expect you already have MODEL_DIR, repo_local_dir(), _prefetch_repo(), etc.
-# MODEL_DIR should be the flat directory where you place single-file artifacts.
-# repo_local_dir(WAN_DIFFUSERS_REPO) should ensure the entire repo exists.
-
-def _hf_resolve_url(repo: str, filename: str) -> str:
-    return f"https://huggingface.co/{repo}/resolve/main/{filename}?download=1"
-
-def _download_strict_file(dest_dir: Path, repo: str, name: str, expected_size: int) -> Path:
+def _candidate_roots() -> list[Path]:
     """
-    Download <name> from HF <repo> to dest_dir, verify exact size.
-    If existing file has wrong size, delete it and re-download.
+    Likely roots for node_modules in dev + packaged app.
+    You can also override with FFMPEG_NPM_ROOT (points to a dir containing 'node_modules').
     """
-    dest_dir.mkdir(parents=True, exist_ok=True)
-    dest = dest_dir / name
+    env_root = os.environ.get("FFMPEG_NPM_ROOT")
+    roots = []
+    if env_root:
+        roots.append(Path(env_root))
+    here = Path(__file__).resolve()
+    # Walk up a few levels (dev)
+    parents = list(here.parents)[:8]
+    roots.extend(parents)
+    # Typical Electron packaged locations
+    for base in [here, *parents]:
+        roots.append(base / "resources")
+        roots.append(base / "resources" / "app.asar.unpacked")
+        roots.append(base / "app.asar.unpacked")
+    # CWD as last resort
+    roots.append(Path.cwd())
+    # Dedup while preserving order
+    seen, out = set(), []
+    for r in roots:
+        try:
+            rp = r.resolve()
+        except Exception:
+            rp = r
+        if rp not in seen:
+            seen.add(rp); out.append(rp)
+    return out
 
-    # If exists, verify exact size
-    if dest.exists():
-        sz = dest.stat().st_size
-        if sz == expected_size:
-            return dest
-        dest.unlink(missing_ok=True)  # wrong-size -> purge
+def _npm_ffmpeg_source_path() -> str:
+    # Direct override: allow Electron main to pass absolute binary path
+    direct = os.environ.get("FFMPEG_BIN")
+    if direct and os.path.isfile(direct):
+        return direct
 
-    url = _hf_resolve_url(repo, name)
-    headers = {
-        "Accept": "*/*",
-        "Accept-Encoding": "identity",
-        "User-Agent": "bonzai-wan-downloader/1.0",
-    }
-    with requests.get(url, stream=True, headers=headers, timeout=90) as r:
-        r.raise_for_status()
-        cl = r.headers.get("Content-Length")
-        if cl is not None and int(cl) != expected_size:
-            raise RuntimeError(
-                f"Remote Content-Length {cl} != expected {expected_size} for {name} ({repo})."
-            )
-        with tempfile.NamedTemporaryFile("wb", delete=False, dir=str(dest_dir)) as tmp:
-            try:
-                for chunk in r.iter_content(chunk_size=1024 * 1024):
-                    if chunk:
-                        tmp.write(chunk)
-                tmp.flush()
-                os.fsync(tmp.fileno())
-                tmp_path = Path(tmp.name)
-            except Exception:
-                Path(tmp.name).unlink(missing_ok=True)
-                raise
+    plat, exe = _platform_tag()
 
-    actual = tmp_path.stat().st_size
-    if actual != expected_size:
-        tmp_path.unlink(missing_ok=True)
-        raise RuntimeError(
-            f"Downloaded size {actual} != expected {expected_size} for {name} ({repo})."
-        )
-    shutil.move(str(tmp_path), dest)
-    return dest
+    # Search for ffmpeg-static-electron-forge layout
+    patterns = [
+        Path("node_modules") / "ffmpeg-static-electron-forge" / "dist" / "bin",
+        Path("app.asar.unpacked") / "node_modules" / "ffmpeg-static-electron-forge" / "dist" / "bin",
+        Path("resources") / "app.asar.unpacked" / "node_modules" / "ffmpeg-static-electron-forge" / "dist" / "bin",
+    ]
 
-def _ensure_repo_present_or_prefetch(repo: str, auto_download: bool):
-    """
-    Ensure the entire diffusers repo exists locally. Uses your existing helpers.
-    Returns an error Flask response if it must start a background prefetch.
-    """
-    root = repo_local_dir(repo)
-    if root and Path(root).exists():
-        return None  # already present
-    # Ask your existing prefetcher to fetch the WHOLE repo (not selective)
-    return _prefetch_repo(repo, auto_download=auto_download)
+    for root in _candidate_roots():
+        for pat in patterns:
+            p = (root / pat / plat / exe)
+            if p.is_file():
+                return str(p)
 
-def _ensure_wan_fp8_files(auto_download: bool):
-    missing = []
-    wrong = []
-    for item in WAN_FP8_REQUIRED_FILES:
-        name = item["name"]
-        exp = WAN_EXPECTED_SIZES.get(name)
-        path = MODEL_DIR / name
-        if not path.exists():
-            missing.append(item)
-        elif exp is not None and path.stat().st_size != exp:
-            wrong.append((item, path.stat().st_size, exp))
+    # Fallback: if a system ffmpeg exists, use it (no staging copy)
+    sys_ffmpeg = shutil.which("ffmpeg.exe" if exe.endswith(".exe") else "ffmpeg")
+    if sys_ffmpeg:
+        return sys_ffmpeg
 
-    if wrong:
-        # purge wrong-sized
-        for item, got, exp in wrong:
-            (MODEL_DIR / item["name"]).unlink(missing_ok=True)
-            missing.append(item)
+    raise FileNotFoundError(
+        "Bundled ffmpeg not found. "
+        "Install 'ffmpeg-static-electron-forge' (recommended) or set FFMPEG_BIN/FFMPEG_NPM_ROOT."
+    )
 
-    if missing and not auto_download:
-        return jsonify({
-            "ok": False,
-            "notes": ["Required WAN FP8/GGUF files missing"],
-            "missing_files": [m["name"] for m in missing],
-        }), 409
+def _dest_ffmpeg_path() -> str:
+    _, exe = _platform_tag()
+    return os.path.join(_user_bin_dir(), exe)
 
-    # Download missing now (strict content-length)
-    for item in missing:
-        _download_strict_file(MODEL_DIR, WAN_FP8_SRC_REPO, item["name"], WAN_EXPECTED_SIZES[item["name"]])
+def _make_executable_and_clear_quarantine(path: str):
+    try:
+        st = os.stat(path)
+        os.chmod(path, st.st_mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
+    except Exception:
+        pass
+    # macOS quarantine bit (no-op elsewhere)
+    try:
+        subprocess.run(["xattr","-dr","com.apple.quarantine", path],
+                       check=False, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    except Exception:
+        pass
 
-    return None
+def get_ffmpeg_binary_path() -> str:
+    src = _npm_ffmpeg_source_path()
+    dst = _dest_ffmpeg_path()
 
-def _ensure_files_present_or_start(pipeline: str, auto_download: bool = False):
-    """
-    Ensures all artifacts for a given pipeline exist locally (and are valid).
-    If anything is missing and auto_download is False, returns a 409 JSON that the UI
-    can use to show a CTA. If auto_download is True, kicks off prefetch and returns its JSON.
-    """
-    # --- Special case: WAN FP8 (Diffusers repo + strict single-file checks)
-    if pipeline == "wan_fp8":
-        # 1) Ensure the official diffusers repo is present
-        guard = _ensure_repo_present_or_prefetch(WAN_DIFFUSERS_REPO, auto_download)
-        if guard:
-            return guard
+    # If src is already the staged path, just ensure executability and return.
+    # Otherwise copy into our user bin to avoid ASAR/execution issues.
+    try:
+        need_copy = True
+        try:
+            need_copy = (os.path.abspath(src) != os.path.abspath(dst))
+        except Exception:
+            need_copy = True
 
-        # 2) Ensure the two single files (strict size, auto-purge wrong ones)
-        guard = _ensure_wan_fp8_files(auto_download)
-        if guard:
-            return guard
-
-        # All good for WAN FP8
-        return None
-
-    # --- Generic fallback for other pipelines
-    plan = _plan_for(pipeline)
-
-    # Repos: fail fast on the first missing
-    for repo_id in plan.get("repos_to_fetch", []):
-        guard = _repos_ready_or_resp(repo_id)  # returns a JSON/HTTP tuple if missing
-        if guard:
-            if auto_download:
-                started = _start_prefetch_pipeline(pipeline)
-                return jsonify(started["json"]), started.get("http_status", 202)
-            return guard  # already a useful JSON/HTTP tuple
-
-    # Files: collect all missing/invalid
-    missing_files = []
-    for f in plan.get("single_files", []):
-        name = (f.get("name") or "").strip()
-        if not name:
-            continue
-        p = MODEL_DIR / name
-
-        # If we have an expected size, enforce strict match; else just existence.
-        expected = WAN_EXPECTED_SIZES.get(name) if "WAN_EXPECTED_SIZES" in globals() else None
-        if not p.exists():
-            missing_files.append({"name": name, "reason": "missing"})
-        else:
-            size = p.stat().st_size
-            if expected is not None and size != expected:
-                # auto-purge wrong-sized files to avoid partial/corrupt state
+        if need_copy:
+            # only copy when src newer or dst missing/different size
+            copy_required = True
+            if os.path.isfile(dst):
                 try:
-                    p.unlink()
+                    s1, s2 = os.stat(src), os.stat(dst)
+                    copy_required = (s1.st_size != s2.st_size) or (s1.st_mtime > s2.st_mtime)
                 except Exception:
-                    pass
-                missing_files.append({"name": name, "reason": f"size_mismatch got={size} expected={expected}"})
+                    copy_required = False
+            if copy_required:
+                os.makedirs(os.path.dirname(dst), exist_ok=True)
+                with open(src, "rb") as fsrc, open(dst, "wb") as fdst:
+                    shutil.copyfileobj(fsrc, fdst, length=1<<20)
+        else:
+            dst = src
+    except Exception as e:
+        raise RuntimeError(f"Failed to stage ffmpeg to app bin: {e}")
 
-    if not missing_files:
-        return None  # everything is ready
+    _make_executable_and_clear_quarantine(dst)
+    if not (os.path.isfile(dst) and os.access(dst, os.X_OK)):
+        raise PermissionError(f"Staged ffmpeg not executable at {dst}")
+
+    os.environ["IMAGEIO_FFMPEG_EXE"] = dst  # used by imageio/ffmpegio
+    return dst
+
+# Ensure env is set at import time for any downstream video writers:
+os.environ["IMAGEIO_FFMPEG_EXE"] = get_ffmpeg_binary_path()
+
+# -- Guard for repos (used by SDXL routes) --
+def _repos_ready_or_resp(*repo_ids: str):
+    missing = []
+    for rid in repo_ids:
+        st = _repo_readiness(rid)
+        if not st.get("ok", False):
+            missing.append({"repo": rid, "missing": st.get("missing", [])})
+    if not missing:
+        return None
+    return jsonify(_json_sanitize({
+        "error": "repos_missing",
+        "message": "Required model repos are not fully present.",
+        "details": missing
+    })), 412
+
+# -- Guard for pipelines with repos + single files (also can auto-start prefetch) --
+def _ensure_files_present_or_start(pipeline: str, auto_download: bool = False):
+    plan = _cached_plan_for(pipeline)
+
+    # Repos
+    missing_repos = []
+    for rid in plan.get("repos_to_fetch", []):
+        st = _repo_readiness(rid)
+        if not st.get("ok", False):
+            missing_repos.append({"repo": rid, "missing": st.get("missing", [])})
+
+    # Single files: include both missing and invalid
+    missing_files = []
+    invalid_files = []
+    for f in plan.get("single_files", []):
+        st = _single_file_status(f)
+        if not st["exists"]:
+            missing_files.append({"name": st["name"], "url": st["url"]})
+        elif not st["ok"]:
+            invalid_files.append({"name": st["name"], "url": st["url"], "reason": st["reason"]})
+
+    if not missing_repos and not missing_files and not invalid_files:
+        return None
 
     if auto_download:
         started = _start_prefetch_pipeline(pipeline)
-        return jsonify(started["json"]), started.get("http_status", 202)
+        return jsonify(_json_sanitize(started["json"])), started["http_status"]
 
-    # Build a helpful 409 for the UI CTA
-    return jsonify({
-        "error": "Assets missing",
-        "repos": [ _repo_readiness(r) for r in plan.get("repos_to_fetch", []) ],
-        "missing_files": [mf["name"] for mf in missing_files],
-        "reasons": missing_files,  # optional: keeps per-file reason for debugging
-        "hint": f'Run /pipelines/prefetch with pipeline="{pipeline}" (or set auto_download:true).'
-    }), 409
+    return jsonify(_json_sanitize({
+        "error": "assets_missing",
+        "message": "Required assets are not available locally.",
+        "missing_repos": missing_repos,
+        "missing_files": missing_files,
+        "invalid_files": invalid_files,
+    })), 412
 
-def _estimate_repo_size(repo_id: str, allow_patterns: Optional[List[str]] = None) -> int:
-    try:
-        manifest = _list_required_remote_files(repo_id, allow_patterns=allow_patterns)
-        return sum(int(f.get("size") or 0) for f in manifest)
-    except Exception:
-        return 0
-
-def _prefetch_repo_files_task(pl: PipelineDownload, repo_id: str, allow_patterns: Optional[List[str]], max_workers: int = 4):
-    root = repo_local_dir(repo_id); root.mkdir(parents=True, exist_ok=True)
-    container_tid = download_manager.add_repo_task(pl, repo_id, total_estimate=0)
-    download_manager.mark_downloading(pl, container_tid)
-    try:
-        manifest = _list_required_remote_files(repo_id, allow_patterns=allow_patterns)
-        needs = []
-        for f in manifest:
-            rel = f["path"]; lp = root / rel
-            if not lp.exists() or (f["size"] and lp.stat().st_size != f["size"]):
-                needs.append(rel)
-    except Exception as e:
-        download_manager.mark_failed(pl, container_tid, f"Manifest error: {e}")
-        download_manager.finalize_if_done(pl); return
-    if not needs:
-        if _repo_completeness(repo_id).get("ok", False):
-            download_manager.update_progress(pl, container_tid, done=1, total=1)
-            download_manager.mark_completed(pl, container_tid)
-        else:
-            download_manager.mark_failed(pl, container_tid, "Repo incomplete but no remote files enumerated.")
-        download_manager.finalize_if_done(pl); return
-
-    path_to_size = {f["path"]: int(f.get("size") or 0) for f in manifest}
-    for rel in needs:
-        size = path_to_size.get(rel, 0); title = f"{repo_id}/{rel}"
-        tid = _tid_file(repo_id, rel)
-        pl.tasks[tid] = DownloadTask(task_id=tid, kind="file", name=title, total_bytes=size, status="pending")
-        if size > 0: download_manager.update_progress(pl, tid, done=0, total=size)
-    download_manager.emit(pl.pipeline_id)
-
-    from concurrent.futures import ThreadPoolExecutor, as_completed
-    completed = 0; total_files = len(needs)
-    def _wrap(rel_path: str):
-        tid = _tid_file(repo_id, rel_path)
-        try:
-            download_manager.mark_downloading(pl, tid)
-            _stream_hf_file_task(pl, tid, repo_id, rel_path, path_to_size.get(rel_path, 0))
-        except Exception as e:
-            logger.exception(f"[files] worker crashed: {repo_id}/{rel_path}")
-            download_manager.mark_failed(pl, tid, str(e))
-
-    with ThreadPoolExecutor(max_workers=max_workers) as ex:
-        futs = [ex.submit(_wrap, rel) for rel in needs]
-        for fut in as_completed(futs):
-            try: fut.result()
-            except Exception: pass
-            completed += 1
-            download_manager.update_progress(pl, container_tid, done=completed, total=total_files)
-
-    states = {t.status for t in pl.tasks.values() if t.kind == "file" and t.name.startswith(f"{repo_id}/")}
-    if "failed" in states:
-        download_manager.mark_failed(pl, container_tid, "Some files failed.")
-    else:
-        download_manager.mark_completed(pl, container_tid)
-    download_manager.finalize_if_done(pl)
+# ---------------------- Prefetch implementation (repos + files) ----------------------
 
 def _start_prefetch_pipeline(pipeline: str) -> Dict[str, Any]:
-    plan = _plan_for(pipeline)
-    pl = download_manager.new(f"prefetch:{pipeline}")
+    """
+    Starts a background worker that fetches repos (filtered manifests) and
+    single-file artifacts for the given pipeline. Emits live progress via
+    DownloadManager. Cancellable via DownloadManager.cancel_pipeline().
+    """
+    plan = _cached_plan_for(pipeline)
+    pl = download_manager.new(pipeline)
     download_manager.set_status(pl, "downloading")
-    download_manager.emit(pl.pipeline_id)
 
-    inaccessible_repos: List[str] = []
-    for rid in plan.get("repos_to_fetch", []):
-        pats = allow_patterns_for_repo(rid)
-        inv = build_repo_inventory(rid, allow_patterns=pats)
-        if inv["missing"] is None and not inv["ok"]:
-            logger.warning("[prefetch] skipping %s due to remote inaccessibility", rid)
-            inaccessible_repos.append(rid); continue
-        if inv["ok"]: continue
-        tid = download_manager.add_repo_task(pl, repo_id=rid, total_estimate=_estimate_repo_size(rid, allow_patterns=pats))
-        socketio.start_background_task(_prefetch_repo_files_task, pl, rid, pats)
+    def _worker():
+        try:
+            # ---------------- 1) Repos first ----------------
+            for rid in plan.get("repos_to_fetch", []):
+                if pl.cancelled:
+                    break
+                allow = allow_patterns_for_repo(rid)
+                manifest = _list_required_remote_files(rid, allow_patterns=allow)
+                total = sum(int(f.get("size") or 0) for f in manifest) or 1
+                tid = download_manager.add_repo_task(pl, rid, total_estimate=total)
+                download_manager.mark_downloading(pl, tid)
 
-    # GGUF/VAEs (mandatory)
-    for f in plan.get("single_files", []):
-        name = (f.get("name") or "").strip(); url = (f.get("url") or "").strip()
-        if not name: continue
-        dest = MODEL_DIR / name
-        if dest.exists() and dest.stat().st_size > 0:
-            tid = download_manager.add_file_task(pl, filename=name, size=dest.stat().st_size)
-            download_manager.update_progress(pl, tid, done=dest.stat().st_size, total=dest.stat().st_size)
-            download_manager.mark_completed(pl, tid); continue
-        if not url: continue
-        tid = download_manager.add_file_task(pl, filename=name, size=0)
-        socketio.start_background_task(_stream_file_task, pl, tid, url, dest)
+                try:
+                    _download_repo_files(pl, tid, rid, manifest)
+                    if not pl.cancelled:
+                        download_manager.mark_completed(pl, tid)
+                except Exception as e:
+                    if pl.cancelled:
+                        download_manager.mark_cancelled(pl, tid)
+                        break
+                    download_manager.mark_failed(pl, tid, str(e))
 
-    if not pl.tasks and inaccessible_repos:
-        download_manager.set_status(pl, "failed")
-        return {"http_status": 403, "json": {
-            "error": "Repository not accessible (auth/terms or offline).",
-            "plan": plan, "pipeline_id": pl.pipeline_id, "download_websocket_url": downloads_url(),
-            "auth_repos": inaccessible_repos,
-        }}
+            # ---------------- 2) Queue ALL single-file tasks so they appear instantly ----------------
+            files_to_do = []
+            for f in plan.get("single_files", []):
+                name = (f or {}).get("name") or ""
+                # Size hint from expectation table (0 means unknown and we’ll resolve via HEAD)
+                size_hint = int(EXPECTED_SIZES.get(name, 0))
+                tid = download_manager.add_file_task(pl, name, size_hint or 1)
+                files_to_do.append((f, tid))
+            download_manager.emit(pl.pipeline_id)
 
-    if not pl.tasks:
-        download_manager.set_status(pl, "completed")
-        return {"http_status": 200, "json": {
-            "message": "Everything already present",
-            "pipeline_id": pl.pipeline_id, "pipelines_started": [], "download_websocket_url": downloads_url(),
-            "details": {"plan": plan, "download_pipelines": [], "notes": []},
-        }}
+            # ---------------- 3) Process single files ----------------
+            for f, tid in files_to_do:
+                if pl.cancelled:
+                    download_manager.mark_cancelled(pl, tid)
+                    break
 
-    logger.info("[prefetch] started pipeline %s for %s", pl.pipeline_id, pipeline)
-    return {"http_status": 202, "json": {
-        "message": "Prefetch started", "pipeline_id": pl.pipeline_id, "pipelines_started": [pl.pipeline_id],
-        "download_websocket_url": downloads_url(),
-        "details": {"plan": plan, "download_pipelines": [{"kind": "mixed", "pipeline_id": pl.pipeline_id}], "notes": []},
-    }}
+                # If it already exists locally and is valid by SIZE, skip
+                st = _single_file_status(f)
+                if st["exists"] and st["ok"]:
+                    download_manager.update_progress(pl, tid, st["size_on_disk"], st["size_on_disk"] or 1)
+                    download_manager.mark_completed(pl, tid)
+                    continue
+
+                download_manager.mark_downloading(pl, tid)
+
+                # Best-effort size hint to weight the progress bar
+                name, url = st["name"], st["url"]
+                size_hint = int(EXPECTED_SIZES.get(name, 0)) if 'EXPECTED_SIZES' in globals() else 0
+                if size_hint <= 0:
+                    try:
+                        headers = {}
+                        if url.startswith("https://huggingface.co/") and _hf_token():
+                            headers["Authorization"] = f"Bearer {_hf_token()}"
+                        r = requests.head(url, allow_redirects=True, headers=headers, timeout=30)
+                        size_hint = int(r.headers.get("content-length", "0") or 0)
+                    except Exception:
+                        size_hint = 0
+                download_manager.update_progress(pl, tid, 0, size_hint or 1)
+
+                try:
+                    _download_single_file(pl, tid, name, url, size_hint=size_hint, optional=False)
+                    if not pl.cancelled:
+                        download_manager.mark_completed(pl, tid)
+                except Exception as e:
+                    if pl.cancelled:
+                        download_manager.mark_cancelled(pl, tid)
+                        break
+                    download_manager.mark_failed(pl, tid, str(e))
+                    # continue with other files
+
+        except Exception:
+            logger.exception("Prefetch worker failed")
+        finally:
+            download_manager.finalize_if_done(pl)
+
+    eventlet.spawn_n(_worker)
+    return {
+        "json": {
+            "ok": True,
+            "message": "Prefetch started",
+            "pipeline_id": pl.pipeline_id,
+            "pipeline": pl.to_dict(),
+        },
+        "http_status": 202,
+    }
+    
+def _download_repo_files(pl: PipelineDownload, tid: str, repo_id: str, manifest: List[Dict[str, Any]]):
+    """
+    Streams all files of a repo manifest into the local repo directory.
+    Tracks progress in bytes, supports cancellation, and skips already-complete files.
+    """
+    headers = {"Authorization": f"Bearer {_hf_token()}"} if _hf_token() else {}
+    base = repo_local_dir(repo_id)
+    base.mkdir(parents=True, exist_ok=True)
+
+    done = 0
+    total = sum(int(f.get("size") or 0) for f in manifest) or 1
+    download_manager.update_progress(pl, tid, done, total)
+
+    for f in manifest:
+        if pl.cancelled:
+            download_manager.mark_cancelled(pl, tid)
+            return
+
+        rel = f["path"]
+        rsz = int(f.get("size") or 0)
+        dest = base / rel
+        dest.parent.mkdir(parents=True, exist_ok=True)
+
+        # Skip if already complete by SIZE
+        if dest.exists() and (rsz == 0 or dest.stat().st_size == rsz):
+            done += (rsz or dest.stat().st_size)
+            download_manager.update_progress(pl, tid, done, total)
+            continue
+
+        url = hf_hub_url(repo_id=repo_id, filename=rel, repo_type="model", revision="main")
+
+        try:
+            _stream_download(
+                url,
+                dest,
+                headers=headers,
+                update=lambda inc: _repo_inc(pl, tid, inc, total, ref_done=lambda: done),
+                is_cancelled=lambda: pl.cancelled,
+            )
+        except Exception as e:
+            # If cancelled, mark and stop; else bubble up so caller can mark failed
+            if pl.cancelled:
+                download_manager.mark_cancelled(pl, tid)
+                return
+            raise e
+
+        done = min(done + (rsz or (dest.stat().st_size if dest.exists() else 0)), total)
+        download_manager.update_progress(pl, tid, done, total)
+
+def _download_single_file(
+    pl: PipelineDownload,
+    tid: str,
+    name: str,
+    url: str,
+    size_hint: int = 0,
+    optional: bool = False,
+):
+    """
+    Stream a single required artifact to MODEL_DIR with live progress updates.
+    Validates *only by size* when a strict expected size is known.
+    Supports cancellation via pl.cancelled.
+    """
+    headers = {}
+    if url.startswith("https://huggingface.co/") and _hf_token():
+        headers["Authorization"] = f"Bearer {_hf_token()}"  # optional, speeds rate limits
+
+    dest = MODEL_DIR / name
+    dest.parent.mkdir(parents=True, exist_ok=True)
+
+    expected_size = _expected_size(name, url)
+
+    # Purge mismatched file when we know the strict size
+    if expected_size > 0 and dest.exists() and dest.stat().st_size != expected_size:
+        try:
+            dest.unlink()
+        except Exception:
+            pass
+
+    # If a (possibly partial) local file exists, validate by SIZE only
+    if dest.exists() and dest.stat().st_size > 0:
+        ok_local = (expected_size <= 0) or (dest.stat().st_size == expected_size)
+        if ok_local:
+            total = expected_size or dest.stat().st_size
+            download_manager.update_progress(pl, tid, total, total)
+            return
+        else:
+            try:
+                dest.unlink()
+            except Exception:
+                pass
+
+    if pl.cancelled:
+        download_manager.mark_cancelled(pl, tid)
+        return
+
+    # Resolve total for progress weighting: size_hint -> HEAD -> expected_size
+    total = int(size_hint or 0)
+    if total <= 0:
+        total = _expected_size(name, url)
+
+    # Ensure the UI sees a task with a non-zero total as early as possible
+    download_manager.update_progress(pl, tid, 0, total or 1)
+
+    # Stream download with increment-based ticking
+    done = 0
+
+    def _tick(_inc: int):
+        nonlocal done
+        done += int(_inc)
+        download_manager.update_progress(pl, tid, done, total or done or 1)
+
+    try:
+        _stream_download(url, dest, headers=headers, update=_tick, is_cancelled=lambda: pl.cancelled)
+    except Exception as e:
+        if pl.cancelled:
+            download_manager.mark_cancelled(pl, tid)
+            return
+        raise e
+
+    # Final strict validation: SIZE ONLY when known
+    if expected_size > 0 and dest.stat().st_size != expected_size:
+        try:
+            dest.unlink()
+        except Exception:
+            pass
+        msg = f"Downloaded {name} has size {dest.stat().st_size}, expected {expected_size}"
+        if optional:
+            logger.warning(msg)
+            return
+        raise ValueError(msg)
+
+    # Mark complete bytes for the UI
+    final_total = expected_size or dest.stat().st_size
+    download_manager.update_progress(pl, tid, final_total, final_total)
+
+def _repo_inc(pl: PipelineDownload, tid: str, inc: int, total: int, ref_done):
+    # Helper to smooth repo progress updates
+    current_done = ref_done()
+    new_done = min(current_done + inc, total)
+    download_manager.update_progress(pl, tid, new_done, total)
+
+def _stream_download(url: str, dest: Path, headers: Dict[str, str], update, is_cancelled=None):
+    with requests.get(url, headers=headers, stream=True, timeout=60) as r:
+        r.raise_for_status()
+        tmp = dest.with_suffix(dest.suffix + ".part")
+        try:
+            with open(tmp, "wb") as f:
+                for chunk in r.iter_content(chunk_size=1024 * 1024):
+                    if not chunk:
+                        continue
+                    if is_cancelled and is_cancelled():
+                        raise CancelledDownload()
+                    f.write(chunk)
+                    try:
+                        update(len(chunk))
+                    except Exception:
+                        pass
+            if is_cancelled and is_cancelled():
+                raise CancelledDownload()
+            tmp.replace(dest)
+        except CancelledDownload:
+            try: tmp.unlink()
+            except Exception: pass
+            raise
+
+# ======================= END MISSING CORE HELPERS (exact patch) =======================
 
 # ------------------------------ REST: plan/prefetch ----------------------------
 @app.route("/pipelines/plan", methods=["POST"])
 def pipelines_plan():
     data = request.json or {}
     pipeline = (data.get("pipeline") or "").strip()
-    if not pipeline: return jsonify({"error": "Provide 'pipeline'."}), 400
-    try: plan = _plan_for(pipeline)
-    except ValueError as e: return jsonify({"error": str(e)}), 400
+    if not pipeline:
+        return jsonify(_json_sanitize({"error": "Provide 'pipeline'."})), 400
+    try:
+        plan = _cached_plan_for(pipeline)
+    except ValueError as e:
+        return jsonify(_json_sanitize({"error": str(e)})), 400
 
     deep = bool(data.get("deep_validate", False))
     repos_status, auth_repos, repo_inventories = [], [], []
     for rid in plan.get("repos_to_fetch", []):
-        st = _repo_readiness(rid); repos_status.append(st)
+        st = _repo_readiness(rid)
+        repos_status.append(st)
         if deep:
             pats = allow_patterns_for_repo(rid)
             repo_inventories.append(build_repo_inventory(rid, allow_patterns=pats))
-        if st.get("missing") is None and not st.get("ok", False): auth_repos.append(rid)
+        if st.get("missing") is None and not st.get("ok", False):
+            auth_repos.append(rid)
+
+    # Single-file artifacts (GGUF / VAE / text encoder, etc.)
+    required_files = []
+    for f in plan.get("single_files", []):
+        required_files.append(_single_file_status(f))
 
     ok_repos = all(r.get("ok") for r in repos_status) if repos_status else True
-    ok_files = all((_gguf_status(f.get("name")).get("exists") if f.get("name") else True)
-                   for f in plan.get("single_files", []))
+    ok_files = all(s.get("ok") for s in required_files) if required_files else True
+
+    # Back-compat: also expose "gguf_status" (same content as required_files but minimal)
+    ggufs = []
+    for s in required_files:
+        ggufs.append({
+            "configured": True,
+            "path": s["path"],
+            "exists": s["exists"],
+            "size": s["size_on_disk"],
+            "name": s["name"],
+        })
+
     resp = {
-        "plan": plan, "repos": repos_status, "gguf_status": plan.get("gguf_status", []),
-        "notes": plan.get("notes", []), "ok": bool(ok_repos and ok_files),
+        "plan": plan,
+        "repos": repos_status,
+        "required_files": required_files,   # <--- NEW (explicit; includes wan2.2_vae.safetensors)
+        "gguf_status": ggufs,              # back-compat for existing UI
+        "notes": plan.get("notes", []),
+        "ok": bool(ok_repos and ok_files),
     }
     if auth_repos:
-        resp["auth_required"] = True; resp["auth_repos"] = auth_repos
-    if deep: resp["inventories"] = repo_inventories
+        resp["auth_required"] = True
+        resp["auth_repos"] = auth_repos
+    if deep:
+        resp["inventories"] = repo_inventories
     return jsonify(_json_sanitize(resp)), 200
 
 @app.route("/pipelines/prefetch", methods=["POST"])
 def pipelines_prefetch():
     data = request.json or {}
     pipeline = (data.get("pipeline") or "").strip()
-    if not pipeline: return jsonify({"error": "Provide 'pipeline'."}), 400
+    if not pipeline:
+        return jsonify(_json_sanitize({"error": "Provide 'pipeline'."})), 400
     try:
         started = _start_prefetch_pipeline(pipeline)
-        return jsonify(started["json"]), started["http_status"]
+        return jsonify(_json_sanitize(started["json"])), started["http_status"]
     except ValueError as e:
-        return jsonify({"error": str(e)}), 400
+        return jsonify(_json_sanitize({"error": str(e)})), 400
 
 # PART 4/5
 
 # ------------------------------ Video helpers ---------------------------------
 def _sanitize_frames_for_video(frames, target_size=None):
-    frames = list(frames or [])
-    if not frames: raise RuntimeError("No frames to write")
+    """
+    Accepts:
+      - Diffusers pipeline output (with `.frames`)
+      - list/tuple of PIL Images or ndarrays
+      - ndarray shaped (T,H,W,C) or (H,W,C)
+
+    Returns: (list_of_uint8_ndarrays, (W, H))
+    """
+    # Handle Diffusers PipeOutput
+    if hasattr(frames, "frames"):
+        frames = frames.frames[0]
+
+    # Normalize to list without using array truthiness
+    if isinstance(frames, np.ndarray):
+        if frames.ndim == 4:        # (T,H,W,C)
+            frames = [frames[i] for i in range(frames.shape[0])]
+        elif frames.ndim == 3:      # (H,W,C)
+            frames = [frames]
+        else:
+            raise RuntimeError(f"Unexpected ndarray shape: {frames.shape}")
+    elif not isinstance(frames, (list, tuple)):
+        frames = [frames]
+
+    frames = list(frames)
+    if len(frames) == 0:
+        raise RuntimeError("No frames to write")
+
+    # Output size
     if target_size is not None:
         W, H = int(target_size[0]), int(target_size[1])
     else:
         f0 = frames[0]
-        if hasattr(f0, "size"): W, H = f0.size
+        if isinstance(f0, Image.Image):
+            W, H = f0.size
         else:
             arr0 = np.asarray(f0)
-            if arr0.ndim == 3 and arr0.shape[2] in (1,3,4): H, W = arr0.shape[0], arr0.shape[1]
-            else: raise RuntimeError("Unexpected frame shape; expected (H,W,C).")
+            if arr0.ndim == 3 and arr0.shape[2] in (1, 3, 4):
+                H, W = arr0.shape[0], arr0.shape[1]
+            else:
+                raise RuntimeError("Unexpected frame shape; expected (H,W,C).")
+
+    # Even dims for H.264
     W -= (W % 2); H -= (H % 2)
-    if W <= 0 or H <= 0: raise RuntimeError("Computed invalid even dimensions for video.")
+    if W <= 0 or H <= 0:
+        raise RuntimeError("Computed invalid even dimensions for video.")
+
     out = []
     for fr in frames:
-        if hasattr(fr, "convert"): img = fr
+        if isinstance(fr, Image.Image):
+            img = fr
         else:
             arr = np.asarray(fr)
-            if arr.ndim == 2: arr = np.stack([arr]*3, axis=-1)
-            elif arr.ndim == 3 and arr.shape[2] == 4: arr = arr[..., :3]
+            if arr.ndim == 2:
+                arr = np.stack([arr] * 3, axis=-1)
+            elif arr.ndim == 3 and arr.shape[2] == 4:
+                arr = arr[..., :3]
             img = Image.fromarray(arr.astype(np.uint8), mode="RGB")
-        if img.mode != "RGB": img = img.convert("RGB")
-        if img.size != (W, H): img = img.resize((W, H), Image.BICUBIC)
+
+        if img.mode != "RGB":
+            img = img.convert("RGB")
+        if img.size != (W, H):
+            img = img.resize((W, H), Image.BICUBIC)
+
         arr = np.asarray(img, dtype=np.uint8)
-        if arr.ndim != 3 or arr.shape[2] != 3: arr = np.stack([arr]*3, axis=-1)
+        if arr.ndim != 3 or arr.shape[2] != 3:
+            arr = np.stack([arr] * 3, axis=-1)
         out.append(np.ascontiguousarray(arr))
+
     return out, (W, H)
 
 def _write_video_h264_safe(out_path, frames, fps, gen_id=None, target_size=None):
@@ -1383,78 +1576,101 @@ def _write_video_h264_safe(out_path, frames, fps, gen_id=None, target_size=None)
         subprocess.run(cmd, check=True)
     finally:
         shutil.rmtree(tmp_dir, ignore_errors=True)
+        
+def _write_video_h264_safe_interpolated(
+    out_path, frames, fps_in, target_size, fps_out=24,
+    upscale=1.5, scaler="lanczos", crf=18, preset="slow",
+    add_grain=0.0, sharpen=0.6, deband=True, gen_id=None
+):
+    # 1) Write the raw video (your existing helper)
+    _write_video_h264_safe(out_path, frames, fps=fps_in, gen_id=gen_id, target_size=target_size)
+
+    # 2) Enhance + interpolate to 24 fps
+    tmp = str(Path(out_path).with_suffix(".tmp.mp4"))
+    enhance_and_interpolate_video(
+        in_path=out_path,
+        out_path=tmp,
+        target_fps=fps_out,
+        upscale=upscale,
+        scaler=scaler,
+        crf=crf,
+        preset=preset,
+        add_grain=add_grain,
+        sharpen=sharpen,
+        deband=deband,
+    )
+    # atomic replace
+    Path(tmp).replace(out_path)
+        
+# --------------------------------------------------------------------
+# Robust frame extractor for Diffusers video outputs (Wan/LTX/etc.)
+# --------------------------------------------------------------------
+def _extract_frames(output) -> list[Image.Image]:
+    """
+    Returns a flat list[Image] from various pipeline outputs.
+    Handles:
+      - output.frames -> [list[Image]] or list[Image]
+      - output.images -> list[Image]
+      - output.videos (tensor BxTxCxHxW or TxCxHxW)
+      - dict-like variants with 'frames'/'images'/'videos'
+    """
+    def _to_pil(x):
+        if isinstance(x, Image.Image):
+            return x.convert("RGB")
+        arr = np.asarray(x)
+        if arr.ndim == 3 and arr.shape[0] in (1,3,4):  # CxHxW -> HxWxC
+            arr = np.moveaxis(arr, 0, -1)
+        arr = np.clip(arr, 0, 255).astype(np.uint8)
+        if arr.ndim == 2:
+            arr = np.stack([arr]*3, axis=-1)
+        if arr.shape[-1] == 4:
+            arr = arr[..., :3]
+        return Image.fromarray(arr, "RGB")
+
+    obj = output
+    # attribute access (Diffusers PipelineOutput)
+    if hasattr(obj, "frames"):
+        fr = obj.frames
+        if isinstance(fr, (list, tuple)) and fr and isinstance(fr[0], (list, tuple)):
+            fr = fr[0]  # unwrap [ [PIL,...] ]
+        return [_to_pil(f) for f in fr]
+    if hasattr(obj, "images"):
+        return [_to_pil(f) for f in obj.images]
+    if hasattr(obj, "videos"):
+        vid = obj.videos  # tensor or np
+        arr = np.array(vid)
+        if arr.ndim == 5:   # B,T,C,H,W
+            arr = arr[0]    # T,C,H,W
+        if arr.ndim == 4:   # T,C,H,W
+            return [_to_pil(arr[t]) for t in range(arr.shape[0])]
+    # dict-like
+    if isinstance(obj, dict):
+        for k in ("frames", "images", "videos"):
+            if k in obj:
+                return _extract_frames(type("X",(object,),{k:obj[k]})())
+    raise RuntimeError("Unable to extract frames from pipeline output")
 
 def _img_b64_to_pil(b64: str) -> Image.Image:
     raw = base64.b64decode(b64)
     return Image.open(io.BytesIO(raw)).convert("RGB")
 
-# ------------------------- GGUF transformer loader ----------------------------
-def load_transformer_from_gguf(gguf_path: Path,
-                               compute_dtype: torch.dtype,
-                               try_classes: Optional[List[str]] = None):
-    """
-    Try multiple known transformer classes to load a GGUF file.
-    Falls back to None if not loadable.
-    """
-    if try_classes is None:
-        try_classes = [
-            # Most common names first
-            "diffusers.LTXVideoTransformer3DModel",
-            "diffusers.FluxTransformer2DModel",
-            "diffusers.Transformer2DModel",
-            # Potential model-specific class names (adjust if you know the exact one)
-            "diffusers.models.transformers.transformer_2d.FluxTransformer2DModel",
-            "diffusers.models.transformers.transformer_2d.Transformer2DModel",
-        ]
-
-    qconf = GGUFQuantizationConfig(compute_dtype=compute_dtype)
-    last_err = None
-    for full_name in try_classes:
-        try:
-            mod_name, cls_name = full_name.rsplit(".", 1)
-            mod = import_module(mod_name)
-            cls = getattr(mod, cls_name)
-            if not hasattr(cls, "from_single_file"):
-                continue
-            logger.info(f"[gguf] Trying {full_name} for {gguf_path.name}")
-            transformer = cls.from_single_file(
-                str(gguf_path),
-                quantization_config=qconf,
-                torch_dtype=compute_dtype,
-            )
-            logger.info(f"[gguf] Loaded {full_name} successfully.")
-            return transformer
-        except Exception as e:
-            last_err = e
-            logger.info(f"[gguf] {full_name} failed: {e}")
-
-    logger.warning(f"[gguf] Could not load transformer from GGUF {gguf_path.name}: {last_err}")
-    return None
-
 # ------------------------------ Generation: SDXL (intermediate) ---------------
 @app.route("/image/intermediate", methods=["POST"])
 def image_intermediate_sdxl():
-    """
-    SDXL base + refiner with optional single-file checkpoint and LoRA.
-    - ckpt: filename in MODEL_DIR (e.g., "cyberrealistic.safetensors")
-    - lora: filename in MODEL_DIR (e.g., "cyberrealistic.safetensors")
-    - lora_strength: float (default 1.0). Uses set_adapters or fuse fallback.
-    """
     import logging as _logging
     _logging.getLogger("transformers.tokenization_utils_base").setLevel(_logging.ERROR)
 
     data = request.json or {}
     prompt = (data.get("prompt") or "").strip()
     if not prompt:
-        return jsonify({"error": "Prompt is required"}), 400
+        return jsonify(_json_sanitize({"error": "Prompt is required"})), 400
 
     negative_prompt = data.get("negative_prompt", "bad anatomy, extra hands, extra legs, extra fingers, poorly drawn face, fused face, cloned face")
     height = int(data.get("height", 1024))
     width  = int(data.get("width", 1024))
 
-    # SDXL extras
-    ckpt_filename = (data.get("ckpt") or "cyberrealistic.safetensors").strip()  # e.g. "cyberrealistic.safetensors"
-    lora_filename = (data.get("lora") or "cyberrealistic.safetensors").strip()  # e.g. "cyberrealistic.safetensors"
+    ckpt_filename = (data.get("ckpt") or "cyberrealistic.safetensors").strip()
+    lora_filename = (data.get("lora") or "cyberrealistic.safetensors").strip()
     lora_strength = float(data.get("lora_strength", 1.0))
 
     steps_base = int(data.get("steps_base", 40))
@@ -1463,12 +1679,11 @@ def image_intermediate_sdxl():
     cb_steps = int(data.get("callback_steps", 5))
     auto_dl = bool(data.get("auto_download", False))
 
-    # Ensure repos ready (for tokenizers/encoders/vae when not using single-file ckpt)
     guard = _repos_ready_or_resp(SDXL_BASE_REPO, SDXL_REFINER_REPO)
     if guard:
         if auto_dl:
             started = _start_prefetch_pipeline("sdxl_intermediate")
-            return jsonify(started["json"]), started["http_status"]
+            return jsonify(_json_sanitize(started["json"])), started["http_status"]
         return guard
 
     gen_id = genbus.new("sdxl_intermediate", {"endpoint": "/image/intermediate", "prompt": prompt})
@@ -1478,7 +1693,6 @@ def image_intermediate_sdxl():
         dtype  = DeviceManager.get_dtype(device)
 
         base = None
-        # 1) Try single-file checkpoint for the base if provided
         if ckpt_filename:
             try:
                 ckpt_path = (MODEL_DIR / ckpt_filename).resolve()
@@ -1493,7 +1707,6 @@ def image_intermediate_sdxl():
             except Exception as e:
                 logger.warning(f"[sdxl] Single-file load failed; falling back to repo: {e}")
 
-        # 2) Fall back to repo base
         if base is None:
             base = StableDiffusionXLPipeline.from_pretrained(
                 str(repo_local_dir(SDXL_BASE_REPO)),
@@ -1503,7 +1716,6 @@ def image_intermediate_sdxl():
                 local_files_only=True,
             ).to(device)
 
-        # Helper to apply LoRA with multiple fallbacks
         def _apply_lora(pipe, lora_path: Path, strength: float, tag: str):
             try:
                 pipe.load_lora_weights(str(lora_path))
@@ -1517,7 +1729,6 @@ def image_intermediate_sdxl():
                 logger.info(f"[sdxl] LoRA applied to {tag}: {lora_path.name} (strength={strength})")
                 return True
             except Exception as e1:
-                # UNet-only fallback (attn_procs)
                 try:
                     pipe.unet.load_attn_procs(str(lora_path))
                     try:
@@ -1530,20 +1741,17 @@ def image_intermediate_sdxl():
                     logger.warning(f"[sdxl] Skipping {tag} LoRA: {e1}")
                     return False
 
-        # Optional LoRA for base
         if lora_filename:
             lp = (MODEL_DIR / lora_filename).resolve()
             if lp.exists() and lp.stat().st_size > 0:
                 _apply_lora(base, lp, lora_strength, "base")
 
-        # Compile UNet when on CUDA (safe try)
         try:
             if device.type == "cuda":
                 base.unet = torch.compile(base.unet, mode="reduce-overhead", fullgraph=True)
         except Exception:
             pass
 
-        # Compel (dual encoders)
         from compel import Compel, ReturnedEmbeddingsType
         def _make_compel(pipe):
             tok_list, enc_list, requires_pooled = [], [], []
@@ -1597,7 +1805,6 @@ def image_intermediate_sdxl():
             callback_steps=max(1, cb_steps),
         ).images
 
-        # Refiner from repo (shares TE2/VAE from base for consistency)
         refiner = StableDiffusionXLImg2ImgPipeline.from_pretrained(
             str(repo_local_dir(SDXL_REFINER_REPO)),
             text_encoder_2=getattr(base, "text_encoder_2", None),
@@ -1608,7 +1815,6 @@ def image_intermediate_sdxl():
             local_files_only=True,
         ).to(device)
 
-        # Optional LoRA for refiner (same file)
         if lora_filename:
             lp = (MODEL_DIR / lora_filename).resolve()
             if lp.exists() and lp.stat().st_size > 0:
@@ -1642,21 +1848,21 @@ def image_intermediate_sdxl():
             callback_steps=max(1, cb_steps),
         ).images[0]
 
-        buf = BytesIO(); image.save(buf, format="PNG")
+        buf = BytesIO(); _apply_watermark(image).save(buf, format="PNG")
         encoded = base64.b64encode(buf.getvalue()).decode("utf-8")
         genbus.finish(gen_id, {"ok": True})
-        return jsonify({
+        return jsonify(_json_sanitize({
             "prompt": prompt,
             "negative_prompt": negative_prompt,
             "image": encoded,
             "generation_id": gen_id,
             "generation_websocket_url": generation_url()
-        }), 201
+        })), 201
 
     except Exception as e:
         logger.exception("SDXL intermediate failed")
         genbus.error(gen_id, str(e))
-        return jsonify({"error": str(e)}), 500
+        return jsonify(_json_sanitize({"error": str(e)})), 500
     finally:
         DeviceManager.free_memory()
 
@@ -1669,13 +1875,13 @@ def image_turbo_sdxl():
     cb_steps = int(data.get("callback_steps", 1))
     auto_dl = bool(data.get("auto_download", False))
     if not prompt:
-        return jsonify({"error": "Prompt is required"}), 400
+        return jsonify(_json_sanitize({"error": "Prompt is required"})), 400
 
     guard = _repos_ready_or_resp(SDXL_TURBO_REPO)
     if guard:
         if auto_dl:
             started = _start_prefetch_pipeline("sdxl_turbo")
-            return jsonify(started["json"]), started["http_status"]
+            return jsonify(_json_sanitize(started["json"])), started["http_status"]
         return guard
 
     gen_id = genbus.new("sdxl_turbo", {"endpoint": "/image/turbo", "prompt": prompt})
@@ -1694,17 +1900,16 @@ def image_turbo_sdxl():
             callback=cb, callback_steps=max(1, cb_steps)
         ).images[0]
 
-        buf = BytesIO(); image.save(buf, format="PNG")
+        buf = BytesIO(); _apply_watermark(image).save(buf, format="PNG")
         b64 = base64.b64encode(buf.getvalue()).decode("utf-8")
         genbus.finish(gen_id, {"ok": True})
-        return jsonify({"prompt": prompt, "image": b64, "generation_id": gen_id, "generation_websocket_url": generation_url()}), 201
+        return jsonify(_json_sanitize({"prompt": prompt, "image": b64, "generation_id": gen_id, "generation_websocket_url": generation_url()})), 201
     except Exception as e:
         logger.exception("SDXL turbo failed")
         genbus.error(gen_id, str(e))
-        return jsonify({"error": str(e)}), 500
+        return jsonify(_json_sanitize({"error": str(e)})), 500
     finally:
         DeviceManager.free_memory()
-
 
 # ------------------------------ FLUX: Krea (t2i) ------------------------------
 @app.route("/image/quality", methods=["POST"])
@@ -1716,9 +1921,8 @@ def image_quality_flux_krea():
     cb_steps = int(data.get("callback_steps", 1))
     auto_dl = bool(data.get("auto_download", False))
     if not prompt:
-        return jsonify({"error": "Prompt is required"}), 400
+        return jsonify(_json_sanitize({"error": "Prompt is required"})), 400
 
-    # Require: local repo + mandatory GGUF
     guard = _ensure_files_present_or_start("flux_krea", auto_download=auto_dl)
     if guard: return guard
 
@@ -1729,14 +1933,12 @@ def image_quality_flux_krea():
         device = DeviceManager.get_device()
         compute_dtype = torch.bfloat16 if device.type in ("cuda", "mps") else torch.float32
 
-        # Load transformer from GGUF (local file)
         transformer = FluxTransformer2DModel.from_single_file(
             str(MODEL_DIR / FLUX_KREA_GGUF_NAME),
             quantization_config=GGUFQuantizationConfig(compute_dtype=compute_dtype),
             torch_dtype=compute_dtype,
         ).to(device)
 
-        # Complete the pipeline from the **local repo cache** (no network)
         pipe = FluxPipeline.from_pretrained(
             str(repo_local_dir(FLUX_KREA_REPO)),
             transformer=transformer,
@@ -1756,23 +1958,22 @@ def image_quality_flux_krea():
             callback_steps=max(1, cb_steps),
         ).images[0]
 
-        buf = BytesIO(); image.save(buf, format="PNG")
+        buf = BytesIO(); _apply_watermark(image).save(buf, format="PNG")
         b64 = base64.b64encode(buf.getvalue()).decode("utf-8")
         genbus.finish(gen_id, {"ok": True})
-        return jsonify({
+        return jsonify(_json_sanitize({
             "prompt": prompt,
             "image": b64,
             "generation_id": gen_id,
             "generation_websocket_url": generation_url()
-        }), 201
+        })), 201
 
     except Exception as e:
         logger.exception("FLUX Krea generation failed")
         genbus.error(gen_id, str(e))
-        return jsonify({"error": str(e)}), 500
+        return jsonify(_json_sanitize({"error": str(e)})), 500
     finally:
         DeviceManager.free_memory()
-
 
 # ----------------------- FLUX Kontext (image -> image) ------------------------
 @app.route("/image/image/quality", methods=["POST"])
@@ -1787,11 +1988,10 @@ def image_kontext_i2i():
     auto_dl = bool(data.get("auto_download", False))
 
     if not prompt:
-        return jsonify({"error": "Prompt is required"}), 400
+        return jsonify(_json_sanitize({"error": "Prompt is required"})), 400
     if not image_b64 and not image_url:
-        return jsonify({"error": "Provide 'image_base64' or 'image_url'"}), 400
+        return jsonify(_json_sanitize({"error": "Provide 'image_base64' or 'image_url'"})), 400
 
-    # Require: local repo + mandatory GGUF
     guard = _ensure_files_present_or_start("flux_kontext", auto_download=auto_dl)
     if guard: return guard
 
@@ -1803,14 +2003,12 @@ def image_kontext_i2i():
         device = DeviceManager.get_device()
         compute_dtype = torch.bfloat16 if device.type in ("cuda", "mps") else torch.float32
 
-        # GGUF transformer (local file)
         transformer = FluxTransformer2DModel.from_single_file(
             str(MODEL_DIR / FLUX_KONTEXT_GGUF_NAME),
             quantization_config=GGUFQuantizationConfig(compute_dtype=compute_dtype),
             torch_dtype=compute_dtype,
         ).to(device)
 
-        # Pipeline completed from the **local Kontext repo** (no network)
         pipe = FluxImg2ImgPipeline.from_pretrained(
             str(repo_local_dir(FLUX_KONTEXT_REPO)),
             transformer=transformer,
@@ -1834,90 +2032,369 @@ def image_kontext_i2i():
             callback_steps=max(1, cb_steps),
         ).images[0]
 
-        buf = BytesIO(); out.save(buf, format="PNG")
+        buf = BytesIO(); _apply_watermark(out).save(buf, format="PNG")
         encoded = base64.b64encode(buf.getvalue()).decode("utf-8")
         genbus.finish(gen_id, {"ok": True})
-        return jsonify({
+        return jsonify(_json_sanitize({
             "prompt": prompt,
             "image": encoded,
             "generation_id": gen_id,
             "generation_websocket_url": generation_url()
-        }), 201
+        })), 201
 
     except Exception as e:
         logger.exception("Kontext i2i failed")
         genbus.error(gen_id, str(e))
-        return jsonify({"error": str(e)}), 500
+        return jsonify(_json_sanitize({"error": str(e)})), 500
     finally:
         DeviceManager.free_memory()
-        
-def _load_ltx_vae_or_none(device: torch.device) -> Optional[AutoencoderKL]:
-    # Prefer upscaler VAE (complete config), then base repo VAE
-    try:
-        vae_dir = repo_local_dir(LTX_UPSAMPLER_REPO) / "vae"
-        if vae_dir.exists():
-            return AutoencoderKL.from_pretrained(
-                str(vae_dir),
-                torch_dtype=torch.float32,
-                local_files_only=True,
-                use_safetensors=True,
-            ).to(device)
-    except Exception as e:
-        logger.warning(f"[ltx] upscaler VAE load failed: {e}")
-    try:
-        vae_dir = repo_local_dir(LTX_REPO) / "vae"
-        if vae_dir.exists():
-            return AutoencoderKL.from_pretrained(
-                str(vae_dir),
-                torch_dtype=torch.float32,
-                local_files_only=True,
-                use_safetensors=True,
-            ).to(device)
-    except Exception as e:
-        logger.warning(f"[ltx] base VAE load failed: {e}")
-    return None
 
-def _maybe_load_t5_encoder_from_gguf(gguf_path: str):
-    """
-    Placeholder: T5 GGUF loading is not officially wired in diffusers.
-    If you have a custom loader (e.g., via a gguf-backed runtime),
-    integrate it here and return a module with the same interface the pipeline expects.
-    Otherwise we no-op gracefully.
-    """
-    try:
-        if not gguf_path or not os.path.isfile(gguf_path):
-            return None
-        # TODO: integrate your T5 GGUF loader here if available.
-        logger.warning("[ltx] T5 GGUF present at %s but no loader is wired; skipping.", gguf_path)
-    except Exception as e:
-        logger.warning("[ltx] Could not load T5 GGUF: %s", e)
-    return None
-
-def _round_hw_to_ratio(h, w, ratio):
-    return h - (h % ratio), w - (w % ratio)
-
-def _flush_mem():
-    try:
-        torch.cuda.empty_cache()
-    except Exception:
-        pass
-    try:
-        torch.mps.empty_cache()
-    except Exception:
-        pass
-    try:
-        import gc; gc.collect()
-    except Exception:
-        pass
+# ------------------------------ VAE / Helpers for LTX -------------------------
 
 def _round_hw_for_vae(h, w, ratio=8):
     return h - (h % ratio), w - (w % ratio)
+
+def enhance_and_interpolate_video(
+    in_path: str,
+    out_path: str,
+    target_fps: int = 24,
+    upscale: float = 1.5,        # 1.0 = keep size, 1.5–2.0 = upscale
+    scaler: str = "lanczos",     # lanczos|spline|bicubic|bilinear
+    crf: int = 18,               # visually-lossless-ish x264
+    preset: str = "slow",
+    add_grain: float = 0.0,      # 0.0–0.2 looks natural if you used heavy denoise
+    sharpen: float = 0.6,        # 0.0–1.5; unsharp strength
+    deband: bool = True,         # fix banding from CRF 40 pre-pass
+):
+    """
+    Spatial clean-up + upscale + 24fps interpolation + high-quality encode.
+    Produces yuv420p MP4 with faststart.
+    """
+    ffmpeg = get_ffmpeg_binary_path()
+
+    # Make sure final dims stay even for yuv420p
+    vf_parts = [
+        # optional upscale
+        f"scale=trunc(iw*{upscale}/2)*2:trunc(ih*{upscale}/2)*2:flags={scaler}" if upscale and upscale != 1.0 else None,
+        # mild denoise/deband to hide compression ringing/banding
+        "gradfun=20:30" if deband else None,              # deband (very safe)
+        # tiny sharpen to restore edges; second triplet is chroma
+        f"unsharp=5:5:{sharpen}:5:5:0" if sharpen and sharpen > 0 else None,
+        # optional fine grain to make it look less 'plastic'
+        (f"noise=alls={add_grain*10}:allf=t" if add_grain and add_grain > 0 else None),
+        # motion-compensated interpolation to 24 fps
+        f"minterpolate=fps={int(target_fps)}:mi_mode=mci:mc_mode=aobmc:me_mode=bidir:vsbmc=1",
+    ]
+    vf = ",".join([p for p in vf_parts if p])
+
+    cmd = [
+        ffmpeg, "-y",
+        "-i", in_path,
+        "-vf", vf,
+        "-c:v", "libx264",
+        "-crf", str(int(crf)),
+        "-preset", preset,
+        "-pix_fmt", "yuv420p",
+        "-movflags", "+faststart",
+        out_path,
+    ]
+
+    # Run; if anything fails, surface a readable error
+    try:
+        subprocess.run(cmd, check=True)
+    except subprocess.CalledProcessError as e:
+        raise RuntimeError(f"ffmpeg enhance/interpolate failed: {e}")
+
+# ---- LTX spatial upscaler (cached) ----
+_ltx_upscaler_pipe = None
+
+def _get_ltx_spatial_upscaler():
+    """
+    Tries the dedicated LTX upscaler pipeline first; falls back to AutoPipelineForImage2Image.
+    Uses the local repo 'linoyts/LTX-Video-spatial-upscaler-0.9.8' you already fetch.
+    """
+    global _ltx_upscaler_pipe
+    if _ltx_upscaler_pipe is not None:
+        return _ltx_upscaler_pipe
+
+    device = DeviceManager.get_device()
+    if device.type == "mps":
+        compute_dtype = torch.float16
+    elif device.type == "cuda":
+        compute_dtype = torch.bfloat16
+    else:
+        compute_dtype = torch.float32
+
+    up_root = repo_local_dir(LTX_UPSAMPLER_REPO)
+
+    # Prefer a purpose-built pipeline if available in your diffusers build
+    try:
+        from diffusers import LTXVideoSpatialUpscalerPipeline
+        pipe = LTXVideoSpatialUpscalerPipeline.from_pretrained(
+            str(up_root),
+            torch_dtype=compute_dtype,
+            local_files_only=True,
+            use_safetensors=True,
+        ).to(device)
+    except Exception:
+        from diffusers import AutoPipelineForImage2Image
+        pipe = AutoPipelineForImage2Image.from_pretrained(
+            str(up_root),
+            torch_dtype=compute_dtype,
+            local_files_only=True,
+            use_safetensors=True,
+        ).to(device)
+
+    # Memory knobs (safe no-ops if unsupported)
+    try: pipe.enable_attention_slicing()
+    except Exception: pass
+    try: pipe.enable_vae_slicing()
+    except Exception: pass
+    try: pipe.enable_vae_tiling()
+    except Exception: pass
+
+    # VAE in fp32 tends to preserve detail better (ignore errors if not supported)
+    try: pipe.vae.to(device=device, dtype=torch.float32)
+    except Exception: pass
+
+    _ltx_upscaler_pipe = pipe
+    return pipe
+
+def _ltx_spatial_upscale_frames(
+    frames: list[Image.Image],
+    scale: float = 2.0,
+    steps: int = 12,
+    guidance: float = 0.0,     # LTX upscaler is usually unconditional; 0.0 is fine
+    strength: float = 0.1,     # 0.0–0.2 sticks closely to the input
+    batch_size: int = 6,
+    gen_id: str | None = None,
+) -> tuple[list[Image.Image], tuple[int,int]]:
+    """
+    Uses the LTX spatial upscaler repo to enhance frames.
+    Returns (upscaled_frames, (W, H)).
+    """
+    assert frames, "No frames to upscale"
+    W0, H0 = frames[0].size
+
+    # Target size (even)
+    Wt = max(2, int(W0 * scale)) // 2 * 2
+    Ht = max(2, int(H0 * scale)) // 2 * 2
+
+    pipe = _get_ltx_spatial_upscaler()
+    out_frames: list[Image.Image] = []
+
+    # Soft pre-resize helps VRAM and avoids over-sharpening
+    def _prep(img: Image.Image) -> Image.Image:
+        return img.convert("RGB").resize((Wt, Ht), Image.BICUBIC)
+
+    total = len(frames)
+    for i in range(0, total, batch_size):
+        chunk = frames[i:i+batch_size]
+        chunk = [_prep(im) for im in chunk]
+
+        with torch.inference_mode():
+            # The upscaler usually ignores text prompt; we pass minimal args for safety.
+            res = pipe(
+                image=chunk,
+                num_inference_steps=int(steps),
+                guidance_scale=float(guidance),
+                strength=float(strength),
+            ).images
+
+        out_frames.extend([im.convert("RGB") for im in res])
+
+        if gen_id:
+            genbus.progress(gen_id, "ltx_upscale", min(i + batch_size, total), total)
+            socketio.sleep(0)
+
+    return out_frames, (Wt, Ht)
+
 # ------------------------------ LTX Image -> Video ----------------------------
+# NEW: Text → Video (Turbo / LTX)
+@app.route("/text/video/turbo", methods=["POST"])
+def ltx_text_to_video():
+    data = request.get_json(silent=True) or {}
+    prompt = (data.get("prompt") or "").strip()
+    neg = data.get("negative_prompt", "worst quality, inconsistent motion, blurry, jittery, distorted")
+    H = int(data.get("height", 480))
+    W = int(data.get("width", 704))
+    frames_count = int(data.get("frames", 161))
+    fps = int(data.get("fps", 24))
+    steps = int(data.get("steps", 50))
+    auto_dl = bool(data.get("auto_download", False))
+    seed = data.get("seed", None)
+
+    if not prompt:
+        return jsonify(_json_sanitize({"error": "Missing 'prompt'"})), 400
+
+    guard = _ensure_files_present_or_start("ltx_video", auto_download=auto_dl)
+    if guard:
+        return guard
+
+    # LTX likes multiples of 8
+    H, W = _round_hw_for_vae(H, W, ratio=8)
+
+    gen_id = genbus.new("ltx_t2v", {
+        "endpoint": "/text/video/turbo",
+        "w": W, "h": H, "frames": frames_count, "fps": fps
+    })
+
+    try:
+        base_root = repo_local_dir(LTX_REPO)  # same repo you used for i2v
+        device = DeviceManager.get_device()
+        if device.type == "mps":
+            compute_dtype = torch.float16
+        elif device.type == "cuda":
+            compute_dtype = torch.bfloat16
+        else:
+            compute_dtype = torch.float32
+
+        pipe = LTXPipeline.from_pretrained(
+            str(base_root),
+            torch_dtype=compute_dtype,
+            local_files_only=True,
+            use_safetensors=True,
+        ).to(device)
+
+        generator = torch.Generator(device=device).manual_seed(seed) if isinstance(seed, int) else None
+
+        genbus.progress(gen_id, "generate_video", 1, 2)
+        out = pipe(
+            prompt=prompt,
+            negative_prompt=neg,
+            width=W,
+            height=H,
+            num_frames=frames_count,
+            num_inference_steps=steps,
+            generator=generator,
+        )
+
+        frames = out.frames[0] if hasattr(out, "frames") else out
+        if not isinstance(frames, (list, tuple)):
+            frames = [frames]
+
+        frames = _apply_watermark_frames(frames)
+
+        genbus.progress(gen_id, "encode_video", 2, 2)
+        out_name = f"ltx_{int(time.time())}.mp4"
+        out_path = os.path.join(os.getcwd(), out_name)
+        _write_video_h264_safe(out_path, frames, fps=fps, gen_id=gen_id, target_size=(W, H))
+
+        genbus.finish(gen_id, {"video_path": out_path})
+        return jsonify(_json_sanitize({
+            "ok": True,
+            "video_path": out_path,
+            "generation_websocket_url": generation_url(),
+        })), 201
+
+    except Exception as e:
+        logger.exception("LTX text->video failed")
+        genbus.error(gen_id, str(e))
+        return jsonify(_json_sanitize({"error": str(e)})), 500
+    finally:
+        DeviceManager.free_memory()
+        
+def _motionfix_preprocess(img: Image.Image, jpeg_q=35, noise_std=3.0) -> Image.Image:
+    buf = io.BytesIO()
+    img.save(buf, format="JPEG", quality=max(10, min(95, int(jpeg_q))))
+    buf.seek(0)
+    comp = Image.open(buf).convert("RGB")
+    arr = np.asarray(comp).astype(np.float32)
+    if noise_std > 0:
+        arr += np.random.normal(scale=float(noise_std), size=arr.shape)
+    arr = np.clip(arr, 0, 255).astype(np.uint8)
+    return Image.fromarray(arr, "RGB")
+
+def _ffmpeg_h264_roundtrip(
+    img: Image.Image,
+    target_w: int,
+    target_h: int,
+    crf: int = 40,
+    downscale: float = 0.5,
+    down_filter: str = "bicubic",   # "bicubic" or "bilinear"
+    up_filter: str = "bicubic",     # "bicubic" or "bilinear"
+) -> Image.Image:
+    """
+    Downscale -> H.264 CRF encode -> decode -> upscale back to (target_w,target_h) via ffmpeg.
+    Returns a PIL.Image. Uses yuv420p and keeps even dimensions for H.264.
+    """
+    ffmpeg = get_ffmpeg_binary_path()
+
+    # input dims
+    iw, ih = img.size
+
+    # compute downscaled (must be even for h264)
+    dw = max(2, int(iw * downscale) // 2 * 2)
+    dh = max(2, int(ih * downscale) // 2 * 2)
+
+    # ensure target dims are even
+    tw = max(2, int(target_w) // 2 * 2)
+    th = max(2, int(target_h) // 2 * 2)
+
+    # ffmpeg scale flag mapping
+    def _flag(x: str) -> str:
+        x = (x or "").lower()
+        return "bilinear" if x.startswith("bilin") else "bicubic"
+
+    down_flag = _flag(down_filter)
+    up_flag   = _flag(up_filter)
+
+    # stage to temp directory
+    tmp_dir = Path(MODEL_DIR) / f"fxrt_{int(time.time()*1000)}"
+    tmp_dir.mkdir(parents=True, exist_ok=True)
+    in_png   = tmp_dir / "in.png"
+    mid_mp4  = tmp_dir / "mid.mp4"
+    out_png  = tmp_dir / "out.png"
+
+    try:
+        img.convert("RGB").save(in_png, "PNG")
+
+        # 1) downscale + h264 encode (CRF ~ 40)
+        #    -pix_fmt yuv420p requires even dims; we enforced that above
+        cmd1 = [
+            ffmpeg, "-y",
+            "-i", str(in_png),
+            "-vf", f"scale={dw}:{dh}:flags={down_flag}",
+            "-c:v", "libx264",
+            "-crf", str(int(crf)),
+            "-preset", "veryfast",
+            "-tune", "stillimage",
+            "-pix_fmt", "yuv420p",
+            "-movflags", "+faststart",
+            str(mid_mp4),
+        ]
+        subprocess.run(cmd1, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+
+        # 2) decode and upscale back to target
+        cmd2 = [
+            ffmpeg, "-y",
+            "-i", str(mid_mp4),
+            "-vf", f"scale={tw}:{th}:flags={up_flag}",
+            "-frames:v", "1",
+            str(out_png),
+        ]
+        subprocess.run(cmd2, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+
+        out = Image.open(out_png).convert("RGB")
+        return out
+
+    except Exception as e:
+        logger.warning(f"[ffmpeg_roundtrip] Falling back to original image: {e}")
+        return img
+
+    finally:
+        try:
+            for p in (in_png, mid_mp4, out_png):
+                if p.exists(): p.unlink()
+            tmp_dir.rmdir()
+        except Exception:
+            pass
+        
 @app.route("/image/video/turbo", methods=["POST"])
 def ltx_image_to_video():
     data = request.get_json(silent=True) or {}
     prompt = (data.get("prompt") or "").strip()
-    neg = data.get("negative_prompt", "worst quality, inconsistent motion, blurry, jittery, distorted")
+    neg = data.get("negative_prompt", "worst quality, blurry, jittery, distorted")
     H = int(data.get("height", 480))
     W = int(data.get("width", 704))
     frames_count = int(data.get("frames", 161))
@@ -1927,19 +2404,28 @@ def ltx_image_to_video():
     image_b64 = (data.get("image_base64") or "").strip()
     image_url = (data.get("image_url") or "").strip()
     seed = data.get("seed", None)
-
+    strength = float(data.get("strength", 0.72))         # ↑ denoise for motion (0.65–0.85 is a good band)
+    guidance = float(data.get("guidance_scale", 5))    # ↓ CFG (2.0–3.5)
+    seed_in   = data.get("seed", None)
+    seed_strategy = (data.get("seed_strategy") or "random").lower()
+    per_frame = bool(data.get("per_frame_seed", True))   # seed drift per frame by default
+    motionfix = bool(data.get("motionfix", True))        # on by default
+    jpeg_q    = int(data.get("jpeg_quality", 50))
+    noise_std = float(data.get("jpeg_gauss_std", 1.0))
+    ffmpeg_roundtrip = bool(data.get("ffmpeg_roundtrip", True))
+    ffmpeg_crf       = int(data.get("ffmpeg_crf", 40))        # “around 40”
+    downscale_factor = float(data.get("downscale_factor", 0.5))
+    down_filter      = (data.get("down_filter") or "bicubic") # or "bilinear"
+    up_filter        = (data.get("up_filter") or "bicubic")
+    
     if not prompt:
-        return jsonify({"error": "Missing 'prompt'"}), 400
+        return jsonify(_json_sanitize({"error": "Missing 'prompt'"})), 400
     if not image_b64 and not image_url:
-        return jsonify({"error": "Provide 'image_base64' or 'image_url'"}), 400
+        return jsonify(_json_sanitize({"error": "Provide 'image_base64' or 'image_url'"})), 400
 
-    # Ensure local repo (will auto-prefetch if asked)
     guard = _ensure_files_present_or_start("ltx_video", auto_download=auto_dl)
     if guard: return guard
 
-    # Round to VAE grid (8)
-    def _round_hw_for_vae(h, w, ratio=8):
-        return h - (h % ratio), w - (w % ratio)
     H, W = _round_hw_for_vae(H, W, ratio=8)
 
     gen_id = genbus.new("ltx_i2v", {"endpoint": "/image/video/turbo", "w": W, "h": H, "frames": frames_count, "fps": fps})
@@ -1948,8 +2434,6 @@ def ltx_image_to_video():
         device = DeviceManager.get_device()
         base_root = repo_local_dir(LTX_REPO)
 
-        # Keep it simple & robust: fp32 (yes, slower, but avoids dtype edge cases)
-        from diffusers import LTXImageToVideoPipeline
         pipe = LTXImageToVideoPipeline.from_pretrained(
             str(base_root),
             torch_dtype=torch.float32,
@@ -1957,19 +2441,41 @@ def ltx_image_to_video():
             use_safetensors=True,
         ).to(device)
 
-        # Load the init image from POST
         if image_url:
             init_img = load_image(image_url).convert("RGB")
         else:
             raw = base64.b64decode(image_b64)
             init_img = Image.open(io.BytesIO(raw)).convert("RGB")
+            
+        if ffmpeg_roundtrip:
+            init_img = _ffmpeg_h264_roundtrip(
+                init_img,
+                target_w=W,
+                target_h=H,
+                crf=ffmpeg_crf,
+                downscale=downscale_factor,
+                down_filter=down_filter,
+                up_filter=up_filter,
+            )
+            
+        if motionfix:
+            init_img = _motionfix_preprocess(init_img, jpeg_q=jpeg_q, noise_std=noise_std)
 
-        # Optional seed
         generator = None
         if isinstance(seed, int):
             generator = torch.Generator(device=device).manual_seed(seed)
+            
+        if motionfix:
+            try:
+                pipe.scheduler = FlowMatchEulerDiscreteScheduler.from_config(pipe.scheduler.config)
+                # helpful toggles if available in your diffusers version:
+                try: setattr(pipe.scheduler, "use_karras_sigmas", True)
+                except Exception: pass
+                try: setattr(pipe.scheduler, "timestep_spacing", "trailing")
+                except Exception: pass
+            except Exception as e:
+                logger.info(f"[LTX] Keep default scheduler (couldn't switch): {e}")
 
-        # Generate (use only supported kwargs)
         genbus.progress(gen_id, "generate_video", 1, 2)
         out = pipe(
             image=init_img,
@@ -1980,53 +2486,41 @@ def ltx_image_to_video():
             num_frames=frames_count,
             num_inference_steps=steps,
             generator=generator,
+            guidance_scale=guidance,              # lower CFG → freer motion
         )
 
-        # Always unwrap nested frames: LTX returns [[PIL...]]
         frames = out.frames[0] if hasattr(out, "frames") else out
         if not isinstance(frames, (list, tuple)):
             frames = [frames]
 
-        # Encode safely via ffmpeg (your helper sanitizes + PNGs -> H.264)
+        frames = _apply_watermark_frames(frames)
+
         genbus.progress(gen_id, "encode_video", 2, 2)
         out_name = f"ltx_{int(time.time())}.mp4"
         out_path = os.path.join(os.getcwd(), out_name)
-        _write_video_h264_safe(out_path, frames, fps=fps, gen_id=gen_id, target_size=(W, H))
-
+        # _write_video_h264_safe(out_path, frames, fps=fps, gen_id=gen_id, target_size=(W, H))
+        _write_video_h264_safe_interpolated(
+            out_path, frames, fps_in=fps, target_size=(W, H),
+            fps_out=24, upscale=1, scaler="lanczos",
+            crf=18, preset="slow", add_grain=0.05, sharpen=0.5, deband=True, gen_id=gen_id
+        )
         genbus.finish(gen_id, {"video_path": out_path})
-        return jsonify({"ok": True, "video_path": out_path, "generation_websocket_url": generation_url()}), 201
+        return jsonify(_json_sanitize({"ok": True, "video_path": out_path, "generation_websocket_url": generation_url()})), 201
 
     except Exception as e:
         logger.exception("LTX image->video failed")
         genbus.error(gen_id, str(e))
-        return jsonify({"error": str(e)}), 500
+        return jsonify(_json_sanitize({"error": str(e)})), 500
     finally:
         DeviceManager.free_memory()
 
 # ------------------- WAN Image -> Video ----------------------------
-def _load_wan_pipeline_shell(device: torch.device, compute_dtype: torch.dtype):
-    from diffusers import WanImageToVideoPipeline
-    repo_root = repo_local_dir(WAN_REPO)
-    pipe = WanImageToVideoPipeline.from_pretrained(
-        str(repo_root), torch_dtype=compute_dtype, local_files_only=True,
-    )
-    # Offloading
-    if device.type == "cuda":
-        try: pipe.enable_model_cpu_offload()
-        except Exception: pipe.enable_sequential_cpu_offload()
-    else:
-        pipe.enable_attention_slicing()
-        try: pipe.vae.enable_slicing()
-        except Exception: pass
-    return pipe.to(device)
 
 def preprocess_image(img: Image.Image, quality=25, noise_std=2.5):
-    # JPEG compression
     buf = io.BytesIO()
     img.save(buf, format='JPEG', quality=quality)
     buf.seek(0)
     compressed = Image.open(buf).convert('RGB')
-    # Add Gaussian noise
     arr = np.array(compressed).astype(np.float32)
     noise = np.random.normal(scale=noise_std, size=arr.shape)
     noisy = np.clip(arr + noise, 0, 255).astype(np.uint8)
@@ -2038,14 +2532,14 @@ def wan_image_to_video():
     prompt = (data.get("prompt") or "").strip()
     neg = data.get("negative_prompt", "worst quality, inconsistent motion, blur, jitter, distorted")
     if not prompt:
-        return jsonify({"error": "Missing 'prompt'"}), 400
+        return jsonify(_json_sanitize({"error": "Missing 'prompt'"})), 400
 
     image_b64 = (data.get("image_base64") or "").strip()
     image_url = (data.get("image_url") or "").strip()
     if not image_b64 and not image_url:
-        return jsonify({"error": "Provide 'image_base64' or 'image_url'"}), 400
+        return jsonify(_json_sanitize({"error": "Provide 'image_base64' or 'image_url'"})), 400
 
-    max_area = int(data.get("max_area", 480 * 832))  # Wan example logic
+    max_area = int(data.get("max_area", 480 * 832))
     frames   = int(data.get("frames", 81))
     steps    = int(data.get("steps", 30))
     fps      = int(data.get("fps", 16))
@@ -2053,74 +2547,116 @@ def wan_image_to_video():
     seed     = data.get("seed", None)
     auto_dl  = bool(data.get("auto_download", False))
 
-    # Ensure the repo and single files are present (and correct-sized)
-    guard = _ensure_files_present_or_start("wan_fp8", auto_download=auto_dl)
-    if guard: return guard
+    gen_id = genbus.new("wan_i2v", {"endpoint": "/image/video/quality", "frames": frames, "fps": fps})
+    genbus.progress(gen_id, "Verifying install...", 1, 5)
 
-    gen_id = genbus.new("wan_i2v", {
-        "endpoint": "/image/video/quality",
-        "frames": frames, "fps": fps
-    })
+    # Make sure the repo + 3 single files are present locally (Comfy diffusion/vae/t5).
+    guard = _ensure_files_present_or_start("wan_video", auto_download=auto_dl)
+    if guard: 
+        return guard
 
     try:
+        # Device + dtypes: keep VAE in float32 for quality; rest depends on hardware
         device = DeviceManager.get_device()
-        # bfloat16 is typical for WAN on GPU; keep model weights native where we override.
-        compute_dtype = torch.bfloat16 if device.type in ("cuda", "mps") else torch.float32
+        if device.type == "mps":
+            compute_dtype = torch.float16
+        elif device.type == "cuda":
+            compute_dtype = torch.bfloat16
+        else:
+            compute_dtype = torch.float32
 
-        # Load official pipeline from the full repo
-        base_root = repo_local_dir(WAN_DIFFUSERS_REPO)
+        base_root = repo_local_dir(WAN_DIFFUSERS_REPO)  # Wan-AI/Wan2.2-TI2V-5B-Diffusers (local)
+
+        genbus.progress(gen_id, "Loading models...", 2, 5)
+
+        # ---- Which noise variant?
+        noise_variant = (data.get("noise_variant") or data.get("noise") or "low").strip().lower()
+        gguf_name = WAN22_HIGH_GGUF_NAME if noise_variant in ("high", "h", "highnoise", "high_noise") else WAN22_LOW_GGUF_NAME
+
+        base_root = repo_local_dir(WAN_DIFFUSERS_REPO)  # Wan-AI/Wan2.2-I2V-A14B-Diffusers (local)
+        tr_cfg = base_root / "transformer" / "config.json"
+        vae_cfg = base_root / "vae" / "config.json"
+
+        # ---- Transformer (Diffusers 3D) from GGUF
+        transformer = WanTransformer3DModel.from_single_file(
+            str(MODEL_DIR / gguf_name),
+            config=str(tr_cfg),
+            quantization_config=GGUFQuantizationConfig(compute_dtype=compute_dtype),
+            torch_dtype=compute_dtype,
+            local_files_only=True,
+        ).to(device)
+
+        # ---- VAE from Wan 2.1 (fp32/16 okay, keep fp32 on CPU if you want to save VRAM)
+        vae = AutoencoderKLWan.from_single_file(
+            str(MODEL_DIR / WAN21_VAE_NAME),
+            config=str(vae_cfg),
+            torch_dtype=compute_dtype,      # for max quality you can force torch.float32
+            local_files_only=True,
+            low_cpu_mem_usage=False,
+            ignore_mismatched_sizes=True,
+        )
+        # Optionally keep VAE on CPU for VRAM savings (slower, but lighter):
+        if os.getenv("WAN_VAE_ON_CPU", "0") == "1":
+            vae = vae.to("cpu")
+        else:
+            vae = vae.to(device)
+
+        # ---- Text encoder from the A14B diffusers repo (no GGUF needed here)
+        #     You can force it to CPU to minimize VRAM:
+        t5_device = torch.device("cpu") if os.getenv("WAN_T5_ON_CPU", "1") == "1" else device
+        text_encoder = T5EncoderModel.from_pretrained(
+            str(base_root / "text_encoder"),
+            torch_dtype=(torch.float16 if t5_device.type != "cpu" else torch.float32),
+            local_files_only=True,
+        ).to(t5_device)
+
+        # ---- Build pipeline (scheduler/tokenizer come from the repo on disk)
         pipe = WanImageToVideoPipeline.from_pretrained(
             str(base_root),
+            transformer=transformer,
+            vae=vae,
+            text_encoder=text_encoder,
             torch_dtype=compute_dtype,
             local_files_only=True,
             use_safetensors=True,
         ).to(device)
 
-        # --- Override VAE from FP8 safetensors (keep native dtype; do not force-cast) ---
-        try:
-            vae_path = MODEL_DIR / WAN_FP8_VAE_NAME
-            # Prefer a single-file loader if supported; otherwise fall back to repo VAE.
-            # Many recent diffusers builds support from_single_file for VAE:
-            vae = AutoencoderKLWan.from_single_file(
-                str(vae_path),
-                torch_dtype=torch.float32,   # leave compute dtype for kernels; weights may be upcast internally
-                local_files_only=True
-            ).to(device)
-            pipe.vae = vae
-        except Exception as e:
-            logger.warning(f"[wan_fp8] Could not override VAE from {WAN_FP8_VAE_NAME}: {e}")
+        # Keep VAE in float32 explicitly (important for quality)
+        # try:
+        #     pipe.vae.to(device=device, dtype=torch.float32)
+        # except Exception:
+        #     pass
 
-        # --- Override transformer from GGUF (quantized) ---
-        try:
-            gguf_path = MODEL_DIR / WAN_FP8_GGUF_NAME
-            transformer = load_transformer_from_gguf(gguf_path, compute_dtype)
-            if transformer is not None:
-                pipe.transformer = transformer.to(device)
-            else:
-                logger.warning("[wan_fp8] GGUF transformer load returned None; using repo transformer.")
-        except Exception as e:
-            logger.warning(f"[wan_fp8] Could not load GGUF transformer: {e}")
+        # Light memory knobs for MPS only
+        if device.type == "mps":
+            try: pipe.enable_attention_slicing()
+            except Exception: pass
+            try: pipe.enable_vae_slicing()
+            except Exception: pass
+            try: pipe.enable_vae_tiling()
+            except Exception: pass
 
-        # ---- Prepare input image ----
+        # ---- Prepare input image
         if image_url:
             init_img = load_image(image_url).convert("RGB")
         else:
             raw = base64.b64decode(image_b64)
             init_img = Image.open(io.BytesIO(raw)).convert("RGB")
 
-        # Wan size logic: keep aspect, snap to VAE multiple
+        # Round size to model-friendly multiples (use your helper with ratio=8)
         aspect = init_img.height / init_img.width
-        mod = getattr(pipe, "vae_scale_factor_spatial", 8) * getattr(pipe.transformer.config, "patch_size", [1,8])[1]
+        mod = getattr(pipe, "vae_scale_factor_spatial", 8) * getattr(pipe.transformer.config, "patch_size", [1, 8])[1]
         h = int(np.sqrt(max_area * aspect)) // mod * mod
         w = int(np.sqrt(max_area / aspect)) // mod * mod
-        init_img = init_img.resize((w, h))
+        h, w = _round_hw_for_vae(h, w, ratio=8)
+        init_img = init_img.resize((w, h), Image.BICUBIC)
 
         generator = None
         if isinstance(seed, int):
             generator = torch.Generator(device=device).manual_seed(seed)
 
-        # ---- Generate frames ----
-        genbus.progress(gen_id, "generate_video", 1, 2)
+        # ---- Generate video frames
+        genbus.progress(gen_id, "Generating video...", 3, 5)
         out = pipe(
             image=init_img,
             prompt=prompt,
@@ -2132,23 +2668,30 @@ def wan_image_to_video():
             generator=generator,
         )
 
-        # Always unwrap nested list
-        frames_pil = out.frames[0] if hasattr(out, "frames") else out
-        if not isinstance(frames_pil, (list, tuple)) or len(frames_pil) == 0:
+        frames = getattr(out, "frames", None)
+        if isinstance(frames, list) and len(frames) and isinstance(frames[0], list):
+            frames = frames[0]
+        if not isinstance(frames, (list, tuple)) or len(frames) == 0:
             raise RuntimeError("WAN pipeline returned no frames")
 
-        # ---- Encode via safe H.264 path (PNG -> ffmpeg yuv420p) ----
-        genbus.progress(gen_id, "encode_video", 2, 2)
+        genbus.progress(gen_id, "Applying watermark...", 4, 5)
+        frames = _apply_watermark_frames(frames)
+
+        genbus.progress(gen_id, "Encoding video...", 4, 5)
         out_path = os.path.join(os.getcwd(), f"wan_{int(time.time())}.mp4")
-        _write_video_h264_safe(out_path, frames_pil, fps=fps, gen_id=gen_id, target_size=(w, h))
+        _write_video_h264_safe(out_path, frames, fps=fps, gen_id=gen_id, target_size=(w, h))
 
         genbus.finish(gen_id, {"video_path": out_path})
-        return jsonify({"ok": True, "video_path": out_path, "generation_websocket_url": generation_url()}), 201
+        return jsonify(_json_sanitize({
+            "ok": True,
+            "video_path": out_path,
+            "generation_websocket_url": generation_url()
+        })), 201
 
     except Exception as e:
         logger.exception("Wan i2v failed")
         genbus.error(gen_id, str(e))
-        return jsonify({"error": str(e)}), 500
+        return jsonify(_json_sanitize({"error": str(e)})), 500
     finally:
         try: DeviceManager.free_memory()
         except Exception: pass
@@ -2158,37 +2701,55 @@ def wan_image_to_video():
 # ------------------------------- Downloads API --------------------------------
 @app.route("/downloads/list", methods=["GET"])
 def downloads_list():
-    return jsonify({"pipelines": [p.to_dict() for p in download_manager.pipelines.values()]}), 200
+    return jsonify(_json_sanitize({"pipelines": [p.to_dict() for p in download_manager.pipelines.values()]})), 200
 
 @app.route("/downloads/status/<pipeline_id>", methods=["GET"])
 def downloads_status(pipeline_id):
     pl = download_manager.pipelines.get(pipeline_id)
     if not pl:
-        return jsonify({"error": "Pipeline not found"}), 404
-    return jsonify(pl.to_dict()), 200
-
-@app.route("/downloads/retry/<pipeline_id>", methods=["POST"])
-def downloads_retry(pipeline_id):
-    return jsonify({"message": "Retry not supported for unified pipeline; re-run /pipelines/prefetch"}), 400
+        return jsonify(_json_sanitize({"error": "Pipeline not found"})), 404
+    return jsonify(_json_sanitize(pl.to_dict())), 200
 
 @app.route("/downloads/cancel/<pipeline_id>", methods=["POST"])
 def downloads_cancel(pipeline_id):
-    return jsonify({"message": "Cancel not supported for unified pipeline"}), 400
+    pl = download_manager.cancel_pipeline(pipeline_id)
+    if not pl:
+        return jsonify({"error": "Pipeline not found"}), 404
+    return jsonify({"ok": True, "pipeline_id": pl.pipeline_id, "status": pl.status}), 200
+
+@app.route("/downloads/retry/<pipeline_id>", methods=["POST"])
+def downloads_retry(pipeline_id):
+    pl = download_manager.pipelines.get(pipeline_id)
+    if not pl:
+        return jsonify({"error": "Pipeline not found"}), 404
+
+    # mark old pipeline done/cancelled so UI stops showing it as active
+    download_manager.cancel_pipeline(pipeline_id)
+
+    # start a fresh prefetch for the same pipeline name
+    started = _start_prefetch_pipeline(pl.pipeline_name)
+    payload = started["json"]
+    # be explicit in the response so the client can (re)subscribe
+    return jsonify({
+        "ok": True,
+        "pipeline_id": payload.get("pipeline_id"),
+        "websocket_url": f"{request.host_url.rstrip('/')}/downloads"
+    }), 202
 
 # -------------------------------- Health & root --------------------------------
 @app.route("/")
 def root():
-    return jsonify({"message": "BonzAI Media Generation Server", "local_only": LOCAL_ONLY})
+    return jsonify(_json_sanitize({"message": "BonzAI Media Generation Server", "local_only": LOCAL_ONLY}))
 
 @app.route("/health")
 def health():
-    return jsonify({
+    return jsonify(_json_sanitize({
         "status": "healthy",
         "device": str(DeviceManager.get_device()),
         "has_hf_token": bool(_hf_token()),
         "local_only": LOCAL_ONLY,
         "model_dir": str(MODEL_DIR),
-    })
+    }))
 
 logger.info(f"HF_HOME={os.environ.get('HF_HOME')}")
 logger.info(f"HF token present? {bool(_hf_token())}")

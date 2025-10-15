@@ -176,15 +176,6 @@
                         </li>
                       </ul>
                     </span>
-                    <span v-if="readiness.notes.length">
-                      <br />
-                      Notes:
-                      <ul style="margin-top: 0.5rem">
-                        <li v-for="(n, i) in readiness.notes" :key="i">
-                          • {{ n }}
-                        </li>
-                      </ul>
-                    </span>
                   </p>
                   <hr />
                   <div class="buttons">
@@ -208,13 +199,13 @@
                   class="notification is-danger"
                   style="margin-bottom: 1rem"
                 >
-                  <strong>Generation failed:</strong>
+                  <strong>Generation failed, please retry.</strong>
+                  <hr />
                   {{ generation.error }}
                 </div>
-
                 <!-- DOWNLOAD PROGRESS -->
                 <div
-                  v-if="downloads && downloads.active && Math.round(downloads.progress) != 100"
+                  v-if="downloads && downloads.active"
                   class="notification is-info"
                   style="margin-bottom: 1.25rem"
                 >
@@ -229,7 +220,7 @@
                     <span
                       class="fira-sans-condensed-black-italic is-pulled-right is-size-1"
                     >
-                      {{ Math.round(downloads.progress || 0) }}%
+                      {{ Math.round(downloads.total_progress || 0) }}%
                       <button
                         class="button is-small is-warning mr-4 retry p-1"
                         @click="retryCurrentPipeline"
@@ -456,6 +447,9 @@ export default {
     const inferences = reactive([]);
     const hasCopy = reactive([]);
 
+    // inside setup()
+    const planReq = reactive({ controller: null, seq: 0 });
+
     // --------- readiness & generation
     const readiness = reactive({
       ok: true,
@@ -507,7 +501,7 @@ export default {
     const endpointForMode = () =>
       mode.value === "turbo" ? "/image/video/turbo" : "/image/video/quality";
     const pipelineForMode = () =>
-      mode.value === "turbo" ? "ltx_video" : "wan_fp8";
+      mode.value === "turbo" ? "ltx_video" : "wan_video";
 
     // WAN requires (num_frames - 1) % 4 === 0
     const normalizeFramesForWan = (frames) => {
@@ -521,6 +515,7 @@ export default {
       active: false,
       pipelineId: null,
       progress: 0,
+      total_progress: 0,
       status: "pending",
       pipeline: { tasks: {} },
       wsUrl: null,
@@ -567,23 +562,61 @@ export default {
       return out;
     };
 
+    const computeTotalFromTasks = (tasksObj) => {
+      const tasks = Object.values(tasksObj || {});
+      if (!tasks.length) return 0;
+
+      // Prefer byte-weighted because server tracks bytes
+      let totalBytes = 0,
+        doneBytes = 0;
+      for (const t of tasks) {
+        const tot = Number(t.total_size || 0);
+        const done = Number(t.downloaded_size || 0);
+        if (tot > 0) {
+          totalBytes += tot;
+          doneBytes += Math.min(done, tot);
+        }
+      }
+      if (totalBytes > 0) return (doneBytes / totalBytes) * 100;
+
+      // Fallback: simple average of task progress
+      const sumPct = tasks.reduce((s, t) => s + Number(t.progress || 0), 0);
+      return sumPct / tasks.length;
+    };
+
     const applyPipelineUpdate = (p) => {
       if (!p) return;
       downloads.pipelineId = p.pipeline_id || downloads.pipelineId;
       downloads.status = p.status || downloads.status || "downloading";
-      const nextPct = Number(p.total_progress || 0);
-      downloads.progress = Math.max(Number(downloads.progress || 0), nextPct);
 
       const existing = downloads.pipeline?.tasks || {};
       const incoming = p.tasks || {};
       const merged = { ...existing };
       for (const [tid, t] of Object.entries(incoming))
         merged[tid] = mergeTask(existing[tid], t);
+
       downloads.pipeline = {
         ...(downloads.pipeline || {}),
         ...p,
         tasks: merged,
       };
+
+      const serverPct = Number(p.total_progress ?? 0);
+      const tasksPct = computeTotalFromTasks(merged);
+
+      // prefer the freshest reading (server if present, else tasks)
+      let next =
+        Number.isFinite(serverPct) && serverPct > 0 ? serverPct : tasksPct;
+
+      // optional: never show 100 until everything is completed
+      const anyActive = Object.values(merged).some((t) =>
+        ["downloading", "pending"].includes(t.status)
+      );
+      if (anyActive) next = Math.min(next, 99.9);
+
+      downloads.total_progress = next;
+      downloads.progress = next;
+
       downloads.active = !["completed", "failed", "cancelled"].includes(
         downloads.status
       );
@@ -683,15 +716,34 @@ export default {
     const cancelCurrentPipeline = async () => {
       if (!downloads.pipelineId) return;
       try {
-        await axios.post(
-          `${API_BASE}/downloads/cancel/${downloads.pipelineId}`
+        const { data, status } = await axios.post(
+          `${API_BASE}/downloads/cancel/${downloads.pipelineId}`,
+          {},
+          { validateStatus: () => true }
         );
+        if (status === 200) {
+          // let the socket update the UI; also flip local flags
+          downloads.status = "cancelled";
+          downloads.active = false;
+        }
       } catch {}
     };
+
     const retryCurrentPipeline = async () => {
       if (!downloads.pipelineId) return;
       try {
-        await axios.post(`${API_BASE}/downloads/retry/${downloads.pipelineId}`);
+        const { data, status } = await axios.post(
+          `${API_BASE}/downloads/retry/${downloads.pipelineId}`,
+          {},
+          { validateStatus: () => true }
+        );
+        if (status === 202 && data?.pipeline_id) {
+          // subscribe to the new pipeline id immediately
+          startDownloadTracking(
+            data.pipeline_id,
+            data.websocket_url || downloads.wsUrl || WS_DL
+          );
+        }
       } catch {}
     };
 
@@ -788,6 +840,7 @@ export default {
     };
 
     const probeCurrentMode = async () => {
+      // reset UI state
       readiness.ok = true;
       readiness.missingRepos = [];
       readiness.repoDetails = [];
@@ -799,23 +852,49 @@ export default {
       generation.blocked = false;
 
       const pipeline = pipelineForMode();
+
+      // --- cancel the previous /plan call (if any)
+      try {
+        planReq.controller?.abort();
+      } catch {}
+      const controller = new AbortController();
+      planReq.controller = controller;
+      const mySeq = ++planReq.seq;
+
       try {
         const { data, status } = await axios.post(
           `${API_BASE}/pipelines/plan`,
           { pipeline, deep_validate: true },
-          { validateStatus: () => true }
+          {
+            signal: controller.signal, // <-- key line
+            validateStatus: () => true,
+          }
         );
-        if (status >= 200 && status < 300) applyPlanToReadiness(data);
-        else {
+
+        // if another /plan started after this one, ignore this response
+        if (mySeq !== planReq.seq) return;
+
+        if (status >= 200 && status < 300) {
+          applyPlanToReadiness(data);
+        } else {
           readiness.ok = false;
           readiness.notes = [`Planner returned HTTP ${status}.`];
         }
       } catch (e) {
-        readiness.ok = false;
-        readiness.notes = [e?.message || "Network error while planning"];
+        // Swallow aborts; surface real errors
+        const aborted =
+          e?.code === "ERR_CANCELED" ||
+          e?.name === "CanceledError" ||
+          e?.message === "canceled";
+        if (!aborted) {
+          readiness.ok = false;
+          readiness.notes = [e?.message || "Network error while planning"];
+        }
+      } finally {
+        // clear only if we're the active controller
+        if (planReq.controller === controller) planReq.controller = null;
       }
     };
-
     // --- CTA action
     const prefetchForMode = async () => {
       const pipeline = pipelineForMode();
@@ -988,14 +1067,14 @@ export default {
 
       // sizes tuned to server examples
       const sizeMaps = {
-        turbo: { sd: [480, 640], hd: [720, 1280], fhd: [1080, 1920] }, // LTX likes 2:3~ish; HxW
-        quality: { sd: [480, 640], hd: [720, 1152], fhd: [1080, 1728] }, // WAN example dims; HxW
+        turbo: { sd: [512, 768], hd: [768, 1280], fhd: [1088  , 1920] }, // LTX likes 2:3~ish; HxW
+        quality: { sd: [240, 416], hd: [720, 1152], fhd: [1080, 1728] }, // WAN example dims; HxW
       };
       const pick = sizeMaps[mode.value] || sizeMaps.turbo;
       const [h, w] = pick[quality.value] || pick.sd;
 
       // sensible defaults matching server
-      let frames = mode.value === "turbo" ? 48 : 65;
+      let frames = mode.value === "turbo" ? 97 : 36;
       let payload;
 
       if (mode.value === "quality") {
@@ -1005,9 +1084,9 @@ export default {
           prompt,
           height: h,
           width: w,
-          frames,
-          fps: 24,
-          steps: 30,
+          frames: frames,
+          fps: 12,
+          steps: 20,
           callback_steps: 1,
           auto_download: true,
           image_base64:
@@ -1022,7 +1101,7 @@ export default {
           width: w,
           frames: 49, // LTX is fine with 96 by default
           fps: 12,
-          steps: 25,
+          steps: 100,
           auto_download: true,
           image_base64:
             uploadedImageBase64.value ||
