@@ -2616,11 +2616,11 @@ def ltx_image_to_video():
     seed_strategy = (data.get("seed_strategy") or "random").lower()
     per_frame = bool(data.get("per_frame_seed", True))   # seed drift per frame by default
     motionfix = bool(data.get("motionfix", True))        # on by default
-    jpeg_q    = int(data.get("jpeg_quality", 65))
-    noise_std = float(data.get("jpeg_gauss_std", 0.66))
+    jpeg_q    = int(data.get("jpeg_quality", 95))
+    noise_std = float(data.get("jpeg_gauss_std", 0.4))
     ffmpeg_roundtrip = bool(data.get("ffmpeg_roundtrip", True))
     ffmpeg_crf       = int(data.get("ffmpeg_crf", 40))        # “around 40”
-    downscale_factor = float(data.get("downscale_factor", 0.5))
+    downscale_factor = float(data.get("downscale_factor", 0.85))
     down_filter      = (data.get("down_filter") or "bicubic") # or "bilinear"
     up_filter        = (data.get("up_filter") or "bicubic")
     
@@ -2714,7 +2714,7 @@ def ltx_image_to_video():
         _write_video_h264_safe_interpolated(
             out_path, out, fps_in=fps, target_size=(W, H),
             fps_out=24, upscale=2, scaler="lanczos", aspect_mode="fill", 
-            crf=20, preset="slow", add_grain=0.25, sharpen=0.75, deband=True, gen_id=gen_id
+            crf=15, preset="slow", add_grain=0.05, sharpen=0.7, deband=True, gen_id=gen_id
         )
         genbus.finish(gen_id, {"video_path": out_path})
         return jsonify(_json_sanitize({"ok": True, "video_path": out_path, "generation_websocket_url": generation_url()})), 201
