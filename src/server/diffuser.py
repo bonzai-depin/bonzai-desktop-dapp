@@ -14,6 +14,7 @@ from dataclasses import dataclass, field
 from typing import Optional, Dict, Any, List
 from importlib import import_module
 from fnmatch import fnmatch
+import imageio.v3 as iio
 
 # ---- eventlet first
 import eventlet
@@ -42,11 +43,14 @@ from transformers import T5EncoderModel, T5Config
 from safetensors.torch import load_file as safe_load_file
 
 from diffusers import (
+    DiffusionPipeline,
     AutoPipelineForText2Image,
     StableDiffusionXLPipeline,
     StableDiffusionXLImg2ImgPipeline,
     HunyuanVideoPipeline,
+    LTXPipeline,
     LTXImageToVideoPipeline,
+    LTXConditionPipeline,
     WanImageToVideoPipeline,
     GGUFQuantizationConfig,
     FluxPipeline,
@@ -56,6 +60,7 @@ from diffusers import (
     AutoencoderKLWan,
     FlowMatchEulerDiscreteScheduler
 )
+from diffusers.pipelines.ltx.pipeline_ltx_condition import LTXVideoCondition
 from diffusers.utils import load_image, export_to_video
 
 # ------------------------- JSON Sanitization -------------------------
@@ -1559,8 +1564,12 @@ def _sanitize_frames_for_video(frames, target_size=None):
 
     return out, (W, H)
 
-def _write_video_h264_safe(out_path, frames, fps, gen_id=None, target_size=None):
+def _write_video_h264_safe(out_path, frames, fps, gen_id=None, target_size=None, trim_head_frames: int = 0):
     arrs, (W, H) = _sanitize_frames_for_video(frames, target_size=target_size)
+    if isinstance(trim_head_frames, int) and trim_head_frames > 0:
+        drop = min(trim_head_frames, max(0, len(arrs) - 1))  # keep at least 1 frame
+        if drop:
+            arrs = arrs[drop:]
     tmp_dir = Path(MODEL_DIR) / f"tmp_frames_{int(time.time())}"
     tmp_dir.mkdir(parents=True, exist_ok=True)
     try:
@@ -1578,29 +1587,176 @@ def _write_video_h264_safe(out_path, frames, fps, gen_id=None, target_size=None)
         shutil.rmtree(tmp_dir, ignore_errors=True)
         
 def _write_video_h264_safe_interpolated(
-    out_path, frames, fps_in, target_size, fps_out=24,
-    upscale=1.5, scaler="lanczos", crf=18, preset="slow",
-    add_grain=0.0, sharpen=0.6, deband=True, gen_id=None
+    out_path,
+    frames,
+    fps_in,
+    target_size=None,          # final delivery (W,H)
+    fps_out=24,
+    upscale=1.0,               # super-sample factor before final downscale
+    scaler="lanczos",          # lanczos|spline36|bicubic|bilinear
+    crf=20,
+    preset="slow",
+    tune="film",
+    add_grain=0.0,             # 0..1
+    sharpen=0.35,              # ~0.3–0.8
+    deband=True,
+    denoise=True,
+    use_libplacebo=False,      # we’ll use core scale/pad/crop for AR correctness
+    aspect_mode="fit",         # fit|fill|stretch|none
+    pad_color="black",         # letterbox/pillarbox color, e.g. "#0a0a0f"
+    gen_id=None,
+    trim_head_frames: int = 0,
 ):
-    # 1) Write the raw video (your existing helper)
-    _write_video_h264_safe(out_path, frames, fps=fps_in, gen_id=gen_id, target_size=target_size)
+    """
+    Aspect modes:
+      - fit:   keep AR, content fits inside target, pad to exact W×H
+      - fill:  keep AR, content fills target, crop overflow to W×H
+      - none:  keep original size (no scaling); still makes dims even
+      - stretch: scale directly to W×H (distorts AR) — not recommended
+    """
+    def _even(n):
+        n = int(round(n))
+        return n - (n % 2) if n % 2 else n
 
-    # 2) Enhance + interpolate to 24 fps
-    tmp = str(Path(out_path).with_suffix(".tmp.mp4"))
-    enhance_and_interpolate_video(
-        in_path=out_path,
-        out_path=tmp,
-        target_fps=fps_out,
-        upscale=upscale,
-        scaler=scaler,
-        crf=crf,
-        preset=preset,
-        add_grain=add_grain,
-        sharpen=sharpen,
-        deband=deband,
-    )
-    # atomic replace
-    Path(tmp).replace(out_path)
+    # Normalize frames without forcing a target resize up-front
+    arrs, (W0, H0) = _sanitize_frames_for_video(frames, target_size=None)
+    if isinstance(trim_head_frames, int) and trim_head_frames > 0:
+        drop = min(trim_head_frames, max(0, len(arrs) - 1))  # keep at least 1 frame
+        if drop:
+            arrs = arrs[drop:]
+    # If caller didn’t provide a target, default to the source size (evened)
+    if target_size is None or aspect_mode == "none":
+        Wt, Ht = _even(W0), _even(H0)
+    else:
+        Wt, Ht = _even(int(target_size[0])), _even(int(target_size[1]))
+
+    # Decide aspect-preserving content box (Wc, Hc) to place into final Wt×Ht
+    if aspect_mode == "fit" and target_size is not None:
+        s = min(Wt / W0, Ht / H0)
+        Wc, Hc = _even(round(W0 * s)), _even(round(H0 * s))
+        Wc = min(Wc, Wt); Hc = min(Hc, Ht)
+
+    elif aspect_mode == "fill" and target_size is not None:
+        s = max(Wt / W0, Ht / H0)
+        Wc, Hc = _even(round(W0 * s)), _even(round(H0 * s))
+        # Wc/Hc >= Wt/Ht — will crop to target
+
+    elif aspect_mode == "stretch" and target_size is not None:
+        # Distorts AR to exactly Wt×Ht
+        Wc, Hc = Wt, Ht
+
+    else:  # "none" or no target provided
+        Wc, Hc = _even(W0), _even(H0)
+        Wt, Ht = Wc, Hc  # final delivery matches source
+
+    # Optional supersampling stage for better detail/anti-aliasing
+    if upscale and upscale > 1.0:
+        Wu, Hu = _even(Wc * upscale), _even(Hc * upscale)
+    else:
+        Wu, Hu = Wc, Hc
+
+    # Write source frames as PNGs
+    tmp_dir = Path(MODEL_DIR) / f"tmp_frames_{int(time.time())}"
+    tmp_dir.mkdir(parents=True, exist_ok=True)
+    try:
+        total = len(arrs)
+        for i, arr in enumerate(arrs, 1):
+            Image.fromarray(arr).save(tmp_dir / f"{i:05d}.png")
+            if gen_id and (i % max(1, total // 10) == 0):
+                genbus.progress(gen_id, "encode_prep", i, total); socketio.sleep(0)
+
+        ffmpeg = get_ffmpeg_binary_path()
+
+        # Map scaler to ffmpeg scale flags
+        sc_flag = {
+            "lanczos":  "lanczos",
+            "spline36": "spline",
+            "bicubic":  "bicubic",
+            "bilinear": "bilinear",
+        }.get(scaler.lower(), "lanczos")
+
+        vf_parts = []
+
+        # Pre-clean (helps resampling)
+        if deband and use_libplacebo:
+            vf_parts.append("libplacebo=deband=1:deband_iterations=1:deband_threshold=4")
+        elif deband:
+            vf_parts.append("gradfun=strength=0.7:radius=16")
+        if denoise:
+            vf_parts.append("hqdn3d=1.0:1.0:6.0:6.0")
+
+        # Supersample → sharpen → downscale to content box
+        if (Wu, Hu) != (W0, H0):
+            vf_parts.append(f"scale={Wu}:{Hu}:flags={sc_flag}")
+        if sharpen and sharpen > 0:
+            amt = max(0.1, min(1.5, float(sharpen)))
+            vf_parts.append(f"unsharp=lx=5:ly=5:la={amt}:cx=5:cy=5:ca=0.0")
+        if (Wc, Hc) != (Wu, Hu):
+            vf_parts.append(f"scale={Wc}:{Hc}:flags={sc_flag}")
+
+        # Fit/fill/stretch/none to reach delivery size exactly (Wt×Ht)
+        if aspect_mode == "fit" and (Wc, Hc) != (Wt, Ht):
+            # center pad to target
+            # pad color can be "black" or "#rrggbb"
+            vf_parts.append(f"pad={Wt}:{Ht}:(ow-iw)/2:(oh-ih)/2:{pad_color}")
+        elif aspect_mode == "fill" and (Wc, Hc) != (Wt, Ht):
+            # crop center to target
+            vf_parts.append(f"crop={Wt}:{Ht}:(in_w-out_w)/2:(in_h-out_h)/2")
+        elif aspect_mode in ("stretch",) and (Wc, Hc) != (Wt, Ht):
+            # one more stretch to exact target (only if user asked)
+            vf_parts.append(f"scale={Wt}:{Ht}:flags={sc_flag}")
+
+        # FPS interpolation if needed
+        if fps_out and int(fps_out) != int(fps_in):
+            vf_parts.append(f"minterpolate=fps={int(fps_out)}:mi_mode=mci:mc_mode=aobmc:me_mode=bidir:vsbmc=1")
+
+        vf_parts.append("format=yuv420p")
+        vf = ",".join(vf_parts)
+
+        cmd = [
+            ffmpeg, "-y",
+            "-framerate", str(fps_in),
+            "-i", str(tmp_dir / "%05d.png"),
+            "-vf", vf,
+            "-c:v", "libx264",
+            "-preset", preset,
+            "-tune", tune,
+            "-crf", str(crf),
+            "-profile:v", "high",
+            "-pix_fmt", "yuv420p",
+            "-movflags", "+faststart",
+            out_path,
+        ]
+
+        # Encode
+        try:
+            subprocess.run(cmd, check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        except subprocess.CalledProcessError:
+            # Safer fallback (strip fancy pieces if any build lacks filters)
+            fallback = []
+            if denoise: fallback.append("hqdn3d=1.0:1.0:6.0:6.0")
+            if (Wu, Hu) != (W0, H0):  fallback.append(f"scale={Wu}:{Hu}:flags={sc_flag}")
+            if sharpen and sharpen > 0: fallback.append("unsharp=5:5:0.4:5:5:0.0")
+            if (Wc, Hc) != (Wu, Hu):   fallback.append(f"scale={Wc}:{Hc}:flags={sc_flag}")
+            if aspect_mode == "fit" and (Wc, Hc) != (Wt, Ht):
+                fallback.append(f"pad={Wt}:{Ht}:(ow-iw)/2:(oh-ih)/2:{pad_color}")
+            elif aspect_mode == "fill" and (Wc, Hc) != (Wt, Ht):
+                fallback.append(f"crop={Wt}:{Ht}:(in_w-out_w)/2:(in_h-out_h)/2")
+            elif aspect_mode == "stretch" and (Wc, Hc) != (Wt, Ht):
+                fallback.append(f"scale={Wt}:{Ht}:flags={sc_flag}")
+            if fps_out and int(fps_out) != int(fps_in):
+                fallback.append(f"minterpolate=fps={int(fps_out)}")
+            fallback.append("format=yuv420p")
+
+            cmd2 = cmd[:]
+            cmd2[cmd2.index("-vf")+1] = ",".join(fallback)
+            subprocess.run(cmd2, check=True)
+
+        if gen_id:
+            genbus.progress(gen_id, "encode_complete", 1, 1)
+
+    finally:
+        shutil.rmtree(tmp_dir, ignore_errors=True)
         
 # --------------------------------------------------------------------
 # Robust frame extractor for Diffusers video outputs (Wan/LTX/etc.)
@@ -2215,14 +2371,27 @@ def _ltx_spatial_upscale_frames(
 def ltx_text_to_video():
     data = request.get_json(silent=True) or {}
     prompt = (data.get("prompt") or "").strip()
-    neg = data.get("negative_prompt", "worst quality, inconsistent motion, blurry, jittery, distorted")
+    neg = data.get("negative_prompt", "worst quality, blurry, jittery, distorted")
     H = int(data.get("height", 480))
     W = int(data.get("width", 704))
     frames_count = int(data.get("frames", 161))
     fps = int(data.get("fps", 24))
-    steps = int(data.get("steps", 50))
+    steps = int(data.get("steps", 40))
     auto_dl = bool(data.get("auto_download", False))
     seed = data.get("seed", None)
+    strength = float(data.get("strength", 0.75))         # ↑ denoise for motion (0.65–0.85 is a good band)
+    guidance = float(data.get("guidance_scale", 5))    # ↓ CFG (2.0–3.5)
+    seed_in   = data.get("seed", None)
+    seed_strategy = (data.get("seed_strategy") or "random").lower()
+    per_frame = bool(data.get("per_frame_seed", True))   # seed drift per frame by default
+    motionfix = bool(data.get("motionfix", True))        # on by default
+    jpeg_q    = int(data.get("jpeg_quality", 65))
+    noise_std = float(data.get("jpeg_gauss_std", 0.66))
+    ffmpeg_roundtrip = bool(data.get("ffmpeg_roundtrip", True))
+    ffmpeg_crf       = int(data.get("ffmpeg_crf", 40))        # “around 40”
+    downscale_factor = float(data.get("downscale_factor", 0.5))
+    down_filter      = (data.get("down_filter") or "bicubic") # or "bilinear"
+    up_filter        = (data.get("up_filter") or "bicubic")
 
     if not prompt:
         return jsonify(_json_sanitize({"error": "Missing 'prompt'"})), 400
@@ -2239,32 +2408,41 @@ def ltx_text_to_video():
         "w": W, "h": H, "frames": frames_count, "fps": fps
     })
 
+    if not prompt:
+        return jsonify(_json_sanitize({"error": "Missing 'prompt'"})), 400
+
+    guard = _ensure_files_present_or_start("ltx_video", auto_download=auto_dl)
+    if guard: return guard
+
+    H, W = _round_hw_for_vae(H, W, ratio=8)
+
+    gen_id = genbus.new("ltx_i2v", {"endpoint": "/image/video/turbo", "w": W, "h": H, "frames": frames_count, "fps": fps})
+
     try:
-        base_root = repo_local_dir(LTX_REPO)  # same repo you used for i2v
         device = DeviceManager.get_device()
-        if device.type == "mps":
-            compute_dtype = torch.float16
-        elif device.type == "cuda":
-            compute_dtype = torch.bfloat16
-        else:
-            compute_dtype = torch.float32
+        base_root = repo_local_dir(LTX_REPO)
+        
+        genbus.progress(gen_id, "Loading models...", 0, 2)
 
         pipe = LTXPipeline.from_pretrained(
             str(base_root),
-            torch_dtype=compute_dtype,
+            torch_dtype=torch.float32,
             local_files_only=True,
             use_safetensors=True,
         ).to(device)
 
-        generator = torch.Generator(device=device).manual_seed(seed) if isinstance(seed, int) else None
+        generator = None
+        if isinstance(seed, int):
+            generator = torch.Generator(device=device).manual_seed(seed)
 
-        genbus.progress(gen_id, "generate_video", 1, 2)
+        genbus.progress(gen_id, "Generating video...", 1, 2)
+        head_burn_in = 12  # ~0.5s @ 24fps
         out = pipe(
             prompt=prompt,
             negative_prompt=neg,
             width=W,
             height=H,
-            num_frames=frames_count,
+            num_frames=frames_count + head_burn_in,
             num_inference_steps=steps,
             generator=generator,
         )
@@ -2273,22 +2451,22 @@ def ltx_text_to_video():
         if not isinstance(frames, (list, tuple)):
             frames = [frames]
 
-        frames = _apply_watermark_frames(frames)
+        # frames = _apply_watermark_frames(frames)
 
-        genbus.progress(gen_id, "encode_video", 2, 2)
+        genbus.progress(gen_id, "Encoding video...", 2, 2)
         out_name = f"ltx_{int(time.time())}.mp4"
         out_path = os.path.join(os.getcwd(), out_name)
-        _write_video_h264_safe(out_path, frames, fps=fps, gen_id=gen_id, target_size=(W, H))
-
+        # _write_video_h264_safe(out_path, frames, fps=fps, gen_id=gen_id, target_size=(W, H))
+        _write_video_h264_safe_interpolated(
+            out_path, out, fps_in=fps, target_size=(W, H),
+            fps_out=24, upscale=2, scaler="lanczos", aspect_mode="fill", 
+            crf=20, preset="slow", add_grain=0.25, sharpen=0.75, deband=True, gen_id=gen_id, trim_head_frames=head_burn_in
+        )
         genbus.finish(gen_id, {"video_path": out_path})
-        return jsonify(_json_sanitize({
-            "ok": True,
-            "video_path": out_path,
-            "generation_websocket_url": generation_url(),
-        })), 201
+        return jsonify(_json_sanitize({"ok": True, "video_path": out_path, "generation_websocket_url": generation_url()})), 201
 
     except Exception as e:
-        logger.exception("LTX text->video failed")
+        logger.exception("LTX image->video failed")
         genbus.error(gen_id, str(e))
         return jsonify(_json_sanitize({"error": str(e)})), 500
     finally:
@@ -2389,6 +2567,34 @@ def _ffmpeg_h264_roundtrip(
             tmp_dir.rmdir()
         except Exception:
             pass
+
+def center_crop_to_aspect(img: Image.Image, target_w: int, target_h: int) -> Image.Image:
+    """
+    Center-crop `img` to match the aspect ratio target_w:target_h (no resize here).
+    Returns a new PIL.Image with the same resolution as input but cropped to the ratio.
+    """
+    w, h = img.size
+    if w <= 0 or h <= 0:
+        return img
+
+    target_ar = float(target_w) / float(target_h)
+    src_ar = float(w) / float(h)
+
+    if abs(src_ar - target_ar) < 1e-6:
+        return img  # already the right ratio
+
+    if src_ar > target_ar:
+        # too wide -> crop width
+        new_w = int(round(h * target_ar))
+        left = (w - new_w) // 2
+        box = (left, 0, left + new_w, h)
+    else:
+        # too tall -> crop height
+        new_h = int(round(w / target_ar))
+        top = (h - new_h) // 2
+        box = (0, top, w, top + new_h)
+
+    return img.crop(box)
         
 @app.route("/image/video/turbo", methods=["POST"])
 def ltx_image_to_video():
@@ -2404,14 +2610,14 @@ def ltx_image_to_video():
     image_b64 = (data.get("image_base64") or "").strip()
     image_url = (data.get("image_url") or "").strip()
     seed = data.get("seed", None)
-    strength = float(data.get("strength", 0.72))         # ↑ denoise for motion (0.65–0.85 is a good band)
+    strength = float(data.get("strength", 0.75))         # ↑ denoise for motion (0.65–0.85 is a good band)
     guidance = float(data.get("guidance_scale", 5))    # ↓ CFG (2.0–3.5)
     seed_in   = data.get("seed", None)
     seed_strategy = (data.get("seed_strategy") or "random").lower()
     per_frame = bool(data.get("per_frame_seed", True))   # seed drift per frame by default
     motionfix = bool(data.get("motionfix", True))        # on by default
-    jpeg_q    = int(data.get("jpeg_quality", 50))
-    noise_std = float(data.get("jpeg_gauss_std", 1.0))
+    jpeg_q    = int(data.get("jpeg_quality", 65))
+    noise_std = float(data.get("jpeg_gauss_std", 0.66))
     ffmpeg_roundtrip = bool(data.get("ffmpeg_roundtrip", True))
     ffmpeg_crf       = int(data.get("ffmpeg_crf", 40))        # “around 40”
     downscale_factor = float(data.get("downscale_factor", 0.5))
@@ -2433,6 +2639,8 @@ def ltx_image_to_video():
     try:
         device = DeviceManager.get_device()
         base_root = repo_local_dir(LTX_REPO)
+        
+        genbus.progress(gen_id, "Loading models...", 0, 2)
 
         pipe = LTXImageToVideoPipeline.from_pretrained(
             str(base_root),
@@ -2446,6 +2654,8 @@ def ltx_image_to_video():
         else:
             raw = base64.b64decode(image_b64)
             init_img = Image.open(io.BytesIO(raw)).convert("RGB")
+            
+        init_img = center_crop_to_aspect(init_img, W, H)
             
         if ffmpeg_roundtrip:
             init_img = _ffmpeg_h264_roundtrip(
@@ -2475,8 +2685,10 @@ def ltx_image_to_video():
                 except Exception: pass
             except Exception as e:
                 logger.info(f"[LTX] Keep default scheduler (couldn't switch): {e}")
+                
+        init_img = init_img.resize((W, H), Image.BICUBIC)
 
-        genbus.progress(gen_id, "generate_video", 1, 2)
+        genbus.progress(gen_id, "Generating video...", 1, 2)
         out = pipe(
             image=init_img,
             prompt=prompt,
@@ -2486,23 +2698,23 @@ def ltx_image_to_video():
             num_frames=frames_count,
             num_inference_steps=steps,
             generator=generator,
-            guidance_scale=guidance,              # lower CFG → freer motion
+            guidance_scale=guidance,
         )
 
         frames = out.frames[0] if hasattr(out, "frames") else out
         if not isinstance(frames, (list, tuple)):
             frames = [frames]
 
-        frames = _apply_watermark_frames(frames)
+        # frames = _apply_watermark_frames(frames)
 
-        genbus.progress(gen_id, "encode_video", 2, 2)
+        genbus.progress(gen_id, "Encoding video...", 2, 2)
         out_name = f"ltx_{int(time.time())}.mp4"
         out_path = os.path.join(os.getcwd(), out_name)
         # _write_video_h264_safe(out_path, frames, fps=fps, gen_id=gen_id, target_size=(W, H))
         _write_video_h264_safe_interpolated(
-            out_path, frames, fps_in=fps, target_size=(W, H),
-            fps_out=24, upscale=1, scaler="lanczos",
-            crf=18, preset="slow", add_grain=0.05, sharpen=0.5, deband=True, gen_id=gen_id
+            out_path, out, fps_in=fps, target_size=(W, H),
+            fps_out=24, upscale=2, scaler="lanczos", aspect_mode="fill", 
+            crf=20, preset="slow", add_grain=0.25, sharpen=0.75, deband=True, gen_id=gen_id
         )
         genbus.finish(gen_id, {"video_path": out_path})
         return jsonify(_json_sanitize({"ok": True, "video_path": out_path, "generation_websocket_url": generation_url()})), 201
@@ -2514,6 +2726,172 @@ def ltx_image_to_video():
     finally:
         DeviceManager.free_memory()
 
+def _load_video_local_ffmpeg(video_path: str, limit: int) -> List[Image.Image]:
+    """
+    Minimal local video loader using the existing bundled ffmpeg.
+    Replicates `load_video(path)[:limit]` semantics:
+      - decodes frames with ffmpeg
+      - collects up to `limit` frames as RGB PIL Images
+      - cleans up temp files
+    """
+    ffmpeg = get_ffmpeg_binary_path()
+    tmp_dir = Path(MODEL_DIR) / f"tmp_vread_{int(time.time())}_{os.getpid()}"
+    tmp_dir.mkdir(parents=True, exist_ok=True)
+
+    try:
+        # -vsync vfr keeps variable frame rate faithful; -frames:v caps the total frames
+        cmd = [
+            ffmpeg, "-hide_banner", "-loglevel", "error",
+            "-y", "-i", video_path,
+            "-vsync", "vfr",
+            "-frames:v", str(max(1, limit)),
+            str(tmp_dir / "%05d.png"),
+        ]
+        subprocess.run(cmd, check=True)
+
+        # Read back as PIL (RGB), preserve order, and apply the same slice [:limit]
+        frames: List[Image.Image] = []
+        for p in sorted(tmp_dir.glob("*.png"))[:limit]:
+            with Image.open(p) as im:
+                frames.append(im.convert("RGB"))
+
+        if not frames:
+            raise RuntimeError("No frames decoded from local video.")
+
+        return frames
+    finally:
+        shutil.rmtree(tmp_dir, ignore_errors=True)
+
+@app.route("/video/video/turbo", methods=["POST"])
+def ltx_video_to_video():
+    """
+    LTX Video→Video refinement.
+    Input: video_base64 | video_url | video_path
+    Tunables: frames, max_area, steps, guidance, strength, fps_out, seed
+    """
+    data = request.get_json(silent=True) or {}
+    prompt = (data.get("prompt") or "").strip()
+    neg = data.get("negative_prompt", "worst quality, blurry, jittery, distorted")
+    H = int(data.get("height", 480))
+    W = int(data.get("width", 704))
+    frames_count = int(data.get("frames", 161))
+    fps = int(data.get("fps", 24))
+    steps = int(data.get("steps", 40))
+    auto_dl = bool(data.get("auto_download", False))
+    video_path = (data.get("video_path") or "").strip()
+    seed = data.get("seed", None)
+    strength = float(data.get("strength", 0.75))         # ↑ denoise for motion (0.65–0.85 is a good band)
+    guidance = float(data.get("guidance_scale", 5))    # ↓ CFG (2.0–3.5)
+    seed_in   = data.get("seed", None)
+    seed_strategy = (data.get("seed_strategy") or "random").lower()
+    per_frame = bool(data.get("per_frame_seed", True))   # seed drift per frame by default
+    motionfix = bool(data.get("motionfix", True))        # on by default
+    jpeg_q    = int(data.get("jpeg_quality", 65))
+    noise_std = float(data.get("jpeg_gauss_std", 0.66))
+    ffmpeg_roundtrip = bool(data.get("ffmpeg_roundtrip", True))
+    ffmpeg_crf       = int(data.get("ffmpeg_crf", 40))        # “around 40”
+    downscale_factor = float(data.get("downscale_factor", 0.5))
+    down_filter      = (data.get("down_filter") or "bicubic") # or "bilinear"
+    up_filter        = (data.get("up_filter") or "bicubic")
+    
+    video_path = str(MODEL_DIR / "video.mp4")
+    
+    if not prompt:
+        return jsonify(_json_sanitize({"error": "Missing 'prompt'"})), 400
+    if not video_path:
+        return jsonify(_json_sanitize({"error": "Provide 'video_path'"})), 400
+
+    guard = _ensure_files_present_or_start("ltx_video", auto_download=auto_dl)
+    if guard: return guard
+
+    H, W = _round_hw_for_vae(H, W, ratio=8)
+
+    gen_id = genbus.new("ltx_i2v", {"endpoint": "/video/video/turbo", "w": W, "h": H, "frames": frames_count, "fps": fps})
+
+    try:
+        device = DeviceManager.get_device()
+        base_root = repo_local_dir(LTX_REPO)
+        
+        genbus.progress(gen_id, "Loading models...", 0, 2)
+
+        pipe = DiffusionPipeline.from_pretrained(
+            str(base_root),
+            custom_pipeline="stg_ltx_condition",
+            torch_dtype=torch.float32,
+            local_files_only=True,
+            use_safetensors=True,
+        ).to(device)
+        
+        try:
+            from diffusers.schedulers import FlowMatchEulerDiscreteScheduler
+            if isinstance(pipe.scheduler, FlowMatchEulerDiscreteScheduler):
+                pipe.scheduler = FlowMatchEulerDiscreteScheduler.from_config(
+                    pipe.scheduler.config,
+                    use_dynamic_shifting=False
+                )
+            else:
+                # Fallback for scheduler subclasses
+                pipe.scheduler = type(pipe.scheduler).from_config(
+                    pipe.scheduler.config,
+                    use_dynamic_shifting=False
+                )
+        except Exception:
+            # Older diffusers: in-place update
+            try:
+                pipe.scheduler.register_to_config(use_dynamic_shifting=False)
+            except Exception:
+                pass        
+        
+        video = _load_video_local_ffmpeg(video_path, 21)
+        condition1 = LTXVideoCondition(video=video, frame_index=0)
+
+        generator = None
+        if isinstance(seed, int):
+            generator = torch.Generator(device=device).manual_seed(seed)
+
+        genbus.progress(gen_id, "Generating video...", 1, 2)
+        out = pipe(
+            conditions=[condition1],
+            prompt=prompt,
+            negative_prompt=neg,
+            width=W,
+            height=H,
+            num_frames=frames_count,
+            num_inference_steps=30,
+            decode_timestep=0.05,
+            decode_noise_scale=0.025,
+            image_cond_noise_scale=0.0,
+            guidance_scale=5.0,
+            guidance_rescale=0.7,
+            generator=generator,
+            stg_applied_layers_idx=[9,10,11],  # last blocks (good default)
+            stg_scale=0.6,                     # motion / strength (0.4–0.8 good range)
+            do_rescaling=True,                 # recommended
+        )
+
+        frames = out.frames[0] if hasattr(out, "frames") else out
+        if not isinstance(frames, (list, tuple)):
+            frames = [frames]
+
+        # frames = _apply_watermark_frames(frames)
+
+        genbus.progress(gen_id, "Encoding video...", 2, 2)
+        
+        out_name = f"ltx_{int(time.time())}.mp4"
+        out_path = os.path.join(os.getcwd(), out_name)
+        _write_video_h264_safe(out_path, frames, fps=fps, gen_id=gen_id, target_size=(W, H))
+        
+        genbus.finish(gen_id, {"video_path": out_path})
+        return jsonify(_json_sanitize({"ok": True, "video_path": out_path, "generation_websocket_url": generation_url()})), 201
+
+    except Exception as e:
+        logger.exception("LTX video->video failed")
+        genbus.error(gen_id, str(e))
+        return jsonify(_json_sanitize({"error": str(e)})), 500
+    finally:
+        DeviceManager.free_memory()
+
+        
 # ------------------- WAN Image -> Video ----------------------------
 
 def preprocess_image(img: Image.Image, quality=25, noise_std=2.5):

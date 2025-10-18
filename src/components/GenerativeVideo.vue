@@ -1067,14 +1067,14 @@ export default {
 
       // sizes tuned to server examples
       const sizeMaps = {
-        turbo: { sd: [512, 768], hd: [768, 1280], fhd: [1088  , 1920] }, // LTX likes 2:3~ish; HxW
+        turbo: { sd: [480, 640], hd: [512, 768], fhd: [768, 1280] }, // LTX likes 2:3~ish; HxW [256, 384] [480, 640] [512, 768]
         quality: { sd: [240, 416], hd: [720, 1152], fhd: [1080, 1728] }, // WAN example dims; HxW
       };
       const pick = sizeMaps[mode.value] || sizeMaps.turbo;
       const [h, w] = pick[quality.value] || pick.sd;
 
       // sensible defaults matching server
-      let frames = mode.value === "turbo" ? 97 : 36;
+      let frames = mode.value === "turbo" ? 37 : 36;
       let payload;
 
       if (mode.value === "quality") {
@@ -1099,9 +1099,9 @@ export default {
           prompt,
           height: h,
           width: w,
-          frames: 49, // LTX is fine with 96 by default
+          frames: frames, // LTX is fine with 96 by default
           fps: 12,
-          steps: 100,
+          steps: 33, // 150
           auto_download: true,
           image_base64:
             uploadedImageBase64.value ||
