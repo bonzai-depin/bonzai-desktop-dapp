@@ -5,16 +5,14 @@
 
 from __future__ import annotations
 
-import os, re, io, time, json, base64, logging, threading, hashlib, platform, shutil, subprocess, gc, stat
+import os, re, io, time, base64, logging, threading, hashlib, platform, shutil, subprocess, gc, stat
 from io import BytesIO
 from pathlib import Path
 from datetime import datetime, date
 from decimal import Decimal
 from dataclasses import dataclass, field
 from typing import Optional, Dict, Any, List
-from importlib import import_module
 from fnmatch import fnmatch
-import imageio.v3 as iio
 
 # ---- eventlet first
 import eventlet
@@ -39,70 +37,70 @@ try:
 except Exception:
     _safetensors_open = None
 
-from transformers import T5EncoderModel, T5Config, CLIPVisionModel
-from safetensors.torch import load_file as safe_load_file
-
+# Diffusers
 from diffusers import (
-    DiffusionPipeline,
     AutoPipelineForText2Image,
     StableDiffusionXLPipeline,
     StableDiffusionXLImg2ImgPipeline,
-    HunyuanVideoPipeline,
     LTXPipeline,
     LTXImageToVideoPipeline,
-    LTXConditionPipeline,
     WanImageToVideoPipeline,
     GGUFQuantizationConfig,
     FluxPipeline,
     FluxImg2ImgPipeline,
     FluxTransformer2DModel,
-    WanTransformer3DModel,
-    AutoencoderKLWan,
-    FlowMatchEulerDiscreteScheduler
+    FlowMatchEulerDiscreteScheduler,
 )
-from diffusers.pipelines.ltx.pipeline_ltx_condition import LTXVideoCondition
-from diffusers.utils import load_image, export_to_video
+from diffusers.utils import load_image
 
 # ------------------------- JSON Sanitization -------------------------
 def _json_sanitize(obj):
-    if obj is None or isinstance(obj, (bool,int,float,str)):
+    if obj is None or isinstance(obj, (bool, int, float, str)):
         return obj
     if isinstance(obj, Path): return str(obj)
-    if isinstance(obj, (datetime,date)): return obj.isoformat()
+    if isinstance(obj, (datetime, date)): return obj.isoformat()
     if isinstance(obj, Decimal): return float(obj)
-    if isinstance(obj, dict): return {str(k): _json_sanitize(v) for k,v in obj.items()}
-    if isinstance(obj, (list,tuple,set)): return [_json_sanitize(v) for v in obj]
-    if hasattr(obj,"__dict__"): return _json_sanitize(vars(obj))
+    if isinstance(obj, dict): return {str(k): _json_sanitize(v) for k, v in obj.items()}
+    if isinstance(obj, (list, tuple, set)): return [_json_sanitize(v) for v in obj]
+    if hasattr(obj, "__dict__"): return _json_sanitize(vars(obj))
     return str(obj)
 
 # ------------------------------ Logging & paths ------------------------------
-logging.basicConfig(level=logging.INFO,
-    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s")
+logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s")
 logger = logging.getLogger("bonzai-server")
 
 USER_DATA_PATH = user_data_dir("bonzai", "BonzAI")
-MODEL_DIR = Path(USER_DATA_PATH)/"models"
+MODEL_DIR = Path(USER_DATA_PATH) / "models"
 MODEL_DIR.mkdir(parents=True, exist_ok=True)
 
-os.environ["HF_HOME"] = str(MODEL_DIR/"hf")
-os.environ.setdefault("HF_HUB_DISABLE_TELEMETRY","1")
-
-LOCAL_ONLY = bool(int(os.getenv("BONZAI_LOCAL_ONLY","1")))
-MAX_REPO_BYTES = int(os.getenv("BONZAI_MAX_REPO_BYTES", str(60*(1<<30))))
+os.environ["HF_HOME"] = str(MODEL_DIR / "hf")
+os.environ.setdefault("HF_HUB_DISABLE_TELEMETRY", "1")
 os.environ.setdefault("TOKENIZERS_PARALLELISM", "false")
+
+LOCAL_ONLY = bool(int(os.getenv("BONZAI_LOCAL_ONLY", "1")))
+MAX_REPO_BYTES = int(os.getenv("BONZAI_MAX_REPO_BYTES", str(60 * (1 << 30))))
 
 # ---------------------------- Flask / Socket.IO -------------------------------
 app = Flask(__name__)
-app.config["SECRET_KEY"] = os.environ.get("SECRET_KEY","bonzai-secret-key")
+app.config["SECRET_KEY"] = os.environ.get("SECRET_KEY", "bonzai-secret-key")
 CORS(app)
 
-socketio = SocketIO(app,cors_allowed_origins="*",async_mode="eventlet",
-                    logger=False,engineio_logger=False,ping_interval=20,ping_timeout=30)
+socketio = SocketIO(
+    app,
+    cors_allowed_origins="*",
+    async_mode="eventlet",
+    logger=False,
+    engineio_logger=False,
+    ping_interval=20,
+    ping_timeout=30,
+)
 
-def socket_emit(event:str,payload:dict,namespace:str):
-    socketio.emit(event,_json_sanitize(payload),namespace=namespace)
-    try: socketio.sleep(0)
-    except Exception: pass
+def socket_emit(event: str, payload: dict, namespace: str):
+    socketio.emit(event, _json_sanitize(payload), namespace=namespace)
+    try:
+        socketio.sleep(0)
+    except Exception:
+        pass
 
 # -------------------------- Devices & memory helpers --------------------------
 class DeviceManager:
@@ -124,14 +122,14 @@ class DeviceManager:
         if torch.cuda.is_available(): torch.cuda.empty_cache()
 
 # ---------------------------- Watermark Helper ----------------------------
-BONZAI_WM_PATH = Path(__file__).parent/"bonzai.png"
+BONZAI_WM_PATH = Path(__file__).parent / "bonzai.png"
 
 def _apply_watermark(image: Image.Image) -> Image.Image:
     try:
-        wm = Image.open(BONZAI_WM_PATH).convert("RGBA").resize((64,64))
+        wm = Image.open(BONZAI_WM_PATH).convert("RGBA").resize((64, 64))
         base = image.convert("RGBA")
-        x,y = base.width-wm.width-4, base.height-wm.height-4
-        base.alpha_composite(wm,(x,y))
+        x, y = base.width - wm.width - 4, base.height - wm.height - 4
+        base.alpha_composite(wm, (x, y))
         return base.convert("RGB")
     except Exception as e:
         logger.warning(f"Watermark failed: {e}")
@@ -146,44 +144,41 @@ def _hf_token() -> Optional[str]:
 
 # PART 2/5
 
-# PART 2/5
-
 # ------------------------------ Generation bus --------------------------------
 class GenerationTracker:
-    def __init__(self): 
+    def __init__(self):
         self._meta: Dict[str, Dict[str, Any]] = {}
 
     def new(self, kind: str, meta: Optional[Dict[str, Any]] = None, gen_id: Optional[str] = None) -> str:
         gid = gen_id or hashlib.md5(f"{kind}_{time.time()}".encode()).hexdigest()[:16]
         self._meta[gid] = {"kind": kind, "meta": meta or {}, "ts": time.time(), "stage": "starting"}
-        socket_emit("gen_started", _json_sanitize({"generation_id": gid, "kind": kind, "meta": meta or {}}), "/generation")
-        socket_emit("gen_progress", _json_sanitize({"generation_id": gid, "stage": "queued", "step": 0, "total": 1, "pct": 0}), "/generation")
+        socket_emit("gen_started", {"generation_id": gid, "kind": kind, "meta": meta or {}}, "/generation")
+        socket_emit("gen_progress", {"generation_id": gid, "stage": "queued", "step": 0, "total": 1, "pct": 0}, "/generation")
         return gid
 
     def progress(self, generation_id: str, stage: str, step: int, total: int):
         pct = round((step / max(total, 1)) * 100.0, 2)
-        socket_emit("gen_progress", _json_sanitize({
+        socket_emit("gen_progress", {
             "generation_id": generation_id,
             "stage": stage,
             "step": int(step),
             "total": int(total),
             "pct": pct
-        }), "/generation")
+        }, "/generation")
 
     def finish(self, generation_id: str, payload: Optional[Dict[str, Any]] = None):
-        socket_emit("gen_finished", _json_sanitize({"generation_id": generation_id, "payload": payload or {}}), "/generation")
+        socket_emit("gen_finished", {"generation_id": generation_id, "payload": payload or {}}, "/generation")
         self._meta.pop(generation_id, None)
 
     def error(self, generation_id: str, message: str):
-        socket_emit("gen_error", _json_sanitize({"generation_id": generation_id, "error": message}), "/generation")
+        socket_emit("gen_error", {"generation_id": generation_id, "error": message}, "/generation")
         self._meta.pop(generation_id, None)
-
 
 genbus = GenerationTracker()
 
 # --------------------------- WebSocket namespaces -----------------------------
 @socketio.on("connect", namespace="/downloads")
-def dl_connect(): 
+def dl_connect():
     emit("connected", _json_sanitize({"message": "Connected to download progress stream"}))
 
 @socketio.on("subscribe", namespace="/downloads")
@@ -198,15 +193,15 @@ def dl_subscribe(data):
     emit("download_progress", _json_sanitize({"pipeline": pl.to_dict() if pl else None}))
 
 @socketio.on("disconnect", namespace="/downloads")
-def dl_disconnect(): 
+def dl_disconnect():
     pass
 
 @socketio.on("connect", namespace="/generation")
-def gen_connect(): 
+def gen_connect():
     emit("connected", _json_sanitize({"message": "Connected to generation progress"}))
 
 @socketio.on("disconnect", namespace="/generation")
-def gen_disconnect(): 
+def gen_disconnect():
     pass
 
 # ------------------------------- Small helpers --------------------------------
@@ -266,9 +261,8 @@ class PipelineDownload:
                 "status": self.status, "attempts": self.attempts,
                 "total_progress": round(self.total_progress, 2),
                 "tasks": {tid: t.to_dict() for tid, t in self.tasks.items()}}
-        
-class CancelledDownload(Exception):
-    pass
+
+class CancelledDownload(Exception): pass
 
 class DownloadManager:
     def __init__(self):
@@ -351,30 +345,18 @@ class DownloadManager:
 
 download_manager = DownloadManager()
 
-# ---------------------- Repo allow_patterns (keep lean) -----------------------
+# ---------------------- Repo allow_patterns (lean) -----------------------
 def _sdxl_patterns() -> List[str]:
     return [
-        "model_index.json",
-        "scheduler/**",
-        "tokenizer/**",
-        "tokenizer_2/**",
-        "text_encoder/**",
-        "text_encoder_2/**",
-        "unet/**",
-        "vae/**",
+        "model_index.json", "scheduler/**", "tokenizer/**", "tokenizer_2/**",
+        "text_encoder/**", "text_encoder_2/**", "unet/**", "vae/**",
         "**/*.json", "**/*.safetensors", "**/*.bin"
     ]
 
 def _flux_patterns() -> List[str]:
     return [
-        "model_index.json",
-        "scheduler/**",
-        "tokenizer/**",
-        "tokenizer_2/**",
-        "text_encoder/**",
-        "text_encoder_2/**",
-        "transformer/**",
-        "vae/**",
+        "model_index.json", "scheduler/**", "tokenizer/**", "tokenizer_2/**",
+        "text_encoder/**", "text_encoder_2/**", "transformer/**", "vae/**",
     ]
 
 def _ltx_patterns_strict() -> List[str]:
@@ -382,21 +364,13 @@ def _ltx_patterns_strict() -> List[str]:
         "model_index.json",
         "ltxv-13b-0.9.8-distilled-fp8.safetensors",
         "ltxv-spatial-upscaler-0.9.8.safetensors",
-        "scheduler/**",
-        "text_encoder/**",
-        "tokenizer/**",
-        "transformer/**",
-        "vae/**",
+        "scheduler/**", "text_encoder/**", "tokenizer/**", "transformer/**", "vae/**",
     ]
 
 def _ltx_upscaler_patterns() -> List[str]:
     return [
-        "model_index.json",
-        "latent_upsampler/**",
-        "vae/**",
-        "**/*.json",
-        "**/*.safetensors",
-        "**/*.bin",
+        "model_index.json", "latent_upsampler/**", "vae/**",
+        "**/*.json", "**/*.safetensors", "**/*.bin",
     ]
 
 def _wan2_patterns() -> list[str]:
@@ -404,12 +378,9 @@ def _wan2_patterns() -> list[str]:
         "model_index.json",
         "scheduler/**",
         "transformer/**",
-        "transformer_2/**",
         "vae/**",
         "text_encoder/**",
-        "image_encoder/**",
         "tokenizer/**",
-        "image_processor/**",    # <- add
         "**/*.json", "**/*.safetensors", "**/*.bin",
     ]
 
@@ -422,7 +393,7 @@ def allow_patterns_for_repo(repo_id: str) -> Optional[List[str]]:
         return _ltx_patterns_strict()
     if repo_id == LTX_UPSAMPLER_REPO:
         return _ltx_upscaler_patterns()
-    if repo_id == (WAN_REPO):
+    if repo_id == WAN_REPO:
         return _wan2_patterns()
     return None
 
@@ -442,31 +413,23 @@ def _nonzero(p: Path) -> bool:
 
 def _tokenizer_ok(root: Path, name: str = "tokenizer") -> bool:
     def _nz(p: Path) -> bool:
-        try:
-            return p.exists() and p.stat().st_size > 0
-        except Exception:
-            return False
+        try: return p.exists() and p.stat().st_size > 0
+        except Exception: return False
 
-    # Common “flat” or nested json
     if _nz(root / f"{name}.json") or _nz(root / name / "tokenizer.json"):
         return True
 
-    # BPE pair (vocab+merges) either under tokenizer/ or repo root
     if (_nz(root / name / "vocab.json") and _nz(root / name / "merges.txt")) or \
        (_nz(root / "vocab.json") and _nz(root / "merges.txt")):
         return True
 
-    # NEW: SentencePiece / T5 layouts under tokenizer/
     tokdir = root / name
     for fn in ("spiece.model", "sentencepiece.bpe.model", "tokenizer.model", "vocab.txt"):
-        if _nz(tokdir / fn):
-            return True
+        if _nz(tokdir / fn): return True
 
-    # Some repos put tokenizer assets under processor/
     proc = root / "processor"
     for fn in ("tokenizer.json", "spiece.model", "sentencepiece.bpe.model", "tokenizer.model", "vocab.txt"):
-        if _nz(proc / fn):
-            return True
+        if _nz(proc / fn): return True
 
     return False
 
@@ -511,11 +474,11 @@ REPO_SPECS = {
         "must_tokenizers": [],
         "must_weight_dirs": ["latent_upsampler", "vae"],
     },
-    "Wan-AI/Wan2.2-TI2V-5B-Diffusers": {
+    "FastVideo/FastWan2.2-TI2V-5B-FullAttn-Diffusers": {
         "must_files": ["model_index.json"],
         "must_tokenizers": ["tokenizer"],
         "must_weight_dirs": ["transformer", "vae", "text_encoder"],
-        "extra_dirs": ["scheduler"],  # accept actual folder
+        "extra_dirs": ["scheduler"],
         "fallback_any_weights": False,
     }
 }
@@ -558,7 +521,6 @@ def _repo_completeness(repo_id: str) -> Dict[str, Any]:
 # PART 3/5
 
 # --------------------------- PLAN: repos + GGUF+VAE ---------------------------
-# Classic repos
 FLUX_KREA_REPO = "black-forest-labs/FLUX.1-Krea-dev"
 FLUX_KONTEXT_REPO = "black-forest-labs/FLUX.1-Kontext-dev"
 SDXL_BASE_REPO    = "stabilityai/stable-diffusion-xl-base-1.0"
@@ -566,35 +528,17 @@ SDXL_REFINER_REPO = "stabilityai/stable-diffusion-xl-refiner-1.0"
 SDXL_TURBO_REPO   = "stabilityai/sdxl-turbo"
 LTX_REPO = "Lightricks/LTX-Video"
 LTX_UPSAMPLER_REPO = "linoyts/LTX-Video-spatial-upscaler-0.9.8"
-
-# Switch WAN classic to the 5B repo
-WAN_REPO = "Wan-AI/Wan2.2-TI2V-5B-Diffusers"
-WAN_GGUF_NAME = "wan2.1-i2v-14b-480p-Q3_K_M.gguf"
-WAN_GGUF_URL  = "https://huggingface.co/city96/Wan2.1-I2V-14B-480P-gguf/resolve/main/wan2.1-i2v-14b-480p-Q3_K_M.gguf"
-
-# --- WAN 2.2 I2V A14B (QuantStack GGUF + Wan 2.1 VAE) ---
-WAN_GGUF_REPO = "QuantStack/Wan2.2-I2V-A14B-GGUF"
-
-WAN22_HIGH_GGUF_NAME = "Wan2.2-I2V-A14B-HighNoise-Q2_K.gguf"
-WAN22_HIGH_GGUF_URL  = "https://huggingface.co/QuantStack/Wan2.2-I2V-A14B-GGUF/resolve/main/Wan2.2-I2V-A14B-HighNoise-Q2_K.gguf"
-
-WAN22_LOW_GGUF_NAME  = "Wan2.2-I2V-A14B-LowNoise-Q2_K.gguf"
-WAN22_LOW_GGUF_URL   = "https://huggingface.co/QuantStack/Wan2.2-I2V-A14B-GGUF/resolve/main/Wan2.2-I2V-A14B-LowNoise-Q2_K.gguf"
-
-WAN21_VAE_NAME       = "Wan2.1_VAE.safetensors"
-WAN21_VAE_URL        = "https://huggingface.co/QuantStack/Wan2.2-I2V-A14B-GGUF/resolve/main/Wan2.1_VAE.safetensors"
+WAN_REPO = "FastVideo/FastWan2.2-TI2V-5B-FullAttn-Diffusers"
 
 # ---------- Single source of truth for exact byte sizes ----------
-# If a file isn't listed here, we'll resolve its size via HEAD at runtime.
 EXPECTED_SIZES = {
-    "flux1-krea-dev-Q8_0.gguf":    12_714_452_256,  # exact bytes
-    "flux1-kontext-dev-Q2_K.gguf": 4_023_690_528,  # exact bytes
+    "flux1-krea-dev-Q8_0.gguf":    12_714_452_256,
+    "flux1-kontext-dev-Q2_K.gguf":  4_023_690_528,
     "Wan2.2-I2V-A14B-HighNoise-Q2_K.gguf": 5_300_957_696,
-    "Wan2.2-I2V-A14B-LowNoise-Q2_K.gguf": 5_300_957_696,
-    "Wan2.1_VAE.safetensors":              253_815_318,
+    "Wan2.2-I2V-A14B-LowNoise-Q2_K.gguf":  5_300_957_696,
+    "Wan2.1_VAE.safetensors":         253_815_318,
 }
 
-# GGUF single files (env overrides still supported) — generic “wan_i2v” path
 FLUX_KREA_GGUF_NAME = os.getenv("FLUX_GGUF_FILENAME", "flux1-krea-dev-Q8_0.gguf").strip()
 FLUX_KREA_GGUF_URL  = os.getenv("FLUX_KREA_GGUF_URL",
     "https://huggingface.co/QuantStack/FLUX.1-Krea-dev-GGUF/resolve/main/flux1-krea-dev-Q8_0.gguf").strip()
@@ -607,7 +551,6 @@ LTX_GGUF_NAME = os.getenv("LTX_GGUF_FILENAME", "ltxv-13b-0.9.8-distilled-Q2_K.gg
 LTX_GGUF_URL  = os.getenv("LTX_GGUF_URL",
     "https://huggingface.co/QuantStack/LTXV-13B-0.9.8-distilled-GGUF/resolve/main/ltxv-13b-0.9.8-distilled-Q2_K.gguf").strip()
 
-# VAE single files (float32) — used in other plans; for wan_video we override with FP8 above
 LTX_VAE_NAME = os.getenv("LTX_VAE_FILENAME", "ltxv-vae-f32.safetensors").strip()
 LTX_VAE_URL  = os.getenv("LTX_VAE_URL",
     "https://huggingface.co/QuantStack/LTXV-13B-0.9.8-distilled-GGUF/resolve/main/vae/LTXV-13B-0.9.8-distilled-VAE.safetensors").strip()
@@ -621,8 +564,7 @@ def _sha256_of_file(path: Path, bufsize: int = 1024 * 1024) -> str:
     with open(path, "rb") as f:
         while True:
             b = f.read(bufsize)
-            if not b:
-                break
+            if not b: break
             h.update(b)
     return h.hexdigest()
 
@@ -636,8 +578,7 @@ def _cached_plan_for(pipeline: str) -> Dict[str, Any]:
     _plan_cache[pipeline] = plan
     return plan
 
-# ---- Robust remote size resolution for Hugging Face (works with resolve/main too)
-
+# ---- Robust remote size resolution for Hugging Face
 _HF_URL_RE = re.compile(r"https://huggingface\.co/([^/]+/[^/]+)/resolve/([^/]+)/(.+)$")
 
 def _head_or_range_size(url: str, headers: dict | None = None, timeout: int = 30) -> int:
@@ -645,29 +586,20 @@ def _head_or_range_size(url: str, headers: dict | None = None, timeout: int = 30
     try:
         r = requests.head(url, allow_redirects=True, headers=headers, timeout=timeout)
         clen = int(r.headers.get("content-length", "0") or "0")
-        if clen > 0:
-            return clen
+        if clen > 0: return clen
     except Exception:
         pass
-    # Range fallback (many CDNs return Content-Range: bytes 0-0/TOTAL)
     try:
         r = requests.get(url, headers={**headers, "Range": "bytes=0-0"}, stream=True, timeout=timeout)
-        cr = r.headers.get("Content-Range", "")
-        m = re.search(r"/(\d+)$", cr)
-        if m:
-            return int(m.group(1))
+        m = re.search(r"/(\d+)$", r.headers.get("Content-Range", ""))
+        if m: return int(m.group(1))
     except Exception:
         pass
     return 0
 
 def _resolve_hf_direct_url(url: str) -> str | None:
-    """
-    If the input is a huggingface 'resolve/main' URL, turn it into a canonical CDN URL
-    using hf_hub_url(repo_id, filename, revision).
-    """
     m = _HF_URL_RE.match(url)
-    if not m:
-        return None
+    if not m: return None
     repo_id, revision, filename = m.group(1), m.group(2), m.group(3)
     try:
         return hf_hub_url(repo_id=repo_id, filename=filename, repo_type="model", revision=revision)
@@ -675,30 +607,23 @@ def _resolve_hf_direct_url(url: str) -> str | None:
         return None
 
 def _expected_size(name: str, url: Optional[str] = None) -> int:
-    # 1) hard-coded registry wins
     s = int(EXPECTED_SIZES.get(name, 0))
-    if s > 0:
-        return s
-
-    if not url:
-        return 0
+    if s > 0: return s
+    if not url: return 0
 
     headers = {}
     if url.startswith("https://huggingface.co/") and _hf_token():
-        headers["Authorization"] = f"Bearer {_hf_token()}"  # speeds up and handles gated repos
+        headers["Authorization"] = f"Bearer {_hf_token()}"
 
-    # 2) try the URL directly
     size = _head_or_range_size(url, headers=headers)
-    # 3) if tiny/suspicious, try the canonical hf_hub_url(link)
-    if size <= 1_000_000:  # <1MB means we probably hit a stub/redirect
+    if size <= 1_000_000:
         alt = _resolve_hf_direct_url(url)
         if alt:
             size2 = _head_or_range_size(alt, headers=headers)
-            if size2 > 0:
-                size = size2
+            if size2 > 0: size = size2
 
     if size > 0:
-        EXPECTED_SIZES[name] = size  # memoize
+        EXPECTED_SIZES[name] = size
     return size
 
 def _invalidate_plan_cache(pipeline: Optional[str] = None):
@@ -714,27 +639,13 @@ def _sf(name, url):
 def _plan_for(pipeline: str) -> Dict[str, Any]:
     pipeline = pipeline.strip().lower()
     if pipeline == "flux_krea":
-        return {
-            "repos_to_fetch": [FLUX_KREA_REPO],
-            "single_files": [_sf(FLUX_KREA_GGUF_NAME, FLUX_KREA_GGUF_URL)],
-        }
+        return {"repos_to_fetch": [FLUX_KREA_REPO], "single_files": [_sf(FLUX_KREA_GGUF_NAME, FLUX_KREA_GGUF_URL)]}
     if pipeline == "flux_kontext":
-        return {
-            "repos_to_fetch": [FLUX_KONTEXT_REPO],
-            "single_files": [_sf(FLUX_KONTEXT_GGUF_NAME, FLUX_KONTEXT_GGUF_URL)],
-        }
+        return {"repos_to_fetch": [FLUX_KONTEXT_REPO], "single_files": [_sf(FLUX_KONTEXT_GGUF_NAME, FLUX_KONTEXT_GGUF_URL)]}
     if pipeline == "ltx_video":
-        return {
-            "repos_to_fetch": [LTX_REPO, LTX_UPSAMPLER_REPO],
-            "single_files": [],
-        }
+        return {"repos_to_fetch": [LTX_REPO, LTX_UPSAMPLER_REPO], "single_files": []}
     if pipeline == "wan_video":
-        return {
-            # We still pull the A14B diffusers repo for configs/tokenizer/scheduler
-            "repos_to_fetch": [WAN_REPO],
-            # The actual transformer + VAE come from the QuantStack GGUF repo
-            "single_files": []
-        }
+        return {"repos_to_fetch": [WAN_REPO], "single_files": []}
     if pipeline == "sdxl_intermediate":
         return {"repos_to_fetch": [SDXL_BASE_REPO, SDXL_REFINER_REPO]}
     if pipeline == "sdxl_turbo":
@@ -743,52 +654,30 @@ def _plan_for(pipeline: str) -> Dict[str, Any]:
 
 # ------------------------------ Repo readiness -------------------------------
 def _repo_readiness(repo_id: str) -> Dict[str, Any]:
-    """
-    Wrapper around _repo_completeness to signal whether a repo is fully usable.
-    Returns a dict with at least {repo, ok, missing}.
-    """
     try:
         return _repo_completeness(repo_id)
     except Exception as e:
         return {"repo": repo_id, "ok": False, "missing": [f"error: {str(e)}"]}
-    
-# ========================= MISSING CORE HELPERS (exact patch) =========================
 
+# ========================= CORE HELPERS (prefetch + inventories) =========================
 def _single_file_status(entry: Dict[str, Any]) -> Dict[str, Any]:
     name = (entry or {}).get("name") or ""
     url  = (entry or {}).get("url") or ""
     p = MODEL_DIR / name
     exists = p.exists() and p.stat().st_size > 0
     size_on_disk = int(p.stat().st_size) if exists else 0
+    expected_size = int(entry.get("size") or 0) or _expected_size(name, url)
 
-    expected_size = int(entry.get("size") or 0)
-    if expected_size <= 0:
-        expected_size = _expected_size(name, url)
-
-    ok = False
-    reason = None
-    if exists:
-        if expected_size > 0:
-            if size_on_disk == expected_size:
-                ok = True
-            else:
-                reason = f"size_mismatch:{size_on_disk}!={expected_size}"
-        else:
-            # last-resort fallback: any non-zero local file passes
-            ok = True
+    ok = exists and (expected_size <= 0 or size_on_disk == expected_size)
+    reason = None if ok or not exists else f"size_mismatch:{size_on_disk}!={expected_size}"
 
     return {
-        "name": name,
-        "url": url,
-        "path": str(p),
-        "exists": bool(exists),
-        "ok": bool(ok),
-        "size_on_disk": size_on_disk,
-        "expected_size": int(expected_size or 0),
+        "name": name, "url": url, "path": str(p),
+        "exists": bool(exists), "ok": bool(ok),
+        "size_on_disk": size_on_disk, "expected_size": int(expected_size or 0),
         "reason": reason,
     }
 
-# -- Repo file listing via HF API (pattern-filtered to keep downloads lean) --
 def _list_required_remote_files(repo_id: str, allow_patterns: Optional[List[str]] = None) -> List[Dict[str, Any]]:
     api = HfApi(token=_hf_token())
     files: List[Dict[str, Any]] = []
@@ -796,10 +685,8 @@ def _list_required_remote_files(repo_id: str, allow_patterns: Optional[List[str]
     def _match(p: str) -> bool:
         return True if not allow_patterns else any(fnmatch(p, pat) for pat in allow_patterns)
 
-    # Prefer list_repo_tree(expand=True) to get sizes
     try:
-        items = api.list_repo_tree(repo_id=repo_id, repo_type="model", revision="main",
-                                   recursive=True, expand=True)
+        items = api.list_repo_tree(repo_id=repo_id, repo_type="model", revision="main", recursive=True, expand=True)
         for it in items or []:
             if getattr(it, "type", None) == "file" and _match(it.path):
                 size = int(getattr(it, "size", 0) or 0)
@@ -807,11 +694,9 @@ def _list_required_remote_files(repo_id: str, allow_patterns: Optional[List[str]
     except Exception:
         pass
 
-    # Fallback: get_paths_info
     if not files:
         try:
-            infos = api.get_paths_info(repo_id=repo_id, repo_type="model",
-                                       paths=[""], revision="main", expand=True, recursive=True)
+            infos = api.get_paths_info(repo_id=repo_id, repo_type="model", paths=[""], revision="main", expand=True, recursive=True)
             for info in infos or []:
                 if getattr(info, "type", "") == "file" and _match(info.path):
                     size = int(getattr(info, "size", 0) or 0)
@@ -819,7 +704,6 @@ def _list_required_remote_files(repo_id: str, allow_patterns: Optional[List[str]
         except Exception:
             pass
 
-    # Fallback: list_repo_files (size unknown)
     if not files:
         try:
             paths = api.list_repo_files(repo_id=repo_id, repo_type="model", revision="main")
@@ -832,23 +716,19 @@ def _list_required_remote_files(repo_id: str, allow_patterns: Optional[List[str]
     if not files:
         return []
 
-    # Fill missing sizes by HEAD/Range on hf_hub_url
     headers = {"Authorization": f"Bearer {_hf_token()}"} if _hf_token() else {}
 
     def _resolve_remote_size(url: str) -> int:
         try:
             r = requests.head(url, allow_redirects=True, headers=headers, timeout=30)
             clen = int(r.headers.get("content-length", "0") or "0")
-            if clen > 0:
-                return clen
+            if clen > 0: return clen
         except Exception:
             pass
         try:
             r = requests.get(url, headers={**headers, "Range": "bytes=0-0"}, stream=True, timeout=30)
-            cr = r.headers.get("Content-Range", "")
-            m = re.search(r"/(\d+)$", cr)
-            if m:
-                return int(m.group(1))
+            m = re.search(r"/(\d+)$", r.headers.get("Content-Range", ""))
+            if m: return int(m.group(1))
         except Exception:
             pass
         return 0
@@ -864,7 +744,6 @@ def _list_required_remote_files(repo_id: str, allow_patterns: Optional[List[str]
 
     return files
 
-# -- Inventory structures used by deep_validate in /pipelines/plan --
 @dataclass
 class FileEntry:
     path: str
@@ -900,9 +779,7 @@ def build_repo_inventory(repo_id: str, allow_patterns: Optional[List[str]] = Non
     spec_report = _repo_completeness(repo_id)
 
     manifest = _list_required_remote_files(repo_id, allow_patterns=allow_patterns)
-    remote_accessible = True
-    if not manifest and not spec_report.get("ok", False):
-        remote_accessible = False
+    remote_accessible = bool(manifest) or bool(spec_report.get("ok", False))
 
     files: List[FileEntry] = []
     needs: List[str] = []
@@ -922,7 +799,6 @@ def build_repo_inventory(repo_id: str, allow_patterns: Optional[List[str]] = Non
         "invalid": sum(1 for x in files if x.status == "invalid"),
     }
 
-    # If we couldn't list remote files, fallback to spec report
     ok = (len(needs) == 0) if manifest else bool(spec_report.get("ok", False))
 
     return {
@@ -938,14 +814,12 @@ def build_repo_inventory(repo_id: str, allow_patterns: Optional[List[str]] = Non
         "missing_list": spec_report.get("missing", []),
     }
 
-# -- Repo task id helper used by DownloadManager.add_repo_task --
 def _tid_repo(repo_id: str) -> str:
     return f"repo::{hashlib.md5(repo_id.encode('utf-8')).hexdigest()[:12]}"
 
-# -- WebSocket URL used in generation responses --
 def generation_url() -> str:
     try:
-        scheme = "wss" if (request.is_secure or request.headers.get("X-Forwarded-Proto","").lower()=="https") else "ws"
+        scheme = "wss" if (request.is_secure or request.headers.get("X-Forwarded-Proto", "").lower() == "https") else "ws"
         return f"{scheme}://{request.host}/generation"
     except Exception:
         return "/generation"
@@ -961,70 +835,45 @@ def _platform_tag():
     if system == "darwin": plat, exe = f"darwin/{arch}", "ffmpeg"
     elif system == "linux": plat, exe = f"linux/{arch}", "ffmpeg"
     elif system == "windows": plat, exe = f"win32/{arch}", "ffmpeg.exe"
-    else:
-        raise RuntimeError(f"Unsupported platform: {system}/{arch}")
+    else: raise RuntimeError(f"Unsupported platform: {system}/{arch}")
     return plat, exe
 
 def _candidate_roots() -> list[Path]:
-    """
-    Likely roots for node_modules in dev + packaged app.
-    You can also override with FFMPEG_NPM_ROOT (points to a dir containing 'node_modules').
-    """
     env_root = os.environ.get("FFMPEG_NPM_ROOT")
-    roots = []
-    if env_root:
-        roots.append(Path(env_root))
+    roots = [Path(env_root)] if env_root else []
     here = Path(__file__).resolve()
-    # Walk up a few levels (dev)
     parents = list(here.parents)[:8]
     roots.extend(parents)
-    # Typical Electron packaged locations
     for base in [here, *parents]:
         roots.append(base / "resources")
         roots.append(base / "resources" / "app.asar.unpacked")
         roots.append(base / "app.asar.unpacked")
-    # CWD as last resort
     roots.append(Path.cwd())
-    # Dedup while preserving order
     seen, out = set(), []
     for r in roots:
-        try:
-            rp = r.resolve()
-        except Exception:
-            rp = r
+        try: rp = r.resolve()
+        except Exception: rp = r
         if rp not in seen:
             seen.add(rp); out.append(rp)
     return out
 
 def _npm_ffmpeg_source_path() -> str:
-    # Direct override: allow Electron main to pass absolute binary path
     direct = os.environ.get("FFMPEG_BIN")
-    if direct and os.path.isfile(direct):
-        return direct
-
+    if direct and os.path.isfile(direct): return direct
     plat, exe = _platform_tag()
-
-    # Search for ffmpeg-static-electron-forge layout
     patterns = [
         Path("node_modules") / "ffmpeg-static-electron-forge" / "dist" / "bin",
         Path("app.asar.unpacked") / "node_modules" / "ffmpeg-static-electron-forge" / "dist" / "bin",
         Path("resources") / "app.asar.unpacked" / "node_modules" / "ffmpeg-static-electron-forge" / "dist" / "bin",
     ]
-
     for root in _candidate_roots():
         for pat in patterns:
             p = (root / pat / plat / exe)
-            if p.is_file():
-                return str(p)
-
-    # Fallback: if a system ffmpeg exists, use it (no staging copy)
+            if p.is_file(): return str(p)
     sys_ffmpeg = shutil.which("ffmpeg.exe" if exe.endswith(".exe") else "ffmpeg")
-    if sys_ffmpeg:
-        return sys_ffmpeg
-
+    if sys_ffmpeg: return sys_ffmpeg
     raise FileNotFoundError(
-        "Bundled ffmpeg not found. "
-        "Install 'ffmpeg-static-electron-forge' (recommended) or set FFMPEG_BIN/FFMPEG_NPM_ROOT."
+        "Bundled ffmpeg not found. Install 'ffmpeg-static-electron-forge' or set FFMPEG_BIN/FFMPEG_NPM_ROOT."
     )
 
 def _dest_ffmpeg_path() -> str:
@@ -1037,28 +886,18 @@ def _make_executable_and_clear_quarantine(path: str):
         os.chmod(path, st.st_mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
     except Exception:
         pass
-    # macOS quarantine bit (no-op elsewhere)
     try:
-        subprocess.run(["xattr","-dr","com.apple.quarantine", path],
-                       check=False, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        subprocess.run(["xattr", "-dr", "com.apple.quarantine", path], check=False,
+                       stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     except Exception:
         pass
 
 def get_ffmpeg_binary_path() -> str:
     src = _npm_ffmpeg_source_path()
     dst = _dest_ffmpeg_path()
-
-    # If src is already the staged path, just ensure executability and return.
-    # Otherwise copy into our user bin to avoid ASAR/execution issues.
     try:
-        need_copy = True
-        try:
-            need_copy = (os.path.abspath(src) != os.path.abspath(dst))
-        except Exception:
-            need_copy = True
-
+        need_copy = (os.path.abspath(src) != os.path.abspath(dst))
         if need_copy:
-            # only copy when src newer or dst missing/different size
             copy_required = True
             if os.path.isfile(dst):
                 try:
@@ -1069,7 +908,7 @@ def get_ffmpeg_binary_path() -> str:
             if copy_required:
                 os.makedirs(os.path.dirname(dst), exist_ok=True)
                 with open(src, "rb") as fsrc, open(dst, "wb") as fdst:
-                    shutil.copyfileobj(fsrc, fdst, length=1<<20)
+                    shutil.copyfileobj(fsrc, fdst, length=1 << 20)
         else:
             dst = src
     except Exception as e:
@@ -1079,13 +918,11 @@ def get_ffmpeg_binary_path() -> str:
     if not (os.path.isfile(dst) and os.access(dst, os.X_OK)):
         raise PermissionError(f"Staged ffmpeg not executable at {dst}")
 
-    os.environ["IMAGEIO_FFMPEG_EXE"] = dst  # used by imageio/ffmpegio
+    os.environ["IMAGEIO_FFMPEG_EXE"] = dst
     return dst
 
-# Ensure env is set at import time for any downstream video writers:
 os.environ["IMAGEIO_FFMPEG_EXE"] = get_ffmpeg_binary_path()
 
-# -- Guard for repos (used by SDXL routes) --
 def _repos_ready_or_resp(*repo_ids: str):
     missing = []
     for rid in repo_ids:
@@ -1100,18 +937,15 @@ def _repos_ready_or_resp(*repo_ids: str):
         "details": missing
     })), 412
 
-# -- Guard for pipelines with repos + single files (also can auto-start prefetch) --
 def _ensure_files_present_or_start(pipeline: str, auto_download: bool = False):
     plan = _cached_plan_for(pipeline)
 
-    # Repos
     missing_repos = []
     for rid in plan.get("repos_to_fetch", []):
         st = _repo_readiness(rid)
         if not st.get("ok", False):
             missing_repos.append({"repo": rid, "missing": st.get("missing", [])})
 
-    # Single files: include both missing and invalid
     missing_files = []
     invalid_files = []
     for f in plan.get("single_files", []):
@@ -1136,24 +970,15 @@ def _ensure_files_present_or_start(pipeline: str, auto_download: bool = False):
         "invalid_files": invalid_files,
     })), 412
 
-# ---------------------- Prefetch implementation (repos + files) ----------------------
-
 def _start_prefetch_pipeline(pipeline: str) -> Dict[str, Any]:
-    """
-    Starts a background worker that fetches repos (filtered manifests) and
-    single-file artifacts for the given pipeline. Emits live progress via
-    DownloadManager. Cancellable via DownloadManager.cancel_pipeline().
-    """
     plan = _cached_plan_for(pipeline)
     pl = download_manager.new(pipeline)
     download_manager.set_status(pl, "downloading")
 
     def _worker():
         try:
-            # ---------------- 1) Repos first ----------------
             for rid in plan.get("repos_to_fetch", []):
-                if pl.cancelled:
-                    break
+                if pl.cancelled: break
                 allow = allow_patterns_for_repo(rid)
                 manifest = _list_required_remote_files(rid, allow_patterns=allow)
                 total = sum(int(f.get("size") or 0) for f in manifest) or 1
@@ -1170,23 +995,19 @@ def _start_prefetch_pipeline(pipeline: str) -> Dict[str, Any]:
                         break
                     download_manager.mark_failed(pl, tid, str(e))
 
-            # ---------------- 2) Queue ALL single-file tasks so they appear instantly ----------------
             files_to_do = []
             for f in plan.get("single_files", []):
                 name = (f or {}).get("name") or ""
-                # Size hint from expectation table (0 means unknown and we’ll resolve via HEAD)
                 size_hint = int(EXPECTED_SIZES.get(name, 0))
                 tid = download_manager.add_file_task(pl, name, size_hint or 1)
                 files_to_do.append((f, tid))
             download_manager.emit(pl.pipeline_id)
 
-            # ---------------- 3) Process single files ----------------
             for f, tid in files_to_do:
                 if pl.cancelled:
                     download_manager.mark_cancelled(pl, tid)
                     break
 
-                # If it already exists locally and is valid by SIZE, skip
                 st = _single_file_status(f)
                 if st["exists"] and st["ok"]:
                     download_manager.update_progress(pl, tid, st["size_on_disk"], st["size_on_disk"] or 1)
@@ -1195,9 +1016,8 @@ def _start_prefetch_pipeline(pipeline: str) -> Dict[str, Any]:
 
                 download_manager.mark_downloading(pl, tid)
 
-                # Best-effort size hint to weight the progress bar
                 name, url = st["name"], st["url"]
-                size_hint = int(EXPECTED_SIZES.get(name, 0)) if 'EXPECTED_SIZES' in globals() else 0
+                size_hint = int(EXPECTED_SIZES.get(name, 0))
                 if size_hint <= 0:
                     try:
                         headers = {}
@@ -1218,8 +1038,6 @@ def _start_prefetch_pipeline(pipeline: str) -> Dict[str, Any]:
                         download_manager.mark_cancelled(pl, tid)
                         break
                     download_manager.mark_failed(pl, tid, str(e))
-                    # continue with other files
-
         except Exception:
             logger.exception("Prefetch worker failed")
         finally:
@@ -1227,20 +1045,11 @@ def _start_prefetch_pipeline(pipeline: str) -> Dict[str, Any]:
 
     eventlet.spawn_n(_worker)
     return {
-        "json": {
-            "ok": True,
-            "message": "Prefetch started",
-            "pipeline_id": pl.pipeline_id,
-            "pipeline": pl.to_dict(),
-        },
+        "json": {"ok": True, "message": "Prefetch started", "pipeline_id": pl.pipeline_id, "pipeline": pl.to_dict()},
         "http_status": 202,
     }
-    
+
 def _download_repo_files(pl: PipelineDownload, tid: str, repo_id: str, manifest: List[Dict[str, Any]]):
-    """
-    Streams all files of a repo manifest into the local repo directory.
-    Tracks progress in bytes, supports cancellation, and skips already-complete files.
-    """
     headers = {"Authorization": f"Bearer {_hf_token()}"} if _hf_token() else {}
     base = repo_local_dir(repo_id)
     base.mkdir(parents=True, exist_ok=True)
@@ -1253,13 +1062,11 @@ def _download_repo_files(pl: PipelineDownload, tid: str, repo_id: str, manifest:
         if pl.cancelled:
             download_manager.mark_cancelled(pl, tid)
             return
-
         rel = f["path"]
         rsz = int(f.get("size") or 0)
         dest = base / rel
         dest.parent.mkdir(parents=True, exist_ok=True)
 
-        # Skip if already complete by SIZE
         if dest.exists() and (rsz == 0 or dest.stat().st_size == rsz):
             done += (rsz or dest.stat().st_size)
             download_manager.update_progress(pl, tid, done, total)
@@ -1276,7 +1083,6 @@ def _download_repo_files(pl: PipelineDownload, tid: str, repo_id: str, manifest:
                 is_cancelled=lambda: pl.cancelled,
             )
         except Exception as e:
-            # If cancelled, mark and stop; else bubble up so caller can mark failed
             if pl.cancelled:
                 download_manager.mark_cancelled(pl, tid)
                 return
@@ -1285,19 +1091,7 @@ def _download_repo_files(pl: PipelineDownload, tid: str, repo_id: str, manifest:
         done = min(done + (rsz or (dest.stat().st_size if dest.exists() else 0)), total)
         download_manager.update_progress(pl, tid, done, total)
 
-def _download_single_file(
-    pl: PipelineDownload,
-    tid: str,
-    name: str,
-    url: str,
-    size_hint: int = 0,
-    optional: bool = False,
-):
-    """
-    Stream a single required artifact to MODEL_DIR with live progress updates.
-    Validates *only by size* when a strict expected size is known.
-    Supports cancellation via pl.cancelled.
-    """
+def _download_single_file(pl: PipelineDownload, tid: str, name: str, url: str, size_hint: int = 0, optional: bool = False):
     headers = {}
     if url.startswith("https://huggingface.co/") and _hf_token():
         headers["Authorization"] = f"Bearer {_hf_token()}"  # optional, speeds rate limits
@@ -1307,14 +1101,10 @@ def _download_single_file(
 
     expected_size = _expected_size(name, url)
 
-    # Purge mismatched file when we know the strict size
     if expected_size > 0 and dest.exists() and dest.stat().st_size != expected_size:
-        try:
-            dest.unlink()
-        except Exception:
-            pass
+        try: dest.unlink()
+        except Exception: pass
 
-    # If a (possibly partial) local file exists, validate by SIZE only
     if dest.exists() and dest.stat().st_size > 0:
         ok_local = (expected_size <= 0) or (dest.stat().st_size == expected_size)
         if ok_local:
@@ -1322,26 +1112,17 @@ def _download_single_file(
             download_manager.update_progress(pl, tid, total, total)
             return
         else:
-            try:
-                dest.unlink()
-            except Exception:
-                pass
+            try: dest.unlink()
+            except Exception: pass
 
     if pl.cancelled:
         download_manager.mark_cancelled(pl, tid)
         return
 
-    # Resolve total for progress weighting: size_hint -> HEAD -> expected_size
-    total = int(size_hint or 0)
-    if total <= 0:
-        total = _expected_size(name, url)
-
-    # Ensure the UI sees a task with a non-zero total as early as possible
+    total = int(size_hint or 0) or _expected_size(name, url)
     download_manager.update_progress(pl, tid, 0, total or 1)
 
-    # Stream download with increment-based ticking
     done = 0
-
     def _tick(_inc: int):
         nonlocal done
         done += int(_inc)
@@ -1355,24 +1136,18 @@ def _download_single_file(
             return
         raise e
 
-    # Final strict validation: SIZE ONLY when known
     if expected_size > 0 and dest.stat().st_size != expected_size:
-        try:
-            dest.unlink()
-        except Exception:
-            pass
+        try: dest.unlink()
+        except Exception: pass
         msg = f"Downloaded {name} has size {dest.stat().st_size}, expected {expected_size}"
         if optional:
-            logger.warning(msg)
-            return
+            logger.warning(msg); return
         raise ValueError(msg)
 
-    # Mark complete bytes for the UI
     final_total = expected_size or dest.stat().st_size
     download_manager.update_progress(pl, tid, final_total, final_total)
 
 def _repo_inc(pl: PipelineDownload, tid: str, inc: int, total: int, ref_done):
-    # Helper to smooth repo progress updates
     current_done = ref_done()
     new_done = min(current_done + inc, total)
     download_manager.update_progress(pl, tid, new_done, total)
@@ -1384,24 +1159,19 @@ def _stream_download(url: str, dest: Path, headers: Dict[str, str], update, is_c
         try:
             with open(tmp, "wb") as f:
                 for chunk in r.iter_content(chunk_size=1024 * 1024):
-                    if not chunk:
-                        continue
-                    if is_cancelled and is_cancelled():
-                        raise CancelledDownload()
+                    if not chunk: continue
+                    if is_cancelled and is_cancelled(): raise CancelledDownload()
                     f.write(chunk)
-                    try:
-                        update(len(chunk))
-                    except Exception:
-                        pass
-            if is_cancelled and is_cancelled():
-                raise CancelledDownload()
+                    try: update(len(chunk))
+                    except Exception: pass
+            if is_cancelled and is_cancelled(): raise CancelledDownload()
             tmp.replace(dest)
         except CancelledDownload:
             try: tmp.unlink()
             except Exception: pass
             raise
-
-# ======================= END MISSING CORE HELPERS (exact patch) =======================
+        
+# PART 4/5
 
 # ------------------------------ REST: plan/prefetch ----------------------------
 @app.route("/pipelines/plan", methods=["POST"])
@@ -1426,30 +1196,19 @@ def pipelines_plan():
         if st.get("missing") is None and not st.get("ok", False):
             auth_repos.append(rid)
 
-    # Single-file artifacts (GGUF / VAE / text encoder, etc.)
-    required_files = []
-    for f in plan.get("single_files", []):
-        required_files.append(_single_file_status(f))
+    required_files = [_single_file_status(f) for f in plan.get("single_files", [])]
 
     ok_repos = all(r.get("ok") for r in repos_status) if repos_status else True
     ok_files = all(s.get("ok") for s in required_files) if required_files else True
 
-    # Back-compat: also expose "gguf_status" (same content as required_files but minimal)
-    ggufs = []
-    for s in required_files:
-        ggufs.append({
-            "configured": True,
-            "path": s["path"],
-            "exists": s["exists"],
-            "size": s["size_on_disk"],
-            "name": s["name"],
-        })
+    ggufs = [{"configured": True, "path": s["path"], "exists": s["exists"], "size": s["size_on_disk"], "name": s["name"]}
+             for s in required_files]
 
     resp = {
         "plan": plan,
         "repos": repos_status,
-        "required_files": required_files,   # <--- NEW (explicit; includes wan2.2_vae.safetensors)
-        "gguf_status": ggufs,              # back-compat for existing UI
+        "required_files": required_files,
+        "gguf_status": ggufs,
         "notes": plan.get("notes", []),
         "ok": bool(ok_repos and ok_files),
     }
@@ -1472,27 +1231,15 @@ def pipelines_prefetch():
     except ValueError as e:
         return jsonify(_json_sanitize({"error": str(e)})), 400
 
-# PART 4/5
-
 # ------------------------------ Video helpers ---------------------------------
 def _sanitize_frames_for_video(frames, target_size=None):
-    """
-    Accepts:
-      - Diffusers pipeline output (with `.frames`)
-      - list/tuple of PIL Images or ndarrays
-      - ndarray shaped (T,H,W,C) or (H,W,C)
-
-    Returns: (list_of_uint8_ndarrays, (W, H))
-    """
-    # Handle Diffusers PipeOutput
     if hasattr(frames, "frames"):
         frames = frames.frames[0]
 
-    # Normalize to list without using array truthiness
     if isinstance(frames, np.ndarray):
-        if frames.ndim == 4:        # (T,H,W,C)
+        if frames.ndim == 4:
             frames = [frames[i] for i in range(frames.shape[0])]
-        elif frames.ndim == 3:      # (H,W,C)
+        elif frames.ndim == 3:
             frames = [frames]
         else:
             raise RuntimeError(f"Unexpected ndarray shape: {frames.shape}")
@@ -1503,7 +1250,6 @@ def _sanitize_frames_for_video(frames, target_size=None):
     if len(frames) == 0:
         raise RuntimeError("No frames to write")
 
-    # Output size
     if target_size is not None:
         W, H = int(target_size[0]), int(target_size[1])
     else:
@@ -1517,7 +1263,6 @@ def _sanitize_frames_for_video(frames, target_size=None):
             else:
                 raise RuntimeError("Unexpected frame shape; expected (H,W,C).")
 
-    # Even dims for H.264
     W -= (W % 2); H -= (H % 2)
     if W <= 0 or H <= 0:
         raise RuntimeError("Computed invalid even dimensions for video.")
@@ -1549,9 +1294,8 @@ def _sanitize_frames_for_video(frames, target_size=None):
 def _write_video_h264_safe(out_path, frames, fps, gen_id=None, target_size=None, trim_head_frames: int = 0):
     arrs, (W, H) = _sanitize_frames_for_video(frames, target_size=target_size)
     if isinstance(trim_head_frames, int) and trim_head_frames > 0:
-        drop = min(trim_head_frames, max(0, len(arrs) - 1))  # keep at least 1 frame
-        if drop:
-            arrs = arrs[drop:]
+        drop = min(trim_head_frames, max(0, len(arrs) - 1))
+        if drop: arrs = arrs[drop:]
     tmp_dir = Path(MODEL_DIR) / f"tmp_frames_{int(time.time())}"
     tmp_dir.mkdir(parents=True, exist_ok=True)
     try:
@@ -1560,84 +1304,64 @@ def _write_video_h264_safe(out_path, frames, fps, gen_id=None, target_size=None,
             if gen_id and (idx % max(1, len(arrs)//10) == 0):
                 genbus.progress(gen_id, "encode_video", idx, len(arrs)); socketio.sleep(0)
         ffmpeg = get_ffmpeg_binary_path()
-        cmd = [
-            ffmpeg, "-y", "-framerate", str(fps), "-i", str(tmp_dir / "%05d.png"),
-            "-c:v", "libx264", "-pix_fmt", "yuv420p", "-vf", f"scale={W}:{H}", out_path,
-        ]
+        cmd = [ffmpeg, "-y", "-framerate", str(fps), "-i", str(tmp_dir / "%05d.png"),
+               "-c:v", "libx264", "-pix_fmt", "yuv420p", "-vf", f"scale={W}:{H}", out_path]
         subprocess.run(cmd, check=True)
     finally:
         shutil.rmtree(tmp_dir, ignore_errors=True)
-        
+
 def _write_video_h264_safe_interpolated(
     out_path,
     frames,
     fps_in,
-    target_size=None,          # final delivery (W,H)
+    target_size=None,
     fps_out=24,
-    upscale=1.0,               # super-sample factor before final downscale
-    scaler="lanczos",          # lanczos|spline36|bicubic|bilinear
+    upscale=1.0,
+    scaler="lanczos",
     crf=20,
     preset="slow",
     tune="film",
-    add_grain=0.0,             # 0..1
-    sharpen=0.35,              # ~0.3–0.8
+    add_grain=0.0,
+    sharpen=0.35,
     deband=True,
     denoise=True,
-    use_libplacebo=False,      # we’ll use core scale/pad/crop for AR correctness
-    aspect_mode="fit",         # fit|fill|stretch|none
-    pad_color="black",         # letterbox/pillarbox color, e.g. "#0a0a0f"
+    use_libplacebo=False,
+    aspect_mode="fit",
+    pad_color="black",
     gen_id=None,
     trim_head_frames: int = 0,
 ):
-    """
-    Aspect modes:
-      - fit:   keep AR, content fits inside target, pad to exact W×H
-      - fill:  keep AR, content fills target, crop overflow to W×H
-      - none:  keep original size (no scaling); still makes dims even
-      - stretch: scale directly to W×H (distorts AR) — not recommended
-    """
     def _even(n):
         n = int(round(n))
         return n - (n % 2) if n % 2 else n
 
-    # Normalize frames without forcing a target resize up-front
     arrs, (W0, H0) = _sanitize_frames_for_video(frames, target_size=None)
     if isinstance(trim_head_frames, int) and trim_head_frames > 0:
-        drop = min(trim_head_frames, max(0, len(arrs) - 1))  # keep at least 1 frame
-        if drop:
-            arrs = arrs[drop:]
-    # If caller didn’t provide a target, default to the source size (evened)
+        drop = min(trim_head_frames, max(0, len(arrs) - 1))
+        if drop: arrs = arrs[drop:]
+
     if target_size is None or aspect_mode == "none":
         Wt, Ht = _even(W0), _even(H0)
     else:
         Wt, Ht = _even(int(target_size[0])), _even(int(target_size[1]))
 
-    # Decide aspect-preserving content box (Wc, Hc) to place into final Wt×Ht
     if aspect_mode == "fit" and target_size is not None:
         s = min(Wt / W0, Ht / H0)
         Wc, Hc = _even(round(W0 * s)), _even(round(H0 * s))
         Wc = min(Wc, Wt); Hc = min(Hc, Ht)
-
     elif aspect_mode == "fill" and target_size is not None:
         s = max(Wt / W0, Ht / H0)
         Wc, Hc = _even(round(W0 * s)), _even(round(H0 * s))
-        # Wc/Hc >= Wt/Ht — will crop to target
-
     elif aspect_mode == "stretch" and target_size is not None:
-        # Distorts AR to exactly Wt×Ht
         Wc, Hc = Wt, Ht
+    else:
+        Wc, Hc = _even(W0), _even(H0); Wt, Ht = Wc, Hc
 
-    else:  # "none" or no target provided
-        Wc, Hc = _even(W0), _even(H0)
-        Wt, Ht = Wc, Hc  # final delivery matches source
-
-    # Optional supersampling stage for better detail/anti-aliasing
     if upscale and upscale > 1.0:
         Wu, Hu = _even(Wc * upscale), _even(Hc * upscale)
     else:
         Wu, Hu = Wc, Hc
 
-    # Write source frames as PNGs
     tmp_dir = Path(MODEL_DIR) / f"tmp_frames_{int(time.time())}"
     tmp_dir.mkdir(parents=True, exist_ok=True)
     try:
@@ -1649,25 +1373,15 @@ def _write_video_h264_safe_interpolated(
 
         ffmpeg = get_ffmpeg_binary_path()
 
-        # Map scaler to ffmpeg scale flags
-        sc_flag = {
-            "lanczos":  "lanczos",
-            "spline36": "spline",
-            "bicubic":  "bicubic",
-            "bilinear": "bilinear",
-        }.get(scaler.lower(), "lanczos")
+        sc_flag = {"lanczos": "lanczos", "spline36": "spline", "bicubic": "bicubic", "bilinear": "bilinear"}.get(scaler.lower(), "lanczos")
 
         vf_parts = []
-
-        # Pre-clean (helps resampling)
         if deband and use_libplacebo:
             vf_parts.append("libplacebo=deband=1:deband_iterations=1:deband_threshold=4")
         elif deband:
             vf_parts.append("gradfun=strength=0.7:radius=16")
         if denoise:
             vf_parts.append("hqdn3d=1.0:1.0:6.0:6.0")
-
-        # Supersample → sharpen → downscale to content box
         if (Wu, Hu) != (W0, H0):
             vf_parts.append(f"scale={Wu}:{Hu}:flags={sc_flag}")
         if sharpen and sharpen > 0:
@@ -1675,46 +1389,26 @@ def _write_video_h264_safe_interpolated(
             vf_parts.append(f"unsharp=lx=5:ly=5:la={amt}:cx=5:cy=5:ca=0.0")
         if (Wc, Hc) != (Wu, Hu):
             vf_parts.append(f"scale={Wc}:{Hc}:flags={sc_flag}")
-
-        # Fit/fill/stretch/none to reach delivery size exactly (Wt×Ht)
         if aspect_mode == "fit" and (Wc, Hc) != (Wt, Ht):
-            # center pad to target
-            # pad color can be "black" or "#rrggbb"
             vf_parts.append(f"pad={Wt}:{Ht}:(ow-iw)/2:(oh-ih)/2:{pad_color}")
         elif aspect_mode == "fill" and (Wc, Hc) != (Wt, Ht):
-            # crop center to target
             vf_parts.append(f"crop={Wt}:{Ht}:(in_w-out_w)/2:(in_h-out_h)/2")
         elif aspect_mode in ("stretch",) and (Wc, Hc) != (Wt, Ht):
-            # one more stretch to exact target (only if user asked)
             vf_parts.append(f"scale={Wt}:{Ht}:flags={sc_flag}")
-
-        # FPS interpolation if needed
         if fps_out and int(fps_out) != int(fps_in):
             vf_parts.append(f"minterpolate=fps={int(fps_out)}:mi_mode=mci:mc_mode=aobmc:me_mode=bidir:vsbmc=1")
-
         vf_parts.append("format=yuv420p")
         vf = ",".join(vf_parts)
 
         cmd = [
-            ffmpeg, "-y",
-            "-framerate", str(fps_in),
-            "-i", str(tmp_dir / "%05d.png"),
-            "-vf", vf,
-            "-c:v", "libx264",
-            "-preset", preset,
-            "-tune", tune,
-            "-crf", str(crf),
-            "-profile:v", "high",
-            "-pix_fmt", "yuv420p",
-            "-movflags", "+faststart",
-            out_path,
+            ffmpeg, "-y", "-framerate", str(fps_in), "-i", str(tmp_dir / "%05d.png"),
+            "-vf", vf, "-c:v", "libx264", "-preset", preset, "-tune", tune,
+            "-crf", str(crf), "-profile:v", "high", "-pix_fmt", "yuv420p", "-movflags", "+faststart", out_path,
         ]
 
-        # Encode
         try:
             subprocess.run(cmd, check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
         except subprocess.CalledProcessError:
-            # Safer fallback (strip fancy pieces if any build lacks filters)
             fallback = []
             if denoise: fallback.append("hqdn3d=1.0:1.0:6.0:6.0")
             if (Wu, Hu) != (W0, H0):  fallback.append(f"scale={Wu}:{Hu}:flags={sc_flag}")
@@ -1729,59 +1423,42 @@ def _write_video_h264_safe_interpolated(
             if fps_out and int(fps_out) != int(fps_in):
                 fallback.append(f"minterpolate=fps={int(fps_out)}")
             fallback.append("format=yuv420p")
-
             cmd2 = cmd[:]
             cmd2[cmd2.index("-vf")+1] = ",".join(fallback)
             subprocess.run(cmd2, check=True)
 
         if gen_id:
             genbus.progress(gen_id, "encode_complete", 1, 1)
-
     finally:
         shutil.rmtree(tmp_dir, ignore_errors=True)
-        
+
 # --------------------------------------------------------------------
 # Robust frame extractor for Diffusers video outputs (Wan/LTX/etc.)
 # --------------------------------------------------------------------
 def _extract_frames(output) -> list[Image.Image]:
-    """
-    Returns a flat list[Image] from various pipeline outputs.
-    Handles:
-      - output.frames -> [list[Image]] or list[Image]
-      - output.images -> list[Image]
-      - output.videos (tensor BxTxCxHxW or TxCxHxW)
-      - dict-like variants with 'frames'/'images'/'videos'
-    """
     def _to_pil(x):
-        if isinstance(x, Image.Image):
-            return x.convert("RGB")
+        if isinstance(x, Image.Image): return x.convert("RGB")
         arr = np.asarray(x)
-        if arr.ndim == 3 and arr.shape[0] in (1,3,4):  # CxHxW -> HxWxC
+        if arr.ndim == 3 and arr.shape[0] in (1,3,4):
             arr = np.moveaxis(arr, 0, -1)
         arr = np.clip(arr, 0, 255).astype(np.uint8)
-        if arr.ndim == 2:
-            arr = np.stack([arr]*3, axis=-1)
-        if arr.shape[-1] == 4:
-            arr = arr[..., :3]
+        if arr.ndim == 2: arr = np.stack([arr]*3, axis=-1)
+        if arr.shape[-1] == 4: arr = arr[..., :3]
         return Image.fromarray(arr, "RGB")
 
     obj = output
-    # attribute access (Diffusers PipelineOutput)
     if hasattr(obj, "frames"):
         fr = obj.frames
         if isinstance(fr, (list, tuple)) and fr and isinstance(fr[0], (list, tuple)):
-            fr = fr[0]  # unwrap [ [PIL,...] ]
+            fr = fr[0]
         return [_to_pil(f) for f in fr]
     if hasattr(obj, "images"):
         return [_to_pil(f) for f in obj.images]
     if hasattr(obj, "videos"):
-        vid = obj.videos  # tensor or np
+        vid = obj.videos
         arr = np.array(vid)
-        if arr.ndim == 5:   # B,T,C,H,W
-            arr = arr[0]    # T,C,H,W
-        if arr.ndim == 4:   # T,C,H,W
-            return [_to_pil(arr[t]) for t in range(arr.shape[0])]
-    # dict-like
+        if arr.ndim == 5: arr = arr[0]
+        if arr.ndim == 4: return [_to_pil(arr[t]) for t in range(arr.shape[0])]
     if isinstance(obj, dict):
         for k in ("frames", "images", "videos"):
             if k in obj:
@@ -1860,19 +1537,15 @@ def image_intermediate_sdxl():
                 try:
                     pipe.set_adapters(["default"], adapter_weights=[strength])
                 except Exception:
-                    try:
-                        pipe.fuse_lora(lora_scale=strength)
-                    except Exception:
-                        pass
+                    try: pipe.fuse_lora(lora_scale=strength)
+                    except Exception: pass
                 logger.info(f"[sdxl] LoRA applied to {tag}: {lora_path.name} (strength={strength})")
                 return True
             except Exception as e1:
                 try:
                     pipe.unet.load_attn_procs(str(lora_path))
-                    try:
-                        pipe.fuse_lora(lora_scale=strength)
-                    except Exception:
-                        pass
+                    try: pipe.fuse_lora(lora_scale=strength)
+                    except Exception: pass
                     logger.info(f"[sdxl] UNet attn_procs LoRA applied to {tag}: {lora_path.name} (strength={strength})")
                     return True
                 except Exception:
@@ -1910,8 +1583,7 @@ def image_intermediate_sdxl():
             )
 
         def _pad_seq_len(a: torch.Tensor, b: torch.Tensor):
-            if a.shape[1] == b.shape[1]:
-                return a, b
+            if a.shape[1] == b.shape[1]: return a, b
             max_len = max(a.shape[1], b.shape[1])
             def pad(t):
                 if t.shape[1] == max_len: return t
@@ -1990,11 +1662,8 @@ def image_intermediate_sdxl():
         encoded = base64.b64encode(buf.getvalue()).decode("utf-8")
         genbus.finish(gen_id, {"ok": True})
         return jsonify(_json_sanitize({
-            "prompt": prompt,
-            "negative_prompt": negative_prompt,
-            "image": encoded,
-            "generation_id": gen_id,
-            "generation_websocket_url": generation_url()
+            "prompt": prompt, "negative_prompt": negative_prompt, "image": encoded,
+            "generation_id": gen_id, "generation_websocket_url": generation_url()
         })), 201
 
     except Exception as e:
@@ -2033,15 +1702,15 @@ def image_turbo_sdxl():
         def cb(step, timestep, latents):
             genbus.progress(gen_id, "sampling", int(step), steps)
 
-        image = pipe(
-            prompt=prompt, num_inference_steps=steps, guidance_scale=1.0,
-            callback=cb, callback_steps=max(1, cb_steps)
-        ).images[0]
+        image = pipe(prompt=prompt, num_inference_steps=steps, guidance_scale=1.0,
+                     callback=cb, callback_steps=max(1, cb_steps)).images[0]
 
         buf = BytesIO(); _apply_watermark(image).save(buf, format="PNG")
         b64 = base64.b64encode(buf.getvalue()).decode("utf-8")
         genbus.finish(gen_id, {"ok": True})
-        return jsonify(_json_sanitize({"prompt": prompt, "image": b64, "generation_id": gen_id, "generation_websocket_url": generation_url()})), 201
+        return jsonify(_json_sanitize({
+            "prompt": prompt, "image": b64, "generation_id": gen_id, "generation_websocket_url": generation_url()
+        })), 201
     except Exception as e:
         logger.exception("SDXL turbo failed")
         genbus.error(gen_id, str(e))
@@ -2056,7 +1725,6 @@ def image_quality_flux_krea():
     prompt = (data.get("prompt") or "").strip()
     h = int(data.get("height", 512)); w = int(data.get("width", 768))
     steps = int(data.get("steps", 35))
-    cb_steps = int(data.get("callback_steps", 1))
     auto_dl = bool(data.get("auto_download", False))
     if not prompt:
         return jsonify(_json_sanitize({"error": "Prompt is required"})), 400
@@ -2064,20 +1732,12 @@ def image_quality_flux_krea():
     guard = _ensure_files_present_or_start("flux_krea", auto_download=auto_dl)
     if guard: return guard
 
-    from diffusers import FluxPipeline, FluxTransformer2DModel, GGUFQuantizationConfig
-
     gen_id = genbus.new("flux_krea", {"endpoint": "/image/quality", "prompt": prompt})
     try:
         device = DeviceManager.get_device()
-        if device.type == "mps":
-            compute_dtype = torch.bfloat16
-        elif device.type == "cuda":
-            compute_dtype = torch.bfloat16
-        else:
-            compute_dtype = torch.float32
+        compute_dtype = torch.bfloat16 if device.type in ("cuda", "mps") else torch.float32
         
         tr_cfg = repo_local_dir(FLUX_KREA_REPO) / "transformer" / "config.json"
-
         transformer = FluxTransformer2DModel.from_single_file(
             str(MODEL_DIR / FLUX_KREA_GGUF_NAME),
             config=str(tr_cfg),
@@ -2106,10 +1766,7 @@ def image_quality_flux_krea():
         b64 = base64.b64encode(buf.getvalue()).decode("utf-8")
         genbus.finish(gen_id, {"ok": True})
         return jsonify(_json_sanitize({
-            "prompt": prompt,
-            "image": b64,
-            "generation_id": gen_id,
-            "generation_websocket_url": generation_url()
+            "prompt": prompt, "image": b64, "generation_id": gen_id, "generation_websocket_url": generation_url()
         })), 201
 
     except Exception as e:
@@ -2127,7 +1784,7 @@ def image_kontext_i2i():
     image_b64 = (data.get("image_base64") or "").strip()
     image_url  = (data.get("image_url") or "").strip()
     h = int(data.get("height", 512)); w = int(data.get("width", 768))
-    steps = int(data.get("steps", 6)); cb_steps = int(data.get("callback_steps", 1))
+    steps = int(data.get("steps", 6))
     strength = float(data.get("strength", 0.5))
     auto_dl = bool(data.get("auto_download", False))
 
@@ -2138,9 +1795,6 @@ def image_kontext_i2i():
 
     guard = _ensure_files_present_or_start("flux_kontext", auto_download=auto_dl)
     if guard: return guard
-
-    from diffusers import FluxImg2ImgPipeline, FluxTransformer2DModel, GGUFQuantizationConfig
-    from diffusers.utils import load_image
 
     gen_id = genbus.new("flux_kontext", {"endpoint": "/image/kontext", "w": w, "h": h, "steps": steps})
     try:
@@ -2173,17 +1827,14 @@ def image_kontext_i2i():
             height=h, width=w,
             num_inference_steps=steps,
             callback=cb,
-            callback_steps=max(1, cb_steps),
+            callback_steps=max(1, 1),
         ).images[0]
 
         buf = BytesIO(); _apply_watermark(out).save(buf, format="PNG")
         encoded = base64.b64encode(buf.getvalue()).decode("utf-8")
         genbus.finish(gen_id, {"ok": True})
         return jsonify(_json_sanitize({
-            "prompt": prompt,
-            "image": encoded,
-            "generation_id": gen_id,
-            "generation_websocket_url": generation_url()
+            "prompt": prompt, "image": encoded, "generation_id": gen_id, "generation_websocket_url": generation_url()
         })), 201
 
     except Exception as e:
@@ -2193,208 +1844,94 @@ def image_kontext_i2i():
     finally:
         DeviceManager.free_memory()
 
-# ------------------------------ VAE / Helpers for LTX -------------------------
-
+# ------------------------------ LTX helpers -------------------------
 def _round_hw_for_vae(h, w, ratio=8):
     return h - (h % ratio), w - (w % ratio)
 
-def enhance_and_interpolate_video(
-    in_path: str,
-    out_path: str,
-    target_fps: int = 24,
-    upscale: float = 1.5,        # 1.0 = keep size, 1.5–2.0 = upscale
-    scaler: str = "lanczos",     # lanczos|spline|bicubic|bilinear
-    crf: int = 18,               # visually-lossless-ish x264
-    preset: str = "slow",
-    add_grain: float = 0.0,      # 0.0–0.2 looks natural if you used heavy denoise
-    sharpen: float = 0.6,        # 0.0–1.5; unsharp strength
-    deband: bool = True,         # fix banding from CRF 40 pre-pass
-):
-    """
-    Spatial clean-up + upscale + 24fps interpolation + high-quality encode.
-    Produces yuv420p MP4 with faststart.
-    """
+def enhance_and_interpolate_video(in_path: str, out_path: str, target_fps: int = 24,
+                                  upscale: float = 1.5, scaler: str = "lanczos",
+                                  crf: int = 18, preset: str = "slow",
+                                  add_grain: float = 0.0, sharpen: float = 0.6, deband: bool = True):
     ffmpeg = get_ffmpeg_binary_path()
-
-    # Make sure final dims stay even for yuv420p
     vf_parts = [
-        # optional upscale
         f"scale=trunc(iw*{upscale}/2)*2:trunc(ih*{upscale}/2)*2:flags={scaler}" if upscale and upscale != 1.0 else None,
-        # mild denoise/deband to hide compression ringing/banding
-        "gradfun=20:30" if deband else None,              # deband (very safe)
-        # tiny sharpen to restore edges; second triplet is chroma
+        "gradfun=20:30" if deband else None,
         f"unsharp=5:5:{sharpen}:5:5:0" if sharpen and sharpen > 0 else None,
-        # optional fine grain to make it look less 'plastic'
         (f"noise=alls={add_grain*10}:allf=t" if add_grain and add_grain > 0 else None),
-        # motion-compensated interpolation to 24 fps
         f"minterpolate=fps={int(target_fps)}:mi_mode=mci:mc_mode=aobmc:me_mode=bidir:vsbmc=1",
     ]
     vf = ",".join([p for p in vf_parts if p])
-
-    cmd = [
-        ffmpeg, "-y",
-        "-i", in_path,
-        "-vf", vf,
-        "-c:v", "libx264",
-        "-crf", str(int(crf)),
-        "-preset", preset,
-        "-pix_fmt", "yuv420p",
-        "-movflags", "+faststart",
-        out_path,
-    ]
-
-    # Run; if anything fails, surface a readable error
+    cmd = [ffmpeg, "-y", "-i", in_path, "-vf", vf, "-c:v", "libx264", "-crf", str(int(crf)),
+           "-preset", preset, "-pix_fmt", "yuv420p", "-movflags", "+faststart", out_path]
     try:
         subprocess.run(cmd, check=True)
     except subprocess.CalledProcessError as e:
         raise RuntimeError(f"ffmpeg enhance/interpolate failed: {e}")
 
-# ---- LTX spatial upscaler (cached) ----
 _ltx_upscaler_pipe = None
 
 def _get_ltx_spatial_upscaler():
-    """
-    Tries the dedicated LTX upscaler pipeline first; falls back to AutoPipelineForImage2Image.
-    Uses the local repo 'linoyts/LTX-Video-spatial-upscaler-0.9.8' you already fetch.
-    """
     global _ltx_upscaler_pipe
     if _ltx_upscaler_pipe is not None:
         return _ltx_upscaler_pipe
 
     device = DeviceManager.get_device()
-    if device.type == "mps":
-        compute_dtype = torch.float16
-    elif device.type == "cuda":
-        compute_dtype = torch.bfloat16
-    else:
-        compute_dtype = torch.float32
-
+    compute_dtype = torch.float16 if device.type == "mps" else (torch.bfloat16 if device.type == "cuda" else torch.float32)
     up_root = repo_local_dir(LTX_UPSAMPLER_REPO)
 
-    # Prefer a purpose-built pipeline if available in your diffusers build
     try:
         from diffusers import LTXVideoSpatialUpscalerPipeline
         pipe = LTXVideoSpatialUpscalerPipeline.from_pretrained(
-            str(up_root),
-            torch_dtype=compute_dtype,
-            local_files_only=True,
-            use_safetensors=True,
+            str(up_root), torch_dtype=compute_dtype, local_files_only=True, use_safetensors=True
         ).to(device)
     except Exception:
         from diffusers import AutoPipelineForImage2Image
         pipe = AutoPipelineForImage2Image.from_pretrained(
-            str(up_root),
-            torch_dtype=compute_dtype,
-            local_files_only=True,
-            use_safetensors=True,
+            str(up_root), torch_dtype=compute_dtype, local_files_only=True, use_safetensors=True
         ).to(device)
 
-    # Memory knobs (safe no-ops if unsupported)
-    try: pipe.enable_attention_slicing()
-    except Exception: pass
-    try: pipe.enable_vae_slicing()
-    except Exception: pass
-    try: pipe.enable_vae_tiling()
-    except Exception: pass
-
-    # VAE in fp32 tends to preserve detail better (ignore errors if not supported)
+    for fn in ("enable_attention_slicing", "enable_vae_slicing", "enable_vae_tiling"):
+        try: getattr(pipe, fn)()
+        except Exception: pass
     try: pipe.vae.to(device=device, dtype=torch.float32)
     except Exception: pass
 
     _ltx_upscaler_pipe = pipe
     return pipe
 
-def _ltx_spatial_upscale_frames(
-    frames: list[Image.Image],
-    scale: float = 2.0,
-    steps: int = 12,
-    guidance: float = 0.0,     # LTX upscaler is usually unconditional; 0.0 is fine
-    strength: float = 0.1,     # 0.0–0.2 sticks closely to the input
-    batch_size: int = 6,
-    gen_id: str | None = None,
-) -> tuple[list[Image.Image], tuple[int,int]]:
-    """
-    Uses the LTX spatial upscaler repo to enhance frames.
-    Returns (upscaled_frames, (W, H)).
-    """
+def _ltx_spatial_upscale_frames(frames: list[Image.Image], scale: float = 2.0, steps: int = 12,
+                                guidance: float = 0.0, strength: float = 0.1, batch_size: int = 6,
+                                gen_id: str | None = None) -> tuple[list[Image.Image], tuple[int,int]]:
     assert frames, "No frames to upscale"
     W0, H0 = frames[0].size
-
-    # Target size (even)
     Wt = max(2, int(W0 * scale)) // 2 * 2
     Ht = max(2, int(H0 * scale)) // 2 * 2
-
     pipe = _get_ltx_spatial_upscaler()
     out_frames: list[Image.Image] = []
-
-    # Soft pre-resize helps VRAM and avoids over-sharpening
     def _prep(img: Image.Image) -> Image.Image:
         return img.convert("RGB").resize((Wt, Ht), Image.BICUBIC)
-
     total = len(frames)
     for i in range(0, total, batch_size):
-        chunk = frames[i:i+batch_size]
-        chunk = [_prep(im) for im in chunk]
-
+        chunk = [_prep(im) for im in frames[i:i+batch_size]]
         with torch.inference_mode():
-            # The upscaler usually ignores text prompt; we pass minimal args for safety.
-            res = pipe(
-                image=chunk,
-                num_inference_steps=int(steps),
-                guidance_scale=float(guidance),
-                strength=float(strength),
-            ).images
-
+            res = pipe(image=chunk, num_inference_steps=int(steps), guidance_scale=float(guidance), strength=float(strength)).images
         out_frames.extend([im.convert("RGB") for im in res])
-
         if gen_id:
-            genbus.progress(gen_id, "ltx_upscale", min(i + batch_size, total), total)
-            socketio.sleep(0)
-
+            genbus.progress(gen_id, "ltx_upscale", min(i + batch_size, total), total); socketio.sleep(0)
     return out_frames, (Wt, Ht)
 
-# ------------------------------ LTX Image -> Video ----------------------------
-# NEW: Text → Video (Turbo / LTX)
+# ------------------------------ LTX Text -> Video ----------------------------
 @app.route("/text/video/turbo", methods=["POST"])
 def ltx_text_to_video():
     data = request.get_json(silent=True) or {}
     prompt = (data.get("prompt") or "").strip()
     neg = data.get("negative_prompt", "worst quality, blurry, jittery, distorted")
-    H = int(data.get("height", 480))
-    W = int(data.get("width", 704))
+    H = int(data.get("height", 480)); W = int(data.get("width", 704))
     frames_count = int(data.get("frames", 161))
     fps = int(data.get("fps", 24))
     steps = int(data.get("steps", 40))
     auto_dl = bool(data.get("auto_download", False))
     seed = data.get("seed", None)
-    strength = float(data.get("strength", 0.75))         # ↑ denoise for motion (0.65–0.85 is a good band)
-    guidance = float(data.get("guidance_scale", 5))    # ↓ CFG (2.0–3.5)
-    seed_in   = data.get("seed", None)
-    seed_strategy = (data.get("seed_strategy") or "random").lower()
-    per_frame = bool(data.get("per_frame_seed", True))   # seed drift per frame by default
-    motionfix = bool(data.get("motionfix", True))        # on by default
-    jpeg_q    = int(data.get("jpeg_quality", 65))
-    noise_std = float(data.get("jpeg_gauss_std", 0.66))
-    ffmpeg_roundtrip = bool(data.get("ffmpeg_roundtrip", True))
-    ffmpeg_crf       = int(data.get("ffmpeg_crf", 40))        # “around 40”
-    downscale_factor = float(data.get("downscale_factor", 0.5))
-    down_filter      = (data.get("down_filter") or "bicubic") # or "bilinear"
-    up_filter        = (data.get("up_filter") or "bicubic")
-
-    if not prompt:
-        return jsonify(_json_sanitize({"error": "Missing 'prompt'"})), 400
-
-    guard = _ensure_files_present_or_start("ltx_video", auto_download=auto_dl)
-    if guard:
-        return guard
-
-    # LTX likes multiples of 8
-    H, W = _round_hw_for_vae(H, W, ratio=8)
-
-    gen_id = genbus.new("ltx_t2v", {
-        "endpoint": "/text/video/turbo",
-        "w": W, "h": H, "frames": frames_count, "fps": fps
-    })
 
     if not prompt:
         return jsonify(_json_sanitize({"error": "Missing 'prompt'"})), 400
@@ -2403,63 +1940,153 @@ def ltx_text_to_video():
     if guard: return guard
 
     H, W = _round_hw_for_vae(H, W, ratio=8)
-
-    gen_id = genbus.new("ltx_i2v", {"endpoint": "/image/video/turbo", "w": W, "h": H, "frames": frames_count, "fps": fps})
+    gen_id = genbus.new("ltx_t2v", {"endpoint": "/text/video/turbo", "w": W, "h": H, "frames": frames_count, "fps": fps})
 
     try:
         device = DeviceManager.get_device()
         base_root = repo_local_dir(LTX_REPO)
-        
         genbus.progress(gen_id, "Loading models...", 0, 2)
 
         pipe = LTXPipeline.from_pretrained(
-            str(base_root),
-            torch_dtype=torch.float32,
-            local_files_only=True,
-            use_safetensors=True,
+            str(base_root), torch_dtype=torch.float32, local_files_only=True, use_safetensors=True
         ).to(device)
 
-        generator = None
-        if isinstance(seed, int):
-            generator = torch.Generator(device=device).manual_seed(seed)
-
+        generator = torch.Generator(device=device).manual_seed(seed) if isinstance(seed, int) else None
         genbus.progress(gen_id, "Generating video...", 1, 2)
-        head_burn_in = 12  # ~0.5s @ 24fps
+
+        head_burn_in = 12
         out = pipe(
-            prompt=prompt,
-            negative_prompt=neg,
-            width=W,
-            height=H,
-            num_frames=frames_count + head_burn_in,
-            num_inference_steps=steps,
-            generator=generator,
+            prompt=prompt, negative_prompt=neg, width=W, height=H,
+            num_frames=frames_count + head_burn_in, num_inference_steps=steps, generator=generator,
         )
-
-        frames = out.frames[0] if hasattr(out, "frames") else out
-        if not isinstance(frames, (list, tuple)):
-            frames = [frames]
-
-        # frames = _apply_watermark_frames(frames)
 
         genbus.progress(gen_id, "Encoding video...", 2, 2)
         out_name = f"ltx_{int(time.time())}.mp4"
         out_path = os.path.join(os.getcwd(), out_name)
-        # _write_video_h264_safe(out_path, frames, fps=fps, gen_id=gen_id, target_size=(W, H))
         _write_video_h264_safe_interpolated(
             out_path, out, fps_in=fps, target_size=(W, H),
-            fps_out=24, upscale=2, scaler="lanczos", aspect_mode="fill", 
-            crf=20, preset="slow", add_grain=0.25, sharpen=0.75, deband=True, gen_id=gen_id, trim_head_frames=head_burn_in
+            fps_out=24, upscale=2, scaler="lanczos", aspect_mode="fill",
+            crf=20, preset="slow", add_grain=0.25, sharpen=0.75, deband=True,
+            gen_id=gen_id, trim_head_frames=head_burn_in
         )
         genbus.finish(gen_id, {"video_path": out_path})
         return jsonify(_json_sanitize({"ok": True, "video_path": out_path, "generation_websocket_url": generation_url()})), 201
 
     except Exception as e:
-        logger.exception("LTX image->video failed")
+        logger.exception("LTX text->video failed")
         genbus.error(gen_id, str(e))
         return jsonify(_json_sanitize({"error": str(e)})), 500
     finally:
         DeviceManager.free_memory()
-        
+
+@app.route("/text/video/quality", methods=["POST"])
+def wan_text_to_video():
+    data = request.get_json(silent=True) or {}
+    prompt = (data.get("prompt") or "").strip()
+    negative_prompt = (data.get("negative_prompt") or
+        "worst quality, low quality, overexposed, artifacts, jitter, wobble, warped faces, extra fingers").strip()
+    H = int(data.get("height", 480))
+    W = int(data.get("width", 832))
+    frames = int(data.get("frames", 49))    # typical short clip
+    fps = int(data.get("fps", 12))
+    steps = int(data.get("steps", 30))
+    guidance = float(data.get("guidance_scale", 4.0))
+    seed = data.get("seed", None)
+    auto_dl = bool(data.get("auto_download", False))
+
+    if not prompt:
+        return jsonify(_json_sanitize({"error": "Prompt is required"})), 400
+
+    guard = _ensure_files_present_or_start("wan_video", auto_download=auto_dl)
+    if guard:
+        return guard
+
+    gen_id = genbus.new("wan_t2v", {
+        "endpoint": "/text/video/quality",
+        "prompt": prompt, "frames": frames, "fps": fps
+    })
+
+    try:
+        device = DeviceManager.get_device()
+        # fp16 is fine on mps/cuda; fallback to fp32 on CPU
+        compute_dtype = torch.float16 if device.type in ("cuda", "mps") else torch.float32
+        base_root = repo_local_dir(WAN_REPO)
+
+        # Build pipeline
+        pipe = WanDMDPipeline.from_pretrained(
+            str(base_root),
+            torch_dtype=compute_dtype,
+            use_safetensors=True,
+            local_files_only=True,
+        ).to(device)
+
+        # Model-safe sizing (multiples of VAE scale × patch size)
+        ps = getattr(pipe.transformer.config, "patch_size", (1, 8, 8))
+        patch_t = int(ps[0]) if len(ps) == 3 else 1
+        patch_w = int(ps[-1])
+        mod_value = int(pipe.vae_scale_factor_spatial) * patch_w
+
+        # Start from requested aspect, then snap to valid grid
+        aspect = float(H) / float(W) if (W and H) else 480/832
+        max_area = max(1, H * W)
+        height = max(mod_value, (round(np.sqrt(max_area * aspect)) // mod_value) * mod_value)
+        width  = max(mod_value, (round(np.sqrt(max_area / aspect)) // mod_value) * mod_value)
+        height -= height % 2
+        width  -= width % 2
+
+        # Align frames to temporal patch
+        if patch_t > 1 and (frames % patch_t != 0):
+            frames = max(patch_t, (frames // patch_t) * patch_t)
+
+        generator = torch.Generator(device=device).manual_seed(seed) if isinstance(seed, int) else None
+
+        def cb(step, timestep, latents):
+            genbus.progress(gen_id, "sampling", int(step), steps)
+
+        genbus.progress(gen_id, "Generating video...", 1, 2)
+        out = pipe(
+            prompt=prompt,
+            negative_prompt=negative_prompt,
+            height=height,
+            width=width,
+            num_frames=frames,
+            guidance_scale=guidance,
+            num_inference_steps=steps,
+            generator=generator,
+            callback=cb,
+            callback_steps=max(1, steps // 10),
+        )
+
+        frames_list = out.frames[0] if hasattr(out, "frames") else out
+        if not isinstance(frames_list, (list, tuple)):
+            frames_list = [frames_list]
+
+        # Encode
+        genbus.progress(gen_id, "Encoding video...", 2, 2)
+        out_name = f"wan_{int(time.time())}.mp4"
+        out_path = os.path.join(os.getcwd(), out_name)
+
+        _write_video_h264_safe_interpolated(
+            out_path, out,
+            fps_in=fps, target_size=(width, height),
+            fps_out=24, upscale=2, scaler="lanczos", aspect_mode="fill",
+            crf=15, preset="slow", add_grain=0.25, sharpen=0.5, deband=True,
+            gen_id=gen_id
+        )
+
+        genbus.finish(gen_id, {"video_path": out_path})
+        return jsonify(_json_sanitize({
+            "ok": True, "video_path": out_path,
+            "generation_websocket_url": generation_url()
+        })), 201
+
+    except Exception as e:
+        logger.exception("WAN text->video failed")
+        genbus.error(gen_id, str(e))
+        return jsonify(_json_sanitize({"error": str(e)})), 500
+    finally:
+        DeviceManager.free_memory()
+
 def _motionfix_preprocess(img: Image.Image, jpeg_q=35, noise_std=3.0) -> Image.Image:
     buf = io.BytesIO()
     img.save(buf, format="JPEG", quality=max(10, min(95, int(jpeg_q))))
@@ -2471,83 +2098,35 @@ def _motionfix_preprocess(img: Image.Image, jpeg_q=35, noise_std=3.0) -> Image.I
     arr = np.clip(arr, 0, 255).astype(np.uint8)
     return Image.fromarray(arr, "RGB")
 
-def _ffmpeg_h264_roundtrip(
-    img: Image.Image,
-    target_w: int,
-    target_h: int,
-    crf: int = 40,
-    downscale: float = 0.5,
-    down_filter: str = "bicubic",   # "bicubic" or "bilinear"
-    up_filter: str = "bicubic",     # "bicubic" or "bilinear"
-) -> Image.Image:
-    """
-    Downscale -> H.264 CRF encode -> decode -> upscale back to (target_w,target_h) via ffmpeg.
-    Returns a PIL.Image. Uses yuv420p and keeps even dimensions for H.264.
-    """
+def _ffmpeg_h264_roundtrip(img: Image.Image, target_w: int, target_h: int, crf: int = 40,
+                           downscale: float = 0.5, down_filter: str = "bicubic", up_filter: str = "bicubic") -> Image.Image:
     ffmpeg = get_ffmpeg_binary_path()
-
-    # input dims
     iw, ih = img.size
-
-    # compute downscaled (must be even for h264)
     dw = max(2, int(iw * downscale) // 2 * 2)
     dh = max(2, int(ih * downscale) // 2 * 2)
-
-    # ensure target dims are even
     tw = max(2, int(target_w) // 2 * 2)
     th = max(2, int(target_h) // 2 * 2)
-
-    # ffmpeg scale flag mapping
     def _flag(x: str) -> str:
         x = (x or "").lower()
         return "bilinear" if x.startswith("bilin") else "bicubic"
-
-    down_flag = _flag(down_filter)
-    up_flag   = _flag(up_filter)
-
-    # stage to temp directory
+    down_flag = _flag(down_filter); up_flag = _flag(up_filter)
     tmp_dir = Path(MODEL_DIR) / f"fxrt_{int(time.time()*1000)}"
     tmp_dir.mkdir(parents=True, exist_ok=True)
     in_png   = tmp_dir / "in.png"
     mid_mp4  = tmp_dir / "mid.mp4"
     out_png  = tmp_dir / "out.png"
-
     try:
         img.convert("RGB").save(in_png, "PNG")
-
-        # 1) downscale + h264 encode (CRF ~ 40)
-        #    -pix_fmt yuv420p requires even dims; we enforced that above
-        cmd1 = [
-            ffmpeg, "-y",
-            "-i", str(in_png),
-            "-vf", f"scale={dw}:{dh}:flags={down_flag}",
-            "-c:v", "libx264",
-            "-crf", str(int(crf)),
-            "-preset", "veryfast",
-            "-tune", "stillimage",
-            "-pix_fmt", "yuv420p",
-            "-movflags", "+faststart",
-            str(mid_mp4),
-        ]
+        cmd1 = [ffmpeg, "-y", "-i", str(in_png), "-vf", f"scale={dw}:{dh}:flags={down_flag}",
+                "-c:v", "libx264", "-crf", str(int(crf)), "-preset", "veryfast", "-tune", "stillimage",
+                "-pix_fmt", "yuv420p", "-movflags", "+faststart", str(mid_mp4)]
         subprocess.run(cmd1, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-
-        # 2) decode and upscale back to target
-        cmd2 = [
-            ffmpeg, "-y",
-            "-i", str(mid_mp4),
-            "-vf", f"scale={tw}:{th}:flags={up_flag}",
-            "-frames:v", "1",
-            str(out_png),
-        ]
+        cmd2 = [ffmpeg, "-y", "-i", str(mid_mp4), "-vf", f"scale={tw}:{th}:flags={up_flag}", "-frames:v", "1", str(out_png)]
         subprocess.run(cmd2, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-
-        out = Image.open(out_png).convert("RGB")
-        return out
-
+        return Image.open(out_png).convert("RGB")
     except Exception as e:
         logger.warning(f"[ffmpeg_roundtrip] Falling back to original image: {e}")
         return img
-
     finally:
         try:
             for p in (in_png, mid_mp4, out_png):
@@ -2557,40 +2136,26 @@ def _ffmpeg_h264_roundtrip(
             pass
 
 def center_crop_to_aspect(img: Image.Image, target_w: int, target_h: int) -> Image.Image:
-    """
-    Center-crop `img` to match the aspect ratio target_w:target_h (no resize here).
-    Returns a new PIL.Image with the same resolution as input but cropped to the ratio.
-    """
     w, h = img.size
-    if w <= 0 or h <= 0:
-        return img
-
+    if w <= 0 or h <= 0: return img
     target_ar = float(target_w) / float(target_h)
     src_ar = float(w) / float(h)
-
-    if abs(src_ar - target_ar) < 1e-6:
-        return img  # already the right ratio
-
+    if abs(src_ar - target_ar) < 1e-6: return img
     if src_ar > target_ar:
-        # too wide -> crop width
-        new_w = int(round(h * target_ar))
-        left = (w - new_w) // 2
+        new_w = int(round(h * target_ar)); left = (w - new_w) // 2
         box = (left, 0, left + new_w, h)
     else:
-        # too tall -> crop height
-        new_h = int(round(w / target_ar))
-        top = (h - new_h) // 2
+        new_h = int(round(w / target_ar)); top = (h - new_h) // 2
         box = (0, top, w, top + new_h)
-
     return img.crop(box)
-        
+
+# ------------------------------ LTX Image -> Video ----------------------------
 @app.route("/image/video/turbo", methods=["POST"])
 def ltx_image_to_video():
     data = request.get_json(silent=True) or {}
     prompt = (data.get("prompt") or "").strip()
     neg = data.get("negative_prompt", "worst quality, blurry, jittery, distorted, morphing, melting, shifting facial features, extra fingers, distorted hands, uncanny valley, jitter, wobble, frame warping")
-    H = int(data.get("height", 480))
-    W = int(data.get("width", 640))
+    H = int(data.get("height", 480)); W = int(data.get("width", 640))
     frames_count = int(data.get("frames", 37))
     fps = int(data.get("fps", 12))
     steps = int(data.get("steps", 30))
@@ -2598,19 +2163,8 @@ def ltx_image_to_video():
     image_b64 = (data.get("image_base64") or "").strip()
     image_url = (data.get("image_url") or "").strip()
     seed = data.get("seed", None)
-    guidance = float(data.get("guidance_scale", 4))    # ↓ CFG (2.0–3.5)
-    seed_in   = data.get("seed", None)
-    seed_strategy = (data.get("seed_strategy") or "random").lower()
-    per_frame = bool(data.get("per_frame_seed", True))   # seed drift per frame by default
-    motionfix = bool(data.get("motionfix", True))        # on by default
-    jpeg_q    = int(data.get("jpeg_quality", 80))
-    noise_std = float(data.get("jpeg_gauss_std", 0.25))
-    ffmpeg_roundtrip = bool(data.get("ffmpeg_roundtrip", True))
-    ffmpeg_crf       = int(data.get("ffmpeg_crf", 25))        # “around 40”
-    downscale_factor = float(data.get("downscale_factor", 0.5))
-    down_filter      = (data.get("down_filter") or "bicubic") # or "bilinear"
-    up_filter        = (data.get("up_filter") or "bicubic")
-        
+    guidance = float(data.get("guidance_scale", 4))
+
     if not prompt:
         return jsonify(_json_sanitize({"error": "Missing 'prompt'"})), 400
     if not image_b64 and not image_url:
@@ -2620,20 +2174,15 @@ def ltx_image_to_video():
     if guard: return guard
 
     H, W = _round_hw_for_vae(H, W, ratio=8)
-
     gen_id = genbus.new("ltx_i2v", {"endpoint": "/image/video/turbo", "w": W, "h": H, "frames": frames_count, "fps": fps})
 
     try:
         device = DeviceManager.get_device()
         base_root = repo_local_dir(LTX_REPO)
-        
         genbus.progress(gen_id, "Loading models...", 0, 2)
 
         pipe = LTXImageToVideoPipeline.from_pretrained(
-            str(base_root),
-            torch_dtype=torch.float32,
-            local_files_only=True,
-            use_safetensors=True,
+            str(base_root), torch_dtype=torch.float32, local_files_only=True, use_safetensors=True
         ).to(device)
 
         if image_url:
@@ -2641,66 +2190,51 @@ def ltx_image_to_video():
         else:
             raw = base64.b64decode(image_b64)
             init_img = Image.open(io.BytesIO(raw)).convert("RGB")
-            
-        init_img = center_crop_to_aspect(init_img, W, H)
-            
-        if ffmpeg_roundtrip:
-            init_img = _ffmpeg_h264_roundtrip(
-                init_img,
-                target_w=W,
-                target_h=H,
-                crf=ffmpeg_crf,
-                downscale=downscale_factor,
-                down_filter=down_filter,
-                up_filter=up_filter,
-            )
-            
-        if motionfix:
-            init_img = _motionfix_preprocess(init_img, jpeg_q=jpeg_q, noise_std=noise_std)
 
-        generator = None
-        if isinstance(seed, int):
-            generator = torch.Generator(device=device).manual_seed(seed)
-            
-        if motionfix:
+        init_img = center_crop_to_aspect(init_img, W, H)
+
+        if bool(data.get("ffmpeg_roundtrip", True)):
+            init_img = _ffmpeg_h264_roundtrip(
+                init_img, target_w=W, target_h=H,
+                crf=int(data.get("ffmpeg_crf", 25)),
+                downscale=float(data.get("downscale_factor", 0.5)),
+                down_filter=(data.get("down_filter") or "bicubic"),
+                up_filter=(data.get("up_filter") or "bicubic"),
+            )
+
+        if bool(data.get("motionfix", True)):
+            init_img = _motionfix_preprocess(
+                init_img, jpeg_q=int(data.get("jpeg_quality", 80)), noise_std=float(data.get("jpeg_gauss_std", 0.25))
+            )
+
             try:
                 pipe.scheduler = FlowMatchEulerDiscreteScheduler.from_config(pipe.scheduler.config)
-                # helpful toggles if available in your diffusers version:
                 try: setattr(pipe.scheduler, "use_karras_sigmas", True)
                 except Exception: pass
                 try: setattr(pipe.scheduler, "timestep_spacing", "trailing")
                 except Exception: pass
             except Exception as e:
                 logger.info(f"[LTX] Keep default scheduler (couldn't switch): {e}")
-                
+
         init_img = init_img.resize((W, H), Image.BICUBIC)
+
+        generator = torch.Generator(device=device).manual_seed(seed) if isinstance(seed, int) else None
 
         genbus.progress(gen_id, "Generating video...", 1, 2)
         out = pipe(
             image=init_img,
             prompt=prompt + " — steady subject, minimal body deformation, identity consistent across frames, natural micro-expressions, smooth cinematic camera move",
             negative_prompt=neg,
-            width=W,
-            height=H,
-            num_frames=frames_count,
-            num_inference_steps=steps,
-            generator=generator,
-            guidance_scale=guidance,
+            width=W, height=H, num_frames=frames_count, num_inference_steps=steps,
+            generator=generator, guidance_scale=guidance,
         )
-
-        frames = out.frames[0] if hasattr(out, "frames") else out
-        if not isinstance(frames, (list, tuple)):
-            frames = [frames]
-
-        # frames = _apply_watermark_frames(frames)
 
         genbus.progress(gen_id, "Encoding video...", 2, 2)
         out_name = f"ltx_{int(time.time())}.mp4"
         out_path = os.path.join(os.getcwd(), out_name)
-        # _write_video_h264_safe(out_path, frames, fps=fps, gen_id=gen_id, target_size=(W, H))
         _write_video_h264_safe_interpolated(
             out_path, out, fps_in=fps, target_size=(W, H),
-            fps_out=24, upscale=2, scaler="lanczos", aspect_mode="fill", 
+            fps_out=24, upscale=2, scaler="lanczos", aspect_mode="fill",
             crf=15, preset="slow", add_grain=0.33, sharpen=0.5, deband=True, gen_id=gen_id
         )
         genbus.finish(gen_id, {"video_path": out_path})
@@ -2714,173 +2248,23 @@ def ltx_image_to_video():
         DeviceManager.free_memory()
 
 def _load_video_local_ffmpeg(video_path: str, limit: int) -> List[Image.Image]:
-    """
-    Minimal local video loader using the existing bundled ffmpeg.
-    Replicates `load_video(path)[:limit]` semantics:
-      - decodes frames with ffmpeg
-      - collects up to `limit` frames as RGB PIL Images
-      - cleans up temp files
-    """
     ffmpeg = get_ffmpeg_binary_path()
     tmp_dir = Path(MODEL_DIR) / f"tmp_vread_{int(time.time())}_{os.getpid()}"
     tmp_dir.mkdir(parents=True, exist_ok=True)
-
     try:
-        # -vsync vfr keeps variable frame rate faithful; -frames:v caps the total frames
-        cmd = [
-            ffmpeg, "-hide_banner", "-loglevel", "error",
-            "-y", "-i", video_path,
-            "-vsync", "vfr",
-            "-frames:v", str(max(1, limit)),
-            str(tmp_dir / "%05d.png"),
-        ]
+        cmd = [ffmpeg, "-hide_banner", "-loglevel", "error", "-y", "-i", video_path, "-vsync", "vfr", "-frames:v", str(max(1, limit)), str(tmp_dir / "%05d.png")]
         subprocess.run(cmd, check=True)
-
-        # Read back as PIL (RGB), preserve order, and apply the same slice [:limit]
         frames: List[Image.Image] = []
         for p in sorted(tmp_dir.glob("*.png"))[:limit]:
             with Image.open(p) as im:
                 frames.append(im.convert("RGB"))
-
         if not frames:
             raise RuntimeError("No frames decoded from local video.")
-
         return frames
     finally:
         shutil.rmtree(tmp_dir, ignore_errors=True)
 
-@app.route("/video/video/turbo", methods=["POST"])
-def ltx_video_to_video():
-    """
-    LTX Video→Video refinement.
-    Input: video_base64 | video_url | video_path
-    Tunables: frames, max_area, steps, guidance, strength, fps_out, seed
-    """
-    data = request.get_json(silent=True) or {}
-    prompt = (data.get("prompt") or "").strip()
-    neg = data.get("negative_prompt", "worst quality, blurry, jittery, distorted, morphing, melting, shifting facial features, extra fingers, distorted hands, uncanny valley, jitter, wobble, frame warping")
-    H = int(data.get("height", 512))
-    W = int(data.get("width", 768))
-    frames_count = int(data.get("frames", 37))
-    fps = int(data.get("fps", 12))
-    steps = int(data.get("steps", 28))
-    auto_dl = bool(data.get("auto_download", False))
-    video_path = (data.get("video_path") or "").strip()
-    seed = data.get("seed", None)
-    strength = float(data.get("strength", 0.75))         # ↑ denoise for motion (0.65–0.85 is a good band)
-    guidance = float(data.get("guidance_scale", 3))    # ↓ CFG (2.0–3.5)
-    seed_in   = data.get("seed", None)
-    seed_strategy = (data.get("seed_strategy") or "random").lower()
-    per_frame = bool(data.get("per_frame_seed", True))   # seed drift per frame by default
-    motionfix = bool(data.get("motionfix", True))        # on by default
-    jpeg_q    = int(data.get("jpeg_quality", 65))
-    noise_std = float(data.get("jpeg_gauss_std", 0.66))
-    ffmpeg_roundtrip = bool(data.get("ffmpeg_roundtrip", True))
-    ffmpeg_crf       = int(data.get("ffmpeg_crf", 40))        # “around 40”
-    downscale_factor = float(data.get("downscale_factor", 0.5))
-    down_filter      = (data.get("down_filter") or "bicubic") # or "bilinear"
-    up_filter        = (data.get("up_filter") or "bicubic")
-    
-    video_path = str(MODEL_DIR / "video.mp4")
-    
-    if not prompt:
-        return jsonify(_json_sanitize({"error": "Missing 'prompt'"})), 400
-    if not video_path:
-        return jsonify(_json_sanitize({"error": "Provide 'video_path'"})), 400
-
-    guard = _ensure_files_present_or_start("ltx_video", auto_download=auto_dl)
-    if guard: return guard
-
-    H, W = _round_hw_for_vae(H, W, ratio=8)
-
-    gen_id = genbus.new("ltx_i2v", {"endpoint": "/video/video/turbo", "w": W, "h": H, "frames": frames_count, "fps": fps})
-
-    try:
-        device = DeviceManager.get_device()
-        base_root = repo_local_dir(LTX_REPO)
-        
-        genbus.progress(gen_id, "Loading models...", 0, 2)
-
-        pipe = DiffusionPipeline.from_pretrained(
-            str(base_root),
-            custom_pipeline="stg_ltx_condition",
-            torch_dtype=torch.float32,
-            local_files_only=True,
-            use_safetensors=True,
-        ).to(device)
-        
-        try:
-            from diffusers.schedulers import FlowMatchEulerDiscreteScheduler
-            if isinstance(pipe.scheduler, FlowMatchEulerDiscreteScheduler):
-                pipe.scheduler = FlowMatchEulerDiscreteScheduler.from_config(
-                    pipe.scheduler.config,
-                    use_dynamic_shifting=False
-                )
-            else:
-                # Fallback for scheduler subclasses
-                pipe.scheduler = type(pipe.scheduler).from_config(
-                    pipe.scheduler.config,
-                    use_dynamic_shifting=False
-                )
-        except Exception:
-            # Older diffusers: in-place update
-            try:
-                pipe.scheduler.register_to_config(use_dynamic_shifting=False)
-            except Exception:
-                pass        
-        
-        video = _load_video_local_ffmpeg(video_path, 21)
-        condition1 = LTXVideoCondition(video=video, frame_index=0)
-
-        generator = None
-        if isinstance(seed, int):
-            generator = torch.Generator(device=device).manual_seed(seed)
-
-        genbus.progress(gen_id, "Generating video...", 1, 2)
-        out = pipe(
-            conditions=[condition1],
-            prompt=prompt,
-            negative_prompt=neg,
-            width=W,
-            height=H,
-            num_frames=frames_count,
-            num_inference_steps=30,
-            decode_timestep=0.05,
-            decode_noise_scale=0.025,
-            image_cond_noise_scale=0.0,
-            guidance_scale=5.0,
-            guidance_rescale=0.7,
-            generator=generator,
-            stg_applied_layers_idx=[9,10,11],  # last blocks (good default)
-            stg_scale=0.6,                     # motion / strength (0.4–0.8 good range)
-            do_rescaling=True,                 # recommended
-        )
-
-        frames = out.frames[0] if hasattr(out, "frames") else out
-        if not isinstance(frames, (list, tuple)):
-            frames = [frames]
-
-        # frames = _apply_watermark_frames(frames)
-
-        genbus.progress(gen_id, "Encoding video...", 2, 2)
-        
-        out_name = f"ltx_{int(time.time())}.mp4"
-        out_path = os.path.join(os.getcwd(), out_name)
-        _write_video_h264_safe(out_path, frames, fps=fps, gen_id=gen_id, target_size=(W, H))
-        
-        genbus.finish(gen_id, {"video_path": out_path})
-        return jsonify(_json_sanitize({"ok": True, "video_path": out_path, "generation_websocket_url": generation_url()})), 201
-
-    except Exception as e:
-        logger.exception("LTX video->video failed")
-        genbus.error(gen_id, str(e))
-        return jsonify(_json_sanitize({"error": str(e)})), 500
-    finally:
-        DeviceManager.free_memory()
-
-        
 # ------------------- WAN Image -> Video ----------------------------
-
 def preprocess_image(img: Image.Image, quality=25, noise_std=2.5):
     buf = io.BytesIO()
     img.save(buf, format='JPEG', quality=quality)
@@ -2895,55 +2279,32 @@ def preprocess_image(img: Image.Image, quality=25, noise_std=2.5):
 def wan_image_to_video():
     data = request.get_json(silent=True) or {}
     prompt = (data.get("prompt") or "").strip()
-    negative_prompt    = (data.get("negative_prompt") or
+    negative_prompt = (data.get("negative_prompt") or
               "Bright tones, overexposed, static, blurred details, subtitles, style, paintings, overall gray, "
               "worst quality, low quality, JPEG artifacts, deformed, disfigured, still picture").strip()
-    H = int(data.get("height", 480))
-    W = int(data.get("width", 832))
+    H = int(data.get("height", 480)); W = int(data.get("width", 832))
     frames = int(data.get("frames", 37))
     fps = int(data.get("fps", 12))
     steps = int(data.get("steps", 30))
     auto_dl = bool(data.get("auto_download", False))
     image_b64 = (data.get("image_base64") or "").strip()
     image_url = (data.get("image_url") or "").strip()
-    max_area = int(data.get("max_area", H * W))  # Wan i2v “480p” recipe
+    max_area = int(data.get("max_area", H * W))
     seed = data.get("seed", None)
-    guidance = float(data.get("guidance_scale", 4))    # ↓ CFG (2.0–3.5)
-    seed_in   = data.get("seed", None)
-    seed_strategy = (data.get("seed_strategy") or "random").lower()
-    per_frame = bool(data.get("per_frame_seed", True))   # seed drift per frame by default
-    motionfix = bool(data.get("motionfix", True))        # on by default
-    jpeg_q    = int(data.get("jpeg_quality", 80))
-    noise_std = float(data.get("jpeg_gauss_std", 0.25))
-    ffmpeg_roundtrip = bool(data.get("ffmpeg_roundtrip", True))
-    ffmpeg_crf       = int(data.get("ffmpeg_crf", 25))        # “around 40”
-    downscale_factor = float(data.get("downscale_factor", 0.5))
-    down_filter      = (data.get("down_filter") or "bicubic") # or "bilinear"
-    up_filter        = (data.get("up_filter") or "bicubic")
-    
+    guidance = float(data.get("guidance_scale", 4))
+
     guard = _ensure_files_present_or_start("wan_video", auto_download=auto_dl)
-    if guard:
-        return guard
+    if guard: return guard
 
     gen_id = genbus.new("wan_video", {"endpoint": "/image/video/quality", "frames": frames, "fps": fps})
 
     try:
         device = DeviceManager.get_device()
-        if device.type == "mps":
-            compute_dtype = torch.float32
-        elif device.type == "cuda":
-            compute_dtype = torch.float32
-        else:
-            compute_dtype = torch.float32
+        compute_dtype = torch.float32
         base_root = repo_local_dir(WAN_REPO)
 
-
-        # --- build pipeline (scheduler/tokenizer/text_encoder load from repo)
         pipe = WanImageToVideoPipeline.from_pretrained(
-            str(base_root),
-            torch_dtype=compute_dtype,
-            use_safetensors=True,
-            local_files_only=True,
+            str(base_root), torch_dtype=compute_dtype, use_safetensors=True, local_files_only=True
         ).to(device)
 
         if image_url:
@@ -2951,33 +2312,25 @@ def wan_image_to_video():
         else:
             raw = base64.b64decode(image_b64)
             init_img = Image.open(io.BytesIO(raw)).convert("RGB")
-            
+
         init_img = center_crop_to_aspect(init_img, W, H)
 
-        # (optional) crop first to preserve the requested AR, then compute model-safe size
-        if W > 0 and H > 0:
-            init_img = center_crop_to_aspect(init_img, W, H)
-
-        # --- model-safe sizing like the official example
+        # model-safe sizing like official example
         ps = getattr(pipe.transformer.config, "patch_size", (1, 8, 8))
-        patch_t = int(ps[0]) if len(ps) == 3 else 1         # temporal patch
-        patch_w = int(ps[-1])                                # spatial patch (width)
+        patch_t = int(ps[0]) if len(ps) == 3 else 1
+        patch_w = int(ps[-1])
         mod_value = int(pipe.vae_scale_factor_spatial) * patch_w
 
         aspect = init_img.height / init_img.width
         height = (round(np.sqrt(max_area * aspect)) // mod_value) * mod_value
         width  = (round(np.sqrt(max_area / aspect)) // mod_value) * mod_value
-        # keep even for yuv420p downstream
         height = max(mod_value, height - (height % 2))
         width  = max(mod_value, width  - (width % 2))
 
-        # Align frames to temporal patch multiple
         if patch_t > 1 and (frames % patch_t != 0):
             frames = max(patch_t, (frames // patch_t) * patch_t)
 
-        # Final resize to EXACT size the model will use
         init_img = init_img.resize((width, height), Image.BICUBIC)
-
         generator = torch.Generator(device=device).manual_seed(seed) if isinstance(seed, int) else None
 
         def cb(step, timestep, latents):
@@ -2988,36 +2341,31 @@ def wan_image_to_video():
             image=init_img,
             prompt=prompt,
             negative_prompt=negative_prompt,
-            height=height,              # <-- use computed dims
-            width=width,                # <--
+            height=height,
+            width=width,
             num_frames=frames,
             guidance_scale=guidance,
             num_inference_steps=steps,
         )
 
-        frames = out.frames[0] if hasattr(out, "frames") else out
-        if not isinstance(frames, (list, tuple)):
-            frames = [frames]
-        # frames_list = _apply_watermark_frames(frames_list)
-
         genbus.progress(gen_id, "Encoding video...", 2, 2)
         out_name = f"wan_{int(time.time())}.mp4"
         out_path = os.path.join(os.getcwd(), out_name)
-        # _write_video_h264_safe(out_path, frames, fps=fps, gen_id=gen_id, target_size=(W, H))
         _write_video_h264_safe_interpolated(
-            out_path, out, fps_in=fps, target_size=(W, H),
-            fps_out=24, upscale=2, scaler="lanczos", aspect_mode="fill", 
+            out_path, out, fps_in=fps, target_size=(width, height),
+            fps_out=24, upscale=2, scaler="lanczos", aspect_mode="fill",
             crf=15, preset="slow", add_grain=0.33, sharpen=0.5, deband=True, gen_id=gen_id
         )
         genbus.finish(gen_id, {"video_path": out_path})
         return jsonify(_json_sanitize({"ok": True, "video_path": out_path, "generation_websocket_url": generation_url()})), 201
 
     except Exception as e:
-        logger.exception("Wan 2.1 i2v failed")
+        logger.exception("Wan i2v failed")
         genbus.error(gen_id, str(e))
         return jsonify(_json_sanitize({"error": str(e)})), 500
     finally:
         DeviceManager.free_memory()
+        
 # PART 5/5
 
 # ------------------------------- Downloads API --------------------------------
@@ -3044,14 +2392,9 @@ def downloads_retry(pipeline_id):
     pl = download_manager.pipelines.get(pipeline_id)
     if not pl:
         return jsonify({"error": "Pipeline not found"}), 404
-
-    # mark old pipeline done/cancelled so UI stops showing it as active
     download_manager.cancel_pipeline(pipeline_id)
-
-    # start a fresh prefetch for the same pipeline name
     started = _start_prefetch_pipeline(pl.pipeline_name)
     payload = started["json"]
-    # be explicit in the response so the client can (re)subscribe
     return jsonify({
         "ok": True,
         "pipeline_id": payload.get("pipeline_id"),

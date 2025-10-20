@@ -1,18 +1,17 @@
-name: Build & Comment Artifacts
-
+name: Release
 on:
-  pull_request:
+  release:
+    types: [created]
 
 jobs:
-  build:
-    name: Build Python & Electron
+  publish:
     runs-on: ${{ matrix.os }}
     strategy:
       matrix:
         include:
-          # - os: ubuntu-latest
-          #   os_key: linux
-          #   arch: x64
+          - os: ubuntu-latest
+            os_key: linux
+            arch: x64
           - os: macos-latest
             os_key: macos
             arch: arm64
@@ -25,29 +24,19 @@ jobs:
 
     env:
       MAIN_PY_FILE: src/server/diffuser.py
+      # forge publisher uses GITHUB_TOKEN
+      GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v3
-
-      # ─── FREE UP SPACE ON LINUX ──────────────────────────────────────
-      # This removes large preinstalled toolchains to reclaim several GB
-      # - name: Free up disk space (Linux)
-      #   if: matrix.os_key == 'linux'
-      #   run: |
-      #     sudo rm -rf /usr/share/dotnet
-      #     sudo rm -rf /opt/ghc
-      #     sudo rm -rf "/usr/local/share/boost"
-      #     sudo rm -rf "$AGENT_TOOLSDIRECTORY"
+      - uses: actions/checkout@v3
 
       - name: Set up Python
         uses: actions/setup-python@v4
         with:
           python-version: "3.12.x"
-          # on macOS only: select arm64 or x64
           architecture: ${{ matrix.os_key == 'macos' && matrix.arch || '' }}
 
-      # ─── Install extra deps & PyInstaller ───
+      # ── Python deps (same shape as your Build job) ───────────────────────────
       - name: Install Diffusers & PESQ + PyInstaller (macOS/Linux)
         if: runner.os != 'Windows'
         shell: bash
@@ -78,7 +67,25 @@ jobs:
             --index-url https://download.pytorch.org/whl/nightly/cu128
           pip install pyinstaller
 
-      # ─── Build Python binary ───
+      # ── Avoid 4GB archive: force onedir ONLY on Linux/Windows ────────────────
+      - name: Force onedir in PyInstaller spec (Linux)
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          cp diffuser.spec diffuser.spec.bak
+          sed -i 's/onefile=True/onefile=False/g' diffuser.spec
+          sed -i 's/debug=True/debug=False/g' diffuser.spec
+
+      - name: Force onedir in PyInstaller spec (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          Copy-Item diffuser.spec diffuser.spec.bak
+          (Get-Content diffuser.spec) `
+            -replace 'onefile=True','onefile=False' `
+            -replace 'debug=True','debug=False' | Set-Content diffuser.spec
+
+      # ── Build Python binary ──────────────────────────────────────────────────
       - name: Build Python binary (macOS/Linux)
         if: runner.os != 'Windows'
         shell: bash
@@ -93,60 +100,65 @@ jobs:
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
-          New-Item -ItemType Directory binaries\${{ matrix.os_key }}-${{ matrix.arch }} -Force
+          New-Item -ItemType Directory -Force -Path "binaries\${{ matrix.os_key }}-${{ matrix.arch }}" | Out-Null
           pyinstaller `
-            --distpath binaries\${{ matrix.os_key }}-${{ matrix.arch }} `
-            --workpath $env:RUNNER_TEMP\pybuild-${{ matrix.os_key }}-${{ matrix.arch }} `
+            --distpath "binaries\${{ matrix.os_key }}-${{ matrix.arch }}" `
+            --workpath "$env:RUNNER_TEMP\pybuild-${{ matrix.os_key }}-${{ matrix.arch }}" `
             diffuser.spec
 
-      # ─── Build Electron app ───
+      # ── macOS: import certs & expose Apple creds for Forge notarization ──────
+      - name: Decode & Import App Certificate
+        if: matrix.os_key == 'macos'
+        env:
+          CERT_BASE64: ${{ secrets.MAC_APP_CERT_BASE64 }}
+          CERT_PASS:   ${{ secrets.MAC_APP_CERT_PASSWORD }}
+          KEYCHAIN_PW: ${{ secrets.KEYCHAIN_PASSWORD }}
+        run: |
+          echo "$CERT_BASE64" | base64 --decode > app.p12
+          security create-keychain -p "$KEYCHAIN_PW" build.keychain
+          security import app.p12 -k build.keychain -P "$CERT_PASS" -T /usr/bin/codesign
+          security set-keychain-settings -t 3600 -u build.keychain
+          security default-keychain -s build.keychain
+          security unlock-keychain -p "$KEYCHAIN_PW" build.keychain
+
+      - name: Decode & Import Installer Certificate
+        if: matrix.os_key == 'macos'
+        env:
+          CERT_BASE64: ${{ secrets.MAC_INSTALLER_CERT_BASE64 }}
+          CERT_PASS:   ${{ secrets.MAC_INSTALLER_CERT_PASSWORD }}
+        run: |
+          echo "$CERT_BASE64" | base64 --decode > installer.p12
+          security import installer.p12 -k build.keychain -P "$CERT_PASS" -T /usr/bin/codesign
+
+      - name: Expose Apple Credentials
+        if: matrix.os_key == 'macos'
+        run: |
+          echo "APPLE_ID=${{ secrets.APPLE_ID }}" >> $GITHUB_ENV
+          echo "APPLE_TEAM_ID=${{ secrets.APPLE_TEAM_ID }}" >> $GITHUB_ENV
+          echo "APPLE_APP_SPECIFIC_PASSWORD=${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}" >> $GITHUB_ENV
+          echo "CSC_IDENTITY_AUTO_DISCOVERY=true" >> $GITHUB_ENV
+
+      # ── Node & Forge publish ─────────────────────────────────────────────────
       - name: Set up Node.js
         uses: actions/setup-node@v3
         with:
           node-version: 20
 
       - name: Install Node dependencies
-        run: npm install
+        run: npm ci
 
-      - name: Build Electron app
+      # Build & publish for the current matrix target
+      - name: Publish with Electron Forge
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
+          KEYCHAIN_PASSWORD: ${{ secrets.KEYCHAIN_PASSWORD }}
         shell: bash
         run: |
           if [[ "${{ matrix.os_key }}" == "macos" && "${{ matrix.arch }}" == "x64" ]]; then
-            npm run make -- --arch=x64
+            npm run publish -- --arch=x64
           else
-            npm run make
+            npm run publish
           fi
-
-      # ─── Upload Python binary artifact ───
-      - name: Upload Python binary artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: python-${{ matrix.os_key }}-${{ matrix.arch }}
-          path: binaries/${{ matrix.os_key }}-${{ matrix.arch }}/
-
-  comment:
-    needs: build
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/github-script@v6
-        with:
-          github-token: ${{ secrets.GITHUB_TOKEN }}
-          script: |
-            const { owner, repo } = context.repo;
-            const runId = context.runId;
-            // Use the 'rest.actions' namespace and the correct parameter name:
-            const resp = await github.rest.actions.listWorkflowRunArtifacts({
-              owner,
-              repo,
-              run_id: runId
-            });
-            const lines = resp.data.artifacts.map(a => {
-              const u = `https://github.com/${owner}/${repo}/actions/runs/${runId}/artifacts/${a.id}`;
-              return `- [${a.name}](${u})`;
-            });
-            await github.rest.issues.createComment({
-              owner,
-              repo,
-              issue_number: context.payload.pull_request.number,
-              body: ['🔧 **Build artifacts are ready!**', '', ...lines].join('\n')
-            });

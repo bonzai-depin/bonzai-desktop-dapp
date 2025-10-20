@@ -6,90 +6,107 @@ import fs from "node:fs";
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-// your app name must match your executableName
 const appName = "bonzai";
+
+// tiny helper
+function copyRecursive(src, dst) {
+  if (!fs.existsSync(src)) throw new Error(`Missing: ${src}`);
+  const stat = fs.statSync(src);
+  if (stat.isDirectory()) {
+    fs.mkdirSync(dst, { recursive: true });
+    for (const name of fs.readdirSync(src)) {
+      copyRecursive(path.join(src, name), path.join(dst, name));
+    }
+  } else {
+    fs.mkdirSync(path.dirname(dst), { recursive: true });
+    fs.copyFileSync(src, dst);
+  }
+}
 
 export default {
   packagerConfig: {
     icon: "./src/assets/logo",
     executableName: appName,
 
-    // 1) Put temp OUTSIDE the repo to avoid subdir-of-itself & ENOSPC
-    // tmpdir: path.resolve(__dirname, "..", "tmp"), // :contentReference[oaicite:6]{index=6}
+    // keep temp outside repo on CI
     tmpdir: process.env.RUNNER_TEMP,
-    // 2) Ship your Python scripts + CI-built binaries
-    extraResource: [path.resolve(__dirname, "src", "server")], // :contentReference[oaicite:7]{index=7}
 
-    // 3) macOS signing/notarization
+    // ship your scripts (optional if you only need the PyInstaller binary)
+    extraResource: [path.resolve(__dirname, "src", "server")],
+
+    // ───────── macOS signing & notarization (forge uses electron-osx-sign / @electron/notarize)
     osxSign: {
-      /* … */
+      identity: process.env.MAC_CODESIGN_IDENTITY || "Developer ID Application",
+      "hardened-runtime": true,
+      entitlements: "./build/entitlements.mac.plist",
+      "entitlements-inherit": "./build/entitlements.mac.plist",
+      "signature-flags": "library",
+      // allow loading PyTorch/FFmpeg dylibs
+      "gatekeeper-assess": false,
     },
     osxNotarize: {
-      /* … */
+      tool: "notarytool",
+      appleId: process.env.APPLE_ID,
+      teamId: process.env.APPLE_TEAM_ID,
+      password: process.env.APPLE_APP_SPECIFIC_PASSWORD,
     },
 
-    // 4) AFTER extraResource is copied, embed the correct PyInstaller output
+    // After extraResource is copied, embed the correct PyInstaller output
     afterCopyExtraResources: [
       async (buildPath, _ver, platform, arch) => {
-        // A) locate Resources root
         const resourcesRoot =
           platform === "darwin"
             ? path.join(buildPath, `${appName}.app`, "Contents", "Resources")
             : path.join(buildPath, "resources");
-    
-        // B) ensure server folder exists
+
         const serverDir = path.join(resourcesRoot, "server");
         fs.mkdirSync(serverDir, { recursive: true });
-    
-        // C) platform key
+
         const platformKey =
-          platform === "darwin" ? "macos"
-          : platform === "win32" ? "windows"
-          : "linux";
-    
-        // D) top-level binary folder in repo
-        let current = path.resolve(__dirname, "binaries", `${platformKey}-${arch}`);
-        if (!fs.existsSync(current)) {
-          throw new Error(`Binary directory not found: ${current}`);
+          platform === "darwin" ? "macos" : platform === "win32" ? "windows" : "linux";
+
+        // PyInstaller output lives here (created by CI)
+        let pyDist = path.resolve(__dirname, "binaries", `${platformKey}-${arch}`);
+        if (!fs.existsSync(pyDist)) {
+          throw new Error(`Binary directory not found: ${pyDist}`);
         }
-    
-        // E) descend if there’s exactly one subfolder (e.g. 'diffuser')
-        if (fs.statSync(current).isDirectory()) {
-          const entries = fs.readdirSync(current);
-          if (entries.length === 1 && fs.statSync(path.join(current, entries[0])).isDirectory()) {
-            current = path.join(current, entries[0]);
+
+        // If there's a single subfolder, descend (e.g. binaries/macos-arm64/diffuser/)
+        const entriesTop = fs.readdirSync(pyDist);
+        if (
+          entriesTop.length === 1 &&
+          fs.statSync(path.join(pyDist, entriesTop[0])).isDirectory()
+        ) {
+          pyDist = path.join(pyDist, entriesTop[0]);
+        }
+
+        // Detect onefile vs onedir:
+        // - mac: we prefer onefile → a single "diffuser" binary
+        // - linux/win: onedir → whole folder of bins/dlls/so's
+        const destDir = path.join(serverDir, "python-runtime", `${platformKey}-${arch}`);
+        fs.mkdirSync(destDir, { recursive: true });
+
+        const hasExe =
+          platform === "win32"
+            ? fs.readdirSync(pyDist).some((f) => f.toLowerCase().endsWith(".exe"))
+            : fs.existsSync(path.join(pyDist, "diffuser"));
+
+        if (platform === "darwin" && hasExe) {
+          // onefile: copy just the binary but keep the name 'diffuser'
+          const src =
+            path.join(pyDist, "diffuser"); // your spec should name the exe "diffuser"
+          if (!fs.existsSync(src)) {
+            throw new Error(`Expected PyInstaller binary not found: ${src}`);
           }
-        }
-    
-        // F) pick the actual executable file
-        const entries = fs.readdirSync(current).filter(e =>
-          fs.statSync(path.join(current, e)).isFile()
-        );
-        if (entries.length === 0) {
-          throw new Error(`No files found in ${current}`);
-        }
-    
-        let exeName;
-        if (platform === "win32") {
-          // On Windows, look for diffuser.exe
-          exeName = entries.find(e => e.toLowerCase().endsWith(".exe"));
-          if (!exeName) throw new Error(`No .exe found in ${current}`);
+          copyRecursive(src, path.join(destDir, "diffuser"));
         } else {
-          // On macOS/Linux, always pick the literal "diffuser"
-          if (!entries.includes("diffuser")) {
-            throw new Error(`"diffuser" not found in ${current}: ${entries}`);
-          }
-          exeName = "diffuser";
+          // onedir or fallback: copy entire folder contents
+          copyRecursive(pyDist, destDir);
         }
-    
-        const srcPath = path.join(current, exeName);
-        const destPath = path.join(serverDir, "python-binary");
-        fs.copyFileSync(srcPath, destPath);
-    
-        console.log(`Copied ${srcPath} → ${destPath}`);
+
+        console.log(`[forge] Packaged python runtime from ${pyDist} → ${destDir}`);
       },
     ],
-    
   },
 
   makers: [
@@ -103,10 +120,7 @@ export default {
       },
     },
     { name: "@electron-forge/maker-deb", config: { bin: appName } },
-    {
-      name: "@electron-forge/maker-squirrel",
-      config: { icon: "./src/assets/logo" },
-    },
+    { name: "@electron-forge/maker-squirrel", config: { icon: "./src/assets/logo" } },
   ],
 
   publishers: [

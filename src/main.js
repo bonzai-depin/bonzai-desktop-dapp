@@ -1,3 +1,4 @@
+// main.js
 import {
   BrowserWindow,
   app,
@@ -6,208 +7,211 @@ import {
   screen,
   shell,
   dialog,
+  net,
 } from "electron";
 import Store from "electron-store";
 import os from "os";
 import fs from "fs";
 import si from "systeminformation";
 import psTree from "ps-tree";
-import {
-  getLlama,
-  LlamaChatSession,
-  JinjaTemplateChatWrapper,
-} from "node-llama-cpp";
+import { getLlama, LlamaChatSession } from "node-llama-cpp";
 import path from "path";
 import { fileURLToPath, pathToFileURL } from "url";
 import { download } from "electron-dl";
 import { unlink } from "node:fs";
 import child_process from "child_process";
 
+// ─────────────────────────────────────────────────────────────────────────────
+// Globals / paths
+// ─────────────────────────────────────────────────────────────────────────────
 const llama = await getLlama();
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-const PY_DIST_FOLDER = "../dist"; // python distributable folder
-const PY_MODULE = "diffuser.py"; // the name of the main module
 let subpy = null;
+const PY_SERVER_PORT = 65000;
 
-const isRunningInBundle = () => {
-  return fs.existsSync(path.join(__dirname, PY_DIST_FOLDER));
-};
+const PLATFORM_KEY =
+  process.platform === "darwin" ? "macos" :
+  process.platform === "win32"  ? "windows" : "linux";
+const ARCH_KEY = process.arch === "arm64" ? "arm64" : "x64";
 
-const getPythonScriptPath = () => {
-  const devScript = path.join(__dirname, PY_MODULE);
-  const prodScript = path.join(process.resourcesPath, "server", "diffuser.py");
-  const prodBinary = path.join(
+// ─────────────────────────────────────────────────────────────────────────────
+// Python server launcher
+// - dev: run system python on src/server/diffuser.py
+// - packaged (mac onefile): resources/server/python-binary
+// - packaged (linux/win onedir): resources/server/python-runtime/<platform>-<arch>/diffuser(.exe)
+// ─────────────────────────────────────────────────────────────────────────────
+function resolvePythonLaunch(port = PY_SERVER_PORT) {
+  if (!app.isPackaged) {
+    const candidates = [
+      path.resolve(__dirname, "server", "diffuser.py"),
+      path.resolve(__dirname, "../server", "diffuser.py"),
+      path.resolve(__dirname, "../src/server", "diffuser.py"),
+      path.resolve(process.cwd(), "src/server", "diffuser.py"),
+    ];
+    const script = candidates.find((p) => fs.existsSync(p));
+    if (!script) throw new Error(`dev diffuser.py not found. Searched:\n${candidates.join("\n")}`);
+    return {
+      mode: "dev",
+      cmd: process.platform === "win32" ? "python" : "python3",
+      args: [script, `--port=${port}`],
+      cwd: path.dirname(script),
+    };
+  }
+
+  const onefilePath = path.join(process.resourcesPath, "server", "python-binary");
+  if (fs.existsSync(onefilePath) && fs.statSync(onefilePath).isFile()) {
+    return {
+      mode: "onefile",
+      cmd: onefilePath,
+      args: [`--port=${port}`],
+      cwd: path.dirname(onefilePath),
+    };
+  }
+
+  const runtimeDir = path.join(
     process.resourcesPath,
     "server",
-    "python-binary"
+    "python-runtime",
+    `${PLATFORM_KEY}-${ARCH_KEY}`
   );
+  const exeName = process.platform === "win32" ? "diffuser.exe" : "diffuser";
+  const exePath = path.join(runtimeDir, exeName);
+  if (fs.existsSync(exePath)) {
+    return {
+      mode: "onedir",
+      cmd: exePath,
+      args: [`--port=${port}`],
+      cwd: runtimeDir,
+    };
+  }
 
-  return {
-    script: isRunningInBundle() ? prodScript : devScript,
-    binary: isRunningInBundle() ? prodBinary : "python",
-  };
-};
+  throw new Error(
+    `No packaged Python runtime found.\nSearched:\n- ${onefilePath}\n- ${exePath}`
+  );
+}
 
-const killPort = (port = 65000) => {
+const killPort = (port = PY_SERVER_PORT) => {
   try {
     if (process.platform === "win32") {
       child_process.execSync(
-        `for /f "tokens=5" %a in ('netstat -aon ^| find ":${port}" ^| find "LISTENING"') do taskkill /f /pid %a`
+        `for /f "tokens=5" %a in ('netstat -aon ^| find ":${port}" ^| find "LISTENING"') do taskkill /f /pid %a`,
+        { stdio: "ignore" }
       );
     } else {
-      child_process.execSync(`lsof -ti:${port} | xargs kill -9`);
+      child_process.execSync(`lsof -ti:${port} | xargs kill -9`, { stdio: "ignore" });
     }
-    console.log(`[killPort] Successfully killed any process on port ${port}`);
-  } catch (err) {
-    console.log(
-      `[killPort] No process found or failed to kill: ${err.message}`
-    );
+    console.log(`[killPort] Freed port ${port}`);
+  } catch {
+    // no-op
   }
 };
 
 const startPythonSubprocess = () => {
-  killPort(65000);
-  const { script, binary } = getPythonScriptPath(); // Updated to return both script and binary paths
-  const port = 65000; // Match Flask port
+  killPort(PY_SERVER_PORT);
 
-  console.log(`Starting diffuser... Script: ${script}, Binary: ${binary}`);
-
-  if (isRunningInBundle()) {
-    console.log("Diffuser runs in bundle mode!");
-    subpy = child_process.execFile(binary, [script, `--port=${port}`]);
-  } else {
-    console.log("Diffuser runs in development mode!");
-    subpy = child_process.spawn(binary, [script, `--port=${port}`]);
+  let launch;
+  try {
+    launch = resolvePythonLaunch(PY_SERVER_PORT);
+  } catch (e) {
+    console.error(e.message);
+    return;
   }
 
-  // Attach event listeners to capture stdout and stderr
-  if (subpy) {
-    subpy.stdout.on("data", (data) => console.log(`Python stdout: ${data}`));
-    subpy.stderr.on("data", (data) => console.error(`Python stderr: ${data}`));
+  console.log(`Starting diffuser [${launch.mode}] → ${launch.cmd} ${launch.args.join(" ")}`);
 
-    subpy.on("close", (code) => {
-      console.log(`Python subprocess exited with code ${code}`);
-    });
+  const env = { ...process.env, PYTHONUNBUFFERED: "1" };
 
-    subpy.on("error", (err) => {
-      console.error(`Failed to start Python subprocess: ${err}`);
-    });
-  } else {
-    console.error("Failed to start Python subprocess: subpy is null.");
-  }
+  subpy = child_process.spawn(launch.cmd, launch.args, {
+    cwd: launch.cwd,
+    env,
+    stdio: ["ignore", "pipe", "pipe"],
+    shell: false,
+  });
+
+  subpy.stdout.on("data", (d) => process.stdout.write(`Python stdout: ${d}`));
+  subpy.stderr.on("data", (d) => process.stderr.write(`Python stderr: ${d}`));
+
+  subpy.on("close", (code) => {
+    console.log(`Python subprocess exited with code ${code}`);
+    subpy = null;
+  });
+  subpy.on("error", (err) => {
+    console.error(`Failed to start Python subprocess: ${err}`);
+  });
 };
 
-const killPythonSubprocess = (main_pid) => {
+const killPythonSubprocess = () => {
   console.log("Killing diffuser...");
-  const python_script_name = path.basename(getPythonScriptPath());
-  let cleanup_completed = false;
-  psTree(main_pid, function (err, children) {
-    let python_pids = children
-      .filter(function (el) {
-        return el.COMMAND == python_script_name;
-      })
-      .map(function (p) {
-        return p.PID;
-      });
-    // kill all the spawned python processes
-    python_pids.forEach(function (pid) {
-      process.kill(pid);
+  return new Promise((resolve) => {
+    if (!subpy || !subpy.pid) return resolve();
+    const pid = subpy.pid;
+
+    psTree(pid, () => {
+      if (process.platform === "win32") {
+        child_process.exec(`taskkill /PID ${pid} /T /F`, () => resolve());
+      } else {
+        try { process.kill(pid, "SIGKILL"); } catch {}
+        resolve();
+      }
+      subpy = null;
     });
-    subpy = null;
-    cleanup_completed = true;
-  });
-  return new Promise(function (resolve, reject) {
-    (function waitForSubProcessCleanup() {
-      if (cleanup_completed) return resolve();
-      setTimeout(waitForSubProcessCleanup, 30);
-    })();
   });
 };
 
 const checkPythonServer = async (url) => {
-  return new Promise((resolve, reject) => {
-    const checkInterval = setInterval(() => {
-      fetch(url)
-        .then(() => {
-          clearInterval(checkInterval);
-          resolve(true);
-        })
-        .catch(() => console.log("Waiting for Python server..."));
-    }, 1000);
-
-    setTimeout(() => {
-      clearInterval(checkInterval);
-      reject(new Error("Python server did not start."));
-    }, 15000);
-  });
+  const deadlineMs = Date.now() + 30000; // 30s
+  while (Date.now() < deadlineMs) {
+    try {
+      const res = await fetch(url);
+      if (res.ok) return true;
+    } catch {}
+    console.log("Waiting for Python server…");
+    await new Promise((r) => setTimeout(r, 1000));
+  }
+  throw new Error("Python server did not start within timeout.");
 };
 
-/**
- * If we want to present local images, we have to register a local protocol and
- * handle it ourselves. This dodges security issues.
- */
-protocol.registerSchemesAsPrivileged([
-  { scheme: "app", privileges: { bypassCSP: true } },
-]);
+// ─────────────────────────────────────────────────────────────────────────────
+// Protocol for local file reads (images, etc.)
+// ─────────────────────────────────────────────────────────────────────────────
+protocol.registerSchemesAsPrivileged([{ scheme: "app", privileges: { bypassCSP: true } }]);
 
 app.whenReady().then(() => {
-  /**
-   * Register a handler for the local protocol. We do the dumb thing of just
-   * reading the file. This is not safe in general.
-   */
   protocol.handle("app", (req) => {
     const { pathname } = new URL(req.url);
     return net.fetch(pathToFileURL(pathname).toString());
   });
 });
 
+// ─────────────────────────────────────────────────────────────────────────────
+// Squirrel (Windows) early-exit
+// ─────────────────────────────────────────────────────────────────────────────
 try {
-  // Handle creating/removing shortcuts on Windows when installing/uninstalling.
   import.meta.resolve("electron-squirrel-startup/package.json");
   app.quit();
-} catch (error) {
-  // Ignore
-  console.log("Ignore error: ", error);
-}
+} catch {}
 
-/**
- * A global cache storage for persistent user data.
- */
+// ─────────────────────────────────────────────────────────────────────────────
+// Store helpers
+// ─────────────────────────────────────────────────────────────────────────────
 const store = new Store();
 
-// Expose store.get
-ipcMain.handle("store-get", (_event, key, defaultValue) => {
-  return store.get(key, defaultValue);
-});
+ipcMain.handle("store-get", (_event, key, def) => store.get(key, def));
+ipcMain.handle("store-set", (_event, key, value) => { store.set(key, value); return true; });
+ipcMain.handle("store-delete", (_event, key) => { store.delete(key); return true; });
 
-// Expose store.set
-ipcMain.handle("store-set", (_event, key, value) => {
-  store.set(key, value);
-  return true;
-});
-
-// Expose store.delete
-ipcMain.handle("store-delete", (_event, key) => {
-  store.delete(key);
-  return true;
-});
-
-ipcMain.handle("agent-save-image", async (event, defaultName, base64Data) => {
-  // 1) show a Save As dialog
+ipcMain.handle("agent-save-image", async (_event, defaultName, base64Data) => {
   const { canceled, filePath } = await dialog.showSaveDialog({
     defaultPath: defaultName,
     filters: [{ name: "Images", extensions: ["png"] }],
   });
   if (canceled || !filePath) return { success: false };
 
-  // 2) strip off data:image/png;base64, if present
   const b64 = base64Data.replace(/^data:image\/\w+;base64,/, "");
   const buf = Buffer.from(b64, "base64");
-
-  // 3) write to disk synchronously or async
   try {
     fs.writeFileSync(filePath, buf);
     return { success: true, path: filePath };
@@ -217,40 +221,38 @@ ipcMain.handle("agent-save-image", async (event, defaultName, base64Data) => {
   }
 });
 
-/**
- * A local Llama Model that we'll be using consistently.
- */
-let model = undefined;
-/**
- * Structures required by LlamaModel for handling chat sessions. These get
- * created when the model is loaded.
- */
+// ─────────────────────────────────────────────────────────────────────────────
+// Llama model wiring
+// ─────────────────────────────────────────────────────────────────────────────
 let modelContext = undefined;
 let modelSession = undefined;
 
+ipcMain.handle("model-check", checkModel);
+ipcMain.handle("model-download", downloadModel);
+ipcMain.handle("model-delete", deleteModel);
+ipcMain.handle("model-load", loadModel);
+ipcMain.handle("model-chat", chat);
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Window creation
+// ─────────────────────────────────────────────────────────────────────────────
 const createWindow = async (width, height) => {
-  // Create the browser window.
   const mainWindow = new BrowserWindow({
-    width: width,
-    height: height,
+    width,
+    height,
     resizable: false,
     maximizable: false,
     minimizable: false,
-    webPreferences: {
-      preload: path.join(__dirname, "preload.js"),
-    },
+    webPreferences: { preload: path.join(__dirname, "preload.js") },
   });
 
   mainWindow.webContents.setWindowOpenHandler(({ url }) => {
-    if (url.startsWith("https:")) {
-      shell.openExternal(url);
-    }
+    if (url.startsWith("https:")) shell.openExternal(url);
     return { action: "deny" };
   });
 
   mainWindow.maximize();
 
-  // and load the index.html of the app.
   if (MAIN_WINDOW_VITE_DEV_SERVER_URL) {
     await mainWindow.loadURL(MAIN_WINDOW_VITE_DEV_SERVER_URL);
   } else {
@@ -258,17 +260,14 @@ const createWindow = async (width, height) => {
       path.join(__dirname, `../renderer/${MAIN_WINDOW_VITE_NAME}/index.html`)
     );
   }
-
-  // Open the DevTools.
-  // mainWindow.webContents.openDevTools();
 };
 
-// This method will be called when Electron has finished
-// initialization and is ready to create browser windows.
-// Some APIs can only be used after this event occurs.
+// ─────────────────────────────────────────────────────────────────────────────
+// App lifecycle
+// ─────────────────────────────────────────────────────────────────────────────
 app.on("ready", async () => {
   const { width, height } = screen.getPrimaryDisplay().workAreaSize;
-  const flaskURL = "http://127.0.0.1:65000";
+  const flaskURL = `http://127.0.0.1:${PY_SERVER_PORT}`;
   startPythonSubprocess();
 
   try {
@@ -279,177 +278,109 @@ app.on("ready", async () => {
     console.error("Failed to start Python server:", error);
     app.quit();
   }
-
-  // createWindow(width, height);
-
-  // develop
-  // try {
-  //   await child_process.spawn("python", ["./src/server/diffuser.py"]);
-  //   return true;
-  // } catch (error) {
-  //   console.error("Server start failed:", error);
-  //   return false;
-  // }
-  // packaging
-  // child_process.spawn('./dist/diffuser/diffuser');
 });
 
 ipcMain.handle("start-server", startPythonSubprocess);
-
 ipcMain.handle("stop-server", killPythonSubprocess);
-
 ipcMain.handle("system-information", systemInformation);
 
-/**
- * Checks if a LLama Model exists
- */
-ipcMain.handle("model-check", checkModel);
-
-ipcMain.handle("model-download", downloadModel);
-
-ipcMain.handle("model-delete", deleteModel);
-
-/**
- * Loads a LLama Model
- */
-ipcMain.handle("model-load", loadModel);
-/**
- * Two way communication with the model.
- */
-ipcMain.handle("model-chat", chat);
-
-// Quit when all windows are closed, except on macOS. There, it's common
-// for applications and their menu bar to stay active until the user quits
-// explicitly with Cmd + Q.
+// Quit on all windows closed (non-mac)
 app.on("window-all-closed", () => {
   if (process.platform !== "darwin") {
-    let main_process_pid = process.pid;
-    killPythonSubprocess(main_process_pid).then(() => {
-      app.quit();
-    });
+    killPythonSubprocess().then(() => app.quit());
   }
 });
 
 app.on("activate", () => {
-  // On OS X it's common to re-create a window in the app when the
-  // dock icon is clicked and there are no other windows open.
-  if (subpy == null) {
-    startPythonSubprocess();
-  }
-
-  if (BrowserWindow.getAllWindows().length === 0) {
-    createWindow();
-  }
+  if (subpy == null) startPythonSubprocess();
+  if (BrowserWindow.getAllWindows().length === 0) createWindow(1280, 800);
 });
 
+// ─────────────────────────────────────────────────────────────────────────────
+// Utilities
+// ─────────────────────────────────────────────────────────────────────────────
 function getLocalIP() {
   const nets = os.networkInterfaces();
   for (const name of Object.keys(nets)) {
     for (const net of nets[name]) {
-      if (net.family === "IPv4" && !net.internal) {
-        return net.address;
-      }
+      if (net.family === "IPv4" && !net.internal) return net.address;
     }
   }
   return "127.0.0.1";
 }
 
-/**
- * Checks the model cache dir and delete the model if available.
- */
 async function systemInformation() {
   const ram = await si.mem();
   const vram = await si.graphics();
-
   const ip = getLocalIP();
-  console.log(`Flask API should be accessible at: http://${ip}:65000`);
+  console.log(`Flask API should be accessible at: http://${ip}:${PY_SERVER_PORT}`);
 
-  const systemValues = {
+  return {
     ram: ram.total,
-    gpu: vram.controllers[0].model,
-    vram: vram.controllers[0].vram,
-    ip: ip,
+    gpu: vram.controllers?.[0]?.model || "Unknown",
+    vram: vram.controllers?.[0]?.vram || 0,
+    ip,
   };
-
-  return systemValues;
 }
 
-/**
- * Initialize the model configuration on the first run.
- */
+// Ensure models dir exists on first run
 const modelDir = store.get("models");
 if (!modelDir) {
-  // In production, the model will be in the resources directory
   const defaultModelDir = app.getPath("userData");
-  console.log(defaultModelDir);
   fs.mkdirSync(defaultModelDir, { recursive: true });
   store.set("models", defaultModelDir);
 }
 
-/**
- * Downloads the model file to the user's data directory.
- */
-async function downloadModel(event, url, filename) {
+// ─────────────────────────────────────────────────────────────────────────────
+// Model management
+// ─────────────────────────────────────────────────────────────────────────────
+async function downloadModel(_event, url, filename) {
   const win = BrowserWindow.getFocusedWindow();
-  console.log('app.getPath("userData")', app.getPath("userData"));
   try {
     const dl = await download(win, url, {
       filename,
       directory: path.join(app.getPath("userData"), "models"),
       showBadge: false,
-      onProgress: (progressObj) => {
-        const pct = progressObj.percent; // 0 to 1
+      onProgress: (p) => {
+        const pct = p.percent;
         win.setProgressBar(pct);
         win.webContents.send("download-progress", { filename, percent: pct });
       },
     });
-
-    win.setProgressBar(-1); // clear
+    win.setProgressBar(-1);
     return { savedPath: dl.getSavePath() };
   } catch (error) {
     console.error("Download failed:", error);
+    win?.setProgressBar(-1);
     return false;
   }
 }
 
-/**
- * Checks the model cache dir and delete the model if available.
- */
-function deleteModel(event, modelname) {
-  console.log('app.getPath("userData")', app.getPath("userData"));
-  console.log("modelname", modelname);
+function deleteModel(_event, modelname) {
+  const modelPath = path.join(app.getPath("userData"), "models", modelname);
+  try {
+    unlink(modelPath, (err) => {
+      if (err) throw err;
+      console.log("Model deleted:", modelPath);
+    });
+    return true;
+  } catch (e) {
+    console.error("Delete failed:", e);
+    return false;
+  }
+}
+
+async function loadModel(_event, modelname) {
   const modelPath = path.join(app.getPath("userData"), "models", modelname);
 
-  unlink(modelPath, (err) => {
-    if (err) throw err;
-    console.log("Model was deleted");
-  });
+  const model = await llama.loadModel({ modelPath });
+  modelContext = await model.createContext({ contextSize: 4096 });
+  modelSession = new LlamaChatSession({ contextSequence: modelContext.getSequence() });
   return true;
 }
 
-/**
- * Checks the model cache dir and loads a model if available.
- */
-async function loadModel(event, modelname) {
+function checkModel(_event, modelname) {
   const modelPath = path.join(app.getPath("userData"), "models", modelname);
-
-  const model = await llama.loadModel({
-    modelPath: modelPath,
-  });
-
-  modelContext = await model.createContext({
-    contextSize: 4096,
-  });
-
-  modelSession = new LlamaChatSession({
-    contextSequence: modelContext.getSequence(),
-  });
-  return true;
-}
-
-function checkModel(event, modelname) {
-  const modelPath = path.join(app.getPath("userData"), "models", modelname);
-
   if (!fs.existsSync(modelPath)) {
     console.error("Model file not found:", modelPath);
     return false;
@@ -457,16 +388,10 @@ function checkModel(event, modelname) {
   return true;
 }
 
-/**
- * Prompts the model to respond to the user message in relation to the current
- * session context.
- */
-async function chat(event, userMessage) {
+async function chat(_event, userMessage) {
   if (!modelSession) {
     throw new Error("Model not loaded");
   }
   const assistantMessage = await modelSession.prompt(userMessage);
-  // Note: We could do streaming here but node-llama-cpp doesn't expose a
-  // streaming interface.
   return assistantMessage;
 }
