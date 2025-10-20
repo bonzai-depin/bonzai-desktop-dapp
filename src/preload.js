@@ -1,6 +1,7 @@
 // See the Electron documentation for details on how to use preload scripts:
 // https://www.electronjs.org/docs/latest/tutorial/process-model#preload-scripts
 const { contextBridge, ipcRenderer } = require("electron");
+
 contextBridge.exposeInMainWorld("electronAPI", {
   startServer: () => ipcRenderer.invoke("start-server"),
   stopServer: () => ipcRenderer.invoke("stop-server"),
@@ -8,7 +9,16 @@ contextBridge.exposeInMainWorld("electronAPI", {
   checkModel: (modelname) => ipcRenderer.invoke("model-check", modelname),
   downloadModel: (url, filename) =>
     ipcRenderer.invoke("model-download", url, filename),
+  onDownloadProgress: (cb) => ipcRenderer.on("download-progress", cb),
   deleteModel: (modelname) => ipcRenderer.invoke("model-delete", modelname),
   loadModel: (modelname) => ipcRenderer.invoke("model-load", modelname),
   chat: (userMessage) => ipcRenderer.invoke("model-chat", userMessage),
+  store: {
+    get: (key, defaultValue = null) =>
+      ipcRenderer.invoke("store-get", key, defaultValue),
+    set: (key, value) => ipcRenderer.invoke("store-set", key, value),
+    delete: (key) => ipcRenderer.invoke("store-delete", key),
+  },
+  saveImage: (defaultName, base64Data) =>
+    ipcRenderer.invoke("agent-save-image", defaultName, base64Data),
 });

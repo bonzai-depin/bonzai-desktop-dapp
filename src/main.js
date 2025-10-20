@@ -1,10 +1,22 @@
-import { BrowserWindow, app, ipcMain, protocol, screen, shell } from "electron";
+import {
+  BrowserWindow,
+  app,
+  ipcMain,
+  protocol,
+  screen,
+  shell,
+  dialog,
+} from "electron";
 import Store from "electron-store";
 import os from "os";
 import fs from "fs";
 import si from "systeminformation";
 import psTree from "ps-tree";
-import { getLlama, LlamaChatSession } from "node-llama-cpp";
+import {
+  getLlama,
+  LlamaChatSession,
+  JinjaTemplateChatWrapper,
+} from "node-llama-cpp";
 import path from "path";
 import { fileURLToPath, pathToFileURL } from "url";
 import { download } from "electron-dl";
@@ -165,6 +177,45 @@ try {
  * A global cache storage for persistent user data.
  */
 const store = new Store();
+
+// Expose store.get
+ipcMain.handle("store-get", (_event, key, defaultValue) => {
+  return store.get(key, defaultValue);
+});
+
+// Expose store.set
+ipcMain.handle("store-set", (_event, key, value) => {
+  store.set(key, value);
+  return true;
+});
+
+// Expose store.delete
+ipcMain.handle("store-delete", (_event, key) => {
+  store.delete(key);
+  return true;
+});
+
+ipcMain.handle("agent-save-image", async (event, defaultName, base64Data) => {
+  // 1) show a Save As dialog
+  const { canceled, filePath } = await dialog.showSaveDialog({
+    defaultPath: defaultName,
+    filters: [{ name: "Images", extensions: ["png"] }],
+  });
+  if (canceled || !filePath) return { success: false };
+
+  // 2) strip off data:image/png;base64, if present
+  const b64 = base64Data.replace(/^data:image\/\w+;base64,/, "");
+  const buf = Buffer.from(b64, "base64");
+
+  // 3) write to disk synchronously or async
+  try {
+    fs.writeFileSync(filePath, buf);
+    return { success: true, path: filePath };
+  } catch (e) {
+    console.error("Failed to save:", e);
+    return { success: false, error: e.message };
+  }
+});
 
 /**
  * A local Llama Model that we'll be using consistently.
@@ -342,11 +393,19 @@ async function downloadModel(event, url, filename) {
   const win = BrowserWindow.getFocusedWindow();
   console.log('app.getPath("userData")', app.getPath("userData"));
   try {
-    await download(win, url, {
+    const dl = await download(win, url, {
+      filename,
       directory: path.join(app.getPath("userData"), "models"),
-      filename: filename,
+      showBadge: false,
+      onProgress: (progressObj) => {
+        const pct = progressObj.percent; // 0 to 1
+        win.setProgressBar(pct);
+        win.webContents.send("download-progress", { filename, percent: pct });
+      },
     });
-    return true;
+
+    win.setProgressBar(-1); // clear
+    return { savedPath: dl.getSavePath() };
   } catch (error) {
     console.error("Download failed:", error);
     return false;
@@ -377,7 +436,11 @@ async function loadModel(event, modelname) {
   const model = await llama.loadModel({
     modelPath: modelPath,
   });
-  modelContext = await model.createContext();
+
+  modelContext = await model.createContext({
+    contextSize: 4096,
+  });
+
   modelSession = new LlamaChatSession({
     contextSequence: modelContext.getSequence(),
   });

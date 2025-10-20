@@ -1,28 +1,23 @@
-name: Build
-on: [push, pull_request]
+name: Release
+on:
+  release:
+    types:
+      - created 
 
 jobs:
-  build_on_linux:
-    name: Build on Linux x64
+  publish_on_linux:
     runs-on: ubuntu-latest
     env:
       MAIN_PY_FILE: src/server/diffuser.py
       OS_KEY:        linux
       ARCH_KEY:      x64
-
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v3
-
-      - name: Install OpenBLAS & pkg-config
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y libopenblas-dev pkg-config
+      - uses: actions/checkout@v3
 
       - name: Set up Python (Linux x64)
         uses: actions/setup-python@v4
         with:
-          python-version: '3.12.x'       # SciPy wheels available for 3.12 :contentReference[oaicite:3]{index=3}
+          python-version: '3.12.x'
 
       - name: Install nightly PyTorch (CUDA 12.8)
         run: |
@@ -38,31 +33,32 @@ jobs:
       - name: Build Python binary (Linux x64)
         run: |
           mkdir -p binaries/${{ env.OS_KEY }}-${{ env.ARCH_KEY }}
-          pyinstaller --onefile \
+          pyinstaller \
+            --onefile \
             --distpath binaries/${{ env.OS_KEY }}-${{ env.ARCH_KEY }} \
-            --workpath $RUNNER_TEMP/pybuild-${{ env.OS_KEY }}-${{ env.ARCH_KEY }} \
-            --specpath $RUNNER_TEMP/pybuild-${{ env.OS_KEY }}-${{ env.ARCH_KEY }} \
-            ${{ env.MAIN_PY_FILE }}                 # move intermediate files out of repo :contentReference[oaicite:4]{index=4}
+            --workpath build \
+            --specpath build \
+            $MAIN_PY_FILE
 
       - name: Set up Node.js
         uses: actions/setup-node@v3
         with:
           node-version: 20
 
-      - name: Install dependencies
-        run: npm install
+      - name: Install Node dependencies
+        run: npm ci
 
-      - name: Build Electron app
-        run: npm run make
+      - name: Publish Linux build
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: npm run publish
 
-  build_on_mac:
-    name: Build on macOS ARM64
+  publish_on_mac:
     runs-on: macos-latest
     env:
       MAIN_PY_FILE: src/server/diffuser.py
       OS_KEY:        macos
       ARCH_KEY:      arm64
-
     steps:
       - uses: actions/checkout@v3
 
@@ -86,31 +82,63 @@ jobs:
       - name: Build Python binary (macOS ARM64)
         run: |
           mkdir -p binaries/${{ env.OS_KEY }}-${{ env.ARCH_KEY }}
-          pyinstaller --onefile \
+          pyinstaller \
+            --onefile \
             --distpath binaries/${{ env.OS_KEY }}-${{ env.ARCH_KEY }} \
-            --workpath $RUNNER_TEMP/pybuild-${{ env.OS_KEY }}-${{ env.ARCH_KEY }} \
-            --specpath $RUNNER_TEMP/pybuild-${{ env.OS_KEY }}-${{ env.ARCH_KEY }} \
-            ${{ env.MAIN_PY_FILE }}
+            --workpath build \
+            --specpath build \
+            $MAIN_PY_FILE
+
+      - name: Decode & Import App Certificate
+        env:
+          CERT_BASE64: ${{ secrets.MAC_APP_CERT_BASE64 }}
+          CERT_PASS:   ${{ secrets.MAC_APP_CERT_PASSWORD }}
+          KEYCHAIN_PW: ${{ secrets.KEYCHAIN_PASSWORD }}
+        run: |
+          echo "$CERT_BASE64" | base64 --decode > app.p12
+          security create-keychain -p "$KEYCHAIN_PW" build.keychain
+          security import app.p12 -k build.keychain -P "$CERT_PASS" -T /usr/bin/codesign
+          security set-keychain-settings -t 3600 -u build.keychain
+          security default-keychain -s build.keychain
+          security unlock-keychain -p "$KEYCHAIN_PW" build.keychain
+
+      - name: Decode & Import Installer Certificate
+        env:
+          CERT_BASE64: ${{ secrets.MAC_INSTALLER_CERT_BASE64 }}
+          CERT_PASS:   ${{ secrets.MAC_INSTALLER_CERT_PASSWORD }}
+        run: |
+          echo "$CERT_BASE64" | base64 --decode > installer.p12
+          security import installer.p12 -k build.keychain -P "$CERT_PASS" -T /usr/bin/codesign
+
+      - name: Expose Apple Credentials
+        run: |
+          echo "APPLE_ID=${{ secrets.APPLE_ID }}"       >> $GITHUB_ENV
+          echo "APPLE_TEAM_ID=${{ secrets.APPLE_TEAM_ID }}" >> $GITHUB_ENV
 
       - name: Set up Node.js
         uses: actions/setup-node@v3
         with:
           node-version: 20
 
-      - name: Install dependencies
-        run: npm install
+      - name: Install Node dependencies
+        run: npm ci
 
-      - name: Build Electron app (ARM64)
-        run: npm run make
+      - name: Publish macOS ARM64 build
+        env:
+          GITHUB_TOKEN:               ${{ secrets.GITHUB_TOKEN }}
+          APPLE_ID:                   ${{ secrets.APPLE_ID }}
+          APPLE_TEAM_ID:              ${{ secrets.APPLE_TEAM_ID }}
+          MAC_APP_CERT_PASSWORD:      ${{ secrets.MAC_APP_CERT_PASSWORD }}
+          MAC_INSTALLER_CERT_PASSWORD:  ${{ secrets.MAC_INSTALLER_CERT_PASSWORD }}
+          KEYCHAIN_PASSWORD:          ${{ secrets.KEYCHAIN_PASSWORD }}
+        run: npm run publish
 
-  build_on_mac_intel:
-    name: Build on macOS x64
+  publish_on_mac_intel:
     runs-on: macos-latest
     env:
       MAIN_PY_FILE: src/server/diffuser.py
       OS_KEY:        macos
       ARCH_KEY:      x64
-
     steps:
       - uses: actions/checkout@v3
 
@@ -134,31 +162,63 @@ jobs:
       - name: Build Python binary (macOS x64)
         run: |
           mkdir -p binaries/${{ env.OS_KEY }}-${{ env.ARCH_KEY }}
-          pyinstaller --onefile \
+          pyinstaller \
+            --onefile \
             --distpath binaries/${{ env.OS_KEY }}-${{ env.ARCH_KEY }} \
-            --workpath $RUNNER_TEMP/pybuild-${{ env.OS_KEY }}-${{ env.ARCH_KEY }} \
-            --specpath $RUNNER_TEMP/pybuild-${{ env.OS_KEY }}-${{ env.ARCH_KEY }} \
-            ${{ env.MAIN_PY_FILE }}
+            --workpath build \
+            --specpath build \
+            $MAIN_PY_FILE
+
+      - name: Decode & Import App Certificate
+        env:
+          CERT_BASE64: ${{ secrets.MAC_APP_CERT_BASE64 }}
+          CERT_PASS:   ${{ secrets.MAC_APP_CERT_PASSWORD }}
+          KEYCHAIN_PW: ${{ secrets.KEYCHAIN_PASSWORD }}
+        run: |
+          echo "$CERT_BASE64" | base64 --decode > app.p12
+          security create-keychain -p "$KEYCHAIN_PW" build.keychain
+          security import app.p12 -k build.keychain -P "$CERT_PASS" -T /usr/bin/codesign
+          security set-keychain-settings -t 3600 -u build.keychain
+          security default-keychain -s build.keychain
+          security unlock-keychain -p "$KEYCHAIN_PW" build.keychain
+
+      - name: Decode & Import Installer Certificate
+        env:
+          CERT_BASE64: ${{ secrets.MAC_INSTALLER_CERT_BASE64 }}
+          CERT_PASS:   ${{ secrets.MAC_INSTALLER_CERT_PASSWORD }}
+        run: |
+          echo "$CERT_BASE64" | base64 --decode > installer.p12
+          security import installer.p12 -k build.keychain -P "$CERT_PASS" -T /usr/bin/codesign
+
+      - name: Expose Apple Credentials
+        run: |
+          echo "APPLE_ID=${{ secrets.APPLE_ID }}"       >> $GITHUB_ENV
+          echo "APPLE_TEAM_ID=${{ secrets.APPLE_TEAM_ID }}" >> $GITHUB_ENV
 
       - name: Set up Node.js
         uses: actions/setup-node@v3
         with:
           node-version: 20
 
-      - name: Install dependencies
-        run: npm install
+      - name: Install Node dependencies
+        run: npm ci
 
-      - name: Build Electron app (x64)
-        run: npm run make -- --arch=x64
+      - name: Publish macOS x64 build
+        env:
+          GITHUB_TOKEN:               ${{ secrets.GITHUB_TOKEN }}
+          APPLE_ID:                   ${{ secrets.APPLE_ID }}
+          APPLE_TEAM_ID:              ${{ secrets.APPLE_TEAM_ID }}
+          MAC_APP_CERT_PASSWORD:      ${{ secrets.MAC_APP_CERT_PASSWORD }}
+          MAC_INSTALLER_CERT_PASSWORD:  ${{ secrets.MAC_INSTALLER_CERT_PASSWORD }}
+          KEYCHAIN_PASSWORD:          ${{ secrets.KEYCHAIN_PASSWORD }}
+        run: npm run publish -- --arch=x64
 
-  build_on_win:
-    name: Build on Windows x64
+  publish_on_win:
     runs-on: windows-latest
     env:
       MAIN_PY_FILE: src/server/diffuser.py
       OS_KEY:        windows
       ARCH_KEY:      x64
-
     steps:
       - uses: actions/checkout@v3
 
@@ -179,22 +239,24 @@ jobs:
           pip install pyinstaller
 
       - name: Build Python binary (Windows x64)
-        shell: pwsh                                       # Windows shell to use $env:RUNNER_TEMP :contentReference[oaicite:5]{index=5}
         run: |
-          New-Item -ItemType Directory binaries\${{ env.OS_KEY }}-${{ env.ARCH_KEY }} -Force
-          pyinstaller --onefile `
+          mkdir binaries\${{ env.OS_KEY }}-${{ env.ARCH_KEY }}
+          pyinstaller `
+            --onefile `
             --distpath binaries\${{ env.OS_KEY }}-${{ env.ARCH_KEY }} `
-            --workpath $env:RUNNER_TEMP\pybuild-${{ env.OS_KEY }}-${{ env.ARCH_KEY }} `
-            --specpath $env:RUNNER_TEMP\pybuild-${{ env.OS_KEY }}-${{ env.ARCH_KEY }} `
-            $env:MAIN_PY_FILE
+            --workpath build `
+            --specpath build `
+            $MAIN_PY_FILE
 
       - name: Set up Node.js
         uses: actions/setup-node@v3
         with:
           node-version: 20
 
-      - name: Install dependencies
-        run: npm install
+      - name: Install Node dependencies
+        run: npm ci
 
-      - name: Build Electron app
-        run: npm run make
+      - name: Publish Windows build
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: npm run publish

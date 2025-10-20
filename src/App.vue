@@ -55,6 +55,7 @@
             class="models__list-item model video"
             :class="{ 'is-active': modelMode == 'video' }"
             @click="modelMode = 'video'"
+            :existingImageBase64="videoImageBase64"
           >
             <a>
               <h1>
@@ -88,6 +89,20 @@
                   3d_rotation
                 </span>
                 Game
+              </h1>
+            </a>
+          </li>
+          <li
+            class="models__list-item model robot"
+            :class="{ 'is-active': modelMode == '3D' }"
+            @click="modelMode = 'robot'"
+          >
+            <a>
+              <h1>
+                <span class="material-symbols-outlined is-size-1">
+                  precision_manufacturing
+                </span>
+                Robots
               </h1>
             </a>
           </li>
@@ -137,10 +152,18 @@ export default {
   setup() {
     const modelMode = ref("chat");
     const systemValues = ref({});
+        const videoImageBase64 = ref("");
+
+    const goAnimateToVideo = (b64) => {
+      videoImageBase64.value = b64 || "";
+      modelMode.value = "video"; // switch view
+    };
 
     return {
       systemValues,
       modelMode,
+            videoImageBase64,
+      goAnimateToVideo,
     };
   },
   async mounted() {
@@ -367,38 +390,45 @@ body {
 
 .tabs.menu li.chat {
   /* aspect-ratio: 16/9; */
-  height: 15vh;
+  height: 12vh;
   background: url("https://www.bonzai.sh/bonzai_chat.jpg") no-repeat;
   background-size: cover;
 }
 
 .tabs.menu li.image {
-  height: 15vh;
+  height: 12vh;
   background: url("https://www.bonzai.sh/bonzai_image.jpg") no-repeat;
   background-size: cover;
 }
 
 .tabs.menu li.video {
-  height: 15vh;
+  height: 12vh;
   background: url("https://www.bonzai.sh/bonzai_video.jpg") no-repeat;
   background-size: cover;
 }
 
 .tabs.menu li.music {
-  height: 15vh;
+  height: 12vh;
   background: url("https://www.bonzai.sh/bonzai_music.jpg") no-repeat;
   background-size: cover;
 }
 
 .tabs.menu li.three {
-  height: 15vh;
+  height: 12vh;
   background: url("assets/bonzai_3d.jpg") no-repeat;
   background-size: cover;
   background-position: center center;
 }
 
+.tabs.menu li.robot {
+  height: 12vh;
+  background: url("https://images.unsplash.com/photo-1696258686308-7ea792cf76b6") no-repeat;
+  background-size: cover;
+  background-position: center center;
+}
+
 .tabs.menu li.agent {
-  height: 15vh;
+  height: 17vh;
   background: url("https://www.bonzai.sh/bonzai_agent.jpg") no-repeat;
 
   background-size: cover;

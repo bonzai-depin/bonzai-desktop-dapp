@@ -1,0 +1,140 @@
+name: Sign & Notarize Artifacts
+
+# 1) Trigger after your Build workflow completes successfully
+on:
+  workflow_run:
+    workflows: ["Build & Comment Artifacts"]
+    types: [completed]
+
+jobs:
+  sign_macos:
+    name: Sign & Notarize macOS
+    if: >
+      github.event.workflow_run.conclusion == 'success'
+      && contains(fromJson('["macos-arm64","macos-x64"]'),
+                  format('{0}-{1}', github.event.workflow_run.head_branch, github.event.workflow_run.head_sha))
+    runs-on: macos-latest
+    env:
+      APPLE_ID:                    ${{ secrets.APPLE_ID }}
+      APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
+      APPLE_TEAM_ID:               ${{ secrets.APPLE_TEAM_ID }}
+      MAC_CERT_BASE64:             ${{ secrets.MAC_APP_CERT_BASE64 }}
+      MAC_CERT_PASSWORD:           ${{ secrets.MAC_APP_CERT_PASSWORD }}
+      KEYCHAIN_PASSWORD:           ${{ secrets.KEYCHAIN_PASSWORD }}
+
+    steps:
+      - name: Download Electron macOS artifact
+        uses: actions/download-artifact@v3
+        with:
+          name: electron-macos
+          path: ./dist
+
+      - name: Download Python binary artifact (macOS)
+        uses: actions/download-artifact@v3
+        with:
+          name: python-macos
+          path: ./binaries
+
+      - name: Create & unlock temporary keychain
+        run: |
+          security create-keychain -p "$KEYCHAIN_PASSWORD" build.keychain
+          security default-keychain -s build.keychain
+          security unlock-keychain -p "$KEYCHAIN_PASSWORD" build.keychain
+          security set-keychain-settings -lut 3600 build.keychain :contentReference[oaicite:5]{index=5}
+
+      - name: Import Developer ID certificate
+        run: |
+          echo "$MAC_CERT_BASE64" | base64 --decode > /tmp/devid.p12
+          security import /tmp/devid.p12 \
+            -k ~/Library/Keychains/build.keychain \
+            -P "$MAC_CERT_PASSWORD" \
+            -T /usr/bin/codesign :contentReference[oaicite:6]{index=6}
+
+      - name: Codesign Python binary
+        run: |
+          BIN="./binaries/python-macos/diffuser"
+          codesign --force --timestamp --options runtime \
+            --sign "Developer ID Application: ${APPLE_ID}" "$BIN" :contentReference[oaicite:7]{index=7}
+
+      - name: Codesign Electron .app bundle
+        run: |
+          APP="./dist/Electron-darwin*/bonzai.app"
+          codesign --force --deep --timestamp --options runtime \
+            --sign "Developer ID Application: ${APPLE_ID}" "$APP" :contentReference[oaicite:8]{index=8}
+
+      - name: Notarize & Staple
+        run: |
+          xcrun notarytool submit "$APP" \
+            --wait \
+            --apple-id "$APPLE_ID" \
+            --password "$APPLE_APP_SPECIFIC_PASSWORD" \
+            --team-id "$APPLE_TEAM_ID" :contentReference[oaicite:9]{index=9}
+          xcrun stapler staple "$APP" :contentReference[oaicite:10]{index=10}
+
+      - name: Upload signed macOS artifacts
+        uses: actions/upload-artifact@v3
+        with:
+          name: signed-macos
+          path: |
+            ./dist
+            ./binaries/python-macos
+
+  # sign_windows:
+  #   name: Sign Windows executables
+  #   if: github.event.workflow_run.conclusion == 'success'
+  #   runs-on: windows-latest
+  #   env:
+  #     CERT_PFX_BASE64: ${{ secrets.WIN_PFX_BASE64 }}
+  #     CERT_PFX_PASS:   ${{ secrets.WIN_PFX_PASSWORD }}
+
+  #   steps:
+  #     - name: Download Electron Windows artifact
+  #       uses: actions/download-artifact@v3
+  #       with:
+  #         name: electron-windows
+  #         path: .\dist
+
+  #     - name: Download Python binary artifact (Windows)
+  #       uses: actions/download-artifact@v3
+  #       with:
+  #         name: python-windows
+  #         path: .\binaries
+
+  #     - name: Decode and install PFX certificate
+  #       shell: powershell
+  #       run: |
+  #         # Decode PFX
+  #         [IO.File]::WriteAllBytes(
+  #           "$env:RUNNER_TEMP\codesign.pfx",
+  #           [Convert]::FromBase64String("$env:CERT_PFX_BASE64")
+  #         )
+  #         # Import into CurrentUser\My store
+  #         Import-PfxCertificate `
+  #           -FilePath "$env:RUNNER_TEMP\codesign.pfx" `
+  #           -CertStoreLocation Cert:\CurrentUser\My `
+  #           -Password (ConvertTo-SecureString -String "$env:CERT_PFX_PASS" -AsPlainText -Force) :contentReference[oaicite:11]{index=11}
+
+  #     - name: Sign Python binary
+  #       shell: powershell
+  #       run: |
+  #         $bin = ".\binaries\windows-x64\diffuser.exe"
+  #         & "C:\Program Files (x86)\Windows Kits\10\bin\x64\signtool.exe" `
+  #           sign /fd SHA256 /a /tr http://timestamp.digicert.com /td SHA256 `
+  #           /sm /n "Your Company Name" "$bin" :contentReference[oaicite:12]{index=12}
+
+  #     - name: Sign Electron installer/exe
+  #       shell: powershell
+  #       run: |
+  #         $exe = ".\dist\YourElectronInstaller.exe"
+  #         & "C:\Program Files (x86)\Windows Kits\10\bin\x64\signtool.exe" `
+  #           sign /fd SHA256 /a /tr http://timestamp.digicert.com /td SHA256 `
+  #           /sm /n "Your Company Name" "$exe" :contentReference[oaicite:13]{index=13}
+
+  #     - name: Upload signed Windows artifacts
+  #       uses: actions/upload-artifact@v3
+  #       with:
+  #         name: signed-windows
+  #         path: |
+  #           .\dist
+  #           .\binaries\windows-x64
+
