@@ -39,7 +39,7 @@ try:
 except Exception:
     _safetensors_open = None
 
-from transformers import T5EncoderModel, T5Config
+from transformers import T5EncoderModel, T5Config, CLIPVisionModel
 from safetensors.torch import load_file as safe_load_file
 
 from diffusers import (
@@ -404,14 +404,13 @@ def _wan2_patterns() -> list[str]:
         "model_index.json",
         "scheduler/**",
         "transformer/**",
-        "transformer_2/**",       # <-- add this
+        "transformer_2/**",
         "vae/**",
         "text_encoder/**",
+        "image_encoder/**",
         "tokenizer/**",
-        "processor/**",
-        "**/*.json",
-        "**/*.safetensors",
-        "**/*.bin",
+        "image_processor/**",    # <- add
+        "**/*.json", "**/*.safetensors", "**/*.bin",
     ]
 
 def allow_patterns_for_repo(repo_id: str) -> Optional[List[str]]:
@@ -423,7 +422,7 @@ def allow_patterns_for_repo(repo_id: str) -> Optional[List[str]]:
         return _ltx_patterns_strict()
     if repo_id == LTX_UPSAMPLER_REPO:
         return _ltx_upscaler_patterns()
-    if repo_id == (WAN_REPO, WAN_DIFFUSERS_REPO):
+    if repo_id == (WAN_REPO):
         return _wan2_patterns()
     return None
 
@@ -512,13 +511,13 @@ REPO_SPECS = {
         "must_tokenizers": [],
         "must_weight_dirs": ["latent_upsampler", "vae"],
     },
-    "Wan-AI/Wan2.2-I2V-A14B-Diffusers": {
+    "Wan-AI/Wan2.2-TI2V-5B-Diffusers": {
         "must_files": ["model_index.json"],
         "must_tokenizers": ["tokenizer"],
-        "must_weight_dirs": ["transformer", "transformer_2", "vae", "text_encoder"],
-        "extra_dirs": ["scheduler"],
+        "must_weight_dirs": ["transformer", "vae", "text_encoder"],
+        "extra_dirs": ["scheduler"],  # accept actual folder
         "fallback_any_weights": False,
-    },
+    }
 }
 
 DEFAULT_SPEC = {"must_files": ["model_index.json"], "must_weight_dirs": [], "must_tokenizers": [], "fallback_any_weights": True}
@@ -570,11 +569,8 @@ LTX_UPSAMPLER_REPO = "linoyts/LTX-Video-spatial-upscaler-0.9.8"
 
 # Switch WAN classic to the 5B repo
 WAN_REPO = "Wan-AI/Wan2.2-TI2V-5B-Diffusers"
-
-# --- WAN 2.2 5B (official diffusers repo + calcuis single-file FP8/GGUF) ---
-
-# Use the official 2.2 A14B diffusers repo (includes vae, text_encoder, tokenizer, scheduler)
-WAN_DIFFUSERS_REPO = "Wan-AI/Wan2.2-I2V-A14B-Diffusers"
+WAN_GGUF_NAME = "wan2.1-i2v-14b-480p-Q3_K_M.gguf"
+WAN_GGUF_URL  = "https://huggingface.co/city96/Wan2.1-I2V-14B-480P-gguf/resolve/main/wan2.1-i2v-14b-480p-Q3_K_M.gguf"
 
 # --- WAN 2.2 I2V A14B (QuantStack GGUF + Wan 2.1 VAE) ---
 WAN_GGUF_REPO = "QuantStack/Wan2.2-I2V-A14B-GGUF"
@@ -591,7 +587,7 @@ WAN21_VAE_URL        = "https://huggingface.co/QuantStack/Wan2.2-I2V-A14B-GGUF/r
 # ---------- Single source of truth for exact byte sizes ----------
 # If a file isn't listed here, we'll resolve its size via HEAD at runtime.
 EXPECTED_SIZES = {
-    "flux1-krea-dev-Q2_K.gguf":    4_023_690_528,  # exact bytes
+    "flux1-krea-dev-Q8_0.gguf":    12_714_452_256,  # exact bytes
     "flux1-kontext-dev-Q2_K.gguf": 4_023_690_528,  # exact bytes
     "Wan2.2-I2V-A14B-HighNoise-Q2_K.gguf": 5_300_957_696,
     "Wan2.2-I2V-A14B-LowNoise-Q2_K.gguf": 5_300_957_696,
@@ -599,9 +595,9 @@ EXPECTED_SIZES = {
 }
 
 # GGUF single files (env overrides still supported) — generic “wan_i2v” path
-FLUX_KREA_GGUF_NAME = os.getenv("FLUX_GGUF_FILENAME", "flux1-krea-dev-Q2_K.gguf").strip()
+FLUX_KREA_GGUF_NAME = os.getenv("FLUX_GGUF_FILENAME", "flux1-krea-dev-Q8_0.gguf").strip()
 FLUX_KREA_GGUF_URL  = os.getenv("FLUX_KREA_GGUF_URL",
-    "https://huggingface.co/QuantStack/FLUX.1-Krea-dev-GGUF/resolve/main/flux1-krea-dev-Q2_K.gguf").strip()
+    "https://huggingface.co/QuantStack/FLUX.1-Krea-dev-GGUF/resolve/main/flux1-krea-dev-Q8_0.gguf").strip()
 
 FLUX_KONTEXT_GGUF_NAME = os.getenv("KONTEXT_GGUF_FILENAME", "flux1-kontext-dev-Q2_K.gguf").strip()
 FLUX_KONTEXT_GGUF_URL  = os.getenv("FLUX_KONTEXT_GGUF_URL",
@@ -610,11 +606,6 @@ FLUX_KONTEXT_GGUF_URL  = os.getenv("FLUX_KONTEXT_GGUF_URL",
 LTX_GGUF_NAME = os.getenv("LTX_GGUF_FILENAME", "ltxv-13b-0.9.8-distilled-Q2_K.gguf").strip()
 LTX_GGUF_URL  = os.getenv("LTX_GGUF_URL",
     "https://huggingface.co/QuantStack/LTXV-13B-0.9.8-distilled-GGUF/resolve/main/ltxv-13b-0.9.8-distilled-Q2_K.gguf").strip()
-
-# Keep WAN generic GGUF/URL on 5B too (used by 'wan_i2v' plan if you use it)
-WAN_GGUF_NAME = os.getenv("WAN_GGUF_FILENAME", "Wan2.2-TI2V-5B-Q2_K.gguf").strip()
-WAN_GGUF_URL  = os.getenv("WAN_GGUF_URL",
-    "https://huggingface.co/QuantStack/Wan2.2-TI2V-5B-GGUF/resolve/main/Wan2.2-TI2V-5B-Q2_K.gguf").strip()
 
 # VAE single files (float32) — used in other plans; for wan_video we override with FP8 above
 LTX_VAE_NAME = os.getenv("LTX_VAE_FILENAME", "ltxv-vae-f32.safetensors").strip()
@@ -740,18 +731,9 @@ def _plan_for(pipeline: str) -> Dict[str, Any]:
     if pipeline == "wan_video":
         return {
             # We still pull the A14B diffusers repo for configs/tokenizer/scheduler
-            "repos_to_fetch": [WAN_DIFFUSERS_REPO],
+            "repos_to_fetch": [WAN_REPO],
             # The actual transformer + VAE come from the QuantStack GGUF repo
-            "single_files": [
-                _sf(WAN22_HIGH_GGUF_NAME, WAN22_HIGH_GGUF_URL),
-                _sf(WAN22_LOW_GGUF_NAME,  WAN22_LOW_GGUF_URL),
-                _sf(WAN21_VAE_NAME,       WAN21_VAE_URL),
-            ],
-            "notes": [
-                "Transformer: QuantStack GGUF (High/Low noise variants).",
-                "VAE: Wan 2.1 (safetensors).",
-                "Configs/tokenizer/scheduler: Wan-AI/Wan2.2-I2V-A14B-Diffusers.",
-            ],
+            "single_files": []
         }
     if pipeline == "sdxl_intermediate":
         return {"repos_to_fetch": [SDXL_BASE_REPO, SDXL_REFINER_REPO]}
@@ -2073,7 +2055,7 @@ def image_quality_flux_krea():
     data = request.json or {}
     prompt = (data.get("prompt") or "").strip()
     h = int(data.get("height", 512)); w = int(data.get("width", 768))
-    steps = int(data.get("steps", 4))
+    steps = int(data.get("steps", 35))
     cb_steps = int(data.get("callback_steps", 1))
     auto_dl = bool(data.get("auto_download", False))
     if not prompt:
@@ -2087,10 +2069,18 @@ def image_quality_flux_krea():
     gen_id = genbus.new("flux_krea", {"endpoint": "/image/quality", "prompt": prompt})
     try:
         device = DeviceManager.get_device()
-        compute_dtype = torch.bfloat16 if device.type in ("cuda", "mps") else torch.float32
+        if device.type == "mps":
+            compute_dtype = torch.bfloat16
+        elif device.type == "cuda":
+            compute_dtype = torch.bfloat16
+        else:
+            compute_dtype = torch.float32
+        
+        tr_cfg = repo_local_dir(FLUX_KREA_REPO) / "transformer" / "config.json"
 
         transformer = FluxTransformer2DModel.from_single_file(
             str(MODEL_DIR / FLUX_KREA_GGUF_NAME),
+            config=str(tr_cfg),
             quantization_config=GGUFQuantizationConfig(compute_dtype=compute_dtype),
             torch_dtype=compute_dtype,
         ).to(device)
@@ -2107,11 +2097,9 @@ def image_quality_flux_krea():
 
         image = pipe(
             prompt=prompt,
-            guidance_scale=0.0,
+            guidance_scale=3.5,
             height=h, width=w,
-            num_inference_steps=steps,
-            callback=cb,
-            callback_steps=max(1, cb_steps),
+            num_inference_steps=steps
         ).images[0]
 
         buf = BytesIO(); _apply_watermark(image).save(buf, format="PNG")
@@ -2600,30 +2588,29 @@ def center_crop_to_aspect(img: Image.Image, target_w: int, target_h: int) -> Ima
 def ltx_image_to_video():
     data = request.get_json(silent=True) or {}
     prompt = (data.get("prompt") or "").strip()
-    neg = data.get("negative_prompt", "worst quality, blurry, jittery, distorted")
+    neg = data.get("negative_prompt", "worst quality, blurry, jittery, distorted, morphing, melting, shifting facial features, extra fingers, distorted hands, uncanny valley, jitter, wobble, frame warping")
     H = int(data.get("height", 480))
-    W = int(data.get("width", 704))
-    frames_count = int(data.get("frames", 161))
-    fps = int(data.get("fps", 24))
-    steps = int(data.get("steps", 40))
+    W = int(data.get("width", 640))
+    frames_count = int(data.get("frames", 37))
+    fps = int(data.get("fps", 12))
+    steps = int(data.get("steps", 30))
     auto_dl = bool(data.get("auto_download", False))
     image_b64 = (data.get("image_base64") or "").strip()
     image_url = (data.get("image_url") or "").strip()
     seed = data.get("seed", None)
-    strength = float(data.get("strength", 0.75))         # ↑ denoise for motion (0.65–0.85 is a good band)
-    guidance = float(data.get("guidance_scale", 5))    # ↓ CFG (2.0–3.5)
+    guidance = float(data.get("guidance_scale", 4))    # ↓ CFG (2.0–3.5)
     seed_in   = data.get("seed", None)
     seed_strategy = (data.get("seed_strategy") or "random").lower()
     per_frame = bool(data.get("per_frame_seed", True))   # seed drift per frame by default
     motionfix = bool(data.get("motionfix", True))        # on by default
-    jpeg_q    = int(data.get("jpeg_quality", 95))
-    noise_std = float(data.get("jpeg_gauss_std", 0.4))
+    jpeg_q    = int(data.get("jpeg_quality", 80))
+    noise_std = float(data.get("jpeg_gauss_std", 0.25))
     ffmpeg_roundtrip = bool(data.get("ffmpeg_roundtrip", True))
-    ffmpeg_crf       = int(data.get("ffmpeg_crf", 40))        # “around 40”
-    downscale_factor = float(data.get("downscale_factor", 0.85))
+    ffmpeg_crf       = int(data.get("ffmpeg_crf", 25))        # “around 40”
+    downscale_factor = float(data.get("downscale_factor", 0.5))
     down_filter      = (data.get("down_filter") or "bicubic") # or "bilinear"
     up_filter        = (data.get("up_filter") or "bicubic")
-    
+        
     if not prompt:
         return jsonify(_json_sanitize({"error": "Missing 'prompt'"})), 400
     if not image_b64 and not image_url:
@@ -2691,7 +2678,7 @@ def ltx_image_to_video():
         genbus.progress(gen_id, "Generating video...", 1, 2)
         out = pipe(
             image=init_img,
-            prompt=prompt,
+            prompt=prompt + " — steady subject, minimal body deformation, identity consistent across frames, natural micro-expressions, smooth cinematic camera move",
             negative_prompt=neg,
             width=W,
             height=H,
@@ -2714,7 +2701,7 @@ def ltx_image_to_video():
         _write_video_h264_safe_interpolated(
             out_path, out, fps_in=fps, target_size=(W, H),
             fps_out=24, upscale=2, scaler="lanczos", aspect_mode="fill", 
-            crf=15, preset="slow", add_grain=0.05, sharpen=0.7, deband=True, gen_id=gen_id
+            crf=15, preset="slow", add_grain=0.33, sharpen=0.5, deband=True, gen_id=gen_id
         )
         genbus.finish(gen_id, {"video_path": out_path})
         return jsonify(_json_sanitize({"ok": True, "video_path": out_path, "generation_websocket_url": generation_url()})), 201
@@ -2771,17 +2758,17 @@ def ltx_video_to_video():
     """
     data = request.get_json(silent=True) or {}
     prompt = (data.get("prompt") or "").strip()
-    neg = data.get("negative_prompt", "worst quality, blurry, jittery, distorted")
-    H = int(data.get("height", 480))
-    W = int(data.get("width", 704))
-    frames_count = int(data.get("frames", 161))
-    fps = int(data.get("fps", 24))
-    steps = int(data.get("steps", 40))
+    neg = data.get("negative_prompt", "worst quality, blurry, jittery, distorted, morphing, melting, shifting facial features, extra fingers, distorted hands, uncanny valley, jitter, wobble, frame warping")
+    H = int(data.get("height", 512))
+    W = int(data.get("width", 768))
+    frames_count = int(data.get("frames", 37))
+    fps = int(data.get("fps", 12))
+    steps = int(data.get("steps", 28))
     auto_dl = bool(data.get("auto_download", False))
     video_path = (data.get("video_path") or "").strip()
     seed = data.get("seed", None)
     strength = float(data.get("strength", 0.75))         # ↑ denoise for motion (0.65–0.85 is a good band)
-    guidance = float(data.get("guidance_scale", 5))    # ↓ CFG (2.0–3.5)
+    guidance = float(data.get("guidance_scale", 3))    # ↓ CFG (2.0–3.5)
     seed_in   = data.get("seed", None)
     seed_strategy = (data.get("seed_strategy") or "random").lower()
     per_frame = bool(data.get("per_frame_seed", True))   # seed drift per frame by default
@@ -2908,172 +2895,129 @@ def preprocess_image(img: Image.Image, quality=25, noise_std=2.5):
 def wan_image_to_video():
     data = request.get_json(silent=True) or {}
     prompt = (data.get("prompt") or "").strip()
-    neg = data.get("negative_prompt", "worst quality, inconsistent motion, blur, jitter, distorted")
-    if not prompt:
-        return jsonify(_json_sanitize({"error": "Missing 'prompt'"})), 400
-
+    negative_prompt    = (data.get("negative_prompt") or
+              "Bright tones, overexposed, static, blurred details, subtitles, style, paintings, overall gray, "
+              "worst quality, low quality, JPEG artifacts, deformed, disfigured, still picture").strip()
+    H = int(data.get("height", 480))
+    W = int(data.get("width", 832))
+    frames = int(data.get("frames", 37))
+    fps = int(data.get("fps", 12))
+    steps = int(data.get("steps", 30))
+    auto_dl = bool(data.get("auto_download", False))
     image_b64 = (data.get("image_base64") or "").strip()
     image_url = (data.get("image_url") or "").strip()
-    if not image_b64 and not image_url:
-        return jsonify(_json_sanitize({"error": "Provide 'image_base64' or 'image_url'"})), 400
-
-    max_area = int(data.get("max_area", 480 * 832))
-    frames   = int(data.get("frames", 81))
-    steps    = int(data.get("steps", 30))
-    fps      = int(data.get("fps", 16))
-    guidance = float(data.get("guidance_scale", 5.0))
-    seed     = data.get("seed", None)
-    auto_dl  = bool(data.get("auto_download", False))
-
-    gen_id = genbus.new("wan_i2v", {"endpoint": "/image/video/quality", "frames": frames, "fps": fps})
-    genbus.progress(gen_id, "Verifying install...", 1, 5)
-
-    # Make sure the repo + 3 single files are present locally (Comfy diffusion/vae/t5).
+    max_area = int(data.get("max_area", H * W))  # Wan i2v “480p” recipe
+    seed = data.get("seed", None)
+    guidance = float(data.get("guidance_scale", 4))    # ↓ CFG (2.0–3.5)
+    seed_in   = data.get("seed", None)
+    seed_strategy = (data.get("seed_strategy") or "random").lower()
+    per_frame = bool(data.get("per_frame_seed", True))   # seed drift per frame by default
+    motionfix = bool(data.get("motionfix", True))        # on by default
+    jpeg_q    = int(data.get("jpeg_quality", 80))
+    noise_std = float(data.get("jpeg_gauss_std", 0.25))
+    ffmpeg_roundtrip = bool(data.get("ffmpeg_roundtrip", True))
+    ffmpeg_crf       = int(data.get("ffmpeg_crf", 25))        # “around 40”
+    downscale_factor = float(data.get("downscale_factor", 0.5))
+    down_filter      = (data.get("down_filter") or "bicubic") # or "bilinear"
+    up_filter        = (data.get("up_filter") or "bicubic")
+    
     guard = _ensure_files_present_or_start("wan_video", auto_download=auto_dl)
-    if guard: 
+    if guard:
         return guard
 
+    gen_id = genbus.new("wan_video", {"endpoint": "/image/video/quality", "frames": frames, "fps": fps})
+
     try:
-        # Device + dtypes: keep VAE in float32 for quality; rest depends on hardware
         device = DeviceManager.get_device()
         if device.type == "mps":
-            compute_dtype = torch.float16
+            compute_dtype = torch.float32
         elif device.type == "cuda":
-            compute_dtype = torch.bfloat16
+            compute_dtype = torch.float32
         else:
             compute_dtype = torch.float32
+        base_root = repo_local_dir(WAN_REPO)
 
-        base_root = repo_local_dir(WAN_DIFFUSERS_REPO)  # Wan-AI/Wan2.2-TI2V-5B-Diffusers (local)
 
-        genbus.progress(gen_id, "Loading models...", 2, 5)
-
-        # ---- Which noise variant?
-        noise_variant = (data.get("noise_variant") or data.get("noise") or "low").strip().lower()
-        gguf_name = WAN22_HIGH_GGUF_NAME if noise_variant in ("high", "h", "highnoise", "high_noise") else WAN22_LOW_GGUF_NAME
-
-        base_root = repo_local_dir(WAN_DIFFUSERS_REPO)  # Wan-AI/Wan2.2-I2V-A14B-Diffusers (local)
-        tr_cfg = base_root / "transformer" / "config.json"
-        vae_cfg = base_root / "vae" / "config.json"
-
-        # ---- Transformer (Diffusers 3D) from GGUF
-        transformer = WanTransformer3DModel.from_single_file(
-            str(MODEL_DIR / gguf_name),
-            config=str(tr_cfg),
-            quantization_config=GGUFQuantizationConfig(compute_dtype=compute_dtype),
-            torch_dtype=compute_dtype,
-            local_files_only=True,
-        ).to(device)
-
-        # ---- VAE from Wan 2.1 (fp32/16 okay, keep fp32 on CPU if you want to save VRAM)
-        vae = AutoencoderKLWan.from_single_file(
-            str(MODEL_DIR / WAN21_VAE_NAME),
-            config=str(vae_cfg),
-            torch_dtype=compute_dtype,      # for max quality you can force torch.float32
-            local_files_only=True,
-            low_cpu_mem_usage=False,
-            ignore_mismatched_sizes=True,
-        )
-        # Optionally keep VAE on CPU for VRAM savings (slower, but lighter):
-        if os.getenv("WAN_VAE_ON_CPU", "0") == "1":
-            vae = vae.to("cpu")
-        else:
-            vae = vae.to(device)
-
-        # ---- Text encoder from the A14B diffusers repo (no GGUF needed here)
-        #     You can force it to CPU to minimize VRAM:
-        t5_device = torch.device("cpu") if os.getenv("WAN_T5_ON_CPU", "1") == "1" else device
-        text_encoder = T5EncoderModel.from_pretrained(
-            str(base_root / "text_encoder"),
-            torch_dtype=(torch.float16 if t5_device.type != "cpu" else torch.float32),
-            local_files_only=True,
-        ).to(t5_device)
-
-        # ---- Build pipeline (scheduler/tokenizer come from the repo on disk)
+        # --- build pipeline (scheduler/tokenizer/text_encoder load from repo)
         pipe = WanImageToVideoPipeline.from_pretrained(
             str(base_root),
-            transformer=transformer,
-            vae=vae,
-            text_encoder=text_encoder,
             torch_dtype=compute_dtype,
-            local_files_only=True,
             use_safetensors=True,
+            local_files_only=True,
         ).to(device)
 
-        # Keep VAE in float32 explicitly (important for quality)
-        # try:
-        #     pipe.vae.to(device=device, dtype=torch.float32)
-        # except Exception:
-        #     pass
-
-        # Light memory knobs for MPS only
-        if device.type == "mps":
-            try: pipe.enable_attention_slicing()
-            except Exception: pass
-            try: pipe.enable_vae_slicing()
-            except Exception: pass
-            try: pipe.enable_vae_tiling()
-            except Exception: pass
-
-        # ---- Prepare input image
         if image_url:
             init_img = load_image(image_url).convert("RGB")
         else:
             raw = base64.b64decode(image_b64)
             init_img = Image.open(io.BytesIO(raw)).convert("RGB")
+            
+        init_img = center_crop_to_aspect(init_img, W, H)
 
-        # Round size to model-friendly multiples (use your helper with ratio=8)
+        # (optional) crop first to preserve the requested AR, then compute model-safe size
+        if W > 0 and H > 0:
+            init_img = center_crop_to_aspect(init_img, W, H)
+
+        # --- model-safe sizing like the official example
+        ps = getattr(pipe.transformer.config, "patch_size", (1, 8, 8))
+        patch_t = int(ps[0]) if len(ps) == 3 else 1         # temporal patch
+        patch_w = int(ps[-1])                                # spatial patch (width)
+        mod_value = int(pipe.vae_scale_factor_spatial) * patch_w
+
         aspect = init_img.height / init_img.width
-        mod = getattr(pipe, "vae_scale_factor_spatial", 8) * getattr(pipe.transformer.config, "patch_size", [1, 8])[1]
-        h = int(np.sqrt(max_area * aspect)) // mod * mod
-        w = int(np.sqrt(max_area / aspect)) // mod * mod
-        h, w = _round_hw_for_vae(h, w, ratio=8)
-        init_img = init_img.resize((w, h), Image.BICUBIC)
+        height = (round(np.sqrt(max_area * aspect)) // mod_value) * mod_value
+        width  = (round(np.sqrt(max_area / aspect)) // mod_value) * mod_value
+        # keep even for yuv420p downstream
+        height = max(mod_value, height - (height % 2))
+        width  = max(mod_value, width  - (width % 2))
 
-        generator = None
-        if isinstance(seed, int):
-            generator = torch.Generator(device=device).manual_seed(seed)
+        # Align frames to temporal patch multiple
+        if patch_t > 1 and (frames % patch_t != 0):
+            frames = max(patch_t, (frames // patch_t) * patch_t)
 
-        # ---- Generate video frames
-        genbus.progress(gen_id, "Generating video...", 3, 5)
+        # Final resize to EXACT size the model will use
+        init_img = init_img.resize((width, height), Image.BICUBIC)
+
+        generator = torch.Generator(device=device).manual_seed(seed) if isinstance(seed, int) else None
+
+        def cb(step, timestep, latents):
+            genbus.progress(gen_id, "sampling", int(step), steps)
+
+        genbus.progress(gen_id, "Generating video...", 1, 2)
         out = pipe(
             image=init_img,
             prompt=prompt,
-            negative_prompt=neg,
-            height=h, width=w,
+            negative_prompt=negative_prompt,
+            height=height,              # <-- use computed dims
+            width=width,                # <--
             num_frames=frames,
-            num_inference_steps=steps,
             guidance_scale=guidance,
-            generator=generator,
+            num_inference_steps=steps,
         )
 
-        frames = getattr(out, "frames", None)
-        if isinstance(frames, list) and len(frames) and isinstance(frames[0], list):
-            frames = frames[0]
-        if not isinstance(frames, (list, tuple)) or len(frames) == 0:
-            raise RuntimeError("WAN pipeline returned no frames")
+        frames = out.frames[0] if hasattr(out, "frames") else out
+        if not isinstance(frames, (list, tuple)):
+            frames = [frames]
+        # frames_list = _apply_watermark_frames(frames_list)
 
-        genbus.progress(gen_id, "Applying watermark...", 4, 5)
-        frames = _apply_watermark_frames(frames)
-
-        genbus.progress(gen_id, "Encoding video...", 4, 5)
-        out_path = os.path.join(os.getcwd(), f"wan_{int(time.time())}.mp4")
-        _write_video_h264_safe(out_path, frames, fps=fps, gen_id=gen_id, target_size=(w, h))
-
+        genbus.progress(gen_id, "Encoding video...", 2, 2)
+        out_name = f"wan_{int(time.time())}.mp4"
+        out_path = os.path.join(os.getcwd(), out_name)
+        # _write_video_h264_safe(out_path, frames, fps=fps, gen_id=gen_id, target_size=(W, H))
+        _write_video_h264_safe_interpolated(
+            out_path, out, fps_in=fps, target_size=(W, H),
+            fps_out=24, upscale=2, scaler="lanczos", aspect_mode="fill", 
+            crf=15, preset="slow", add_grain=0.33, sharpen=0.5, deband=True, gen_id=gen_id
+        )
         genbus.finish(gen_id, {"video_path": out_path})
-        return jsonify(_json_sanitize({
-            "ok": True,
-            "video_path": out_path,
-            "generation_websocket_url": generation_url()
-        })), 201
+        return jsonify(_json_sanitize({"ok": True, "video_path": out_path, "generation_websocket_url": generation_url()})), 201
 
     except Exception as e:
-        logger.exception("Wan i2v failed")
+        logger.exception("Wan 2.1 i2v failed")
         genbus.error(gen_id, str(e))
         return jsonify(_json_sanitize({"error": str(e)})), 500
     finally:
-        try: DeviceManager.free_memory()
-        except Exception: pass
-
+        DeviceManager.free_memory()
 # PART 5/5
 
 # ------------------------------- Downloads API --------------------------------

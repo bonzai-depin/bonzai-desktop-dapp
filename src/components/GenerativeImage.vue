@@ -994,7 +994,7 @@ export default {
 
       const payload = { prompt, auto_download: true, mode: mode.value };
       const sizes = {
-        sd: [480, 640],
+        sd: [512, 768],
         hd: [720, 1280],
         fhd: [1080, 1920],
         "2k": [1440, 2560],
