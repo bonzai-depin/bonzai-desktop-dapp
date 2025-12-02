@@ -1416,6 +1416,35 @@ root.add(lidPivot);
     }
   });
 
+  // PHYSICS AUTO-DROP AFTER 3 SECONDS
+  if (params.physics && params.physics.world) {
+    setTimeout(() => {
+      // Create falling treasures
+      for (let i = 0; i < 50; i++) {
+        const shape = new params.CANNON.Sphere(0.08);
+        const body = new params.CANNON.Body({
+          mass: 0.1,
+          shape,
+          position: new params.CANNON.Vec3(
+            (Math.random()-0.5)*1.2,
+            chestHeight + 0.8 + Math.random()*0.4,
+            (Math.random()-0.5)*1.2
+          ),
+        });
+
+        // Visual mesh
+        const mesh = new THREE.Mesh(
+          new THREE.SphereGeometry(0.08, 16, 16),
+          goldMatBright
+        );
+        mesh.castShadow = true;
+
+        root.add(mesh);
+        params.physics.addBody(body, mesh);
+      }
+    }, 3000);
+  }
+
 
   ////////////////////////////////////////////////////////////////////////////
   // RETURN OBJECT FROM MODULE
@@ -1638,7 +1667,9 @@ export default async function generate(params) {
   const scene = params.scene;
   const root = new THREE.Group();
   root.name = "GeneratedObject";
-
+  const physics = params.physics;
+  const CANNON = params.CANNON;
+  
   try {
 ${indent(out, 4)}
 

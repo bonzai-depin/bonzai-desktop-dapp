@@ -31,6 +31,8 @@
    UPGRADED THREE.JS CORE IMPORTS (VITE-FRIENDLY)
 --------------------------------------------------- */
 import * as THREE from "three";
+/* Physics */
+import * as CANNON from "cannon-es";
 
 import { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js";
 
@@ -62,6 +64,12 @@ export default {
 
       /* PMREM + Environment */
       _envMap: null,
+      physics: {
+        world: null,
+        bodies: [],
+        objects: [], // maps CANNON bodies to THREE meshes
+        constraints: [],
+      },
     };
   },
 
@@ -261,6 +269,20 @@ export default {
   },
 
   methods: {
+    initPhysicsWorld() {
+      const world = new CANNON.World();
+      world.gravity.set(0, -9.82, 0);
+
+      // Broadphase = MUCH faster
+      world.broadphase = new CANNON.SAPBroadphase(world);
+      world.allowSleep = true;
+
+      // Solver tuning
+      world.solver.iterations = 10;
+      world.solver.tolerance = 0.001;
+
+      this.physics.world = world;
+    },
     /* ---------------------------------------------------
        INIT THREE + PMREM + ENVIRONMENT MAP + HDR SKY
     ---------------------------------------------------- */
@@ -427,6 +449,8 @@ export default {
         });
         this._ro.observe(el);
       }
+
+      this.initPhysicsWorld();
 
       /* --------------------------
          START RENDER LOOP
@@ -1224,6 +1248,18 @@ float h = 0.0;
         const dt = this.clock.getDelta();
         const t = this.clock.elapsedTime;
 
+        if (this.physics.world) {
+          this.physics.world.step(1 / 60, dt, 3);
+
+          // Sync meshes to physics bodies
+          for (const body of this.physics.objects) {
+            if (body.__mesh) {
+              body.__mesh.position.copy(body.position);
+              body.__mesh.quaternion.copy(body.quaternion);
+            }
+          }
+        }
+
         // Camera-follow sky + stars
         if (this._skyMesh) {
           this._skyMesh.position.copy(this.camera.position);
@@ -1491,6 +1527,22 @@ float h = 0.0;
         // context passed to LLM-generated module
         const ctx = {
           THREE,
+          CANNON,
+
+          physics: {
+            world: this.physics.world,
+            addBody: (body, mesh) => {
+              this.physics.bodies.push(body);
+              this.physics.world.addBody(body);
+
+              if (mesh) {
+                body.__mesh = mesh;
+                this.physics.objects.push(body);
+              }
+            },
+            addConstraint: (c) => this.physics.constraints.push(c),
+          },
+
           scene: this.scene,
           camera: this.camera,
           renderer: this.renderer,
