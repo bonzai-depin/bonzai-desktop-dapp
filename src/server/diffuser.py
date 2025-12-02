@@ -40,10 +40,12 @@ except Exception:
 # Diffusers
 from diffusers import (
     AutoPipelineForText2Image,
+    ZImagePipeline,
     StableDiffusionXLPipeline,
     StableDiffusionXLImg2ImgPipeline,
     LTXPipeline,
     LTXImageToVideoPipeline,
+    WanTransformer3DModel,
     WanImageToVideoPipeline,
     GGUFQuantizationConfig,
     FluxPipeline,
@@ -51,7 +53,10 @@ from diffusers import (
     FluxTransformer2DModel,
     FlowMatchEulerDiscreteScheduler,
 )
-from diffusers.utils import load_image
+
+from diffusers.utils import load_image, export_to_video
+
+from transformers import CLIPVisionModel
 
 # ------------------------- JSON Sanitization -------------------------
 def _json_sanitize(obj):
@@ -346,6 +351,18 @@ class DownloadManager:
 download_manager = DownloadManager()
 
 # ---------------------- Repo allow_patterns (lean) -----------------------
+def _z_image_patterns() -> list[str]:
+    return [
+        "model_index.json",
+        "scheduler/**",
+        "transformer/**",
+        "text_encoder/**",
+        "tokenizer/**",
+        "vae/**",
+        "**/*.json", 
+        "**/*.safetensors",
+    ]
+    
 def _sdxl_patterns() -> List[str]:
     return [
         "model_index.json", "scheduler/**", "tokenizer/**", "tokenizer_2/**",
@@ -373,7 +390,7 @@ def _ltx_upscaler_patterns() -> List[str]:
         "**/*.json", "**/*.safetensors", "**/*.bin",
     ]
 
-def _wan2_patterns() -> list[str]:
+def _wan_patterns_5b() -> list[str]:
     return [
         "model_index.json",
         "scheduler/**",
@@ -383,18 +400,34 @@ def _wan2_patterns() -> list[str]:
         "tokenizer/**",
         "**/*.json", "**/*.safetensors", "**/*.bin",
     ]
+    
+def _wan_patterns_14b() -> list[str]:
+    return [
+        "model_index.json",
+        "scheduler/**",
+        "transformer/**",
+        "transformer_2/**",
+        "vae/**",
+        "text_encoder/**",
+        "tokenizer/**",
+        "**/*.json", "**/*.safetensors", "**/*.bin",
+    ]
 
 def allow_patterns_for_repo(repo_id: str) -> Optional[List[str]]:
     if repo_id in ("black-forest-labs/FLUX.1-dev", "black-forest-labs/FLUX.1-Krea-dev"):
         return _flux_patterns()
-    if repo_id in (SDXL_BASE_REPO, SDXL_REFINER_REPO, SDXL_TURBO_REPO):
+    if repo_id == Z_IMAGE_TURBO_REPO:
+        return _z_image_patterns()
+    if repo_id in (SDXL_BASE_REPO, SDXL_REFINER_REPO):
         return _sdxl_patterns()
     if repo_id == LTX_REPO:
         return _ltx_patterns_strict()
     if repo_id == LTX_UPSAMPLER_REPO:
         return _ltx_upscaler_patterns()
-    if repo_id == WAN_REPO:
-        return _wan2_patterns()
+    if repo_id == WAN_REPO_5B:
+        return _wan_patterns_5b()
+    if repo_id == WAN_REPO_14B:
+        return _wan_patterns_14b()
     return None
 
 # ---------------------- Integrity & completeness helpers ----------------------
@@ -440,6 +473,13 @@ REPO_SPECS = {
         "must_weight_dirs": ["text_encoder", "text_encoder_2", "vae"],
         "extra_dirs": ["scheduler"],
     },
+    "Tongyi-MAI/Z-Image-Turbo": {
+        "must_files": ["model_index.json"],
+        "must_tokenizers": ["tokenizer"],
+        "must_weight_dirs": ["transformer", "text_encoder", "vae"],
+        "extra_dirs": ["scheduler"],
+        "fallback_any_weights": False,
+    },
     "stabilityai/stable-diffusion-xl-base-1.0": {
         "must_files": ["model_index.json"],
         "must_tokenizers": ["tokenizer", "tokenizer_2"],
@@ -451,12 +491,6 @@ REPO_SPECS = {
         "must_tokenizers": [],
         "must_weight_dirs": ["unet", "vae"],
         "extra_dirs": ["scheduler"],
-    },
-    "stabilityai/sdxl-turbo": {
-        "must_files": ["model_index.json"],
-        "must_tokenizers": ["tokenizer", "tokenizer_2"],
-        "must_weight_dirs": ["unet", "vae"],
-        "extra_dirs": ["text_encoder", "text_encoder_2", "scheduler"],
     },
     "Lightricks/LTX-Video": {
         "must_files": [
@@ -474,11 +508,18 @@ REPO_SPECS = {
         "must_tokenizers": [],
         "must_weight_dirs": ["latent_upsampler", "vae"],
     },
-    "FastVideo/FastWan2.2-TI2V-5B-FullAttn-Diffusers": {
+    "Wan-AI/Wan2.2-TI2V-5B-Diffusers": {
         "must_files": ["model_index.json"],
         "must_tokenizers": ["tokenizer"],
         "must_weight_dirs": ["transformer", "vae", "text_encoder"],
-        "extra_dirs": ["scheduler"],
+        "extra_dirs": ["scheduler"],  # accept actual folder
+        "fallback_any_weights": False,
+    },
+    "Wan-AI/Wan2.2-I2V-A14B-Diffusers": {
+        "must_files": ["model_index.json"],
+        "must_tokenizers": ["tokenizer"],
+        "must_weight_dirs": ["transformer", "transformer_2", "vae", "text_encoder"],
+        "extra_dirs": ["scheduler"],  # accept actual folder
         "fallback_any_weights": False,
     }
 }
@@ -525,18 +566,29 @@ FLUX_KREA_REPO = "black-forest-labs/FLUX.1-Krea-dev"
 FLUX_KONTEXT_REPO = "black-forest-labs/FLUX.1-Kontext-dev"
 SDXL_BASE_REPO    = "stabilityai/stable-diffusion-xl-base-1.0"
 SDXL_REFINER_REPO = "stabilityai/stable-diffusion-xl-refiner-1.0"
-SDXL_TURBO_REPO   = "stabilityai/sdxl-turbo"
+
+Z_IMAGE_TURBO_REPO = "Tongyi-MAI/Z-Image-Turbo"
+Z_IMAGE_GGUF_REPO = "jayn7/Z-Image-Turbo-GGUF"
+
+Z_IMAGE_GGUF_NAME = os.getenv("Z_IMAGE_GGUF_FILENAME", "z_image_turbo-Q4_K_M.gguf").strip()
+Z_IMAGE_GGUF_URL = os.getenv("Z_IMAGE_GGUF_URL",
+    "https://huggingface.co/jayn7/Z-Image-Turbo-GGUF/resolve/main/z_image_turbo-Q4_K_M.gguf").strip()
+
 LTX_REPO = "Lightricks/LTX-Video"
 LTX_UPSAMPLER_REPO = "linoyts/LTX-Video-spatial-upscaler-0.9.8"
-WAN_REPO = "FastVideo/FastWan2.2-TI2V-5B-FullAttn-Diffusers"
+WAN_REPO_5B = "Wan-AI/Wan2.2-TI2V-5B-Diffusers"
+WAN_REPO_14B = "Wan-AI/Wan2.2-I2V-A14B-Diffusers"
+
+WAN_GGUF_14B_NAME_HIGH = "Wan2.2-I2V-A14B-HighNoise-Q2_K.gguf"
+WAN_GGUF_14B_NAME_LOW ="Wan2.2-I2V-A14B-LowNoise-Q2_K.gguf"
 
 # ---------- Single source of truth for exact byte sizes ----------
 EXPECTED_SIZES = {
+    "z_image_turbo-Q4_K_M.gguf": 5_348_000_000,
     "flux1-krea-dev-Q8_0.gguf":    12_714_452_256,
     "flux1-kontext-dev-Q2_K.gguf":  4_023_690_528,
     "Wan2.2-I2V-A14B-HighNoise-Q2_K.gguf": 5_300_957_696,
     "Wan2.2-I2V-A14B-LowNoise-Q2_K.gguf":  5_300_957_696,
-    "Wan2.1_VAE.safetensors":         253_815_318,
 }
 
 FLUX_KREA_GGUF_NAME = os.getenv("FLUX_GGUF_FILENAME", "flux1-krea-dev-Q8_0.gguf").strip()
@@ -644,12 +696,14 @@ def _plan_for(pipeline: str) -> Dict[str, Any]:
         return {"repos_to_fetch": [FLUX_KONTEXT_REPO], "single_files": [_sf(FLUX_KONTEXT_GGUF_NAME, FLUX_KONTEXT_GGUF_URL)]}
     if pipeline == "ltx_video":
         return {"repos_to_fetch": [LTX_REPO, LTX_UPSAMPLER_REPO], "single_files": []}
-    if pipeline == "wan_video":
-        return {"repos_to_fetch": [WAN_REPO], "single_files": []}
+    if pipeline == "wan_video_5b":
+        return {"repos_to_fetch": [WAN_REPO_5B], "single_files": []}
+    if pipeline == "wan_video_14b":
+        return {"repos_to_fetch": [WAN_REPO_14B], "single_files": []}
+    if pipeline == "z_image_turbo":
+        return {"repos_to_fetch": [Z_IMAGE_TURBO_REPO], "single_files": []}
     if pipeline == "sdxl_intermediate":
         return {"repos_to_fetch": [SDXL_BASE_REPO, SDXL_REFINER_REPO]}
-    if pipeline == "sdxl_turbo":
-        return {"repos_to_fetch": [SDXL_TURBO_REPO]}
     raise ValueError(f"Unknown pipeline: {pipeline}")
 
 # ------------------------------ Repo readiness -------------------------------
@@ -1232,238 +1286,266 @@ def pipelines_prefetch():
         return jsonify(_json_sanitize({"error": str(e)})), 400
 
 # ------------------------------ Video helpers ---------------------------------
-def _sanitize_frames_for_video(frames, target_size=None):
-    if hasattr(frames, "frames"):
-        frames = frames.frames[0]
+def _as_pil_list(frames_or_output):
+    """
+    Accepts:
+      - Diffusers VideoPipelineOutput with .frames (possibly [B][T])
+      - dict with "frames"
+      - list[PIL.Image] or list[np.ndarray] or list[torch.Tensor]
+    Returns: list[PIL.Image] (flat, RGB)
+    """
+    import numpy as np
+    from PIL import Image
+    import torch
 
-    if isinstance(frames, np.ndarray):
-        if frames.ndim == 4:
-            frames = [frames[i] for i in range(frames.shape[0])]
-        elif frames.ndim == 3:
-            frames = [frames]
-        else:
-            raise RuntimeError(f"Unexpected ndarray shape: {frames.shape}")
-    elif not isinstance(frames, (list, tuple)):
-        frames = [frames]
+    obj = frames_or_output
 
-    frames = list(frames)
-    if len(frames) == 0:
-        raise RuntimeError("No frames to write")
-
-    if target_size is not None:
-        W, H = int(target_size[0]), int(target_size[1])
+    if hasattr(obj, "frames"):
+        frames = obj.frames
+    elif isinstance(obj, dict) and "frames" in obj:
+        frames = obj["frames"]
     else:
-        f0 = frames[0]
-        if isinstance(f0, Image.Image):
-            W, H = f0.size
-        else:
-            arr0 = np.asarray(f0)
-            if arr0.ndim == 3 and arr0.shape[2] in (1, 3, 4):
-                H, W = arr0.shape[0], arr0.shape[1]
-            else:
-                raise RuntimeError("Unexpected frame shape; expected (H,W,C).")
+        frames = obj
 
-    W -= (W % 2); H -= (H % 2)
-    if W <= 0 or H <= 0:
-        raise RuntimeError("Computed invalid even dimensions for video.")
+    if isinstance(frames, (list, tuple)) and frames and isinstance(frames[0], (list, tuple)):
+        frames = frames[0]  # flatten [B][T] → [T]
 
     out = []
-    for fr in frames:
-        if isinstance(fr, Image.Image):
-            img = fr
+    for f in frames:
+        if isinstance(f, Image.Image):
+            out.append(f.convert("RGB")); continue
+
+        # torch → numpy
+        if isinstance(f, torch.Tensor):
+            t = f.detach().to("cpu")
+            if t.ndim == 3 and t.shape[0] in (1, 3, 4):
+                t = t.permute(1, 2, 0)  # CHW → HWC
+            arr = t.numpy()
         else:
-            arr = np.asarray(fr)
+            arr = np.asarray(f)
+
+        if arr.ndim == 2:
+            arr = np.repeat(arr[..., None], 3, axis=2)
+        if arr.ndim == 3 and arr.shape[0] in (1, 3, 4) and arr.shape[-1] not in (1, 3, 4):
+            arr = np.transpose(arr, (1, 2, 0))  # CHW → HWC
+        if arr.ndim != 3 or arr.shape[2] not in (3, 4):
+            raise ValueError(f"Invalid frame shape {arr.shape}")
+
+        if arr.dtype.kind == "f":
+            arr = (np.clip(arr, 0.0, 1.0) * 255.0).round().astype(np.uint8)
+        elif arr.dtype != np.uint8:
+            arr = arr.astype(np.uint8)
+
+        out.append(Image.fromarray(arr[..., :3], "RGB"))
+    return out
+
+
+def _resample_frames_linear(arrs_uint8, fps_in, fps_out):
+    """
+    Simple frame-rate conversion via linear blend between neighbors.
+    arrs_uint8: list[np.uint8 HxWx3]
+    """
+    import numpy as np
+    if fps_out is None or fps_out <= fps_in:
+        return arrs_uint8, fps_in
+    N = len(arrs_uint8)
+    if N < 2:
+        return arrs_uint8, fps_in
+
+    ratio = float(fps_out) / float(fps_in)
+    new_len = int(round((N - 1) * ratio)) + 1
+    H, W, _ = arrs_uint8[0].shape
+    out = []
+    for j in range(new_len):
+        p = j / ratio
+        i0 = int(np.floor(p))
+        i1 = min(i0 + 1, N - 1)
+        a = float(p - i0)
+        if i1 == i0:
+            out.append(arrs_uint8[i0])
+        else:
+            f0 = arrs_uint8[i0].astype(np.float32)
+            f1 = arrs_uint8[i1].astype(np.float32)
+            blended = ((1.0 - a) * f0 + a * f1).clip(0, 255).astype(np.uint8)
+            out.append(blended)
+    return out, fps_out
+
+
+def _sanitize_frames_for_video(frames, target_size=None):
+    """
+    Accepts list[PIL.Image] or list[np.ndarray], returns (list[np.uint8 HxWx3], (W,H)).
+    """
+    import numpy as np
+    from PIL import Image
+    arrs = []
+    W = H = None
+    for i, f in enumerate(frames):
+        if isinstance(f, Image.Image):
+            img = f.convert("RGB")
+        else:
+            arr = np.asarray(f)
             if arr.ndim == 2:
-                arr = np.stack([arr] * 3, axis=-1)
-            elif arr.ndim == 3 and arr.shape[2] == 4:
-                arr = arr[..., :3]
-            img = Image.fromarray(arr.astype(np.uint8), mode="RGB")
+                arr = np.repeat(arr[..., None], 3, axis=2)
+            if arr.ndim == 3 and arr.shape[0] in (1, 3, 4) and arr.shape[-1] not in (1, 3, 4):
+                arr = np.transpose(arr, (1, 2, 0))
+            if arr.dtype.kind == "f":
+                arr = (np.clip(arr, 0.0, 1.0) * 255.0).round().astype(np.uint8)
+            elif arr.dtype != np.uint8:
+                arr = arr.astype(np.uint8)
+            img = Image.fromarray(arr, mode="RGBA" if arr.shape[2] == 4 else "RGB").convert("RGB")
 
-        if img.mode != "RGB":
-            img = img.convert("RGB")
-        if img.size != (W, H):
-            img = img.resize((W, H), Image.BICUBIC)
+        if target_size:
+            img = img.resize(target_size, Image.BICUBIC)
+        if W is None:
+            W, H = img.size
+        arrs.append(np.array(img, dtype=np.uint8))
+    return arrs, (W, H)
 
-        arr = np.asarray(img, dtype=np.uint8)
-        if arr.ndim != 3 or arr.shape[2] != 3:
-            arr = np.stack([arr] * 3, axis=-1)
-        out.append(np.ascontiguousarray(arr))
-
-    return out, (W, H)
+def _debug_dump_frame(img, path):
+    try:
+        from PIL import Image
+        img.convert("RGB").save(path, "PNG")
+    except Exception:
+        pass
 
 def _write_video_h264_safe(out_path, frames, fps, gen_id=None, target_size=None, trim_head_frames: int = 0):
+    """
+    Writes frames -> H.264 using a rawvideo pipe (no PNG temp files).
+    Accepts list[PIL.Image] / list[np.ndarray], optional resize via target_size.
+    """
+    import subprocess, numpy as np
+    from PIL import Image
+
     arrs, (W, H) = _sanitize_frames_for_video(frames, target_size=target_size)
+
+    # optional head trim (e.g., LTX burn-in)
     if isinstance(trim_head_frames, int) and trim_head_frames > 0:
         drop = min(trim_head_frames, max(0, len(arrs) - 1))
-        if drop: arrs = arrs[drop:]
-    tmp_dir = Path(MODEL_DIR) / f"tmp_frames_{int(time.time())}"
-    tmp_dir.mkdir(parents=True, exist_ok=True)
-    try:
-        for idx, arr in enumerate(arrs, 1):
-            Image.fromarray(arr).save(tmp_dir / f"{idx:05d}.png")
-            if gen_id and (idx % max(1, len(arrs)//10) == 0):
-                genbus.progress(gen_id, "encode_video", idx, len(arrs)); socketio.sleep(0)
-        ffmpeg = get_ffmpeg_binary_path()
-        cmd = [ffmpeg, "-y", "-framerate", str(fps), "-i", str(tmp_dir / "%05d.png"),
-               "-c:v", "libx264", "-pix_fmt", "yuv420p", "-vf", f"scale={W}:{H}", out_path]
-        subprocess.run(cmd, check=True)
-    finally:
-        shutil.rmtree(tmp_dir, ignore_errors=True)
+        if drop:
+            arrs = arrs[drop:]
 
-def _write_video_h264_safe_interpolated(
-    out_path,
-    frames,
-    fps_in,
-    target_size=None,
-    fps_out=24,
-    upscale=1.0,
-    scaler="lanczos",
-    crf=20,
-    preset="slow",
-    tune="film",
-    add_grain=0.0,
-    sharpen=0.35,
-    deband=True,
-    denoise=True,
-    use_libplacebo=False,
-    aspect_mode="fit",
-    pad_color="black",
-    gen_id=None,
-    trim_head_frames: int = 0,
-):
-    def _even(n):
-        n = int(round(n))
-        return n - (n % 2) if n % 2 else n
+    if not arrs:
+        raise RuntimeError("No frames to encode")
 
-    arrs, (W0, H0) = _sanitize_frames_for_video(frames, target_size=None)
-    if isinstance(trim_head_frames, int) and trim_head_frames > 0:
-        drop = min(trim_head_frames, max(0, len(arrs) - 1))
-        if drop: arrs = arrs[drop:]
+    # enforce even dims for yuv420p
+    W -= (W % 2)
+    H -= (H % 2)
 
-    if target_size is None or aspect_mode == "none":
-        Wt, Ht = _even(W0), _even(H0)
-    else:
-        Wt, Ht = _even(int(target_size[0])), _even(int(target_size[1]))
+    # quick sanity dump for debugging (first & last frame)
+    if os.environ.get("BONZAI_DUMP_FRAMES") == "1":
+        _debug_dump_frame(Image.fromarray(arrs[0], "RGB"), Path(out_path).with_suffix("").as_posix()+"_first.png")
+        _debug_dump_frame(Image.fromarray(arrs[-1], "RGB"), Path(out_path).with_suffix("").as_posix()+"_last.png")
 
-    if aspect_mode == "fit" and target_size is not None:
-        s = min(Wt / W0, Ht / H0)
-        Wc, Hc = _even(round(W0 * s)), _even(round(H0 * s))
-        Wc = min(Wc, Wt); Hc = min(Hc, Ht)
-    elif aspect_mode == "fill" and target_size is not None:
-        s = max(Wt / W0, Ht / H0)
-        Wc, Hc = _even(round(W0 * s)), _even(round(H0 * s))
-    elif aspect_mode == "stretch" and target_size is not None:
-        Wc, Hc = Wt, Ht
-    else:
-        Wc, Hc = _even(W0), _even(H0); Wt, Ht = Wc, Hc
+    ffmpeg = get_ffmpeg_binary_path()
+    # Colorspace flags help QuickTime behave, avoid the opaque taupe look
+    vf = "format=yuv420p,setsar=1"
+    cmd = [
+        ffmpeg, "-y",
+        "-f", "rawvideo",
+        "-pix_fmt", "rgb24",
+        "-s", f"{W}x{H}",
+        "-r", str(int(fps)),
+        "-i", "-",                # stdin
+        "-vf", vf,
+        "-c:v", "libx264",
+        "-preset", "slow",
+        "-crf", "18",
+        "-color_primaries", "bt709",
+        "-colorspace", "bt709",
+        "-color_trc", "bt709",
+        "-movflags", "+faststart",
+        out_path,
+    ]
 
-    if upscale and upscale > 1.0:
-        Wu, Hu = _even(Wc * upscale), _even(Hc * upscale)
-    else:
-        Wu, Hu = Wc, Hc
-
-    tmp_dir = Path(MODEL_DIR) / f"tmp_frames_{int(time.time())}"
-    tmp_dir.mkdir(parents=True, exist_ok=True)
+    # stream frames to ffmpeg
+    proc = subprocess.Popen(cmd, stdin=subprocess.PIPE)
     try:
         total = len(arrs)
         for i, arr in enumerate(arrs, 1):
-            Image.fromarray(arr).save(tmp_dir / f"{i:05d}.png")
+            # arr is uint8 HxWx3
+            proc.stdin.write(arr.tobytes())
             if gen_id and (i % max(1, total // 10) == 0):
-                genbus.progress(gen_id, "encode_prep", i, total); socketio.sleep(0)
-
-        ffmpeg = get_ffmpeg_binary_path()
-
-        sc_flag = {"lanczos": "lanczos", "spline36": "spline", "bicubic": "bicubic", "bilinear": "bilinear"}.get(scaler.lower(), "lanczos")
-
-        vf_parts = []
-        if deband and use_libplacebo:
-            vf_parts.append("libplacebo=deband=1:deband_iterations=1:deband_threshold=4")
-        elif deband:
-            vf_parts.append("gradfun=strength=0.7:radius=16")
-        if denoise:
-            vf_parts.append("hqdn3d=1.0:1.0:6.0:6.0")
-        if (Wu, Hu) != (W0, H0):
-            vf_parts.append(f"scale={Wu}:{Hu}:flags={sc_flag}")
-        if sharpen and sharpen > 0:
-            amt = max(0.1, min(1.5, float(sharpen)))
-            vf_parts.append(f"unsharp=lx=5:ly=5:la={amt}:cx=5:cy=5:ca=0.0")
-        if (Wc, Hc) != (Wu, Hu):
-            vf_parts.append(f"scale={Wc}:{Hc}:flags={sc_flag}")
-        if aspect_mode == "fit" and (Wc, Hc) != (Wt, Ht):
-            vf_parts.append(f"pad={Wt}:{Ht}:(ow-iw)/2:(oh-ih)/2:{pad_color}")
-        elif aspect_mode == "fill" and (Wc, Hc) != (Wt, Ht):
-            vf_parts.append(f"crop={Wt}:{Ht}:(in_w-out_w)/2:(in_h-out_h)/2")
-        elif aspect_mode in ("stretch",) and (Wc, Hc) != (Wt, Ht):
-            vf_parts.append(f"scale={Wt}:{Ht}:flags={sc_flag}")
-        if fps_out and int(fps_out) != int(fps_in):
-            vf_parts.append(f"minterpolate=fps={int(fps_out)}:mi_mode=mci:mc_mode=aobmc:me_mode=bidir:vsbmc=1")
-        vf_parts.append("format=yuv420p")
-        vf = ",".join(vf_parts)
-
-        cmd = [
-            ffmpeg, "-y", "-framerate", str(fps_in), "-i", str(tmp_dir / "%05d.png"),
-            "-vf", vf, "-c:v", "libx264", "-preset", preset, "-tune", tune,
-            "-crf", str(crf), "-profile:v", "high", "-pix_fmt", "yuv420p", "-movflags", "+faststart", out_path,
-        ]
-
-        try:
-            subprocess.run(cmd, check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-        except subprocess.CalledProcessError:
-            fallback = []
-            if denoise: fallback.append("hqdn3d=1.0:1.0:6.0:6.0")
-            if (Wu, Hu) != (W0, H0):  fallback.append(f"scale={Wu}:{Hu}:flags={sc_flag}")
-            if sharpen and sharpen > 0: fallback.append("unsharp=5:5:0.4:5:5:0.0")
-            if (Wc, Hc) != (Wu, Hu):   fallback.append(f"scale={Wc}:{Hc}:flags={sc_flag}")
-            if aspect_mode == "fit" and (Wc, Hc) != (Wt, Ht):
-                fallback.append(f"pad={Wt}:{Ht}:(ow-iw)/2:(oh-ih)/2:{pad_color}")
-            elif aspect_mode == "fill" and (Wc, Hc) != (Wt, Ht):
-                fallback.append(f"crop={Wt}:{Ht}:(in_w-out_w)/2:(in_h-out_h)/2")
-            elif aspect_mode == "stretch" and (Wc, Hc) != (Wt, Ht):
-                fallback.append(f"scale={Wt}:{Ht}:flags={sc_flag}")
-            if fps_out and int(fps_out) != int(fps_in):
-                fallback.append(f"minterpolate=fps={int(fps_out)}")
-            fallback.append("format=yuv420p")
-            cmd2 = cmd[:]
-            cmd2[cmd2.index("-vf")+1] = ",".join(fallback)
-            subprocess.run(cmd2, check=True)
-
-        if gen_id:
-            genbus.progress(gen_id, "encode_complete", 1, 1)
+                genbus.progress(gen_id, "encode_video", i, total)
+                try: socketio.sleep(0)
+                except Exception: pass
     finally:
-        shutil.rmtree(tmp_dir, ignore_errors=True)
+        if proc.stdin:
+            proc.stdin.close()
+        ret = proc.wait()
+        if ret != 0:
+            raise RuntimeError(f"ffmpeg exited with code {ret}")
+
+def _write_video_h264_safe_interpolated(
+    out_path,
+    frames_or_output,
+    *,
+    fps_in,
+    gen_id=None,
+    target_size=None,
+    # enhancement/interp knobs (kept for API compatibility)
+    fps_out=24,
+    upscale=2.0,
+    scaler="lanczos",
+    aspect_mode="fill",   # accepted for compatibility; base video is already sized
+    crf=18,
+    preset="slow",
+    add_grain=0.0,
+    sharpen=0.0,
+    deband=True,
+    trim_head_frames: int = 0,
+):
+    """
+    Unified video writer for both LTX and Wan:
+      1) Coerces diffusers output to list[PIL.Image].
+      2) Writes a base mp4 at fps_in via _write_video_h264_safe (optionally trims head frames).
+      3) Runs ffmpeg enhancement + 24-fps interpolation via enhance_and_interpolate_video().
+    """
+    # 1) Normalize Wan/LTX outputs → list[PIL.Image]
+    frames_pil = _as_pil_list(frames_or_output)
+
+    # 2) Write a temporary, clean base mp4 (no fancy filters here)
+    tmp_base = Path(MODEL_DIR) / f"tmp_base_{int(time.time()*1000)}_{os.getpid()}.mp4"
+    try:
+        _write_video_h264_safe(
+            str(tmp_base),
+            frames_pil,
+            fps_in,
+            gen_id=gen_id,
+            target_size=target_size,          # if set, base is written at exact size already
+            trim_head_frames=trim_head_frames # burn-in removal (LTX style)
+        )
+
+        # 3) Enhance + 24fps interpolate into the final output
+        enhance_and_interpolate_video(
+            in_path=str(tmp_base),
+            out_path=str(out_path),
+            target_fps=int(fps_out or fps_in),
+            upscale=float(upscale or 1.0),
+            scaler=scaler,
+            crf=int(crf),
+            preset=preset,
+            add_grain=float(add_grain or 0.0),
+            sharpen=float(sharpen or 0.0),
+            deband=bool(deband),
+            # aspect_mode is accepted for compatibility; base already has the desired size
+        )
+    finally:
+        try:
+            os.remove(str(tmp_base))
+        except Exception:
+            pass
+
+def _force_pipeline_dtype(pipe, dtype: torch.dtype):
+    """Force all pipeline components to the same dtype for MPS compatibility."""
+    for name in ["unet", "vae", "text_encoder", "text_encoder_2"]:
+        component = getattr(pipe, name, None)
+        if component is not None:
+            component.to(dtype=dtype)
+    return pipe
 
 # --------------------------------------------------------------------
 # Robust frame extractor for Diffusers video outputs (Wan/LTX/etc.)
 # --------------------------------------------------------------------
-def _extract_frames(output) -> list[Image.Image]:
-    def _to_pil(x):
-        if isinstance(x, Image.Image): return x.convert("RGB")
-        arr = np.asarray(x)
-        if arr.ndim == 3 and arr.shape[0] in (1,3,4):
-            arr = np.moveaxis(arr, 0, -1)
-        arr = np.clip(arr, 0, 255).astype(np.uint8)
-        if arr.ndim == 2: arr = np.stack([arr]*3, axis=-1)
-        if arr.shape[-1] == 4: arr = arr[..., :3]
-        return Image.fromarray(arr, "RGB")
-
-    obj = output
-    if hasattr(obj, "frames"):
-        fr = obj.frames
-        if isinstance(fr, (list, tuple)) and fr and isinstance(fr[0], (list, tuple)):
-            fr = fr[0]
-        return [_to_pil(f) for f in fr]
-    if hasattr(obj, "images"):
-        return [_to_pil(f) for f in obj.images]
-    if hasattr(obj, "videos"):
-        vid = obj.videos
-        arr = np.array(vid)
-        if arr.ndim == 5: arr = arr[0]
-        if arr.ndim == 4: return [_to_pil(arr[t]) for t in range(arr.shape[0])]
-    if isinstance(obj, dict):
-        for k in ("frames", "images", "videos"):
-            if k in obj:
-                return _extract_frames(type("X",(object,),{k:obj[k]})())
-    raise RuntimeError("Unable to extract frames from pipeline output")
 
 def _img_b64_to_pil(b64: str) -> Image.Image:
     raw = base64.b64decode(b64)
@@ -1514,7 +1596,7 @@ def image_intermediate_sdxl():
                 if ckpt_path.exists() and ckpt_path.stat().st_size > 0 and ckpt_path.suffix.lower() == ".safetensors":
                     base = StableDiffusionXLPipeline.from_single_file(
                         str(ckpt_path),
-                        torch_dtype=dtype,
+                        dtype=dtype,
                         use_safetensors=True,
                         local_files_only=True,
                     ).to(device)
@@ -1525,7 +1607,7 @@ def image_intermediate_sdxl():
         if base is None:
             base = StableDiffusionXLPipeline.from_pretrained(
                 str(repo_local_dir(SDXL_BASE_REPO)),
-                torch_dtype=dtype,
+                dtype=dtype,
                 use_safetensors=True,
                 variant="fp16",
                 local_files_only=True,
@@ -1600,6 +1682,8 @@ def image_intermediate_sdxl():
 
         def cb_base(step, timestep, latents):
             genbus.progress(gen_id, "base_sampling", int(step), steps_base)
+            
+        base = _force_pipeline_dtype(base, dtype)
 
         latents = base(
             prompt_embeds=prompt_embeds_base,
@@ -1619,11 +1703,18 @@ def image_intermediate_sdxl():
             str(repo_local_dir(SDXL_REFINER_REPO)),
             text_encoder_2=getattr(base, "text_encoder_2", None),
             vae=getattr(base, "vae", None),
-            torch_dtype=dtype,
             use_safetensors=True,
             variant="fp16",
             local_files_only=True,
         ).to(device)
+        
+        # Force UNet and text encoders to float16, but VAE to float32
+        refiner.unet = refiner.unet.to(dtype=dtype)
+        if refiner.text_encoder_2 is not None:
+            refiner.text_encoder_2 = refiner.text_encoder_2.to(dtype=dtype)
+
+        # VAE MUST be float32 on MPS to avoid conv bias mismatch
+        refiner.vae = refiner.vae.to(dtype=torch.float32, device=device)
 
         if lora_filename:
             lp = (MODEL_DIR / lora_filename).resolve()
@@ -1673,51 +1764,102 @@ def image_intermediate_sdxl():
     finally:
         DeviceManager.free_memory()
 
-# ------------------------------ Generation: SDXL Turbo ------------------------
+# ------------------------------ Generation: Z-Image Turbo ------------------------
 @app.route("/image/turbo", methods=["POST"])
-def image_turbo_sdxl():
+def image_turbo_zimage():
+    '''
+    Z-Image Turbo text-to-image generation.
+    Replaces SDXL Turbo with the faster, higher quality Z-Image model.
+    '''
     data = request.json or {}
     prompt = (data.get("prompt") or "").strip()
-    steps = int(data.get("steps", 3))
-    cb_steps = int(data.get("callback_steps", 1))
+    h = int(data.get("height", 1024))
+    w = int(data.get("width", 1024))
+    steps = int(data.get("steps", 9))  # Z-Image uses 9 steps (8 DiT forwards)
     auto_dl = bool(data.get("auto_download", False))
+    seed = data.get("seed")
+    
     if not prompt:
         return jsonify(_json_sanitize({"error": "Prompt is required"})), 400
 
-    guard = _repos_ready_or_resp(SDXL_TURBO_REPO)
+    # Check if repo is ready
+    guard = _repos_ready_or_resp(Z_IMAGE_TURBO_REPO)
     if guard:
         if auto_dl:
-            started = _start_prefetch_pipeline("sdxl_turbo")
+            started = _start_prefetch_pipeline("z_image_turbo")
             return jsonify(_json_sanitize(started["json"])), started["http_status"]
         return guard
 
-    gen_id = genbus.new("sdxl_turbo", {"endpoint": "/image/turbo", "prompt": prompt})
+    gen_id = genbus.new("z_image_turbo", {"endpoint": "/image/turbo", "prompt": prompt, "w": w, "h": h})
+    
     try:
         device = DeviceManager.get_device()
-        dtype = DeviceManager.get_dtype(device)
-        pipe = AutoPipelineForText2Image.from_pretrained(
-            str(repo_local_dir(SDXL_TURBO_REPO)), torch_dtype=dtype, variant="fp16", local_files_only=True
+        # Z-Image uses bfloat16 for optimal performance
+        dtype = torch.bfloat16 if device.type in ("cuda", "mps") else torch.float32
+        
+        genbus.progress(gen_id, "Loading Z-Image model...", 0, steps)
+        
+        # Load Z-Image pipeline
+        pipe = ZImagePipeline.from_pretrained(
+            str(repo_local_dir(Z_IMAGE_TURBO_REPO)),
+            dtype=dtype,
+            local_files_only=True,
+            low_cpu_mem_usage=False,
         ).to(device)
-
-        def cb(step, timestep, latents):
-            genbus.progress(gen_id, "sampling", int(step), steps)
-
-        image = pipe(prompt=prompt, num_inference_steps=steps, guidance_scale=1.0,
-                     callback=cb, callback_steps=max(1, cb_steps)).images[0]
-
-        buf = BytesIO(); _apply_watermark(image).save(buf, format="PNG")
+        
+        # Optional: Enable memory optimizations
+        if device.type == "cuda" and hasattr(pipe, 'enable_model_cpu_offload'):
+            # Uncomment for low VRAM systems:
+            # pipe.enable_model_cpu_offload()
+            pass
+        
+        # Set up generator for reproducibility
+        generator = None
+        if seed is not None:
+            generator = torch.Generator(device=device).manual_seed(int(seed))
+        
+        def callback(step, timestep, latents):
+            genbus.progress(gen_id, "Generating...", int(step), steps)
+        
+        genbus.progress(gen_id, "Generating image...", 1, steps)
+        
+        # Generate image - Z-Image Turbo uses guidance_scale=0.0
+        output = pipe(
+            prompt=prompt,
+            height=h,
+            width=w,
+            num_inference_steps=steps,
+            guidance_scale=0.0,  # Critical: Turbo models use 0 guidance
+            generator=generator,
+        )
+        
+        image = output.images[0]
+        
+        # Apply watermark and encode
+        buf = BytesIO()
+        _apply_watermark(image).save(buf, format="PNG")
         b64 = base64.b64encode(buf.getvalue()).decode("utf-8")
+        
         genbus.finish(gen_id, {"ok": True})
+        
         return jsonify(_json_sanitize({
-            "prompt": prompt, "image": b64, "generation_id": gen_id, "generation_websocket_url": generation_url()
+            "prompt": prompt,
+            "image": b64,
+            "width": w,
+            "height": h,
+            "steps": steps,
+            "model": "z_image_turbo",
+            "generation_id": gen_id,
+            "generation_websocket_url": generation_url()
         })), 201
+        
     except Exception as e:
-        logger.exception("SDXL turbo failed")
+        logger.exception("Z-Image Turbo generation failed")
         genbus.error(gen_id, str(e))
         return jsonify(_json_sanitize({"error": str(e)})), 500
     finally:
         DeviceManager.free_memory()
-
+        
 # ------------------------------ FLUX: Krea (t2i) ------------------------------
 @app.route("/image/quality", methods=["POST"])
 def image_quality_flux_krea():
@@ -1735,22 +1877,32 @@ def image_quality_flux_krea():
     gen_id = genbus.new("flux_krea", {"endpoint": "/image/quality", "prompt": prompt})
     try:
         device = DeviceManager.get_device()
-        compute_dtype = torch.bfloat16 if device.type in ("cuda", "mps") else torch.float32
+        if device.type == "cuda":
+            compute_dtype = torch.bfloat16
+        elif device.type == "mps":
+            compute_dtype = torch.float16
+        else:
+            compute_dtype = torch.float32
         
         tr_cfg = repo_local_dir(FLUX_KREA_REPO) / "transformer" / "config.json"
         transformer = FluxTransformer2DModel.from_single_file(
             str(MODEL_DIR / FLUX_KREA_GGUF_NAME),
             config=str(tr_cfg),
             quantization_config=GGUFQuantizationConfig(compute_dtype=compute_dtype),
-            torch_dtype=compute_dtype,
+            dtype=compute_dtype,
         ).to(device)
 
         pipe = FluxPipeline.from_pretrained(
             str(repo_local_dir(FLUX_KREA_REPO)),
             transformer=transformer,
-            torch_dtype=compute_dtype,
+            dtype=compute_dtype,
             local_files_only=True,
         ).to(device)
+        
+        pipe.text_encoder = pipe.text_encoder.to(dtype=compute_dtype)
+        pipe.text_encoder_2 = pipe.text_encoder_2.to(dtype=compute_dtype)
+        if hasattr(pipe, 'vae'):
+            pipe.vae = pipe.vae.to(dtype=compute_dtype)
 
         def cb(step, timestep, latents):
             genbus.progress(gen_id, "sampling", int(step), steps)
@@ -1804,13 +1956,13 @@ def image_kontext_i2i():
         transformer = FluxTransformer2DModel.from_single_file(
             str(MODEL_DIR / FLUX_KONTEXT_GGUF_NAME),
             quantization_config=GGUFQuantizationConfig(compute_dtype=compute_dtype),
-            torch_dtype=compute_dtype,
+            dtype=compute_dtype,
         ).to(device)
 
         pipe = FluxImg2ImgPipeline.from_pretrained(
             str(repo_local_dir(FLUX_KONTEXT_REPO)),
             transformer=transformer,
-            torch_dtype=compute_dtype,
+            dtype=compute_dtype,
             local_files_only=True,
         ).to(device)
 
@@ -1882,12 +2034,12 @@ def _get_ltx_spatial_upscaler():
     try:
         from diffusers import LTXVideoSpatialUpscalerPipeline
         pipe = LTXVideoSpatialUpscalerPipeline.from_pretrained(
-            str(up_root), torch_dtype=compute_dtype, local_files_only=True, use_safetensors=True
+            str(up_root), dtype=compute_dtype, local_files_only=True, use_safetensors=True
         ).to(device)
     except Exception:
         from diffusers import AutoPipelineForImage2Image
         pipe = AutoPipelineForImage2Image.from_pretrained(
-            str(up_root), torch_dtype=compute_dtype, local_files_only=True, use_safetensors=True
+            str(up_root), dtype=compute_dtype, local_files_only=True, use_safetensors=True
         ).to(device)
 
     for fn in ("enable_attention_slicing", "enable_vae_slicing", "enable_vae_tiling"):
@@ -1948,7 +2100,7 @@ def ltx_text_to_video():
         genbus.progress(gen_id, "Loading models...", 0, 2)
 
         pipe = LTXPipeline.from_pretrained(
-            str(base_root), torch_dtype=torch.float32, local_files_only=True, use_safetensors=True
+            str(base_root), dtype=torch.float32, local_files_only=True, use_safetensors=True
         ).to(device)
 
         generator = torch.Generator(device=device).manual_seed(seed) if isinstance(seed, int) else None
@@ -1974,114 +2126,6 @@ def ltx_text_to_video():
 
     except Exception as e:
         logger.exception("LTX text->video failed")
-        genbus.error(gen_id, str(e))
-        return jsonify(_json_sanitize({"error": str(e)})), 500
-    finally:
-        DeviceManager.free_memory()
-
-@app.route("/text/video/quality", methods=["POST"])
-def wan_text_to_video():
-    data = request.get_json(silent=True) or {}
-    prompt = (data.get("prompt") or "").strip()
-    negative_prompt = (data.get("negative_prompt") or
-        "worst quality, low quality, overexposed, artifacts, jitter, wobble, warped faces, extra fingers").strip()
-    H = int(data.get("height", 480))
-    W = int(data.get("width", 832))
-    frames = int(data.get("frames", 49))    # typical short clip
-    fps = int(data.get("fps", 12))
-    steps = int(data.get("steps", 30))
-    guidance = float(data.get("guidance_scale", 4.0))
-    seed = data.get("seed", None)
-    auto_dl = bool(data.get("auto_download", False))
-
-    if not prompt:
-        return jsonify(_json_sanitize({"error": "Prompt is required"})), 400
-
-    guard = _ensure_files_present_or_start("wan_video", auto_download=auto_dl)
-    if guard:
-        return guard
-
-    gen_id = genbus.new("wan_t2v", {
-        "endpoint": "/text/video/quality",
-        "prompt": prompt, "frames": frames, "fps": fps
-    })
-
-    try:
-        device = DeviceManager.get_device()
-        # fp16 is fine on mps/cuda; fallback to fp32 on CPU
-        compute_dtype = torch.float16 if device.type in ("cuda", "mps") else torch.float32
-        base_root = repo_local_dir(WAN_REPO)
-
-        # Build pipeline
-        pipe = WanDMDPipeline.from_pretrained(
-            str(base_root),
-            torch_dtype=compute_dtype,
-            use_safetensors=True,
-            local_files_only=True,
-        ).to(device)
-
-        # Model-safe sizing (multiples of VAE scale × patch size)
-        ps = getattr(pipe.transformer.config, "patch_size", (1, 8, 8))
-        patch_t = int(ps[0]) if len(ps) == 3 else 1
-        patch_w = int(ps[-1])
-        mod_value = int(pipe.vae_scale_factor_spatial) * patch_w
-
-        # Start from requested aspect, then snap to valid grid
-        aspect = float(H) / float(W) if (W and H) else 480/832
-        max_area = max(1, H * W)
-        height = max(mod_value, (round(np.sqrt(max_area * aspect)) // mod_value) * mod_value)
-        width  = max(mod_value, (round(np.sqrt(max_area / aspect)) // mod_value) * mod_value)
-        height -= height % 2
-        width  -= width % 2
-
-        # Align frames to temporal patch
-        if patch_t > 1 and (frames % patch_t != 0):
-            frames = max(patch_t, (frames // patch_t) * patch_t)
-
-        generator = torch.Generator(device=device).manual_seed(seed) if isinstance(seed, int) else None
-
-        def cb(step, timestep, latents):
-            genbus.progress(gen_id, "sampling", int(step), steps)
-
-        genbus.progress(gen_id, "Generating video...", 1, 2)
-        out = pipe(
-            prompt=prompt,
-            negative_prompt=negative_prompt,
-            height=height,
-            width=width,
-            num_frames=frames,
-            guidance_scale=guidance,
-            num_inference_steps=steps,
-            generator=generator,
-            callback=cb,
-            callback_steps=max(1, steps // 10),
-        )
-
-        frames_list = out.frames[0] if hasattr(out, "frames") else out
-        if not isinstance(frames_list, (list, tuple)):
-            frames_list = [frames_list]
-
-        # Encode
-        genbus.progress(gen_id, "Encoding video...", 2, 2)
-        out_name = f"wan_{int(time.time())}.mp4"
-        out_path = os.path.join(os.getcwd(), out_name)
-
-        _write_video_h264_safe_interpolated(
-            out_path, out,
-            fps_in=fps, target_size=(width, height),
-            fps_out=24, upscale=2, scaler="lanczos", aspect_mode="fill",
-            crf=15, preset="slow", add_grain=0.25, sharpen=0.5, deband=True,
-            gen_id=gen_id
-        )
-
-        genbus.finish(gen_id, {"video_path": out_path})
-        return jsonify(_json_sanitize({
-            "ok": True, "video_path": out_path,
-            "generation_websocket_url": generation_url()
-        })), 201
-
-    except Exception as e:
-        logger.exception("WAN text->video failed")
         genbus.error(gen_id, str(e))
         return jsonify(_json_sanitize({"error": str(e)})), 500
     finally:
@@ -2163,7 +2207,7 @@ def ltx_image_to_video():
     image_b64 = (data.get("image_base64") or "").strip()
     image_url = (data.get("image_url") or "").strip()
     seed = data.get("seed", None)
-    guidance = float(data.get("guidance_scale", 4))
+    guidance = float(data.get("guidance_scale", 5))
 
     if not prompt:
         return jsonify(_json_sanitize({"error": "Missing 'prompt'"})), 400
@@ -2182,10 +2226,10 @@ def ltx_image_to_video():
         genbus.progress(gen_id, "Loading models...", 0, 2)
 
         pipe = LTXImageToVideoPipeline.from_pretrained(
-            str(base_root), torch_dtype=torch.float32, local_files_only=True, use_safetensors=True
+            str(base_root), dtype=torch.float32, local_files_only=True, use_safetensors=True
         ).to(device)
 
-        if image_url:
+        if image_url:  
             init_img = load_image(image_url).convert("RGB")
         else:
             raw = base64.b64decode(image_b64)
@@ -2196,7 +2240,7 @@ def ltx_image_to_video():
         if bool(data.get("ffmpeg_roundtrip", True)):
             init_img = _ffmpeg_h264_roundtrip(
                 init_img, target_w=W, target_h=H,
-                crf=int(data.get("ffmpeg_crf", 25)),
+                crf=int(data.get("ffmpeg_crf", 20)),
                 downscale=float(data.get("downscale_factor", 0.5)),
                 down_filter=(data.get("down_filter") or "bicubic"),
                 up_filter=(data.get("up_filter") or "bicubic"),
@@ -2204,7 +2248,7 @@ def ltx_image_to_video():
 
         if bool(data.get("motionfix", True)):
             init_img = _motionfix_preprocess(
-                init_img, jpeg_q=int(data.get("jpeg_quality", 80)), noise_std=float(data.get("jpeg_gauss_std", 0.25))
+                init_img, jpeg_q=int(data.get("jpeg_quality", 85)), noise_std=float(data.get("jpeg_gauss_std", 0.25))
             )
 
             try:
@@ -2234,7 +2278,7 @@ def ltx_image_to_video():
         out_path = os.path.join(os.getcwd(), out_name)
         _write_video_h264_safe_interpolated(
             out_path, out, fps_in=fps, target_size=(W, H),
-            fps_out=24, upscale=2, scaler="lanczos", aspect_mode="fill",
+            fps_out=24, upscale=1, scaler="lanczos", aspect_mode="fill",
             crf=15, preset="slow", add_grain=0.33, sharpen=0.5, deband=True, gen_id=gen_id
         )
         genbus.finish(gen_id, {"video_path": out_path})
@@ -2275,37 +2319,77 @@ def preprocess_image(img: Image.Image, quality=25, noise_std=2.5):
     noisy = np.clip(arr + noise, 0, 255).astype(np.uint8)
     return Image.fromarray(noisy)
 
-@app.route("/image/video/quality", methods=["POST"])
+@app.route("/image/video/intermediate", methods=["POST"])
 def wan_image_to_video():
     data = request.get_json(silent=True) or {}
     prompt = (data.get("prompt") or "").strip()
     negative_prompt = (data.get("negative_prompt") or
               "Bright tones, overexposed, static, blurred details, subtitles, style, paintings, overall gray, "
               "worst quality, low quality, JPEG artifacts, deformed, disfigured, still picture").strip()
-    H = int(data.get("height", 480)); W = int(data.get("width", 832))
-    frames = int(data.get("frames", 37))
+    H = int(data.get("height", 704)); W = int(data.get("width", 1280))
+    frames = int(data.get("frames", 61))
     fps = int(data.get("fps", 12))
-    steps = int(data.get("steps", 30))
+    steps = int(data.get("steps", 50))
     auto_dl = bool(data.get("auto_download", False))
     image_b64 = (data.get("image_base64") or "").strip()
     image_url = (data.get("image_url") or "").strip()
     max_area = int(data.get("max_area", H * W))
     seed = data.get("seed", None)
-    guidance = float(data.get("guidance_scale", 4))
+    guidance = float(data.get("guidance_scale", 1))
 
-    guard = _ensure_files_present_or_start("wan_video", auto_download=auto_dl)
+    guard = _ensure_files_present_or_start("wan_video_5b", auto_download=auto_dl)
     if guard: return guard
 
-    gen_id = genbus.new("wan_video", {"endpoint": "/image/video/quality", "frames": frames, "fps": fps})
+    gen_id = genbus.new("wan_video_5b", {"endpoint": "/image/video/quality", "frames": frames, "fps": fps})
 
     try:
         device = DeviceManager.get_device()
-        compute_dtype = torch.float32
-        base_root = repo_local_dir(WAN_REPO)
+        # ---- dtype policy: VAE in fp32 (to avoid black outputs), transformer in mixed
+        if device.type == "cuda":
+            tr_dtype  = torch.bfloat16
+            vae_dtype = torch.float32
+        elif device.type == "mps":
+            # mps + bf16 is problematic; use fp16/32 (fp32 is safer for VAE)
+            tr_dtype  = torch.float16
+            vae_dtype = torch.float32
+        else:
+            tr_dtype  = torch.float32
+            vae_dtype = torch.float32
+            
+        base_root = repo_local_dir(WAN_REPO_5B)
 
         pipe = WanImageToVideoPipeline.from_pretrained(
-            str(base_root), torch_dtype=compute_dtype, use_safetensors=True, local_files_only=True
+            str(base_root), dtype=tr_dtype, use_safetensors=True, local_files_only=True
         ).to(device)
+        
+        # Prefer FlowMatch Euler if available (Wan 2.x friendly)
+        try:
+            pipe.scheduler = FlowMatchEulerDiscreteScheduler.from_config(pipe.scheduler.config)
+            try: setattr(pipe.scheduler, "use_karras_sigmas", True)
+            except Exception: pass
+            try: setattr(pipe.scheduler, "timestep_spacing", "trailing")
+            except Exception: pass
+        except Exception:
+            pass
+
+        # Critical: decode in float32 to prevent “black output”
+        try:
+            pipe.vae.config.force_upcast = True
+        except Exception:
+            pass
+        try:
+            pipe.vae.to(device=device, dtype=torch.float32)  # you already set vae_dtype=fp32
+            pipe.enable_vae_slicing()
+            pipe.enable_vae_tiling()
+        except Exception:
+            pass
+        
+        try:
+            pipe.enable_attention_slicing("max")
+            try: pipe.enable_sequential_cpu_offload()
+            except Exception: pass
+        except Exception:
+            pass
 
         if image_url:
             init_img = load_image(image_url).convert("RGB")
@@ -2331,13 +2415,15 @@ def wan_image_to_video():
             frames = max(patch_t, (frames // patch_t) * patch_t)
 
         init_img = init_img.resize((width, height), Image.BICUBIC)
+        
         generator = torch.Generator(device=device).manual_seed(seed) if isinstance(seed, int) else None
 
         def cb(step, timestep, latents):
             genbus.progress(gen_id, "sampling", int(step), steps)
 
         genbus.progress(gen_id, "Generating video...", 1, 2)
-        out = pipe(
+        # ----- run the pipeline
+        res = pipe(
             image=init_img,
             prompt=prompt,
             negative_prompt=negative_prompt,
@@ -2346,18 +2432,211 @@ def wan_image_to_video():
             num_frames=frames,
             guidance_scale=guidance,
             num_inference_steps=steps,
+            output_type="pil",
+            generator=generator,
         )
 
-        genbus.progress(gen_id, "Encoding video...", 2, 2)
         out_name = f"wan_{int(time.time())}.mp4"
         out_path = os.path.join(os.getcwd(), out_name)
+        
+        # Inspect the actual frames we got from Wan at this resolution
+        dbg = _as_pil_list(res)
+        dbg[0].save("wan_dbg_first.png")
+        dbg[-1].save("wan_dbg_last.png")
+
         _write_video_h264_safe_interpolated(
-            out_path, out, fps_in=fps, target_size=(width, height),
-            fps_out=24, upscale=2, scaler="lanczos", aspect_mode="fill",
-            crf=15, preset="slow", add_grain=0.33, sharpen=0.5, deband=True, gen_id=gen_id
+            out_path,
+            res,                         # <-- pass the pipeline result directly
+            fps_in=fps,
+            target_size=None, # or None (since you already resized)
+            fps_out=24,
+            upscale=1,
+            scaler="lanczos",
+            crf=15,
+            preset="slow",
+            add_grain=0.33,
+            sharpen=0.75,
+            deband=True,
+            gen_id=gen_id,
+            # trim_head_frames=0  # (Wan: usually 0; keep nonzero only for LTX burn-in)
         )
+
         genbus.finish(gen_id, {"video_path": out_path})
-        return jsonify(_json_sanitize({"ok": True, "video_path": out_path, "generation_websocket_url": generation_url()})), 201
+        return jsonify(_json_sanitize({
+            "ok": True, "video_path": out_path, "generation_websocket_url": generation_url()
+        })), 201
+
+    except Exception as e:
+        logger.exception("Wan i2v failed")
+        genbus.error(gen_id, str(e))
+        return jsonify(_json_sanitize({"error": str(e)})), 500
+    finally:
+        DeviceManager.free_memory()
+       
+@app.route("/image/video/quality", methods=["POST"])
+def wan_image_to_quality_video():
+    data = request.get_json(silent=True) or {}
+    prompt = (data.get("prompt") or "").strip()
+    negative_prompt = (data.get("negative_prompt") or
+              "Bright tones, overexposed, static, blurred details, subtitles, style, paintings, overall gray, "
+              "worst quality, low quality, JPEG artifacts, deformed, disfigured, still picture").strip()
+    H = int(data.get("height", 704)); W = int(data.get("width", 1280))
+    frames = int(data.get("frames", 61))
+    fps = int(data.get("fps", 12))
+    steps = int(data.get("steps", 50))
+    auto_dl = bool(data.get("auto_download", False))
+    image_b64 = (data.get("image_base64") or "").strip()
+    image_url = (data.get("image_url") or "").strip()
+    max_area = int(data.get("max_area", H * W))
+    seed = data.get("seed", None)
+    guidance = float(data.get("guidance_scale", 1))
+
+    guard = _ensure_files_present_or_start("wan_video_14b", auto_download=auto_dl)
+    if guard: return guard
+
+    gen_id = genbus.new("wan_video_14b", {"endpoint": "/image/video/quality", "frames": frames, "fps": fps})
+
+    try:
+        device = DeviceManager.get_device()
+        # ---- dtype policy: VAE in fp32 (to avoid black outputs), transformer in mixed
+        if device.type == "cuda":
+            tr_dtype  = torch.bfloat16
+            vae_dtype = torch.float32
+        elif device.type == "mps":
+            # mps + bf16 is problematic; use fp16/32 (fp32 is safer for VAE)
+            tr_dtype  = torch.float16
+            vae_dtype = torch.float32
+        else:
+            tr_dtype  = torch.float32
+            vae_dtype = torch.float32
+            
+        base_root = repo_local_dir(WAN_REPO_14B)
+        
+        tr_cfg = repo_local_dir(WAN_REPO_14B) / "transformer" / "config.json"
+        transformer = WanTransformer3DModel.from_single_file(
+            str(MODEL_DIR / WAN_GGUF_14B_NAME_HIGH),
+            config=str(tr_cfg),
+            quantization_config=GGUFQuantizationConfig(compute_dtype=tr_dtype),
+            dtype=tr_dtype,
+            device=device
+        )
+        
+        tr2_cfg = repo_local_dir(WAN_REPO_14B) / "transformer_2" / "config.json"
+        transformer_2 = WanTransformer3DModel.from_single_file(
+            str(MODEL_DIR / WAN_GGUF_14B_NAME_LOW),
+            config=str(tr2_cfg),
+            quantization_config=GGUFQuantizationConfig(compute_dtype=tr_dtype),
+            dtype=tr_dtype,
+            device=device
+        )
+
+        pipe = WanImageToVideoPipeline.from_pretrained(
+            str(base_root), transformer=transformer, transformer_2=transformer_2, dtype=tr_dtype, use_safetensors=True, local_files_only=True
+        ).to(device)
+        
+        # Prefer FlowMatch Euler if available (Wan 2.x friendly)
+        try:
+            pipe.scheduler = FlowMatchEulerDiscreteScheduler.from_config(pipe.scheduler.config)
+            try: setattr(pipe.scheduler, "use_karras_sigmas", True)
+            except Exception: pass
+            try: setattr(pipe.scheduler, "timestep_spacing", "trailing")
+            except Exception: pass
+        except Exception:
+            pass
+
+        # Critical: decode in float32 to prevent “black output”
+        try:
+            pipe.vae.config.force_upcast = True
+        except Exception:
+            pass
+        try:
+            pipe.vae.to(device=device, dtype=torch.float32)  # you already set vae_dtype=fp32
+            pipe.enable_vae_slicing()
+            pipe.enable_vae_tiling()
+        except Exception:
+            pass
+        
+        try:
+            pipe.enable_attention_slicing("max")
+            try: pipe.enable_sequential_cpu_offload()
+            except Exception: pass
+        except Exception:
+            pass
+
+        if image_url:
+            init_img = load_image(image_url).convert("RGB")
+        else:
+            raw = base64.b64decode(image_b64)
+            init_img = Image.open(io.BytesIO(raw)).convert("RGB")
+
+        init_img = center_crop_to_aspect(init_img, W, H)
+
+        # model-safe sizing like official example
+        ps = getattr(pipe.transformer.config, "patch_size", (1, 8, 8))
+        patch_t = int(ps[0]) if len(ps) == 3 else 1
+        patch_w = int(ps[-1])
+        mod_value = int(pipe.vae_scale_factor_spatial) * patch_w
+
+        aspect = init_img.height / init_img.width
+        height = (round(np.sqrt(max_area * aspect)) // mod_value) * mod_value
+        width  = (round(np.sqrt(max_area / aspect)) // mod_value) * mod_value
+        height = max(mod_value, height - (height % 2))
+        width  = max(mod_value, width  - (width % 2))
+
+        if patch_t > 1 and (frames % patch_t != 0):
+            frames = max(patch_t, (frames // patch_t) * patch_t)
+
+        init_img = init_img.resize((width, height), Image.BICUBIC)
+        
+        generator = torch.Generator(device=device).manual_seed(seed) if isinstance(seed, int) else None
+
+        def cb(step, timestep, latents):
+            genbus.progress(gen_id, "sampling", int(step), steps)
+
+        genbus.progress(gen_id, "Generating video...", 1, 2)
+        # ----- run the pipeline
+        res = pipe(
+            image=init_img,
+            prompt=prompt,
+            negative_prompt=negative_prompt,
+            height=height,
+            width=width,
+            num_frames=frames,
+            guidance_scale=guidance,
+            num_inference_steps=steps,
+            output_type="pil",
+            generator=generator,
+        )
+
+        out_name = f"wan_{int(time.time())}.mp4"
+        out_path = os.path.join(os.getcwd(), out_name)
+        
+        # Inspect the actual frames we got from Wan at this resolution
+        dbg = _as_pil_list(res)
+        dbg[0].save("wan_dbg_first.png")
+        dbg[-1].save("wan_dbg_last.png")
+
+        _write_video_h264_safe_interpolated(
+            out_path,
+            res,                         # <-- pass the pipeline result directly
+            fps_in=fps,
+            target_size=None, # or None (since you already resized)
+            fps_out=24,
+            upscale=1,
+            scaler="lanczos",
+            crf=15,
+            preset="slow",
+            add_grain=0.33,
+            sharpen=0.75,
+            deband=True,
+            gen_id=gen_id,
+            # trim_head_frames=0  # (Wan: usually 0; keep nonzero only for LTX burn-in)
+        )
+
+        genbus.finish(gen_id, {"video_path": out_path})
+        return jsonify(_json_sanitize({
+            "ok": True, "video_path": out_path, "generation_websocket_url": generation_url()
+        })), 201
 
     except Exception as e:
         logger.exception("Wan i2v failed")

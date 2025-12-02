@@ -152,7 +152,7 @@ export default {
   setup() {
     const modelMode = ref("chat");
     const systemValues = ref({});
-        const videoImageBase64 = ref("");
+    const videoImageBase64 = ref("");
 
     const goAnimateToVideo = (b64) => {
       videoImageBase64.value = b64 || "";
@@ -162,7 +162,7 @@ export default {
     return {
       systemValues,
       modelMode,
-            videoImageBase64,
+      videoImageBase64,
       goAnimateToVideo,
     };
   },
@@ -380,7 +380,7 @@ body {
   margin: 5px;
   height: 10vh;
   width: 100%;
-  background: url("https://www.bonzai.sh/bonzai_logo-full.png") no-repeat;
+  background: url("assets/bonzai_logo-full.png") no-repeat;
   background-size: contain;
 }
 
@@ -391,25 +391,25 @@ body {
 .tabs.menu li.chat {
   /* aspect-ratio: 16/9; */
   height: 12vh;
-  background: url("https://www.bonzai.sh/bonzai_chat.jpg") no-repeat;
+  background: url("assets/bonzai_chat.jpg") no-repeat;
   background-size: cover;
 }
 
 .tabs.menu li.image {
   height: 12vh;
-  background: url("https://www.bonzai.sh/bonzai_image.jpg") no-repeat;
+  background: url("assets/bonzai_image.jpg") no-repeat;
   background-size: cover;
 }
 
 .tabs.menu li.video {
   height: 12vh;
-  background: url("https://www.bonzai.sh/bonzai_video.jpg") no-repeat;
+  background: url("assets/bonzai_video.jpg") no-repeat;
   background-size: cover;
 }
 
 .tabs.menu li.music {
   height: 12vh;
-  background: url("https://www.bonzai.sh/bonzai_music.jpg") no-repeat;
+  background: url("assets/bonzai_music.jpg") no-repeat;
   background-size: cover;
 }
 
@@ -422,14 +422,14 @@ body {
 
 .tabs.menu li.robot {
   height: 12vh;
-  background: url("https://images.unsplash.com/photo-1696258686308-7ea792cf76b6") no-repeat;
+  background: url("assets/bonzai_robots.jpg") no-repeat;
   background-size: cover;
   background-position: center center;
 }
 
 .tabs.menu li.agent {
   height: 17vh;
-  background: url("https://www.bonzai.sh/bonzai_agent.jpg") no-repeat;
+  background: url("assets/bonzai_agent.jpg") no-repeat;
 
   background-size: cover;
   background-position: bottom center;
@@ -475,5 +475,18 @@ div.answer p {
 
 div.answer ol {
   padding-left: 1em !important;
+}
+
+div.answer table thead tr th {
+  font-family: "Fira Sans Condensed", sans-serif;
+  font-style: italic;
+  font: 900;
+  color: #fff !important;
+  text-transform: uppercase;
+}
+
+div.answer table td {
+  text-align: left;
+  padding-bottom: 20px !important;
 }
 </style>

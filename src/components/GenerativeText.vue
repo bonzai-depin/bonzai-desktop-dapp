@@ -3,7 +3,7 @@
   <div class="models__deployment column is-8 is-paddingless">
     <div class="models__deployment-install">
       <div class="columns">
-        <div class="column is-12 p-5">
+        <div class="column is-12">
           <div class="level">
             <div class="level-left">
               <div class="level-item" style="position: relative">
@@ -94,7 +94,7 @@
               v-if="!isLoading && isModel"
               @click="
                 openChat = true;
-                loadModel(currentModel.filename);
+                loadModel(currentModel);
               "
             >
               <span class="material-symbols-outlined is-size-3 mr-2">
@@ -148,7 +148,7 @@
               {{ currentModel.modelname }}
             </span>
             to Peers to earn
-            <span class="fira-sans-condensed-black-italic">$TAO</span>
+            <span class="fira-sans-condensed-black-italic">$USDC</span>
             .
           </p>
         </div>
@@ -370,76 +370,148 @@ export default {
     const openModel = ref(false);
     const openChat = ref(false);
     const availableModels = ref({
-      deepseek_1_5_B: {
+      gemma_3_1_B: {
+        modelname: "Gemma 3 1B",
+        modeldesc:
+          "1B-parameter Gemma 3 instruction-tuned model from Google with a 32,768-token context window. A compact, efficient chat and reasoning model. Best for: lightweight multilingual assistants, summarization, and everyday QA on laptops or edge devices.",
+        url: "https://huggingface.co/unsloth/gemma-3-1b-it-GGUF/resolve/main/gemma-3-1b-it-Q4_K_M.gguf",
+        filename: "gemma-3-1b-it-q4_k_m.gguf",
+        filesize: "806 MB",
+        parameters: 1000000000,
+        context: 32768,
+      },
+
+      deepseek_R1_1_5_B: {
         modelname: "DeepSeek R1 1.5B",
-        modeldesc: `A 1.5B parameters dense model distilled from DeepSeek-R1, based on popular open source model Qwen. DeepSeek-R1 achieves performance comparable to OpenAI-o1 across math, code, and reasoning tasks.`,
-        url: "https://huggingface.co/TheBloke/Mistral-7B-Instruct-v0.2-GGUF/resolve/main/mistral-7b-instruct-v0.2.Q4_K_M.gguf",
-        filename: "DeepSeek-R1-Distill-Qwen-1.5B-Q6_K.gguf",
-        filesize: "1.46 GB",
+        modeldesc:
+          "1.5B-parameter DeepSeek-R1 distilled model on the Qwen backbone with a 32,768-token context window. Designed to pack strong chain-of-thought style reasoning into a tiny footprint. Best for: background reasoning agents and math/code helpers on very modest hardware.",
+        url: "https://huggingface.co/unsloth/DeepSeek-R1-Distill-Qwen-1.5B-GGUF/resolve/main/DeepSeek-R1-Distill-Qwen-1.5B-Q4_K_M.gguf",
+        filename: "deepseek-r1-distill-qwen-1.5b-q4_k_m.gguf",
+        filesize: "1.12 GB",
+        parameters: 1500000000,
+        context: 32768,
       },
-      deepseek_7_B: {
+
+      deepseek_R1_7_B: {
         modelname: "DeepSeek R1 7B",
-        modeldesc: `A 7B parameters dense model distilled from DeepSeek-R1, based on popular open source model Qwen. DeepSeek-R1 achieves performance comparable to OpenAI-o1 across math, code, and reasoning tasks.`,
-        url: "https://huggingface.co/TheBloke/Mistral-7B-Instruct-v0.2-GGUF/resolve/main/mistral-7b-instruct-v0.2.Q4_K_M.gguf",
-        filename: "DeepSeek-R1-Distill-Qwen-7B-Q6_K.gguf",
-        filesize: "6.25 GB",
+        modeldesc:
+          "7B-parameter DeepSeek-R1 distilled Qwen model with a 32,768-token context window. Provides strong open-weight reasoning for math, code, and analytical tasks. Best for: primary local assistant focused on chain-of-thought reasoning and tool use on a single modern GPU.",
+        url: "https://huggingface.co/unsloth/DeepSeek-R1-Distill-Qwen-7B-GGUF/resolve/main/DeepSeek-R1-Distill-Qwen-7B-Q4_K_M.gguf",
+        filename: "deepseek-r1-distill-qwen-7b-q4_k_m.gguf",
+        filesize: "4.68 GB",
+        parameters: 7000000000,
+        context: 32768,
       },
-      deepseek_14_B: {
-        modelname: "DeepSeek R1 14B",
-        modeldesc: `A 14B parameters dense model distilled from DeepSeek-R1, based on popular open source model Qwen. DeepSeek-R1 achieves performance comparable to OpenAI-o1 across math, code, and reasoning tasks.`,
-        url: "https://huggingface.co/TheBloke/Mistral-7B-Instruct-v0.2-GGUF/resolve/main/mistral-7b-instruct-v0.2.Q4_K_M.gguf",
-        filename: "DeepSeek-R1-Distill-Qwen-14B-Q6_K.gguf",
-        filesize: "12.12 GB",
-      },
-      deepseek_32_B: {
+
+      deepseek_R1_32_B: {
         modelname: "DeepSeek R1 32B",
-        modeldesc: `A 32B parameters dense model distilled from DeepSeek-R1, based on popular open source model Qwen. DeepSeek-R1 achieves performance comparable to OpenAI-o1 across math, code, and reasoning tasks.`,
-        url: "https://huggingface.co/TheBloke/Mistral-7B-Instruct-v0.2-GGUF/resolve/main/mistral-7b-instruct-v0.2.Q4_K_M.gguf",
-        filename: "DeepSeek-R1-Distill-Qwen-32B-Q6_K.gguf",
-        filesize: "26.89 GB",
+        modeldesc:
+          "32B-parameter DeepSeek-R1 distilled Qwen model with a 32,768-token context window. High-end local reasoning model targeting complex multi-step problems and code. Best for: workstation or multi-GPU setups that need near frontier-level open reasoning quality.",
+        url: "https://huggingface.co/unsloth/DeepSeek-R1-Distill-Qwen-32B-GGUF/resolve/main/DeepSeek-R1-Distill-Qwen-32B-Q4_K_M.gguf",
+        filename: "deepseek-r1-distill-qwen-32b-q4_k_m.gguf",
+        filesize: "19.85 GB",
+        parameters: 32000000000,
+        context: 32768,
       },
-      phi: {
-        modelname: "Phi 3.8B",
-        modeldesc: `A 3.8B parameters LLM model built by Microsoft. Phi is a lightweight, state-of-the-art open model trained with synthetic data and high-quality publicly available websites data.`,
+
+      phi_3_3_8_B: {
+        modelname: "Phi-3 Mini 3.8B",
+        modeldesc:
+          "3.8B-parameter Phi-3 Mini model from Microsoft with a 4,096-token context window. Trained on curated synthetic and filtered web data for strong small-model reasoning. Best for: very fast local chatbots, short-context coding, and educational assistants on CPU or iGPU.",
         url: "https://huggingface.co/microsoft/Phi-3-mini-4k-instruct-gguf/resolve/main/Phi-3-mini-4k-instruct-q4.gguf",
-        filename: "phi.gguf",
+        filename: "phi-3-mini-4k-instruct-q4.gguf",
         filesize: "2.39 GB",
+        parameters: 3800000000,
+        context: 4096,
       },
-      llama2: {
+
+      phi_4_3_8_B: {
+        modelname: "Phi-4 Mini 3.8B",
+        modeldesc:
+          "3.8B-parameter Phi-4 Mini instruction-tuned model from Microsoft with a 128,000-token context window. Long-context, reasoning-focused small model. Best for: document QA, longer chats, and compact local assistants that still handle large prompts.",
+        url: "https://huggingface.co/bartowski/microsoft_Phi-4-mini-instruct-GGUF/resolve/main/Phi-4-mini-instruct-Q4_K_M.gguf",
+        filename: "phi-4-mini-instruct-q4_k_m.gguf",
+        filesize: "2.49 GB",
+        parameters: 3800000000,
+        context: 128000,
+      },
+
+      llama_2_7_B: {
         modelname: "LLaMA 2 7B",
-        modeldesc: `A 7B parameters LLM model built by Meta.`,
+        modeldesc:
+          "7B-parameter LLaMA 2 chat model from Meta with a 4,096-token context window. Classic open-weight assistant baseline. Best for: compatibility with older llama.cpp tooling, simple chatbots, and lightweight coding helpers.",
         url: "https://huggingface.co/TheBloke/Llama-2-7B-Chat-GGUF/resolve/main/llama-2-7b-chat.Q4_K_M.gguf",
-        filename: "llama2.gguf",
+        filename: "llama-2-7b-chat-q4_k_m.gguf",
         filesize: "4.08 GB",
+        parameters: 7000000000,
+        context: 4096,
       },
-      llama3: {
+
+      llama_3_1_8_B: {
         modelname: "LLaMA 3.1 8B",
-        modeldesc: `A 8B parameters LLM model built by Meta.`,
+        modeldesc:
+          "8B-parameter LLaMA 3.1 instruct model from Meta with a 131,072-token context window. Modern, strong general-purpose assistant with good multilingual and coding performance. Best for: main local chat and coding assistant on a single recent GPU.",
         url: "https://huggingface.co/lmstudio-community/Meta-Llama-3.1-8B-Instruct-GGUF/resolve/main/Meta-Llama-3.1-8B-Instruct-Q4_K_M.gguf",
-        filename: "llama3.gguf",
+        filename: "meta-llama-3.1-8b-instruct-q4_k_m.gguf",
         filesize: "4.92 GB",
+        parameters: 8000000000,
+        context: 131072,
       },
-      mistral: {
+
+      mistral_7_B: {
         modelname: "Mistral 7B",
-        modeldesc: `A 7B parameters LLM model built by Mistral AI, the French OpenAI.`,
+        modeldesc:
+          "7B-parameter Mistral Instruct v0.2 model from Mistral AI with a 32,768-token context window. Efficient and fast with strong instruction following. Best for: multilingual chat, summarization, and tools/agent orchestration on a single consumer GPU.",
         url: "https://huggingface.co/TheBloke/Mistral-7B-Instruct-v0.2-GGUF/resolve/main/mistral-7b-instruct-v0.2.Q4_K_M.gguf",
-        filename: "llama2.gguf",
+        filename: "mistral-7b-instruct-v0.2-q4_k_m.gguf",
         filesize: "4.37 GB",
+        parameters: 7000000000,
+        context: 32768,
       },
-      qwen_coder: {
-        modelname: "Qwen Coder 3 30B",
-        modeldesc: `A 30B parameters LLM model dedicated to code generation, built by Alibaba.`,
-        filename: "Qwen3-Coder-30B-A3B-Instruct-Q3_K_S.gguf",
-        filesize: "13.29 GB",
-      }
+
+      gpt_oss_20_B: {
+        modelname: "GPT-OSS 20B",
+        modeldesc:
+          "20B-parameter GPT-OSS model with a long context window (up to around 131,072 tokens depending on runtime). Open-weight alternative to proprietary GPT-style models. Best for: demanding local reasoning, tool-using agents, and advanced coding on high-end hardware.",
+        url: "https://huggingface.co/unsloth/gpt-oss-20b-GGUF/resolve/main/gpt-oss-20b-Q4_K_M.gguf",
+        filename: "gpt-oss-20b-q4_k_m.gguf",
+        filesize: "11.6 GB",
+        parameters: 20000000000,
+        context: 131072,
+      },
+
+      qwen_2_5_3_B: {
+        modelname: "Qwen 2.5 3B",
+        modeldesc:
+          "3.09B-parameter Qwen 2.5 instruction-tuned model from Alibaba/Qwen with a 32,768-token context window. Multilingual generalist with good code and tool-use skills. Best for: compact but capable assistants, RAG front-ends, and small coding copilots.",
+        url: "https://huggingface.co/Qwen/Qwen2.5-3B-Instruct-GGUF/resolve/main/qwen2.5-3b-instruct-q5_k_m.gguf",
+        filename: "qwen2.5-3b-instruct-q5_k_m.gguf",
+        filesize: "2.44 GB",
+        parameters: 3090000000,
+        context: 32768,
+      },
+
+      qwen_3_coder_30_B: {
+        modelname: "Qwen3 Coder 30B A3B",
+        modeldesc:
+          "30.5B-parameter Mixture-of-Experts Qwen3-Coder A3B model with a native 262,144-token context window. Specialized for code understanding and generation across very large repositories. Best for: serious local coding copilots, multi-file refactoring, and advanced software reasoning.",
+        url: "https://huggingface.co/unsloth/Qwen3-Coder-30B-A3B-Instruct-GGUF/resolve/main/Qwen3-Coder-30B-A3B-Instruct-UD-Q3_K_XL.gguf",
+        filename: "qwen3-coder-30b-a3b-instruct-ud-q3_k_xl.gguf",
+        filesize: "13.8 GB",
+        parameters: 30500000000,
+        context: 262144,
+      },
     });
 
     const currentModel = ref({
-      modelname: "DeepSeek R1 1.5B",
-      modeldesc: `A 1.5B parameters dense model distilled from DeepSeek-R1, based on popular open source model Qwen. DeepSeek-R1 achieves performance comparable to OpenAI-o1 across math, code, and reasoning tasks.`,
-      url: "https://huggingface.co/TheBloke/Mistral-7B-Instruct-v0.2-GGUF/resolve/main/mistral-7b-instruct-v0.2.Q4_K_M.gguf",
-      filename: "DeepSeek-R1-Distill-Qwen-1.5B-Q6_K.gguf",
-      filesize: "1.46 GB",
+      modelname: "Gemma 3 1B",
+      modeldesc:
+        "1B-parameter Gemma 3 instruction-tuned model from Google with a 32,768-token context window. A compact, efficient chat and reasoning model. Best for: lightweight multilingual assistants, summarization, and everyday QA on laptops or edge devices.",
+      url: "https://huggingface.co/unsloth/gemma-3-1b-it-GGUF/resolve/main/gemma-3-1b-it-Q4_K_M.gguf",
+      filename: "gemma-3-1b-it-q4_k_m.gguf",
+      filesize: "806 MB",
+      parameters: 1000000000,
+      context: 32768,
     });
 
     const pickModel = async (model) => {
@@ -491,8 +563,18 @@ export default {
       isLoading.value = false;
     };
 
-    const loadModel = async (filename) => {
-      await window.electronAPI.loadModel(filename);
+    const loadModel = async (model) => {
+      console.log("Now loading (raw)...", model);
+
+      const payload = {
+        filename: model.filename,
+        parameters: model.parameters,
+        context: model.context,
+      };
+
+      console.log("Sending to electronAPI.loadModel:", payload);
+
+      await window.electronAPI.loadModel(payload);
     };
 
     const inferences = reactive([]);
@@ -581,7 +663,11 @@ export default {
 @import url("https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:opsz,wght,FILL,GRAD@20..48,100..700,0..1,-50..200");
 
 .material-symbols-outlined {
-  font-variation-settings: "FILL" 0, "wght" 100, "GRAD" -25, "opsz" 48;
+  font-variation-settings:
+    "FILL" 0,
+    "wght" 100,
+    "GRAD" -25,
+    "opsz" 48;
 
   border-radius: 100%;
 }
@@ -599,7 +685,7 @@ export default {
   z-index: -1;
   height: 100%;
   width: 100%;
-  background: url("https://www.bonzai.sh/bonzai_chat.jpg") no-repeat;
+  background: url("src/assets/bonzai_chat.jpg") no-repeat;
   background-size: cover;
   filter: blur(6px);
   animation: move 40s ease infinite;
@@ -684,32 +770,32 @@ export default {
 .tabs li.bonzai .logo {
   height: 20vh;
   width: 100%;
-  background: url("https://www.bonzai.sh/bonzai_logo-full.png") no-repeat;
+  background: url("src/assets/bonzai_logo-full.png") no-repeat;
   background-size: contain;
 }
 
 .tabs li.chat {
   /* aspect-ratio: 16/9; */
   height: 20vh;
-  background: url("https://www.bonzai.sh/bonzai_chat.jpg") no-repeat;
+  background: url("src/assets/bonzai_chat.jpg") no-repeat;
   background-size: cover;
 }
 
 .tabs li.image {
   height: 20vh;
-  background: url("https://www.bonzai.sh/bonzai_image.jpg") no-repeat;
+  background: url("src/assets/bonzai_image.jpg") no-repeat;
   background-size: cover;
 }
 
 .tabs li.video {
   height: 20vh;
-  background: url("https://www.bonzai.sh/bonzai_video.jpg") no-repeat;
+  background: url("src/assets/bonzai_video.jpg") no-repeat;
   background-size: cover;
 }
 
 .tabs li.music {
   height: 20vh;
-  background: url("https://www.bonzai.sh/bonzai_music.jpg") no-repeat;
+  background: url("src/assets/bonzai_music.jpg") no-repeat;
   background-size: cover;
 }
 
@@ -762,9 +848,12 @@ p {
 }
 
 p.desc {
-  font-size: 32px;
-  border-bottom: 32px solid rgba(255, 255, 255, 0.1) !important;
+  padding: 1em;
+  font-size: 28px;
   border-radius: 4px;
+  min-height: 126px;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  backdrop-filter: blur(32px);
 }
 
 span.answer__id {

@@ -501,7 +501,7 @@ export default {
     const endpointForMode = () =>
       mode.value === "turbo" ? "/image/video/turbo" : "/image/video/quality";
     const pipelineForMode = () =>
-      mode.value === "turbo" ? "ltx_video" : "wan_video";
+      mode.value === "turbo" ? "ltx_video" : "wan_video_14b";
 
     // WAN requires (num_frames - 1) % 4 === 0
     const normalizeFramesForWan = (frames) => {
@@ -1068,13 +1068,13 @@ export default {
       // sizes tuned to server examples
       const sizeMaps = {
         turbo: { sd: [480, 640], hd: [512, 768], fhd: [704, 1216] }, // LTX likes 2:3~ish; HxW [256, 384] [480, 640] [512, 768]
-        quality: { sd: [240, 416], hd: [720, 1152], fhd: [1080, 1728] }, // WAN example dims; HxW
+        quality: { sd: [480, 480], hd: [704, 1280], fhd: [1080, 1728] }, // [480, 832]
       };
       const pick = sizeMaps[mode.value] || sizeMaps.turbo;
       const [h, w] = pick[quality.value] || pick.sd;
 
       // sensible defaults matching server
-      let frames = mode.value === "turbo" ? 61 : 36;
+      let frames = mode.value === "turbo" ? 49 : 41;
       let payload;
 
       if (mode.value === "quality") {
@@ -1085,9 +1085,8 @@ export default {
           height: h,
           width: w,
           frames: frames,
-          fps: 12,
-          steps: 25,
-          callback_steps: 1,
+          fps: 10,
+          steps: 26,
           auto_download: true,
           image_base64:
             uploadedImageBase64.value ||
@@ -1100,8 +1099,8 @@ export default {
           height: h,
           width: w,
           frames: frames, // LTX is fine with 96 by default
-          fps: 12,
-          steps: 25, // 150
+          fps: 10,
+          steps: 26, // 150
           auto_download: true,
           image_base64:
             uploadedImageBase64.value ||
@@ -1290,7 +1289,7 @@ export default {
   z-index: -1;
   height: 100%;
   width: 100%;
-  background: url("https://www.bonzai.sh/bonzai_video.jpg") no-repeat;
+  background: url("src/assets/bonzai_video.jpg") no-repeat;
   background-size: cover;
   filter: blur(6px);
   animation: move 40s ease infinite;
@@ -1313,6 +1312,80 @@ export default {
   border: 1px solid rgba(255, 255, 255, 0.1);
   backdrop-filter: blur(32px);
   border-radius: 4px !important;
+}
+h1 {
+  margin-top: 0 !important;
+  font-size: 64px;
+  color: #fff;
+  text-align: right;
+}
+p {
+  margin-bottom: 1em;
+  font-size: 24px;
+  color: #fff;
+  text-align: justify;
+  font-family: "Fira Sans", sans-serif;
+  font-weight: 100;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  transform: translate3d(0, 0, 0);
+}
+div.question {
+  border: 1px solid rgba(255, 255, 255, 0.25);
+  padding: 1em 1em 2em;
+  margin-top: 2em !important;
+  margin-bottom: 1em !important;
+  font-weight: 700;
+  box-shadow: 8px 8px 0 rgba(97, 55, 142, 0.66);
+  border-radius: 4px;
+  backdrop-filter: blur(6px);
+}
+hr {
+  margin: 12px 0;
+  width: 100%;
+  background-color: rgba(255, 255, 255, 0.015);
+}
+.input {
+  color: #fff;
+  background: rgba(255, 255, 255, 0.1);
+  box-shadow: 8px 8px 0 rgba(97, 55, 142, 0.66);
+  transition: 200ms ease-in;
+  transform: translate3d(0, 0, 0);
+}
+::placeholder {
+  color: rgba(255, 255, 255, 0.1) !important;
+  opacity: 1 !important;
+}
+.button.chat.is-loading {
+  position: absolute;
+  width: 32px;
+  height: 32px;
+  right: 10px;
+  bottom: 14px;
+  border: none !important;
+  box-shadow: none !important;
+}
+.is-loading {
+  text-shadow: none !important;
+}
+input[type="radio"] {
+  display: none;
+}
+input[type="radio"] + label {
+  padding: 3px 12px 9px;
+  color: rgba(255, 255, 255, 0.3) !important;
+  border: 1px solid rgba(255, 255, 255, 0.3);
+  border-radius: 4px;
+}
+input[type="radio"]:checked + label {
+  color: rgba(255, 255, 255, 1) !important;
+  border: 1px solid rgba(255, 255, 255, 1) !important;
+  background: rgba(97, 55, 142, 0.33) !important;
+  backdrop-filter: blur(64px) !important;
+}
+label.radio.quality {
+  margin: 0 3px;
+  padding: 3px 6px 0;
 }
 h1 {
   margin-top: 0 !important;

@@ -38,10 +38,9 @@ export default {
     osxSign: {
       identity: process.env.MAC_CODESIGN_IDENTITY || "Developer ID Application",
       "hardened-runtime": true,
-      entitlements: "./build/entitlements.mac.plist",
-      "entitlements-inherit": "./build/entitlements.mac.plist",
+      entitlements: "./entitlements.mac.plist", // Root of project
+      "entitlements-inherit": "./entitlements.mac.plist",
       "signature-flags": "library",
-      // allow loading PyTorch/FFmpeg dylibs
       "gatekeeper-assess": false,
     },
     osxNotarize: {
@@ -63,10 +62,18 @@ export default {
         fs.mkdirSync(serverDir, { recursive: true });
 
         const platformKey =
-          platform === "darwin" ? "macos" : platform === "win32" ? "windows" : "linux";
+          platform === "darwin"
+            ? "macos"
+            : platform === "win32"
+              ? "windows"
+              : "linux";
 
         // PyInstaller output lives here (created by CI)
-        let pyDist = path.resolve(__dirname, "binaries", `${platformKey}-${arch}`);
+        let pyDist = path.resolve(
+          __dirname,
+          "binaries",
+          `${platformKey}-${arch}`
+        );
         if (!fs.existsSync(pyDist)) {
           throw new Error(`Binary directory not found: ${pyDist}`);
         }
@@ -83,18 +90,23 @@ export default {
         // Detect onefile vs onedir:
         // - mac: we prefer onefile → a single "diffuser" binary
         // - linux/win: onedir → whole folder of bins/dlls/so's
-        const destDir = path.join(serverDir, "python-runtime", `${platformKey}-${arch}`);
+        const destDir = path.join(
+          serverDir,
+          "python-runtime",
+          `${platformKey}-${arch}`
+        );
         fs.mkdirSync(destDir, { recursive: true });
 
         const hasExe =
           platform === "win32"
-            ? fs.readdirSync(pyDist).some((f) => f.toLowerCase().endsWith(".exe"))
+            ? fs
+                .readdirSync(pyDist)
+                .some((f) => f.toLowerCase().endsWith(".exe"))
             : fs.existsSync(path.join(pyDist, "diffuser"));
 
         if (platform === "darwin" && hasExe) {
           // onefile: copy just the binary but keep the name 'diffuser'
-          const src =
-            path.join(pyDist, "diffuser"); // your spec should name the exe "diffuser"
+          const src = path.join(pyDist, "diffuser"); // your spec should name the exe "diffuser"
           if (!fs.existsSync(src)) {
             throw new Error(`Expected PyInstaller binary not found: ${src}`);
           }
@@ -104,7 +116,9 @@ export default {
           copyRecursive(pyDist, destDir);
         }
 
-        console.log(`[forge] Packaged python runtime from ${pyDist} → ${destDir}`);
+        console.log(
+          `[forge] Packaged python runtime from ${pyDist} → ${destDir}`
+        );
       },
     ],
   },
@@ -120,7 +134,10 @@ export default {
       },
     },
     { name: "@electron-forge/maker-deb", config: { bin: appName } },
-    { name: "@electron-forge/maker-squirrel", config: { icon: "./src/assets/logo" } },
+    {
+      name: "@electron-forge/maker-squirrel",
+      config: { icon: "./src/assets/logo" },
+    },
   ],
 
   publishers: [

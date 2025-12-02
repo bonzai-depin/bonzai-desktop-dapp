@@ -136,7 +136,23 @@ jobs:
           echo "APPLE_ID=${{ secrets.APPLE_ID }}" >> $GITHUB_ENV
           echo "APPLE_TEAM_ID=${{ secrets.APPLE_TEAM_ID }}" >> $GITHUB_ENV
           echo "APPLE_APP_SPECIFIC_PASSWORD=${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}" >> $GITHUB_ENV
-          echo "CSC_IDENTITY_AUTO_DISCOVERY=true" >> $GITHUB_ENV
+          echo "MAC_CODESIGN_IDENTITY=${{ secrets.MAC_CODESIGN_IDENTITY }}" >> $GITHUB_ENV
+
+      - name: Sign Python binary (macOS)
+        if: matrix.os_key == 'macos'
+        env:
+          KEYCHAIN_PW: ${{ secrets.KEYCHAIN_PASSWORD }}
+        run: |
+          security unlock-keychain -p "$KEYCHAIN_PW" build.keychain
+          
+          BINARY_PATH="binaries/${{ matrix.os_key }}-${{ matrix.arch }}/diffuser"
+          if [ -f "$BINARY_PATH" ]; then
+            codesign --force --sign "Developer ID Application" \
+              --options runtime \
+              --entitlements build/entitlements.mac.plist \
+              "$BINARY_PATH"
+            echo "Signed Python binary: $BINARY_PATH"
+          fi
 
       # ── Node & Forge publish ─────────────────────────────────────────────────
       - name: Set up Node.js

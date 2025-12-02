@@ -777,7 +777,7 @@ export default {
   z-index: -1;
   height: 100%;
   width: 100%;
-  background: url("https://www.bonzai.sh/bonzai_agent.jpg") no-repeat;
+  background: url("src/assets/bonzai_agent.jpg") no-repeat;
   background-size: cover;
   filter: blur(6px);
   animation: move 40s ease infinite;

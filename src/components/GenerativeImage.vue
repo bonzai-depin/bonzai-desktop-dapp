@@ -109,7 +109,7 @@
                     Quality
                   </label>
 
-                  <span class="control" v-if="mode !== 'turbo'">
+                  <span class="control">
                     <input
                       v-model="quality"
                       :value="'sd'"
@@ -369,10 +369,10 @@
                           position: absolute;
                           width: 128px;
                           bottom: 7em;
-                          right: 1em;
+                          right: 2em;
                         "
                       >
-                        <img src="https://www.bonzai.sh/bonzai_logo-full.png" />
+                        <img src="src/assets/bonzai_logo-full.png" />
                       </div>
                       <img
                         class="generated__image"
@@ -382,12 +382,13 @@
                       />
                       <hr />
                       <button
-                        class="button is-medium is-success copy is-pulled-right ml-5 mr-0 p-0 pl-1 pr-1"
+                        class="button is-medium is-success copy is-pulled-right ml-5 mr-0 p-0 pl-1 pr-4"
                         @click="downloadImage(index)"
                       >
-                        <span class="material-symbols-outlined is-size-2">
+                        <span class="material-symbols-outlined is-size-2 mr-1">
                           save
                         </span>
+                        Download
                       </button>
                       <button
                         class="button is-medium is-danger is-pulled-right ml-2 p-0 pl-1 pr-1"
@@ -532,7 +533,7 @@ export default {
         ? "flux_krea"
         : m === "intermediate"
           ? "sdxl_intermediate"
-          : "sdxl_turbo";
+          : "z_image_turbo";
     const currentPipeline = computed(() => pipelineForMode(mode.value));
 
     // ------------ downloads state/socket --
@@ -994,13 +995,14 @@ export default {
 
       const payload = { prompt, auto_download: true, mode: mode.value };
       const sizes = {
+        default: [1024, 1024],
         sd: [512, 768],
         hd: [720, 1280],
         fhd: [1080, 1920],
         "2k": [1440, 2560],
         "4k": [2160, 4096],
       };
-      const [h, w] = sizes[quality.value] || sizes.sd;
+      const [h, w] = sizes[quality.value] || sizes.default;
       payload.height = h;
       payload.width = w;
       if (mode.value === "intermediate")
@@ -1222,34 +1224,38 @@ export default {
   z-index: -1;
   height: 100%;
   width: 100%;
-  background: url("https://www.bonzai.sh/bonzai_image.jpg") no-repeat;
+  background: url("src/assets/bonzai_image.jpg") no-repeat;
   background-size: cover;
   filter: blur(6px);
   animation: move 40s ease infinite;
   overflow: hidden;
 }
+
 .models__deployment {
   position: relative;
   background: transparent;
   padding: 0 !important;
   margin: 0 !important;
 }
+
 .models__deployment-install {
   overflow-y: auto;
   padding: 6em;
   height: 100vh;
   background: rgba(0, 0, 0, 0.5);
 }
+
 .models__activity--payouts {
   padding: 4em;
   border: 1px solid rgba(255, 255, 255, 0.1);
   backdrop-filter: blur(32px);
   border-radius: 4px !important;
 }
+
 .generated__image {
   width: 100% !important;
   height: 100% !important;
-  border: 1px solid rgba(255, 255, 255, 1);
+  border: 8px solid rgba(255, 255, 255, 1);
   border-radius: 4px !important;
 }
 h1 {
@@ -1270,17 +1276,19 @@ p {
   transform: translate3d(0, 0, 0);
 }
 div.question {
-  border: 1px solid rgba(255, 255, 255, 0.25);
-  padding: 1em 1em 5em;
+  border: 1px solid rgba(255, 255, 255, 0);
+  padding: 2em 2em 5em;
   margin-top: 2em !important;
   margin-bottom: 1em !important;
   font-weight: 700;
+  background-color: rgba(255, 255, 255, 0.1);
   box-shadow: 8px 8px 0 rgba(97, 55, 142, 0.66);
   border-radius: 4px;
-  backdrop-filter: blur(6px);
+  backdrop-filter: blur(26px);
 }
+
 div.question .generated__image {
-  box-shadow: 8px 8px 0 rgba(97, 55, 142, 0.66);
+  /* box-shadow: 8px 8px 0 rgba(97, 55, 142, 0.66); */
 }
 form {
   position: relative;

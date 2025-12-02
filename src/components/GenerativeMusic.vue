@@ -692,8 +692,8 @@ export default {
         const missingCount = Array.isArray(rs?.missing)
           ? rs.missing.length
           : typeof rs?.missing === "number"
-          ? rs.missing
-          : 1;
+            ? rs.missing
+            : 1;
         const exists = typeof rs?.exists === "boolean" ? rs.exists : true;
         const entry = {
           repo: rs.repo,
@@ -1060,7 +1060,11 @@ export default {
 <style scoped>
 @import url("https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:opsz,wght,FILL,GRAD@20..48,100..700,0..1,-50..200");
 .material-symbols-outlined {
-  font-variation-settings: "FILL" 0, "wght" 100, "GRAD" -25, "opsz" 48;
+  font-variation-settings:
+    "FILL" 0,
+    "wght" 100,
+    "GRAD" -25,
+    "opsz" 48;
   border-radius: 100%;
 }
 .columns {
@@ -1071,7 +1075,7 @@ export default {
   z-index: -1;
   height: 100%;
   width: 100%;
-  background: url("https://www.bonzai.sh/bonzai_music.jpg") no-repeat;
+  background: url("src/assets/bonzai_music.jpg") no-repeat;
   background-size: cover;
   filter: blur(6px);
   animation: move 40s ease infinite;

@@ -33,8 +33,11 @@ let subpy = null;
 const PY_SERVER_PORT = 65000;
 
 const PLATFORM_KEY =
-  process.platform === "darwin" ? "macos" :
-  process.platform === "win32"  ? "windows" : "linux";
+  process.platform === "darwin"
+    ? "macos"
+    : process.platform === "win32"
+      ? "windows"
+      : "linux";
 const ARCH_KEY = process.arch === "arm64" ? "arm64" : "x64";
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -52,7 +55,10 @@ function resolvePythonLaunch(port = PY_SERVER_PORT) {
       path.resolve(process.cwd(), "src/server", "diffuser.py"),
     ];
     const script = candidates.find((p) => fs.existsSync(p));
-    if (!script) throw new Error(`dev diffuser.py not found. Searched:\n${candidates.join("\n")}`);
+    if (!script)
+      throw new Error(
+        `dev diffuser.py not found. Searched:\n${candidates.join("\n")}`
+      );
     return {
       mode: "dev",
       cmd: process.platform === "win32" ? "python" : "python3",
@@ -61,7 +67,11 @@ function resolvePythonLaunch(port = PY_SERVER_PORT) {
     };
   }
 
-  const onefilePath = path.join(process.resourcesPath, "server", "python-binary");
+  const onefilePath = path.join(
+    process.resourcesPath,
+    "server",
+    "python-binary"
+  );
   if (fs.existsSync(onefilePath) && fs.statSync(onefilePath).isFile()) {
     return {
       mode: "onefile",
@@ -101,7 +111,9 @@ const killPort = (port = PY_SERVER_PORT) => {
         { stdio: "ignore" }
       );
     } else {
-      child_process.execSync(`lsof -ti:${port} | xargs kill -9`, { stdio: "ignore" });
+      child_process.execSync(`lsof -ti:${port} | xargs kill -9`, {
+        stdio: "ignore",
+      });
     }
     console.log(`[killPort] Freed port ${port}`);
   } catch {
@@ -120,7 +132,9 @@ const startPythonSubprocess = () => {
     return;
   }
 
-  console.log(`Starting diffuser [${launch.mode}] → ${launch.cmd} ${launch.args.join(" ")}`);
+  console.log(
+    `Starting diffuser [${launch.mode}] → ${launch.cmd} ${launch.args.join(" ")}`
+  );
 
   const env = { ...process.env, PYTHONUNBUFFERED: "1" };
 
@@ -153,7 +167,9 @@ const killPythonSubprocess = () => {
       if (process.platform === "win32") {
         child_process.exec(`taskkill /PID ${pid} /T /F`, () => resolve());
       } else {
-        try { process.kill(pid, "SIGKILL"); } catch {}
+        try {
+          process.kill(pid, "SIGKILL");
+        } catch {}
         resolve();
       }
       subpy = null;
@@ -177,7 +193,9 @@ const checkPythonServer = async (url) => {
 // ─────────────────────────────────────────────────────────────────────────────
 // Protocol for local file reads (images, etc.)
 // ─────────────────────────────────────────────────────────────────────────────
-protocol.registerSchemesAsPrivileged([{ scheme: "app", privileges: { bypassCSP: true } }]);
+protocol.registerSchemesAsPrivileged([
+  { scheme: "app", privileges: { bypassCSP: true } },
+]);
 
 app.whenReady().then(() => {
   protocol.handle("app", (req) => {
@@ -200,8 +218,14 @@ try {
 const store = new Store();
 
 ipcMain.handle("store-get", (_event, key, def) => store.get(key, def));
-ipcMain.handle("store-set", (_event, key, value) => { store.set(key, value); return true; });
-ipcMain.handle("store-delete", (_event, key) => { store.delete(key); return true; });
+ipcMain.handle("store-set", (_event, key, value) => {
+  store.set(key, value);
+  return true;
+});
+ipcMain.handle("store-delete", (_event, key) => {
+  store.delete(key);
+  return true;
+});
 
 ipcMain.handle("agent-save-image", async (_event, defaultName, base64Data) => {
   const { canceled, filePath } = await dialog.showSaveDialog({
@@ -310,15 +334,21 @@ function getLocalIP() {
 }
 
 async function systemInformation() {
-  const ram = await si.mem();
-  const vram = await si.graphics();
+  const ram = await si.mem(); // bytes: { total, free, available, ... }
+  const gfx = await si.graphics(); // includes controllers[].vram in MB
   const ip = getLocalIP();
-  console.log(`Flask API should be accessible at: http://${ip}:${PY_SERVER_PORT}`);
+  console.log(
+    `Flask API should be accessible at: http://${ip}:${PY_SERVER_PORT}`
+  );
+
+  const controller = gfx.controllers?.[0];
 
   return {
+    // existing
     ram: ram.total,
-    gpu: vram.controllers?.[0]?.model || "Unknown",
-    vram: vram.controllers?.[0]?.vram || 0,
+    ramAvailable: ram.available,
+    gpu: controller?.model || "Unknown",
+    vram: controller?.vram || 0,
     ip,
   };
 }
@@ -370,12 +400,96 @@ function deleteModel(_event, modelname) {
   }
 }
 
-async function loadModel(_event, modelname) {
-  const modelPath = path.join(app.getPath("userData"), "models", modelname);
+function computeMaxContextForModel(currentModel, sysInfo) {
+  const params = currentModel.parameters || 0;
+
+  const ramBytes = sysInfo.ramAvailable || sysInfo.ram || 0;
+  const ramGB = ramBytes / 1024 ** 3;
+
+  const vramMB = sysInfo.vram || 0;
+  const vramGB = vramMB / 1024;
+
+  const modelMaxCtx = currentModel.context || 4096;
+
+  const isMac = process.platform === "darwin";
+  const isUnified = isMac && vramMB === 0; // typical for Apple Silicon
+
+  let memBudgetGB;
+
+  if (isUnified) {
+    // Apple unified memory: CPU+GPU share the same pool
+    // Keep ~30% headroom for the OS, other apps, and fragmentation
+    memBudgetGB = ramGB * 0.7;
+  } else if (vramGB > 0) {
+    // Discrete GPU case: KV cache + weights mostly limited by VRAM,
+    // but we also need RAM for the app + overhead.
+    // Be conservative and assume we can safely use ~80% of VRAM,
+    // and at most what RAM allows.
+    memBudgetGB = Math.min(ramGB * 0.8, vramGB * 0.8);
+  } else {
+    // Pure CPU, no GPU offload
+    memBudgetGB = ramGB * 0.8;
+  }
+
+  let baseCtx;
+
+  // Use memBudgetGB *and* params together
+  if (params <= 4_000_000_000) {
+    // 1–4B class
+    if (memBudgetGB < 4) baseCtx = 4096;
+    else if (memBudgetGB < 8) baseCtx = 8192;
+    else if (memBudgetGB < 16) baseCtx = 16384;
+    else baseCtx = 32768;
+  } else if (params <= 8_000_000_000) {
+    // 7–8B class
+    if (memBudgetGB < 6) baseCtx = 4096;
+    else if (memBudgetGB < 12) baseCtx = 8192;
+    else if (memBudgetGB < 24) baseCtx = 16384;
+    else baseCtx = 32768;
+  } else if (params <= 20_000_000_000) {
+    // 13–20B class
+    if (memBudgetGB < 8) baseCtx = 4096;
+    else if (memBudgetGB < 16) baseCtx = 8192;
+    else if (memBudgetGB < 32) baseCtx = 16384;
+    else baseCtx = 32768;
+  } else {
+    // 30B+ monsters (DeepSeek 32B, Qwen3 Coder 30B, etc.)
+    if (memBudgetGB < 16) baseCtx = 4096;
+    else if (memBudgetGB < 24) baseCtx = 8192;
+    else if (memBudgetGB < 48) baseCtx = 16384;
+    else baseCtx = 32768;
+  }
+
+  const chosen = Math.min(modelMaxCtx, baseCtx);
+
+  console.log(
+    `[CTX] RAM=${ramGB.toFixed(1)}GB, memBudget=${memBudgetGB.toFixed(
+      1
+    )}GB, VRAM=${vramGB.toFixed(1)}GB, params=${params}, baseCtx=${baseCtx}, modelMaxCtx=${modelMaxCtx}, chosen=${chosen}, unified=${isUnified}`
+  );
+
+  return chosen;
+}
+
+async function loadModel(_event, currentModel) {
+  const modelPath = path.join(
+    app.getPath("userData"),
+    "models",
+    currentModel.filename
+  );
+  console.log("Model path:", modelPath);
 
   const model = await llama.loadModel({ modelPath });
-  modelContext = await model.createContext({ contextSize: 4096 });
-  modelSession = new LlamaChatSession({ contextSequence: modelContext.getSequence() });
+
+  const sysInfo = await systemInformation();
+  const desiredCtx = computeMaxContextForModel(currentModel, sysInfo);
+  console.log("Model context:", desiredCtx);
+
+  modelContext = await model.createContext({ contextSize: desiredCtx });
+  modelSession = new LlamaChatSession({
+    contextSequence: modelContext.getSequence(),
+  });
+
   return true;
 }
 
