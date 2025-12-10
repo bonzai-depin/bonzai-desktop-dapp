@@ -145,12 +145,12 @@
                 <!-- READINESS CTA -->
                 <div
                   v-if="showUpdateCTA"
-                  class="notification is-danger mb-6 mt-6"
+                  class="notification is-danger mb-6 mt-6 p-6"
                   style="margin-bottom: 1rem"
                 >
                   <p class="mb-2">
-                    <strong class="fira-sans-condensed-black-italic">
-                      Model Download Required
+                    <strong class="fira-sans-condensed-black-italic is-size-2">
+                      Download Required
                     </strong>
                     <span v-if="readiness.missingRepos.length">
                       <ul style="margin-top: 0.5rem">
@@ -180,7 +180,7 @@
                   <hr />
                   <div class="buttons">
                     <button
-                      class="button is-warning mr-5"
+                      class="button is-warning mr-5 is-large"
                       @click="prefetchForMode"
                       :disabled="downloads.active || readiness.authRequired"
                       title="(Re)download required files"
@@ -206,12 +206,12 @@
                 <!-- DOWNLOAD PROGRESS -->
                 <div
                   v-if="downloads && downloads.active"
-                  class="notification is-info"
+                  class="notification is-info p-6"
                   style="margin-bottom: 1.25rem"
                 >
                   <p class="mb-2">
                     <span class="fira-sans-condensed-black-italic is-size-4">
-                      Model Download in Progress
+                      Downloading
                       <button
                         disabled
                         class="button is-loading is-info is-small mr-2 p-4"
@@ -221,28 +221,6 @@
                       class="fira-sans-condensed-black-italic is-pulled-right is-size-1"
                     >
                       {{ Math.round(downloads.total_progress || 0) }}%
-                      <button
-                        class="button is-small is-warning mr-4 retry p-1"
-                        @click="retryCurrentPipeline"
-                        :disabled="
-                          !downloads.pipelineId ||
-                          downloads.status === 'completed'
-                        "
-                      >
-                        <span class="material-symbols-outlined">
-                          restart_alt
-                        </span>
-                      </button>
-                      <button
-                        class="button is-small is-danger mr-4 cancel p-1"
-                        @click="cancelCurrentPipeline"
-                        :disabled="
-                          !downloads.pipelineId ||
-                          downloads.status === 'completed'
-                        "
-                      >
-                        <span class="material-symbols-outlined">cancel</span>
-                      </button>
                     </span>
                   </p>
                   <progress
@@ -501,7 +479,7 @@ export default {
     const endpointForMode = () =>
       mode.value === "turbo" ? "/image/video/turbo" : "/image/video/quality";
     const pipelineForMode = () =>
-      mode.value === "turbo" ? "ltx_video" : "wan_video_14b";
+      mode.value === "turbo" ? "ltx_video" : "wan_video";
 
     // WAN requires (num_frames - 1) % 4 === 0
     const normalizeFramesForWan = (frames) => {
@@ -525,7 +503,7 @@ export default {
     let httpPollTimer = null;
 
     const socketOpts = {
-      transports: ["websocket", "polling"],
+      transports: ["polling", "websocket"],
       upgrade: true,
       forceNew: true,
       timeout: 10000,
@@ -1067,14 +1045,14 @@ export default {
 
       // sizes tuned to server examples
       const sizeMaps = {
-        turbo: { sd: [480, 640], hd: [512, 768], fhd: [704, 1216] }, // LTX likes 2:3~ish; HxW [256, 384] [480, 640] [512, 768]
-        quality: { sd: [480, 480], hd: [704, 1280], fhd: [1080, 1728] }, // [480, 832]
+        turbo: { sd: [480, 640], hd: [512, 768], fhd: [768, 1280] }, // LTX likes 2:3~ish; HxW [256, 384] [480, 640] [512, 768]
+        quality: { sd: [240, 320], hd: [576, 768], fhd: [1024, 1728] }, // [480, 832]
       };
       const pick = sizeMaps[mode.value] || sizeMaps.turbo;
       const [h, w] = pick[quality.value] || pick.sd;
 
       // sensible defaults matching server
-      let frames = mode.value === "turbo" ? 49 : 41;
+      let frames = mode.value === "turbo" ? 37 : 30;
       let payload;
 
       if (mode.value === "quality") {
@@ -1086,7 +1064,7 @@ export default {
           width: w,
           frames: frames,
           fps: 10,
-          steps: 26,
+          steps: 10,
           auto_download: true,
           image_base64:
             uploadedImageBase64.value ||
@@ -1099,8 +1077,11 @@ export default {
           height: h,
           width: w,
           frames: frames, // LTX is fine with 96 by default
-          fps: 10,
-          steps: 26, // 150
+          fps: 12,
+          steps: 150 , // 150,
+          guidance_scale: 5,
+          use_condition_pipeline: false,
+          scheduler_type: "karras",
           auto_download: true,
           image_base64:
             uploadedImageBase64.value ||

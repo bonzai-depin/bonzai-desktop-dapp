@@ -479,7 +479,7 @@ export default {
     let httpPollTimer = null;
 
     const socketOpts = {
-      transports: ["websocket", "polling"],
+      transports: ["polling", "websocket"],
       upgrade: true,
       forceNew: true,
       timeout: 10000,

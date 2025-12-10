@@ -1,12 +1,13 @@
 <template>
   <div class="background"></div>
+
   <div class="models__deployment column is-8 is-paddingless">
     <div class="models__deployment-install">
       <div class="columns">
-        <div class="column is-12">
+        <div class="column is-12 p-5">
           <div class="level">
             <div class="level-left">
-              <div class="level-item" style="position: relative">
+              <div class="level-item">
                 <h1 class="fira-sans-condensed-black-italic">
                   <span
                     class="material-symbols-outlined is-size-1 mr-2"
@@ -370,14 +371,14 @@ export default {
     const openModel = ref(false);
     const openChat = ref(false);
     const availableModels = ref({
-      gemma_3_1_B: {
-        modelname: "Gemma 3 1B",
+      codestral_22_B: {
+        modelname: "Codestral 22B",
         modeldesc:
-          "1B-parameter Gemma 3 instruction-tuned model from Google with a 32,768-token context window. A compact, efficient chat and reasoning model. Best for: lightweight multilingual assistants, summarization, and everyday QA on laptops or edge devices.",
-        url: "https://huggingface.co/unsloth/gemma-3-1b-it-GGUF/resolve/main/gemma-3-1b-it-Q4_K_M.gguf",
-        filename: "gemma-3-1b-it-q4_k_m.gguf",
-        filesize: "806 MB",
-        parameters: 1000000000,
+          "22B-parameter Codestral model from Mistral AI with a 32,768-token context window. Specialized for code generation across 80+ programming languages with Fill-in-Middle support. Best for: dedicated coding copilot, multi-language development, and code completion tasks.",
+        url: "https://huggingface.co/bartowski/Codestral-22B-v0.1-GGUF/resolve/main/Codestral-22B-v0.1-Q4_K_M.gguf",
+        filename: "Codestral-22B-v0.1-Q4_K_M.gguf",
+        filesize: "13.3 GB",
+        parameters: 22000000000,
         context: 32768,
       },
 
@@ -414,26 +415,37 @@ export default {
         context: 32768,
       },
 
-      phi_3_3_8_B: {
-        modelname: "Phi-3 Mini 3.8B",
+      gemma_3_1_B: {
+        modelname: "Gemma 3 1B",
         modeldesc:
-          "3.8B-parameter Phi-3 Mini model from Microsoft with a 4,096-token context window. Trained on curated synthetic and filtered web data for strong small-model reasoning. Best for: very fast local chatbots, short-context coding, and educational assistants on CPU or iGPU.",
-        url: "https://huggingface.co/microsoft/Phi-3-mini-4k-instruct-gguf/resolve/main/Phi-3-mini-4k-instruct-q4.gguf",
-        filename: "phi-3-mini-4k-instruct-q4.gguf",
-        filesize: "2.39 GB",
-        parameters: 3800000000,
-        context: 4096,
+          "1B-parameter Gemma 3 instruction-tuned model from Google with a 32,768-token context window. A compact, efficient chat and reasoning model. Best for: lightweight multilingual assistants, summarization, and everyday QA on laptops or edge devices.",
+        url: "https://huggingface.co/unsloth/gemma-3-1b-it-GGUF/resolve/main/gemma-3-1b-it-Q4_K_M.gguf",
+        filename: "gemma-3-1b-it-q4_k_m.gguf",
+        filesize: "806 MB",
+        parameters: 1000000000,
+        context: 32768,
       },
 
-      phi_4_3_8_B: {
-        modelname: "Phi-4 Mini 3.8B",
+      gpt_oss_20_B: {
+        modelname: "GPT-OSS 20B",
         modeldesc:
-          "3.8B-parameter Phi-4 Mini instruction-tuned model from Microsoft with a 128,000-token context window. Long-context, reasoning-focused small model. Best for: document QA, longer chats, and compact local assistants that still handle large prompts.",
-        url: "https://huggingface.co/bartowski/microsoft_Phi-4-mini-instruct-GGUF/resolve/main/Phi-4-mini-instruct-Q4_K_M.gguf",
-        filename: "phi-4-mini-instruct-q4_k_m.gguf",
-        filesize: "2.49 GB",
-        parameters: 3800000000,
-        context: 128000,
+          "20B-parameter GPT-OSS model with a long context window (up to around 131,072 tokens depending on runtime). Open-weight alternative to proprietary GPT-style models. Best for: demanding local reasoning, tool-using agents, and advanced coding on high-end hardware.",
+        url: "https://huggingface.co/unsloth/gpt-oss-20b-GGUF/resolve/main/gpt-oss-20b-Q4_K_M.gguf",
+        filename: "gpt-oss-20b-q4_k_m.gguf",
+        filesize: "11.6 GB",
+        parameters: 20000000000,
+        context: 131072,
+      },
+
+      hermes_4_14_B: {
+        modelname: "Hermes 4 14B",
+        modeldesc:
+          "14B-parameter Hermes 4 hybrid reasoning model from Nous Research based on Qwen 3 14B with a 32,768-token context window. Features explicit <think> reasoning mode for deliberation. Best for: advanced reasoning, code generation, structured JSON outputs, and creative tasks.",
+        url: "https://huggingface.co/bartowski/NousResearch_Hermes-4-14B-GGUF/resolve/main/NousResearch_Hermes-4-14B-Q4_K_M.gguf",
+        filename: "NousResearch_Hermes-4-14B-Q4_K_M.gguf",
+        filesize: "8.99 GB",
+        parameters: 14000000000,
+        context: 32768,
       },
 
       llama_2_7_B: {
@@ -469,15 +481,26 @@ export default {
         context: 32768,
       },
 
-      gpt_oss_20_B: {
-        modelname: "GPT-OSS 20B",
+      phi_3_3_8_B: {
+        modelname: "Phi-3 Mini 3.8B",
         modeldesc:
-          "20B-parameter GPT-OSS model with a long context window (up to around 131,072 tokens depending on runtime). Open-weight alternative to proprietary GPT-style models. Best for: demanding local reasoning, tool-using agents, and advanced coding on high-end hardware.",
-        url: "https://huggingface.co/unsloth/gpt-oss-20b-GGUF/resolve/main/gpt-oss-20b-Q4_K_M.gguf",
-        filename: "gpt-oss-20b-q4_k_m.gguf",
-        filesize: "11.6 GB",
-        parameters: 20000000000,
-        context: 131072,
+          "3.8B-parameter Phi-3 Mini model from Microsoft with a 4,096-token context window. Trained on curated synthetic and filtered web data for strong small-model reasoning. Best for: very fast local chatbots, short-context coding, and educational assistants on CPU or iGPU.",
+        url: "https://huggingface.co/microsoft/Phi-3-mini-4k-instruct-gguf/resolve/main/Phi-3-mini-4k-instruct-q4.gguf",
+        filename: "phi-3-mini-4k-instruct-q4.gguf",
+        filesize: "2.39 GB",
+        parameters: 3800000000,
+        context: 4096,
+      },
+
+      phi_4_3_8_B: {
+        modelname: "Phi-4 Mini 3.8B",
+        modeldesc:
+          "3.8B-parameter Phi-4 Mini instruction-tuned model from Microsoft with a 128,000-token context window. Long-context, reasoning-focused small model. Best for: document QA, longer chats, and compact local assistants that still handle large prompts.",
+        url: "https://huggingface.co/bartowski/microsoft_Phi-4-mini-instruct-GGUF/resolve/main/Phi-4-mini-instruct-Q4_K_M.gguf",
+        filename: "phi-4-mini-instruct-q4_k_m.gguf",
+        filesize: "2.49 GB",
+        parameters: 3800000000,
+        context: 128000,
       },
 
       qwen_2_5_3_B: {
@@ -491,15 +514,59 @@ export default {
         context: 32768,
       },
 
+      qwen_2_5_coder_7_B: {
+        modelname: "Qwen 2.5 Coder 7B",
+        modeldesc:
+          "7B-parameter Qwen 2.5 Coder instruction-tuned model from Alibaba with a 32,768-token context window. Code specialist trained on 5.5T tokens including source code. Best for: everyday coding tasks, debugging, code completion on consumer hardware.",
+        url: "https://huggingface.co/Qwen/Qwen2.5-Coder-7B-Instruct-GGUF/resolve/main/qwen2.5-coder-7b-instruct-q5_k_m.gguf",
+        filename: "qwen2.5-coder-7b-instruct-q5_k_m.gguf",
+        filesize: "5.48 GB",
+        parameters: 7000000000,
+        context: 32768,
+      },
+
+      qwen_2_5_coder_14_B: {
+        modelname: "Qwen 2.5 Coder 14B",
+        modeldesc:
+          "14B-parameter Qwen 2.5 Coder instruction-tuned model with 128K context. State-of-the-art code generation and reasoning. Best for: serious development work, complex refactoring, and code agents requiring stronger understanding.",
+        url: "https://huggingface.co/Qwen/Qwen2.5-Coder-14B-Instruct-GGUF/resolve/main/qwen2.5-coder-14b-instruct-q4_k_m.gguf",
+        filename: "qwen2.5-coder-14b-instruct-q4_k_m.gguf",
+        filesize: "8.93 GB",
+        parameters: 14000000000,
+        context: 131072,
+      },
+
+      qwen_2_5_coder_32_B: {
+        modelname: "Qwen 2.5 Coder 32B",
+        modeldesc:
+          "32B-parameter Qwen 2.5 Coder - the current SOTA open-source code LLM with GPT-4o-level coding abilities. 128K context for large codebases. Best for: professional development, multi-file refactoring, code agents, and complex software reasoning.",
+        url: "https://huggingface.co/bartowski/Qwen2.5-Coder-32B-Instruct-GGUF/resolve/main/Qwen2.5-Coder-32B-Instruct-Q4_K_M.gguf",
+        filename: "Qwen2.5-Coder-32B-Instruct-Q4_K_M.gguf",
+        filesize: "19.9 GB",
+        parameters: 32000000000,
+        context: 131072,
+      },
+
       qwen_3_coder_30_B: {
         modelname: "Qwen3 Coder 30B A3B",
         modeldesc:
           "30.5B-parameter Mixture-of-Experts Qwen3-Coder A3B model with a native 262,144-token context window. Specialized for code understanding and generation across very large repositories. Best for: serious local coding copilots, multi-file refactoring, and advanced software reasoning.",
-        url: "https://huggingface.co/unsloth/Qwen3-Coder-30B-A3B-Instruct-GGUF/resolve/main/Qwen3-Coder-30B-A3B-Instruct-UD-Q3_K_XL.gguf",
-        filename: "qwen3-coder-30b-a3b-instruct-ud-q3_k_xl.gguf",
-        filesize: "13.8 GB",
+        url: "https://huggingface.co/unsloth/Qwen3-Coder-30B-A3B-Instruct-GGUF/resolve/main/Qwen3-Coder-30B-A3B-Instruct-UD-Q5_K_XL.gguf",
+        filename: "qwen3-coder-30b-a3b-instruct-ud-q5_k_xl.gguf",
+        filesize: "21.7 GB",
         parameters: 30500000000,
         context: 262144,
+      },
+
+      yi_coder_9_B: {
+        modelname: "Yi-Coder 9B Chat",
+        modeldesc:
+          "9B-parameter Yi-Coder Chat model from 01.AI with 128K context window. First sub-10B model to pass 20% on LiveCodeBench. Supports 52 programming languages. Best for: capable coding assistant on modest hardware, long-context code understanding.",
+        url: "https://huggingface.co/bartowski/Yi-Coder-9B-Chat-GGUF/resolve/main/Yi-Coder-9B-Chat-Q5_K_M.gguf",
+        filename: "Yi-Coder-9B-Chat-Q5_K_M.gguf",
+        filesize: "6.26 GB",
+        parameters: 9000000000,
+        context: 131072,
       },
     });
 

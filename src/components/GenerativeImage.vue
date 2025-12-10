@@ -196,15 +196,15 @@
                 <!-- READINESS CTA (only for current mode) -->
                 <div
                   v-if="showUpdateCTA && readiness.currentMode == mode"
-                  class="notification is-danger mb-6 mt-6"
+                  class="notification is-danger mb-6 mt-6 p-6"
                   style="margin-bottom: 1rem"
                 >
                   <p class="mb-2">
-                    <strong class="fira-sans-condensed-black-italic">
-                      Model Download Required
+                    <strong class="fira-sans-condensed-black-italic is-size-2">
+                      Download Required
                     </strong>
                     <span v-if="readiness.missingRepos.length">
-                      <ul style="margin-top: 0.5rem">
+                      <ul style="margin-top: 0.5rem; text-transform: lowercase;">
                         <li v-for="d in readiness.repoDetails" :key="d.repo">
                           <span
                             class="material-symbols-outlined is-size-3 mr-1"
@@ -217,10 +217,16 @@
                     </span>
 
                     <span v-if="readiness.missingGguf">
-                      <span class="material-symbols-outlined is-size-3 mr-1">
-                        deployed_code
-                      </span>
-                      {{ readiness.ggufName || "Unknown (server-configured)" }}
+                      <ul style="margin-top: 0.5rem; text-transform: lowercase;">
+                        <li v-for="gguf in readiness.ggufNames">
+                          <span
+                            class="material-symbols-outlined is-size-3 mr-1"
+                          >
+                            deployed_code
+                          </span>
+                          {{ gguf }}
+                        </li>
+                      </ul>
                     </span>
 
                     <span v-if="readiness.notes.length">
@@ -236,7 +242,7 @@
                   <hr />
                   <div class="buttons">
                     <button
-                      class="button is-warning mr-5"
+                      class="button is-warning mr-5 is-large"
                       @click="prefetchForMode"
                       :disabled="downloads.active || readiness.authRequired"
                       title="(Re)download required files for this mode"
@@ -255,20 +261,20 @@
                   class="notification is-danger"
                   style="margin-bottom: 1rem"
                 >
-                  <strong>Generation failed:</strong>
-                  {{ generation.error }}
+                  <strong>I wasn't able to handle this prompt.</strong>
+                  <!-- {{ generation.error }} -->
+                    Please retry, with different, lower settings.
                 </div>
 
-                <!-- DOWNLOAD PROGRESS: only show if pipeline matches current mode -->
                 <!-- DOWNLOAD PROGRESS -->
                 <div
                   v-if="downloads && downloads.active"
-                  class="notification is-info"
+                  class="notification is-info p-6"
                   style="margin-bottom: 1.25rem"
                 >
                   <p class="mb-2">
                     <span class="fira-sans-condensed-black-italic is-size-4">
-                      Model Download in Progress
+                      Downloading
                       <button
                         disabled
                         class="button is-loading is-info is-small mr-2 p-4"
@@ -278,30 +284,6 @@
                       class="fira-sans-condensed-black-italic is-pulled-right is-size-1"
                     >
                       {{ Math.round(downloads.total_progress || 0) }}%
-                      <button
-                        class="button is-small is-warning retry p-1"
-                        @click="retryCurrentPipeline"
-                        :disabled="
-                          !downloads.pipelineId ||
-                          downloads.status === 'completed'
-                        "
-                        title="Retry failed/blocked pipeline"
-                      >
-                        <span class="material-symbols-outlined">
-                          restart_alt
-                        </span>
-                      </button>
-                      <button
-                        class="button is-small is-danger cancel p-1"
-                        @click="cancelCurrentPipeline"
-                        :disabled="
-                          !downloads.pipelineId ||
-                          downloads.status === 'completed'
-                        "
-                        title="Cancel current pipeline"
-                      >
-                        <span class="material-symbols-outlined">cancel</span>
-                      </button>
                     </span>
                   </p>
                   <progress
@@ -320,6 +302,7 @@
                         v-for="t in downloadTaskList"
                         :key="t.task_id"
                         class="is-size-7 columns"
+                        style="text-transform: lowercase;"
                       >
                         <div class="column has-text-left">
                           <span class="material-symbols-outlined is-size-6">
@@ -475,6 +458,7 @@ const API_BASE =
 
 const WS_DL = `${API_BASE}/downloads`;
 const WS_GEN = `${API_BASE}/generation`;
+const too = "tooo";
 
 export default {
   name: "GenerativeImage",
@@ -532,8 +516,8 @@ export default {
       m === "quality"
         ? "flux_krea"
         : m === "intermediate"
-          ? "sdxl_intermediate"
-          : "z_image_turbo";
+          ? "z_image_turbo"
+          : "sdxl";
     const currentPipeline = computed(() => pipelineForMode(mode.value));
 
     // ------------ downloads state/socket --
@@ -552,7 +536,7 @@ export default {
     let httpPollTimer = null;
 
     const socketOpts = {
-      transports: ["websocket", "polling"],
+      transports: ["polling", "websocket"],
       upgrade: true,
       forceNew: true,
       timeout: 10000,
@@ -998,7 +982,7 @@ export default {
         default: [1024, 1024],
         sd: [512, 768],
         hd: [720, 1280],
-        fhd: [1080, 1920],
+        fhd: [1024, 1920],
         "2k": [1440, 2560],
         "4k": [2160, 4096],
       };
@@ -1354,7 +1338,7 @@ ol.chat li {
 }
 .retry {
   position: absolute;
-  top: -3em;
+  top: -5em;
   right: 2.75em;
   opacity: 0.5;
 }
@@ -1365,8 +1349,8 @@ ol.chat li {
 }
 .cancel {
   position: absolute;
-  top: -3em;
-  right: -1.25em;
+  top: -5em;
+  right: -2em;
   opacity: 0.5;
 }
 </style>

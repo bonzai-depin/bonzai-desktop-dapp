@@ -442,21 +442,21 @@ function computeMaxContextForModel(currentModel, sysInfo) {
     else baseCtx = 32768;
   } else if (params <= 8_000_000_000) {
     // 7–8B class
-    if (memBudgetGB < 6) baseCtx = 4096;
-    else if (memBudgetGB < 12) baseCtx = 8192;
-    else if (memBudgetGB < 24) baseCtx = 16384;
+    if (memBudgetGB < 16) baseCtx = 4096;
+    else if (memBudgetGB < 24) baseCtx = 8192;
+    else if (memBudgetGB < 32) baseCtx = 16384;
     else baseCtx = 32768;
   } else if (params <= 20_000_000_000) {
     // 13–20B class
-    if (memBudgetGB < 8) baseCtx = 4096;
-    else if (memBudgetGB < 16) baseCtx = 8192;
-    else if (memBudgetGB < 32) baseCtx = 16384;
+    if (memBudgetGB < 16) baseCtx = 2048;
+    else if (memBudgetGB < 24) baseCtx = 4096;
+    else if (memBudgetGB < 32) baseCtx = 8192;
     else baseCtx = 32768;
   } else {
     // 30B+ monsters (DeepSeek 32B, Qwen3 Coder 30B, etc.)
-    if (memBudgetGB < 16) baseCtx = 4096;
-    else if (memBudgetGB < 24) baseCtx = 8192;
-    else if (memBudgetGB < 48) baseCtx = 16384;
+    if (memBudgetGB < 32) baseCtx = 4096;
+    else if (memBudgetGB < 64) baseCtx = 8192;
+    else if (memBudgetGB < 128) baseCtx = 16384;
     else baseCtx = 32768;
   }
 

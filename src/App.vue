@@ -74,7 +74,7 @@
                 <span class="material-symbols-outlined is-size-1">
                   headphones
                 </span>
-                Music
+                Audio
               </h1>
             </a>
           </li>
@@ -88,7 +88,7 @@
                 <span class="material-symbols-outlined is-size-1">
                   3d_rotation
                 </span>
-                Game
+                Assets
               </h1>
             </a>
           </li>
@@ -113,8 +113,8 @@
           >
             <a>
               <h1>
-                <span class="material-symbols-outlined is-size-1">hub</span>
-                Smart Agents
+                <span class="material-symbols-outlined is-size-1">query_stats</span>
+                Prediction
               </h1>
             </a>
           </li>
@@ -223,8 +223,8 @@ body {
 
 .system {
   position: absolute;
-  top: 20px;
-  right: 8px;
+  top: 24px;
+  right: 10px;
   z-index: 777;
 }
 
@@ -415,14 +415,14 @@ body {
 
 .tabs.menu li.three {
   height: 12vh;
-  background: url("assets/bonzai_3d.jpg") no-repeat;
+  background: url("assets/bonzai_3d.png") no-repeat;
   background-size: cover;
   background-position: center center;
 }
 
 .tabs.menu li.robot {
   height: 12vh;
-  background: url("assets/bonzai_robots.jpg") no-repeat;
+  background: url("assets/bonzai_robots.png") no-repeat;
   background-size: cover;
   background-position: center center;
 }

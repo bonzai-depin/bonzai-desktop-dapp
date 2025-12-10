@@ -349,7 +349,7 @@ export default {
 
     const setupTrainingSocket = () => {
       trainingSocket.value = io(`${API_BASE}/training`, {
-        transports: ["websocket", "polling"],
+        transports: ["polling", "websocket"],
       });
 
       trainingSocket.value.on("training_progress", (data) => {

@@ -8,6 +8,7 @@ from __future__ import annotations
 import os, re, io, time, base64, logging, threading, hashlib, platform, shutil, subprocess, gc, stat
 from io import BytesIO
 from pathlib import Path
+import platform
 from datetime import datetime, date
 from decimal import Decimal
 from dataclasses import dataclass, field
@@ -40,23 +41,43 @@ except Exception:
 # Diffusers
 from diffusers import (
     AutoPipelineForText2Image,
-    ZImagePipeline,
     StableDiffusionXLPipeline,
     StableDiffusionXLImg2ImgPipeline,
     LTXPipeline,
     LTXImageToVideoPipeline,
-    WanTransformer3DModel,
-    WanImageToVideoPipeline,
+    LTXConditionPipeline,
     GGUFQuantizationConfig,
     FluxPipeline,
     FluxImg2ImgPipeline,
     FluxTransformer2DModel,
     FlowMatchEulerDiscreteScheduler,
+    AutoencoderKL,
+    AutoencoderKLWan,
+    WanImageToVideoPipeline,
+    WanTransformer3DModel,
+    UniPCMultistepScheduler,
+    ZImagePipeline,
+    ZImageTransformer2DModel,
 )
 
+from diffusers.pipelines.ltx.pipeline_ltx_condition import LTXVideoCondition
 from diffusers.utils import load_image, export_to_video
 
-from transformers import CLIPVisionModel
+# Memory offloading support for LTX
+from diffusers.hooks import apply_group_offloading
+
+from transformers import CLIPVisionModel, CLIPTextModel
+
+# ------------------------- GGUF FILE LOCKS (CRITICAL) -------------------------
+_GGUF_LOCKS: Dict[str, threading.Lock] = {}
+_GGUF_LOCKS_GUARD = threading.Lock()
+
+def _gguf_lock(name: str) -> threading.Lock:
+    with _GGUF_LOCKS_GUARD:
+        if name not in _GGUF_LOCKS:
+            _GGUF_LOCKS[name] = threading.Lock()
+        return _GGUF_LOCKS[name]
+
 
 # ------------------------- JSON Sanitization -------------------------
 def _json_sanitize(obj):
@@ -74,11 +95,30 @@ def _json_sanitize(obj):
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s")
 logger = logging.getLogger("bonzai-server")
 
-USER_DATA_PATH = user_data_dir("bonzai", "BonzAI")
-MODEL_DIR = Path(USER_DATA_PATH) / "models"
-MODEL_DIR.mkdir(parents=True, exist_ok=True)
 
+def get_safe_model_dir():
+    home = Path.home()
+
+    # Preferred universal location
+    safe = home / "bonzai-models"
+    safe.mkdir(parents=True, exist_ok=True)
+    return safe
+
+# Model storage location (per OS):
+# macOS   -> /Users/<you>/bonzai-models
+# Windows -> C:\Users\<you>\bonzai-models   (or D:\bonzai-models)
+# Linux   -> /home/<you>/bonzai-models
+
+MODEL_DIR = get_safe_model_dir()
+
+USER_BIN_DIR = MODEL_DIR / "bin"
+USER_BIN_DIR.mkdir(parents=True, exist_ok=True)
+
+# Also move HF cache there
 os.environ["HF_HOME"] = str(MODEL_DIR / "hf")
+os.environ["TRANSFORMERS_CACHE"] = str(MODEL_DIR / "hf")
+os.environ["DIFFUSERS_CACHE"] = str(MODEL_DIR / "hf")
+
 os.environ.setdefault("HF_HUB_DISABLE_TELEMETRY", "1")
 os.environ.setdefault("TOKENIZERS_PARALLELISM", "false")
 
@@ -96,8 +136,8 @@ socketio = SocketIO(
     async_mode="eventlet",
     logger=False,
     engineio_logger=False,
-    ping_interval=20,
-    ping_timeout=30,
+    ping_interval=25,
+    ping_timeout=120,
 )
 
 def socket_emit(event: str, payload: dict, namespace: str):
@@ -351,17 +391,6 @@ class DownloadManager:
 download_manager = DownloadManager()
 
 # ---------------------- Repo allow_patterns (lean) -----------------------
-def _z_image_patterns() -> list[str]:
-    return [
-        "model_index.json",
-        "scheduler/**",
-        "transformer/**",
-        "text_encoder/**",
-        "tokenizer/**",
-        "vae/**",
-        "**/*.json", 
-        "**/*.safetensors",
-    ]
     
 def _sdxl_patterns() -> List[str]:
     return [
@@ -389,45 +418,39 @@ def _ltx_upscaler_patterns() -> List[str]:
         "model_index.json", "latent_upsampler/**", "vae/**",
         "**/*.json", "**/*.safetensors", "**/*.bin",
     ]
-
-def _wan_patterns_5b() -> list[str]:
-    return [
-        "model_index.json",
-        "scheduler/**",
-        "transformer/**",
-        "vae/**",
-        "text_encoder/**",
-        "tokenizer/**",
-        "**/*.json", "**/*.safetensors", "**/*.bin",
-    ]
     
-def _wan_patterns_14b() -> list[str]:
+def _wan_patterns() -> List[str]:
     return [
         "model_index.json",
         "scheduler/**",
-        "transformer/**",
-        "transformer_2/**",
-        "vae/**",
-        "text_encoder/**",
         "tokenizer/**",
-        "**/*.json", "**/*.safetensors", "**/*.bin",
+        "image_encoder/**",
+        "image_processor/**",
+        "text_encoder/**",
+        "transformer/**",
+        "vae/**",
+        "**/*.json",
+        "**/*.safetensors",
+        "**/*.bin",
     ]
 
 def allow_patterns_for_repo(repo_id: str) -> Optional[List[str]]:
     if repo_id in ("black-forest-labs/FLUX.1-dev", "black-forest-labs/FLUX.1-Krea-dev"):
         return _flux_patterns()
-    if repo_id == Z_IMAGE_TURBO_REPO:
-        return _z_image_patterns()
     if repo_id in (SDXL_BASE_REPO, SDXL_REFINER_REPO):
         return _sdxl_patterns()
+    if repo_id == Z_REPO:
+        return [
+            "model_index.json", "scheduler/**", "tokenizer/**",
+            "text_encoder/**", "transformer/**", "vae/**",
+            "**/*.safetensors", "**/*.json", "**/*.bin"
+        ]   
     if repo_id == LTX_REPO:
         return _ltx_patterns_strict()
     if repo_id == LTX_UPSAMPLER_REPO:
         return _ltx_upscaler_patterns()
-    if repo_id == WAN_REPO_5B:
-        return _wan_patterns_5b()
-    if repo_id == WAN_REPO_14B:
-        return _wan_patterns_14b()
+    if repo_id == WAN_REPO:
+        return _wan_patterns()
     return None
 
 # ---------------------- Integrity & completeness helpers ----------------------
@@ -473,29 +496,23 @@ REPO_SPECS = {
         "must_weight_dirs": ["text_encoder", "text_encoder_2", "vae"],
         "extra_dirs": ["scheduler"],
     },
-    "Tongyi-MAI/Z-Image-Turbo": {
-        "must_files": ["model_index.json"],
-        "must_tokenizers": ["tokenizer"],
-        "must_weight_dirs": ["transformer", "text_encoder", "vae"],
-        "extra_dirs": ["scheduler"],
-        "fallback_any_weights": False,
-    },
     "stabilityai/stable-diffusion-xl-base-1.0": {
         "must_files": ["model_index.json"],
-        "must_tokenizers": ["tokenizer", "tokenizer_2"],
         "must_weight_dirs": ["unet", "vae"],
+        "must_tokenizers": ["tokenizer", "tokenizer_2"],
         "extra_dirs": ["text_encoder", "text_encoder_2", "scheduler"],
+        "fallback_any_weights": False,
     },
     "stabilityai/stable-diffusion-xl-refiner-1.0": {
         "must_files": ["model_index.json"],
-        "must_tokenizers": [],
         "must_weight_dirs": ["unet", "vae"],
         "extra_dirs": ["scheduler"],
+        "fallback_any_weights": False,
     },
     "Lightricks/LTX-Video": {
         "must_files": [
             "model_index.json",
-            "ltxv-2b-0.9.8-distilled-fp8.safetensors",
+            "ltxv-13b-0.9.8-distilled-fp8.safetensors",
             "ltxv-spatial-upscaler-0.9.8.safetensors",
         ],
         "must_tokenizers": ["tokenizer"],
@@ -508,20 +525,18 @@ REPO_SPECS = {
         "must_tokenizers": [],
         "must_weight_dirs": ["latent_upsampler", "vae"],
     },
-    "Wan-AI/Wan2.2-TI2V-5B-Diffusers": {
+    "Wan-AI/Wan2.1-I2V-14B-480P-Diffusers": {
+        "must_files": ["model_index.json"],
+        "must_tokenizers": ["tokenizer"],
+        "must_weight_dirs": ["image_encoder", "text_encoder", "transformer", "vae"],
+        "extra_dirs": ["scheduler", "image_processor"],
+    },
+    "Tongyi-MAI/Z-Image-Turbo": {
         "must_files": ["model_index.json"],
         "must_tokenizers": ["tokenizer"],
         "must_weight_dirs": ["transformer", "vae", "text_encoder"],
-        "extra_dirs": ["scheduler"],  # accept actual folder
-        "fallback_any_weights": False,
+        "extra_dirs": ["scheduler"],
     },
-    "Wan-AI/Wan2.2-I2V-A14B-Diffusers": {
-        "must_files": ["model_index.json"],
-        "must_tokenizers": ["tokenizer"],
-        "must_weight_dirs": ["transformer", "transformer_2", "vae", "text_encoder"],
-        "extra_dirs": ["scheduler"],  # accept actual folder
-        "fallback_any_weights": False,
-    }
 }
 
 DEFAULT_SPEC = {"must_files": ["model_index.json"], "must_weight_dirs": [], "must_tokenizers": [], "fallback_any_weights": True}
@@ -562,54 +577,42 @@ def _repo_completeness(repo_id: str) -> Dict[str, Any]:
 # PART 3/5
 
 # --------------------------- PLAN: repos + GGUF+VAE ---------------------------
-FLUX_KREA_REPO = "black-forest-labs/FLUX.1-Krea-dev"
-FLUX_KONTEXT_REPO = "black-forest-labs/FLUX.1-Kontext-dev"
+
 SDXL_BASE_REPO    = "stabilityai/stable-diffusion-xl-base-1.0"
 SDXL_REFINER_REPO = "stabilityai/stable-diffusion-xl-refiner-1.0"
 
-Z_IMAGE_TURBO_REPO = "Tongyi-MAI/Z-Image-Turbo"
-Z_IMAGE_GGUF_REPO = "jayn7/Z-Image-Turbo-GGUF"
+FLUX_KREA_REPO = "black-forest-labs/FLUX.1-Krea-dev"
+FLUX_KREA_GGUF_NAME = os.getenv("FLUX_GGUF_FILENAME", "flux1-krea-dev-Q5_K_M.gguf").strip()
+FLUX_KREA_GGUF_URL  = os.getenv("FLUX_KREA_GGUF_URL",
+    "https://huggingface.co/QuantStack/FLUX.1-Krea-dev-GGUF/resolve/main/flux1-krea-dev-Q5_K_M.gguf").strip()
 
-Z_IMAGE_GGUF_NAME = os.getenv("Z_IMAGE_GGUF_FILENAME", "z_image_turbo-Q4_K_M.gguf").strip()
-Z_IMAGE_GGUF_URL = os.getenv("Z_IMAGE_GGUF_URL",
-    "https://huggingface.co/jayn7/Z-Image-Turbo-GGUF/resolve/main/z_image_turbo-Q4_K_M.gguf").strip()
+FLUX_KONTEXT_REPO = "black-forest-labs/FLUX.1-Kontext-dev"
+FLUX_KONTEXT_GGUF_NAME = os.getenv("KONTEXT_GGUF_FILENAME", "flux1-kontext-dev-Q2_K.gguf").strip()
+FLUX_KONTEXT_GGUF_URL  = os.getenv("FLUX_KONTEXT_GGUF_URL",
+    "https://huggingface.co/QuantStack/FLUX.1-Kontext-dev-GGUF/resolve/main/flux1-kontext-dev-Q5_K_M.gguf").strip()
+
+Z_REPO = "Tongyi-MAI/Z-Image-Turbo"
+Z_GGUF_REPO = "jayn7/Z-Image-Turbo-GGUF"
+Z_GGUF_NAME = "z_image_turbo-Q5_K_M.gguf"
+Z_GGUF_URL = (
+    "https://huggingface.co/jayn7/Z-Image-Turbo-GGUF/resolve/main/z_image_turbo-Q5_K_M.gguf"
+)
 
 LTX_REPO = "Lightricks/LTX-Video"
 LTX_UPSAMPLER_REPO = "linoyts/LTX-Video-spatial-upscaler-0.9.8"
-WAN_REPO_5B = "Wan-AI/Wan2.2-TI2V-5B-Diffusers"
-WAN_REPO_14B = "Wan-AI/Wan2.2-I2V-A14B-Diffusers"
 
-WAN_GGUF_14B_NAME_HIGH = "Wan2.2-I2V-A14B-HighNoise-Q2_K.gguf"
-WAN_GGUF_14B_NAME_LOW ="Wan2.2-I2V-A14B-LowNoise-Q2_K.gguf"
+WAN_REPO      = "Wan-AI/Wan2.1-I2V-14B-480P-Diffusers"
+WAN_GGUF_REPO = "city96/Wan2.1-I2V-14B-480P-gguf"
+WAN_GGUF_NAME = "wan2.1-i2v-14b-480p-Q4_K_M.gguf"
+WAN_GGUF_URL = "https://huggingface.co/city96/Wan2.1-I2V-14B-480P-gguf/resolve/main/wan2.1-i2v-14b-480p-Q4_K_M.gguf"
 
 # ---------- Single source of truth for exact byte sizes ----------
 EXPECTED_SIZES = {
-    "z_image_turbo-Q4_K_M.gguf": 5_348_000_000,
-    "flux1-krea-dev-Q8_0.gguf":    12_714_452_256,
+    "flux1-krea-dev-Q5_K_M.gguf":    8_419_501_344,
     "flux1-kontext-dev-Q2_K.gguf":  4_023_690_528,
-    "Wan2.2-I2V-A14B-HighNoise-Q2_K.gguf": 5_300_957_696,
-    "Wan2.2-I2V-A14B-LowNoise-Q2_K.gguf":  5_300_957_696,
+    "wan2.1-i2v-14b-480p-Q4_K_M.gguf": 11_341_184_384,
+    "z_image_turbo-Q5_K_M.gguf": 5_522_742_336,
 }
-
-FLUX_KREA_GGUF_NAME = os.getenv("FLUX_GGUF_FILENAME", "flux1-krea-dev-Q8_0.gguf").strip()
-FLUX_KREA_GGUF_URL  = os.getenv("FLUX_KREA_GGUF_URL",
-    "https://huggingface.co/QuantStack/FLUX.1-Krea-dev-GGUF/resolve/main/flux1-krea-dev-Q8_0.gguf").strip()
-
-FLUX_KONTEXT_GGUF_NAME = os.getenv("KONTEXT_GGUF_FILENAME", "flux1-kontext-dev-Q2_K.gguf").strip()
-FLUX_KONTEXT_GGUF_URL  = os.getenv("FLUX_KONTEXT_GGUF_URL",
-    "https://huggingface.co/QuantStack/FLUX.1-Kontext-dev-GGUF/resolve/main/flux1-kontext-dev-Q2_K.gguf").strip()
-
-LTX_GGUF_NAME = os.getenv("LTX_GGUF_FILENAME", "ltxv-13b-0.9.8-distilled-Q2_K.gguf").strip()
-LTX_GGUF_URL  = os.getenv("LTX_GGUF_URL",
-    "https://huggingface.co/QuantStack/LTXV-13B-0.9.8-distilled-GGUF/resolve/main/ltxv-13b-0.9.8-distilled-Q2_K.gguf").strip()
-
-LTX_VAE_NAME = os.getenv("LTX_VAE_FILENAME", "ltxv-vae-f32.safetensors").strip()
-LTX_VAE_URL  = os.getenv("LTX_VAE_URL",
-    "https://huggingface.co/QuantStack/LTXV-13B-0.9.8-distilled-GGUF/resolve/main/vae/LTXV-13B-0.9.8-distilled-VAE.safetensors").strip()
-
-WAN_VAE_NAME = os.getenv("WAN_VAE_FILENAME", "wan-vae-f32.safetensors").strip()
-WAN_VAE_URL  = os.getenv("WAN_VAE_URL",
-    "https://huggingface.co/QuantStack/Wan2.2-TI2V-5B-GGUF/resolve/main/vae/Wan2.2_VAE.safetensors").strip()
 
 def _sha256_of_file(path: Path, bufsize: int = 1024 * 1024) -> str:
     h = hashlib.sha256()
@@ -659,24 +662,34 @@ def _resolve_hf_direct_url(url: str) -> str | None:
         return None
 
 def _expected_size(name: str, url: Optional[str] = None) -> int:
-    s = int(EXPECTED_SIZES.get(name, 0))
-    if s > 0: return s
-    if not url: return 0
+    """
+    Prefer the authoritative remote size (HEAD/Range),
+    fall back to EXPECTED_SIZES only if remote probing fails.
+    Also keeps EXPECTED_SIZES in sync if remote disagrees.
+    """
+    # 1) If we have a URL, try to get the real size from the server
+    if url:
+        headers = {}
+        if url.startswith("https://huggingface.co/") and _hf_token():
+            headers["Authorization"] = f"Bearer {_hf_token()}"
 
-    headers = {}
-    if url.startswith("https://huggingface.co/") and _hf_token():
-        headers["Authorization"] = f"Bearer {_hf_token()}"
+        size = _head_or_range_size(url, headers=headers)
+        if size <= 1_000_000:
+            # Try direct hf_hub_url resolution if the /resolve URL is being weird
+            alt = _resolve_hf_direct_url(url)
+            if alt:
+                size2 = _head_or_range_size(alt, headers=headers)
+                if size2 > 0:
+                    size = size2
 
-    size = _head_or_range_size(url, headers=headers)
-    if size <= 1_000_000:
-        alt = _resolve_hf_direct_url(url)
-        if alt:
-            size2 = _head_or_range_size(alt, headers=headers)
-            if size2 > 0: size = size2
+        if size > 0:
+            # Keep the cache in sync with reality
+            EXPECTED_SIZES[name] = int(size)
+            return int(size)
 
-    if size > 0:
-        EXPECTED_SIZES[name] = size
-    return size
+    # 2) Fallback: use whatever we have hard-coded
+    return int(EXPECTED_SIZES.get(name, 0) or 0)
+
 
 def _invalidate_plan_cache(pipeline: Optional[str] = None):
     if pipeline:
@@ -696,14 +709,18 @@ def _plan_for(pipeline: str) -> Dict[str, Any]:
         return {"repos_to_fetch": [FLUX_KONTEXT_REPO], "single_files": [_sf(FLUX_KONTEXT_GGUF_NAME, FLUX_KONTEXT_GGUF_URL)]}
     if pipeline == "ltx_video":
         return {"repos_to_fetch": [LTX_REPO, LTX_UPSAMPLER_REPO], "single_files": []}
-    if pipeline == "wan_video_5b":
-        return {"repos_to_fetch": [WAN_REPO_5B], "single_files": []}
-    if pipeline == "wan_video_14b":
-        return {"repos_to_fetch": [WAN_REPO_14B], "single_files": []}
-    if pipeline == "z_image_turbo":
-        return {"repos_to_fetch": [Z_IMAGE_TURBO_REPO], "single_files": []}
-    if pipeline == "sdxl_intermediate":
+    if pipeline == "wan_video":
+        return {
+            "repos_to_fetch": [WAN_REPO],
+            "single_files": [_sf(WAN_GGUF_NAME, WAN_GGUF_URL)],
+        }
+    if pipeline == "sdxl":
         return {"repos_to_fetch": [SDXL_BASE_REPO, SDXL_REFINER_REPO]}
+    if pipeline == "z_image_turbo":
+        return {
+            "repos_to_fetch": [Z_REPO],
+            "single_files": [_sf(Z_GGUF_NAME, Z_GGUF_URL)],
+        }
     raise ValueError(f"Unknown pipeline: {pipeline}")
 
 # ------------------------------ Repo readiness -------------------------------
@@ -768,7 +785,24 @@ def _list_required_remote_files(repo_id: str, allow_patterns: Optional[List[str]
             pass
 
     if not files:
-        return []
+        # CRITICAL FALLBACK FOR HUGE REPOS (SDXL, etc.)
+        logger.warning(f"[HF] Repo listing failed for {repo_id}, using fallback spec-based download")
+        spec = REPO_SPECS.get(repo_id)
+        if not spec:
+            return []
+
+        # Hard fallback: download entire repo without filtering
+        api = HfApi(token=_hf_token())
+        try:
+            paths = api.list_repo_files(repo_id=repo_id, repo_type="model", revision="main")
+            out = []
+            for p in paths:
+                out.append({"path": p, "size": 0})
+            return out
+        except Exception as e:
+            logger.error(f"[HF] Absolute fallback failed for {repo_id}: {e}")
+            return []
+
 
     headers = {"Authorization": f"Bearer {_hf_token()}"} if _hf_token() else {}
 
@@ -878,10 +912,8 @@ def generation_url() -> str:
     except Exception:
         return "/generation"
 
-def _user_bin_dir() -> str:
-    p = Path(USER_DATA_PATH) / "bin"
-    p.mkdir(parents=True, exist_ok=True)
-    return str(p)
+def _user_bin_dir():
+    return str(USER_BIN_DIR)
 
 def _platform_tag():
     system = platform.system().lower()
@@ -1035,7 +1067,9 @@ def _start_prefetch_pipeline(pipeline: str) -> Dict[str, Any]:
                 if pl.cancelled: break
                 allow = allow_patterns_for_repo(rid)
                 manifest = _list_required_remote_files(rid, allow_patterns=allow)
-                total = sum(int(f.get("size") or 0) for f in manifest) or 1
+                total = sum(int(f.get("size") or 0) for f in manifest)
+                if total <= 0:
+                    total = max(len(manifest), 1)
                 tid = download_manager.add_repo_task(pl, rid, total_estimate=total)
                 download_manager.mark_downloading(pl, tid)
 
@@ -1111,6 +1145,9 @@ def _download_repo_files(pl: PipelineDownload, tid: str, repo_id: str, manifest:
     done = 0
     total = sum(int(f.get("size") or 0) for f in manifest) or 1
     download_manager.update_progress(pl, tid, done, total)
+    
+    if not manifest:
+        raise RuntimeError(f"No remote files resolved for repo {repo_id}")
 
     for f in manifest:
         if pl.cancelled:
@@ -1144,86 +1181,116 @@ def _download_repo_files(pl: PipelineDownload, tid: str, repo_id: str, manifest:
 
         done = min(done + (rsz or (dest.stat().st_size if dest.exists() else 0)), total)
         download_manager.update_progress(pl, tid, done, total)
+        eventlet.sleep(0)
 
 def _download_single_file(pl: PipelineDownload, tid: str, name: str, url: str, size_hint: int = 0, optional: bool = False):
-    headers = {}
-    if url.startswith("https://huggingface.co/") and _hf_token():
-        headers["Authorization"] = f"Bearer {_hf_token()}"  # optional, speeds rate limits
+    lock = _gguf_lock(name)
 
-    dest = MODEL_DIR / name
-    dest.parent.mkdir(parents=True, exist_ok=True)
+    # ✅ Only ONE thread may touch this GGUF at a time
+    with lock:
+        headers = {}
+        if url.startswith("https://huggingface.co/") and _hf_token():
+            headers["Authorization"] = f"Bearer {_hf_token()}"
 
-    expected_size = _expected_size(name, url)
+        dest = MODEL_DIR / name
+        MODEL_DIR.mkdir(parents=True, exist_ok=True)
+        dest.parent.mkdir(parents=True, exist_ok=True)
 
-    if expected_size > 0 and dest.exists() and dest.stat().st_size != expected_size:
-        try: dest.unlink()
-        except Exception: pass
+        expected_size = _expected_size(name, url)
 
-    if dest.exists() and dest.stat().st_size > 0:
-        ok_local = (expected_size <= 0) or (dest.stat().st_size == expected_size)
-        if ok_local:
-            total = expected_size or dest.stat().st_size
-            download_manager.update_progress(pl, tid, total, total)
-            return
-        else:
-            try: dest.unlink()
-            except Exception: pass
+        # ✅ NEVER DELETE active files unless no .part exists
+        part = dest.with_suffix(dest.suffix + ".part")
 
-    if pl.cancelled:
-        download_manager.mark_cancelled(pl, tid)
-        return
+        if expected_size > 0 and dest.exists() and dest.stat().st_size != expected_size:
+            if not part.exists():
+                try:
+                    logger.warning(f"[GGUF] Deleting corrupt file: {dest}")
+                    dest.unlink()
+                except Exception:
+                    pass
+            else:
+                logger.warning(f"[GGUF] Skipping delete, active .part exists for {name}")
 
-    total = int(size_hint or 0) or _expected_size(name, url)
-    download_manager.update_progress(pl, tid, 0, total or 1)
+        if dest.exists() and dest.stat().st_size > 0:
+            ok_local = (expected_size <= 0) or (dest.stat().st_size == expected_size)
+            if ok_local:
+                total = expected_size or dest.stat().st_size
+                download_manager.update_progress(pl, tid, total, total)
+                return
 
-    done = 0
-    def _tick(_inc: int):
-        nonlocal done
-        done += int(_inc)
-        download_manager.update_progress(pl, tid, done, total or done or 1)
-
-    try:
-        _stream_download(url, dest, headers=headers, update=_tick, is_cancelled=lambda: pl.cancelled)
-    except Exception as e:
         if pl.cancelled:
             download_manager.mark_cancelled(pl, tid)
             return
-        raise e
 
-    if expected_size > 0 and dest.stat().st_size != expected_size:
-        try: dest.unlink()
-        except Exception: pass
-        msg = f"Downloaded {name} has size {dest.stat().st_size}, expected {expected_size}"
-        if optional:
-            logger.warning(msg); return
-        raise ValueError(msg)
+        total = int(size_hint or 0) or _expected_size(name, url)
+        download_manager.update_progress(pl, tid, 0, total or 1)
 
-    final_total = expected_size or dest.stat().st_size
-    download_manager.update_progress(pl, tid, final_total, final_total)
+        done = 0
+        def _tick(_inc: int):
+            nonlocal done
+            done += int(_inc)
+            download_manager.update_progress(pl, tid, done, total or done or 1)
+
+        try:
+            _stream_download(url, dest, headers=headers, update=_tick, is_cancelled=lambda: pl.cancelled)
+        except Exception as e:
+            if pl.cancelled:
+                download_manager.mark_cancelled(pl, tid)
+                return
+            raise e
+
+        if expected_size > 0 and dest.stat().st_size != expected_size:
+            try: dest.unlink()
+            except Exception: pass
+            msg = f"Downloaded {name} has size {dest.stat().st_size}, expected {expected_size}"
+            if optional:
+                logger.warning(msg); return
+            raise ValueError(msg)
+
+        final_total = expected_size or dest.stat().st_size
+        download_manager.update_progress(pl, tid, final_total, final_total)
 
 def _repo_inc(pl: PipelineDownload, tid: str, inc: int, total: int, ref_done):
     current_done = ref_done()
     new_done = min(current_done + inc, total)
     download_manager.update_progress(pl, tid, new_done, total)
 
-def _stream_download(url: str, dest: Path, headers: Dict[str, str], update, is_cancelled=None):
-    with requests.get(url, headers=headers, stream=True, timeout=60) as r:
+def _stream_download(url, dest, headers, update, is_cancelled=None):
+    tmp = dest.with_suffix(dest.suffix + ".part")
+    downloaded = tmp.stat().st_size if tmp.exists() else 0
+
+    range_headers = dict(headers or {})
+    if downloaded > 0:
+        range_headers["Range"] = f"bytes={downloaded}-"
+
+    with requests.get(url, headers=range_headers, stream=True, timeout=(10, 600)) as r:
         r.raise_for_status()
-        tmp = dest.with_suffix(dest.suffix + ".part")
-        try:
-            with open(tmp, "wb") as f:
-                for chunk in r.iter_content(chunk_size=1024 * 1024):
-                    if not chunk: continue
-                    if is_cancelled and is_cancelled(): raise CancelledDownload()
-                    f.write(chunk)
-                    try: update(len(chunk))
-                    except Exception: pass
-            if is_cancelled and is_cancelled(): raise CancelledDownload()
-            tmp.replace(dest)
-        except CancelledDownload:
-            try: tmp.unlink()
-            except Exception: pass
-            raise
+
+        dest.parent.mkdir(parents=True, exist_ok=True)
+
+        with open(tmp, "ab") as f:
+            for chunk in r.iter_content(chunk_size=1024 * 1024):
+                if not chunk:
+                    continue
+                if is_cancelled and is_cancelled():
+                    raise CancelledDownload()
+
+                f.write(chunk)
+                try:
+                    update(len(chunk))
+                except Exception:
+                    pass
+
+                import eventlet
+                eventlet.sleep(0)
+
+    dest.parent.mkdir(parents=True, exist_ok=True)
+
+    try:
+        tmp.replace(dest)
+    except FileNotFoundError:
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        shutil.move(str(tmp), str(dest))
         
 # PART 4/5
 
@@ -1551,9 +1618,143 @@ def _img_b64_to_pil(b64: str) -> Image.Image:
     raw = base64.b64decode(b64)
     return Image.open(io.BytesIO(raw)).convert("RGB")
 
-# ------------------------------ Generation: SDXL (intermediate) ---------------
-@app.route("/image/intermediate", methods=["POST"])
-def image_intermediate_sdxl():
+
+# --------------------------------------------------------------------
+# LTX Memory Offloading Helper
+# --------------------------------------------------------------------
+
+def _calculate_ltx_mu(height: int, width: int, num_frames: int) -> float:
+    """
+    Calculate the mu parameter for LTX dynamic shifting scheduler.
+    
+    This is required when use_dynamic_shifting=True in the scheduler config.
+    The mu value controls the shift in the flow matching schedule based on
+    the sequence length (number of latent tokens).
+    
+    Formula from LTX-Video:
+    - num_latent_frames = (num_frames - 1) // 8 + 1
+    - latent_height = height // 32
+    - latent_width = width // 32  
+    - image_seq_len = num_latent_frames * latent_height * latent_width
+    - mu = image_seq_len * m + b (linear interpolation based on seq len)
+    """
+    # LTX VAE temporal compression is 8x, spatial is 32x
+    num_latent_frames = (num_frames - 1) // 8 + 1
+    latent_height = height // 32
+    latent_width = width // 32
+    image_seq_len = num_latent_frames * latent_height * latent_width
+    
+    # Linear interpolation parameters from LTX scheduler config
+    base_seq_len = 256
+    max_seq_len = 4096
+    base_shift = 0.5
+    max_shift = 1.16
+    
+    # Calculate mu using linear interpolation
+    m = (max_shift - base_shift) / (max_seq_len - base_seq_len)
+    b = base_shift - m * base_seq_len
+    mu = image_seq_len * m + b
+    
+    return mu
+
+
+def _apply_ltx_memory_offloading(pipe, device: torch.device):
+    """
+    Apply group offloading to LTX pipeline for reduced memory usage.
+    
+    Uses fine-grained group offloading which is faster than model-level CPU offload:
+    - Transformer: leaf_level offloading (finest granularity for largest component)
+    - Text encoder: block_level offloading (groups of 2 blocks)
+    - VAE: leaf_level offloading
+    
+    Falls back to model_cpu_offload if group offloading fails.
+    """
+    import gc
+    offload_device = torch.device("cpu")
+    
+    # CUDA can use streams for async transfers, MPS cannot
+    use_stream = (device.type == "cuda")
+    
+    # First, enable VAE optimizations
+    try:
+        if hasattr(pipe, 'vae') and pipe.vae is not None:
+            if hasattr(pipe.vae, 'enable_tiling'):
+                pipe.vae.enable_tiling()
+                logger.info("[LTX] Enabled VAE tiling")
+            if hasattr(pipe.vae, 'enable_slicing'):
+                pipe.vae.enable_slicing()
+                logger.info("[LTX] Enabled VAE slicing")
+    except Exception as e:
+        logger.warning(f"[LTX] Could not enable VAE tiling/slicing: {e}")
+    
+    group_offload_success = True
+    
+    # Apply group offloading to transformer (largest component) - leaf_level for finest granularity
+    try:
+        if hasattr(pipe, 'transformer') and pipe.transformer is not None:
+            pipe.transformer.enable_group_offload(
+                onload_device=device,
+                offload_device=offload_device,
+                offload_type="leaf_level",
+                use_stream=use_stream
+            )
+            logger.info(f"[LTX] Applied group offloading to transformer (leaf_level, stream={use_stream})")
+    except Exception as e:
+        logger.warning(f"[LTX] Could not apply transformer group offload: {e}")
+        group_offload_success = False
+    
+    # Apply group offloading to text encoder - block_level is sufficient
+    try:
+        if hasattr(pipe, 'text_encoder') and pipe.text_encoder is not None:
+            apply_group_offloading(
+                pipe.text_encoder,
+                onload_device=device,
+                offload_type="block_level",
+                num_blocks_per_group=2
+            )
+            logger.info("[LTX] Applied group offloading to text_encoder (block_level)")
+    except Exception as e:
+        logger.warning(f"[LTX] Could not apply text_encoder group offload: {e}")
+        group_offload_success = False
+    
+    # Apply group offloading to VAE - leaf_level for memory efficiency during decoding
+    try:
+        if hasattr(pipe, 'vae') and pipe.vae is not None:
+            apply_group_offloading(
+                pipe.vae,
+                onload_device=device,
+                offload_type="leaf_level"
+            )
+            logger.info("[LTX] Applied group offloading to VAE (leaf_level)")
+    except Exception as e:
+        logger.warning(f"[LTX] Could not apply VAE group offload: {e}")
+        group_offload_success = False
+    
+    # If group offloading worked, we're done
+    if group_offload_success:
+        gc.collect()
+        return pipe
+    
+    # Fallback to model CPU offload if group offloading failed
+    logger.warning("[LTX] Group offloading partially failed, trying model CPU offload as fallback")
+    try:
+        pipe.enable_model_cpu_offload(device=device)
+        logger.info(f"[LTX] Enabled model CPU offload for device: {device}")
+        gc.collect()
+        return pipe
+    except Exception as e:
+        logger.warning(f"[LTX] Model CPU offload failed: {e}")
+    
+    # Final fallback: just move to device
+    logger.warning("[LTX] All offloading methods failed, moving pipeline to device directly")
+    pipe = pipe.to(device)
+    gc.collect()
+    return pipe
+
+
+# ------------------------------ Generation: SDXL ------------------------
+@app.route("/image/turbo", methods=["POST"])
+def image_turbo_sdxl():
     import logging as _logging
     _logging.getLogger("transformers.tokenization_utils_base").setLevel(_logging.ERROR)
 
@@ -1579,11 +1780,11 @@ def image_intermediate_sdxl():
     guard = _repos_ready_or_resp(SDXL_BASE_REPO, SDXL_REFINER_REPO)
     if guard:
         if auto_dl:
-            started = _start_prefetch_pipeline("sdxl_intermediate")
+            started = _start_prefetch_pipeline("sdxl")
             return jsonify(_json_sanitize(started["json"])), started["http_status"]
         return guard
 
-    gen_id = genbus.new("sdxl_intermediate", {"endpoint": "/image/intermediate", "prompt": prompt})
+    gen_id = genbus.new("sdxl", {"endpoint": "/image/turbo", "prompt": prompt})
 
     try:
         device = DeviceManager.get_device()
@@ -1764,102 +1965,118 @@ def image_intermediate_sdxl():
     finally:
         DeviceManager.free_memory()
 
-# ------------------------------ Generation: Z-Image Turbo ------------------------
-@app.route("/image/turbo", methods=["POST"])
-def image_turbo_zimage():
-    '''
-    Z-Image Turbo text-to-image generation.
-    Replaces SDXL Turbo with the faster, higher quality Z-Image model.
-    '''
-    data = request.json or {}
+@app.route("/image/intermediate", methods=["POST"])
+def z_image_turbo():
+    """
+    Generate a high-quality image using the GGUF version of Z-Image-Turbo.
+    """
+    data = request.get_json(silent=True) or {}
     prompt = (data.get("prompt") or "").strip()
-    h = int(data.get("height", 1024))
-    w = int(data.get("width", 1024))
-    steps = int(data.get("steps", 9))  # Z-Image uses 9 steps (8 DiT forwards)
+    negative_prompt = (data.get("negative_prompt") or "").strip() or (
+        "blurry, low quality, distorted, jpeg artifacts, text, watermark"
+    )
+    H = int(data.get("height", 512))
+    W = int(data.get("width", 512))
+    steps = int(data.get("steps", 20))
+    seed = data.get("seed", None)
+    guidance = float(data.get("guidance_scale", 4.0))
     auto_dl = bool(data.get("auto_download", False))
-    seed = data.get("seed")
-    
-    if not prompt:
-        return jsonify(_json_sanitize({"error": "Prompt is required"})), 400
+    enable_offloading = bool(data.get("enable_memory_offloading", True))
 
-    # Check if repo is ready
-    guard = _repos_ready_or_resp(Z_IMAGE_TURBO_REPO)
+    if not prompt:
+        return jsonify(_json_sanitize({"error": "Missing 'prompt'"})), 400
+
+    # Ensure models are present
+    guard = _ensure_files_present_or_start("z_image_turbo", auto_download=auto_dl)
     if guard:
-        if auto_dl:
-            started = _start_prefetch_pipeline("z_image_turbo")
-            return jsonify(_json_sanitize(started["json"])), started["http_status"]
         return guard
 
-    gen_id = genbus.new("z_image_turbo", {"endpoint": "/image/turbo", "prompt": prompt, "w": w, "h": h})
-    
+    gen_id = genbus.new(
+        "z_i2i",
+        {"endpoint": "/image/z", "w": W, "h": H, "steps": steps}
+    )
+
     try:
+        genbus.progress(gen_id, "Loading models...", 0, 2)
+
         device = DeviceManager.get_device()
-        # Z-Image uses bfloat16 for optimal performance
-        dtype = torch.bfloat16 if device.type in ("cuda", "mps") else torch.float32
+        if device.type == "cuda":
+            compute_dtype = torch.bfloat16
+        elif device.type == "mps":
+            compute_dtype = torch.bfloat16
+        else:
+            compute_dtype = torch.float32
+
+        base_root = repo_local_dir(Z_REPO)
+
+        # Download / resolve GGUF
+        # tr_cfg = repo_local_dir(Z_REPO) / "transformer" / "config.json"
+
+        # transformer = ZImageTransformer2DModel.from_single_file(
+        #     str(MODEL_DIR / Z_GGUF_NAME),
+        #     config=str(tr_cfg),
+        #     quantization_config=GGUFQuantizationConfig(compute_dtype=torch.bfloat16),
+        #     torch_dtype=torch.bfloat16,
+        # )
         
-        genbus.progress(gen_id, "Loading Z-Image model...", 0, steps)
-        
-        # Load Z-Image pipeline
         pipe = ZImagePipeline.from_pretrained(
-            str(repo_local_dir(Z_IMAGE_TURBO_REPO)),
-            dtype=dtype,
+            str(base_root),
+            # transformer=transformer,
+            torch_dtype=compute_dtype,
             local_files_only=True,
             low_cpu_mem_usage=False,
-        ).to(device)
+        )
+
+        # Device placement and offloading (Flux-like logic)
+        pipe = pipe.to(device)
         
-        # Optional: Enable memory optimizations
-        if device.type == "cuda" and hasattr(pipe, 'enable_model_cpu_offload'):
-            # Uncomment for low VRAM systems:
-            # pipe.enable_model_cpu_offload()
-            pass
-        
-        # Set up generator for reproducibility
-        generator = None
-        if seed is not None:
-            generator = torch.Generator(device=device).manual_seed(int(seed))
-        
-        def callback(step, timestep, latents):
-            genbus.progress(gen_id, "Generating...", int(step), steps)
-        
-        genbus.progress(gen_id, "Generating image...", 1, steps)
-        
-        # Generate image - Z-Image Turbo uses guidance_scale=0.0
-        output = pipe(
+        # Seeded generator (works on CPU / CUDA / MPS)
+        generator = (
+            torch.Generator(device=device).manual_seed(seed)
+            if isinstance(seed, int)
+            else None
+        )
+
+        genbus.progress(gen_id, "Generating image...", 1, 3)
+
+        # It’s safe to use H/W directly; if needed Z-Image will internally enforce multiples.
+        out = pipe(
             prompt=prompt,
-            height=h,
-            width=w,
-            num_inference_steps=steps,
-            guidance_scale=0.0,  # Critical: Turbo models use 0 guidance
+            negative_prompt=negative_prompt,
+            height=H,
+            width=W,
+            num_inference_steps=9,
+            guidance_scale=0.0,
             generator=generator,
         )
+        image = out.images[0]
         
-        image = output.images[0]
-        
-        # Apply watermark and encode
+        image.save("example.png")
+
+        # Watermark + base64, like your other image endpoints
         buf = BytesIO()
         _apply_watermark(image).save(buf, format="PNG")
-        b64 = base64.b64encode(buf.getvalue()).decode("utf-8")
-        
+        encoded = base64.b64encode(buf.getvalue()).decode("utf-8")
+
         genbus.finish(gen_id, {"ok": True})
         
         return jsonify(_json_sanitize({
+            "ok": True,
             "prompt": prompt,
-            "image": b64,
-            "width": w,
-            "height": h,
-            "steps": steps,
-            "model": "z_image_turbo",
+            "negative_prompt": negative_prompt,
+            "image": encoded,
             "generation_id": gen_id,
-            "generation_websocket_url": generation_url()
+            "generation_websocket_url": generation_url(),
         })), 201
-        
+
     except Exception as e:
-        logger.exception("Z-Image Turbo generation failed")
+        logger.exception("Z-Image-Turbo failed")
         genbus.error(gen_id, str(e))
         return jsonify(_json_sanitize({"error": str(e)})), 500
     finally:
         DeviceManager.free_memory()
-        
+
+    
 # ------------------------------ FLUX: Krea (t2i) ------------------------------
 @app.route("/image/quality", methods=["POST"])
 def image_quality_flux_krea():
@@ -2077,13 +2294,33 @@ def _ltx_spatial_upscale_frames(frames: list[Image.Image], scale: float = 2.0, s
 def ltx_text_to_video():
     data = request.get_json(silent=True) or {}
     prompt = (data.get("prompt") or "").strip()
-    neg = data.get("negative_prompt", "worst quality, blurry, jittery, distorted")
+    neg = data.get("negative_prompt", "worst quality, inconsistent motion, blurry, jittery, distorted")
     H = int(data.get("height", 480)); W = int(data.get("width", 704))
     frames_count = int(data.get("frames", 161))
     fps = int(data.get("fps", 24))
-    steps = int(data.get("steps", 40))
     auto_dl = bool(data.get("auto_download", False))
     seed = data.get("seed", None)
+    # Memory offloading option (enabled by default for large models)
+    enable_offloading = bool(data.get("enable_memory_offloading", True))
+    # Use condition pipeline (newer) or original pipeline (more memory efficient)
+    use_condition_pipeline = bool(data.get("use_condition_pipeline", True))
+    # Scheduler type: "dynamic" (LTX native with mu) or "karras" (karras sigmas)
+    scheduler_type = data.get("scheduler_type", "dynamic").lower()
+    # LTXConditionPipeline specific options
+    guidance_rescale = float(data.get("guidance_rescale", 0.7))
+    decode_timestep = float(data.get("decode_timestep", 0.05))
+    decode_noise_scale = float(data.get("decode_noise_scale", 0.025))
+    max_seq_len = int(data.get("max_sequence_length", 256))
+    # Use distilled timesteps only if explicitly enabled (requires distilled model)
+    use_distilled_timesteps = bool(data.get("use_distilled_timesteps", False))
+    
+    # Adjust defaults based on whether using distilled model
+    if use_distilled_timesteps:
+        steps = int(data.get("steps", 8))
+        guidance_scale = float(data.get("guidance_scale", 1.0))
+    else:
+        steps = int(data.get("steps", 30))
+        guidance_scale = float(data.get("guidance_scale", 5.0))
 
     if not prompt:
         return jsonify(_json_sanitize({"error": "Missing 'prompt'"})), 400
@@ -2095,31 +2332,170 @@ def ltx_text_to_video():
     gen_id = genbus.new("ltx_t2v", {"endpoint": "/text/video/turbo", "w": W, "h": H, "frames": frames_count, "fps": fps})
 
     try:
+        import gc
+        
+        # Clear memory before loading large model
+        gc.collect()
         device = DeviceManager.get_device()
+        if device.type == "mps":
+            torch.mps.empty_cache()
+        elif device.type == "cuda":
+            torch.cuda.empty_cache()
+        
+        # Determine compute dtype based on device
+        if device.type == "cuda":
+            compute_dtype = torch.bfloat16
+        elif device.type == "mps":
+            compute_dtype = torch.float16
+        else:
+            compute_dtype = torch.float32
+            
         base_root = repo_local_dir(LTX_REPO)
-        genbus.progress(gen_id, "Loading models...", 0, 2)
+        genbus.progress(gen_id, "Loading models...", 0, 3)
 
-        pipe = LTXPipeline.from_pretrained(
-            str(base_root), dtype=torch.float32, local_files_only=True, use_safetensors=True
-        ).to(device)
+        # Choose pipeline based on parameter - original LTXPipeline is more memory efficient
+        if use_condition_pipeline:
+            logger.info("[LTX T2V] Using LTXConditionPipeline (more features, higher memory)")
+            pipe = LTXConditionPipeline.from_pretrained(
+                str(base_root), 
+                torch_dtype=compute_dtype, 
+                local_files_only=True, 
+                use_safetensors=True,
+                low_cpu_mem_usage=True,
+            )
+        else:
+            logger.info("[LTX T2V] Using LTXPipeline (original, more memory efficient)")
+            pipe = LTXPipeline.from_pretrained(
+                str(base_root), 
+                torch_dtype=compute_dtype, 
+                local_files_only=True, 
+                use_safetensors=True,
+                low_cpu_mem_usage=True,
+            )
+        
+        # Garbage collect after loading
+        gc.collect()
+        
+        # Fix tokenizer max length to avoid truncation warnings
+        if hasattr(pipe, 'tokenizer') and pipe.tokenizer is not None:
+            pipe.tokenizer.model_max_length = max_seq_len
+            logger.info(f"[LTX T2V] Set tokenizer max length to {max_seq_len}")
+        
+        # Note: Do NOT disable dynamic shifting - it's needed for quality generation
+        # The LTXConditionPipeline computes mu automatically based on latent dimensions
+        
+        # Enable VAE tiling for memory efficiency
+        if hasattr(pipe, 'vae') and hasattr(pipe.vae, 'enable_tiling'):
+            pipe.vae.enable_tiling()
+        
+        # Configure scheduler based on scheduler_type
+        # Options: "dynamic" (default), "karras", "exponential", "beta"
+        # All non-dynamic options disable use_dynamic_shifting and use alternative sigma schedules
+        if use_condition_pipeline and hasattr(pipe, 'scheduler'):
+            if scheduler_type == "karras":
+                pipe.scheduler = FlowMatchEulerDiscreteScheduler.from_config(
+                    pipe.scheduler.config,
+                    use_dynamic_shifting=False,
+                    use_karras_sigmas=True,
+                    timestep_spacing="trailing"
+                )
+                logger.info("[LTX T2V] Using karras sigmas scheduler")
+            elif scheduler_type == "exponential":
+                pipe.scheduler = FlowMatchEulerDiscreteScheduler.from_config(
+                    pipe.scheduler.config,
+                    use_dynamic_shifting=False,
+                    use_exponential_sigmas=True,
+                    timestep_spacing="trailing"
+                )
+                logger.info("[LTX T2V] Using exponential sigmas scheduler")
+            elif scheduler_type == "beta":
+                pipe.scheduler = FlowMatchEulerDiscreteScheduler.from_config(
+                    pipe.scheduler.config,
+                    use_dynamic_shifting=False,
+                    use_beta_sigmas=True,
+                    timestep_spacing="trailing"
+                )
+                logger.info("[LTX T2V] Using beta sigmas scheduler")
+            elif scheduler_type == "stochastic":
+                # Stochastic sampling can improve quality (recommended for distilled models)
+                pipe.scheduler = FlowMatchEulerDiscreteScheduler.from_config(
+                    pipe.scheduler.config,
+                    stochastic_sampling=True
+                )
+                logger.info("[LTX T2V] Using stochastic sampling scheduler")
+            else:
+                # Default: use dynamic shifting with mu (LTX native)
+                logger.info("[LTX T2V] Using dynamic shifting scheduler")
+        
+        # Apply group offloading for memory efficiency (works for both pipeline types)
+        if enable_offloading:
+            logger.info(f"[LTX T2V] Applying group offloading for device: {device}")
+            pipe = _apply_ltx_memory_offloading(pipe, device)
+            # With group offloading, computation happens on target device
+            gen_device = device
+        else:
+            # Standard approach - move entire pipeline to device
+            pipe = pipe.to(device)
+            gen_device = device
 
-        generator = torch.Generator(device=device).manual_seed(seed) if isinstance(seed, int) else None
-        genbus.progress(gen_id, "Generating video...", 1, 2)
+        generator = torch.Generator(device=gen_device).manual_seed(seed) if isinstance(seed, int) else None
+        genbus.progress(gen_id, "Generating video...", 1, 3)
 
-        head_burn_in = 12
-        out = pipe(
-            prompt=prompt, negative_prompt=neg, width=W, height=H,
-            num_frames=frames_count + head_burn_in, num_inference_steps=steps, generator=generator,
-        )
+        # Build pipeline call kwargs - base args work for both pipelines
+        pipe_kwargs = {
+            "prompt": prompt,
+            "negative_prompt": neg,
+            "width": W,
+            "height": H,
+            "num_frames": frames_count,
+            "num_inference_steps": steps,
+            "guidance_scale": guidance_scale,
+            "max_sequence_length": max_seq_len,  # Support longer prompts for both pipelines
+            "generator": generator,
+            "output_type": "pil",
+        }
+        
+        # Add condition pipeline specific args
+        if use_condition_pipeline:
+            pipe_kwargs["guidance_rescale"] = guidance_rescale
+            pipe_kwargs["decode_timestep"] = decode_timestep
+            pipe_kwargs["decode_noise_scale"] = decode_noise_scale
+            
+            # Set up scheduler timesteps based on scheduler type
+            if scheduler_type in ("karras", "exponential", "beta"):
+                # These modes disable dynamic shifting - no mu needed
+                pipe.scheduler.set_timesteps(steps, device=gen_device)
+            elif hasattr(pipe, 'scheduler') and getattr(pipe.scheduler.config, 'use_dynamic_shifting', False):
+                # Dynamic shifting mode (default or stochastic) - calculate and pass mu
+                mu = _calculate_ltx_mu(H, W, frames_count)
+                logger.info(f"[LTX T2V] Calculated mu={mu:.4f} for {H}x{W}x{frames_count}")
+                pipe.scheduler.set_timesteps(steps, device=gen_device, mu=mu)
+        
+        # Use optimized timesteps for distilled models (only works with LTXConditionPipeline)
+        if use_distilled_timesteps:
+            if use_condition_pipeline:
+                pipe_kwargs["timesteps"] = [1000, 993, 987, 981, 975, 909, 725, 0.03]
+                pipe_kwargs["num_inference_steps"] = len(pipe_kwargs["timesteps"])
+                logger.info("[LTX T2V] Using distilled timesteps for faster generation")
+            else:
+                logger.warning("[LTX T2V] Distilled timesteps only work with LTXConditionPipeline, using standard steps instead")
+        
+        out = pipe(**pipe_kwargs)
+        
+        # Extract frames from output
+        frames = out.frames[0] if hasattr(out, 'frames') else out
 
-        genbus.progress(gen_id, "Encoding video...", 2, 2)
+        genbus.progress(gen_id, "Encoding video...", 2, 3)
         out_name = f"ltx_{int(time.time())}.mp4"
         out_path = os.path.join(os.getcwd(), out_name)
+        
+        # Trim head frames for original pipeline (burn-in), not needed for condition pipeline
+        trim_head = 0 if use_condition_pipeline else 3
         _write_video_h264_safe_interpolated(
-            out_path, out, fps_in=fps, target_size=(W, H),
+            out_path, frames, fps_in=fps, target_size=(W, H),
             fps_out=24, upscale=2, scaler="lanczos", aspect_mode="fill",
             crf=20, preset="slow", add_grain=0.25, sharpen=0.75, deband=True,
-            gen_id=gen_id, trim_head_frames=head_burn_in
+            gen_id=gen_id, trim_head_frames=trim_head
         )
         genbus.finish(gen_id, {"video_path": out_path})
         return jsonify(_json_sanitize({"ok": True, "video_path": out_path, "generation_websocket_url": generation_url()})), 201
@@ -2198,16 +2574,40 @@ def center_crop_to_aspect(img: Image.Image, target_w: int, target_h: int) -> Ima
 def ltx_image_to_video():
     data = request.get_json(silent=True) or {}
     prompt = (data.get("prompt") or "").strip()
-    neg = data.get("negative_prompt", "worst quality, blurry, jittery, distorted, morphing, melting, shifting facial features, extra fingers, distorted hands, uncanny valley, jitter, wobble, frame warping")
+    neg = data.get("negative_prompt", "low quality, worst quality, deformed, distorted, disfigured, motion smear, motion artifacts, fused fingers, bad anatomy, weird hand, ugly")
     H = int(data.get("height", 480)); W = int(data.get("width", 640))
-    frames_count = int(data.get("frames", 37))
-    fps = int(data.get("fps", 12))
-    steps = int(data.get("steps", 30))
+    frames_count = int(data.get("frames", 161))
+    fps = int(data.get("fps", 24))
     auto_dl = bool(data.get("auto_download", False))
     image_b64 = (data.get("image_base64") or "").strip()
     image_url = (data.get("image_url") or "").strip()
     seed = data.get("seed", None)
-    guidance = float(data.get("guidance_scale", 5))
+    # Memory offloading option (enabled by default for large models like LTX 13B)
+    enable_offloading = bool(data.get("enable_memory_offloading", True))
+    # Use condition pipeline (newer) or original pipeline (more memory efficient)
+    use_condition_pipeline = bool(data.get("use_condition_pipeline", True))
+    # Scheduler type: "dynamic" (LTX native with mu) or "karras" (karras sigmas)
+    scheduler_type = data.get("scheduler_type", "karras").lower()
+    # LTXConditionPipeline specific options
+    guidance_rescale = float(data.get("guidance_rescale", 0.7))
+    decode_timestep = float(data.get("decode_timestep", 0.05))
+    decode_noise_scale = float(data.get("decode_noise_scale", 0.025))
+    image_cond_noise_scale = float(data.get("image_cond_noise_scale", 0.0))
+    max_seq_len = int(data.get("max_sequence_length", 256))
+    # Frame index for image conditioning (0 = first frame, can be any frame index)
+    frame_index = int(data.get("frame_index", 0))
+    # Conditioning strength (1.0 = full conditioning)
+    condition_strength = float(data.get("condition_strength", 1.0))
+    # Use distilled timesteps only if explicitly enabled (requires distilled model)
+    use_distilled_timesteps = bool(data.get("use_distilled_timesteps", False))
+    
+    # Adjust defaults based on whether using distilled model
+    if use_distilled_timesteps:
+        steps = int(data.get("steps", 8))
+        guidance_scale = float(data.get("guidance_scale", 1.0))
+    else:
+        steps = int(data.get("steps", 30))
+        guidance_scale = float(data.get("guidance_scale", 5.0))
 
     if not prompt:
         return jsonify(_json_sanitize({"error": "Missing 'prompt'"})), 400
@@ -2221,14 +2621,113 @@ def ltx_image_to_video():
     gen_id = genbus.new("ltx_i2v", {"endpoint": "/image/video/turbo", "w": W, "h": H, "frames": frames_count, "fps": fps})
 
     try:
+        import gc
+        
+        # Clear memory before loading large model
+        gc.collect()
         device = DeviceManager.get_device()
+        if device.type == "mps":
+            torch.mps.empty_cache()
+        elif device.type == "cuda":
+            torch.cuda.empty_cache()
+        
+        # Determine compute dtype based on device
+        # if device.type == "cuda":
+        #     compute_dtype = torch.bfloat16
+        # elif device.type == "mps":
+        #     compute_dtype = torch.float16
+        # else:
+        #     compute_dtype = torch.float32
+            
+        compute_dtype = torch.float32
+            
         base_root = repo_local_dir(LTX_REPO)
-        genbus.progress(gen_id, "Loading models...", 0, 2)
+        genbus.progress(gen_id, "Loading models...", 0, 3)
 
-        pipe = LTXImageToVideoPipeline.from_pretrained(
-            str(base_root), dtype=torch.float32, local_files_only=True, use_safetensors=True
-        ).to(device)
+        # Choose pipeline based on parameter - original LTXImageToVideoPipeline is more memory efficient
+        if use_condition_pipeline:
+            logger.info("[LTX I2V] Using LTXConditionPipeline (more features, higher memory)")
+            pipe = LTXConditionPipeline.from_pretrained(
+                str(base_root), 
+                torch_dtype=compute_dtype, 
+                local_files_only=True, 
+                use_safetensors=True,
+                low_cpu_mem_usage=True,
+            )
+        else:
+            logger.info("[LTX I2V] Using LTXImageToVideoPipeline (original, more memory efficient)")
+            pipe = LTXImageToVideoPipeline.from_pretrained(
+                str(base_root), 
+                torch_dtype=compute_dtype, 
+                local_files_only=True, 
+                use_safetensors=True,
+                low_cpu_mem_usage=True,
+            )
+        
+        # Garbage collect after loading
+        gc.collect()
+        
+        # Fix tokenizer max length to avoid truncation warnings
+        if hasattr(pipe, 'tokenizer') and pipe.tokenizer is not None:
+            pipe.tokenizer.model_max_length = max_seq_len
+            logger.info(f"[LTX I2V] Set tokenizer max length to {max_seq_len}")
+        
+        # Note: Do NOT disable dynamic shifting - it's needed for quality generation
+        # The LTXConditionPipeline computes mu automatically based on latent dimensions
+        
+        # Enable VAE tiling for memory efficiency
+        if hasattr(pipe, 'vae') and hasattr(pipe.vae, 'enable_tiling'):
+            pipe.vae.enable_tiling()
+        
+        # Configure scheduler based on scheduler_type
+        # Options: "dynamic" (default), "karras", "exponential", "beta", "stochastic"
+        if use_condition_pipeline and hasattr(pipe, 'scheduler'):
+            if scheduler_type == "karras":
+                pipe.scheduler = FlowMatchEulerDiscreteScheduler.from_config(
+                    pipe.scheduler.config,
+                    use_dynamic_shifting=False,
+                    use_karras_sigmas=True,
+                    timestep_spacing="trailing"
+                )
+                logger.info("[LTX I2V] Using karras sigmas scheduler")
+            elif scheduler_type == "exponential":
+                pipe.scheduler = FlowMatchEulerDiscreteScheduler.from_config(
+                    pipe.scheduler.config,
+                    use_dynamic_shifting=False,
+                    use_exponential_sigmas=True,
+                    timestep_spacing="trailing"
+                )
+                logger.info("[LTX I2V] Using exponential sigmas scheduler")
+            elif scheduler_type == "beta":
+                pipe.scheduler = FlowMatchEulerDiscreteScheduler.from_config(
+                    pipe.scheduler.config,
+                    use_dynamic_shifting=False,
+                    use_beta_sigmas=True,
+                    timestep_spacing="trailing"
+                )
+                logger.info("[LTX I2V] Using beta sigmas scheduler")
+            elif scheduler_type == "stochastic":
+                pipe.scheduler = FlowMatchEulerDiscreteScheduler.from_config(
+                    pipe.scheduler.config,
+                    stochastic_sampling=True
+                )
+                logger.info("[LTX I2V] Using stochastic sampling scheduler")
+            else:
+                # Default: use dynamic shifting with mu (LTX native)
+                logger.info("[LTX I2V] Using dynamic shifting scheduler")
+        
+        # Apply group offloading for memory efficiency (works for both pipeline types)
+        if enable_offloading:
+            logger.info(f"[LTX I2V] Applying group offloading for device: {device}")
+            pipe = _apply_ltx_memory_offloading(pipe, device)
+            # With group offloading, computation happens on target device
+            gen_device = device
+        else:
+            # Standard approach - move entire pipeline to device
+            pipe = pipe.to(device)
+            gen_device = device
 
+        # Load and preprocess input image
         if image_url:  
             init_img = load_image(image_url).convert("RGB")
         else:
@@ -2237,10 +2736,11 @@ def ltx_image_to_video():
 
         init_img = center_crop_to_aspect(init_img, W, H)
 
+        # Optional preprocessing for better motion
         if bool(data.get("ffmpeg_roundtrip", True)):
             init_img = _ffmpeg_h264_roundtrip(
                 init_img, target_w=W, target_h=H,
-                crf=int(data.get("ffmpeg_crf", 20)),
+                crf=int(data.get("ffmpeg_crf", 10)),
                 downscale=float(data.get("downscale_factor", 0.5)),
                 down_filter=(data.get("down_filter") or "bicubic"),
                 up_filter=(data.get("up_filter") or "bicubic"),
@@ -2248,36 +2748,87 @@ def ltx_image_to_video():
 
         if bool(data.get("motionfix", True)):
             init_img = _motionfix_preprocess(
-                init_img, jpeg_q=int(data.get("jpeg_quality", 85)), noise_std=float(data.get("jpeg_gauss_std", 0.25))
+                init_img, jpeg_q=int(data.get("jpeg_quality", 90)), noise_std=float(data.get("jpeg_gauss_std", 0.1))
             )
-
-            try:
-                pipe.scheduler = FlowMatchEulerDiscreteScheduler.from_config(pipe.scheduler.config)
-                try: setattr(pipe.scheduler, "use_karras_sigmas", True)
-                except Exception: pass
-                try: setattr(pipe.scheduler, "timestep_spacing", "trailing")
-                except Exception: pass
-            except Exception as e:
-                logger.info(f"[LTX] Keep default scheduler (couldn't switch): {e}")
 
         init_img = init_img.resize((W, H), Image.BICUBIC)
 
-        generator = torch.Generator(device=device).manual_seed(seed) if isinstance(seed, int) else None
+        generator = torch.Generator(device=gen_device).manual_seed(seed) if isinstance(seed, int) else None
 
-        genbus.progress(gen_id, "Generating video...", 1, 2)
-        out = pipe(
-            image=init_img,
-            prompt=prompt + " — steady subject, minimal body deformation, identity consistent across frames, natural micro-expressions, smooth cinematic camera move",
-            negative_prompt=neg,
-            width=W, height=H, num_frames=frames_count, num_inference_steps=steps,
-            generator=generator, guidance_scale=guidance,
-        )
+        genbus.progress(gen_id, "Generating video...", 1, 3)
+        
+        # Build pipeline call kwargs - different for each pipeline type
+        if use_condition_pipeline:
+            # LTXConditionPipeline uses LTXVideoCondition
+            image_condition = LTXVideoCondition(
+                image=init_img,
+                frame_index=frame_index,
+                strength=condition_strength,
+            )
+            
+            # Set up scheduler timesteps based on scheduler type
+            # Set up scheduler timesteps based on scheduler type
+            if scheduler_type in ("karras", "exponential", "beta"):
+                # These modes disable dynamic shifting - no mu needed
+                pipe.scheduler.set_timesteps(steps, device=gen_device)
+            elif hasattr(pipe, 'scheduler') and getattr(pipe.scheduler.config, 'use_dynamic_shifting', False):
+                # Dynamic shifting mode (default or stochastic) - calculate and pass mu
+                mu = _calculate_ltx_mu(H, W, frames_count)
+                logger.info(f"[LTX I2V] Calculated mu={mu:.4f} for {H}x{W}x{frames_count}")
+                pipe.scheduler.set_timesteps(steps, device=gen_device, mu=mu)
+            
+            pipe_kwargs = {
+                "conditions": [image_condition],
+                "prompt": prompt,
+                "negative_prompt": neg,
+                "width": W,
+                "height": H,
+                "num_frames": frames_count,
+                "num_inference_steps": steps,
+                "guidance_scale": guidance_scale,
+                "guidance_rescale": guidance_rescale,
+                "decode_timestep": decode_timestep,
+                "decode_noise_scale": decode_noise_scale,
+                "image_cond_noise_scale": image_cond_noise_scale,
+                "max_sequence_length": max_seq_len,
+                "generator": generator,
+                "output_type": "pil",
+            }
+        else:
+            # LTXImageToVideoPipeline uses image directly
+            pipe_kwargs = {
+                "image": init_img,
+                "prompt": prompt,
+                "negative_prompt": neg,
+                "width": W,
+                "height": H,
+                "num_frames": frames_count,
+                "num_inference_steps": steps,
+                "guidance_scale": guidance_scale,
+                "max_sequence_length": max_seq_len,  # Support longer prompts
+                "generator": generator,
+                "output_type": "pil",
+            }
+        
+        # Use optimized timesteps for distilled models (only works with LTXConditionPipeline)
+        if use_distilled_timesteps:
+            if use_condition_pipeline:
+                pipe_kwargs["timesteps"] = [1000, 993, 987, 981, 975, 909, 725, 0.03]
+                pipe_kwargs["num_inference_steps"] = len(pipe_kwargs["timesteps"])
+                logger.info("[LTX I2V] Using distilled timesteps for faster generation")
+            else:
+                logger.warning("[LTX I2V] Distilled timesteps only work with LTXConditionPipeline, using standard steps instead")
+        
+        out = pipe(**pipe_kwargs)
+        
+        # Extract frames from output
+        frames = out.frames[0] if hasattr(out, 'frames') else out
 
-        genbus.progress(gen_id, "Encoding video...", 2, 2)
+        genbus.progress(gen_id, "Encoding video...", 2, 3)
         out_name = f"ltx_{int(time.time())}.mp4"
         out_path = os.path.join(os.getcwd(), out_name)
         _write_video_h264_safe_interpolated(
-            out_path, out, fps_in=fps, target_size=(W, H),
+            out_path, frames, fps_in=fps, target_size=(W, H),
             fps_out=24, upscale=1, scaler="lanczos", aspect_mode="fill",
             crf=15, preset="slow", add_grain=0.33, sharpen=0.5, deband=True, gen_id=gen_id
         )
@@ -2286,6 +2837,181 @@ def ltx_image_to_video():
 
     except Exception as e:
         logger.exception("LTX image->video failed")
+        genbus.error(gen_id, str(e))
+        return jsonify(_json_sanitize({"error": str(e)})), 500
+    finally:
+        DeviceManager.free_memory()
+
+@app.route("/image/video/quality", methods=["POST"])
+def wan_image_to_video():
+    data = request.get_json(silent=True) or {}
+    prompt          = (data.get("prompt") or "").strip()
+    negative_prompt = data.get("negative_prompt") or (
+        "Bright tones, overexposed, static, blurred details, subtitles, style, "
+        "works, paintings, images, static, overall gray, worst quality, low quality, "
+        "JPEG compression residue, ugly, incomplete, extra fingers, poorly drawn hands, "
+        "poorly drawn faces, deformed, disfigured, misshapen limbs, fused fingers, "
+        "still picture, messy background, three legs, many people in the background, walking backwards"
+    )
+    H             = int(data.get("height", 0))
+    W             = int(data.get("width", 0))
+    frames_count  = int(data.get("frames", 81))  # 4*k+1 frames by default
+    fps           = int(data.get("fps", 16))
+    steps         = int(data.get("steps", 20))
+    auto_dl       = bool(data.get("auto_download", False))
+    image_b64     = (data.get("image_base64") or "").strip()
+    image_url     = (data.get("image_url") or "").strip()
+    seed          = data.get("seed", None)
+    guidance_scale = float(data.get("guidance_scale", 5.0))
+    enable_offloading = bool(data.get("enable_memory_offloading", True))
+
+    # Basic validation...
+    if not prompt:
+        return jsonify(_json_sanitize({"error": "Missing 'prompt'"})), 400
+    if not image_b64 and not image_url:
+        return jsonify(_json_sanitize({"error": "Provide 'image_base64' or 'image_url'"})), 400
+
+    # NEW: mirror Flux prefetch logic, but for Wan
+    guard = _ensure_files_present_or_start("wan_video", auto_download=auto_dl)
+    if guard:
+        return guard
+
+    # create generation ID
+    gen_id = genbus.new("wan_i2v", {
+        "endpoint": "/image/video/quality",
+        "w": W or None,
+        "h": H or None,
+        "frames": frames_count,
+        "fps": fps,
+    })
+
+    try:
+        import gc
+        gc.collect()
+        device = DeviceManager.get_device()
+        if device.type == "mps":
+            torch.mps.empty_cache()
+        elif device.type == "cuda":
+            torch.cuda.empty_cache()
+
+        # dtype: bf16 on CUDA, fp16 on MPS, fp32 on CPU
+        if device.type == "cuda":
+            compute_dtype = torch.bfloat16
+        elif device.type == "mps":
+            compute_dtype = torch.float16
+        else:
+            compute_dtype = torch.float32
+
+        genbus.progress(gen_id, "Loading models...", 0, 3)
+
+        base_root = repo_local_dir(WAN_REPO)
+
+        # load components: VAE & image encoder in fp32; transformer quantized
+        image_encoder = CLIPVisionModel.from_pretrained(str(base_root), subfolder="image_encoder", torch_dtype=torch.float32)
+        vae           = AutoencoderKLWan.from_pretrained(str(base_root), subfolder="vae", torch_dtype=torch.float32)
+
+        quant_path = str(MODEL_DIR / WAN_GGUF_NAME)
+
+        transformer = WanTransformer3DModel.from_single_file(
+            quant_path,
+            quantization_config=GGUFQuantizationConfig(compute_dtype=compute_dtype),
+            torch_dtype=compute_dtype,
+        )
+        # scheduler for Wan I2V
+        scheduler = UniPCMultistepScheduler(
+            prediction_type="flow_prediction",
+            use_flow_sigmas=True,
+            num_train_timesteps=1000,
+            flow_shift=3.0,
+        )
+        pipe = WanImageToVideoPipeline.from_pretrained(
+            str(base_root),
+            transformer=transformer,
+            vae=vae,
+            image_encoder=image_encoder,
+            torch_dtype=compute_dtype,
+            scheduler=scheduler,
+        )
+        gc.collect()
+
+        # adapt height/width to multiples of (vae_scale_factor_spatial * patch_size)
+        def _aspect_resize(img, pipe_instance, max_area=720 * 1280):
+            aspect_ratio = img.height / img.width
+            mod_value = pipe_instance.vae_scale_factor_spatial * pipe_instance.transformer.config.patch_size[1]
+            h = round(np.sqrt(max_area * aspect_ratio)) // mod_value * mod_value
+            w = round(np.sqrt(max_area / aspect_ratio)) // mod_value * mod_value
+            return h, w
+
+        # load and resize input image
+        if image_url:
+            init_img = load_image(image_url).convert("RGB")
+        else:
+            init_img = Image.open(io.BytesIO(base64.b64decode(image_b64))).convert("RGB")
+
+        if H <= 0 or W <= 0:
+            H, W = _aspect_resize(init_img, pipe)
+        else:
+            mod_val = pipe.vae_scale_factor_spatial * pipe.transformer.config.patch_size[1]
+            H = max(mod_val, (H // mod_val) * mod_val)
+            W = max(mod_val, (W // mod_val) * mod_val)
+        init_img = center_crop_to_aspect(init_img, W, H).resize((W, H), Image.BICUBIC)
+
+        pipe.to(device)
+        # *** THIS IS THE IMPORTANT PART ***
+        # Make sure the image encoder and VAE are actually on the same device
+        if hasattr(pipe, "image_encoder") and pipe.image_encoder is not None:
+            pipe.image_encoder = pipe.image_encoder.to(device, dtype=torch.float32)
+        if hasattr(pipe, "vae") and pipe.vae is not None:
+            pipe.vae = pipe.vae.to(device, dtype=torch.float32)
+            
+        generator = torch.Generator(device=generator_device).manual_seed(seed) if isinstance(seed, int) else None
+
+        genbus.progress(gen_id, "Generating video...", 1, 3)
+
+        # call the pipeline
+        pipe_kwargs = {
+            "image": init_img,
+            "prompt": prompt,
+            "negative_prompt": negative_prompt,
+            "height": H,
+            "width": W,
+            "num_frames": frames_count,
+            "num_inference_steps": steps,
+            "guidance_scale": guidance_scale,
+            "generator": generator,
+        }
+            
+        out = pipe(**pipe_kwargs)
+
+        frames = out.frames[0] if hasattr(out, "frames") else out
+
+        genbus.progress(gen_id, "Encoding video...", 2, 3)
+        out_path = os.path.join(os.getcwd(), f"wan_{int(time.time())}.mp4")
+        _write_video_h264_safe_interpolated(
+            out_path,
+            frames,
+            fps_in=fps,
+            target_size=(W, H),
+            fps_out=24,
+            upscale=1,
+            scaler="lanczos",
+            aspect_mode="fill",
+            crf=15,
+            preset="slow",
+            add_grain=0.33,
+            sharpen=0.5,
+            deband=True,
+            gen_id=gen_id,
+        )
+        genbus.finish(gen_id, {"video_path": out_path})
+        return jsonify(_json_sanitize({
+            "ok": True,
+            "video_path": out_path,
+            "generation_websocket_url": generation_url(),
+        })), 201
+
+    except Exception as e:
+        logger.exception("WAN image->video failed")
         genbus.error(gen_id, str(e))
         return jsonify(_json_sanitize({"error": str(e)})), 500
     finally:
@@ -2307,343 +3033,6 @@ def _load_video_local_ffmpeg(video_path: str, limit: int) -> List[Image.Image]:
         return frames
     finally:
         shutil.rmtree(tmp_dir, ignore_errors=True)
-
-# ------------------- WAN Image -> Video ----------------------------
-def preprocess_image(img: Image.Image, quality=25, noise_std=2.5):
-    buf = io.BytesIO()
-    img.save(buf, format='JPEG', quality=quality)
-    buf.seek(0)
-    compressed = Image.open(buf).convert('RGB')
-    arr = np.array(compressed).astype(np.float32)
-    noise = np.random.normal(scale=noise_std, size=arr.shape)
-    noisy = np.clip(arr + noise, 0, 255).astype(np.uint8)
-    return Image.fromarray(noisy)
-
-@app.route("/image/video/intermediate", methods=["POST"])
-def wan_image_to_video():
-    data = request.get_json(silent=True) or {}
-    prompt = (data.get("prompt") or "").strip()
-    negative_prompt = (data.get("negative_prompt") or
-              "Bright tones, overexposed, static, blurred details, subtitles, style, paintings, overall gray, "
-              "worst quality, low quality, JPEG artifacts, deformed, disfigured, still picture").strip()
-    H = int(data.get("height", 704)); W = int(data.get("width", 1280))
-    frames = int(data.get("frames", 61))
-    fps = int(data.get("fps", 12))
-    steps = int(data.get("steps", 50))
-    auto_dl = bool(data.get("auto_download", False))
-    image_b64 = (data.get("image_base64") or "").strip()
-    image_url = (data.get("image_url") or "").strip()
-    max_area = int(data.get("max_area", H * W))
-    seed = data.get("seed", None)
-    guidance = float(data.get("guidance_scale", 1))
-
-    guard = _ensure_files_present_or_start("wan_video_5b", auto_download=auto_dl)
-    if guard: return guard
-
-    gen_id = genbus.new("wan_video_5b", {"endpoint": "/image/video/quality", "frames": frames, "fps": fps})
-
-    try:
-        device = DeviceManager.get_device()
-        # ---- dtype policy: VAE in fp32 (to avoid black outputs), transformer in mixed
-        if device.type == "cuda":
-            tr_dtype  = torch.bfloat16
-            vae_dtype = torch.float32
-        elif device.type == "mps":
-            # mps + bf16 is problematic; use fp16/32 (fp32 is safer for VAE)
-            tr_dtype  = torch.float16
-            vae_dtype = torch.float32
-        else:
-            tr_dtype  = torch.float32
-            vae_dtype = torch.float32
-            
-        base_root = repo_local_dir(WAN_REPO_5B)
-
-        pipe = WanImageToVideoPipeline.from_pretrained(
-            str(base_root), dtype=tr_dtype, use_safetensors=True, local_files_only=True
-        ).to(device)
-        
-        # Prefer FlowMatch Euler if available (Wan 2.x friendly)
-        try:
-            pipe.scheduler = FlowMatchEulerDiscreteScheduler.from_config(pipe.scheduler.config)
-            try: setattr(pipe.scheduler, "use_karras_sigmas", True)
-            except Exception: pass
-            try: setattr(pipe.scheduler, "timestep_spacing", "trailing")
-            except Exception: pass
-        except Exception:
-            pass
-
-        # Critical: decode in float32 to prevent “black output”
-        try:
-            pipe.vae.config.force_upcast = True
-        except Exception:
-            pass
-        try:
-            pipe.vae.to(device=device, dtype=torch.float32)  # you already set vae_dtype=fp32
-            pipe.enable_vae_slicing()
-            pipe.enable_vae_tiling()
-        except Exception:
-            pass
-        
-        try:
-            pipe.enable_attention_slicing("max")
-            try: pipe.enable_sequential_cpu_offload()
-            except Exception: pass
-        except Exception:
-            pass
-
-        if image_url:
-            init_img = load_image(image_url).convert("RGB")
-        else:
-            raw = base64.b64decode(image_b64)
-            init_img = Image.open(io.BytesIO(raw)).convert("RGB")
-
-        init_img = center_crop_to_aspect(init_img, W, H)
-
-        # model-safe sizing like official example
-        ps = getattr(pipe.transformer.config, "patch_size", (1, 8, 8))
-        patch_t = int(ps[0]) if len(ps) == 3 else 1
-        patch_w = int(ps[-1])
-        mod_value = int(pipe.vae_scale_factor_spatial) * patch_w
-
-        aspect = init_img.height / init_img.width
-        height = (round(np.sqrt(max_area * aspect)) // mod_value) * mod_value
-        width  = (round(np.sqrt(max_area / aspect)) // mod_value) * mod_value
-        height = max(mod_value, height - (height % 2))
-        width  = max(mod_value, width  - (width % 2))
-
-        if patch_t > 1 and (frames % patch_t != 0):
-            frames = max(patch_t, (frames // patch_t) * patch_t)
-
-        init_img = init_img.resize((width, height), Image.BICUBIC)
-        
-        generator = torch.Generator(device=device).manual_seed(seed) if isinstance(seed, int) else None
-
-        def cb(step, timestep, latents):
-            genbus.progress(gen_id, "sampling", int(step), steps)
-
-        genbus.progress(gen_id, "Generating video...", 1, 2)
-        # ----- run the pipeline
-        res = pipe(
-            image=init_img,
-            prompt=prompt,
-            negative_prompt=negative_prompt,
-            height=height,
-            width=width,
-            num_frames=frames,
-            guidance_scale=guidance,
-            num_inference_steps=steps,
-            output_type="pil",
-            generator=generator,
-        )
-
-        out_name = f"wan_{int(time.time())}.mp4"
-        out_path = os.path.join(os.getcwd(), out_name)
-        
-        # Inspect the actual frames we got from Wan at this resolution
-        dbg = _as_pil_list(res)
-        dbg[0].save("wan_dbg_first.png")
-        dbg[-1].save("wan_dbg_last.png")
-
-        _write_video_h264_safe_interpolated(
-            out_path,
-            res,                         # <-- pass the pipeline result directly
-            fps_in=fps,
-            target_size=None, # or None (since you already resized)
-            fps_out=24,
-            upscale=1,
-            scaler="lanczos",
-            crf=15,
-            preset="slow",
-            add_grain=0.33,
-            sharpen=0.75,
-            deband=True,
-            gen_id=gen_id,
-            # trim_head_frames=0  # (Wan: usually 0; keep nonzero only for LTX burn-in)
-        )
-
-        genbus.finish(gen_id, {"video_path": out_path})
-        return jsonify(_json_sanitize({
-            "ok": True, "video_path": out_path, "generation_websocket_url": generation_url()
-        })), 201
-
-    except Exception as e:
-        logger.exception("Wan i2v failed")
-        genbus.error(gen_id, str(e))
-        return jsonify(_json_sanitize({"error": str(e)})), 500
-    finally:
-        DeviceManager.free_memory()
-       
-@app.route("/image/video/quality", methods=["POST"])
-def wan_image_to_quality_video():
-    data = request.get_json(silent=True) or {}
-    prompt = (data.get("prompt") or "").strip()
-    negative_prompt = (data.get("negative_prompt") or
-              "Bright tones, overexposed, static, blurred details, subtitles, style, paintings, overall gray, "
-              "worst quality, low quality, JPEG artifacts, deformed, disfigured, still picture").strip()
-    H = int(data.get("height", 704)); W = int(data.get("width", 1280))
-    frames = int(data.get("frames", 61))
-    fps = int(data.get("fps", 12))
-    steps = int(data.get("steps", 50))
-    auto_dl = bool(data.get("auto_download", False))
-    image_b64 = (data.get("image_base64") or "").strip()
-    image_url = (data.get("image_url") or "").strip()
-    max_area = int(data.get("max_area", H * W))
-    seed = data.get("seed", None)
-    guidance = float(data.get("guidance_scale", 1))
-
-    guard = _ensure_files_present_or_start("wan_video_14b", auto_download=auto_dl)
-    if guard: return guard
-
-    gen_id = genbus.new("wan_video_14b", {"endpoint": "/image/video/quality", "frames": frames, "fps": fps})
-
-    try:
-        device = DeviceManager.get_device()
-        # ---- dtype policy: VAE in fp32 (to avoid black outputs), transformer in mixed
-        if device.type == "cuda":
-            tr_dtype  = torch.bfloat16
-            vae_dtype = torch.float32
-        elif device.type == "mps":
-            # mps + bf16 is problematic; use fp16/32 (fp32 is safer for VAE)
-            tr_dtype  = torch.float16
-            vae_dtype = torch.float32
-        else:
-            tr_dtype  = torch.float32
-            vae_dtype = torch.float32
-            
-        base_root = repo_local_dir(WAN_REPO_14B)
-        
-        tr_cfg = repo_local_dir(WAN_REPO_14B) / "transformer" / "config.json"
-        transformer = WanTransformer3DModel.from_single_file(
-            str(MODEL_DIR / WAN_GGUF_14B_NAME_HIGH),
-            config=str(tr_cfg),
-            quantization_config=GGUFQuantizationConfig(compute_dtype=tr_dtype),
-            dtype=tr_dtype,
-            device=device
-        )
-        
-        tr2_cfg = repo_local_dir(WAN_REPO_14B) / "transformer_2" / "config.json"
-        transformer_2 = WanTransformer3DModel.from_single_file(
-            str(MODEL_DIR / WAN_GGUF_14B_NAME_LOW),
-            config=str(tr2_cfg),
-            quantization_config=GGUFQuantizationConfig(compute_dtype=tr_dtype),
-            dtype=tr_dtype,
-            device=device
-        )
-
-        pipe = WanImageToVideoPipeline.from_pretrained(
-            str(base_root), transformer=transformer, transformer_2=transformer_2, dtype=tr_dtype, use_safetensors=True, local_files_only=True
-        ).to(device)
-        
-        # Prefer FlowMatch Euler if available (Wan 2.x friendly)
-        try:
-            pipe.scheduler = FlowMatchEulerDiscreteScheduler.from_config(pipe.scheduler.config)
-            try: setattr(pipe.scheduler, "use_karras_sigmas", True)
-            except Exception: pass
-            try: setattr(pipe.scheduler, "timestep_spacing", "trailing")
-            except Exception: pass
-        except Exception:
-            pass
-
-        # Critical: decode in float32 to prevent “black output”
-        try:
-            pipe.vae.config.force_upcast = True
-        except Exception:
-            pass
-        try:
-            pipe.vae.to(device=device, dtype=torch.float32)  # you already set vae_dtype=fp32
-            pipe.enable_vae_slicing()
-            pipe.enable_vae_tiling()
-        except Exception:
-            pass
-        
-        try:
-            pipe.enable_attention_slicing("max")
-            try: pipe.enable_sequential_cpu_offload()
-            except Exception: pass
-        except Exception:
-            pass
-
-        if image_url:
-            init_img = load_image(image_url).convert("RGB")
-        else:
-            raw = base64.b64decode(image_b64)
-            init_img = Image.open(io.BytesIO(raw)).convert("RGB")
-
-        init_img = center_crop_to_aspect(init_img, W, H)
-
-        # model-safe sizing like official example
-        ps = getattr(pipe.transformer.config, "patch_size", (1, 8, 8))
-        patch_t = int(ps[0]) if len(ps) == 3 else 1
-        patch_w = int(ps[-1])
-        mod_value = int(pipe.vae_scale_factor_spatial) * patch_w
-
-        aspect = init_img.height / init_img.width
-        height = (round(np.sqrt(max_area * aspect)) // mod_value) * mod_value
-        width  = (round(np.sqrt(max_area / aspect)) // mod_value) * mod_value
-        height = max(mod_value, height - (height % 2))
-        width  = max(mod_value, width  - (width % 2))
-
-        if patch_t > 1 and (frames % patch_t != 0):
-            frames = max(patch_t, (frames // patch_t) * patch_t)
-
-        init_img = init_img.resize((width, height), Image.BICUBIC)
-        
-        generator = torch.Generator(device=device).manual_seed(seed) if isinstance(seed, int) else None
-
-        def cb(step, timestep, latents):
-            genbus.progress(gen_id, "sampling", int(step), steps)
-
-        genbus.progress(gen_id, "Generating video...", 1, 2)
-        # ----- run the pipeline
-        res = pipe(
-            image=init_img,
-            prompt=prompt,
-            negative_prompt=negative_prompt,
-            height=height,
-            width=width,
-            num_frames=frames,
-            guidance_scale=guidance,
-            num_inference_steps=steps,
-            output_type="pil",
-            generator=generator,
-        )
-
-        out_name = f"wan_{int(time.time())}.mp4"
-        out_path = os.path.join(os.getcwd(), out_name)
-        
-        # Inspect the actual frames we got from Wan at this resolution
-        dbg = _as_pil_list(res)
-        dbg[0].save("wan_dbg_first.png")
-        dbg[-1].save("wan_dbg_last.png")
-
-        _write_video_h264_safe_interpolated(
-            out_path,
-            res,                         # <-- pass the pipeline result directly
-            fps_in=fps,
-            target_size=None, # or None (since you already resized)
-            fps_out=24,
-            upscale=1,
-            scaler="lanczos",
-            crf=15,
-            preset="slow",
-            add_grain=0.33,
-            sharpen=0.75,
-            deband=True,
-            gen_id=gen_id,
-            # trim_head_frames=0  # (Wan: usually 0; keep nonzero only for LTX burn-in)
-        )
-
-        genbus.finish(gen_id, {"video_path": out_path})
-        return jsonify(_json_sanitize({
-            "ok": True, "video_path": out_path, "generation_websocket_url": generation_url()
-        })), 201
-
-    except Exception as e:
-        logger.exception("Wan i2v failed")
-        genbus.error(gen_id, str(e))
-        return jsonify(_json_sanitize({"error": str(e)})), 500
-    finally:
-        DeviceManager.free_memory()
         
 # PART 5/5
 
