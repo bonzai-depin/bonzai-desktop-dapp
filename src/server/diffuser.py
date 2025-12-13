@@ -45,7 +45,6 @@ from diffusers import (
     StableDiffusionXLImg2ImgPipeline,
     LTXPipeline,
     LTXImageToVideoPipeline,
-    LTXConditionPipeline,
     GGUFQuantizationConfig,
     FluxPipeline,
     FluxImg2ImgPipeline,
@@ -60,13 +59,12 @@ from diffusers import (
     ZImageTransformer2DModel,
 )
 
-from diffusers.pipelines.ltx.pipeline_ltx_condition import LTXVideoCondition
 from diffusers.utils import load_image, export_to_video
 
 # Memory offloading support for LTX
 from diffusers.hooks import apply_group_offloading
 
-from transformers import CLIPVisionModel, CLIPTextModel
+from transformers import CLIPVisionModel, CLIPTextModel, UMT5EncoderModel
 
 # ------------------------- GGUF FILE LOCKS (CRITICAL) -------------------------
 _GGUF_LOCKS: Dict[str, threading.Lock] = {}
@@ -424,8 +422,6 @@ def _wan_patterns() -> List[str]:
         "model_index.json",
         "scheduler/**",
         "tokenizer/**",
-        "image_encoder/**",
-        "image_processor/**",
         "text_encoder/**",
         "transformer/**",
         "vae/**",
@@ -451,6 +447,8 @@ def allow_patterns_for_repo(repo_id: str) -> Optional[List[str]]:
         return _ltx_upscaler_patterns()
     if repo_id == WAN_REPO:
         return _wan_patterns()
+    if repo == CHATTERBOX_REPO:
+        return ["**/*"]
     return None
 
 # ---------------------- Integrity & completeness helpers ----------------------
@@ -525,17 +523,34 @@ REPO_SPECS = {
         "must_tokenizers": [],
         "must_weight_dirs": ["latent_upsampler", "vae"],
     },
-    "Wan-AI/Wan2.1-I2V-14B-480P-Diffusers": {
+    "Wan-AI/Wan2.2-TI2V-5B-Diffusers": {
         "must_files": ["model_index.json"],
         "must_tokenizers": ["tokenizer"],
-        "must_weight_dirs": ["image_encoder", "text_encoder", "transformer", "vae"],
-        "extra_dirs": ["scheduler", "image_processor"],
+        "must_weight_dirs": [
+            "text_encoder",
+            "transformer",
+            "vae"
+        ],
+        "extra_dirs": [
+            "scheduler",
+        ],
+    },
+    "QuantStack/Wan2.2-TI2V-5B-GGUF": {
+        "must_files": [],
+        "must_weight_dirs": ["VAE"],
+        "extra_dirs": [],
     },
     "Tongyi-MAI/Z-Image-Turbo": {
         "must_files": ["model_index.json"],
         "must_tokenizers": ["tokenizer"],
         "must_weight_dirs": ["transformer", "vae", "text_encoder"],
         "extra_dirs": ["scheduler"],
+    },
+    "ResembleAI/chatterbox": {
+        "must_files": [],
+        "must_tokenizers": [],
+        "must_weight_dirs": [],
+        "extra_dirs": [],
     },
 }
 
@@ -601,10 +616,42 @@ Z_GGUF_URL = (
 LTX_REPO = "Lightricks/LTX-Video"
 LTX_UPSAMPLER_REPO = "linoyts/LTX-Video-spatial-upscaler-0.9.8"
 
-WAN_REPO      = "Wan-AI/Wan2.1-I2V-14B-480P-Diffusers"
-WAN_GGUF_REPO = "city96/Wan2.1-I2V-14B-480P-gguf"
-WAN_GGUF_NAME = "wan2.1-i2v-14b-480p-Q4_K_M.gguf"
-WAN_GGUF_URL = "https://huggingface.co/city96/Wan2.1-I2V-14B-480P-gguf/resolve/main/wan2.1-i2v-14b-480p-Q4_K_M.gguf"
+# Wan 2.2 TI2V 5B Turbo (text+image → video)
+WAN_REPO = "Wan-AI/Wan2.2-TI2V-5B-Diffusers"  # official diffusers repo (config + tokenizer + defaults)
+
+# Turbo GGUF transformer (hum-ma)
+WAN22_GGUF_NAME = "Wan2.2-TI2V-5B-Q5_K_M.gguf"
+WAN22_GGUF_URL  = (
+    "https://huggingface.co/QuantStack/Wan2.2-TI2V-5B-GGUF/resolve/main/Wan2.2-TI2V-5B-Q5_K_M.gguf"
+)
+
+CHATTERBOX_REPO = "ResembleAI/chatterbox"
+
+CHATTERBOX_LANGUAGES = {
+    "ar": "Arabic",
+    "da": "Danish", 
+    "de": "German",
+    "el": "Greek",
+    "en": "English",
+    "es": "Spanish",
+    "fi": "Finnish",
+    "fr": "French",
+    "he": "Hebrew",
+    "hi": "Hindi",
+    "it": "Italian",
+    "ja": "Japanese",
+    "ko": "Korean",
+    "ms": "Malay",
+    "nl": "Dutch",
+    "no": "Norwegian",
+    "pl": "Polish",
+    "pt": "Portuguese",
+    "ru": "Russian",
+    "sv": "Swedish",
+    "sw": "Swahili",
+    "tr": "Turkish",
+    "zh": "Chinese",
+}
 
 # ---------- Single source of truth for exact byte sizes ----------
 EXPECTED_SIZES = {
@@ -612,6 +659,7 @@ EXPECTED_SIZES = {
     "flux1-kontext-dev-Q2_K.gguf":  4_023_690_528,
     "wan2.1-i2v-14b-480p-Q4_K_M.gguf": 11_341_184_384,
     "z_image_turbo-Q5_K_M.gguf": 5_522_742_336,
+    "Wan2.2-TI2V-5B-Q5_K_M.gguf": 3_810_603_360,
 }
 
 def _sha256_of_file(path: Path, bufsize: int = 1024 * 1024) -> str:
@@ -711,8 +759,12 @@ def _plan_for(pipeline: str) -> Dict[str, Any]:
         return {"repos_to_fetch": [LTX_REPO, LTX_UPSAMPLER_REPO], "single_files": []}
     if pipeline == "wan_video":
         return {
-            "repos_to_fetch": [WAN_REPO],
-            "single_files": [_sf(WAN_GGUF_NAME, WAN_GGUF_URL)],
+            "repos_to_fetch": [
+                WAN_REPO
+            ],
+            "single_files": [
+                _sf(WAN22_GGUF_NAME, WAN22_GGUF_URL)
+            ],
         }
     if pipeline == "sdxl":
         return {"repos_to_fetch": [SDXL_BASE_REPO, SDXL_REFINER_REPO]}
@@ -721,6 +773,8 @@ def _plan_for(pipeline: str) -> Dict[str, Any]:
             "repos_to_fetch": [Z_REPO],
             "single_files": [_sf(Z_GGUF_NAME, Z_GGUF_URL)],
         }
+    if pipeline == "chatterbox":
+        return {"repos_to_fetch": [CHATTERBOX_REPO], "single_files": []}
     raise ValueError(f"Unknown pipeline: {pipeline}")
 
 # ------------------------------ Repo readiness -------------------------------
@@ -1660,36 +1714,43 @@ def _calculate_ltx_mu(height: int, width: int, num_frames: int) -> float:
 
 def _apply_ltx_memory_offloading(pipe, device: torch.device):
     """
-    Apply group offloading to LTX pipeline for reduced memory usage.
+    Apply efficient group offloading to LTX pipeline.
     
-    Uses fine-grained group offloading which is faster than model-level CPU offload:
-    - Transformer: leaf_level offloading (finest granularity for largest component)
+    Strategy:
+    - Transformer: leaf_level offloading (finest granularity, best memory savings)
     - Text encoder: block_level offloading (groups of 2 blocks)
-    - VAE: leaf_level offloading
-    
-    Falls back to model_cpu_offload if group offloading fails.
+    - VAE: Keep on device (fp32 on MPS for stability, bf16 on CUDA)
     """
     import gc
     offload_device = torch.device("cpu")
+    use_stream = (device.type == "cuda")  # CUDA can use async transfers
     
-    # CUDA can use streams for async transfers, MPS cannot
-    use_stream = (device.type == "cuda")
+    group_offload_success = False
     
-    # First, enable VAE optimizations
+    # Configure VAE - keep on compute device
     try:
-        if hasattr(pipe, 'vae') and pipe.vae is not None:
-            if hasattr(pipe.vae, 'enable_tiling'):
+        if hasattr(pipe, "vae") and pipe.vae is not None:
+            # MPS needs fp32 for VAE stability, CUDA can use bf16
+            if device.type == "mps":
+                vae_dtype = torch.float32
+            elif device.type == "cuda":
+                vae_dtype = torch.bfloat16
+            else:
+                vae_dtype = torch.float32
+            
+            pipe.vae.to(device, dtype=vae_dtype)
+            
+            # Enable memory optimizations
+            if hasattr(pipe.vae, "enable_tiling"):
                 pipe.vae.enable_tiling()
-                logger.info("[LTX] Enabled VAE tiling")
-            if hasattr(pipe.vae, 'enable_slicing'):
+            if hasattr(pipe.vae, "enable_slicing"):
                 pipe.vae.enable_slicing()
-                logger.info("[LTX] Enabled VAE slicing")
+                
+            logger.info(f"[LTX] VAE on {device} dtype={vae_dtype}")
     except Exception as e:
-        logger.warning(f"[LTX] Could not enable VAE tiling/slicing: {e}")
+        logger.warning(f"[LTX] VAE config failed: {e}")
     
-    group_offload_success = True
-    
-    # Apply group offloading to transformer (largest component) - leaf_level for finest granularity
+    # Transformer: leaf_level offloading (largest component)
     try:
         if hasattr(pipe, 'transformer') and pipe.transformer is not None:
             pipe.transformer.enable_group_offload(
@@ -1698,12 +1759,12 @@ def _apply_ltx_memory_offloading(pipe, device: torch.device):
                 offload_type="leaf_level",
                 use_stream=use_stream
             )
-            logger.info(f"[LTX] Applied group offloading to transformer (leaf_level, stream={use_stream})")
+            logger.info(f"[LTX] Transformer: leaf_level offload (stream={use_stream})")
+            group_offload_success = True
     except Exception as e:
-        logger.warning(f"[LTX] Could not apply transformer group offload: {e}")
-        group_offload_success = False
+        logger.warning(f"[LTX] Transformer offload failed: {e}")
     
-    # Apply group offloading to text encoder - block_level is sufficient
+    # Text encoder: block_level offloading
     try:
         if hasattr(pipe, 'text_encoder') and pipe.text_encoder is not None:
             apply_group_offloading(
@@ -1712,45 +1773,59 @@ def _apply_ltx_memory_offloading(pipe, device: torch.device):
                 offload_type="block_level",
                 num_blocks_per_group=2
             )
-            logger.info("[LTX] Applied group offloading to text_encoder (block_level)")
+            logger.info("[LTX] Text encoder: block_level offload")
+            group_offload_success = True
     except Exception as e:
-        logger.warning(f"[LTX] Could not apply text_encoder group offload: {e}")
-        group_offload_success = False
+        logger.warning(f"[LTX] Text encoder offload failed: {e}")
     
-    # Apply group offloading to VAE - leaf_level for memory efficiency during decoding
-    try:
-        if hasattr(pipe, 'vae') and pipe.vae is not None:
-            apply_group_offloading(
-                pipe.vae,
-                onload_device=device,
-                offload_type="leaf_level"
-            )
-            logger.info("[LTX] Applied group offloading to VAE (leaf_level)")
-    except Exception as e:
-        logger.warning(f"[LTX] Could not apply VAE group offload: {e}")
-        group_offload_success = False
+    # Fallback if group offloading failed
+    if not group_offload_success:
+        logger.warning("[LTX] Group offload failed, using model CPU offload")
+        try:
+            pipe.enable_model_cpu_offload(device=device)
+        except Exception as e:
+            logger.warning(f"[LTX] CPU offload failed, moving to device: {e}")
+            pipe = pipe.to(device)
     
-    # If group offloading worked, we're done
-    if group_offload_success:
-        gc.collect()
-        return pipe
-    
-    # Fallback to model CPU offload if group offloading failed
-    logger.warning("[LTX] Group offloading partially failed, trying model CPU offload as fallback")
-    try:
-        pipe.enable_model_cpu_offload(device=device)
-        logger.info(f"[LTX] Enabled model CPU offload for device: {device}")
-        gc.collect()
-        return pipe
-    except Exception as e:
-        logger.warning(f"[LTX] Model CPU offload failed: {e}")
-    
-    # Final fallback: just move to device
-    logger.warning("[LTX] All offloading methods failed, moving pipeline to device directly")
-    pipe = pipe.to(device)
     gc.collect()
     return pipe
 
+def _apply_wan_memory_offloading(pipe, device: torch.device):
+    """
+    Aggressive memory offloading for Wan 2.2 14B on MPS.
+    Uses sequential CPU offload which is slower but fits in memory.
+    """
+    import gc
+    
+    # For 14B model on MPS, sequential CPU offload is the only reliable option
+    if device.type == "mps":
+        # VAE must stay on device but with memory optimizations
+        if hasattr(pipe, "vae") and pipe.vae is not None:
+            pipe.vae.to(device, dtype=torch.float32)
+            if hasattr(pipe.vae, "enable_tiling"):
+                pipe.vae.enable_tiling()
+            if hasattr(pipe.vae, "enable_slicing"):
+                pipe.vae.enable_slicing()
+        
+        # Use sequential CPU offload - moves each layer to GPU one at a time
+        # Much slower but fits in memory
+        pipe.enable_sequential_cpu_offload(device=device)
+        logger.info("[Wan] Using sequential CPU offload for MPS")
+        
+    elif device.type == "cuda":
+        # CUDA can use more efficient model offload
+        pipe.enable_model_cpu_offload(device=device)
+        if hasattr(pipe.vae, "enable_tiling"):
+            pipe.vae.enable_tiling()
+        logger.info("[Wan] Using model CPU offload for CUDA")
+    else:
+        pipe = pipe.to(device)
+    
+    gc.collect()
+    if device.type == "mps":
+        torch.mps.empty_cache()
+    
+    return pipe
 
 # ------------------------------ Generation: SDXL ------------------------
 @app.route("/image/turbo", methods=["POST"])
@@ -2294,33 +2369,27 @@ def _ltx_spatial_upscale_frames(frames: list[Image.Image], scale: float = 2.0, s
 def ltx_text_to_video():
     data = request.get_json(silent=True) or {}
     prompt = (data.get("prompt") or "").strip()
-    neg = data.get("negative_prompt", "worst quality, inconsistent motion, blurry, jittery, distorted")
-    H = int(data.get("height", 480)); W = int(data.get("width", 704))
-    frames_count = int(data.get("frames", 161))
+    
+    # Comprehensive negative prompt
+    default_neg = (
+        "worst quality, inconsistent motion, blurry, jittery, distorted, "
+        "deformed, bad anatomy, extra limbs, missing limbs, fused fingers, "
+        "poorly drawn face, mutation, ugly, low resolution"
+    )
+    neg = data.get("negative_prompt", default_neg)
+    
+    H = int(data.get("height", 480))
+    W = int(data.get("width", 704))
+    frames_count = int(data.get("frames", 97))  # ~4 seconds at 24fps
     fps = int(data.get("fps", 24))
     auto_dl = bool(data.get("auto_download", False))
     seed = data.get("seed", None)
-    # Memory offloading option (enabled by default for large models)
-    enable_offloading = bool(data.get("enable_memory_offloading", True))
-    # Use condition pipeline (newer) or original pipeline (more memory efficient)
-    use_condition_pipeline = bool(data.get("use_condition_pipeline", True))
-    # Scheduler type: "dynamic" (LTX native with mu) or "karras" (karras sigmas)
-    scheduler_type = data.get("scheduler_type", "dynamic").lower()
-    # LTXConditionPipeline specific options
-    guidance_rescale = float(data.get("guidance_rescale", 0.7))
-    decode_timestep = float(data.get("decode_timestep", 0.05))
-    decode_noise_scale = float(data.get("decode_noise_scale", 0.025))
-    max_seq_len = int(data.get("max_sequence_length", 256))
-    # Use distilled timesteps only if explicitly enabled (requires distilled model)
-    use_distilled_timesteps = bool(data.get("use_distilled_timesteps", False))
     
-    # Adjust defaults based on whether using distilled model
-    if use_distilled_timesteps:
-        steps = int(data.get("steps", 8))
-        guidance_scale = float(data.get("guidance_scale", 1.0))
-    else:
-        steps = int(data.get("steps", 30))
-        guidance_scale = float(data.get("guidance_scale", 5.0))
+    # Generation settings
+    steps = int(data.get("steps", 40))
+    guidance_scale = float(data.get("guidance_scale", 7.0))
+    max_seq_len = int(data.get("max_sequence_length", 512))
+    enable_offloading = bool(data.get("enable_memory_offloading", True))
 
     if not prompt:
         return jsonify(_json_sanitize({"error": "Missing 'prompt'"})), 400
@@ -2328,13 +2397,12 @@ def ltx_text_to_video():
     guard = _ensure_files_present_or_start("ltx_video", auto_download=auto_dl)
     if guard: return guard
 
-    H, W = _round_hw_for_vae(H, W, ratio=8)
+    H, W = _round_hw_for_vae(H, W, ratio=32)
     gen_id = genbus.new("ltx_t2v", {"endpoint": "/text/video/turbo", "w": W, "h": H, "frames": frames_count, "fps": fps})
 
     try:
         import gc
         
-        # Clear memory before loading large model
         gc.collect()
         device = DeviceManager.get_device()
         if device.type == "mps":
@@ -2342,163 +2410,88 @@ def ltx_text_to_video():
         elif device.type == "cuda":
             torch.cuda.empty_cache()
         
-        # Determine compute dtype based on device
+        # Dtype selection
         if device.type == "cuda":
             compute_dtype = torch.bfloat16
-        elif device.type == "mps":
-            compute_dtype = torch.float16
         else:
+            # MPS and CPU: use fp32 to avoid dtype mismatches
             compute_dtype = torch.float32
             
         base_root = repo_local_dir(LTX_REPO)
-        genbus.progress(gen_id, "Loading models...", 0, 3)
+        genbus.progress(gen_id, "Loading LTX-Video...", 0, 3)
 
-        # Choose pipeline based on parameter - original LTXPipeline is more memory efficient
-        if use_condition_pipeline:
-            logger.info("[LTX T2V] Using LTXConditionPipeline (more features, higher memory)")
-            pipe = LTXConditionPipeline.from_pretrained(
-                str(base_root), 
-                torch_dtype=compute_dtype, 
-                local_files_only=True, 
-                use_safetensors=True,
-                low_cpu_mem_usage=True,
-            )
-        else:
-            logger.info("[LTX T2V] Using LTXPipeline (original, more memory efficient)")
-            pipe = LTXPipeline.from_pretrained(
-                str(base_root), 
-                torch_dtype=compute_dtype, 
-                local_files_only=True, 
-                use_safetensors=True,
-                low_cpu_mem_usage=True,
-            )
-        
-        # Garbage collect after loading
+        # Use LTXPipeline for text-to-video
+        pipe = LTXPipeline.from_pretrained(
+            str(base_root), 
+            torch_dtype=compute_dtype, 
+            local_files_only=True, 
+            use_safetensors=True,
+            low_cpu_mem_usage=True,
+        )
         gc.collect()
         
-        # Fix tokenizer max length to avoid truncation warnings
+        # Enable long prompts
         if hasattr(pipe, 'tokenizer') and pipe.tokenizer is not None:
             pipe.tokenizer.model_max_length = max_seq_len
-            logger.info(f"[LTX T2V] Set tokenizer max length to {max_seq_len}")
         
-        # Note: Do NOT disable dynamic shifting - it's needed for quality generation
-        # The LTXConditionPipeline computes mu automatically based on latent dimensions
+        # Configure scheduler
+        if hasattr(pipe, 'scheduler'):
+            pipe.scheduler = FlowMatchEulerDiscreteScheduler.from_config(
+                pipe.scheduler.config,
+                use_dynamic_shifting=False,
+                stochastic_sampling=True,
+            )
         
-        # Enable VAE tiling for memory efficiency
-        if hasattr(pipe, 'vae') and hasattr(pipe.vae, 'enable_tiling'):
-            pipe.vae.enable_tiling()
-        
-        # Configure scheduler based on scheduler_type
-        # Options: "dynamic" (default), "karras", "exponential", "beta"
-        # All non-dynamic options disable use_dynamic_shifting and use alternative sigma schedules
-        if use_condition_pipeline and hasattr(pipe, 'scheduler'):
-            if scheduler_type == "karras":
-                pipe.scheduler = FlowMatchEulerDiscreteScheduler.from_config(
-                    pipe.scheduler.config,
-                    use_dynamic_shifting=False,
-                    use_karras_sigmas=True,
-                    timestep_spacing="trailing"
-                )
-                logger.info("[LTX T2V] Using karras sigmas scheduler")
-            elif scheduler_type == "exponential":
-                pipe.scheduler = FlowMatchEulerDiscreteScheduler.from_config(
-                    pipe.scheduler.config,
-                    use_dynamic_shifting=False,
-                    use_exponential_sigmas=True,
-                    timestep_spacing="trailing"
-                )
-                logger.info("[LTX T2V] Using exponential sigmas scheduler")
-            elif scheduler_type == "beta":
-                pipe.scheduler = FlowMatchEulerDiscreteScheduler.from_config(
-                    pipe.scheduler.config,
-                    use_dynamic_shifting=False,
-                    use_beta_sigmas=True,
-                    timestep_spacing="trailing"
-                )
-                logger.info("[LTX T2V] Using beta sigmas scheduler")
-            elif scheduler_type == "stochastic":
-                # Stochastic sampling can improve quality (recommended for distilled models)
-                pipe.scheduler = FlowMatchEulerDiscreteScheduler.from_config(
-                    pipe.scheduler.config,
-                    stochastic_sampling=True
-                )
-                logger.info("[LTX T2V] Using stochastic sampling scheduler")
-            else:
-                # Default: use dynamic shifting with mu (LTX native)
-                logger.info("[LTX T2V] Using dynamic shifting scheduler")
-        
-        # Apply group offloading for memory efficiency (works for both pipeline types)
+        # Apply memory offloading
+        # In ltx_image_to_video(), replace the non-offloading VAE config:
         if enable_offloading:
-            logger.info(f"[LTX T2V] Applying group offloading for device: {device}")
             pipe = _apply_ltx_memory_offloading(pipe, device)
-            # With group offloading, computation happens on target device
-            gen_device = device
         else:
-            # Standard approach - move entire pipeline to device
             pipe = pipe.to(device)
-            gen_device = device
+            # Ensure VAE is fp32 on MPS
+            if device.type == "mps" and hasattr(pipe, "vae"):
+                pipe.vae.to(device, dtype=torch.float32)
 
+        gen_device = device if device.type != "mps" else "cpu"
         generator = torch.Generator(device=gen_device).manual_seed(seed) if isinstance(seed, int) else None
         genbus.progress(gen_id, "Generating video...", 1, 3)
 
-        # Build pipeline call kwargs - base args work for both pipelines
-        pipe_kwargs = {
-            "prompt": prompt,
-            "negative_prompt": neg,
-            "width": W,
-            "height": H,
-            "num_frames": frames_count,
-            "num_inference_steps": steps,
-            "guidance_scale": guidance_scale,
-            "max_sequence_length": max_seq_len,  # Support longer prompts for both pipelines
-            "generator": generator,
-            "output_type": "pil",
-        }
+        # Generate video
+        out = pipe(
+            prompt=prompt,
+            negative_prompt=neg,
+            width=W,
+            height=H,
+            num_frames=frames_count,
+            num_inference_steps=steps,
+            guidance_scale=guidance_scale,
+            max_sequence_length=max_seq_len,
+            generator=generator,
+            output_type="pil",
+        )
         
-        # Add condition pipeline specific args
-        if use_condition_pipeline:
-            pipe_kwargs["guidance_rescale"] = guidance_rescale
-            pipe_kwargs["decode_timestep"] = decode_timestep
-            pipe_kwargs["decode_noise_scale"] = decode_noise_scale
-            
-            # Set up scheduler timesteps based on scheduler type
-            if scheduler_type in ("karras", "exponential", "beta"):
-                # These modes disable dynamic shifting - no mu needed
-                pipe.scheduler.set_timesteps(steps, device=gen_device)
-            elif hasattr(pipe, 'scheduler') and getattr(pipe.scheduler.config, 'use_dynamic_shifting', False):
-                # Dynamic shifting mode (default or stochastic) - calculate and pass mu
-                mu = _calculate_ltx_mu(H, W, frames_count)
-                logger.info(f"[LTX T2V] Calculated mu={mu:.4f} for {H}x{W}x{frames_count}")
-                pipe.scheduler.set_timesteps(steps, device=gen_device, mu=mu)
-        
-        # Use optimized timesteps for distilled models (only works with LTXConditionPipeline)
-        if use_distilled_timesteps:
-            if use_condition_pipeline:
-                pipe_kwargs["timesteps"] = [1000, 993, 987, 981, 975, 909, 725, 0.03]
-                pipe_kwargs["num_inference_steps"] = len(pipe_kwargs["timesteps"])
-                logger.info("[LTX T2V] Using distilled timesteps for faster generation")
-            else:
-                logger.warning("[LTX T2V] Distilled timesteps only work with LTXConditionPipeline, using standard steps instead")
-        
-        out = pipe(**pipe_kwargs)
-        
-        # Extract frames from output
         frames = out.frames[0] if hasattr(out, 'frames') else out
+        logger.info(f"[LTX T2V] Generated {len(frames)} frames at {W}x{H}")
 
         genbus.progress(gen_id, "Encoding video...", 2, 3)
         out_name = f"ltx_{int(time.time())}.mp4"
         out_path = os.path.join(os.getcwd(), out_name)
         
-        # Trim head frames for original pipeline (burn-in), not needed for condition pipeline
-        trim_head = 0 if use_condition_pipeline else 3
         _write_video_h264_safe_interpolated(
             out_path, frames, fps_in=fps, target_size=(W, H),
-            fps_out=24, upscale=2, scaler="lanczos", aspect_mode="fill",
-            crf=20, preset="slow", add_grain=0.25, sharpen=0.75, deband=True,
-            gen_id=gen_id, trim_head_frames=trim_head
+            fps_out=24, upscale=1, scaler="lanczos", aspect_mode="fill",
+            crf=18, preset="slow", add_grain=0.15, sharpen=0.3, deband=True,
+            gen_id=gen_id,
         )
         genbus.finish(gen_id, {"video_path": out_path})
-        return jsonify(_json_sanitize({"ok": True, "video_path": out_path, "generation_websocket_url": generation_url()})), 201
+        return jsonify(_json_sanitize({
+            "ok": True, 
+            "video_path": out_path, 
+            "width": W,
+            "height": H,
+            "frames": len(frames),
+            "generation_websocket_url": generation_url()
+        })), 201
 
     except Exception as e:
         logger.exception("LTX text->video failed")
@@ -2572,42 +2565,46 @@ def center_crop_to_aspect(img: Image.Image, target_w: int, target_h: int) -> Ima
 # ------------------------------ LTX Image -> Video ----------------------------
 @app.route("/image/video/turbo", methods=["POST"])
 def ltx_image_to_video():
+    """
+    LTX-Video Image-to-Video generation.
+    
+    Uses LTXImageToVideoPipeline with optimized settings for quality output.
+    Supports long prompts via max_sequence_length parameter.
+    """
     data = request.get_json(silent=True) or {}
+
     prompt = (data.get("prompt") or "").strip()
-    neg = data.get("negative_prompt", "low quality, worst quality, deformed, distorted, disfigured, motion smear, motion artifacts, fused fingers, bad anatomy, weird hand, ugly")
-    H = int(data.get("height", 480)); W = int(data.get("width", 640))
-    frames_count = int(data.get("frames", 161))
+    
+    # Comprehensive negative prompt for quality
+    default_neg = (
+        "low quality, worst quality, deformed, distorted, disfigured, "
+        "motion smear, motion artifacts, fused fingers, bad anatomy, weird hand, "
+        "ugly, duplicate, morbid, mutilated, poorly drawn hands, poorly drawn face, "
+        "mutation, blurry, extra limbs, cloned face, gross proportions, malformed limbs, "
+        "missing arms, missing legs, extra arms, extra legs, fused hands, too many fingers, "
+        "long neck, amateur, low resolution, grainy"
+    )
+    neg = (data.get("negative_prompt") or default_neg).strip()
+
+    # Video dimensions - LTX works best at 480p or 720p
+    H = int(data.get("height", 480))
+    W = int(data.get("width", 704))
+    frames_count = int(data.get("frames", 97))  # ~4 seconds at 24fps
     fps = int(data.get("fps", 24))
     auto_dl = bool(data.get("auto_download", False))
+
+    # Input image
     image_b64 = (data.get("image_base64") or "").strip()
     image_url = (data.get("image_url") or "").strip()
     seed = data.get("seed", None)
-    # Memory offloading option (enabled by default for large models like LTX 13B)
-    enable_offloading = bool(data.get("enable_memory_offloading", True))
-    # Use condition pipeline (newer) or original pipeline (more memory efficient)
-    use_condition_pipeline = bool(data.get("use_condition_pipeline", True))
-    # Scheduler type: "dynamic" (LTX native with mu) or "karras" (karras sigmas)
-    scheduler_type = data.get("scheduler_type", "karras").lower()
-    # LTXConditionPipeline specific options
-    guidance_rescale = float(data.get("guidance_rescale", 0.7))
-    decode_timestep = float(data.get("decode_timestep", 0.05))
-    decode_noise_scale = float(data.get("decode_noise_scale", 0.025))
-    image_cond_noise_scale = float(data.get("image_cond_noise_scale", 0.0))
-    max_seq_len = int(data.get("max_sequence_length", 256))
-    # Frame index for image conditioning (0 = first frame, can be any frame index)
-    frame_index = int(data.get("frame_index", 0))
-    # Conditioning strength (1.0 = full conditioning)
-    condition_strength = float(data.get("condition_strength", 1.0))
-    # Use distilled timesteps only if explicitly enabled (requires distilled model)
-    use_distilled_timesteps = bool(data.get("use_distilled_timesteps", False))
+
+    # Generation settings - optimized defaults for quality
+    steps = int(data.get("steps", 40))  # More steps = better quality
+    guidance_scale = float(data.get("guidance_scale", 7.0))  # Higher guidance = more prompt adherence
+    max_seq_len = int(data.get("max_sequence_length", 512))  # Long prompt support
     
-    # Adjust defaults based on whether using distilled model
-    if use_distilled_timesteps:
-        steps = int(data.get("steps", 8))
-        guidance_scale = float(data.get("guidance_scale", 1.0))
-    else:
-        steps = int(data.get("steps", 30))
-        guidance_scale = float(data.get("guidance_scale", 5.0))
+    # Memory management
+    enable_offloading = bool(data.get("enable_memory_offloading", True))
 
     if not prompt:
         return jsonify(_json_sanitize({"error": "Missing 'prompt'"})), 400
@@ -2615,225 +2612,133 @@ def ltx_image_to_video():
         return jsonify(_json_sanitize({"error": "Provide 'image_base64' or 'image_url'"})), 400
 
     guard = _ensure_files_present_or_start("ltx_video", auto_download=auto_dl)
-    if guard: return guard
+    if guard:
+        return guard
 
-    H, W = _round_hw_for_vae(H, W, ratio=8)
-    gen_id = genbus.new("ltx_i2v", {"endpoint": "/image/video/turbo", "w": W, "h": H, "frames": frames_count, "fps": fps})
+    # LTX VAE needs dimensions divisible by 32 for best results
+    H, W = _round_hw_for_vae(H, W, ratio=32)
+
+    gen_id = genbus.new("ltx_i2v", {
+        "endpoint": "/image/video/turbo",
+        "w": W, "h": H, "frames": frames_count, "fps": fps
+    })
 
     try:
         import gc
-        
-        # Clear memory before loading large model
+
         gc.collect()
         device = DeviceManager.get_device()
         if device.type == "mps":
             torch.mps.empty_cache()
         elif device.type == "cuda":
             torch.cuda.empty_cache()
-        
-        # Determine compute dtype based on device
-        # if device.type == "cuda":
-        #     compute_dtype = torch.bfloat16
-        # elif device.type == "mps":
-        #     compute_dtype = torch.float16
-        # else:
-        #     compute_dtype = torch.float32
-            
-        compute_dtype = torch.float32
-            
+
+        # Dtype selection - fp16 for MPS, bf16 for CUDA
+        if device.type == "cuda":
+            compute_dtype = torch.bfloat16
+        else:
+            # MPS and CPU: use fp32 to avoid dtype mismatches
+            compute_dtype = torch.float32
+
         base_root = repo_local_dir(LTX_REPO)
-        genbus.progress(gen_id, "Loading models...", 0, 3)
+        genbus.progress(gen_id, "Loading LTX-Video...", 0, 3)
 
-        # Choose pipeline based on parameter - original LTXImageToVideoPipeline is more memory efficient
-        if use_condition_pipeline:
-            logger.info("[LTX I2V] Using LTXConditionPipeline (more features, higher memory)")
-            pipe = LTXConditionPipeline.from_pretrained(
-                str(base_root), 
-                torch_dtype=compute_dtype, 
-                local_files_only=True, 
-                use_safetensors=True,
-                low_cpu_mem_usage=True,
-            )
-        else:
-            logger.info("[LTX I2V] Using LTXImageToVideoPipeline (original, more memory efficient)")
-            pipe = LTXImageToVideoPipeline.from_pretrained(
-                str(base_root), 
-                torch_dtype=compute_dtype, 
-                local_files_only=True, 
-                use_safetensors=True,
-                low_cpu_mem_usage=True,
-            )
-        
-        # Garbage collect after loading
+        # Load pipeline
+        pipe = LTXImageToVideoPipeline.from_pretrained(
+            str(base_root),
+            torch_dtype=compute_dtype,
+            local_files_only=True,
+            use_safetensors=True,
+            low_cpu_mem_usage=True,
+        )
         gc.collect()
-        
-        # Fix tokenizer max length to avoid truncation warnings
-        if hasattr(pipe, 'tokenizer') and pipe.tokenizer is not None:
-            pipe.tokenizer.model_max_length = max_seq_len
-            logger.info(f"[LTX I2V] Set tokenizer max length to {max_seq_len}")
-        
-        # Note: Do NOT disable dynamic shifting - it's needed for quality generation
-        # The LTXConditionPipeline computes mu automatically based on latent dimensions
-        
-        # Enable VAE tiling for memory efficiency
-        if hasattr(pipe, 'vae') and hasattr(pipe.vae, 'enable_tiling'):
-            pipe.vae.enable_tiling()
-        
-        # Configure scheduler based on scheduler_type
-        # Options: "dynamic" (default), "karras", "exponential", "beta", "stochastic"
-        if use_condition_pipeline and hasattr(pipe, 'scheduler'):
-            if scheduler_type == "karras":
-                pipe.scheduler = FlowMatchEulerDiscreteScheduler.from_config(
-                    pipe.scheduler.config,
-                    use_dynamic_shifting=False,
-                    use_karras_sigmas=True,
-                    timestep_spacing="trailing"
-                )
-                logger.info("[LTX I2V] Using karras sigmas scheduler")
-            elif scheduler_type == "exponential":
-                pipe.scheduler = FlowMatchEulerDiscreteScheduler.from_config(
-                    pipe.scheduler.config,
-                    use_dynamic_shifting=False,
-                    use_exponential_sigmas=True,
-                    timestep_spacing="trailing"
-                )
-                logger.info("[LTX I2V] Using exponential sigmas scheduler")
-            elif scheduler_type == "beta":
-                pipe.scheduler = FlowMatchEulerDiscreteScheduler.from_config(
-                    pipe.scheduler.config,
-                    use_dynamic_shifting=False,
-                    use_beta_sigmas=True,
-                    timestep_spacing="trailing"
-                )
-                logger.info("[LTX I2V] Using beta sigmas scheduler")
-            elif scheduler_type == "stochastic":
-                pipe.scheduler = FlowMatchEulerDiscreteScheduler.from_config(
-                    pipe.scheduler.config,
-                    stochastic_sampling=True
-                )
-                logger.info("[LTX I2V] Using stochastic sampling scheduler")
-            else:
-                # Default: use dynamic shifting with mu (LTX native)
-                logger.info("[LTX I2V] Using dynamic shifting scheduler")
-        
-        # Apply group offloading for memory efficiency (works for both pipeline types)
-        if enable_offloading:
-            logger.info(f"[LTX I2V] Applying group offloading for device: {device}")
-            pipe = _apply_ltx_memory_offloading(pipe, device)
-            # With group offloading, computation happens on target device
-            gen_device = device
-        else:
-            # Standard approach - move entire pipeline to device
-            pipe = pipe.to(device)
-            gen_device = device
 
-        # Load and preprocess input image
-        if image_url:  
+        # Enable long prompts
+        if hasattr(pipe, "tokenizer") and pipe.tokenizer is not None:
+            pipe.tokenizer.model_max_length = max_seq_len
+
+        # Configure scheduler - use default FlowMatch settings
+        if hasattr(pipe, "scheduler") and pipe.scheduler is not None:
+            pipe.scheduler = FlowMatchEulerDiscreteScheduler.from_config(
+                pipe.scheduler.config,
+                use_dynamic_shifting=False,
+                stochastic_sampling=True,
+            )
+
+        # Apply memory offloading
+        if enable_offloading:
+            pipe = _apply_ltx_memory_offloading(pipe, device)
+        else:
+            pipe = pipe.to(device)
+            # Configure VAE for non-offloaded mode
+            if device.type == "mps" and hasattr(pipe, "vae"):
+                pipe.vae.to("cpu", dtype=torch.float32)
+                _orig_decode = pipe.vae.decode
+                pipe.vae.decode = lambda z, *a, **kw: _orig_decode(z.to("cpu", dtype=torch.float32), *a, **kw)
+
+        # Load and prepare input image
+        if image_url:
             init_img = load_image(image_url).convert("RGB")
         else:
-            raw = base64.b64decode(image_b64)
-            init_img = Image.open(io.BytesIO(raw)).convert("RGB")
+            init_img = Image.open(io.BytesIO(base64.b64decode(image_b64))).convert("RGB")
 
-        init_img = center_crop_to_aspect(init_img, W, H)
+        init_img = center_crop_to_aspect(init_img, W, H).resize((W, H), Image.BICUBIC)
 
-        # Optional preprocessing for better motion
-        if bool(data.get("ffmpeg_roundtrip", True)):
-            init_img = _ffmpeg_h264_roundtrip(
-                init_img, target_w=W, target_h=H,
-                crf=int(data.get("ffmpeg_crf", 10)),
-                downscale=float(data.get("downscale_factor", 0.5)),
-                down_filter=(data.get("down_filter") or "bicubic"),
-                up_filter=(data.get("up_filter") or "bicubic"),
-            )
-
-        if bool(data.get("motionfix", True)):
-            init_img = _motionfix_preprocess(
-                init_img, jpeg_q=int(data.get("jpeg_quality", 90)), noise_std=float(data.get("jpeg_gauss_std", 0.1))
-            )
-
-        init_img = init_img.resize((W, H), Image.BICUBIC)
-
+        # Set up generator for reproducibility
+        gen_device = device if device.type != "mps" else "cpu"
         generator = torch.Generator(device=gen_device).manual_seed(seed) if isinstance(seed, int) else None
 
         genbus.progress(gen_id, "Generating video...", 1, 3)
+
+        # Generate video
+        out = pipe(
+            image=init_img,
+            prompt=prompt,
+            negative_prompt=neg,
+            width=W,
+            height=H,
+            num_frames=frames_count,
+            num_inference_steps=steps,
+            guidance_scale=guidance_scale,
+            max_sequence_length=max_seq_len,
+            generator=generator,
+            output_type="pil",
+        )
         
-        # Build pipeline call kwargs - different for each pipeline type
-        if use_condition_pipeline:
-            # LTXConditionPipeline uses LTXVideoCondition
-            image_condition = LTXVideoCondition(
-                image=init_img,
-                frame_index=frame_index,
-                strength=condition_strength,
-            )
-            
-            # Set up scheduler timesteps based on scheduler type
-            # Set up scheduler timesteps based on scheduler type
-            if scheduler_type in ("karras", "exponential", "beta"):
-                # These modes disable dynamic shifting - no mu needed
-                pipe.scheduler.set_timesteps(steps, device=gen_device)
-            elif hasattr(pipe, 'scheduler') and getattr(pipe.scheduler.config, 'use_dynamic_shifting', False):
-                # Dynamic shifting mode (default or stochastic) - calculate and pass mu
-                mu = _calculate_ltx_mu(H, W, frames_count)
-                logger.info(f"[LTX I2V] Calculated mu={mu:.4f} for {H}x{W}x{frames_count}")
-                pipe.scheduler.set_timesteps(steps, device=gen_device, mu=mu)
-            
-            pipe_kwargs = {
-                "conditions": [image_condition],
-                "prompt": prompt,
-                "negative_prompt": neg,
-                "width": W,
-                "height": H,
-                "num_frames": frames_count,
-                "num_inference_steps": steps,
-                "guidance_scale": guidance_scale,
-                "guidance_rescale": guidance_rescale,
-                "decode_timestep": decode_timestep,
-                "decode_noise_scale": decode_noise_scale,
-                "image_cond_noise_scale": image_cond_noise_scale,
-                "max_sequence_length": max_seq_len,
-                "generator": generator,
-                "output_type": "pil",
-            }
-        else:
-            # LTXImageToVideoPipeline uses image directly
-            pipe_kwargs = {
-                "image": init_img,
-                "prompt": prompt,
-                "negative_prompt": neg,
-                "width": W,
-                "height": H,
-                "num_frames": frames_count,
-                "num_inference_steps": steps,
-                "guidance_scale": guidance_scale,
-                "max_sequence_length": max_seq_len,  # Support longer prompts
-                "generator": generator,
-                "output_type": "pil",
-            }
-        
-        # Use optimized timesteps for distilled models (only works with LTXConditionPipeline)
-        if use_distilled_timesteps:
-            if use_condition_pipeline:
-                pipe_kwargs["timesteps"] = [1000, 993, 987, 981, 975, 909, 725, 0.03]
-                pipe_kwargs["num_inference_steps"] = len(pipe_kwargs["timesteps"])
-                logger.info("[LTX I2V] Using distilled timesteps for faster generation")
-            else:
-                logger.warning("[LTX I2V] Distilled timesteps only work with LTXConditionPipeline, using standard steps instead")
-        
-        out = pipe(**pipe_kwargs)
-        
-        # Extract frames from output
-        frames = out.frames[0] if hasattr(out, 'frames') else out
+        frames = out.frames[0] if hasattr(out, "frames") else out
+        logger.info(f"[LTX] Generated {len(frames)} frames at {W}x{H}")
 
         genbus.progress(gen_id, "Encoding video...", 2, 3)
+
         out_name = f"ltx_{int(time.time())}.mp4"
         out_path = os.path.join(os.getcwd(), out_name)
+
+        # Write video with quality settings
         _write_video_h264_safe_interpolated(
-            out_path, frames, fps_in=fps, target_size=(W, H),
-            fps_out=24, upscale=1, scaler="lanczos", aspect_mode="fill",
-            crf=15, preset="slow", add_grain=0.33, sharpen=0.5, deband=True, gen_id=gen_id
+            out_path, frames,
+            fps_in=fps,
+            target_size=(W, H),
+            fps_out=24,
+            upscale=1,
+            scaler="lanczos",
+            aspect_mode="fill",
+            crf=18,  # Good quality
+            preset="slow",
+            add_grain=0.15,
+            sharpen=0.3,
+            deband=True,
+            gen_id=gen_id,
         )
+
         genbus.finish(gen_id, {"video_path": out_path})
-        return jsonify(_json_sanitize({"ok": True, "video_path": out_path, "generation_websocket_url": generation_url()})), 201
+        return jsonify(_json_sanitize({
+            "ok": True,
+            "video_path": out_path,
+            "width": W,
+            "height": H,
+            "frames": len(frames),
+            "generation_websocket_url": generation_url(),
+        })), 201
 
     except Exception as e:
         logger.exception("LTX image->video failed")
@@ -2841,182 +2746,388 @@ def ltx_image_to_video():
         return jsonify(_json_sanitize({"error": str(e)})), 500
     finally:
         DeviceManager.free_memory()
+        
+def _mps_clear_memory():
+    gc.collect()
+    torch.mps.empty_cache()
+    torch.mps.synchronize()
+
+def _mps_delete_model(model, name="model"):
+    if model: model.to("cpu")
+    del model
+    _mps_clear_memory()
 
 @app.route("/image/video/quality", methods=["POST"])
 def wan_image_to_video():
-    data = request.get_json(silent=True) or {}
+    """
+    Wan 2.2 TI2V-5B Image-to-Video with MPS sequential loading optimization.
+    
+    Strategy: Load each component → use it → DELETE it → load next component.
+    This keeps peak memory low on unified memory systems.
+    """
+    data = request.get_json(force=True) or {}
+
     prompt          = (data.get("prompt") or "").strip()
-    negative_prompt = data.get("negative_prompt") or (
-        "Bright tones, overexposed, static, blurred details, subtitles, style, "
-        "works, paintings, images, static, overall gray, worst quality, low quality, "
-        "JPEG compression residue, ugly, incomplete, extra fingers, poorly drawn hands, "
-        "poorly drawn faces, deformed, disfigured, misshapen limbs, fused fingers, "
-        "still picture, messy background, three legs, many people in the background, walking backwards"
-    )
-    H             = int(data.get("height", 0))
-    W             = int(data.get("width", 0))
-    frames_count  = int(data.get("frames", 81))  # 4*k+1 frames by default
-    fps           = int(data.get("fps", 16))
-    steps         = int(data.get("steps", 20))
-    auto_dl       = bool(data.get("auto_download", False))
-    image_b64     = (data.get("image_base64") or "").strip()
-    image_url     = (data.get("image_url") or "").strip()
-    seed          = data.get("seed", None)
-    guidance_scale = float(data.get("guidance_scale", 5.0))
-    enable_offloading = bool(data.get("enable_memory_offloading", True))
+    negative_prompt = (data.get("negative_prompt") or "").strip()
+    H               = int(data.get("height", 480))
+    W               = int(data.get("width", 832))
+    frames_count    = int(data.get("frames", 41))    # 4*k+1
+    fps             = int(data.get("fps", 16))
+    steps           = int(data.get("steps", 30))
+    guidance        = float(data.get("guidance_scale", 5.0))
+    seed            = data.get("seed")
+    auto_dl         = bool(data.get("auto_download", False))
+    image_b64       = (data.get("image_base64") or "").strip()
+    image_url       = (data.get("image_url") or "").strip()
 
-    # Basic validation...
     if not prompt:
-        return jsonify(_json_sanitize({"error": "Missing 'prompt'"})), 400
+        return jsonify({"error": "Missing 'prompt'"}), 400
     if not image_b64 and not image_url:
-        return jsonify(_json_sanitize({"error": "Provide 'image_base64' or 'image_url'"})), 400
+        return jsonify({"error": "Provide 'image_base64' or 'image_url'"}), 400
 
-    # NEW: mirror Flux prefetch logic, but for Wan
+    # Ensure files present
     guard = _ensure_files_present_or_start("wan_video", auto_download=auto_dl)
     if guard:
         return guard
 
-    # create generation ID
-    gen_id = genbus.new("wan_i2v", {
+    gen_id = genbus.new("wan22_ti2v", {
         "endpoint": "/image/video/quality",
-        "w": W or None,
-        "h": H or None,
-        "frames": frames_count,
-        "fps": fps,
+        "w": W, "h": H, "frames": frames_count,
     })
 
     try:
         import gc
-        gc.collect()
+        from diffusers import FlowMatchEulerDiscreteScheduler
+        from diffusers.models import AutoencoderKLWan, WanTransformer3DModel
+        from transformers import UMT5EncoderModel, AutoTokenizer
+        
         device = DeviceManager.get_device()
-        if device.type == "mps":
-            torch.mps.empty_cache()
-        elif device.type == "cuda":
-            torch.cuda.empty_cache()
-
-        # dtype: bf16 on CUDA, fp16 on MPS, fp32 on CPU
-        if device.type == "cuda":
-            compute_dtype = torch.bfloat16
-        elif device.type == "mps":
-            compute_dtype = torch.float16
-        else:
-            compute_dtype = torch.float32
-
-        genbus.progress(gen_id, "Loading models...", 0, 3)
-
-        base_root = repo_local_dir(WAN_REPO)
-
-        # load components: VAE & image encoder in fp32; transformer quantized
-        image_encoder = CLIPVisionModel.from_pretrained(str(base_root), subfolder="image_encoder", torch_dtype=torch.float32)
-        vae           = AutoencoderKLWan.from_pretrained(str(base_root), subfolder="vae", torch_dtype=torch.float32)
-
-        quant_path = str(MODEL_DIR / WAN_GGUF_NAME)
-
-        transformer = WanTransformer3DModel.from_single_file(
-            quant_path,
-            quantization_config=GGUFQuantizationConfig(compute_dtype=compute_dtype),
-            torch_dtype=compute_dtype,
-        )
-        # scheduler for Wan I2V
-        scheduler = UniPCMultistepScheduler(
-            prediction_type="flow_prediction",
-            use_flow_sigmas=True,
-            num_train_timesteps=1000,
-            flow_shift=3.0,
-        )
-        pipe = WanImageToVideoPipeline.from_pretrained(
-            str(base_root),
-            transformer=transformer,
-            vae=vae,
-            image_encoder=image_encoder,
-            torch_dtype=compute_dtype,
-            scheduler=scheduler,
-        )
+        device_type = device.type
+        
+        # Clear memory before starting
         gc.collect()
-
-        # adapt height/width to multiples of (vae_scale_factor_spatial * patch_size)
-        def _aspect_resize(img, pipe_instance, max_area=720 * 1280):
-            aspect_ratio = img.height / img.width
-            mod_value = pipe_instance.vae_scale_factor_spatial * pipe_instance.transformer.config.patch_size[1]
-            h = round(np.sqrt(max_area * aspect_ratio)) // mod_value * mod_value
-            w = round(np.sqrt(max_area / aspect_ratio)) // mod_value * mod_value
-            return h, w
-
-        # load and resize input image
+        if device_type == "mps":
+            torch.mps.empty_cache()
+        
+        # Dtype selection: bf16 for CUDA, fp32 for MPS (more stable)
+        compute_dtype = torch.bfloat16 if device_type == "cuda" else torch.float32
+        
+        genbus.progress(gen_id, "Loading image...", 0, 6)
+        
+        # Load input image
         if image_url:
             init_img = load_image(image_url).convert("RGB")
         else:
             init_img = Image.open(io.BytesIO(base64.b64decode(image_b64))).convert("RGB")
+        
+        # Ensure dimensions divisible by 32 (vae_scale * patch_size)
+        mod = 32
+        H = max(mod, (H // mod) * mod)
+        W = max(mod, (W // mod) * mod)
+        
+        # Ensure frames is 4k+1 for temporal compression
+        frames_count = ((frames_count - 1) // 4) * 4 + 1
+        
+        # Resize image
+        init_img = init_img.resize((W, H), Image.LANCZOS)
+        
+        # Default negative prompt
+        if not negative_prompt:
+            negative_prompt = (
+                "blurry, low quality, distorted, deformed, ugly, "
+                "bad anatomy, extra limbs, missing limbs, bad hands, "
+                "extra fingers, mutated, disfigured, poorly drawn face"
+            )
+        
+        base_path = repo_local_dir(WAN_REPO)
+        
+        # =====================================================================
+        # PHASE 1: Text Encoding
+        # =====================================================================
+        genbus.progress(gen_id, "Encoding text...", 1, 6)
+        logger.info("[Wan MPS] Phase 1: Text encoding")
+        
+        _mps_clear_memory()
+        
+        tokenizer = AutoTokenizer.from_pretrained(
+            base_path, subfolder="tokenizer", local_files_only=True
+        )
+        
+        text_encoder = UMT5EncoderModel.from_pretrained(
+            base_path,
+            subfolder="text_encoder",
+            torch_dtype=compute_dtype,
+            local_files_only=True,
+            low_cpu_mem_usage=True,
+        ).to(device)
+        text_encoder.eval()
+        
+        max_seq_len = 512
+        
+        with torch.no_grad():
+            # Encode positive prompt
+            pos_tokens = tokenizer(
+                prompt, padding="max_length", max_length=max_seq_len,
+                truncation=True, return_tensors="pt"
+            )
+            prompt_embeds = text_encoder(pos_tokens.input_ids.to(device))[0]
+            
+            # Encode negative prompt
+            neg_tokens = tokenizer(
+                negative_prompt, padding="max_length", max_length=max_seq_len,
+                truncation=True, return_tensors="pt"
+            )
+            negative_embeds = text_encoder(neg_tokens.input_ids.to(device))[0]
+        
+        # Move to CPU, delete encoder
+        prompt_embeds = prompt_embeds.cpu()
+        negative_embeds = negative_embeds.cpu()
+        
+        _mps_delete_model(text_encoder, "text_encoder")
+        del tokenizer
+        _mps_clear_memory()
+        
+        # =====================================================================
+        # PHASE 2: Image Encoding (VAE Encode)
+        # =====================================================================
+        genbus.progress(gen_id, "Encoding image...", 2, 6)
+        logger.info("[Wan MPS] Phase 2: Image encoding")
+        
+        _mps_clear_memory()
+        
+        vae = AutoencoderKLWan.from_pretrained(
+            base_path,
+            subfolder="vae",
+            torch_dtype=torch.float32,  # VAE needs fp32 on MPS
+            local_files_only=True,
+            low_cpu_mem_usage=True,
+        ).to(device)
+        vae.eval()
+        
+        # Enable memory optimizations
+        if hasattr(vae, "enable_tiling"):
+            vae.enable_tiling()
+        if hasattr(vae, "enable_slicing"):
+            vae.enable_slicing()
+        
+        # Get scale factors
+        vae_scale_spatial = 16
+        vae_scale_temporal = 4
+        latent_channels = 48
+        # After loading VAE, get actual scaling factor from config
+        scaling_factor = getattr(vae.config, 'scaling_factor', None)
+        if scaling_factor is None:
+            # Try alternate config keys
+            scaling_factor = getattr(vae.config, 'scale_factor', 1.0)
+        logger.info(f"[Wan MPS] VAE scaling_factor: {scaling_factor}")
+        
+        # Prepare image tensor: [B, C, T, H, W]
+        img_np = np.array(init_img).astype(np.float32) / 255.0
+        img_np = (img_np - 0.5) / 0.5  # Normalize to [-1, 1]
+        img_tensor = torch.from_numpy(img_np).permute(2, 0, 1)  # [C, H, W]
+        img_tensor = img_tensor.unsqueeze(0).unsqueeze(2)  # [1, C, 1, H, W]
+        img_tensor = img_tensor.to(device, dtype=torch.float32)
+        
+        # Keep 5D: [1, C, 1, H, W]
+        with torch.no_grad():
+            encoded = vae.encode(img_tensor)
+            
+            # Debug: print what we got
+            logger.info(f"[Wan MPS] VAE encode output type: {type(encoded)}")
+            if hasattr(encoded, 'latent_dist'):
+                logger.info(f"[Wan MPS] latent_dist sample shape: {encoded.latent_dist.sample().shape}")
+                image_latents = encoded.latent_dist.sample()
+            elif hasattr(encoded, 'latents'):
+                logger.info(f"[Wan MPS] latents shape: {encoded.latents.shape}")
+                image_latents = encoded.latents
+            else:
+                logger.info(f"[Wan MPS] encoded[0] shape: {encoded[0].shape}")
+                image_latents = encoded[0]
+            
+            image_latents = image_latents * scaling_factor
 
-        if H <= 0 or W <= 0:
-            H, W = _aspect_resize(init_img, pipe)
+        logger.info(f"[Wan MPS] Final image_latents shape: {image_latents.shape}")
+        
+        # Move VAE to CPU (we'll reload for decode)
+        image_latents = image_latents.cpu()
+        vae.to("cpu")
+        _mps_clear_memory()
+        
+        logger.info(f"[Wan MPS] Image latents shape: {image_latents.shape}")
+        
+        # =====================================================================
+        # PHASE 3: Denoising Loop
+        # =====================================================================
+        genbus.progress(gen_id, "Loading transformer...", 3, 6)
+        logger.info("[Wan MPS] Phase 3: Loading transformer")
+        
+        _mps_clear_memory()
+        
+        # Calculate latent dimensions
+        latent_h = H // vae_scale_spatial
+        latent_w = W // vae_scale_spatial
+        latent_t = (frames_count - 1) // vae_scale_temporal + 1
+        
+        # Load transformer (GGUF if available, else standard)
+        gguf_path = MODEL_DIR / WAN22_GGUF_NAME if WAN22_GGUF_NAME else None
+        
+        if gguf_path and gguf_path.exists():
+            from diffusers import GGUFQuantizationConfig
+            config_path = base_path / "transformer" / "config.json"
+            transformer = WanTransformer3DModel.from_single_file(
+                str(gguf_path),
+                config=str(config_path),
+                quantization_config=GGUFQuantizationConfig(compute_dtype=compute_dtype),
+                torch_dtype=compute_dtype,
+            )
         else:
-            mod_val = pipe.vae_scale_factor_spatial * pipe.transformer.config.patch_size[1]
-            H = max(mod_val, (H // mod_val) * mod_val)
-            W = max(mod_val, (W // mod_val) * mod_val)
-        init_img = center_crop_to_aspect(init_img, W, H).resize((W, H), Image.BICUBIC)
-
-        pipe.to(device)
-        # *** THIS IS THE IMPORTANT PART ***
-        # Make sure the image encoder and VAE are actually on the same device
-        if hasattr(pipe, "image_encoder") and pipe.image_encoder is not None:
-            pipe.image_encoder = pipe.image_encoder.to(device, dtype=torch.float32)
-        if hasattr(pipe, "vae") and pipe.vae is not None:
-            pipe.vae = pipe.vae.to(device, dtype=torch.float32)
+            transformer = WanTransformer3DModel.from_pretrained(
+                base_path,
+                subfolder="transformer",
+                torch_dtype=compute_dtype,
+                local_files_only=True,
+                low_cpu_mem_usage=True,
+            )
+        
+        transformer.to(device)
+        transformer.eval()
+        
+        # Setup scheduler
+        scheduler = FlowMatchEulerDiscreteScheduler(
+            num_train_timesteps=1000,
+            shift=5.0,
+        )
+        scheduler.set_timesteps(steps, device=device)
+        timesteps = scheduler.timesteps
+        
+        # Prepare latents
+        generator = torch.Generator(device=device).manual_seed(seed) if isinstance(seed, int) else None
+        
+        latent_shape = (1, latent_channels, latent_t, latent_h, latent_w)
+        latents = torch.randn(latent_shape, generator=generator, device=device, dtype=compute_dtype)
+        
+        # Move embeddings to device
+        prompt_embeds = prompt_embeds.to(device, dtype=compute_dtype)
+        negative_embeds = negative_embeds.to(device, dtype=compute_dtype)
+        image_latents = image_latents.to(device, dtype=compute_dtype)
+        
+        # Create first-frame conditioning mask
+        cond_mask = torch.zeros(1, 1, latent_t, 1, 1, device=device, dtype=compute_dtype)
+        cond_mask[:, :, 0, :, :] = 1.0
+        
+        # Expand image latents temporally
+        image_latents_expanded = torch.zeros_like(latents)
+        image_latents_expanded[:, :, 0:1, :, :] = image_latents
+        
+        # Apply first frame conditioning
+        latents = image_latents_expanded * cond_mask + latents * (1 - cond_mask)
+        
+        do_cfg = guidance > 1.0
+        
+        genbus.progress(gen_id, "Denoising...", 4, 6)
+        logger.info(f"[Wan MPS] Starting {steps} denoising steps")
+        
+        for i, t in enumerate(timesteps):
+            # CFG: duplicate latents
+            latent_input = torch.cat([latents] * 2) if do_cfg else latents
             
-        generator = torch.Generator(device=generator_device).manual_seed(seed) if isinstance(seed, int) else None
-
-        genbus.progress(gen_id, "Generating video...", 1, 3)
-
-        # call the pipeline
-        pipe_kwargs = {
-            "image": init_img,
-            "prompt": prompt,
-            "negative_prompt": negative_prompt,
-            "height": H,
-            "width": W,
-            "num_frames": frames_count,
-            "num_inference_steps": steps,
-            "guidance_scale": guidance_scale,
-            "generator": generator,
-        }
+            timestep = t.expand(latent_input.shape[0])
+            encoder_states = torch.cat([negative_embeds, prompt_embeds]) if do_cfg else prompt_embeds
             
-        out = pipe(**pipe_kwargs)
+            with torch.no_grad():
+                noise_pred = transformer(
+                    hidden_states=latent_input,
+                    timestep=timestep,
+                    encoder_hidden_states=encoder_states,
+                    return_dict=False,
+                )[0]
+            
+            if do_cfg:
+                noise_uncond, noise_cond = noise_pred.chunk(2)
+                noise_pred = noise_uncond + guidance * (noise_cond - noise_uncond)
+            
+            latents = scheduler.step(noise_pred, t, latents, return_dict=False)[0]
+            
+            # Re-apply first frame conditioning
+            latents = image_latents_expanded * cond_mask + latents * (1 - cond_mask)
+        
+        # Move latents to CPU, delete transformer
+        latents = latents.cpu()
+        
+        _mps_delete_model(transformer, "transformer")
+        del scheduler, prompt_embeds, negative_embeds, image_latents, image_latents_expanded, cond_mask
+        _mps_clear_memory()
+        
+        # =====================================================================
+        # PHASE 4: VAE Decoding
+        # =====================================================================
+        genbus.progress(gen_id, "Decoding video...", 5, 6)
+        logger.info("[Wan MPS] Phase 4: VAE decoding")
+        
+        _mps_clear_memory()
+        
+        # Move VAE back to device
+        vae.to(device)
 
-        frames = out.frames[0] if hasattr(out, "frames") else out
+        # Ensure fp32 for decode
+        latents = latents.to(device, dtype=torch.float32)
 
-        genbus.progress(gen_id, "Encoding video...", 2, 3)
-        out_path = os.path.join(os.getcwd(), f"wan_{int(time.time())}.mp4")
+        # Denormalize - divide by scaling factor
+        if scaling_factor != 1.0:
+            latents = latents / scaling_factor
+
+        with torch.no_grad():
+            video = vae.decode(latents, return_dict=False)[0]
+
+        # Convert to frames: output is [B, C, T, H, W]
+        video = video.squeeze(0)  # [C, T, H, W]
+        video = video.permute(1, 2, 3, 0)  # [T, H, W, C]
+        video = video.cpu().float().numpy()
+
+        # Denormalize from [-1, 1] to [0, 1]
+        video = (video + 1.0) / 2.0
+        video = video.clip(0, 1)
+        video = (video * 255).astype(np.uint8)
+        
+        frames = [Image.fromarray(f) for f in video]
+        
+        # Cleanup
+        _mps_delete_model(vae, "vae")
+        _mps_clear_memory()
+        
+        # =====================================================================
+        # PHASE 5: Encode Video
+        # =====================================================================
+        genbus.progress(gen_id, "Encoding video...", 6, 6)
+        
+        out_path = os.path.join(os.getcwd(), f"wan22_{int(time.time())}.mp4")
+        
         _write_video_h264_safe_interpolated(
             out_path,
             frames,
-            fps_in=fps,
+            fps_in=16,      # Wan native
+            fps_out=60,     # Target smooth output
             target_size=(W, H),
-            fps_out=24,
-            upscale=1,
-            scaler="lanczos",
-            aspect_mode="fill",
-            crf=15,
+            crf=18,
             preset="slow",
-            add_grain=0.33,
-            sharpen=0.5,
-            deband=True,
-            gen_id=gen_id,
+            add_grain=0.15,
+            sharpen=0.3,
         )
+        
         genbus.finish(gen_id, {"video_path": out_path})
+        
         return jsonify(_json_sanitize({
-            "ok": True,
+            "status": "success",
             "video_path": out_path,
-            "generation_websocket_url": generation_url(),
-        })), 201
+            "frames": len(frames),
+            "resolution": f"{W}x{H}",
+        }))
 
     except Exception as e:
-        logger.exception("WAN image->video failed")
-        genbus.error(gen_id, str(e))
-        return jsonify(_json_sanitize({"error": str(e)})), 500
-    finally:
-        DeviceManager.free_memory()
-
+        logger.exception("Wan I2V failed")
+        genbus.finish(gen_id, {"error": str(e)})
+        return jsonify({"error": str(e)}), 500
+    
 def _load_video_local_ffmpeg(video_path: str, limit: int) -> List[Image.Image]:
     ffmpeg = get_ffmpeg_binary_path()
     tmp_dir = Path(MODEL_DIR) / f"tmp_vread_{int(time.time())}_{os.getpid()}"
@@ -3033,7 +3144,146 @@ def _load_video_local_ffmpeg(video_path: str, limit: int) -> List[Image.Image]:
         return frames
     finally:
         shutil.rmtree(tmp_dir, ignore_errors=True)
+
+@app.route("/audio", methods=["POST"])
+def audio_generation():
+    """
+    Multilingual TTS & Voice Cloning endpoint using Chatterbox.
+    
+    Parameters:
+        prompt (str): Text to synthesize (required)
+        language (str): Language code - ar, da, de, el, en, es, fi, fr, he, hi, 
+                        it, ja, ko, ms, nl, no, pl, pt, ru, sv, sw, tr, zh (default: "en")
+        synthesis_base64 (str): Base64-encoded reference audio for voice cloning (optional)
+        synthesis_url (str): URL to reference audio for voice cloning (optional)
+        exaggeration (float): Emotion exaggeration 0.0-1.0 (default 0.5)
+        cfg_weight (float): CFG weight 0.0-1.0 (default 0.5)
+        temperature (float): Sampling temperature 0.1-1.0 (default 0.8)
+        auto_download (bool): Auto-download models if missing (default False)
+    
+    Returns:
+        JSON with audio_path to generated WAV file
+    """
+    data = request.get_json(silent=True) or {}
+    
+    prompt = (data.get("prompt") or "").strip()
+    language = (data.get("language") or "en").strip().lower()
+    synthesis_b64 = (data.get("synthesis_base64") or "").strip()
+    synthesis_url = (data.get("synthesis_url") or "").strip()
+    exaggeration = float(data.get("exaggeration", 0.5))
+    cfg_weight = float(data.get("cfg_weight", 0.5))
+    temperature = float(data.get("temperature", 0.8))
+    auto_dl = bool(data.get("auto_download", False))
+    
+    if not prompt:
+        return jsonify(_json_sanitize({"error": "Missing 'prompt'"})), 400
+    
+    # Validate language
+    if language not in CHATTERBOX_LANGUAGES:
+        return jsonify(_json_sanitize({
+            "error": f"Unsupported language '{language}'",
+            "supported": list(CHATTERBOX_LANGUAGES.keys())
+        })), 400
+    
+    # Prefetch / readiness check
+    guard = _ensure_files_present_or_start("chatterbox", auto_download=auto_dl)
+    if guard:
+        return guard
+    
+    gen_id = genbus.new("chatterbox_tts", {
+        "endpoint": "/audio",
+        "language": language,
+        "has_synthesis": bool(synthesis_b64 or synthesis_url),
+        "exaggeration": exaggeration,
+        "cfg_weight": cfg_weight,
+    })
+    
+    try:
+        import gc
+        import torchaudio as ta
+        from chatterbox.mtl_tts import ChatterboxMultilingualTTS
         
+        gc.collect()
+        
+        device = DeviceManager.get_device()
+        if device.type == "mps":
+            torch.mps.empty_cache()
+        elif device.type == "cuda":
+            torch.cuda.empty_cache()
+        
+        genbus.progress(gen_id, "Loading Chatterbox Multilingual...", 0, 3)
+        
+        # Load multilingual model
+        model = ChatterboxMultilingualTTS.from_pretrained(device=str(device))
+        
+        genbus.progress(gen_id, "Generating audio...", 1, 3)
+        
+        # Prepare synthesis reference if provided (voice cloning)
+        audio_prompt_path = None
+        temp_synthesis_file = None
+        
+        if synthesis_url:
+            # Download reference audio
+            import requests
+            resp = requests.get(synthesis_url, timeout=30)
+            resp.raise_for_status()
+            temp_synthesis_file = os.path.join(os.getcwd(), f"_synthesis_ref_{int(time.time())}.wav")
+            with open(temp_synthesis_file, "wb") as f:
+                f.write(resp.content)
+            audio_prompt_path = temp_synthesis_file
+            
+        elif synthesis_b64:
+            # Decode base64 reference audio
+            temp_synthesis_file = os.path.join(os.getcwd(), f"_synthesis_ref_{int(time.time())}.wav")
+            with open(temp_synthesis_file, "wb") as f:
+                f.write(base64.b64decode(synthesis_b64))
+            audio_prompt_path = temp_synthesis_file
+        
+        # Generate speech with multilingual model
+        generate_kwargs = {
+            "text": prompt,
+            "language_id": language,
+            "exaggeration": exaggeration,
+            "cfg_weight": cfg_weight,
+            "temperature": temperature,
+        }
+        
+        if audio_prompt_path:
+            generate_kwargs["audio_prompt_path"] = audio_prompt_path
+        
+        wav = model.generate(**generate_kwargs)
+        
+        genbus.progress(gen_id, "Saving audio...", 2, 3)
+        
+        # Save output
+        out_path = os.path.join(os.getcwd(), f"chatterbox_{language}_{int(time.time())}.wav")
+        ta.save(out_path, wav, model.sr)
+        
+        # Cleanup temp file
+        if temp_synthesis_file and os.path.exists(temp_synthesis_file):
+            try:
+                os.remove(temp_synthesis_file)
+            except:
+                pass
+        
+        genbus.finish(gen_id, {"audio_path": out_path})
+        
+        return jsonify(_json_sanitize({
+            "ok": True,
+            "audio_path": out_path,
+            "language": language,
+            "sample_rate": model.sr,
+            "generation_websocket_url": generation_url(),
+        })), 201
+        
+    except Exception as e:
+        logger.exception("Chatterbox Multilingual TTS failed")
+        genbus.error(gen_id, str(e))
+        return jsonify(_json_sanitize({"error": str(e)})), 500
+    finally:
+        DeviceManager.free_memory()
+
+
 # PART 5/5
 
 # ------------------------------- Downloads API --------------------------------
