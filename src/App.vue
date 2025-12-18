@@ -51,20 +51,7 @@
               </h1>
             </a>
           </li>
-          <li
-            class="models__list-item model video"
-            :class="{ 'is-active': modelMode == 'video' }"
-            @click="modelMode = 'video'"
-            :existingImageBase64="videoImageBase64"
-          >
-            <a>
-              <h1>
-                <span class="material-symbols-outlined is-size-1">movie</span>
-                Video
-              </h1>
-            </a>
-          </li>
-          <li
+                    <li
             class="models__list-item model music"
             :class="{ 'is-active': modelMode == 'music' }"
             @click="modelMode = 'music'"
@@ -75,6 +62,19 @@
                   headphones
                 </span>
                 Audio
+              </h1>
+            </a>
+          </li>
+          <li
+            class="models__list-item model video"
+            :class="{ 'is-active': modelMode == 'video' }"
+            @click="modelMode = 'video'"
+            :existingImageBase64="videoImageBase64"
+          >
+            <a>
+              <h1>
+                <span class="material-symbols-outlined is-size-1">movie</span>
+                Video
               </h1>
             </a>
           </li>
@@ -100,9 +100,9 @@
             <a>
               <h1>
                 <span class="material-symbols-outlined is-size-1">
-                  precision_manufacturing
+                  exercise
                 </span>
-                Robots
+                Training
               </h1>
             </a>
           </li>
@@ -113,7 +113,7 @@
           >
             <a>
               <h1>
-                <span class="material-symbols-outlined is-size-1">query_stats</span>
+                <span class="material-symbols-outlined is-size-1">finance_mode</span>
                 Prediction
               </h1>
             </a>
@@ -128,6 +128,7 @@
     <Generative3D v-if="modelMode == '3D'" />
     <SmartAgent v-if="modelMode == 'agent'" />
   </div>
+  <BonzaiBottomBar />
 </template>
 
 <script>
@@ -138,9 +139,11 @@ import GenerativeVideo from "./components/GenerativeVideo.vue";
 import GenerativeMusic from "./components/GenerativeMusic.vue";
 import Generative3D from "./components/Generative3D.vue";
 import SmartAgent from "./components/SmartAgent.vue";
+import BonzaiBottomBar from './components/BonzaiBottomBar.vue';
 
 export default {
   name: "App",
+
   components: {
     GenerativeText,
     GenerativeImage,
@@ -148,6 +151,7 @@ export default {
     GenerativeMusic,
     Generative3D,
     SmartAgent,
+    BonzaiBottomBar,
   },
   setup() {
     const modelMode = ref("chat");
@@ -211,6 +215,7 @@ export default {
   color: #2c3e50;
   margin: 0 !important;
   padding: 0 !important;
+  padding-bottom: 1080px !important;
 }
 
 html,
@@ -225,6 +230,7 @@ body {
   position: absolute;
   top: 24px;
   right: 10px;
+  height: 9.5vh !important;
   z-index: 777;
 }
 
@@ -328,7 +334,7 @@ body {
 .tabs.menu li.is-active {
   width: 100%;
   font-family: "Fira Sans", sans-serif;
-  font-weight: 100;
+  font-weight: 300;
   font-style: normal;
 }
 
@@ -363,13 +369,13 @@ body {
   color: #fff;
   font-size: 48px;
   font-weight: 100;
-  text-shadow: 1px 1px 1px #777;
+  text-shadow: 1px 1px 1px #000;
   border: none;
 }
 
 .tabs.menu li.bonzai {
   /* aspect-ratio: 16/9; */
-  height: 10vh;
+  height: 12.5vh;
   width: 100%;
   background: #61378e;
   border-bottom: 10vh solid #61378e;
@@ -378,7 +384,7 @@ body {
 
 .tabs.menu li.bonzai .logo {
   margin: 5px;
-  height: 10vh;
+  height: 12.5vh;
   width: 100%;
   background: url("assets/bonzai_logo-full.png") no-repeat;
   background-size: contain;
@@ -390,49 +396,48 @@ body {
 
 .tabs.menu li.chat {
   /* aspect-ratio: 16/9; */
-  height: 12vh;
+  height: 12.5vh;
   background: url("assets/bonzai_chat.jpg") no-repeat;
   background-size: cover;
 }
 
 .tabs.menu li.image {
-  height: 12vh;
+  height: 12.5vh;
   background: url("assets/bonzai_image.jpg") no-repeat;
   background-size: cover;
 }
 
 .tabs.menu li.video {
-  height: 12vh;
+  height: 12.5vh;
   background: url("assets/bonzai_video.jpg") no-repeat;
   background-size: cover;
 }
 
 .tabs.menu li.music {
-  height: 12vh;
+  height: 12.5vh;
   background: url("assets/bonzai_music.jpg") no-repeat;
   background-size: cover;
 }
 
 .tabs.menu li.three {
-  height: 12vh;
-  background: url("assets/bonzai_3d.png") no-repeat;
+  height: 12.5vh;
+  background: url("assets/bonzai_3d.jpg") no-repeat;
   background-size: cover;
-  background-position: center center;
 }
 
 .tabs.menu li.robot {
-  height: 12vh;
-  background: url("assets/bonzai_robots.png") no-repeat;
+  height: 12.5vh;
+  background: url("assets/bonzai_robots.jpg") no-repeat;
   background-size: cover;
-  background-position: center center;
+  background-position: center 33%;
 }
 
 .tabs.menu li.agent {
-  height: 17vh;
+  height: 12.5vh;
   background: url("assets/bonzai_agent.jpg") no-repeat;
 
   background-size: cover;
-  background-position: bottom center;
+  background-position: center 66%;
 }
 
 p.question {

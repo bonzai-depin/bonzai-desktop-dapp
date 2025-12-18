@@ -5,7 +5,7 @@
 
 from __future__ import annotations
 
-import os, re, io, time, base64, logging, threading, hashlib, platform, shutil, subprocess, gc, stat
+import os, re, io, time, base64, logging, threading, hashlib, platform, shutil, subprocess, gc, stat, json
 from io import BytesIO
 from pathlib import Path
 import platform
@@ -54,7 +54,6 @@ from diffusers import (
     AutoencoderKLWan,
     WanImageToVideoPipeline,
     WanTransformer3DModel,
-    UniPCMultistepScheduler,
     ZImagePipeline,
     ZImageTransformer2DModel,
 )
@@ -64,7 +63,21 @@ from diffusers.utils import load_image, export_to_video
 # Memory offloading support for LTX
 from diffusers.hooks import apply_group_offloading
 
-from transformers import CLIPVisionModel, CLIPTextModel, UMT5EncoderModel
+
+from transformers import (
+    UMT5EncoderModel,
+    AutoTokenizer,
+    CLIPVisionModel,
+    CLIPImageProcessor,
+)
+
+try:
+    # CLIPImageProcessor is available in most transformers versions.  It
+    # simplifies preprocessing of images for the CLIP vision encoder.  If
+    # unavailable, we'll fall back to manual normalization defined below.
+    from transformers import CLIPImageProcessor  # type: ignore
+except Exception:
+    CLIPImageProcessor = None  # type: ignore  # noqa: N816
 
 # ------------------------- GGUF FILE LOCKS (CRITICAL) -------------------------
 _GGUF_LOCKS: Dict[str, threading.Lock] = {}
@@ -423,7 +436,8 @@ def _wan_patterns() -> List[str]:
         "scheduler/**",
         "tokenizer/**",
         "text_encoder/**",
-        "transformer/**",
+        "transformer/**",           # HighNoise expert
+        "transformer_2/**",         # LowNoise expert (Wan2.2 MoE naming)
         "vae/**",
         "**/*.json",
         "**/*.safetensors",
@@ -523,22 +537,23 @@ REPO_SPECS = {
         "must_tokenizers": [],
         "must_weight_dirs": ["latent_upsampler", "vae"],
     },
-    "Wan-AI/Wan2.2-TI2V-5B-Diffusers": {
+    "Wan-AI/Wan2.2-I2V-A14B-Diffusers": {
         "must_files": ["model_index.json"],
         "must_tokenizers": ["tokenizer"],
         "must_weight_dirs": [
             "text_encoder",
-            "transformer",
-            "vae"
+            "vae",
         ],
         "extra_dirs": [
             "scheduler",
+            "transformer",      # HighNoise expert (config only when using GGUF)
+            "transformer_2",    # LowNoise expert (config only when using GGUF)
         ],
     },
-    "QuantStack/Wan2.2-TI2V-5B-GGUF": {
+    "QuantStack/Wan2.2-I2V-A14B-GGUF": {
         "must_files": [],
-        "must_weight_dirs": ["VAE"],
-        "extra_dirs": [],
+        "must_weight_dirs": [],
+        "extra_dirs": ["HighNoise", "LowNoise"],
     },
     "Tongyi-MAI/Z-Image-Turbo": {
         "must_files": ["model_index.json"],
@@ -616,13 +631,23 @@ Z_GGUF_URL = (
 LTX_REPO = "Lightricks/LTX-Video"
 LTX_UPSAMPLER_REPO = "linoyts/LTX-Video-spatial-upscaler-0.9.8"
 
-# Wan 2.2 TI2V 5B Turbo (text+image → video)
-WAN_REPO = "Wan-AI/Wan2.2-TI2V-5B-Diffusers"  # official diffusers repo (config + tokenizer + defaults)
+# Wan 2.2 I2V A14B MoE (image → video with two expert transformers)
+WAN_REPO = "Wan-AI/Wan2.2-I2V-A14B-Diffusers"  # official diffusers repo (config + tokenizer + defaults)
 
-# Turbo GGUF transformer (hum-ma)
-WAN22_GGUF_NAME = "Wan2.2-TI2V-5B-Q5_K_M.gguf"
-WAN22_GGUF_URL  = (
-    "https://huggingface.co/QuantStack/Wan2.2-TI2V-5B-GGUF/resolve/main/Wan2.2-TI2V-5B-Q5_K_M.gguf"
+# MoE GGUF transformers - HighNoise for early steps, LowNoise for later steps
+WAN22_GGUF_HIGH_NAME = "Wan2.2-I2V-A14B-HighNoise-Q5_K_M.gguf"
+WAN22_GGUF_HIGH_URL = (
+    "https://huggingface.co/QuantStack/Wan2.2-I2V-A14B-GGUF/resolve/main/HighNoise/Wan2.2-I2V-A14B-HighNoise-Q5_K_M.gguf"
+)
+WAN22_GGUF_LOW_NAME = "Wan2.2-I2V-A14B-LowNoise-Q5_K_M.gguf"
+WAN22_GGUF_LOW_URL = (
+    "https://huggingface.co/QuantStack/Wan2.2-I2V-A14B-GGUF/resolve/main/LowNoise/Wan2.2-I2V-A14B-LowNoise-Q5_K_M.gguf"
+)
+
+WAN_21_VAE_NAME = "wan_2.1_vae.safetensors"
+WAN_21_VAE_URL = (
+    "https://huggingface.co/Comfy-Org/Wan_2.1_ComfyUI_repackaged/resolve/main/"
+    "split_files/vae/wan_2.1_vae.safetensors"
 )
 
 CHATTERBOX_REPO = "ResembleAI/chatterbox"
@@ -659,7 +684,9 @@ EXPECTED_SIZES = {
     "flux1-kontext-dev-Q2_K.gguf":  4_023_690_528,
     "wan2.1-i2v-14b-480p-Q4_K_M.gguf": 11_341_184_384,
     "z_image_turbo-Q5_K_M.gguf": 5_522_742_336,
-    "Wan2.2-TI2V-5B-Q5_K_M.gguf": 3_810_603_360,
+    "Wan2.2-I2V-A14B-HighNoise-Q5_K_M.gguf": 11_596_584_160,  # ~10.8 GB
+    "Wan2.2-I2V-A14B-LowNoise-Q5_K_M.gguf": 11_596_584_160,   # ~10.8 GB
+    "wan_2.1_vae.safetensors": 534_096_904,
 }
 
 def _sha256_of_file(path: Path, bufsize: int = 1024 * 1024) -> str:
@@ -763,7 +790,9 @@ def _plan_for(pipeline: str) -> Dict[str, Any]:
                 WAN_REPO
             ],
             "single_files": [
-                _sf(WAN22_GGUF_NAME, WAN22_GGUF_URL)
+                _sf(WAN22_GGUF_HIGH_NAME, WAN22_GGUF_HIGH_URL),
+                _sf(WAN22_GGUF_LOW_NAME, WAN22_GGUF_LOW_URL),
+                _sf(WAN_21_VAE_NAME, WAN_21_VAE_URL),
             ],
         }
     if pipeline == "sdxl":
@@ -2760,10 +2789,8 @@ def _mps_delete_model(model, name="model"):
 @app.route("/image/video/quality", methods=["POST"])
 def wan_image_to_video():
     """
-    Wan 2.2 TI2V-5B Image-to-Video with MPS sequential loading optimization.
-    
-    Strategy: Load each component → use it → DELETE it → load next component.
-    This keeps peak memory low on unified memory systems.
+    Wan 2.2 I2V-A14B with MoE switching.
+    FIXED: Uses Wan 2.1 VAE for proper colors.
     """
     data = request.get_json(force=True) or {}
 
@@ -2771,10 +2798,10 @@ def wan_image_to_video():
     negative_prompt = (data.get("negative_prompt") or "").strip()
     H               = int(data.get("height", 480))
     W               = int(data.get("width", 832))
-    frames_count    = int(data.get("frames", 41))    # 4*k+1
+    frames_count    = int(data.get("frames", 81))
     fps             = int(data.get("fps", 16))
-    steps           = int(data.get("steps", 30))
-    guidance        = float(data.get("guidance_scale", 5.0))
+    steps           = int(data.get("steps", 40))
+    guidance        = float(data.get("guidance_scale", 3.5))
     seed            = data.get("seed")
     auto_dl         = bool(data.get("auto_download", False))
     image_b64       = (data.get("image_base64") or "").strip()
@@ -2785,261 +2812,239 @@ def wan_image_to_video():
     if not image_b64 and not image_url:
         return jsonify({"error": "Provide 'image_base64' or 'image_url'"}), 400
 
-    # Ensure files present
     guard = _ensure_files_present_or_start("wan_video", auto_download=auto_dl)
     if guard:
         return guard
 
-    gen_id = genbus.new("wan22_ti2v", {
-        "endpoint": "/image/video/quality",
-        "w": W, "h": H, "frames": frames_count,
+    gen_id = genbus.new("wan22_i2v_a14b", {
+        "endpoint": "/image/video/quality", "w": W, "h": H, "frames": frames_count,
     })
 
+    # HARDCODED WAN 2.1 VAE NORMALIZATION CONSTANTS
+    # These are CRITICAL for proper color rendering
+    WAN21_LATENTS_MEAN = [
+        -0.7571, -0.7089, -0.9113, 0.1075, -0.1745, 0.9653, -0.1517, 1.5508,
+        0.4134, -0.0715, 0.5517, -0.3632, -0.1922, -0.9497, 0.2503, -0.2921
+    ]
+    WAN21_LATENTS_STD = [
+        2.8184, 1.4541, 2.3275, 2.6558, 1.2196, 1.7708, 2.6052, 2.0743,
+        3.2687, 2.1526, 2.8652, 1.5579, 1.6382, 1.1253, 2.8251, 1.9160
+    ]
+
     try:
-        import gc
-        from diffusers import FlowMatchEulerDiscreteScheduler
-        from diffusers.models import AutoencoderKLWan, WanTransformer3DModel
-        from transformers import UMT5EncoderModel, AutoTokenizer
-        
         device = DeviceManager.get_device()
         device_type = device.type
         
-        # Clear memory before starting
         gc.collect()
         if device_type == "mps":
             torch.mps.empty_cache()
         
-        # Dtype selection: bf16 for CUDA, fp32 for MPS (more stable)
         compute_dtype = torch.bfloat16 if device_type == "cuda" else torch.float32
         
-        genbus.progress(gen_id, "Loading image...", 0, 6)
-        
         # Load input image
-        if image_url:
-            init_img = load_image(image_url).convert("RGB")
-        else:
-            init_img = Image.open(io.BytesIO(base64.b64decode(image_b64))).convert("RGB")
+        genbus.progress(gen_id, "Loading image...", 0, 9)
         
-        # Ensure dimensions divisible by 32 (vae_scale * patch_size)
+        if image_url:
+            pil_image = load_image(image_url).convert("RGB")
+        else:
+            pil_image = Image.open(io.BytesIO(base64.b64decode(image_b64))).convert("RGB")
+        
         mod = 32
         H = max(mod, (H // mod) * mod)
         W = max(mod, (W // mod) * mod)
-        
-        # Ensure frames is 4k+1 for temporal compression
         frames_count = ((frames_count - 1) // 4) * 4 + 1
         
-        # Resize image
-        init_img = init_img.resize((W, H), Image.LANCZOS)
+        pil_image = pil_image.resize((W, H), Image.LANCZOS)
         
-        # Default negative prompt
         if not negative_prompt:
-            negative_prompt = (
-                "blurry, low quality, distorted, deformed, ugly, "
-                "bad anatomy, extra limbs, missing limbs, bad hands, "
-                "extra fingers, mutated, disfigured, poorly drawn face"
-            )
+            negative_prompt = "blurry, low quality, distorted, deformed, ugly, bad anatomy, extra limbs"
         
         base_path = repo_local_dir(WAN_REPO)
         
-        # =====================================================================
         # PHASE 1: Text Encoding
-        # =====================================================================
-        genbus.progress(gen_id, "Encoding text...", 1, 6)
-        logger.info("[Wan MPS] Phase 1: Text encoding")
-        
+        genbus.progress(gen_id, "Encoding text...", 1, 9)
+        logger.info("[Wan] Phase 1: Text encoding")
         _mps_clear_memory()
         
-        tokenizer = AutoTokenizer.from_pretrained(
-            base_path, subfolder="tokenizer", local_files_only=True
-        )
-        
+        tokenizer = AutoTokenizer.from_pretrained(base_path, subfolder="tokenizer", local_files_only=True)
         text_encoder = UMT5EncoderModel.from_pretrained(
-            base_path,
-            subfolder="text_encoder",
-            torch_dtype=compute_dtype,
-            local_files_only=True,
-            low_cpu_mem_usage=True,
+            base_path, subfolder="text_encoder", torch_dtype=compute_dtype,
+            local_files_only=True, low_cpu_mem_usage=True,
         ).to(device)
         text_encoder.eval()
         
         max_seq_len = 512
-        
         with torch.no_grad():
-            # Encode positive prompt
-            pos_tokens = tokenizer(
-                prompt, padding="max_length", max_length=max_seq_len,
-                truncation=True, return_tensors="pt"
-            )
+            pos_tokens = tokenizer(prompt, padding="max_length", max_length=max_seq_len, truncation=True, return_tensors="pt")
             prompt_embeds = text_encoder(pos_tokens.input_ids.to(device))[0]
-            
-            # Encode negative prompt
-            neg_tokens = tokenizer(
-                negative_prompt, padding="max_length", max_length=max_seq_len,
-                truncation=True, return_tensors="pt"
-            )
+            neg_tokens = tokenizer(negative_prompt, padding="max_length", max_length=max_seq_len, truncation=True, return_tensors="pt")
             negative_embeds = text_encoder(neg_tokens.input_ids.to(device))[0]
         
-        # Move to CPU, delete encoder
         prompt_embeds = prompt_embeds.cpu()
         negative_embeds = negative_embeds.cpu()
-        
         _mps_delete_model(text_encoder, "text_encoder")
         del tokenizer
         _mps_clear_memory()
         
-        # =====================================================================
-        # PHASE 2: Image Encoding (VAE Encode)
-        # =====================================================================
-        genbus.progress(gen_id, "Encoding image...", 2, 6)
-        logger.info("[Wan MPS] Phase 2: Image encoding")
+        # PHASE 2: Check CLIP requirement
+        genbus.progress(gen_id, "Checking config...", 2, 9)
+        config_path = base_path / "transformer" / "config.json"
+        with open(config_path, 'r') as f:
+            transformer_config = json.load(f)
         
+        image_dim = transformer_config.get('image_dim', None)
+        image_embeds = None
+        
+        if image_dim is not None:
+            logger.info("[Wan] Loading CLIP encoder")
+            _mps_clear_memory()
+            clip_processor = CLIPImageProcessor.from_pretrained(base_path, subfolder="image_processor", local_files_only=True)
+            clip_encoder = CLIPVisionModel.from_pretrained(
+                base_path, subfolder="image_encoder", torch_dtype=torch.float32,
+                local_files_only=True, low_cpu_mem_usage=True,
+            ).to(device)
+            clip_encoder.eval()
+            
+            with torch.no_grad():
+                clip_inputs = clip_processor(images=pil_image, return_tensors="pt")
+                clip_inputs = {k: v.to(device) for k, v in clip_inputs.items()}
+                clip_outputs = clip_encoder(**clip_inputs, output_hidden_states=True)
+                image_embeds = clip_outputs.hidden_states[-2]
+            
+            image_embeds = image_embeds.cpu()
+            _mps_delete_model(clip_encoder, "clip_encoder")
+            del clip_processor
+            _mps_clear_memory()
+        
+        # PHASE 3: VAE Encoding with Wan 2.1 VAE
+        genbus.progress(gen_id, "Loading Wan 2.1 VAE...", 3, 9)
+        logger.info("[Wan] Phase 3: VAE encoding with Wan 2.1 VAE")
         _mps_clear_memory()
         
-        vae = AutoencoderKLWan.from_pretrained(
-            base_path,
-            subfolder="vae",
-            torch_dtype=torch.float32,  # VAE needs fp32 on MPS
-            local_files_only=True,
-            low_cpu_mem_usage=True,
-        ).to(device)
+        vae_path = MODEL_DIR / WAN_21_VAE_NAME
+        if not vae_path.exists():
+            raise FileNotFoundError(f"Wan 2.1 VAE not found at {vae_path}. Run prefetch first.")
+        
+        logger.info(f"[Wan] Loading Wan 2.1 VAE from {vae_path}")
+        
+        vae = AutoencoderKLWan.from_single_file(str(vae_path), torch_dtype=torch.float32)
+        vae.to(device)
         vae.eval()
+        if hasattr(vae, "enable_tiling"): vae.enable_tiling()
+        if hasattr(vae, "enable_slicing"): vae.enable_slicing()
         
-        # Enable memory optimizations
-        if hasattr(vae, "enable_tiling"):
-            vae.enable_tiling()
-        if hasattr(vae, "enable_slicing"):
-            vae.enable_slicing()
+        latent_channels = 16
         
-        # Get scale factors
-        vae_scale_spatial = 16
-        vae_scale_temporal = 4
-        latent_channels = 48
-        # After loading VAE, get actual scaling factor from config
-        scaling_factor = getattr(vae.config, 'scaling_factor', None)
-        if scaling_factor is None:
-            # Try alternate config keys
-            scaling_factor = getattr(vae.config, 'scale_factor', 1.0)
-        logger.info(f"[Wan MPS] VAE scaling_factor: {scaling_factor}")
+        # Preprocess image to [-1, 1]
+        img_np = np.array(pil_image).astype(np.float32) / 255.0
+        img_np = (img_np - 0.5) / 0.5
+        img_tensor = torch.from_numpy(img_np).permute(2, 0, 1).unsqueeze(0).unsqueeze(2)
         
-        # Prepare image tensor: [B, C, T, H, W]
-        img_np = np.array(init_img).astype(np.float32) / 255.0
-        img_np = (img_np - 0.5) / 0.5  # Normalize to [-1, 1]
-        img_tensor = torch.from_numpy(img_np).permute(2, 0, 1)  # [C, H, W]
-        img_tensor = img_tensor.unsqueeze(0).unsqueeze(2)  # [1, C, 1, H, W]
-        img_tensor = img_tensor.to(device, dtype=torch.float32)
+        # Build video_condition: [image + black frames]
+        black_frames = torch.zeros(1, 3, frames_count - 1, H, W, dtype=torch.float32)
+        video_condition = torch.cat([img_tensor, black_frames], dim=2).to(device, dtype=torch.float32)
         
-        # Keep 5D: [1, C, 1, H, W]
         with torch.no_grad():
-            encoded = vae.encode(img_tensor)
+            encoded = vae.encode(video_condition)
+            latent_condition = encoded.latent_dist.mode() if hasattr(encoded, 'latent_dist') else encoded[0]
             
-            # Debug: print what we got
-            logger.info(f"[Wan MPS] VAE encode output type: {type(encoded)}")
-            if hasattr(encoded, 'latent_dist'):
-                logger.info(f"[Wan MPS] latent_dist sample shape: {encoded.latent_dist.sample().shape}")
-                image_latents = encoded.latent_dist.sample()
-            elif hasattr(encoded, 'latents'):
-                logger.info(f"[Wan MPS] latents shape: {encoded.latents.shape}")
-                image_latents = encoded.latents
-            else:
-                logger.info(f"[Wan MPS] encoded[0] shape: {encoded[0].shape}")
-                image_latents = encoded[0]
+            logger.info(f"[Wan] latent raw: min={latent_condition.min():.3f}, max={latent_condition.max():.3f}")
             
-            image_latents = image_latents * scaling_factor
-
-        logger.info(f"[Wan MPS] Final image_latents shape: {image_latents.shape}")
+            # NORMALIZE using Wan 2.1 constants
+            latents_mean = torch.tensor(WAN21_LATENTS_MEAN).view(1, -1, 1, 1, 1).to(device, latent_condition.dtype)
+            latents_std = torch.tensor(WAN21_LATENTS_STD).view(1, -1, 1, 1, 1).to(device, latent_condition.dtype)
+            latent_condition = (latent_condition - latents_mean) / latents_std
+            
+            logger.info(f"[Wan] latent normalized: min={latent_condition.min():.3f}, max={latent_condition.max():.3f}")
         
-        # Move VAE to CPU (we'll reload for decode)
-        image_latents = image_latents.cpu()
+        latent_t, latent_h, latent_w = latent_condition.shape[2], latent_condition.shape[3], latent_condition.shape[4]
+        
+        # Build mask and condition
+        mask = torch.zeros(1, 4, latent_t, latent_h, latent_w, device=device, dtype=torch.float32)
+        mask[:, :, 0, :, :] = 1.0
+        condition = torch.cat([mask, latent_condition], dim=1).cpu()
+        
         vae.to("cpu")
         _mps_clear_memory()
         
-        logger.info(f"[Wan MPS] Image latents shape: {image_latents.shape}")
-        
-        # =====================================================================
-        # PHASE 3: Denoising Loop
-        # =====================================================================
-        genbus.progress(gen_id, "Loading transformer...", 3, 6)
-        logger.info("[Wan MPS] Phase 3: Loading transformer")
-        
+        # PHASE 4: MoE Denoising
+        genbus.progress(gen_id, "Loading HighNoise expert...", 4, 9)
+        logger.info("[Wan] Phase 4: MoE Denoising")
         _mps_clear_memory()
         
-        # Calculate latent dimensions
-        latent_h = H // vae_scale_spatial
-        latent_w = W // vae_scale_spatial
-        latent_t = (frames_count - 1) // vae_scale_temporal + 1
+        gguf_high_path = MODEL_DIR / WAN22_GGUF_HIGH_NAME
+        gguf_low_path = MODEL_DIR / WAN22_GGUF_LOW_NAME
+        config_high_path = base_path / "transformer" / "config.json"
+        config_low_path = base_path / "transformer_2" / "config.json"
+        if not config_low_path.exists(): config_low_path = config_high_path
         
-        # Load transformer (GGUF if available, else standard)
-        gguf_path = MODEL_DIR / WAN22_GGUF_NAME if WAN22_GGUF_NAME else None
-        
-        if gguf_path and gguf_path.exists():
-            from diffusers import GGUFQuantizationConfig
-            config_path = base_path / "transformer" / "config.json"
-            transformer = WanTransformer3DModel.from_single_file(
-                str(gguf_path),
-                config=str(config_path),
-                quantization_config=GGUFQuantizationConfig(compute_dtype=compute_dtype),
-                torch_dtype=compute_dtype,
-            )
-        else:
-            transformer = WanTransformer3DModel.from_pretrained(
-                base_path,
-                subfolder="transformer",
-                torch_dtype=compute_dtype,
-                local_files_only=True,
-                low_cpu_mem_usage=True,
-            )
-        
-        transformer.to(device)
-        transformer.eval()
-        
-        # Setup scheduler
-        scheduler = FlowMatchEulerDiscreteScheduler(
-            num_train_timesteps=1000,
-            shift=5.0,
+        scheduler = FlowMatchEulerDiscreteScheduler.from_pretrained(
+            base_path, subfolder="scheduler", local_files_only=True, shift=8.0,
         )
         scheduler.set_timesteps(steps, device=device)
         timesteps = scheduler.timesteps
         
-        # Prepare latents
+        # MoE switch at 87.5%
+        moe_switch_idx = len(timesteps)
+        for idx, t in enumerate(timesteps):
+            t_norm = t.item() / 1000.0 if t.item() > 1.0 else t.item()
+            if t_norm < 0.875:
+                moe_switch_idx = idx
+                break
+        
+        logger.info(f"[Wan] MoE switch at step {moe_switch_idx}/{len(timesteps)}")
+        
         generator = torch.Generator(device=device).manual_seed(seed) if isinstance(seed, int) else None
+        latents = torch.randn((1, latent_channels, latent_t, latent_h, latent_w), generator=generator, device=device, dtype=compute_dtype)
+        latents = latents * getattr(scheduler, 'init_noise_sigma', 1.0)
         
-        latent_shape = (1, latent_channels, latent_t, latent_h, latent_w)
-        latents = torch.randn(latent_shape, generator=generator, device=device, dtype=compute_dtype)
-        
-        # Move embeddings to device
         prompt_embeds = prompt_embeds.to(device, dtype=compute_dtype)
         negative_embeds = negative_embeds.to(device, dtype=compute_dtype)
-        image_latents = image_latents.to(device, dtype=compute_dtype)
-        
-        # Create first-frame conditioning mask
-        cond_mask = torch.zeros(1, 1, latent_t, 1, 1, device=device, dtype=compute_dtype)
-        cond_mask[:, :, 0, :, :] = 1.0
-        
-        # Expand image latents temporally
-        image_latents_expanded = torch.zeros_like(latents)
-        image_latents_expanded[:, :, 0:1, :, :] = image_latents
-        
-        # Apply first frame conditioning
-        latents = image_latents_expanded * cond_mask + latents * (1 - cond_mask)
+        condition_gpu = condition.to(device, dtype=compute_dtype)
+        image_embeds_gpu = image_embeds.to(device, dtype=compute_dtype) if image_embeds is not None else None
         
         do_cfg = guidance > 1.0
         
-        genbus.progress(gen_id, "Denoising...", 4, 6)
-        logger.info(f"[Wan MPS] Starting {steps} denoising steps")
+        def load_transformer(gguf_path, config_path, name):
+            logger.info(f"[Wan] Loading {name}")
+            trans = WanTransformer3DModel.from_single_file(
+                str(gguf_path), config=str(config_path),
+                quantization_config=GGUFQuantizationConfig(compute_dtype=compute_dtype),
+                torch_dtype=compute_dtype,
+            )
+            trans.to(device)
+            trans.eval()
+            return trans
+        
+        transformer = load_transformer(gguf_high_path, config_high_path, "HighNoise")
+        
+        genbus.progress(gen_id, "Denoising (HighNoise)...", 5, 9)
         
         for i, t in enumerate(timesteps):
-            # CFG: duplicate latents
-            latent_input = torch.cat([latents] * 2) if do_cfg else latents
+            if i == moe_switch_idx and moe_switch_idx < len(timesteps):
+                logger.info(f"[Wan] Switching to LowNoise at step {i}")
+                genbus.progress(gen_id, "Switching to LowNoise...", 6, 9)
+                _mps_delete_model(transformer, "HighNoise")
+                transformer = load_transformer(gguf_low_path, config_low_path, "LowNoise")
+                genbus.progress(gen_id, "Denoising (LowNoise)...", 7, 9)
             
-            timestep = t.expand(latent_input.shape[0])
-            encoder_states = torch.cat([negative_embeds, prompt_embeds]) if do_cfg else prompt_embeds
+            latent_model_input = torch.cat([latents, condition_gpu], dim=1)
+            
+            if do_cfg:
+                latent_model_input = torch.cat([latent_model_input] * 2)
+                encoder_states = torch.cat([negative_embeds, prompt_embeds])
+                img_batch = torch.cat([image_embeds_gpu, image_embeds_gpu]) if image_embeds_gpu is not None else None
+            else:
+                encoder_states = prompt_embeds
+                img_batch = image_embeds_gpu
+            
+            timestep = t.expand(latent_model_input.shape[0])
             
             with torch.no_grad():
                 noise_pred = transformer(
-                    hidden_states=latent_input,
-                    timestep=timestep,
+                    hidden_states=latent_model_input, timestep=timestep,
                     encoder_hidden_states=encoder_states,
-                    return_dict=False,
+                    encoder_hidden_states_image=img_batch, return_dict=False,
                 )[0]
             
             if do_cfg:
@@ -3047,87 +3052,69 @@ def wan_image_to_video():
                 noise_pred = noise_uncond + guidance * (noise_cond - noise_uncond)
             
             latents = scheduler.step(noise_pred, t, latents, return_dict=False)[0]
-            
-            # Re-apply first frame conditioning
-            latents = image_latents_expanded * cond_mask + latents * (1 - cond_mask)
         
-        # Move latents to CPU, delete transformer
-        latents = latents.cpu()
+        logger.info(f"[Wan] Final latents: min={latents.min():.3f}, max={latents.max():.3f}")
         
+        final_latents = latents.cpu()
         _mps_delete_model(transformer, "transformer")
-        del scheduler, prompt_embeds, negative_embeds, image_latents, image_latents_expanded, cond_mask
+        del prompt_embeds, negative_embeds, condition_gpu
+        if image_embeds_gpu is not None: del image_embeds_gpu
         _mps_clear_memory()
         
-        # =====================================================================
-        # PHASE 4: VAE Decoding
-        # =====================================================================
-        genbus.progress(gen_id, "Decoding video...", 5, 6)
-        logger.info("[Wan MPS] Phase 4: VAE decoding")
-        
+        # PHASE 5: VAE Decode
+        genbus.progress(gen_id, "Decoding video...", 8, 9)
+        logger.info("[Wan] Phase 5: VAE decoding")
         _mps_clear_memory()
         
-        # Move VAE back to device
         vae.to(device)
-
-        # Ensure fp32 for decode
-        latents = latents.to(device, dtype=torch.float32)
-
-        # Denormalize - divide by scaling factor
-        if scaling_factor != 1.0:
-            latents = latents / scaling_factor
-
+        latents = final_latents.to(device, dtype=torch.float32)
+        
+        # UN-NORMALIZE: x = normalized * std + mean
+        latents_mean = torch.tensor(WAN21_LATENTS_MEAN).view(1, -1, 1, 1, 1).to(device, latents.dtype)
+        latents_std = torch.tensor(WAN21_LATENTS_STD).view(1, -1, 1, 1, 1).to(device, latents.dtype)
+        latents = latents * latents_std + latents_mean
+        
+        logger.info(f"[Wan] Latents un-normalized: min={latents.min():.3f}, max={latents.max():.3f}")
+        
         with torch.no_grad():
             video = vae.decode(latents, return_dict=False)[0]
-
-        # Convert to frames: output is [B, C, T, H, W]
-        video = video.squeeze(0)  # [C, T, H, W]
-        video = video.permute(1, 2, 3, 0)  # [T, H, W, C]
-        video = video.cpu().float().numpy()
-
-        # Denormalize from [-1, 1] to [0, 1]
-        video = (video + 1.0) / 2.0
-        video = video.clip(0, 1)
+        
+        logger.info(f"[Wan] VAE output: min={video.min():.3f}, max={video.max():.3f}")
+        
+        video = video.squeeze(0).permute(1, 2, 3, 0).cpu().float().numpy()
+        video = ((video + 1.0) / 2.0).clip(0, 1)
         video = (video * 255).astype(np.uint8)
         
         frames = [Image.fromarray(f) for f in video]
+        logger.info(f"[Wan] Generated {len(frames)} frames")
         
-        # Cleanup
         _mps_delete_model(vae, "vae")
         _mps_clear_memory()
         
-        # =====================================================================
-        # PHASE 5: Encode Video
-        # =====================================================================
-        genbus.progress(gen_id, "Encoding video...", 6, 6)
+        # PHASE 6: Encode Video
+        genbus.progress(gen_id, "Encoding video...", 9, 9)
         
         out_path = os.path.join(os.getcwd(), f"wan22_{int(time.time())}.mp4")
         
         _write_video_h264_safe_interpolated(
-            out_path,
-            frames,
-            fps_in=16,      # Wan native
-            fps_out=60,     # Target smooth output
-            target_size=(W, H),
-            crf=18,
-            preset="slow",
-            add_grain=0.15,
-            sharpen=0.3,
+            out_path, frames, fps_in=16, fps_out=60, target_size=(W, H),
+            crf=18, preset="slow", add_grain=0.15, sharpen=0.3,
         )
         
         genbus.finish(gen_id, {"video_path": out_path})
         
         return jsonify(_json_sanitize({
-            "status": "success",
-            "video_path": out_path,
-            "frames": len(frames),
-            "resolution": f"{W}x{H}",
+            "status": "success", "video_path": out_path,
+            "frames": len(frames), "resolution": f"{W}x{H}",
         }))
 
     except Exception as e:
         logger.exception("Wan I2V failed")
-        genbus.finish(gen_id, {"error": str(e)})
+        genbus.error(gen_id, str(e))
         return jsonify({"error": str(e)}), 500
-    
+    finally:
+        DeviceManager.free_memory()
+
 def _load_video_local_ffmpeg(video_path: str, limit: int) -> List[Image.Image]:
     ffmpeg = get_ffmpeg_binary_path()
     tmp_dir = Path(MODEL_DIR) / f"tmp_vread_{int(time.time())}_{os.getpid()}"

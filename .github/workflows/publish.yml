@@ -9,8 +9,8 @@ jobs:
     runs-on: ubuntu-latest
     env:
       MAIN_PY_FILE: src/server/diffuser.py
-      OS_KEY:        linux
-      ARCH_KEY:      x64
+      OS_KEY: linux
+      ARCH_KEY: x64
     steps:
       - uses: actions/checkout@v3
 
@@ -27,7 +27,9 @@ jobs:
 
       - name: Install Python deps & PyInstaller
         run: |
+          pip install git+https://github.com/huggingface/diffusers.git
           pip install -r requirements.txt
+          pip install https://github.com/vBaiCai/python-pesq/archive/master.zip
           pip install pyinstaller
 
       - name: Build Python binary (Linux x64)
@@ -36,9 +38,9 @@ jobs:
           pyinstaller \
             --onefile \
             --distpath binaries/${{ env.OS_KEY }}-${{ env.ARCH_KEY }} \
-            --workpath build \
-            --specpath build \
-            $MAIN_PY_FILE
+            --workpath $RUNNER_TEMP/pybuild \
+            --specpath $RUNNER_TEMP \
+            ${{ env.MAIN_PY_FILE }}
 
       - name: Set up Node.js
         uses: actions/setup-node@v3
@@ -57,8 +59,8 @@ jobs:
     runs-on: macos-latest
     env:
       MAIN_PY_FILE: src/server/diffuser.py
-      OS_KEY:        macos
-      ARCH_KEY:      arm64
+      OS_KEY: macos
+      ARCH_KEY: arm64
     steps:
       - uses: actions/checkout@v3
 
@@ -76,7 +78,9 @@ jobs:
 
       - name: Install Python deps & PyInstaller
         run: |
+          pip install git+https://github.com/huggingface/diffusers.git
           pip install -r requirements.txt
+          pip install https://github.com/vBaiCai/python-pesq/archive/master.zip
           pip install pyinstaller
 
       - name: Build Python binary (macOS ARM64)
@@ -85,14 +89,14 @@ jobs:
           pyinstaller \
             --onefile \
             --distpath binaries/${{ env.OS_KEY }}-${{ env.ARCH_KEY }} \
-            --workpath build \
-            --specpath build \
-            $MAIN_PY_FILE
+            --workpath $RUNNER_TEMP/pybuild \
+            --specpath $RUNNER_TEMP \
+            ${{ env.MAIN_PY_FILE }}
 
       - name: Decode & Import App Certificate
         env:
           CERT_BASE64: ${{ secrets.MAC_APP_CERT_BASE64 }}
-          CERT_PASS:   ${{ secrets.MAC_APP_CERT_PASSWORD }}
+          CERT_PASS: ${{ secrets.MAC_APP_CERT_PASSWORD }}
           KEYCHAIN_PW: ${{ secrets.KEYCHAIN_PASSWORD }}
         run: |
           echo "$CERT_BASE64" | base64 --decode > app.p12
@@ -101,37 +105,36 @@ jobs:
           security set-keychain-settings -t 3600 -u build.keychain
           security default-keychain -s build.keychain
           security unlock-keychain -p "$KEYCHAIN_PW" build.keychain
+          security set-key-partition-list -S apple-tool:,apple: -s -k "$KEYCHAIN_PW" build.keychain
 
       - name: Decode & Import Installer Certificate
         env:
           CERT_BASE64: ${{ secrets.MAC_INSTALLER_CERT_BASE64 }}
-          CERT_PASS:   ${{ secrets.MAC_INSTALLER_CERT_PASSWORD }}
+          CERT_PASS: ${{ secrets.MAC_INSTALLER_CERT_PASSWORD }}
+          KEYCHAIN_PW: ${{ secrets.KEYCHAIN_PASSWORD }}
         run: |
           echo "$CERT_BASE64" | base64 --decode > installer.p12
           security import installer.p12 -k build.keychain -P "$CERT_PASS" -T /usr/bin/codesign
+          security set-key-partition-list -S apple-tool:,apple: -s -k "$KEYCHAIN_PW" build.keychain
 
-      - name: Expose Apple Credentials
-        if: matrix.os_key == 'macos'
-        run: |
-          echo "APPLE_ID=${{ secrets.APPLE_ID }}" >> $GITHUB_ENV
-          echo "APPLE_TEAM_ID=${{ secrets.APPLE_TEAM_ID }}" >> $GITHUB_ENV
-          echo "APPLE_APP_SPECIFIC_PASSWORD=${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}" >> $GITHUB_ENV
-          echo "MAC_CODESIGN_IDENTITY=${{ secrets.MAC_CODESIGN_IDENTITY }}" >> $GITHUB_ENV
-
-      - name: Sign Python binary (macOS)
-        if: matrix.os_key == 'macos'
+      - name: Sign Python binary (macOS ARM64)
         env:
           KEYCHAIN_PW: ${{ secrets.KEYCHAIN_PASSWORD }}
         run: |
           security unlock-keychain -p "$KEYCHAIN_PW" build.keychain
           
-          BINARY_PATH="binaries/${{ matrix.os_key }}-${{ matrix.arch }}/diffuser"
+          BINARY_PATH="binaries/${{ env.OS_KEY }}-${{ env.ARCH_KEY }}/diffuser"
           if [ -f "$BINARY_PATH" ]; then
             codesign --force --sign "Developer ID Application" \
               --options runtime \
-              --entitlements build/entitlements.mac.plist \
+              --entitlements ./entitlements.mac.plist \
+              --timestamp \
               "$BINARY_PATH"
-            echo "Signed Python binary: $BINARY_PATH"
+            echo "✅ Signed Python binary: $BINARY_PATH"
+            codesign --verify --verbose "$BINARY_PATH"
+          else
+            echo "❌ Python binary not found at: $BINARY_PATH"
+            exit 1
           fi
 
       - name: Set up Node.js
@@ -142,22 +145,46 @@ jobs:
       - name: Install Node dependencies
         run: npm ci
 
+      - name: Sign ffmpeg binary (macOS ARM64)
+        env:
+          KEYCHAIN_PW: ${{ secrets.KEYCHAIN_PASSWORD }}
+        run: |
+          security unlock-keychain -p "$KEYCHAIN_PW" build.keychain
+          
+          FFMPEG_PATH="node_modules/ffmpeg-static-electron-forge/bin/darwin/arm64/ffmpeg"
+          
+          if [ -f "$FFMPEG_PATH" ]; then
+            codesign --force --sign "Developer ID Application" \
+              --options runtime \
+              --entitlements ./entitlements.mac.plist \
+              --timestamp \
+              "$FFMPEG_PATH"
+            echo "✅ Signed ffmpeg at: $FFMPEG_PATH"
+            codesign --verify --verbose "$FFMPEG_PATH"
+          else
+            echo "❌ ffmpeg not found at: $FFMPEG_PATH"
+            echo "Available files:"
+            find node_modules/ffmpeg-static-electron-forge -name ffmpeg -type f || true
+            exit 1
+          fi
+
       - name: Publish macOS ARM64 build
         env:
-          GITHUB_TOKEN:               ${{ secrets.GITHUB_TOKEN }}
-          APPLE_ID:                   ${{ secrets.APPLE_ID }}
-          APPLE_TEAM_ID:              ${{ secrets.APPLE_TEAM_ID }}
-          MAC_APP_CERT_PASSWORD:      ${{ secrets.MAC_APP_CERT_PASSWORD }}
-          MAC_INSTALLER_CERT_PASSWORD:  ${{ secrets.MAC_INSTALLER_CERT_PASSWORD }}
-          KEYCHAIN_PASSWORD:          ${{ secrets.KEYCHAIN_PASSWORD }}
-        run: npm run publish
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
+          KEYCHAIN_PASSWORD: ${{ secrets.KEYCHAIN_PASSWORD }}
+        run: |
+          security unlock-keychain -p "${{ secrets.KEYCHAIN_PASSWORD }}" build.keychain
+          npm run publish
 
   publish_on_mac_intel:
-    runs-on: macos-latest
+    runs-on: macos-13
     env:
       MAIN_PY_FILE: src/server/diffuser.py
-      OS_KEY:        macos
-      ARCH_KEY:      x64
+      OS_KEY: macos
+      ARCH_KEY: x64
     steps:
       - uses: actions/checkout@v3
 
@@ -175,7 +202,9 @@ jobs:
 
       - name: Install Python deps & PyInstaller
         run: |
+          pip install git+https://github.com/huggingface/diffusers.git
           pip install -r requirements.txt
+          pip install https://github.com/vBaiCai/python-pesq/archive/master.zip
           pip install pyinstaller
 
       - name: Build Python binary (macOS x64)
@@ -184,14 +213,14 @@ jobs:
           pyinstaller \
             --onefile \
             --distpath binaries/${{ env.OS_KEY }}-${{ env.ARCH_KEY }} \
-            --workpath build \
-            --specpath build \
-            $MAIN_PY_FILE
+            --workpath $RUNNER_TEMP/pybuild \
+            --specpath $RUNNER_TEMP \
+            ${{ env.MAIN_PY_FILE }}
 
       - name: Decode & Import App Certificate
         env:
           CERT_BASE64: ${{ secrets.MAC_APP_CERT_BASE64 }}
-          CERT_PASS:   ${{ secrets.MAC_APP_CERT_PASSWORD }}
+          CERT_PASS: ${{ secrets.MAC_APP_CERT_PASSWORD }}
           KEYCHAIN_PW: ${{ secrets.KEYCHAIN_PASSWORD }}
         run: |
           echo "$CERT_BASE64" | base64 --decode > app.p12
@@ -200,19 +229,37 @@ jobs:
           security set-keychain-settings -t 3600 -u build.keychain
           security default-keychain -s build.keychain
           security unlock-keychain -p "$KEYCHAIN_PW" build.keychain
+          security set-key-partition-list -S apple-tool:,apple: -s -k "$KEYCHAIN_PW" build.keychain
 
       - name: Decode & Import Installer Certificate
         env:
           CERT_BASE64: ${{ secrets.MAC_INSTALLER_CERT_BASE64 }}
-          CERT_PASS:   ${{ secrets.MAC_INSTALLER_CERT_PASSWORD }}
+          CERT_PASS: ${{ secrets.MAC_INSTALLER_CERT_PASSWORD }}
+          KEYCHAIN_PW: ${{ secrets.KEYCHAIN_PASSWORD }}
         run: |
           echo "$CERT_BASE64" | base64 --decode > installer.p12
           security import installer.p12 -k build.keychain -P "$CERT_PASS" -T /usr/bin/codesign
+          security set-key-partition-list -S apple-tool:,apple: -s -k "$KEYCHAIN_PW" build.keychain
 
-      - name: Expose Apple Credentials
+      - name: Sign Python binary (macOS x64)
+        env:
+          KEYCHAIN_PW: ${{ secrets.KEYCHAIN_PASSWORD }}
         run: |
-          echo "APPLE_ID=${{ secrets.APPLE_ID }}"       >> $GITHUB_ENV
-          echo "APPLE_TEAM_ID=${{ secrets.APPLE_TEAM_ID }}" >> $GITHUB_ENV
+          security unlock-keychain -p "$KEYCHAIN_PW" build.keychain
+          
+          BINARY_PATH="binaries/${{ env.OS_KEY }}-${{ env.ARCH_KEY }}/diffuser"
+          if [ -f "$BINARY_PATH" ]; then
+            codesign --force --sign "Developer ID Application" \
+              --options runtime \
+              --entitlements ./entitlements.mac.plist \
+              --timestamp \
+              "$BINARY_PATH"
+            echo "✅ Signed Python binary: $BINARY_PATH"
+            codesign --verify --verbose "$BINARY_PATH"
+          else
+            echo "❌ Python binary not found at: $BINARY_PATH"
+            exit 1
+          fi
 
       - name: Set up Node.js
         uses: actions/setup-node@v3
@@ -222,22 +269,46 @@ jobs:
       - name: Install Node dependencies
         run: npm ci
 
+      - name: Sign ffmpeg binary (macOS x64)
+        env:
+          KEYCHAIN_PW: ${{ secrets.KEYCHAIN_PASSWORD }}
+        run: |
+          security unlock-keychain -p "$KEYCHAIN_PW" build.keychain
+          
+          FFMPEG_PATH="node_modules/ffmpeg-static-electron-forge/bin/darwin/x64/ffmpeg"
+          
+          if [ -f "$FFMPEG_PATH" ]; then
+            codesign --force --sign "Developer ID Application" \
+              --options runtime \
+              --entitlements ./entitlements.mac.plist \
+              --timestamp \
+              "$FFMPEG_PATH"
+            echo "✅ Signed ffmpeg at: $FFMPEG_PATH"
+            codesign --verify --verbose "$FFMPEG_PATH"
+          else
+            echo "❌ ffmpeg not found at: $FFMPEG_PATH"
+            echo "Available files:"
+            find node_modules/ffmpeg-static-electron-forge -name ffmpeg -type f || true
+            exit 1
+          fi
+
       - name: Publish macOS x64 build
         env:
-          GITHUB_TOKEN:               ${{ secrets.GITHUB_TOKEN }}
-          APPLE_ID:                   ${{ secrets.APPLE_ID }}
-          APPLE_TEAM_ID:              ${{ secrets.APPLE_TEAM_ID }}
-          MAC_APP_CERT_PASSWORD:      ${{ secrets.MAC_APP_CERT_PASSWORD }}
-          MAC_INSTALLER_CERT_PASSWORD:  ${{ secrets.MAC_INSTALLER_CERT_PASSWORD }}
-          KEYCHAIN_PASSWORD:          ${{ secrets.KEYCHAIN_PASSWORD }}
-        run: npm run publish -- --arch=x64
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
+          KEYCHAIN_PASSWORD: ${{ secrets.KEYCHAIN_PASSWORD }}
+        run: |
+          security unlock-keychain -p "${{ secrets.KEYCHAIN_PASSWORD }}" build.keychain
+          npm run publish -- --arch=x64
 
   publish_on_win:
     runs-on: windows-latest
     env:
       MAIN_PY_FILE: src/server/diffuser.py
-      OS_KEY:        windows
-      ARCH_KEY:      x64
+      OS_KEY: windows
+      ARCH_KEY: x64
     steps:
       - uses: actions/checkout@v3
 
@@ -254,18 +325,20 @@ jobs:
 
       - name: Install Python deps & PyInstaller
         run: |
+          pip install git+https://github.com/huggingface/diffusers.git
           pip install -r requirements.txt
+          pip install https://github.com/vBaiCai/python-pesq/archive/master.zip
           pip install pyinstaller
 
       - name: Build Python binary (Windows x64)
         run: |
-          mkdir binaries\${{ env.OS_KEY }}-${{ env.ARCH_KEY }}
+          New-Item -ItemType Directory -Force -Path "binaries\${{ env.OS_KEY }}-${{ env.ARCH_KEY }}" | Out-Null
           pyinstaller `
             --onefile `
-            --distpath binaries\${{ env.OS_KEY }}-${{ env.ARCH_KEY }} `
-            --workpath build `
-            --specpath build `
-            $MAIN_PY_FILE
+            --distpath "binaries\${{ env.OS_KEY }}-${{ env.ARCH_KEY }}" `
+            --workpath "$env:RUNNER_TEMP\pybuild" `
+            --specpath "$env:RUNNER_TEMP" `
+            $env:MAIN_PY_FILE
 
       - name: Set up Node.js
         uses: actions/setup-node@v3

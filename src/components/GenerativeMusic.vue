@@ -12,9 +12,9 @@
                     class="material-symbols-outlined mr-2"
                     style="font-size: 92px !important"
                   >
-                    headphones
+                    graphic_eq
                   </span>
-                  Generative Music
+                  Generative Audio
                 </h1>
               </div>
             </div>
@@ -32,7 +32,7 @@
                   disabled
                   class="button is-loading is-info is-small mr-2 p-4"
                 ></button>
-                Generating Media
+                Generating Audio
                 <span class="ml-1" v-if="generation.stage">
                   ({{ generation.stage }})
                 </span>
@@ -55,105 +55,116 @@
           <div class="models__activity--payouts">
             <div class="columns">
               <div class="column is-12">
-                <!-- MODE/QUALITY TOGGLES (kept for consistency; 'quality' may map to duration/bitrate on server) -->
+                <!-- MODE TOGGLES -->
                 <div class="control mb-5 has-text-left">
                   <input
                     v-model="mode"
-                    :value="'turbo'"
-                    id="mode_speed"
+                    :value="'tts'"
+                    id="mode_tts"
                     type="radio"
                     name="mode"
                     checked
                   />
-                  <label for="mode_speed" class="radio mr-2">
+                  <label for="mode_tts" class="radio mr-2">
                     <span
                       class="material-symbols-outlined"
                       style="font-size: 32px !important"
                     >
-                      acute
+                      record_voice_over
                     </span>
-                    Turbo
+                    Text to Speech
                   </label>
 
                   <input
                     v-model="mode"
-                    :value="'quality'"
-                    id="mode_quality"
+                    :value="'clone'"
+                    id="mode_clone"
                     type="radio"
                     name="mode"
                   />
-                  <label for="mode_quality" class="radio mr-1">
+                  <label for="mode_clone" class="radio mr-2">
                     <span
                       class="material-symbols-outlined"
                       style="font-size: 32px !important"
                     >
-                      high_quality
+                      voice_over_off
                     </span>
-                    Quality
+                    Voice Clone
                   </label>
 
-                  <span class="control">
-                    <input
-                      v-model="quality"
-                      :value="'sd'"
-                      id="mode_quality_sd"
-                      type="radio"
-                      name="mode_quality"
-                      checked
-                    />
-                    <label for="mode_quality_sd" class="radio quality">
-                      <span
-                        class="material-symbols-outlined"
-                        style="font-size: 32px !important"
-                      >
-                        sd
-                      </span>
-                    </label>
-                    <input
-                      v-model="quality"
-                      :value="'hd'"
-                      id="mode_quality_hd"
-                      type="radio"
-                      name="mode_quality"
-                    />
-                    <label for="mode_quality_hd" class="radio quality">
-                      <span
-                        class="material-symbols-outlined"
-                        style="font-size: 32px !important"
-                      >
-                        hd
-                      </span>
-                    </label>
-                    <input
-                      v-model="quality"
-                      :value="'fhd'"
-                      id="mode_quality_fhd"
-                      type="radio"
-                      name="mode_quality"
-                    />
-                    <label for="mode_quality_fhd" class="radio quality">
-                      <span
-                        class="material-symbols-outlined"
-                        style="font-size: 32px !important"
-                      >
-                        full_hd
-                      </span>
-                    </label>
+                  <!-- LANGUAGE SELECTOR -->
+                  <span class="control ml-4">
+                    <div class="select is-dark">
+                      <select v-model="language">
+                        <option
+                          v-for="(name, code) in languages"
+                          :key="code"
+                          :value="code"
+                        >
+                          {{ languageFlags[code] }} {{ name }}
+                        </option>
+                      </select>
+                    </div>
                   </span>
+
+                  <!-- EXPRESSION SLIDER -->
+                  <span class="control ml-4">
+                    <label class="label is-small has-text-white">
+                      Expression
+                    </label>
+                    <input
+                      type="range"
+                      min="0"
+                      max="100"
+                      v-model.number="exaggerationPct"
+                      class="slider"
+                      style="width: 100px; vertical-align: middle"
+                    />
+                    <span class="ml-2 is-size-7">{{ exaggerationPct }}%</span>
+                  </span>
+                </div>
+
+                <!-- VOICE CLONE FILE INPUT -->
+                <div v-if="mode === 'clone'" class="mb-5">
+                  <div class="file has-name is-fullwidth">
+                    <label class="file-label">
+                      <input
+                        class="file-input"
+                        type="file"
+                        accept="audio/*"
+                        @change="handleSynthesisFile"
+                      />
+                      <span class="file-cta">
+                        <span class="file-icon">
+                          <span class="material-symbols-outlined">
+                            upload_file
+                          </span>
+                        </span>
+                        <span class="file-label">Reference Voice (5-10s)</span>
+                      </span>
+                      <span class="file-name">
+                        {{ synthesisFileName || "No file selected" }}
+                      </span>
+                    </label>
+                  </div>
+                  <p class="help has-text-grey-light">
+                    Upload a 5-10 second audio clip to clone the voice. Works
+                    across all 23 languages.
+                  </p>
                 </div>
 
                 <!-- READINESS CTA -->
                 <div
-                  v-if="showUpdateCTA"
-                  class="notification is-danger mb-6 mt-6"
+                  v-if="showUpdateCTA && readiness.currentMode == mode"
+                  class="notification is-danger mb-6 mt-6 p-6"
                   style="margin-bottom: 1rem"
                 >
                   <p class="mb-2">
-                    <strong class="fira-sans-condensed-black-italic">
-                      Model Download Required
+                    <strong class="fira-sans-condensed-black-italic is-size-2">
+                      Download Required
                     </strong>
                     <span v-if="readiness.missingRepos.length">
-                      <ul style="margin-top: 0.5rem">
+                      <ul style="margin-top: 0.5rem; text-transform: lowercase">
                         <li v-for="d in readiness.repoDetails" :key="d.repo">
                           <span
                             class="material-symbols-outlined is-size-3 mr-1"
@@ -164,12 +175,20 @@
                         </li>
                       </ul>
                     </span>
+
                     <span v-if="readiness.missingGguf">
-                      <span class="material-symbols-outlined is-size-3 mr-1">
-                        deployed_code
-                      </span>
-                      {{ readiness.ggufName || "Unknown (server-configured)" }}
+                      <ul style="margin-top: 0.5rem; text-transform: lowercase">
+                        <li v-for="gguf in readiness.ggufNames" :key="gguf">
+                          <span
+                            class="material-symbols-outlined is-size-3 mr-1"
+                          >
+                            deployed_code
+                          </span>
+                          {{ gguf }}
+                        </li>
+                      </ul>
                     </span>
+
                     <span v-if="readiness.notes.length">
                       <br />
                       Notes:
@@ -183,24 +202,15 @@
                   <hr />
                   <div class="buttons">
                     <button
-                      class="button is-warning mr-5"
+                      class="button is-warning mr-5 is-large"
                       @click="prefetchForMode"
                       :disabled="downloads.active || readiness.authRequired"
+                      title="(Re)download required files"
                     >
                       <span class="material-symbols-outlined mr-1">
                         download
                       </span>
                       Download Now
-                    </button>
-                    <button
-                      class="button is-info"
-                      @click="probeCurrentMode"
-                      :disabled="downloads.active"
-                    >
-                      <span class="material-symbols-outlined mr-1">
-                        refresh
-                      </span>
-                      Refresh
                     </button>
                   </div>
                 </div>
@@ -211,19 +221,19 @@
                   class="notification is-danger"
                   style="margin-bottom: 1rem"
                 >
-                  <strong>Generation failed:</strong>
-                  {{ generation.error }}
+                  <strong>I wasn't able to handle this prompt.</strong>
+                  Please retry with different settings.
                 </div>
 
                 <!-- DOWNLOAD PROGRESS -->
                 <div
-                  v-if="downloads.active"
-                  class="notification is-info"
+                  v-if="downloads && downloads.active"
+                  class="notification is-info p-6"
                   style="margin-bottom: 1.25rem"
                 >
                   <p class="mb-2">
                     <span class="fira-sans-condensed-black-italic is-size-4">
-                      Model Download in Progress
+                      Downloading
                       <button
                         disabled
                         class="button is-loading is-info is-small mr-2 p-4"
@@ -232,29 +242,7 @@
                     <span
                       class="fira-sans-condensed-black-italic is-pulled-right is-size-1"
                     >
-                      {{ Math.round(downloads.progress || 0) }}%
-                      <button
-                        class="button is-small is-warning mr-4 retry p-1"
-                        @click="retryCurrentPipeline"
-                        :disabled="
-                          !downloads.pipelineId ||
-                          downloads.status === 'completed'
-                        "
-                      >
-                        <span class="material-symbols-outlined">
-                          restart_alt
-                        </span>
-                      </button>
-                      <button
-                        class="button is-small is-danger mr-4 cancel p-1"
-                        @click="cancelCurrentPipeline"
-                        :disabled="
-                          !downloads.pipelineId ||
-                          downloads.status === 'completed'
-                        "
-                      >
-                        <span class="material-symbols-outlined">cancel</span>
-                      </button>
+                      {{ Math.round(downloads.total_progress || 0) }}%
                     </span>
                   </p>
                   <progress
@@ -273,6 +261,7 @@
                         v-for="t in downloadTaskList"
                         :key="t.task_id"
                         class="is-size-7 columns"
+                        style="text-transform: lowercase"
                       >
                         <div class="column has-text-left">
                           <span class="material-symbols-outlined is-size-6">
@@ -298,10 +287,10 @@
                   <input
                     class="input is-large is-fullwidth"
                     type="text"
-                    placeholder="Describe your music and press enter to generate..."
+                    :placeholder="promptPlaceholder"
                     v-model="form.prompt"
-                    @keyup.enter="sendMessage(form.prompt)"
-                    :disabled="isLoading"
+                    @keyup.enter="canGenerate && sendMessage(form.prompt)"
+                    :disabled="isLoading || !canGenerate"
                   />
                   <button
                     class="button chat is-loading is-outlined is-info is-large is-fullwidth"
@@ -316,29 +305,67 @@
                     :key="inference.id || index"
                   >
                     <div class="question">
-                      <audio
-                        v-if="
-                          inference?.answer?.data?.audio_path ||
-                          inference?.answer?.data?.music_path
+                      <div
+                        class="logo watermark"
+                        style="
+                          position: absolute;
+                          width: 64px;
+                          bottom: 5em;
+                          right: 2em;
                         "
-                        :src="
-                          fileUrl(
-                            inference.answer.data.audio_path ||
-                              inference.answer.data.music_path
-                          )
-                        "
-                        controls
-                        style="width: 100%"
-                      ></audio>
-                      <hr />
-                      <button
-                        class="button is-medium is-success copy is-pulled-right ml-5 mr-0 p-0 pl-1 pr-1"
-                        @click="downloadAudio(index)"
-                        title="Save audio"
                       >
-                        <span class="material-symbols-outlined is-size-2">
+                        <img src="src/assets/bonzai_logo-full.png" />
+                      </div>
+
+                      <!-- Audio Player -->
+                      <div class="audio-container">
+                        <audio
+                          v-if="inference?.answer?.data?.audio_path"
+                          :src="fileUrl(inference.answer.data.audio_path)"
+                          controls
+                          class="audio-player"
+                        ></audio>
+                        <div class="audio-meta">
+                          <span class="tag is-dark">
+                            {{
+                              languageFlags[inference.language] ||
+                              inference.language
+                            }}
+                            {{ languages[inference.language] || "" }}
+                          </span>
+                          <span
+                            v-if="inference.hasClone"
+                            class="tag is-warning ml-2"
+                          >
+                            <span class="material-symbols-outlined is-size-6">
+                              voice_over_off
+                            </span>
+                            Cloned
+                          </span>
+                        </div>
+                      </div>
+
+                      <p class="prompt-text mt-3">
+                        <span class="material-symbols-outlined mr-1">
+                          {{
+                            inference.hasClone
+                              ? "voice_over_off"
+                              : "record_voice_over"
+                          }}
+                        </span>
+                        {{ inference.question }}
+                      </p>
+
+                      <hr />
+
+                      <button
+                        class="button is-medium is-success copy is-pulled-right ml-5 mr-0 p-0 pl-1 pr-4"
+                        @click="downloadAudio(index)"
+                      >
+                        <span class="material-symbols-outlined is-size-2 mr-1">
                           save
                         </span>
+                        Download
                       </button>
                       <button
                         class="button is-medium is-danger is-pulled-right ml-2 p-0 pl-1 pr-1"
@@ -351,7 +378,10 @@
                       </button>
                       <button
                         class="button is-medium is-success copy is-pulled-left p-0 pl-1 pr-1"
-                        @click="copy(inference.question)"
+                        @click="
+                          copy(inference.question);
+                          hasCopy[index] = true;
+                        "
                       >
                         <span
                           class="material-symbols-outlined is-size-2"
@@ -381,19 +411,6 @@
               </div>
             </div>
           </div>
-
-          <div class="models__activity--payouts mt-5">
-            <div class="columns">
-              <h1 class="column is-12 has-text-centered">
-                <span
-                  class="material-symbols-outlined p-0 m-5"
-                  style="font-size: 92px !important"
-                >
-                  headphones
-                </span>
-              </h1>
-            </div>
-          </div>
         </div>
       </div>
     </div>
@@ -414,20 +431,86 @@ import useClipboard from "vue-clipboard3";
 import axios from "axios";
 import { io } from "socket.io-client";
 
-const API_BASE = "http://127.0.0.1:65000";
+const API_BASE =
+  (typeof process !== "undefined" && process.env?.VITE_API_BASE) ||
+  (window?.electronAPI?.env && window.electronAPI.env.API_BASE) ||
+  "http://127.0.0.1:65000";
+
 const WS_DL = `${API_BASE}/downloads`;
 const WS_GEN = `${API_BASE}/generation`;
 
 export default {
-  name: "GenerativeMusic",
+  name: "GenerativeAudio",
   setup() {
     // ------------ basic state -------------
-    const mode = ref("turbo");
-    const quality = ref("sd");
+    const mode = ref("tts"); // 'tts' or 'clone'
+    const language = ref("en");
+    const exaggerationPct = ref(50); // 0-100 -> maps to 0.0-1.0
     const isLoading = ref(false);
     const form = reactive({ prompt: "" });
     const inferences = reactive([]);
     const hasCopy = reactive([]);
+
+    // Supported languages (23 languages)
+    const languages = {
+      ar: "Arabic",
+      da: "Danish",
+      de: "German",
+      el: "Greek",
+      en: "English",
+      es: "Spanish",
+      fi: "Finnish",
+      fr: "French",
+      he: "Hebrew",
+      hi: "Hindi",
+      it: "Italian",
+      ja: "Japanese",
+      ko: "Korean",
+      ms: "Malay",
+      nl: "Dutch",
+      no: "Norwegian",
+      pl: "Polish",
+      pt: "Portuguese",
+      ru: "Russian",
+      sv: "Swedish",
+      sw: "Swahili",
+      tr: "Turkish",
+      zh: "Chinese",
+    };
+
+    const languageFlags = {
+      ar: "🇸🇦",
+      da: "🇩🇰",
+      de: "🇩🇪",
+      el: "🇬🇷",
+      en: "🇺🇸",
+      es: "🇪🇸",
+      fi: "🇫🇮",
+      fr: "🇫🇷",
+      he: "🇮🇱",
+      hi: "🇮🇳",
+      it: "🇮🇹",
+      ja: "🇯🇵",
+      ko: "🇰🇷",
+      ms: "🇲🇾",
+      nl: "🇳🇱",
+      no: "🇳🇴",
+      pl: "🇵🇱",
+      pt: "🇧🇷",
+      ru: "🇷🇺",
+      sv: "🇸🇪",
+      sw: "🇹🇿",
+      tr: "🇹🇷",
+      zh: "🇨🇳",
+    };
+
+    // Voice clone reference file
+    const synthesisFile = ref(null);
+    const synthesisFileName = ref("");
+    const synthesisBase64 = ref("");
+
+    // controller for abortable /plan calls
+    const planReq = reactive({ controller: null, seq: 0 });
 
     // ------------ readiness ---------------
     const readiness = reactive({
@@ -435,10 +518,11 @@ export default {
       missingRepos: [],
       repoDetails: [],
       missingGguf: false,
-      ggufName: null,
+      ggufNames: [],
       notes: [],
       authRequired: false,
       authRepos: [],
+      currentMode: null,
     });
 
     const showUpdateCTA = computed(
@@ -448,6 +532,19 @@ export default {
         !readiness.ok ||
         readiness.missingRepos.length > 0 ||
         readiness.missingGguf
+    );
+
+    const canGenerate = computed(() => {
+      if (!readiness.ok || readiness.authRequired || generation.active)
+        return false;
+      if (mode.value === "clone" && !synthesisBase64.value) return false;
+      return true;
+    });
+
+    const promptPlaceholder = computed(() =>
+      mode.value === "clone"
+        ? `Enter text in ${languages[language.value]} to speak in the cloned voice...`
+        : `Enter text in ${languages[language.value]} to convert to speech...`
     );
 
     // ------------ generation --------------
@@ -461,19 +558,21 @@ export default {
     });
 
     // ------------ pipeline/endpoint maps --
-    // If your server uses a different path or pipeline key, tweak these two lines:
-    const endpointForMode = () => "/audio/music";
-    const pipelineForMode = () => "musicgen";
+    const endpointForMode = () => `/audio`;
+    const pipelineForMode = () => "chatterbox";
+    const currentPipeline = computed(() => pipelineForMode());
 
     // ------------ downloads state/socket --
     const downloads = reactive({
       active: false,
       pipelineId: null,
       progress: 0,
+      total_progress: 0,
       status: "pending",
       pipeline: { tasks: {} },
       wsUrl: null,
     });
+
     const downloadsSocket = ref(null);
     const lastDlEventAt = ref(0);
     let httpPollTimer = null;
@@ -489,6 +588,12 @@ export default {
       path: "/socket.io",
     };
 
+    const downloadMatchesMode = computed(() => {
+      const name = downloads?.pipeline?.pipeline_name || "";
+      return name.endsWith(`:${currentPipeline.value}`);
+    });
+
+    // ---- helpers to merge and compute byte-weighted progress
     const mergeTask = (dst, src) => {
       if (!dst) return { ...src };
       const out = { ...dst, ...src };
@@ -499,23 +604,39 @@ export default {
         typeof src.downloaded_size === "number"
       )
         out.downloaded_size = Math.max(
-          dst.downloaded_size,
-          src.downloaded_size
+          dst.downloaded_size || 0,
+          src.downloaded_size || 0
         );
       if (
         typeof dst.total_size === "number" &&
         typeof src.total_size === "number"
       )
-        out.total_size = Math.max(dst.total_size, src.total_size);
+        out.total_size = Math.max(dst.total_size || 0, src.total_size || 0);
       return out;
+    };
+
+    const computeTotalFromTasks = (tasksObj) => {
+      const tasks = Object.values(tasksObj || {});
+      if (!tasks.length) return 0;
+      let totalBytes = 0,
+        doneBytes = 0;
+      for (const t of tasks) {
+        const tot = Number(t.total_size || 0);
+        const done = Number(t.downloaded_size || 0);
+        if (tot > 0) {
+          totalBytes += tot;
+          doneBytes += Math.min(done, tot);
+        }
+      }
+      if (totalBytes > 0) return (doneBytes / totalBytes) * 100;
+      const sumPct = tasks.reduce((s, t) => s + Number(t.progress || 0), 0);
+      return sumPct / tasks.length;
     };
 
     const applyPipelineUpdate = (p) => {
       if (!p) return;
       downloads.pipelineId = p.pipeline_id || downloads.pipelineId;
       downloads.status = p.status || downloads.status || "downloading";
-      const nextPct = Number(p.total_progress || 0);
-      downloads.progress = Math.max(Number(downloads.progress || 0), nextPct);
 
       const existing = downloads.pipeline?.tasks || {};
       const incoming = p.tasks || {};
@@ -527,6 +648,20 @@ export default {
         ...p,
         tasks: merged,
       };
+
+      const serverPct = Number(p.total_progress ?? 0);
+      const tasksPct = computeTotalFromTasks(merged);
+      let next =
+        Number.isFinite(serverPct) && serverPct > 0 ? serverPct : tasksPct;
+
+      const anyActive = Object.values(merged).some((t) =>
+        ["downloading", "pending"].includes(t.status)
+      );
+      if (anyActive) next = Math.min(next, 99.9);
+
+      downloads.total_progress = next;
+      downloads.progress = next;
+
       downloads.active = !["completed", "failed", "cancelled"].includes(
         downloads.status
       );
@@ -540,17 +675,20 @@ export default {
       }
       downloads.wsUrl = base;
       downloadsSocket.value = io(base, socketOpts);
+
       downloadsSocket.value.on("connect", () => {
         if (downloads.pipelineId)
           downloadsSocket.value.emit("subscribe", {
             pipeline_id: downloads.pipelineId,
           });
       });
+
       downloadsSocket.value.on("download_progress", ({ pipeline }) => {
         lastDlEventAt.value = Date.now();
         if (!pipeline) return;
         applyPipelineUpdate(pipeline);
       });
+
       downloadsSocket.value.on("connect_error", (e) =>
         console.warn("[downloads] connect_error", e?.message || e)
       );
@@ -622,15 +760,31 @@ export default {
     const cancelCurrentPipeline = async () => {
       if (!downloads.pipelineId) return;
       try {
-        await axios.post(
-          `${API_BASE}/downloads/cancel/${downloads.pipelineId}`
+        const { status } = await axios.post(
+          `${API_BASE}/downloads/cancel/${downloads.pipelineId}`,
+          {},
+          { validateStatus: () => true }
         );
+        if (status === 200) {
+          downloads.status = "cancelled";
+          downloads.active = false;
+        }
       } catch {}
     };
+
     const retryCurrentPipeline = async () => {
       if (!downloads.pipelineId) return;
       try {
-        await axios.post(`${API_BASE}/downloads/retry/${downloads.pipelineId}`);
+        const { data, status } = await axios.post(
+          `${API_BASE}/downloads/retry/${downloads.pipelineId}`,
+          {},
+          { validateStatus: () => true }
+        );
+        if (status === 202 && data?.pipeline_id)
+          startDownloadTracking(
+            data.pipeline_id,
+            data.websocket_url || downloads.wsUrl || WS_DL
+          );
       } catch {}
     };
 
@@ -650,11 +804,11 @@ export default {
         root: r.root || null,
       }));
       const ggufs = Array.isArray(data?.gguf_status) ? data.gguf_status : [];
-      const missG = ggufs.find((g) => g && g.configured && !g.exists);
-      readiness.missingGguf = !!missG;
-      readiness.ggufName = missG
-        ? (missG.path || missG.name || "").split("/").pop()
-        : null;
+      const missG = ggufs.filter((g) => g && g.configured && !g.exists);
+      readiness.missingGguf = missG.length > 0;
+      readiness.ggufNames = missG.map((g) =>
+        (g.path || g.name || "").split("/").pop()
+      );
       readiness.authRequired = !!data?.auth_required;
       readiness.authRepos = Array.isArray(data?.auth_repos)
         ? data.auth_repos
@@ -694,7 +848,6 @@ export default {
           : typeof rs?.missing === "number"
             ? rs.missing
             : 1;
-        const exists = typeof rs?.exists === "boolean" ? rs.exists : true;
         const entry = {
           repo: rs.repo,
           missing: Math.max(1, missingCount),
@@ -703,8 +856,6 @@ export default {
         const idx = readiness.repoDetails.findIndex((x) => x.repo === rs.repo);
         if (idx >= 0) readiness.repoDetails[idx] = entry;
         else readiness.repoDetails.push(entry);
-        if (!exists)
-          readiness.notes.push(`${rs.repo}: repository not found locally`);
       }
       const hint = res?.data?.hint;
       if (hint) readiness.notes.push(hint);
@@ -715,34 +866,53 @@ export default {
       readiness.missingRepos = [];
       readiness.repoDetails = [];
       readiness.missingGguf = false;
-      readiness.ggufName = null;
+      readiness.ggufNames = [];
       readiness.notes = [];
       readiness.authRequired = false;
       readiness.authRepos = [];
       generation.blocked = false;
 
-      const pipeline = pipelineForMode();
+      const pipeline = currentPipeline.value;
+      readiness.currentMode = mode.value;
+
+      try {
+        planReq.controller?.abort();
+      } catch {}
+      const controller = new AbortController();
+      planReq.controller = controller;
+      const mySeq = ++planReq.seq;
 
       try {
         const { data, status } = await axios.post(
           `${API_BASE}/pipelines/plan`,
           { pipeline, deep_validate: true },
-          { validateStatus: () => true }
+          { signal: controller.signal, validateStatus: () => true }
         );
+
+        if (mySeq !== planReq.seq) return;
+
         if (status >= 200 && status < 300) applyPlanToReadiness(data);
         else {
           readiness.ok = false;
           readiness.notes = [`Planner returned HTTP ${status}.`];
         }
       } catch (e) {
-        readiness.ok = false;
-        readiness.notes = [e?.message || "Network error while planning"];
+        const aborted =
+          e?.code === "ERR_CANCELED" ||
+          e?.name === "CanceledError" ||
+          e?.message === "canceled";
+        if (!aborted) {
+          readiness.ok = false;
+          readiness.notes = [e?.message || "Network error while planning"];
+        }
+      } finally {
+        if (planReq.controller === controller) planReq.controller = null;
       }
     };
 
     // ------------ CTA action --------------
     const prefetchForMode = async () => {
-      const pipeline = pipelineForMode();
+      const pipeline = currentPipeline.value;
       try {
         const res = await axios.post(
           `${API_BASE}/pipelines/prefetch`,
@@ -768,6 +938,7 @@ export default {
           await probeCurrentMode();
           return;
         }
+
         if (res.status === 403) return apply403ToReadiness(res);
         if (res.status === 409) {
           apply409ToReadiness(res);
@@ -787,6 +958,7 @@ export default {
     const ensureGenerationSocket = (base = WS_GEN) => {
       if (genSocket.value && genSocket.value.connected) return;
       genSocket.value = io(base, socketOpts);
+
       genSocket.value.on("gen_started", ({ generation_id }) => {
         Object.assign(generation, {
           id: generation_id,
@@ -809,7 +981,6 @@ export default {
               generation.pct,
               (Number(step) / Number(total)) * 100
             );
-          if (!generation.active) generation.active = true;
         }
       );
       genSocket.value.on("gen_finished", ({ generation_id }) => {
@@ -826,6 +997,77 @@ export default {
         generation.stage = "error";
         generation.active = false;
       });
+    };
+
+    // ------------ voice clone file handler
+    const handleSynthesisFile = async (event) => {
+      const file = event.target.files?.[0];
+      if (!file) {
+        synthesisFile.value = null;
+        synthesisFileName.value = "";
+        synthesisBase64.value = "";
+        return;
+      }
+
+      synthesisFile.value = file;
+      synthesisFileName.value = file.name;
+
+      const reader = new FileReader();
+      reader.onload = () => {
+        const result = reader.result;
+        const base64 = result.split(",")[1] || result;
+        synthesisBase64.value = base64;
+      };
+      reader.readAsDataURL(file);
+    };
+
+    // ------------ actions -----------------
+    const sendMessage = async (prompt) => {
+      if (!prompt) return;
+      if (!canGenerate.value) return;
+
+      const payload = {
+        prompt,
+        language: language.value,
+        auto_download: true,
+        exaggeration: exaggerationPct.value / 100,
+        cfg_weight: 0.5,
+        temperature: 0.8,
+      };
+
+      if (mode.value === "clone" && synthesisBase64.value)
+        payload.synthesis_base64 = synthesisBase64.value;
+
+      const url = `${API_BASE}${endpointForMode()}`;
+
+      ensureGenerationSocket();
+      Object.assign(generation, {
+        active: true,
+        stage: "starting",
+        pct: 0,
+        error: null,
+      });
+
+      const onSuccess = async (response) => {
+        if (response?.data?.audio_path) {
+          inferences.push({
+            question: prompt,
+            answer: response,
+            id: uuid(),
+            language: language.value,
+            hasClone: mode.value === "clone",
+          });
+          try {
+            await window.electronAPI?.store?.set?.(
+              "audioInferences",
+              JSON.parse(JSON.stringify(inferences))
+            );
+          } catch {}
+          form.prompt = "";
+        }
+      };
+
+      await requestWithDownloadTracking(url, payload, onSuccess);
     };
 
     // ------------ request wrapper ---------
@@ -873,50 +1115,7 @@ export default {
       }
     };
 
-    // ------------ actions -----------------
-    const sendMessage = async (prompt) => {
-      if (!prompt) return;
-
-      // Map UI 'quality' to duration/bitrate presets (adjust to your backend contract)
-      const durationByQuality = { sd: 7, hd: 15, fhd: 30 };
-      const duration = durationByQuality[quality.value] || durationByQuality.sd;
-
-      const payload = {
-        prompt,
-        duration_sec: duration,
-        auto_download: true,
-      };
-
-      const url = `${API_BASE}${endpointForMode()}`;
-
-      ensureGenerationSocket();
-      Object.assign(generation, {
-        active: true,
-        stage: "starting",
-        pct: 0,
-        error: null,
-      });
-
-      const onSuccess = async (response) => {
-        if (
-          response?.data?.audio_path ||
-          response?.data?.music_path ||
-          response?.data?.audio_base64
-        ) {
-          inferences.push({ question: prompt, answer: response, id: uuid() });
-          try {
-            await window.electronAPI?.store?.set?.(
-              "musicInferences",
-              JSON.parse(JSON.stringify(inferences))
-            );
-          } catch {}
-          form.prompt = "";
-        }
-      };
-
-      await requestWithDownloadTracking(url, payload, onSuccess);
-    };
-
+    // ------------ utils -------------------
     const { toClipboard } = useClipboard();
     const copy = async (txt) => {
       try {
@@ -926,27 +1125,15 @@ export default {
 
     const fileUrl = (p) =>
       p && /^https?:\/\//i.test(p) ? p : p ? `file://${p}` : "";
-    const downloadAudio = async (idx) => {
-      const path =
-        inferences[idx]?.answer?.data?.audio_path ||
-        inferences[idx]?.answer?.data?.music_path;
-      const b64 = inferences[idx]?.answer?.data?.audio_base64;
-      const defaultName =
-        (path && path.split("/").pop()) || `bonzai-music-${Date.now()}.wav`;
 
-      // Prefer disk path; fallback to base64 save if your preload exposes saveAudioBase64
-      if (path) {
-        const result = await window.electronAPI?.saveAudio?.(defaultName, path);
-        if (!result?.success)
-          console.error("Save cancelled or failed", result?.error);
-      } else if (b64) {
-        const result = await window.electronAPI?.saveAudioBase64?.(
-          defaultName,
-          b64
-        );
-        if (!result?.success)
-          console.error("Save cancelled or failed", result?.error);
-      }
+    const downloadAudio = async (idx) => {
+      const path = inferences[idx]?.answer?.data?.audio_path;
+      if (!path) return;
+      const defaultName =
+        path.split("/").pop() || `bonzai-audio-${Date.now()}.wav`;
+      const result = await window.electronAPI?.saveAudio?.(defaultName, path);
+      if (!result?.success)
+        console.error("Save cancelled or failed", result?.error);
     };
 
     const removeInference = async (idx) => {
@@ -955,20 +1142,9 @@ export default {
       hasCopy.splice(idx, 1);
       try {
         await window.electronAPI?.store?.set?.(
-          "musicInferences",
+          "audioInferences",
           JSON.parse(JSON.stringify(inferences))
         );
-      } catch {}
-    };
-
-    const loadHistory = async () => {
-      try {
-        const saved = await window.electronAPI?.store?.get?.(
-          "musicInferences",
-          []
-        );
-        if (Array.isArray(saved))
-          saved.forEach((item) => inferences.push(item));
       } catch {}
     };
 
@@ -999,7 +1175,7 @@ export default {
       await resumeActiveDownloadIfAny();
       try {
         const saved = await window.electronAPI?.store?.get?.(
-          "musicInferences",
+          "audioInferences",
           []
         );
         if (Array.isArray(saved))
@@ -1007,6 +1183,7 @@ export default {
       } catch {}
       await probeCurrentMode();
     });
+
     onBeforeUnmount(() => {
       if (downloadsSocket.value?.connected) {
         try {
@@ -1023,26 +1200,28 @@ export default {
         } catch {}
       }
     });
-    watch(
-      mode,
-      () => {
-        probeCurrentMode();
-      },
-      { immediate: true }
-    );
+
+    watch(mode, () => probeCurrentMode(), { immediate: true });
 
     return {
       mode,
-      quality,
+      language,
+      languages,
+      languageFlags,
+      exaggerationPct,
       form,
       isLoading,
       inferences,
       hasCopy,
+      synthesisFileName,
       readiness,
+      canGenerate,
       showUpdateCTA,
+      promptPlaceholder,
       generation,
       downloads,
       downloadTaskList,
+      downloadMatchesMode,
       sendMessage,
       copy,
       downloadAudio,
@@ -1051,6 +1230,7 @@ export default {
       cancelCurrentPipeline,
       retryCurrentPipeline,
       probeCurrentMode,
+      handleSynthesisFile,
       fileUrl,
     };
   },
@@ -1059,6 +1239,15 @@ export default {
 
 <style scoped>
 @import url("https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:opsz,wght,FILL,GRAD@20..48,100..700,0..1,-50..200");
+
+.generation {
+  position: fixed;
+  width: 33%;
+  top: 1em;
+  right: 1em;
+  z-index: 1;
+  opacity: 0.9;
+}
 .material-symbols-outlined {
   font-variation-settings:
     "FILL" 0,
@@ -1075,7 +1264,7 @@ export default {
   z-index: -1;
   height: 100%;
   width: 100%;
-  background: url("src/assets/bonzai_music.jpg") no-repeat;
+  background: url("src/assets/bonzai_audio.jpg") no-repeat;
   background-size: cover;
   filter: blur(6px);
   animation: move 40s ease infinite;
@@ -1105,11 +1294,6 @@ h1 {
   color: #fff;
   text-align: right;
 }
-h2 {
-  font-size: 48px;
-  color: #fff;
-  text-align: right;
-}
 p {
   margin-bottom: 1em;
   font-size: 24px;
@@ -1117,54 +1301,52 @@ p {
   text-align: justify;
   font-family: "Fira Sans", sans-serif;
   font-weight: 100;
-  -webkit-font-smoothing: antialiased;
-  -moz-osx-font-smoothing: grayscale;
-  transform: translate3d(0, 0, 0);
 }
-p.desc {
-  font-size: 32px;
-  border-bottom: 32px solid rgba(255, 255, 255, 0.1) !important;
-  border-radius: 4px;
-}
-p.question {
-  border: 1px solid rgba(255, 255, 255, 0.25);
-  padding: 1em;
+div.question {
+  border: 1px solid rgba(255, 255, 255, 0);
+  padding: 2em 2em 5em;
   margin-top: 2em !important;
   margin-bottom: 1em !important;
   font-weight: 700;
+  background-color: rgba(255, 255, 255, 0.1);
   box-shadow: 8px 8px 0 rgba(97, 55, 142, 0.66);
   border-radius: 4px;
-  backdrop-filter: blur(6px);
+  backdrop-filter: blur(26px);
+  position: relative;
 }
-div.answer {
-  border: 1px solid rgba(255, 255, 255, 0.25);
-  padding: 1em;
-  box-shadow: -8px 8px 0 rgba(57, 213, 130, 0.25);
+.audio-container {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+.audio-player {
+  width: 100%;
+  height: 48px;
   border-radius: 4px;
-  backdrop-filter: blur(6px);
-  background: rgba(255, 255, 255, 0.1);
 }
-div.answer p {
-  margin-bottom: 0 !important;
+.audio-meta {
+  display: flex;
+  align-items: center;
 }
-span.answer__id {
-  display: block;
-  position: absolute;
-  top: 0;
-  right: 0;
-  font-size: 12px;
-  font-weight: 700;
-  color: rgba(255, 255, 255, 0.25);
+.prompt-text {
+  font-size: 16px !important;
+  color: rgba(255, 255, 255, 0.7);
+  display: flex;
+  align-items: center;
 }
 form {
   position: relative;
+}
+hr {
+  margin: 12px 0;
+  width: 100%;
+  background-color: rgba(255, 255, 255, 0.015);
 }
 .input {
   color: #fff;
   background: rgba(255, 255, 255, 0.1);
   box-shadow: 8px 8px 0 rgba(97, 55, 142, 0.66);
   transition: 200ms ease-in;
-  transform: translate3d(0, 0, 0);
 }
 ::placeholder {
   color: rgba(255, 255, 255, 0.1) !important;
@@ -1178,9 +1360,6 @@ form {
   bottom: 14px;
   border: none !important;
   box-shadow: none !important;
-}
-.is-loading {
-  text-shadow: none !important;
 }
 input[type="radio"] {
   display: none;
@@ -1197,9 +1376,54 @@ input[type="radio"]:checked + label {
   background: rgba(97, 55, 142, 0.33) !important;
   backdrop-filter: blur(64px) !important;
 }
-label.radio.quality {
-  margin: 0 3px;
-  padding: 3px 6px 0;
+.select.is-dark select {
+  background: rgba(255, 255, 255, 0.1);
+  border-color: rgba(255, 255, 255, 0.3);
+  color: #fff;
+}
+.select.is-dark select:hover {
+  border-color: rgba(255, 255, 255, 0.5);
+}
+.file-label {
+  width: 100%;
+}
+.file-cta,
+.file-name {
+  background: rgba(255, 255, 255, 0.1);
+  border-color: rgba(255, 255, 255, 0.3);
+  color: #fff;
+}
+.file-name {
+  max-width: none;
+  flex: 1;
+}
+.help {
+  margin-top: 0.5rem;
+}
+.slider {
+  -webkit-appearance: none;
+  appearance: none;
+  height: 4px;
+  background: rgba(255, 255, 255, 0.3);
+  border-radius: 2px;
+  cursor: pointer;
+}
+.slider::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 16px;
+  height: 16px;
+  background: #fff;
+  border-radius: 50%;
+  cursor: pointer;
+}
+.tag.is-dark {
+  background: rgba(0, 0, 0, 0.5);
+  color: #fff;
+}
+.tag.is-warning {
+  background: rgba(255, 221, 87, 0.8);
+  color: #000;
 }
 ul,
 ol {
@@ -1212,13 +1436,5 @@ ol.chat {
 }
 ol.chat li {
   position: relative;
-}
-.generation {
-  position: fixed;
-  width: 33%;
-  top: 1em;
-  right: 1em;
-  z-index: 1;
-  opacity: 0.9;
 }
 </style>

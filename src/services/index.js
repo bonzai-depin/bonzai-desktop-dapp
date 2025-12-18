@@ -1,10 +1,12 @@
 /**
- * BonzAI — Core Services
- * This file contains all production-ready services for BonzAI
+ * BonzAI Web3 Services
+ * 
+ * Central export for all Web3 services
  */
 
-export { tokenGating } from './tokenGating.js';
-export { nftMinter } from './nftMinter.js';
-export { peerNetwork } from './peerNetwork.js';
-export { zkPrivacy } from './zkPrivacy.js';
-export { agentMarketplace } from './agentMarketplace.js';
+export { web3Service } from './web3.service.js';
+export { levelService } from './level.service.js';
+export { marketplaceService } from './marketplace.service.js';
+
+// Re-export for convenience
+export { CONFIG } from '../../config/web3.config.js';

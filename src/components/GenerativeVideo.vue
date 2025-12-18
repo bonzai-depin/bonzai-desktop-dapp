@@ -153,7 +153,7 @@
                       Download Required
                     </strong>
                     <span v-if="readiness.missingRepos.length">
-                      <ul style="margin-top: 0.5rem">
+                      <ul style="margin-top: 0.5rem; text-transform: lowercase">
                         <li v-for="d in readiness.repoDetails" :key="d.repo">
                           <span
                             class="material-symbols-outlined is-size-3 mr-1"
@@ -165,7 +165,7 @@
                       </ul>
                     </span>
                     <span v-if="readiness.missingGguf">
-                      <ul>
+                      <ul style="text-transform: lowercase">
                         <li v-for="gguf in readiness.ggufNames">
                           <span
                             class="material-symbols-outlined is-size-3 mr-1"
@@ -1045,14 +1045,14 @@ export default {
 
       // sizes tuned to server examples
       const sizeMaps = {
-        turbo: { sd: [480, 640], hd: [512, 768], fhd: [768, 1280] }, // LTX likes 2:3~ish; HxW [256, 384] [480, 640] [512, 768]
-        quality: { sd: [240, 320], hd: [576, 768], fhd: [1024, 1728] }, // [480, 832]
+        turbo: { sd: [512, 768], hd: [512, 768], fhd: [768, 1280] }, // LTX likes 2:3~ish; HxW [256, 384] [480, 640] [512, 768]
+        quality: { sd: [256, 384], hd: [576, 768], fhd: [1024, 1728] }, // [480, 832]
       };
       const pick = sizeMaps[mode.value] || sizeMaps.turbo;
       const [h, w] = pick[quality.value] || pick.sd;
 
       // sensible defaults matching server
-      let frames = mode.value === "turbo" ? 37 : 30;
+      let frames = mode.value === "turbo" ? 41 : 21;
       let payload;
 
       if (mode.value === "quality") {
@@ -1063,8 +1063,9 @@ export default {
           height: h,
           width: w,
           frames: frames,
-          fps: 10,
-          steps: 10,
+          fps: 10, // 12 * 3s + 1 = 37 frames
+          steps: 30,
+          guidance_scale: 3,
           auto_download: true,
           image_base64:
             uploadedImageBase64.value ||
@@ -1078,10 +1079,15 @@ export default {
           width: w,
           frames: frames, // LTX is fine with 96 by default
           fps: 12,
-          steps: 150 , // 150,
-          guidance_scale: 5,
-          use_condition_pipeline: false,
-          scheduler_type: "karras",
+          steps: 40,
+          guidance_scale: 3.0,
+          max_sequence_length: 512,
+          seed: 42,
+          negative_prompt: `deformed face, ugly face, bad face, mutated face, disfigured face,
+    "deformed limbs, extra limbs, missing limbs, bad hands, extra fingers,
+    "fused fingers, bad anatomy, mutation, blurry, low quality, worst quality,
+    "poorly drawn, amateur, distorted body, wrong proportions`,
+          enable_memory_offloading: true,
           auto_download: true,
           image_base64:
             uploadedImageBase64.value ||
