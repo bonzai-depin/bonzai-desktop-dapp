@@ -44,6 +44,7 @@ from diffusers import (
     StableDiffusionXLPipeline,
     StableDiffusionXLImg2ImgPipeline,
     LTXPipeline,
+    LTXLatentUpsamplePipeline,
     LTXImageToVideoPipeline,
     GGUFQuantizationConfig,
     FluxPipeline,
@@ -784,6 +785,8 @@ def _plan_for(pipeline: str) -> Dict[str, Any]:
         return {"repos_to_fetch": [FLUX_KONTEXT_REPO], "single_files": [_sf(FLUX_KONTEXT_GGUF_NAME, FLUX_KONTEXT_GGUF_URL)]}
     if pipeline == "ltx_video":
         return {"repos_to_fetch": [LTX_REPO, LTX_UPSAMPLER_REPO], "single_files": []}
+    if pipeline == "ltx_upscaler":
+        return {"repos_to_fetch": [LTX_UPSAMPLER_REPO, LTX_REPO], "single_files": []}
     if pipeline == "wan_video":
         return {
             "repos_to_fetch": [
@@ -2631,6 +2634,9 @@ def ltx_image_to_video():
     steps = int(data.get("steps", 40))  # More steps = better quality
     guidance_scale = float(data.get("guidance_scale", 7.0))  # Higher guidance = more prompt adherence
     max_seq_len = int(data.get("max_sequence_length", 512))  # Long prompt support
+    motionfix = bool(data.get("motionfix", True)) 
+    jpeg_q    = int(data.get("jpeg_quality", 80))
+    noise_std = float(data.get("jpeg_gauss_std", 0.25))
     
     # Memory management
     enable_offloading = bool(data.get("enable_memory_offloading", True))
@@ -2712,6 +2718,9 @@ def ltx_image_to_video():
             init_img = Image.open(io.BytesIO(base64.b64decode(image_b64))).convert("RGB")
 
         init_img = center_crop_to_aspect(init_img, W, H).resize((W, H), Image.BICUBIC)
+        
+        if motionfix:
+            init_img = _motionfix_preprocess(init_img, jpeg_q=jpeg_q, noise_std=noise_std)
 
         # Set up generator for reproducibility
         gen_device = device if device.type != "mps" else "cpu"
@@ -2806,6 +2815,8 @@ def wan_image_to_video():
     auto_dl         = bool(data.get("auto_download", False))
     image_b64       = (data.get("image_base64") or "").strip()
     image_url       = (data.get("image_url") or "").strip()
+    
+    _mps_clear_memory()
 
     if not prompt:
         return jsonify({"error": "Missing 'prompt'"}), 400
@@ -2839,8 +2850,14 @@ def wan_image_to_video():
         if device_type == "mps":
             torch.mps.empty_cache()
         
-        compute_dtype = torch.bfloat16 if device_type == "cuda" else torch.float32
-        
+        # compute_dtype = torch.bfloat16 if device_type == "cuda" else torch.float32
+        if device.type == "cuda":
+            compute_dtype = torch.bfloat16
+        elif device.type == "mps":
+            compute_dtype = torch.bfloat16
+        else:
+            compute_dtype = torch.float32
+            
         # Load input image
         genbus.progress(gen_id, "Loading image...", 0, 9)
         

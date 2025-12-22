@@ -1,17 +1,20 @@
 /**
  * BonzAI Level Service
  * 
- * Manages the 5-tier level system:
- * - LVL1: Text Generation (99 BONZAI + LVL1 NFT staked)
- * - LVL2: Audio Generation (499 BONZAI + LVL2 NFT staked)
- * - LVL3: Image Generation (999 BONZAI + LVL3 NFT staked)
- * - LVL4: Video Generation (4999 BONZAI + LVL4 NFT staked)
- * - LVL5: Training (9999 BONZAI + LVL5 NFT staked)
+ * Manages the 6-tier level system with DUAL access paths:
  * 
- * A level is active when:
- * 1. User holds >= required BONZAI tokens (across Ethereum + Arbitrum)
- * 2. User owns the corresponding ERC1155 NFT
- * 3. User has staked that NFT in the staking contract
+ * A level is ACTIVE when EITHER:
+ *   1. User holds >= required BONZAI tokens (across Ethereum + Arbitrum)
+ *   OR
+ *   2. User has paid 0.1 ETH to unlock the level via BonzaiLevelRegistry
+ * 
+ * Levels:
+ *   - LVL1: Text Generation (100 BONZAI or 0.1 ETH)
+ *   - LVL2: Audio Generation (500 BONZAI or 0.1 ETH)
+ *   - LVL3: Image Generation (2,000 BONZAI or 0.1 ETH)
+ *   - LVL4: Video Generation (10,000 BONZAI or 0.1 ETH)
+ *   - LVL5: Game Generation (50,000 BONZAI or 0.1 ETH)
+ *   - LVL6: Training (200,000 BONZAI or 0.1 ETH)
  */
 
 import { ethers } from 'ethers';
@@ -23,20 +26,21 @@ import { web3Service } from './web3.service.js';
 // ABI DEFINITIONS
 // ═══════════════════════════════════════════════════════════════════════════
 
-const ERC1155_ABI = [
-  'function balanceOf(address account, uint256 id) view returns (uint256)',
-  'function balanceOfBatch(address[] accounts, uint256[] ids) view returns (uint256[])',
-  'function setApprovalForAll(address operator, bool approved)',
-  'function isApprovedForAll(address account, address operator) view returns (bool)',
-  'function safeTransferFrom(address from, address to, uint256 id, uint256 amount, bytes data)',
-];
-
-const STAKING_ABI = [
-  'function stakedBalance(address account, uint256 tokenId) view returns (uint256)',
-  'function stake(uint256 tokenId, uint256 amount)',
-  'function unstake(uint256 tokenId, uint256 amount)',
-  'function isStaked(address account, uint256 tokenId) view returns (bool)',
-  'function getStakedTokens(address account) view returns (uint256[])',
+const LEVEL_REGISTRY_ABI = [
+  'function hasUnlockedLevel(address user, uint8 level) view returns (bool)',
+  'function getUserUnlockedLevels(address user) view returns (bool[6])',
+  'function getHighestUnlockedLevel(address user) view returns (uint8)',
+  'function getNextUnlockableLevel(address user) view returns (uint8)',
+  'function canUnlockLevel(address user, uint8 level) view returns (bool canUnlock, string reason)',
+  'function calculateCostToLevel(address user, uint8 targetLevel) view returns (uint256 cost, uint8 levelsToUnlock)',
+  'function levelPrice() view returns (uint256)',
+  'function bulkPrice() view returns (uint256)',
+  'function buybackPercentage() view returns (uint256)',
+  'function buybackEnabled() view returns (bool)',
+  'function getBuybackConfig() view returns (bool enabled, uint256 percentage, uint256 minOut, uint256 totalBought)',
+  'function unlockLevel(uint8 level) payable',
+  'function unlockLevelRange(uint8 fromLevel, uint8 toLevel) payable',
+  'function unlockAllLevels() payable',
 ];
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -46,59 +50,58 @@ const STAKING_ABI = [
 const state = reactive({
   // Level status for each tier
   levels: {
-    LVL1: { holdingMet: false, nftOwned: false, nftStaked: false, active: false },
-    LVL2: { holdingMet: false, nftOwned: false, nftStaked: false, active: false },
-    LVL3: { holdingMet: false, nftOwned: false, nftStaked: false, active: false },
-    LVL4: { holdingMet: false, nftOwned: false, nftStaked: false, active: false },
-    LVL5: { holdingMet: false, nftOwned: false, nftStaked: false, active: false },
-    LVL6: { holdingMet: false, nftOwned: false, nftStaked: false, active: false },
+    LVL1: { holdingMet: false, ethUnlocked: false, active: false },
+    LVL2: { holdingMet: false, ethUnlocked: false, active: false },
+    LVL3: { holdingMet: false, ethUnlocked: false, active: false },
+    LVL4: { holdingMet: false, ethUnlocked: false, active: false },
+    LVL5: { holdingMet: false, ethUnlocked: false, active: false },
+    LVL6: { holdingMet: false, ethUnlocked: false, active: false },
   },
   
-  // NFT balances
-  nftBalances: {
-    1: 0, // LVL1 NFT
-    2: 0, // LVL2 NFT
-    3: 0, // LVL3 NFT
-    4: 0, // LVL4 NFT
-    5: 0, // LVL5 NFT
-    6: 0, // LVL6 NFT
+  // ETH unlock prices (fetched from contract)
+  prices: {
+    perLevel: 0.1,  // ETH
+    bulk: 0.4,      // ETH for all 6
   },
   
-  // Staked amounts
-  stakedAmounts: {
-    1: 0,
-    2: 0,
-    3: 0,
-    4: 0,
-    5: 0,
-    6: 0,
+  // Sequential unlock: next level that can be unlocked via ETH
+  nextUnlockableLevel: 1,
+  
+  // Buyback configuration (fetched from contract)
+  buyback: {
+    enabled: true,
+    percentage: 2000, // basis points (20%)
+    minBonzaiOut: 0,
+    totalBonzaiBought: 0,
   },
   
   // Loading states
   isLoading: false,
+  isUnlocking: false,
   lastCheck: null,
-  
-  // Error handling
   error: null,
 });
 
 // ═══════════════════════════════════════════════════════════════════════════
-// CONTRACT INSTANCES
+// CONTRACT INSTANCE
 // ═══════════════════════════════════════════════════════════════════════════
 
-let nftContract = null;
-let stakingContract = null;
+let registryContract = null;
 
-const initContracts = async () => {
+const getRegistryContract = async (withSigner = false) => {
+  const registryAddress = CONFIG.levelUnlock?.registryAddress;
+  
+  if (!registryAddress || registryAddress === ethers.ZeroAddress) {
+    return null;
+  }
+  
+  if (withSigner) {
+    const signer = await web3Service.getSigner();
+    return new ethers.Contract(registryAddress, LEVEL_REGISTRY_ABI, signer);
+  }
+  
   const provider = web3Service.getProvider('arbitrum');
-  
-  if (CONFIG.nft.address && CONFIG.nft.address !== ethers.ZeroAddress) {
-    nftContract = new ethers.Contract(CONFIG.nft.address, ERC1155_ABI, provider);
-  }
-  
-  if (CONFIG.nft.stakingContract && CONFIG.nft.stakingContract !== ethers.ZeroAddress) {
-    stakingContract = new ethers.Contract(CONFIG.nft.stakingContract, STAKING_ABI, provider);
-  }
+  return new ethers.Contract(registryAddress, LEVEL_REGISTRY_ABI, provider);
 };
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -106,76 +109,53 @@ const initContracts = async () => {
 // ═══════════════════════════════════════════════════════════════════════════
 
 /**
- * Check if user meets holding requirement for a level
+ * Check if user meets HOLDING requirement for a level
  */
 const checkHoldingRequirement = (levelKey) => {
   const levelConfig = CONFIG.levels[levelKey];
+  if (!levelConfig) return false;
+  
   const totalBalance = web3Service.state.balances.total;
   return totalBalance >= levelConfig.holdingRequired;
 };
 
 /**
- * Check if user owns the NFT for a level
+ * Check if user has PAID to unlock a level via ETH
  */
-const checkNftOwnership = async (levelKey, userAddress) => {
-  const levelConfig = CONFIG.levels[levelKey];
-  const tokenId = levelConfig.nftTokenId;
-  
-  // If contracts not deployed yet, return true (for development)
-  if (!nftContract) {
-    console.warn('[Level] NFT contract not deployed, bypassing NFT check');
-    return true;
-  }
-  
+const checkEthUnlock = async (levelId, userAddress) => {
   try {
-    const balance = await nftContract.balanceOf(userAddress, tokenId);
-    state.nftBalances[tokenId] = Number(balance);
-    return Number(balance) > 0;
-  } catch (e) {
-    console.error(`[Level] NFT check failed for ${levelKey}:`, e);
-    return false;
-  }
-};
-
-/**
- * Check if user has staked the NFT for a level
- */
-const checkNftStaked = async (levelKey, userAddress) => {
-  const levelConfig = CONFIG.levels[levelKey];
-  const tokenId = levelConfig.nftTokenId;
-  
-  // If staking contract not deployed yet, return true (for development)
-  if (!stakingContract) {
-    console.warn('[Level] Staking contract not deployed, bypassing staking check');
-    return true;
-  }
-  
-  try {
-    const isStaked = await stakingContract.isStaked(userAddress, tokenId);
-    if (isStaked) {
-      const stakedAmount = await stakingContract.stakedBalance(userAddress, tokenId);
-      state.stakedAmounts[tokenId] = Number(stakedAmount);
+    const contract = await getRegistryContract();
+    
+    // If contract not deployed, ETH unlock not available
+    if (!contract) {
+      return false;
     }
-    return isStaked;
+    
+    const unlocked = await contract.hasUnlockedLevel(userAddress, levelId);
+    return unlocked;
   } catch (e) {
-    console.error(`[Level] Staking check failed for ${levelKey}:`, e);
+    console.warn(`[Level] ETH unlock check failed for LVL${levelId}:`, e.message);
     return false;
   }
 };
 
 /**
  * Check all requirements for a single level
+ * Level is ACTIVE if holdingMet OR ethUnlocked
  */
 const checkLevel = async (levelKey, userAddress) => {
+  const levelConfig = CONFIG.levels[levelKey];
+  if (!levelConfig) return { holdingMet: false, ethUnlocked: false, active: false };
+  
   const holdingMet = checkHoldingRequirement(levelKey);
-  const nftOwned = await checkNftOwnership(levelKey, userAddress);
-  const nftStaked = await checkNftStaked(levelKey, userAddress);
+  const ethUnlocked = await checkEthUnlock(levelConfig.id, userAddress);
   
-  const active = holdingMet && nftOwned && nftStaked;
+  // Active if EITHER condition is met
+  const active = holdingMet || ethUnlocked;
   
-  state.levels[levelKey] = { holdingMet, nftOwned, nftStaked, active };
+  state.levels[levelKey] = { holdingMet, ethUnlocked, active };
   
-  return { holdingMet, nftOwned, nftStaked, active };
+  return { holdingMet, ethUnlocked, active };
 };
 
 /**
@@ -192,7 +172,8 @@ export const checkAllLevels = async () => {
   state.error = null;
   
   try {
-    await initContracts();
+    // Fetch prices from contract if available
+    await fetchPrices();
     
     // Check all levels in parallel
     await Promise.all([
@@ -215,65 +196,236 @@ export const checkAllLevels = async () => {
   }
 };
 
+/**
+ * Fetch current prices and buyback config from contract
+ */
+const fetchPrices = async () => {
+  try {
+    const contract = await getRegistryContract();
+    if (!contract) {
+      // Use config defaults
+      state.prices.perLevel = parseFloat(CONFIG.levelUnlock?.pricePerLevel || '0.1');
+      state.prices.bulk = parseFloat(CONFIG.levelUnlock?.bulkPrice || '0.4');
+      state.buyback.percentage = CONFIG.buyback?.percentage || 2000;
+      state.buyback.enabled = CONFIG.buyback?.enabled ?? true;
+      return;
+    }
+    
+    const userAddress = web3Service.state.walletAddress;
+    
+    // Fetch all config in parallel
+    const [levelPrice, bulkPrice, buybackConfig, nextLevel] = await Promise.all([
+      contract.levelPrice(),
+      contract.bulkPrice(),
+      contract.getBuybackConfig(),
+      userAddress ? contract.getNextUnlockableLevel(userAddress) : Promise.resolve(1),
+    ]);
+    
+    state.prices.perLevel = parseFloat(ethers.formatEther(levelPrice));
+    state.prices.bulk = parseFloat(ethers.formatEther(bulkPrice));
+    
+    // Buyback config: [enabled, percentage, minOut, totalBought]
+    state.buyback.enabled = buybackConfig[0];
+    state.buyback.percentage = Number(buybackConfig[1]);
+    state.buyback.minBonzaiOut = Number(buybackConfig[2]);
+    state.buyback.totalBonzaiBought = Number(ethers.formatEther(buybackConfig[3]));
+    
+    state.nextUnlockableLevel = Number(nextLevel);
+  } catch (e) {
+    console.warn('[Level] Failed to fetch prices:', e.message);
+  }
+};
+
 // ═══════════════════════════════════════════════════════════════════════════
-// NFT STAKING
+// ETH UNLOCK FUNCTIONS
 // ═══════════════════════════════════════════════════════════════════════════
 
 /**
- * Stake NFT for a level
+ * Check if a level can be unlocked (sequential requirement)
+ * @param {number} levelId - Level to check (1-6)
+ * @returns {{ canUnlock: boolean, reason: string | null }}
  */
-export const stakeNft = async (levelKey) => {
-  const levelConfig = CONFIG.levels[levelKey];
-  const tokenId = levelConfig.nftTokenId;
+export const canUnlockLevel = (levelId) => {
+  const levelKey = `LVL${levelId}`;
+  const levelStatus = state.levels[levelKey];
   
-  if (!stakingContract || !nftContract) {
-    throw new Error('Contracts not initialized');
+  if (!levelStatus) {
+    return { canUnlock: false, reason: 'Invalid level' };
   }
   
-  const signer = await web3Service.getSigner();
-  const userAddress = await signer.getAddress();
-  
-  // Check if approved
-  const isApproved = await nftContract.isApprovedForAll(userAddress, CONFIG.nft.stakingContract);
-  if (!isApproved) {
-    const nftWithSigner = nftContract.connect(signer);
-    const approveTx = await nftWithSigner.setApprovalForAll(CONFIG.nft.stakingContract, true);
-    await approveTx.wait();
+  if (levelStatus.ethUnlocked) {
+    return { canUnlock: false, reason: 'Already unlocked' };
   }
   
-  // Stake the NFT
-  const stakingWithSigner = stakingContract.connect(signer);
-  const stakeTx = await stakingWithSigner.stake(tokenId, 1);
-  await stakeTx.wait();
+  // Check sequential requirement
+  if (levelId > 1) {
+    const prevLevelKey = `LVL${levelId - 1}`;
+    const prevLevelStatus = state.levels[prevLevelKey];
+    if (!prevLevelStatus?.ethUnlocked) {
+      return { 
+        canUnlock: false, 
+        reason: `Unlock LVL${levelId - 1} first` 
+      };
+    }
+  }
   
-  // Refresh level status
-  await checkLevel(levelKey, userAddress);
-  
-  return true;
+  return { canUnlock: true, reason: null };
 };
 
 /**
- * Unstake NFT for a level
+ * Get the next level that can be unlocked via ETH
+ * @returns {number} Next unlockable level (1-6), or 0 if all unlocked
  */
-export const unstakeNft = async (levelKey) => {
-  const levelConfig = CONFIG.levels[levelKey];
-  const tokenId = levelConfig.nftTokenId;
-  
-  if (!stakingContract) {
-    throw new Error('Staking contract not initialized');
+export const getNextUnlockableLevel = () => {
+  for (let lvl = 1; lvl <= 6; lvl++) {
+    const levelKey = `LVL${lvl}`;
+    if (!state.levels[levelKey]?.ethUnlocked) {
+      return lvl;
+    }
+  }
+  return 0; // All unlocked
+};
+
+/**
+ * Unlock a single level by paying ETH
+ * @param {number} levelId - Level to unlock (1-6)
+ * @returns {Promise<{success: boolean, txHash?: string, error?: string}>}
+ */
+export const unlockLevelWithEth = async (levelId) => {
+  // Validate sequential requirement
+  const { canUnlock, reason } = canUnlockLevel(levelId);
+  if (!canUnlock) {
+    return { success: false, error: reason };
   }
   
-  const signer = await web3Service.getSigner();
-  const userAddress = await signer.getAddress();
+  state.isUnlocking = true;
   
-  const stakingWithSigner = stakingContract.connect(signer);
-  const unstakeTx = await stakingWithSigner.unstake(tokenId, 1);
-  await unstakeTx.wait();
+  try {
+    const contract = await getRegistryContract(true);
+    if (!contract) {
+      throw new Error('Level registry contract not configured');
+    }
+    
+    const price = await contract.levelPrice();
+    
+    const tx = await contract.unlockLevel(levelId, { value: price });
+    const receipt = await tx.wait();
+    
+    // Refresh level status
+    const userAddress = web3Service.state.walletAddress;
+    await checkLevel(`LVL${levelId}`, userAddress);
+    
+    // Update next unlockable level
+    state.nextUnlockableLevel = getNextUnlockableLevel();
+    
+    return { success: true, txHash: receipt.hash };
+  } catch (e) {
+    const error = e.shortMessage || e.message || String(e);
+    console.error('[Level] Unlock failed:', error);
+    return { success: false, error };
+  } finally {
+    state.isUnlocking = false;
+  }
+};
+
+/**
+ * Unlock a range of sequential levels by paying ETH
+ * @param {number} fromLevel - Starting level (1-6)
+ * @param {number} toLevel - Ending level (1-6, inclusive)
+ */
+export const unlockLevelRangeWithEth = async (fromLevel, toLevel) => {
+  // Validate range
+  if (fromLevel < 1 || toLevel > 6 || fromLevel > toLevel) {
+    return { success: false, error: 'Invalid level range' };
+  }
   
-  // Refresh level status
-  await checkLevel(levelKey, userAddress);
+  // Check sequential requirement for starting level
+  if (fromLevel > 1) {
+    const prevLevelKey = `LVL${fromLevel - 1}`;
+    if (!state.levels[prevLevelKey]?.ethUnlocked) {
+      return { 
+        success: false, 
+        error: `Unlock LVL${fromLevel - 1} first` 
+      };
+    }
+  }
   
-  return true;
+  state.isUnlocking = true;
+  
+  try {
+    const contract = await getRegistryContract(true);
+    if (!contract) {
+      throw new Error('Level registry contract not configured');
+    }
+    
+    const userAddress = web3Service.state.walletAddress;
+    const [cost, count] = await contract.calculateCostToLevel(userAddress, toLevel);
+    
+    if (count === 0) {
+      return { success: false, error: 'Nothing to unlock' };
+    }
+    
+    const tx = await contract.unlockLevelRange(fromLevel, toLevel, { value: cost });
+    const receipt = await tx.wait();
+    
+    // Refresh all levels
+    await checkAllLevels();
+    
+    return { success: true, txHash: receipt.hash, levelsUnlocked: Number(count) };
+  } catch (e) {
+    const error = e.shortMessage || e.message || String(e);
+    console.error('[Level] Range unlock failed:', error);
+    return { success: false, error };
+  } finally {
+    state.isUnlocking = false;
+  }
+};
+
+/**
+ * Unlock multiple levels by paying ETH (convenience wrapper)
+ * @param {number[]} levelIds - Levels to unlock (must be sequential)
+ * @deprecated Use unlockLevelRangeWithEth instead
+ */
+export const unlockLevelsWithEth = async (levelIds) => {
+  if (!levelIds.length) {
+    return { success: false, error: 'No levels specified' };
+  }
+  
+  const sorted = [...levelIds].sort((a, b) => a - b);
+  const fromLevel = sorted[0];
+  const toLevel = sorted[sorted.length - 1];
+  
+  return unlockLevelRangeWithEth(fromLevel, toLevel);
+};
+
+/**
+ * Unlock ALL levels at discounted bulk price
+ */
+export const unlockAllLevelsWithEth = async () => {
+  state.isUnlocking = true;
+  
+  try {
+    const contract = await getRegistryContract(true);
+    if (!contract) {
+      throw new Error('Level registry contract not configured');
+    }
+    
+    const bulkPrice = await contract.bulkPrice();
+    
+    const tx = await contract.unlockAllLevels({ value: bulkPrice });
+    const receipt = await tx.wait();
+    
+    // Refresh all levels
+    await checkAllLevels();
+    
+    return { success: true, txHash: receipt.hash };
+  } catch (e) {
+    const error = e.shortMessage || e.message || String(e);
+    console.error('[Level] Bulk unlock failed:', error);
+    return { success: false, error };
+  } finally {
+    state.isUnlocking = false;
+  }
 };
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -284,7 +436,6 @@ export const unstakeNft = async (levelKey) => {
  * Check if user can access a specific feature
  */
 export const canAccessFeature = (feature) => {
-  // Find which level provides this feature
   for (const [levelKey, levelConfig] of Object.entries(CONFIG.levels)) {
     if (levelConfig.features.includes(feature) && state.levels[levelKey].active) {
       return true;
@@ -307,22 +458,43 @@ export const getLevelBlockReason = (levelKey) => {
   const level = state.levels[levelKey];
   const config = CONFIG.levels[levelKey];
   
-  if (!level) return 'Invalid level';
+  if (!level || !config) return 'Invalid level';
+  if (level.active) return null;
   
-  const reasons = [];
+  const currentBalance = web3Service.state.balances.total;
+  const needed = config.holdingRequired - currentBalance;
   
-  if (!level.holdingMet) {
-    reasons.push(`Need ${config.holdingRequired} BONZAI (you have ${web3Service.state.balances.total.toFixed(0)})`);
-  }
-  if (!level.nftOwned) {
-    reasons.push(`Need to own ${config.name} NFT`);
-  }
-  if (!level.nftStaked) {
-    reasons.push(`Need to stake ${config.name} NFT`);
-  }
-  
-  return reasons.length > 0 ? reasons.join(', ') : null;
+  return `Hold ${config.holdingRequired.toLocaleString()} BONZAI (need ${needed.toLocaleString()} more) or pay ${state.prices.perLevel} ETH to unlock`;
 };
+
+/**
+ * Get unlock options for a level
+ */
+export const getLevelUnlockOptions = (levelKey) => {
+  const config = CONFIG.levels[levelKey];
+  if (!config) return null;
+  
+  const levelId = config.id;
+  const currentBalance = web3Service.state.balances.total;
+  const { canUnlock, reason } = canUnlockLevel(levelId);
+  
+  return {
+    levelId,
+    holdingRequired: config.holdingRequired,
+    currentBalance,
+    holdingNeeded: Math.max(0, config.holdingRequired - currentBalance),
+    ethPrice: state.prices.perLevel,
+    canUnlockViaHolding: currentBalance >= config.holdingRequired,
+    canUnlockViaEth: canUnlock,
+    unlockBlockedReason: reason,
+    isNextUnlockable: levelId === state.nextUnlockableLevel,
+    buybackPercentage: state.buyback.percentage / 100, // Convert to percentage
+  };
+};
+
+// ═══════════════════════════════════════════════════════════════════════════
+// COMPUTED VALUES
+// ═══════════════════════════════════════════════════════════════════════════
 
 /**
  * Get the highest active level
@@ -354,6 +526,15 @@ export const levelProgress = computed(() => {
   return (activeCount / 6) * 100;
 });
 
+/**
+ * Get levels that could be unlocked via ETH (not yet unlocked, not met via holding)
+ */
+export const unlockableLevels = computed(() => {
+  return Object.entries(state.levels)
+    .filter(([_, status]) => !status.active && !status.ethUnlocked)
+    .map(([key, _]) => key);
+});
+
 // ═══════════════════════════════════════════════════════════════════════════
 // LEVEL INFO HELPERS
 // ═══════════════════════════════════════════════════════════════════════════
@@ -373,6 +554,7 @@ export const getAllLevelsWithStatus = computed(() => {
     key,
     ...config,
     status: state.levels[key],
+    unlockOptions: getLevelUnlockOptions(key),
   }));
 });
 
@@ -386,19 +568,27 @@ export const levelService = {
   // Level checking
   checkAllLevels,
   
-  // NFT operations
-  stakeNft,
-  unstakeNft,
+  // Sequential unlock helpers
+  canUnlockLevel,
+  getNextUnlockableLevel,
+  
+  // ETH unlock
+  unlockLevelWithEth,
+  unlockLevelRangeWithEth,
+  unlockLevelsWithEth,
+  unlockAllLevelsWithEth,
   
   // Access verification
   canAccessFeature,
   isLevelActive,
   getLevelBlockReason,
+  getLevelUnlockOptions,
   
   // Computed
   highestActiveLevel,
   activeLevels,
   levelProgress,
+  unlockableLevels,
   
   // Info helpers
   getLevelConfig,

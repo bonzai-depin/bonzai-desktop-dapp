@@ -204,7 +204,7 @@
                       Download Required
                     </strong>
                     <span v-if="readiness.missingRepos.length">
-                      <ul style="margin-top: 0.5rem; text-transform: lowercase;">
+                      <ul style="margin-top: 0.5rem; text-transform: lowercase">
                         <li v-for="d in readiness.repoDetails" :key="d.repo">
                           <span
                             class="material-symbols-outlined is-size-3 mr-1"
@@ -217,7 +217,7 @@
                     </span>
 
                     <span v-if="readiness.missingGguf">
-                      <ul style="margin-top: 0.5rem; text-transform: lowercase;">
+                      <ul style="margin-top: 0.5rem; text-transform: lowercase">
                         <li v-for="gguf in readiness.ggufNames">
                           <span
                             class="material-symbols-outlined is-size-3 mr-1"
@@ -261,9 +261,8 @@
                   class="notification is-danger"
                   style="margin-bottom: 1rem"
                 >
-                  <strong>I wasn't able to handle this prompt.</strong>
-                  <!-- {{ generation.error }} -->
-                    Please retry, with different, lower settings.
+                  <strong>I wasn't able to generate your image.</strong>
+                  Please retry, with different, lower settings or upgrade your hardware.
                 </div>
 
                 <!-- DOWNLOAD PROGRESS -->
@@ -302,7 +301,7 @@
                         v-for="t in downloadTaskList"
                         :key="t.task_id"
                         class="is-size-7 columns"
-                        style="text-transform: lowercase;"
+                        style="text-transform: lowercase"
                       >
                         <div class="column has-text-left">
                           <span class="material-symbols-outlined is-size-6">
@@ -458,7 +457,6 @@ const API_BASE =
 
 const WS_DL = `${API_BASE}/downloads`;
 const WS_GEN = `${API_BASE}/generation`;
-const too = "tooo";
 
 export default {
   name: "GenerativeImage",

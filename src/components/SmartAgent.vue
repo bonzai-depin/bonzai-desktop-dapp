@@ -82,7 +82,7 @@
                 <div
                   v-for="proj in marketProjects"
                   :key="'dsla_' + proj.name"
-                  class="columns is-8 is-multiline control mb-5 has-text-left"
+                  class="columns is-8 is-multiline control mt-5 mb-5 has-text-left"
                 >
                   <div class="bonzai__agent column is-4">
                     <input
@@ -584,7 +584,8 @@
           <!-- RUN TAB -->
           <div v-if="activeTab === 'run'">
             <div
-              class="notification is-info p-6"
+              class="model
+               is-info p-6"
               style="margin-top: 1.25rem"
               v-if="
                 purchasedProjects.length === 0 && deployedAgents.length === 0

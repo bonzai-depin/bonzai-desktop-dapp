@@ -221,8 +221,8 @@
                   class="notification is-danger"
                   style="margin-bottom: 1rem"
                 >
-                  <strong>I wasn't able to handle this prompt.</strong>
-                  Please retry with different settings.
+                  <strong>I wasn't able to generate your audio.</strong>
+                  Please retry, with different, lower settings or upgrade your hardware.
                 </div>
 
                 <!-- DOWNLOAD PROGRESS -->

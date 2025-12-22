@@ -246,10 +246,10 @@
             <div class="level-right">
               <div class="level-item">
                 <button
-                  class="button is-outlined is-info is-large fira-sans-condensed-black-italic ml-5"
+                  class="button is-danger is-large"
                   @click="openModel = false"
                 >
-                  <span class="material-symbols-outlined is-size-1">Close</span>
+                  <span class="material-symbols-outlined is-size-1">close</span>
                 </button>
               </div>
             </div>
@@ -295,10 +295,10 @@
             <div class="level-right">
               <div class="level-item">
                 <button
-                  class="button is-outlined is-info is-large fira-sans-condensed-black-italic ml-5"
+                  class="button is-danger is-large"
                   @click="openChat = false"
                 >
-                  <span class="material-symbols-outlined is-size-1">Close</span>
+                  <span class="material-symbols-outlined is-size-1">close</span>
                 </button>
               </div>
             </div>

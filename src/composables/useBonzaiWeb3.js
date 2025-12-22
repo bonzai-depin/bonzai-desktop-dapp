@@ -1,33 +1,76 @@
 /**
  * BonzAI Web3 Composable
- * 
- * Easy-to-use composable for integrating Web3 level gating into
- * existing generative components (GenerativeText, GenerativeImage, etc.)
- */
-
-import { computed, watch, onMounted } from 'vue';
-import { useWeb3Store } from '../stores/web3.store.js';
-import { CONFIG } from '../../config/web3.config.js';
-
-/**
- * Main Web3 composable for BonzAI components
- * 
- * @param {Object} options
- * @param {string} options.requiredLevel - Level required for this component ('LVL1' - 'LVL5')
- * @param {string} options.feature - Specific feature to check access for
- * @param {boolean} options.autoInitialize - Auto-initialize on mount (default: true)
- * @returns {Object} Web3 state and methods
- * 
- * @example
- * // In GenerativeText.vue
- * const { hasAccess, isConnected, connect, blockReason } = useBonzaiWeb3({
- *   requiredLevel: 'LVL1'
- * });
- * 
- * // In GenerativeImage.vue
- * const { hasAccess, isConnected, connect, blockReason } = useBonzaiWeb3({
+ *
+ * Easy integration for Vue components:
+ *
+ * ```vue
+ * const { hasAccess, isConnected, connect } = useBonzaiWeb3({
  *   requiredLevel: 'LVL3'
  * });
+ * ```
+ *
+ * Level access is granted when EITHER:
+ *   - User holds >= required BONZAI tokens
+ *   - User has paid 0.1 ETH to unlock the level
+ */
+
+import { computed, onMounted } from "vue";
+import { useWeb3Store } from "../stores/web3.store.js";
+import { CONFIG } from "../config/web3.config.js";
+
+/**
+ * Level key constants
+ */
+export const LEVELS = {
+  TEXT: "LVL1",
+  AUDIO: "LVL2",
+  IMAGE: "LVL3",
+  VIDEO: "LVL4",
+  GAME: "LVL5",
+  TRAINING: "LVL6",
+};
+
+/**
+ * Feature constants for granular access checks
+ */
+export const FEATURES = {
+  // LVL1
+  TEXT_GENERATION: "text-generation",
+  CHAT: "chat",
+  CODE_ASSISTANCE: "code-assistance",
+
+  // LVL2
+  AUDIO_GENERATION: "audio-generation",
+  VOICE_SYNTHESIS: "voice-synthesis",
+  MUSIC_CREATION: "music-creation",
+
+  // LVL3
+  IMAGE_GENERATION: "image-generation",
+  FLUX: "flux",
+  SDXL: "sdxl",
+  IMG2IMG: "img2img",
+
+  // LVL4
+  VIDEO_GENERATION: "video-generation",
+  LTX: "ltx",
+  WAN: "wan",
+  HUNYUAN: "hunyuan",
+
+  // LVL5
+  GAME_GENERATION: "game-generation",
+  GAMES_2D: "2d-games",
+  GAMES_3D: "3d-games",
+  P5JS: "p5js",
+  THREEJS: "threejs",
+
+  // LVL6
+  MODEL_TRAINING: "model-training",
+  FINE_TUNING: "fine-tuning",
+  LEROBOT: "lerobot",
+};
+
+/**
+ * Main composable
  */
 export function useBonzaiWeb3(options = {}) {
   const {
@@ -35,144 +78,142 @@ export function useBonzaiWeb3(options = {}) {
     feature = null,
     autoInitialize = true,
   } = options;
-  
-  const web3Store = useWeb3Store();
-  
+
+  const store = useWeb3Store();
+
   // ═══════════════════════════════════════════════════════════════════════════
-  // COMPUTED STATE
+  // CONNECTION STATE
   // ═══════════════════════════════════════════════════════════════════════════
-  
-  // Connection state
-  const isConnected = computed(() => web3Store.isConnected);
-  const isConnecting = computed(() => web3Store.isConnecting);
-  const walletAddress = computed(() => web3Store.walletAddress);
-  const truncatedAddress = computed(() => web3Store.truncatedAddress);
-  const isOnArbitrum = computed(() => web3Store.isOnArbitrum);
-  
-  // Balance state
-  const totalBalance = computed(() => web3Store.totalBalance);
-  const balances = computed(() => web3Store.balances);
-  
-  // Level state
-  const levels = computed(() => web3Store.levels);
-  const activeLevels = computed(() => web3Store.activeLevels);
-  const highestLevel = computed(() => web3Store.highestLevel);
-  
-  // Access check for required level
+
+  const isConnected = computed(() => store.isConnected);
+  const isConnecting = computed(() => store.isConnecting);
+  const walletAddress = computed(() => store.walletAddress);
+  const truncatedAddress = computed(() => store.truncatedAddress);
+  const isOnArbitrum = computed(() => store.isOnArbitrum);
+  const networkName = computed(() => store.networkName);
+
+  // ═══════════════════════════════════════════════════════════════════════════
+  // BALANCE STATE
+  // ═══════════════════════════════════════════════════════════════════════════
+
+  const totalBalance = computed(() => store.totalBalance);
+  const balances = computed(() => store.balances);
+  const isLoadingBalances = computed(() => store.isLoadingBalances);
+
+  // ═══════════════════════════════════════════════════════════════════════════
+  // LEVEL STATE
+  // ═══════════════════════════════════════════════════════════════════════════
+
+  const levels = computed(() => store.levels);
+  const activeLevels = computed(() => store.activeLevels);
+  const highestLevel = computed(() => store.highestLevel);
+  const currentLevel = computed(() => store.currentLevel);
+  const currentLevelLabel = computed(() => store.currentLevelLabel);
+  const levelProgress = computed(() => store.levelProgress);
+  const levelPrices = computed(() => store.levelPrices);
+  const isUnlockingLevel = computed(() => store.isUnlockingLevel);
+
+  // ═══════════════════════════════════════════════════════════════════════════
+  // ACCESS CHECKS
+  // ═══════════════════════════════════════════════════════════════════════════
+
+  /**
+   * Check if user has access to the required level/feature
+   */
   const hasAccess = computed(() => {
     if (!isConnected.value) return false;
-    
+
     if (requiredLevel) {
-      return web3Store.isLevelActive(requiredLevel);
+      return store.isLevelActive(requiredLevel);
     }
-    
+
     if (feature) {
-      return web3Store.canAccess(feature);
+      return store.canAccess(feature);
     }
-    
-    return true; // No requirements specified
+
+    return true;
   });
-  
-  // Get reason why access is blocked
+
+  /**
+   * Get the reason why access is blocked
+   */
   const blockReason = computed(() => {
     if (!isConnected.value) {
-      return 'Connect your wallet to access this feature';
+      return "Connect your wallet to access this feature";
     }
-    
-    if (requiredLevel && !web3Store.isLevelActive(requiredLevel)) {
-      return web3Store.getLevelBlockReason(requiredLevel);
+
+    if (requiredLevel && !store.isLevelActive(requiredLevel)) {
+      return store.getLevelBlockReason(requiredLevel);
     }
-    
+
     return null;
   });
-  
-  // Level config for the required level
+
+  /**
+   * Get config for the required level
+   */
   const levelConfig = computed(() => {
     if (!requiredLevel) return null;
     return CONFIG.levels[requiredLevel];
   });
-  
-  // Amount needed to meet holding requirement
+
+  /**
+   * Amount of BONZAI needed to meet holding requirement
+   */
   const amountNeeded = computed(() => {
     if (!levelConfig.value) return 0;
     const needed = levelConfig.value.holdingRequired - totalBalance.value;
     return Math.max(0, needed);
   });
-  
+
+  /**
+   * Get unlock options for the required level
+   */
+  const unlockOptions = computed(() => {
+    if (!requiredLevel) return null;
+    return store.getLevelUnlockOptions(requiredLevel);
+  });
+
   // ═══════════════════════════════════════════════════════════════════════════
   // METHODS
   // ═══════════════════════════════════════════════════════════════════════════
-  
-  /**
-   * Connect wallet
-   */
-  const connect = async () => {
-    return web3Store.connect();
-  };
-  
-  /**
-   * Disconnect wallet
-   */
-  const disconnect = () => {
-    web3Store.disconnect();
-  };
-  
-  /**
-   * Refresh balances and levels
-   */
-  const refresh = async () => {
-    await web3Store.refreshAll();
-  };
-  
-  /**
-   * Switch to Arbitrum network
-   */
-  const switchToArbitrum = async () => {
-    return web3Store.switchToArbitrum();
-  };
-  
-  /**
-   * Check if a specific level is active
-   */
-  const isLevelActive = (levelKey) => {
-    return web3Store.isLevelActive(levelKey);
-  };
-  
-  /**
-   * Check if user can access a specific feature
-   */
-  const canAccessFeature = (featureName) => {
-    return web3Store.canAccess(featureName);
-  };
-  
-  /**
-   * Stake NFT for a level
-   */
-  const stakeNft = async (levelKey) => {
-    return web3Store.stakeNft(levelKey);
-  };
-  
-  /**
-   * Unstake NFT for a level
-   */
-  const unstakeNft = async (levelKey) => {
-    return web3Store.unstakeNft(levelKey);
-  };
-  
+
+  // Wallet
+  const connect = async () => store.connect();
+  const disconnect = async () => store.disconnect();
+  const refresh = async () => store.refreshAll();
+  const switchToArbitrum = async () => store.switchToArbitrum();
+
+  // Level checks
+  const isLevelActive = (levelKey) => store.isLevelActive(levelKey);
+  const canAccessFeature = (featureName) => store.canAccess(featureName);
+
+  // Level unlocking (ETH payment)
+  const unlockLevel = async (levelId) => store.unlockLevel(levelId);
+  const unlockLevels = async (levelIds) => store.unlockLevels(levelIds);
+  const unlockAllLevels = async () => store.unlockAllLevels();
+
+  // Agent helpers
+  const hasAgentPurchased = (agentId) => store.hasAgentPurchased(agentId);
+  const purchaseAgent = async (agentId) => store.purchaseAgent(agentId);
+  const hasEnoughForAgentFee = () => store.hasEnoughForAgentFee();
+  const executeAgent = async (agent, inputs, context) =>
+    store.executeAgent(agent, inputs, context);
+
   // ═══════════════════════════════════════════════════════════════════════════
   // LIFECYCLE
   // ═══════════════════════════════════════════════════════════════════════════
-  
+
   onMounted(async () => {
     if (autoInitialize) {
-      await web3Store.initialize();
+      await store.initialize();
     }
   });
-  
+
   // ═══════════════════════════════════════════════════════════════════════════
   // RETURN
   // ═══════════════════════════════════════════════════════════════════════════
-  
+
   return {
     // Connection state
     isConnected,
@@ -180,123 +221,56 @@ export function useBonzaiWeb3(options = {}) {
     walletAddress,
     truncatedAddress,
     isOnArbitrum,
-    
+    networkName,
+
     // Balance state
     totalBalance,
     balances,
-    
+    isLoadingBalances,
+
     // Level state
     levels,
     activeLevels,
     highestLevel,
-    
+    currentLevel,
+    currentLevelLabel,
+    levelProgress,
+    levelPrices,
+    isUnlockingLevel,
+
     // Access state
     hasAccess,
     blockReason,
     levelConfig,
     amountNeeded,
-    
-    // Methods
+    unlockOptions,
+
+    // Wallet methods
     connect,
     disconnect,
     refresh,
     switchToArbitrum,
+
+    // Level methods
     isLevelActive,
     canAccessFeature,
-    stakeNft,
-    unstakeNft,
-    
-    // Store reference (for advanced usage)
-    store: web3Store,
-    
+    unlockLevel,
+    unlockLevels,
+    unlockAllLevels,
+
+    // Agent methods
+    hasAgentPurchased,
+    purchaseAgent,
+    hasEnoughForAgentFee,
+    executeAgent,
+
+    // Store reference
+    store,
+
     // Config
     CONFIG,
   };
 }
 
-/**
- * Create an access guard for a component
- * Returns a function that can be used to conditionally render or execute actions
- * 
- * @example
- * const guard = createAccessGuard('LVL3');
- * 
- * // In template
- * <button @click="guard(generateImage)" :disabled="!guard.hasAccess.value">
- *   Generate Image
- * </button>
- */
-export function createAccessGuard(requiredLevel) {
-  const { hasAccess, blockReason, connect, isConnected } = useBonzaiWeb3({
-    requiredLevel,
-    autoInitialize: false,
-  });
-  
-  const guard = (action) => {
-    if (!hasAccess.value) {
-      console.warn(`[BonzAI] Access denied for ${requiredLevel}: ${blockReason.value}`);
-      return false;
-    }
-    return typeof action === 'function' ? action() : true;
-  };
-  
-  guard.hasAccess = hasAccess;
-  guard.blockReason = blockReason;
-  guard.isConnected = isConnected;
-  guard.connect = connect;
-  
-  return guard;
-}
-
-/**
- * Level requirement constants for easy reference
- */
-export const LEVELS = {
-  TEXT: 'LVL1',
-  AUDIO: 'LVL2',
-  IMAGE: 'LVL3',
-  VIDEO: 'LVL4',
-  GAME: 'LVL5',
-  TRAINING: 'LVL6',
-};
-
-/**
- * Feature names for access checking
- */
-export const FEATURES = {
-  // LVL1
-  TEXT_GENERATION: 'text-generation',
-  CHAT: 'chat',
-  CODE_ASSISTANCE: 'code-assistance',
-  
-  // LVL2
-  AUDIO_GENERATION: 'audio-generation',
-  VOICE_SYNTHESIS: 'voice-synthesis',
-  MUSIC_CREATION: 'music-creation',
-  
-  // LVL3
-  IMAGE_GENERATION: 'image-generation',
-  FLUX: 'flux',
-  SDXL: 'sdxl',
-  IMG2IMG: 'img2img',
-  
-  // LVL4
-  VIDEO_GENERATION: 'video-generation',
-  LTX: 'ltx',
-  WAN: 'wan',
-  HUNYUAN: 'hunyuan',
-  
-  // LVL5
-  GAME_GENERATION: 'game-generation',
-  GAMES_2D: '2d-games',
-  GAMES_3D: '3d-games',
-  P5JS: 'p5js',
-  THREEJS: 'threejs',
-  
-  // LVL6
-  MODEL_TRAINING: 'model-training',
-  FINE_TUNING: 'fine-tuning',
-  LEROBOT: 'lerobot',
-};
-
+export { CONFIG };
 export default useBonzaiWeb3;

@@ -246,6 +246,153 @@ ipcMain.handle("agent-save-image", async (_event, defaultName, base64Data) => {
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
+// Polymarket API Proxy (bypasses CORS for renderer process)
+// ─────────────────────────────────────────────────────────────────────────────
+const POLYMARKET_ENDPOINTS = {
+  markets: "https://gamma-api.polymarket.com/markets",
+  holders: "https://data-api.polymarket.com/holders",
+  events: "https://gamma-api.polymarket.com/events",
+  prices: "https://clob.polymarket.com/prices",
+};
+
+/**
+ * Generic fetch proxy for external APIs
+ * Routes requests through main process to bypass CORS restrictions
+ */
+ipcMain.handle("polymarket:fetch", async (_event, { endpoint, params }) => {
+  try {
+    // Build URL
+    const baseUrl = POLYMARKET_ENDPOINTS[endpoint] || endpoint;
+    const url = new URL(baseUrl);
+
+    // Add query params
+    if (params && typeof params === "object") {
+      Object.entries(params).forEach(([key, val]) => {
+        if (val !== undefined && val !== null) {
+          url.searchParams.append(key, String(val));
+        }
+      });
+    }
+
+    console.log(`[Polymarket Proxy] Fetching: ${url.toString()}`);
+
+    // Use native fetch (Node 18+) or net.fetch
+    const response = await fetch(url.toString(), {
+      method: "GET",
+      headers: {
+        Accept: "application/json",
+        "User-Agent": "BonzAI/1.0",
+      },
+    });
+
+    if (!response.ok) {
+      const errorText = await response.text();
+      console.error(`[Polymarket Proxy] HTTP ${response.status}: ${errorText}`);
+      return {
+        success: false,
+        error: `HTTP ${response.status}: ${response.statusText}`,
+        status: response.status,
+      };
+    }
+
+    const data = await response.json();
+    return { success: true, data };
+  } catch (error) {
+    console.error(`[Polymarket Proxy] Error:`, error.message);
+    return { success: false, error: error.message };
+  }
+});
+
+/**
+ * Batch fetch for efficiency (multiple requests in parallel)
+ */
+ipcMain.handle("polymarket:batch", async (_event, requests) => {
+  if (!Array.isArray(requests)) {
+    return [{ success: false, error: "requests must be an array" }];
+  }
+
+  const results = await Promise.all(
+    requests.map(async ({ endpoint, params }) => {
+      try {
+        const baseUrl = POLYMARKET_ENDPOINTS[endpoint] || endpoint;
+        const url = new URL(baseUrl);
+
+        if (params && typeof params === "object") {
+          Object.entries(params).forEach(([key, val]) => {
+            if (val !== undefined && val !== null) {
+              url.searchParams.append(key, String(val));
+            }
+          });
+        }
+
+        const response = await fetch(url.toString(), {
+          method: "GET",
+          headers: {
+            Accept: "application/json",
+            "User-Agent": "BonzAI/1.0",
+          },
+        });
+
+        if (!response.ok) {
+          return {
+            success: false,
+            error: `HTTP ${response.status}`,
+            status: response.status,
+          };
+        }
+
+        const data = await response.json();
+        return { success: true, data };
+      } catch (e) {
+        return { success: false, error: e.message };
+      }
+    })
+  );
+
+  return results;
+});
+
+/**
+ * Generic external API proxy for any URL
+ * Use this for APIs not in the predefined endpoints
+ */
+ipcMain.handle("proxy:fetch", async (_event, { url, options = {} }) => {
+  try {
+    const response = await fetch(url, {
+      method: options.method || "GET",
+      headers: {
+        Accept: "application/json",
+        "User-Agent": "BonzAI/1.0",
+        ...(options.headers || {}),
+      },
+      body: options.body ? JSON.stringify(options.body) : undefined,
+    });
+
+    if (!response.ok) {
+      return {
+        success: false,
+        error: `HTTP ${response.status}: ${response.statusText}`,
+        status: response.status,
+      };
+    }
+
+    const contentType = response.headers.get("content-type");
+    let data;
+
+    if (contentType && contentType.includes("application/json")) {
+      data = await response.json();
+    } else {
+      data = await response.text();
+    }
+
+    return { success: true, data };
+  } catch (error) {
+    console.error(`[Proxy] Error fetching ${url}:`, error.message);
+    return { success: false, error: error.message };
+  }
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Llama model wiring
 // ─────────────────────────────────────────────────────────────────────────────
 let modelContext = undefined;

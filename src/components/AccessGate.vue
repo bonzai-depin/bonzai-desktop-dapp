@@ -16,17 +16,21 @@
         </button>
       </div>
 
-      <!-- Connected but No Access State -->
+      <!-- Connected But No Access -->
       <div v-else class="state-no-access">
-        <div class="gate-icon locked">
+        <div class="gate-icon">
           <span class="material-symbols-outlined">lock</span>
         </div>
-        <h2>{{ levelKey }}: {{ levelName }}</h2>
-        <p class="description">{{ levelDescription }}</p>
+        <h2>Access Restricted</h2>
+        <p class="level-info">
+          <span class="level-name">{{ levelName }}</span>
+          <span class="level-desc">{{ levelDescription }}</span>
+        </p>
 
-        <!-- Requirements Checklist -->
         <div class="requirements">
-          <div class="requirement" :class="{ met: holdingMet }">
+          <h3>Requirements</h3>
+
+          <div class="req-item" :class="{ met: holdingMet }">
             <span class="material-symbols-outlined">
               {{ holdingMet ? "check_circle" : "radio_button_unchecked" }}
             </span>
@@ -38,71 +42,110 @@
             </span>
           </div>
 
-          <div class="requirement" :class="{ met: nftOwned }">
+          <div class="req-item" :class="{ met: nftOwned }">
             <span class="material-symbols-outlined">
               {{ nftOwned ? "check_circle" : "radio_button_unchecked" }}
             </span>
-            <span class="req-text">Own {{ levelName }} NFT</span>
+            <span class="req-text">Own the BONZAI Access NFT</span>
           </div>
 
-          <div class="requirement" :class="{ met: nftStaked }">
+          <div class="req-item" :class="{ met: nftStaked }">
             <span class="material-symbols-outlined">
               {{ nftStaked ? "check_circle" : "radio_button_unchecked" }}
             </span>
-            <span class="req-text">Stake {{ levelName }} NFT</span>
+            <span class="req-text">Stake your BONZAI Access NFT</span>
           </div>
         </div>
 
-        <!-- Action Buttons -->
-        <div class="gate-actions">
+        <!-- Actions -->
+        <div class="actions">
+          <!-- Buy BONZAI -->
           <a
             v-if="!holdingMet"
+            class="action-btn primary"
             :href="buyLink"
             target="_blank"
-            class="action-btn primary"
+            rel="noopener noreferrer"
           >
             <span class="material-symbols-outlined">shopping_cart</span>
-            Get {{ amountNeeded.toLocaleString() }} more BONZAI
+            Buy BONZAI (Need {{ requiredMore.toLocaleString() }} more)
           </a>
 
+          <!-- Stake NFT -->
           <button
             v-if="holdingMet && nftOwned && !nftStaked"
             class="action-btn primary"
             @click="handleStakeNft"
           >
-            <span class="material-symbols-outlined">lock</span>
-            Stake NFT to Activate
+            <span class="material-symbols-outlined">lock_open</span>
+            Stake Access NFT
           </button>
 
-          <a
+          <!-- Get NFT -->
+          <button
             v-if="holdingMet && !nftOwned"
-            href="#marketplace"
             class="action-btn secondary"
+            disabled
           >
-            <span class="material-symbols-outlined">storefront</span>
-            Get NFT in Marketplace
-          </a>
+            <span class="material-symbols-outlined">info</span>
+            Access NFT required (minting soon)
+          </button>
+
+          <!-- Refresh -->
+          <button class="action-btn secondary" @click="refreshAccess">
+            <span class="material-symbols-outlined">refresh</span>
+            Refresh
+          </button>
         </div>
 
-        <!-- Helpful Info -->
-        <div class="help-info">
-          <span class="material-symbols-outlined">info</span>
-          <span>
-            Your BONZAI balance is aggregated across Ethereum and Arbitrum
-          </span>
+        <!-- Wallet Info -->
+        <div class="wallet-info">
+          <div class="balance-display">
+            <span class="label">Your BONZAI Balance</span>
+            <span class="value">{{ totalBalance.toLocaleString() }}</span>
+          </div>
+          <div class="network-display">
+            <span class="label">Networks</span>
+            <span class="value">Ethereum + Arbitrum</span>
+          </div>
         </div>
       </div>
     </div>
   </div>
 
-  <!-- Slot for actual content when access is granted -->
-  <slot v-else></slot>
+  <!-- Slot content when access granted -->
+  <slot v-else />
 </template>
 
 <script setup>
 import { computed } from "vue";
 import { useBonzaiWeb3 } from "../composables/useBonzaiWeb3.js";
 import { CONFIG } from "../../config/web3.config.js";
+
+// Holder-based tiering (derived from current BONZAI holder distribution)
+// LVL1 ≥ 100   | LVL2 ≥ 500   | LVL3 ≥ 2,000   | LVL4 ≥ 10,000   | LVL5 ≥ 50,000   | LVL6 ≥ 200,000
+const HOLDER_BASED_HOLDING_REQUIREMENTS = Object.freeze({
+  LVL1: 100,
+  LVL2: 500,
+  LVL3: 2000,
+  LVL4: 10000,
+  LVL5: 50000,
+  LVL6: 200000,
+});
+
+const applyHolderBasedLevelOverrides = () => {
+  if (!CONFIG || !CONFIG.levels) return;
+  for (const [levelKey, holdingRequired] of Object.entries(
+    HOLDER_BASED_HOLDING_REQUIREMENTS
+  )) {
+    if (CONFIG.levels[levelKey]) {
+      CONFIG.levels[levelKey].holdingRequired = holdingRequired;
+    }
+  }
+};
+
+// Apply once at module init so store + UI stay consistent.
+applyHolderBasedLevelOverrides();
 
 const props = defineProps({
   level: {
@@ -139,8 +182,8 @@ const nftOwned = computed(() => levelStatus.value.nftOwned);
 const nftStaked = computed(() => levelStatus.value.nftStaked);
 
 // Balance info
-const currentBalance = computed(() => totalBalance.value);
-const amountNeeded = computed(() =>
+const currentBalance = computed(() => totalBalance.value || 0);
+const requiredMore = computed(() =>
   Math.max(0, holdingRequired.value - currentBalance.value)
 );
 
@@ -155,33 +198,45 @@ const connect = async () => {
 const handleStakeNft = async () => {
   await stakeNft(props.level);
 };
+
+const refreshAccess = async () => {
+  // Force a refresh by reconnecting
+  await doConnect(true);
+};
 </script>
 
 <style scoped>
 .access-gate {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.85);
+  backdrop-filter: blur(12px);
   display: flex;
   align-items: center;
   justify-content: center;
-  min-height: 60vh;
-  padding: 40px 20px;
+  z-index: 9999;
+  padding: 20px;
 }
 
 .gate-content {
-  max-width: 480px;
+  background: linear-gradient(135deg, rgba(17, 24, 39, 0.95) 0%, rgba(31, 41, 55, 0.95) 100%);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 20px;
+  padding: 40px;
+  max-width: 500px;
   width: 100%;
   text-align: center;
+  color: white;
+  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.5);
 }
 
 .gate-icon {
   width: 80px;
   height: 80px;
-  margin: 0 auto 24px;
-  background: linear-gradient(
-    135deg,
-    rgba(16, 185, 129, 0.2) 0%,
-    rgba(5, 150, 105, 0.2) 100%
-  );
-  border-radius: 20px;
+  margin: 0 auto 20px;
+  background: rgba(16, 185, 129, 0.1);
+  border: 2px solid rgba(16, 185, 129, 0.3);
+  border-radius: 50%;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -192,48 +247,30 @@ const handleStakeNft = async () => {
   color: #10b981;
 }
 
-.gate-icon.locked {
-  background: linear-gradient(
-    135deg,
-    rgba(251, 191, 36, 0.2) 0%,
-    rgba(245, 158, 11, 0.2) 100%
-  );
-}
-
-.gate-icon.locked .material-symbols-outlined {
-  color: #fbbf24;
-}
-
 h2 {
-  font-size: 24px;
+  font-size: 28px;
   font-weight: 700;
-  color: white;
-  margin: 0 0 12px 0;
+  margin: 0 0 12px;
 }
 
 p {
-  color: rgba(255, 255, 255, 0.6);
-  margin: 0 0 24px 0;
+  margin: 0 0 24px;
+  opacity: 0.8;
   line-height: 1.5;
 }
 
-.description {
-  font-size: 15px;
-}
-
-/* Connect Button */
 .connect-btn {
-  display: inline-flex;
-  align-items: center;
-  gap: 10px;
-  padding: 14px 28px;
   background: linear-gradient(135deg, #10b981 0%, #059669 100%);
   border: none;
   border-radius: 12px;
+  padding: 14px 24px;
   color: white;
-  font-weight: 600;
   font-size: 16px;
+  font-weight: 600;
   cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
   transition: all 0.2s ease;
 }
 
@@ -243,61 +280,80 @@ p {
 }
 
 .connect-btn:disabled {
-  opacity: 0.7;
+  opacity: 0.6;
   cursor: not-allowed;
 }
 
-.connect-btn .material-symbols-outlined {
-  font-size: 22px;
+.level-info {
+  margin-bottom: 30px;
 }
 
-/* Requirements */
+.level-name {
+  display: block;
+  font-size: 20px;
+  font-weight: 700;
+  color: #10b981;
+  margin-bottom: 6px;
+}
+
+.level-desc {
+  display: block;
+  font-size: 14px;
+  opacity: 0.8;
+}
+
 .requirements {
-  background: rgba(255, 255, 255, 0.03);
-  border: 1px solid rgba(255, 255, 255, 0.1);
-  border-radius: 12px;
-  padding: 16px;
-  margin-bottom: 24px;
   text-align: left;
+  margin-bottom: 30px;
+  padding: 20px;
+  background: rgba(0, 0, 0, 0.2);
+  border-radius: 12px;
 }
 
-.requirement {
+.requirements h3 {
+  margin: 0 0 16px;
+  font-size: 16px;
+  font-weight: 600;
+}
+
+.req-item {
   display: flex;
-  align-items: center;
-  gap: 12px;
-  padding: 12px 0;
-  border-bottom: 1px solid rgba(255, 255, 255, 0.05);
-  color: rgba(255, 255, 255, 0.5);
+  align-items: flex-start;
+  gap: 10px;
+  margin-bottom: 12px;
+  font-size: 14px;
 }
 
-.requirement:last-child {
-  border-bottom: none;
+.req-item:last-child {
+  margin-bottom: 0;
 }
 
-.requirement .material-symbols-outlined {
-  font-size: 22px;
+.req-item .material-symbols-outlined {
+  font-size: 20px;
   color: rgba(255, 255, 255, 0.3);
+  flex-shrink: 0;
 }
 
-.requirement.met {
-  color: rgba(255, 255, 255, 0.9);
-}
-
-.requirement.met .material-symbols-outlined {
+.req-item.met .material-symbols-outlined {
   color: #10b981;
 }
 
 .req-text {
   flex: 1;
+  opacity: 0.8;
+}
+
+.req-item.met .req-text {
+  opacity: 1;
 }
 
 .req-status {
-  font-size: 13px;
-  color: rgba(255, 255, 255, 0.4);
+  font-size: 12px;
+  opacity: 0.6;
+  margin-left: auto;
 }
 
-/* Gate Actions */
-.gate-actions {
+.actions {
   display: flex;
   flex-direction: column;
   gap: 12px;
@@ -305,16 +361,15 @@ p {
 }
 
 .action-btn {
+  padding: 12px 20px;
+  border-radius: 12px;
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
   display: flex;
   align-items: center;
   justify-content: center;
-  gap: 10px;
-  padding: 14px 24px;
-  border: none;
-  border-radius: 12px;
-  font-weight: 600;
-  font-size: 15px;
-  cursor: pointer;
+  gap: 8px;
   text-decoration: none;
   transition: all 0.2s ease;
 }
@@ -332,52 +387,53 @@ p {
 .action-btn.secondary {
   background: rgba(255, 255, 255, 0.1);
   color: white;
-  border: 1px solid rgba(255, 255, 255, 0.2);
+  border: 1px solid rgba(255, 255, 255, 0.1);
 }
 
-.action-btn.secondary:hover {
+.action-btn.secondary:hover:not(:disabled) {
   background: rgba(255, 255, 255, 0.15);
 }
 
-.action-btn .material-symbols-outlined {
-  font-size: 20px;
+.action-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
 }
 
-/* Help Info */
-.help-info {
+.wallet-info {
   display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: 8px;
-  padding: 12px 16px;
-  background: rgba(59, 130, 246, 0.1);
-  border-radius: 8px;
-  font-size: 13px;
-  color: rgba(147, 197, 253, 0.9);
+  justify-content: space-between;
+  gap: 20px;
+  padding-top: 20px;
+  border-top: 1px solid rgba(255, 255, 255, 0.1);
 }
 
-.help-info .material-symbols-outlined {
-  font-size: 18px;
+.balance-display,
+.network-display {
+  text-align: left;
 }
 
-/* Responsive */
+.label {
+  display: block;
+  font-size: 12px;
+  opacity: 0.6;
+  margin-bottom: 4px;
+}
+
+.value {
+  display: block;
+  font-size: 14px;
+  font-weight: 600;
+  color: #10b981;
+}
+
 @media (max-width: 480px) {
   .gate-content {
-    padding: 0 16px;
+    padding: 30px 20px;
   }
 
-  h2 {
-    font-size: 20px;
-  }
-
-  .requirement {
-    flex-wrap: wrap;
-  }
-
-  .req-status {
-    width: 100%;
-    margin-left: 34px;
-    margin-top: 4px;
+  .wallet-info {
+    flex-direction: column;
+    gap: 12px;
   }
 }
 </style>

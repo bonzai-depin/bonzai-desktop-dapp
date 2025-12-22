@@ -199,9 +199,8 @@
                   class="notification is-danger"
                   style="margin-bottom: 1rem"
                 >
-                  <strong>Generation failed, please retry.</strong>
-                  <hr />
-                  {{ generation.error }}
+                  <strong>I wasn't able to generate your video.</strong>
+                  Please retry, with different, lower settings or upgrade your hardware.
                 </div>
                 <!-- DOWNLOAD PROGRESS -->
                 <div
@@ -1045,8 +1044,8 @@ export default {
 
       // sizes tuned to server examples
       const sizeMaps = {
-        turbo: { sd: [512, 768], hd: [512, 768], fhd: [768, 1280] }, // LTX likes 2:3~ish; HxW [256, 384] [480, 640] [512, 768]
-        quality: { sd: [256, 384], hd: [576, 768], fhd: [1024, 1728] }, // [480, 832]
+        turbo: { sd: [480, 640], hd: [512, 768], fhd: [768, 1280] }, // LTX likes 2:3~ish; HxW [256, 384] [480, 640] [512, 768]
+        quality: { sd: [384, 512], hd: [576, 768], fhd: [1024, 1728] }, // [480, 832]
       };
       const pick = sizeMaps[mode.value] || sizeMaps.turbo;
       const [h, w] = pick[quality.value] || pick.sd;
@@ -1062,10 +1061,10 @@ export default {
           prompt,
           height: h,
           width: w,
-          frames: frames,
-          fps: 10, // 12 * 3s + 1 = 37 frames
-          steps: 30,
-          guidance_scale: 3,
+          frames: Math.min(frames, 41), // Cap at 41 for MPS memory
+          fps: 10, // Wan native fps
+          steps: 20,
+          guidance_scale: 3, // 3-6
           auto_download: true,
           image_base64:
             uploadedImageBase64.value ||

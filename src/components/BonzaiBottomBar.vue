@@ -1,420 +1,439 @@
 <template>
-  <div class="bonzai-bottom-bar" :class="{ connected: isConnected }">
+  <div class="bonzai-bottom-bar">
+    <!-- Main Bar Content -->
     <div class="bar-content">
-      <!-- Left group: Level progress and balances -->
-      <div class="left-group">
-        <!-- Level Progress -->
-        <div class="level-section" v-if="isConnected">
-          <div class="level-progress-container">
-            <div class="level-track">
-              <div
-                v-for="level in allLevels"
-                :key="level.key"
-                class="level-node"
-                :class="{
-                  active: level.status.active,
-                  partial: level.status.holdingMet,
-                }"
-                :title="getLevelTooltip(level)"
-                @click="showLevelDetails(level)"
-              >
-                <span class="material-symbols-outlined">{{ level.icon }}</span>
-                <span class="level-label">{{ level.key }}</span>
-              </div>
-              <div class="progress-line">
-                <div
-                  class="progress-fill"
-                  :style="{ width: levelProgress + '%' }"
-                ></div>
-              </div>
-            </div>
-          </div>
-        </div>
-        <!-- Balance display -->
-        <div class="balance-section" v-if="isConnected">
-          <div class="balance-info" @click="showBreakdown = !showBreakdown">
-            <span class="material-symbols-outlined">token</span>
-            <span class="amount">{{ formatBalance(totalBalance) }}</span>
-            <span class="symbol">BONZAI</span>
-          </div>
-          <div class="balance-breakdown" v-if="showBreakdown">
-            <span class="chain-balance">
-              ETH: {{ formatBalance(balances.ethereum) }}
-            </span>
-            <span class="chain-balance">
-              ARB: {{ formatBalance(balances.arbitrum) }}
-            </span>
-          </div>
-          <button
-            class="refresh-btn"
-            :disabled="isRefreshing"
-            @click="handleRefresh"
-            title="Refresh balances"
-          >
-            <span
-              class="material-symbols-outlined"
-              :class="{ spinning: isRefreshing }"
-            >
-              refresh
-            </span>
-          </button>
-          <button
-            v-if="isConnected && !isOnArbitrum"
-            class="switch-btn"
-            @click="switchToArbitrum"
-            title="Switch to Arbitrum"
-          >
-            <span class="material-symbols-outlined">swap_horiz</span>
-          </button>
-        </div>
-      </div>
-
-      <!-- Right group: wallet and actions -->
-      <div class="right-group">
-        <a
-          :href="buyLink"
-          target="_blank"
-          class="buy-btn"
-          title="Buy BONZAI on Uniswap"
-        >
-          <span class="material-symbols-outlined">shopping_cart</span>
-          <span class="btn-text">Buy</span>
-        </a>
+      <!-- Left: Wallet Section -->
+      <div class="wallet-section">
         <button
           v-if="!isConnected"
-          class="connect-btn"
+          class="button is-success is-large"
+          @click="connect"
           :disabled="isConnecting"
-          @click="handleConnect"
         >
-          <span class="material-symbols-outlined">wallet</span>
+          <span class="material-symbols-outlined mr-2">wallet</span>
+
           <span class="btn-text">
             {{ isConnecting ? "Connecting..." : "Connect Wallet" }}
           </span>
         </button>
+
         <div v-else class="wallet-info">
-          <div class="network-badge" :class="{ arbitrum: isOnArbitrum }">
-            {{ isOnArbitrum ? "Arbitrum" : networkName }}
-          </div>
-          <span class="address" @click="copyAddress">
-            {{ truncatedAddress }}
-            <span class="material-symbols-outlined copy-icon">
-              content_copy
+          <div class="wallet-address p-3" @click="copyAddress">
+            <span class="address-text">{{ truncatedAddress }}</span>
+            <span class="network-badge" :class="{ arbitrum: isOnArbitrum }">
+              {{ isOnArbitrum ? "ARB" : "ETH" }}
             </span>
-          </span>
+            <span class="fira-sans-condensed-black-italic current-level-label">
+              <span v-if="displayedHighestLevelKey">
+                {{ displayedHighestLevelKey }}
+              </span>
+              <span v-else class="no-level">LVL 0</span>
+            </span>
+          </div>
+
           <button
-            class="disconnect-btn"
-            @click="handleDisconnect"
+            class="button is-danger"
+            @click="disconnect"
             title="Disconnect"
           >
             <span class="material-symbols-outlined">logout</span>
           </button>
         </div>
       </div>
+
+      <!-- Center: Level Progress -->
+      <div class="levels-section">
+        <div class="level-track">
+          <div
+            v-for="lvl in 6"
+            :key="lvl"
+            class="level-node"
+            :class="getLevelClass(lvl)"
+            @click="openLevelModal(lvl)"
+          >
+            <div class="node-inner">
+              <span class="material-symbols-outlined is-size-5">
+                {{ getLevelIcon(lvl) }}
+              </span>
+              <span
+                class="level-num fira-sans-condensed-black-italic is-size-5"
+              >
+                LVL{{ lvl }}
+              </span>
+            </div>
+            <div class="level-connector" v-if="lvl < 6"></div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Right: Balance & Actions -->
+      <div class="balance-section fira-sans-condensed-black-italic">
+        <div class="balance-display" v-if="isConnected">
+          <div class="bonzai-balance">
+            <span class="balance-amount is-size-1">
+              {{ formatBalance(totalBalance) }}
+            </span>
+            <span class="balance-token is-size-4">BONZAI</span>
+          </div>
+        </div>
+
+        <div class="action-buttons">
+          <a
+            :href="buyLink"
+            target="_blank"
+            class="button is-info is-outlined"
+            title="Buy BONZAI"
+          >
+            <span class="material-symbols-outlined">shopping_cart</span>
+          </a>
+          <button class="button is-warning" @click="refresh" title="Refresh">
+            <span
+              class="material-symbols-outlined"
+              :class="{ spinning: isRefreshing }"
+            >
+              sync
+            </span>
+          </button>
+        </div>
+      </div>
     </div>
 
-    <!-- Level Details Modal -->
+    <!-- Level Modal -->
     <Teleport to="body">
-      <div
-        v-if="selectedLevel"
-        class="level-modal-overlay"
-        @click.self="selectedLevel = null"
-      >
-        <div class="level-modal">
-          <div class="modal-header">
-            <span class="material-symbols-outlined">
-              {{ selectedLevel.icon }}
-            </span>
-            <h3>{{ selectedLevel.key }}: {{ selectedLevel.name }}</h3>
-            <button class="close-btn" @click="selectedLevel = null">
-              <span class="material-symbols-outlined">close</span>
-            </button>
-          </div>
+      <Transition name="fade">
+        <div
+          v-if="selectedLevel"
+          class="level-modal-overlay"
+          @click.self="selectedLevel = null"
+        >
+          <div class="level-modal">
+            <div class="has-text-right">
+              <button
+                class="button is-danger"
+                @click="selectedLevel = null"
+                title="Close"
+              >
+                <span class="material-symbols-outlined">close</span>
+              </button>
+            </div>
+            <div class="modal-header">
+              <span class="material-symbols-outlined is-size-1">
+                {{ getLevelIcon(selectedLevel) }}
+              </span>
+              <span
+                class="modal-level-badge fira-sans-condensed-black-italic is-size-1"
+              >
+                LVL{{ selectedLevel }}
+              </span>
+              <h2 class="fira-sans-condensed-black-italic is-size-3">
+                {{ getLevelConfig(selectedLevel)?.name }}
+              </h2>
+            </div>
 
-          <div class="modal-body">
-            <p class="description">{{ selectedLevel.description }}</p>
+            <div class="modal-body">
+              <div class="level-description models__activity--payouts" :class="{ ok: isLevelUnlockedOrHolding(selectedLevel) }">
+                <div class="modal-status mb-5">
+                  <span
+                    class="status-pill fira-sans-condensed-black-italic is-size-4"
+                    :class="{ ok: isLevelUnlockedOrHolding(selectedLevel) }"
+                  >
+                    {{
+                      isLevelUnlockedOrHolding(selectedLevel)
+                        ? "Unlocked"
+                        : "Locked"
+                    }}
+                  </span>
+                </div>
+                <p>{{ getLevelConfig(selectedLevel)?.description }}</p>
+              </div>
 
-            <div class="requirements">
-              <h4>Requirements</h4>
-              <div
-                class="req-item"
-                :class="{ met: selectedLevel.status.holdingMet }"
-              >
-                <span class="material-symbols-outlined">
-                  {{
-                    selectedLevel.status.holdingMet
-                      ? "check_circle"
-                      : "radio_button_unchecked"
-                  }}
-                </span>
-                <span>Hold {{ selectedLevel.holdingRequired }} BONZAI</span>
-                <span class="current" v-if="!selectedLevel.status.holdingMet">
-                  (You have {{ formatBalance(totalBalance) }})
-                </span>
+              <div class="features-list fira-sans-condensed-black-italic">
+                <ul>
+                  <li
+                    v-for="feature in getLevelConfig(selectedLevel)?.features"
+                    :key="feature"
+                  >
+                    <strong>{{ formatFeature(feature) }}</strong>
+                  </li>
+                </ul>
               </div>
-              <div
-                class="req-item"
-                :class="{ met: selectedLevel.status.nftOwned }"
-              >
-                <span class="material-symbols-outlined">
-                  {{
-                    selectedLevel.status.nftOwned
-                      ? "check_circle"
-                      : "radio_button_unchecked"
-                  }}
-                </span>
-                <span>Own {{ selectedLevel.name }} NFT</span>
-              </div>
-              <div
-                class="req-item"
-                :class="{ met: selectedLevel.status.nftStaked }"
-              >
-                <span class="material-symbols-outlined">
-                  {{
-                    selectedLevel.status.nftStaked
-                      ? "check_circle"
-                      : "radio_button_unchecked"
-                  }}
-                </span>
-                <span>Stake {{ selectedLevel.name }} NFT</span>
+
+              <!-- IMPORTANT: no confusion between unlock & use -->
+              <div class="requirements-summary">
+                <h3
+                  class="requirements-title fira-sans-condensed-black-italic is-size-3"
+                >
+                  Unlock Requirements
+                </h3>
+
+                <div class="req-row">
+                  <span class="material-symbols-outlined">wallet</span>
+                  <span class="req-text">
+                    Hold
+                    <strong>
+                      {{ getLevelConfig(selectedLevel)?.holdingRequired }}+
+                    </strong>
+                    BONZAI
+                  </span>
+                  <span
+                    class="req-status"
+                    :class="{
+                      met: hasEnoughBonzai(
+                        getLevelConfig(selectedLevel)?.holdingRequired || 0
+                      ),
+                    }"
+                  >
+                    {{
+                      hasEnoughBonzai(
+                        getLevelConfig(selectedLevel)?.holdingRequired || 0
+                      )
+                        ? "✓"
+                        : "✗"
+                    }}
+                  </span>
+                </div>
+                <hr />
+                <div class="fira-sans-condensed-black-italic has-text-centered">
+                  OR
+                </div>
+                <hr />
+                <div class="req-row">
+                  <span class="material-symbols-outlined">key_vertical</span>
+                  <span class="req-text">
+                    Spend
+                    <strong>{{ levelPrice }}</strong>
+                    ETH
+                    <strong>once</strong>
+                  </span>
+                  <span
+                    class="req-status"
+                    :class="{ met: isLevelManuallyUnlocked(selectedLevel) }"
+                  >
+                    {{ isLevelManuallyUnlocked(selectedLevel) ? "✓" : "✗" }}
+                  </span>
+                </div>
               </div>
             </div>
 
-            <div class="features">
-              <h4>Unlocked Features</h4>
-              <ul>
-                <li v-for="feature in selectedLevel.features" :key="feature">
-                  {{ formatFeature(feature) }}
-                </li>
-              </ul>
-            </div>
-
-            <div class="modal-actions">
+            <div class="modal-footer has-text-centered">
               <a
-                v-if="!selectedLevel.status.holdingMet"
                 :href="buyLink"
                 target="_blank"
-                class="action-btn primary"
+                class="button is-info is-outlined mr-2 is-medium"
+                title="Buy BONZAI"
               >
                 Buy BONZAI
               </a>
               <button
-                v-if="
-                  selectedLevel.status.nftOwned &&
-                  !selectedLevel.status.nftStaked
-                "
-                class="action-btn primary"
-                @click="stakeNft(selectedLevel.key)"
+                v-if="!isLevelUnlockedOrHolding(selectedLevel)"
+                class="button is-success mr-2 is-medium"
+                @click="unlockLevel(selectedLevel)"
+                :disabled="isUnlocking"
+                title="Unlock with ETH"
               >
-                Stake NFT
+                <span
+                  v-if="isUnlocking === selectedLevel"
+                  class="spinner"
+                ></span>
+                <span v-else>Unlock Now</span>
+                <div class="tags has-addons">
+                  <span
+                    class="tag is-warning partner fira-sans-condensed-black-italic is-small"
+                  >
+                    0.1 ETH
+                  </span>
+                </div>
               </button>
+
               <button
-                v-if="selectedLevel.status.nftStaked"
-                class="action-btn secondary"
-                @click="unstakeNft(selectedLevel.key)"
+                v-else
+                class="button is-success is-medium"
+                @click="selectedLevel = null"
+                title="Close"
               >
-                Unstake NFT
+                Confirm
               </button>
             </div>
           </div>
         </div>
-      </div>
+      </Transition>
     </Teleport>
   </div>
 </template>
 
 <script setup>
-import { ref, computed, onMounted } from "vue";
-import { useWeb3Store } from "../stores/web3.store.js";
+import { ref, computed } from "vue";
+import { useBonzaiWeb3 } from "../composables/useBonzaiWeb3.js";
 import { CONFIG } from "../config/web3.config.js";
 
-const web3Store = useWeb3Store();
+const {
+  isConnected,
+  isConnecting,
+  walletAddress,
+  truncatedAddress,
+  isOnArbitrum,
+  totalBalance,
+  balances,
+  levels,
+  highestLevel,
+  connect: doConnect,
+  disconnect: doDisconnect,
+  refresh: doRefresh,
+  store,
+} = useBonzaiWeb3();
 
-// Local state
 const isRefreshing = ref(false);
-const showBreakdown = ref(false);
+const isUnlocking = ref(null);
 const selectedLevel = ref(null);
 
-// Computed from store
-const isConnected = computed(() => web3Store.isConnected);
-const isConnecting = computed(() => web3Store.isConnecting);
-const walletAddress = computed(() => web3Store.walletAddress);
-const truncatedAddress = computed(() => web3Store.truncatedAddress);
-const isOnArbitrum = computed(() => web3Store.isOnArbitrum);
-const networkName = computed(() => web3Store.networkName);
-const totalBalance = computed(() => web3Store.totalBalance);
-const balances = computed(() => web3Store.balances);
-const levelProgress = computed(() => web3Store.levelProgress);
-
-// Get all levels with their config and status
-const allLevels = computed(() => {
-  return Object.entries(CONFIG.levels).map(([key, config]) => ({
-    key,
-    ...config,
-    status: web3Store.levels[key] || {
-      holdingMet: false,
-      nftOwned: false,
-      nftStaked: false,
-      active: false,
-    },
-  }));
-});
-
+const levelPrice = computed(() => CONFIG.levelUnlock?.price || 0.1);
 const buyLink = CONFIG.links.buyBonzai;
 
-// Handlers
-const handleConnect = async () => {
-  await web3Store.connect();
+// Helpers
+const getLevelConfig = (lvl) => CONFIG.levels[`LVL${lvl}`];
+
+const hasEnoughBonzai = (required) => totalBalance.value >= required;
+
+// Manual unlock flag (ETH unlock)
+const isLevelManuallyUnlocked = (levelId) =>
+  store.unlockedLevels?.[levelId] ?? false;
+
+// New rule: unlocking is either holdings OR manual ETH unlock.
+// Once unlocked => user can use the tier.
+const isLevelUnlockedOrHolding = (levelId) => {
+  const cfg = getLevelConfig(levelId);
+  const required = cfg?.holdingRequired || 0;
+  return isLevelManuallyUnlocked(levelId) || hasEnoughBonzai(required);
 };
 
-const handleDisconnect = () => {
-  web3Store.disconnect();
-};
+// Displayed highest level: include ETH unlocks (not only holding-based "highestLevel")
+const displayedHighestLevelKey = computed(() => {
+  // LVL∞ takes precedence if present in highestLevel
+  if ((highestLevel.value || "").toString().trim() === "LVL∞") return "LVL∞";
 
-const handleRefresh = async () => {
-  isRefreshing.value = true;
-  await web3Store.refreshAll();
-  isRefreshing.value = false;
-};
-
-const switchToArbitrum = async () => {
-  await web3Store.switchToArbitrum();
-};
-
-const copyAddress = async () => {
-  if (walletAddress.value) {
-    await navigator.clipboard.writeText(walletAddress.value);
-    // Could add a toast notification here
+  for (let i = 6; i >= 1; i--) {
+    if (isLevelUnlockedOrHolding(i)) return `LVL${i}`;
   }
+  return highestLevel.value || "";
+});
+
+const getLevelClass = (lvl) => {
+  const key = `LVL${lvl}`;
+  const unlocked = isLevelUnlockedOrHolding(lvl);
+  // If you want "active" driven by your levels service, keep it OR it with unlocked
+  const serviceActive = levels.value[key]?.active ?? false;
+  const active = unlocked || serviceActive;
+
+  return {
+    unlocked,
+    active,
+    locked: !unlocked,
+  };
 };
 
-const showLevelDetails = (level) => {
-  selectedLevel.value = level;
+const getLevelIcon = (lvl) => {
+  const icons = [
+    "chat",
+    "headphones",
+    "image",
+    "movie",
+    "3d_rotation",
+    "exercise",
+  ];
+  return icons[lvl - 1] || "⭐";
 };
 
-const stakeNft = async (levelKey) => {
-  await web3Store.stakeNft(levelKey);
-  selectedLevel.value = null;
+const formatBalance = (val) => {
+  const n = Number(val || 0);
+  if (n >= 1000000) return (n / 1000000).toFixed(1) + "M";
+  if (n >= 1000) return (n / 1000).toFixed(1) + "K";
+  return n.toFixed(0);
 };
 
-const unstakeNft = async (levelKey) => {
-  await web3Store.unstakeNft(levelKey);
-  selectedLevel.value = null;
-};
-
-// Formatters
-const formatBalance = (balance) => {
-  if (balance >= 1000000) return (balance / 1000000).toFixed(2) + "M";
-  if (balance >= 1000) return (balance / 1000).toFixed(2) + "K";
-  return balance.toFixed(0);
-};
-
-const formatFeature = (feature) => {
-  return feature
+const formatFeature = (feature) =>
+  feature
     .split("-")
     .map((w) => w.charAt(0).toUpperCase() + w.slice(1))
     .join(" ");
+
+// Actions
+const connect = async () => {
+  await doConnect();
 };
 
-const getLevelTooltip = (level) => {
-  if (level.status.active) return `${level.name} - Active`;
-  if (level.status.holdingMet) return `${level.name} - Need NFT staked`;
-  return `${level.name} - Need ${level.holdingRequired} BONZAI`;
+const disconnect = async () => {
+  await doDisconnect();
 };
 
-// Initialize on mount
-onMounted(async () => {
-  await web3Store.initialize();
-});
+const refresh = async () => {
+  isRefreshing.value = true;
+  await doRefresh();
+  setTimeout(() => (isRefreshing.value = false), 500);
+};
+
+const copyAddress = () => {
+  if (!walletAddress.value) return;
+  navigator.clipboard.writeText(walletAddress.value);
+};
+
+const openLevelModal = (lvl) => {
+  selectedLevel.value = lvl;
+};
+
+const unlockLevel = async (levelId) => {
+  isUnlocking.value = levelId;
+  try {
+    await store.unlockLevel(levelId);
+  } catch (e) {
+    console.error("Unlock failed:", e);
+  } finally {
+    isUnlocking.value = null;
+  }
+};
 </script>
 
 <style scoped>
+/* BonzAI Design System */
+:root {
+  --bonzai-bg-dark: #0a0a0f;
+  --bonzai-bg-card: rgba(20, 20, 30, 0.92);
+  --bonzai-green: #10b981;
+  --bonzai-green-glow: rgba(16, 185, 129, 0.3);
+  --bonzai-purple: #8b5cf6;
+  --bonzai-text: #f0f0f5;
+  --bonzai-text-muted: rgba(240, 240, 245, 0.7);
+  --bonzai-border: rgba(255, 255, 255, 0.1);
+  --bonzai-radius: 12px;
+}
+
 .bonzai-bottom-bar {
+  padding-top: 0.5em;
   position: fixed;
   bottom: 0;
   left: 0;
   right: 0;
-  height: 64px;
-  background: rgba(15, 15, 20, 0.9);
-  backdrop-filter: blur(12px);
-  border-top: 1px solid rgba(255, 255, 255, 0.08);
   z-index: 9999;
-  display: flex;
-  align-items: center;
-  font-family:
-    "Inter",
-    -apple-system,
-    BlinkMacSystemFont,
-    sans-serif;
+  height: 7.66vh;
+  color: #fff;
+  background: #61378e;
+  backdrop-filter: blur(20px);
+  box-shadow: 10px 0 25px #000;
+  transition: all 0.3s ease;
 }
 
-.bonzai-bottom-bar.connected {
-  border-top-color: rgba(16, 185, 129, 0.3);
-}
-
+/* Main Bar Content */
 .bar-content {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  width: 100%;
-  gap: 16px;
-  padding: 0 16px;
+  padding: 12px 24px;
+  gap: 24px;
 }
 
-/* Group containers */
-.left-group,
-.right-group {
-  display: flex;
-  align-items: center;
-  gap: 16px;
-}
-
-.left-group {
-  flex: 1;
-}
-
-.right-group {
-  margin-left: auto;
-}
-
-/* Balance section inside left group */
-.balance-section {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-}
-
-.balance-info {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  cursor: pointer;
-  font-weight: 600;
-  color: rgba(255, 255, 255, 0.9);
-}
-
-.connect-btn {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 8px 16px;
-  background: linear-gradient(135deg, #10b981 0%, #059669 100%);
-  border: none;
-  border-radius: 8px;
-  color: white;
-  font-weight: 600;
-  font-size: 14px;
-  cursor: pointer;
-  transition: all 0.2s ease;
-}
-
-.connect-btn:hover:not(:disabled) {
-  transform: translateY(-1px);
-  box-shadow: 0 4px 12px rgba(16, 185, 129, 0.4);
-}
-
-.connect-btn:disabled {
-  opacity: 0.6;
-  cursor: not-allowed;
+/* Wallet Section */
+.wallet-section {
+  flex: 0 0 auto;
+  min-width: 180px;
 }
 
 .wallet-info {
@@ -423,246 +442,209 @@ onMounted(async () => {
   gap: 10px;
 }
 
-.network-badge {
-  padding: 4px 10px;
-  background: rgba(255, 255, 255, 0.1);
-  border-radius: 12px;
-  font-size: 11px;
-  font-weight: 600;
-  color: rgba(255, 255, 255, 0.7);
-  text-transform: uppercase;
-}
-
-.network-badge.arbitrum {
-  background: rgba(40, 160, 240, 0.2);
-  color: #28a0f0;
-}
-
-.address {
+.wallet-address {
   display: flex;
   align-items: center;
   gap: 6px;
-  padding: 6px 12px;
-  background: rgba(255, 255, 255, 0.05);
+  padding: 8px 12px;
+  background: rgba(255, 255, 255, 0.06);
   border-radius: 8px;
+  cursor: pointer;
+}
+
+.address-text {
   font-family: "JetBrains Mono", monospace;
   font-size: 13px;
-  color: rgba(255, 255, 255, 0.8);
-  cursor: pointer;
-  transition: background 0.2s ease;
+  color: #fff;
 }
 
-.address:hover {
-  background: rgba(255, 255, 255, 0.1);
+.network-badge {
+  padding: 2px 6px;
+  background: rgba(255, 255, 255, 0.12);
+  border-radius: 4px;
+  font-size: 10px;
+  font-weight: 800;
+  color: rgba(255, 255, 255, 0.9);
 }
 
-.copy-icon {
+.network-badge.arbitrum {
+  background: linear-gradient(135deg, #28a0f0 0%, #1a73e8 100%);
+  color: white;
+}
+
+.current-level-label {
   font-size: 14px;
-  opacity: 0.5;
+  color: #fff;
+}
+
+.current-level-label .no-level {
+  font-style: italic;
+  opacity: 0.85;
 }
 
 .disconnect-btn {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  width: 32px;
-  height: 32px;
-  background: rgba(239, 68, 68, 0.1);
-  border: 1px solid rgba(239, 68, 68, 0.3);
-  border-radius: 6px;
-  color: #ef4444;
+  padding: 8px;
+  background: transparent;
+  border: 1px solid var(--bonzai-border);
+  border-radius: 8px;
+  color: rgba(255, 255, 255, 0.85);
   cursor: pointer;
-  transition: all 0.2s ease;
 }
 
 .disconnect-btn:hover {
-  background: rgba(239, 68, 68, 0.2);
+  border-color: #ef4444;
+  color: #ef4444;
 }
 
-/* Level Section */
-.level-section {
+.tag {
+  position: absolute;
+  top: -12px;
+  right: -18px;
+  text-shadow: none !important;
+}
+
+/* Levels Section */
+.levels-section {
   flex: 1;
   display: flex;
-  justify-content: center;
-  max-width: 600px;
-}
-
-.level-progress-container {
-  width: 100%;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
 }
 
 .level-track {
-  position: relative;
   display: flex;
-  justify-content: space-between;
   align-items: center;
-  padding: 0 10px;
+  gap: 0;
 }
 
 .level-node {
   position: relative;
-  z-index: 2;
+  display: flex;
+  align-items: center;
+}
+
+.node-inner {
+  width: 64px;
+  height: 64px;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.06);
+  border: 2px solid var(--bonzai-border);
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 2px;
-  padding: 6px 10px;
-  background: rgba(255, 255, 255, 0.05);
-  border: 1px solid rgba(255, 255, 255, 0.1);
-  border-radius: 8px;
+  justify-content: center;
   cursor: pointer;
-  transition: all 0.2s ease;
+  transition: all 0.2s;
 }
 
-.level-node:hover {
-  background: rgba(255, 255, 255, 0.1);
-  transform: translateY(-2px);
+.level-node.unlocked .node-inner {
+  border-color: var(--bonzai-purple);
+  background: rgba(139, 92, 246, 0.1);
 }
 
-.level-node.partial {
-  border-color: rgba(251, 191, 36, 0.5);
-  background: rgba(251, 191, 36, 0.1);
+.level-node.active .node-inner {
+  border-color: var(--bonzai-green);
+  background: rgba(16, 185, 129, 1);
+  box-shadow: 0 0 20px var(--bonzai-green-glow);
+  will-change: transform, box-shadow;
+  animation: pulse 1.6s ease-in-out infinite;
 }
 
-.level-node.active {
-  border-color: rgba(16, 185, 129, 0.5);
-  background: rgba(16, 185, 129, 0.15);
+.level-node:hover .node-inner {
+  transform: scale(1.08);
+  border-color: var(--bonzai-green);
 }
 
-.level-node .material-symbols-outlined {
-  font-size: 18px;
-  color: rgba(255, 255, 255, 0.5);
-}
-
-.level-node.partial .material-symbols-outlined {
-  color: #fbbf24;
-}
-
-.level-node.active .material-symbols-outlined {
-  color: #10b981;
-}
-
-.level-label {
+.level-num {
   font-size: 10px;
-  font-weight: 600;
-  color: rgba(255, 255, 255, 0.5);
-  text-transform: uppercase;
+  font-weight: 800;
+  color: rgba(255, 255, 255, 0.85);
 }
 
-.level-node.active .level-label {
-  color: #10b981;
+.level-connector {
+  width: 20px;
+  height: 2px;
+  background: rgba(255, 255, 255, 0.18);
 }
 
-.progress-line {
-  position: absolute;
-  left: 30px;
-  right: 30px;
-  top: 50%;
-  height: 3px;
-  background: rgba(255, 255, 255, 0.1);
-  border-radius: 2px;
-  z-index: 1;
-  transform: translateY(-50%);
-}
-
-.progress-fill {
-  height: 100%;
-  background: linear-gradient(90deg, #10b981 0%, #059669 100%);
-  border-radius: 2px;
-  transition: width 0.5s ease;
+.level-node.active .level-connector,
+.level-node.unlocked .level-connector {
+  background: linear-gradient(
+    90deg,
+    var(--bonzai-green) 0%,
+    rgba(255, 255, 255, 0.18) 100%
+  );
 }
 
 /* Balance Section */
 .balance-section {
+  flex: 0 0 auto;
   display: flex;
   align-items: center;
-  gap: 10px;
-  min-width: auto;
-  justify-content: flex-start;
+  gap: 16px;
 }
 
 .balance-display {
+  text-align: right;
+}
+
+.bonzai-balance {
   display: flex;
-  flex-direction: column;
-  align-items: flex-end;
-  gap: 2px;
+  align-items: baseline;
+  gap: 6px;
 }
 
 .balance-amount {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  font-size: 14px;
-  font-weight: 600;
-  color: white;
-}
-
-.balance-amount .material-symbols-outlined {
   font-size: 18px;
-  color: #fbbf24;
+  font-weight: 800;
+  color: #fff;
 }
 
-.balance-amount .amount {
-  font-family: "JetBrains Mono", monospace;
-}
-
-.balance-amount .symbol {
-  color: rgba(255, 255, 255, 0.5);
+.balance-token {
   font-size: 12px;
+  color: rgba(255, 255, 255, 0.9);
 }
 
-.balance-breakdown {
+.chain-breakdown {
+  display: flex;
+  gap: 12px;
+  margin-top: 4px;
+}
+
+.chain-balance {
+  font-size: 11px;
+  color: rgba(255, 255, 255, 0.85);
+}
+
+.action-buttons {
   display: flex;
   gap: 8px;
-  font-size: 10px;
-  color: rgba(255, 255, 255, 0.4);
 }
 
-.buy-btn {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  padding: 8px 14px;
-  background: linear-gradient(135deg, #fbbf24 0%, #f59e0b 100%);
-  border: none;
+.action-btn {
+  width: 36px;
+  height: 36px;
   border-radius: 8px;
-  color: #1a1a1a;
-  font-weight: 600;
-  font-size: 13px;
-  text-decoration: none;
+  border: 1px solid var(--bonzai-border);
+  background: transparent;
+  color: rgba(255, 255, 255, 0.9);
   cursor: pointer;
-  transition: all 0.2s ease;
-}
-
-.buy-btn:hover {
-  transform: translateY(-1px);
-  box-shadow: 0 4px 12px rgba(251, 191, 36, 0.4);
-}
-
-.switch-btn,
-.refresh-btn {
   display: flex;
   align-items: center;
   justify-content: center;
-  width: 36px;
-  height: 36px;
-  background: rgba(255, 255, 255, 0.05);
-  border: 1px solid rgba(255, 255, 255, 0.1);
-  border-radius: 8px;
-  color: rgba(255, 255, 255, 0.7);
-  cursor: pointer;
-  transition: all 0.2s ease;
+  transition: all 0.2s;
+  text-decoration: none;
 }
 
-.switch-btn:hover,
-.refresh-btn:hover:not(:disabled) {
-  background: rgba(255, 255, 255, 0.1);
+.action-btn:hover {
+  border-color: var(--bonzai-green);
+  color: var(--bonzai-green);
+}
+
+.action-btn.buy-btn:hover {
+  background: var(--bonzai-green);
   color: white;
-}
-
-.refresh-btn:disabled {
-  opacity: 0.5;
-  cursor: not-allowed;
 }
 
 .spinning {
@@ -678,12 +660,42 @@ onMounted(async () => {
   }
 }
 
-/* Level Modal */
+@keyframes pulseRed {
+  0% {
+    transform: scale(1);
+    box-shadow: 0 0 0 0 rgba(241, 70, 104, 0.1);
+  }
+  50% {
+    transform: scale(1);
+    box-shadow: 0 0 0 64px rgba(241, 70, 104, 0);
+  }
+  100% {
+    transform: scale(1);
+    box-shadow: 0 0 0 0 rgba(241, 70, 104, 0);
+  }
+}
+
+@keyframes pulse {
+  0% {
+    transform: scale(1);
+    box-shadow: 0 0 0 0 rgba(16, 185, 129, 0.1);
+  }
+  50% {
+    transform: scale(1);
+    box-shadow: 0 0 0 64px rgba(16, 185, 129, 0);
+  }
+  100% {
+    transform: scale(1);
+    box-shadow: 0 0 0 0 rgba(16, 185, 129, 0);
+  }
+}
+
+/* Modal */
 .level-modal-overlay {
   position: fixed;
   inset: 0;
-  background: rgba(0, 0, 0, 0.8);
-  backdrop-filter: blur(4px);
+  background: rgba(0, 0, 0, 0.78);
+  backdrop-filter: blur(16px);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -691,199 +703,234 @@ onMounted(async () => {
 }
 
 .level-modal {
-  background: linear-gradient(180deg, #1a1a24 0%, #12121a 100%);
-  border: 1px solid rgba(255, 255, 255, 0.1);
+  width: 92%;
+  max-width: 460px;
+  background: var(--bonzai-bg-dark);
+  border: 1px solid var(--bonzai-border);
   border-radius: 16px;
-  width: 90%;
-  max-width: 480px;
-  max-height: 90vh;
-  overflow-y: auto;
-}
-
-.modal-header {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  padding: 20px;
-  border-bottom: 1px solid rgba(255, 255, 255, 0.1);
-}
-
-.modal-header .material-symbols-outlined {
-  font-size: 28px;
-  color: #10b981;
-}
-
-.modal-header h3 {
-  flex: 1;
-  margin: 0;
-  font-size: 18px;
-  font-weight: 600;
-  color: white;
+  padding: 24px;
+  position: relative;
+  color: #fff; /* ensure white text */
 }
 
 .close-btn {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  width: 32px;
-  height: 32px;
+  position: absolute;
+  top: 14px;
+  right: 14px;
   background: transparent;
   border: none;
-  color: rgba(255, 255, 255, 0.5);
+  color: rgba(255, 255, 255, 0.9);
   cursor: pointer;
-  border-radius: 6px;
-  transition: all 0.2s ease;
 }
 
-.close-btn:hover {
-  background: rgba(255, 255, 255, 0.1);
-  color: white;
+.models__activity--payouts {
+  background: rgba(255, 255, 255, 0.04);
+  border-radius: 10px;
+  padding: 2em;
+  border: 1px solid rgba(241, 70, 104, 0.25); /* #f14668 */
+  animation: 2s pulseRed infinite;
 }
 
-.modal-body {
-  padding: 20px;
+.models__activity--payouts.ok {
+  background: rgba(16, 185, 129, 0.04);
+  border-radius: 10px;
+  padding: 2em;
+  border: 1px solid rgba(16, 185, 129, 0.25); /* #f14668 */
+  animation: 2s pulse infinite;
 }
 
-.description {
-  color: rgba(255, 255, 255, 0.7);
-  margin-bottom: 20px;
-  line-height: 1.5;
+.modal-header {
+  text-align: center;
+  margin-bottom: 18px;
 }
 
-.requirements h4,
-.features h4 {
-  font-size: 14px;
-  font-weight: 600;
-  color: rgba(255, 255, 255, 0.5);
-  text-transform: uppercase;
-  margin-bottom: 12px;
+.modal-level-badge {
+  display: inline-block;
+  padding: 6px 16px;
+  background: var(--bonzai-green);
+  border-radius: 20px;
+  font-weight: 900;
+  color: #fff;
+  margin-bottom: 10px;
 }
 
-.req-item {
+.modal-header h2 {
+  margin: 0;
+  color: #fff;
+}
+
+.modal-status {
+  margin-top: 10px;
+}
+
+strong {
+  color: rgba(16, 185, 129, 1);
+}
+
+.status-pill {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 6px 10px;
+  border-radius: 999px;
+  border: 3px solid rgba(241, 70, 104, 0.9);
+  color: rgba(241, 70, 104, 0.9);
+  font-size: 12px;
+  font-weight: 100;
+  background: rgba(255, 255, 255, 0.06);
+}
+
+.status-pill.ok {
+  color: rgba(16, 185, 129, 1);
+  border-color: rgba(16, 185, 129, 0.55);
+  background: rgba(16, 185, 129, 0.12);
+}
+
+.level-description {
+  color: rgba(255, 255, 255, 0.92);
+  text-align: center;
+  margin-bottom: 16px;
+  line-height: 1.35;
+}
+
+.features-list h3,
+.requirements-title {
+  color: rgba(255, 255, 255, 0.95);
+  margin: 0 0 8px 0;
+  font-weight: 900;
+  letter-spacing: 0.2px;
+}
+
+.features-list ul {
+  list-style: none;
+  padding: 0 0 0 14px;
+  margin: 0 0 16px 0;
+}
+
+.features-list li {
+  padding: 8px 0;
+  color: rgba(255, 255, 255, 0.92);
+  list-style-type: circle;
+}
+
+.requirements-summary {
+  background: rgba(255, 255, 255, 0.04);
+  border-radius: 10px;
+  padding: 2em;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+.req-row {
   display: flex;
   align-items: center;
   gap: 10px;
-  padding: 10px 12px;
-  background: rgba(255, 255, 255, 0.03);
-  border-radius: 8px;
-  margin-bottom: 8px;
-  color: rgba(255, 255, 255, 0.6);
+  padding: 10px 0;
+  font-size: 13px;
+  color: rgba(255, 255, 255, 0.92);
 }
 
-.req-item .material-symbols-outlined {
-  font-size: 20px;
-  color: rgba(255, 255, 255, 0.3);
+hr {
+  margin: 12px 0;
+  width: 100%;
+  background-color: rgba(255, 255, 255, 0.015);
 }
 
-.req-item.met {
-  background: rgba(16, 185, 129, 0.1);
-  color: rgba(255, 255, 255, 0.9);
+.req-icon {
+  width: 20px;
+  text-align: center;
+  opacity: 0.95;
 }
 
-.req-item.met .material-symbols-outlined {
-  color: #10b981;
-}
-
-.req-item .current {
-  margin-left: auto;
-  font-size: 12px;
-  color: rgba(255, 255, 255, 0.4);
-}
-
-.features {
-  margin-top: 20px;
-}
-
-.features ul {
-  list-style: none;
-  padding: 0;
-  margin: 0;
-}
-
-.features li {
-  padding: 8px 0;
-  color: rgba(255, 255, 255, 0.7);
-  border-bottom: 1px solid rgba(255, 255, 255, 0.05);
-}
-
-.features li:last-child {
-  border-bottom: none;
-}
-
-.modal-actions {
-  display: flex;
-  gap: 12px;
-  margin-top: 24px;
-}
-
-.action-btn {
+.req-text {
   flex: 1;
-  padding: 12px 20px;
-  border: none;
-  border-radius: 8px;
-  font-weight: 600;
+}
+
+.req-status {
   font-size: 14px;
-  cursor: pointer;
-  transition: all 0.2s ease;
-  text-decoration: none;
+  font-weight: 900;
+  color: rgba(255, 255, 255, 0.75);
+}
+
+.req-status.met {
+  color: var(--bonzai-green);
+}
+
+.req-note {
+  margin-top: 10px;
+  font-size: 12px;
+  color: rgba(255, 255, 255, 0.85);
   text-align: center;
 }
 
-.action-btn.primary {
-  background: linear-gradient(135deg, #10b981 0%, #059669 100%);
-  color: white;
+.modal-footer {
+  display: flex;
+  gap: 20px;
+  margin-top: 16px;
+  padding-top: 16px;
+  align-items: center;
 }
 
-.action-btn.primary:hover {
-  transform: translateY(-1px);
-  box-shadow: 0 4px 12px rgba(16, 185, 129, 0.4);
+.modal-footer .button {
+  flex: 1;
+  cursor: pointer;
+  text-align: center;
+  text-decoration: none;
 }
 
-.action-btn.secondary {
-  background: rgba(255, 255, 255, 0.1);
-  color: white;
-  border: 1px solid rgba(255, 255, 255, 0.2);
+.primary-btn {
+  background: linear-gradient(135deg, var(--bonzai-green) 0%, #059669 100%);
+  border: none;
+  color: #fff;
 }
 
-.action-btn.secondary:hover {
-  background: rgba(255, 255, 255, 0.15);
+.primary-btn:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.secondary-btn {
+  background: transparent;
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  color: #fff;
+}
+
+.spinner {
+  display: inline-block;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  border: 2px solid rgba(255, 255, 255, 0.35);
+  border-top-color: rgba(255, 255, 255, 0.95);
+  animation: spin 0.9s linear infinite;
+}
+
+/* Transitions */
+.fade-enter-active,
+.fade-leave-active {
+  transition: opacity 0.2s ease;
+}
+.fade-enter-from,
+.fade-leave-to {
+  opacity: 0;
 }
 
 /* Responsive */
 @media (max-width: 768px) {
-  .bonzai-bottom-bar {
-    height: auto;
-    padding: 12px 16px;
-  }
-
   .bar-content {
     flex-wrap: wrap;
-    gap: 12px;
+    padding: 12px 16px;
   }
-
-  .right-group {
-    order: 1;
+  .levels-section {
+    order: -1;
     width: 100%;
-    justify-content: flex-end;
+    margin-bottom: 12px;
   }
-
-  .balance-section {
-    order: 2;
-    width: 100%;
+  .node-inner {
+    width: 40px;
+    height: 40px;
   }
-
-  .level-section {
-    order: 3;
-    width: 100%;
-    max-width: none;
-  }
-
-  .btn-text {
-    display: none;
-  }
-
-  .level-label {
-    display: none;
+  .level-connector {
+    width: 12px;
   }
 }
 </style>

@@ -22,3 +22,73 @@ contextBridge.exposeInMainWorld("electronAPI", {
   saveImage: (defaultName, base64Data) =>
     ipcRenderer.invoke("agent-save-image", defaultName, base64Data),
 });
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Polymarket API Proxy
+// Routes requests through main process to bypass CORS restrictions
+// ─────────────────────────────────────────────────────────────────────────────
+contextBridge.exposeInMainWorld("polymarketProxy", {
+  /**
+   * Fetch from Polymarket API
+   * @param {string} endpoint - 'markets', 'holders', 'events', 'prices', or full URL
+   * @param {Object} params - Query parameters
+   * @returns {Promise<{success: boolean, data?: any, error?: string}>}
+   */
+  fetch: (endpoint, params) =>
+    ipcRenderer.invoke("polymarket:fetch", { endpoint, params }),
+
+  /**
+   * Batch fetch multiple endpoints in parallel
+   * @param {Array<{endpoint: string, params?: Object}>} requests
+   * @returns {Promise<Array<{success: boolean, data?: any, error?: string}>>}
+   */
+  batch: (requests) => ipcRenderer.invoke("polymarket:batch", requests),
+
+  /**
+   * Convenience methods for common endpoints
+   */
+  getMarkets: (params = {}) =>
+    ipcRenderer.invoke("polymarket:fetch", { endpoint: "markets", params }),
+
+  getHolders: (marketId, params = {}) =>
+    ipcRenderer.invoke("polymarket:fetch", {
+      endpoint: "holders",
+      params: { market: marketId, ...params },
+    }),
+
+  getEvents: (params = {}) =>
+    ipcRenderer.invoke("polymarket:fetch", { endpoint: "events", params }),
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Generic External API Proxy
+// For any external API that has CORS restrictions
+// ─────────────────────────────────────────────────────────────────────────────
+contextBridge.exposeInMainWorld("externalProxy", {
+  /**
+   * Fetch any external URL through main process
+   * @param {string} url - Full URL to fetch
+   * @param {Object} options - { method, headers, body }
+   * @returns {Promise<{success: boolean, data?: any, error?: string}>}
+   */
+  fetch: (url, options = {}) =>
+    ipcRenderer.invoke("proxy:fetch", { url, options }),
+
+  /**
+   * GET request helper
+   */
+  get: (url, headers = {}) =>
+    ipcRenderer.invoke("proxy:fetch", {
+      url,
+      options: { method: "GET", headers },
+    }),
+
+  /**
+   * POST request helper
+   */
+  post: (url, body, headers = {}) =>
+    ipcRenderer.invoke("proxy:fetch", {
+      url,
+      options: { method: "POST", headers, body },
+    }),
+});
