@@ -200,7 +200,8 @@
                   style="margin-bottom: 1rem"
                 >
                   <strong>I wasn't able to generate your video.</strong>
-                  Please retry, with different, lower settings or upgrade your hardware.
+                  Please retry, with different, lower settings or upgrade your
+                  hardware.
                 </div>
                 <!-- DOWNLOAD PROGRESS -->
                 <div
@@ -327,9 +328,10 @@
                   :key="inference.id || index"
                 >
                   <div class="question">
+                    <!-- Video Player - UPDATED: Use HTTP streaming URL -->
                     <video
-                      v-if="inference?.answer?.data?.video_path"
-                      :src="fileUrl(inference.answer.data.video_path)"
+                      v-if="getVideoUrl(inference)"
+                      :src="getVideoUrl(inference)"
                       controls
                       style="
                         width: 100vh;
@@ -408,7 +410,11 @@ import useClipboard from "vue-clipboard3";
 import axios from "axios";
 import { io } from "socket.io-client";
 
-const API_BASE = "http://127.0.0.1:65000";
+const API_BASE =
+  (typeof process !== "undefined" && process.env?.VITE_API_BASE) ||
+  (window?.electronAPI?.env && window.electronAPI.env.API_BASE) ||
+  "http://127.0.0.1:65000";
+
 const WS_DL = `${API_BASE}/downloads`;
 const WS_GEN = `${API_BASE}/generation`;
 
@@ -416,18 +422,14 @@ export default {
   name: "GenerativeVideo",
   props: { existingImageBase64: { type: String, default: "" } },
   setup(props) {
-    // --------- basic state
     const mode = ref("turbo");
     const quality = ref("sd");
     const isLoading = ref(false);
     const form = reactive({ prompt: "" });
     const inferences = reactive([]);
     const hasCopy = reactive([]);
-
-    // inside setup()
     const planReq = reactive({ controller: null, seq: 0 });
 
-    // --------- readiness & generation
     const readiness = reactive({
       ok: true,
       missingRepos: [],
@@ -457,37 +459,30 @@ export default {
         readiness.missingGguf
     );
 
-    // --- WAN helpers ---
-    // Snap a dimension to the nearest multiple of 64 (keeps aspect if you start with a 16:9/4:3 map)
     const snap64 = (v) => {
       const m = 64;
       const down = Math.floor(v / m) * m;
       const up = Math.ceil(v / m) * m;
-      // prefer rounding that stays within [256, 1024] typical sweet-spot
       const candidate = Math.abs(v - down) <= Math.abs(up - v) ? down : up;
       return Math.max(256, Math.min(1024, candidate));
     };
 
-    // WAN requires (num_frames - 1) % 4 === 0, i.e. 1,5,9,13,...
     const toWanFrames = (n) => {
       const k = Math.round((n - 1) / 4);
-      return Math.max(5, 1 + 4 * k); // minimum useful sequence is 5
+      return Math.max(5, 1 + 4 * k);
     };
 
-    // --------- pipeline/endpoint updated for turbo(LTX) vs quality(WAN)
     const endpointForMode = () =>
       mode.value === "turbo" ? "/image/video/turbo" : "/image/video/quality";
     const pipelineForMode = () =>
       mode.value === "turbo" ? "ltx_video" : "wan_video";
 
-    // WAN requires (num_frames - 1) % 4 === 0
     const normalizeFramesForWan = (frames) => {
       const n = Math.max(5, Number(frames) || 5);
       const k = Math.round((n - 1) / 4);
       return 1 + 4 * k;
     };
 
-    // --------- downloads (socket-first, poll as fallback)
     const downloads = reactive({
       active: false,
       pipelineId: null,
@@ -515,35 +510,27 @@ export default {
     const mergeTask = (dst, src) => {
       if (!dst) return { ...src };
       const out = { ...dst, ...src };
-      if (
-        typeof dst.progress === "number" &&
-        typeof src.progress === "number"
-      ) {
+      if (typeof dst.progress === "number" && typeof src.progress === "number")
         out.progress = Math.max(dst.progress || 0, src.progress || 0);
-      }
       if (
         typeof dst.downloaded_size === "number" &&
         typeof src.downloaded_size === "number"
-      ) {
+      )
         out.downloaded_size = Math.max(
           dst.downloaded_size,
           src.downloaded_size
         );
-      }
       if (
         typeof dst.total_size === "number" &&
         typeof src.total_size === "number"
-      ) {
+      )
         out.total_size = Math.max(dst.total_size, src.total_size);
-      }
       return out;
     };
 
     const computeTotalFromTasks = (tasksObj) => {
       const tasks = Object.values(tasksObj || {});
       if (!tasks.length) return 0;
-
-      // Prefer byte-weighted because server tracks bytes
       let totalBytes = 0,
         doneBytes = 0;
       for (const t of tasks) {
@@ -555,8 +542,6 @@ export default {
         }
       }
       if (totalBytes > 0) return (doneBytes / totalBytes) * 100;
-
-      // Fallback: simple average of task progress
       const sumPct = tasks.reduce((s, t) => s + Number(t.progress || 0), 0);
       return sumPct / tasks.length;
     };
@@ -565,35 +550,26 @@ export default {
       if (!p) return;
       downloads.pipelineId = p.pipeline_id || downloads.pipelineId;
       downloads.status = p.status || downloads.status || "downloading";
-
       const existing = downloads.pipeline?.tasks || {};
       const incoming = p.tasks || {};
       const merged = { ...existing };
       for (const [tid, t] of Object.entries(incoming))
         merged[tid] = mergeTask(existing[tid], t);
-
       downloads.pipeline = {
         ...(downloads.pipeline || {}),
         ...p,
         tasks: merged,
       };
-
       const serverPct = Number(p.total_progress ?? 0);
       const tasksPct = computeTotalFromTasks(merged);
-
-      // prefer the freshest reading (server if present, else tasks)
       let next =
         Number.isFinite(serverPct) && serverPct > 0 ? serverPct : tasksPct;
-
-      // optional: never show 100 until everything is completed
       const anyActive = Object.values(merged).some((t) =>
         ["downloading", "pending"].includes(t.status)
       );
       if (anyActive) next = Math.min(next, 99.9);
-
       downloads.total_progress = next;
       downloads.progress = next;
-
       downloads.active = !["completed", "failed", "cancelled"].includes(
         downloads.status
       );
@@ -607,21 +583,17 @@ export default {
       }
       downloads.wsUrl = base;
       downloadsSocket.value = io(base, socketOpts);
-
       downloadsSocket.value.on("connect", () => {
-        if (downloads.pipelineId) {
+        if (downloads.pipelineId)
           downloadsSocket.value.emit("subscribe", {
             pipeline_id: downloads.pipelineId,
           });
-        }
       });
-
       downloadsSocket.value.on("download_progress", ({ pipeline }) => {
         lastDlEventAt.value = Date.now();
         if (!pipeline) return;
         applyPipelineUpdate(pipeline);
       });
-
       downloadsSocket.value.on("connect_error", (e) =>
         console.warn("[downloads] connect_error", e?.message || e)
       );
@@ -699,7 +671,6 @@ export default {
           { validateStatus: () => true }
         );
         if (status === 200) {
-          // let the socket update the UI; also flip local flags
           downloads.status = "cancelled";
           downloads.active = false;
         }
@@ -714,58 +685,39 @@ export default {
           {},
           { validateStatus: () => true }
         );
-        if (status === 202 && data?.pipeline_id) {
-          // subscribe to the new pipeline id immediately
+        if (status === 202 && data?.pipeline_id)
           startDownloadTracking(
             data.pipeline_id,
             data.websocket_url || downloads.wsUrl || WS_DL
           );
-        }
       } catch {}
     };
 
-    // --------- readiness helpers
     const applyPlanToReadiness = (data) => {
-      // Extract repos data
       const repos = Array.isArray(data?.repos) ? data.repos : [];
-      // Identify incomplete repos (missing or not OK)
       const incompleteRepos = repos.filter(
         (r) =>
           r && (r.ok === false || (Number.isFinite(r.missing) && r.missing > 0))
       );
-
-      // Save all missing repo names (unique)
       readiness.missingRepos = [
         ...new Set(incompleteRepos.map((r) => r.repo).filter(Boolean)),
       ];
-
-      // Save details of each missing/incomplete repo
       readiness.repoDetails = incompleteRepos.map((r) => ({
         repo: r.repo,
         missing: Number.isFinite(r.missing) ? r.missing : null,
         root: r.root || null,
       }));
-
-      // Extract GGUF statuses
       const ggufs = Array.isArray(data?.gguf_status) ? data.gguf_status : [];
-      // Gather all missing GGUFs
       const missingGgufs = ggufs.filter((g) => g && g.configured && !g.exists);
       readiness.missingGguf = missingGgufs.length > 0;
-      // Save the list of missing GGUF filenames (not just one)
       readiness.ggufNames = missingGgufs.map((g) =>
         (g.path || g.name || "").split("/").pop()
       );
-
-      // Handle authentication requirements
       readiness.authRequired = !!data?.auth_required;
       readiness.authRepos = Array.isArray(data?.auth_repos)
         ? data.auth_repos
         : [];
-
-      // Save any notes
       readiness.notes = Array.isArray(data?.notes) ? data.notes : [];
-
-      // Mark overall readiness ok only if everything is present and no auth needed
       const serverOk = !!data?.ok;
       readiness.ok =
         serverOk &&
@@ -817,7 +769,6 @@ export default {
     };
 
     const probeCurrentMode = async () => {
-      // reset UI state
       readiness.ok = true;
       readiness.missingRepos = [];
       readiness.repoDetails = [];
@@ -827,38 +778,26 @@ export default {
       readiness.authRequired = false;
       readiness.authRepos = [];
       generation.blocked = false;
-
       const pipeline = pipelineForMode();
-
-      // --- cancel the previous /plan call (if any)
       try {
         planReq.controller?.abort();
       } catch {}
       const controller = new AbortController();
       planReq.controller = controller;
       const mySeq = ++planReq.seq;
-
       try {
         const { data, status } = await axios.post(
           `${API_BASE}/pipelines/plan`,
           { pipeline, deep_validate: true },
-          {
-            signal: controller.signal, // <-- key line
-            validateStatus: () => true,
-          }
+          { signal: controller.signal, validateStatus: () => true }
         );
-
-        // if another /plan started after this one, ignore this response
         if (mySeq !== planReq.seq) return;
-
-        if (status >= 200 && status < 300) {
-          applyPlanToReadiness(data);
-        } else {
+        if (status >= 200 && status < 300) applyPlanToReadiness(data);
+        else {
           readiness.ok = false;
           readiness.notes = [`Planner returned HTTP ${status}.`];
         }
       } catch (e) {
-        // Swallow aborts; surface real errors
         const aborted =
           e?.code === "ERR_CANCELED" ||
           e?.name === "CanceledError" ||
@@ -868,11 +807,10 @@ export default {
           readiness.notes = [e?.message || "Network error while planning"];
         }
       } finally {
-        // clear only if we're the active controller
         if (planReq.controller === controller) planReq.controller = null;
       }
     };
-    // --- CTA action
+
     const prefetchForMode = async () => {
       const pipeline = pipelineForMode();
       try {
@@ -881,7 +819,6 @@ export default {
           { pipeline, deep_validate: true },
           { validateStatus: () => true }
         );
-
         if (res.status === 202) {
           const started = Array.isArray(res.data?.pipelines_started)
             ? res.data.pipelines_started
@@ -895,19 +832,16 @@ export default {
           if (pid) startDownloadTracking(pid, ws);
           return;
         }
-
         if (res.status >= 200 && res.status < 300) {
           await probeCurrentMode();
           return;
         }
-
         if (res.status === 403) return apply403ToReadiness(res);
         if (res.status === 409) {
           apply409ToReadiness(res);
           await probeCurrentMode();
           return;
         }
-
         generation.error =
           res?.data?.error || `Prefetch failed (${res.status})`;
       } catch (e) {
@@ -915,7 +849,6 @@ export default {
       }
     };
 
-    // --------- generation socket
     const genSocket = ref(null);
     const ensureGenerationSocket = (base = WS_GEN) => {
       if (genSocket.value && genSocket.value.connected) return;
@@ -960,14 +893,12 @@ export default {
       });
     };
 
-    // --------- request wrapper
     const requestWithDownloadTracking = async (url, payload, onSuccess) => {
       try {
         isLoading.value = true;
         const res = await axios.post(url, payload, {
           validateStatus: () => true,
         });
-
         if (res.status === 202) {
           const pid =
             res.data?.pipeline_id ||
@@ -981,20 +912,17 @@ export default {
           if (pid) startDownloadTracking(pid, ws);
           return;
         }
-
         if (res.status >= 200 && res.status < 300) {
           generation.blocked = false;
           await onSuccess(res);
           return;
         }
-
         if (res.status === 403) return apply403ToReadiness(res);
         if (res.status === 409) {
           apply409ToReadiness(res);
           await probeCurrentMode();
           return;
         }
-
         generation.error = res?.data?.error || `Request failed (${res.status})`;
         generation.active = false;
       } catch (err) {
@@ -1005,7 +933,6 @@ export default {
       }
     };
 
-    // --------- image handling for i2v
     const pickedImageName = ref("");
     const uploadedImageBase64 = ref("");
     const imagePreviewUrl = computed(() => {
@@ -1037,49 +964,41 @@ export default {
         reader.readAsDataURL(file);
       });
 
-    // --------- actions
     const sendMessage = async (prompt) => {
       if (!prompt) return;
       if (!hasAnyImage.value) return;
-
-      // sizes tuned to server examples
       const sizeMaps = {
-        turbo: { sd: [480, 640], hd: [512, 768], fhd: [768, 1280] }, // LTX likes 2:3~ish; HxW [256, 384] [480, 640] [512, 768]
-        quality: { sd: [384, 512], hd: [576, 768], fhd: [1024, 1728] }, // [480, 832]
+        turbo: { sd: [480, 640], hd: [480, 832], fhd: [768, 1280] },
+        quality: { sd: [480, 640], hd: [480, 832], fhd: [1024, 1728] },
       };
       const pick = sizeMaps[mode.value] || sizeMaps.turbo;
       const [h, w] = pick[quality.value] || pick.sd;
-
-      // sensible defaults matching server
-      let frames = mode.value === "turbo" ? 41 : 21;
+      let frames = mode.value === "turbo" ? 96 : 41;
       let payload;
-
       if (mode.value === "quality") {
-        // WAN
         frames = normalizeFramesForWan(frames);
         payload = {
           prompt,
           height: h,
           width: w,
-          frames: Math.min(frames, 41), // Cap at 41 for MPS memory
-          fps: 10, // Wan native fps
-          steps: 20,
-          guidance_scale: 3, // 3-6
+          frames: Math.min(frames, 81),
+          fps: 8,
+          steps: 10,
+          guidance_scale: 3,
           auto_download: true,
           image_base64:
             uploadedImageBase64.value ||
             (props.existingImageBase64 || "").trim(),
         };
       } else {
-        // LTX
         payload = {
           prompt,
           height: h,
           width: w,
-          frames: frames, // LTX is fine with 96 by default
-          fps: 12,
-          steps: 40,
-          guidance_scale: 3.0,
+          frames: frames,
+          fps: 24,
+          steps: 100,
+          guidance_scale: 5.0,
           max_sequence_length: 512,
           seed: 42,
           negative_prompt: `deformed face, ugly face, bad face, mutated face, disfigured face,
@@ -1093,12 +1012,11 @@ export default {
             (props.existingImageBase64 || "").trim(),
         };
       }
-
       const url = `${API_BASE}${endpointForMode()}`;
       ensureGenerationSocket();
-
       const onSuccess = async (response) => {
-        if (response?.data?.video_path) {
+        // UPDATED: Check for video_url OR video_path
+        if (response?.data?.video_path || response?.data?.video_url) {
           inferences.push({
             question: `${mode.value}-i2v`,
             answer: response,
@@ -1112,21 +1030,37 @@ export default {
           } catch {}
         }
       };
-
       await requestWithDownloadTracking(url, payload, onSuccess);
     };
 
-    // --------- utils / history
     const { toClipboard } = useClipboard();
     const copy = async (txt) => {
       try {
         await toClipboard(txt);
       } catch {}
     };
+
+    // UPDATED: Get video URL - prefer HTTP streaming URL, fallback to file://
+    const getVideoUrl = (inference) => {
+      const data = inference?.answer?.data;
+      if (!data) return "";
+      // Prefer HTTP streaming URL (works in Electron)
+      if (data.video_url) return data.video_url;
+      // Fallback to file:// for backwards compatibility
+      if (data.video_path) {
+        if (/^https?:\/\//i.test(data.video_path)) return data.video_path;
+        return `file://${data.video_path}`;
+      }
+      return "";
+    };
+
     const fileUrl = (p) =>
       p && /^https?:\/\//i.test(p) ? p : p ? `file://${p}` : "";
+
     const downloadVideo = async (idx) => {
-      const path = inferences[idx]?.answer?.data?.video_path;
+      const data = inferences[idx]?.answer?.data;
+      if (!data) return;
+      const path = data.video_path;
       if (!path) return;
       const defaultName =
         path.split("/").pop() || `bonzai-video-${Date.now()}.mp4`;
@@ -1134,6 +1068,7 @@ export default {
       if (!result?.success)
         console.error("Save cancelled or failed", result?.error);
     };
+
     const removeInference = async (idx) => {
       if (idx < 0 || idx >= inferences.length) return;
       inferences.splice(idx, 1);
@@ -1145,6 +1080,7 @@ export default {
         );
       } catch {}
     };
+
     const loadHistory = async () => {
       try {
         const saved = await window.electronAPI?.store?.get?.(
@@ -1156,7 +1092,6 @@ export default {
       } catch {}
     };
 
-    // --------- derived: stable ordered task list
     const downloadTaskList = computed(() => {
       const tasks = downloads.pipeline?.tasks || {};
       const arr = Object.values(tasks);
@@ -1177,13 +1112,13 @@ export default {
         });
     });
 
-    // --------- lifecycle
     onMounted(async () => {
       ensureGenerationSocket();
       await resumeActiveDownloadIfAny();
       await loadHistory();
       await probeCurrentMode();
     });
+
     onBeforeUnmount(() => {
       if (downloadsSocket.value?.connected) {
         try {
@@ -1200,6 +1135,7 @@ export default {
         } catch {}
       }
     });
+
     watch(
       mode,
       () => {
@@ -1209,7 +1145,6 @@ export default {
     );
 
     return {
-      // state
       mode,
       quality,
       form,
@@ -1220,14 +1155,11 @@ export default {
       showUpdateCTA,
       generation,
       downloads,
-      // derived
       downloadTaskList,
-      // i2v helpers
       onImagePicked,
       pickedImageName,
       hasAnyImage,
       imagePreviewUrl,
-      // actions
       sendMessage,
       copy,
       downloadVideo,
@@ -1236,8 +1168,8 @@ export default {
       cancelCurrentPipeline,
       retryCurrentPipeline,
       probeCurrentMode,
-      // misc
       fileUrl,
+      getVideoUrl,
     };
   },
 };
@@ -1298,80 +1230,6 @@ export default {
   border: 1px solid rgba(255, 255, 255, 0.1);
   backdrop-filter: blur(32px);
   border-radius: 4px !important;
-}
-h1 {
-  margin-top: 0 !important;
-  font-size: 64px;
-  color: #fff;
-  text-align: right;
-}
-p {
-  margin-bottom: 1em;
-  font-size: 24px;
-  color: #fff;
-  text-align: justify;
-  font-family: "Fira Sans", sans-serif;
-  font-weight: 100;
-  -webkit-font-smoothing: antialiased;
-  -moz-osx-font-smoothing: grayscale;
-  transform: translate3d(0, 0, 0);
-}
-div.question {
-  border: 1px solid rgba(255, 255, 255, 0.25);
-  padding: 1em 1em 2em;
-  margin-top: 2em !important;
-  margin-bottom: 1em !important;
-  font-weight: 700;
-  box-shadow: 8px 8px 0 rgba(97, 55, 142, 0.66);
-  border-radius: 4px;
-  backdrop-filter: blur(6px);
-}
-hr {
-  margin: 12px 0;
-  width: 100%;
-  background-color: rgba(255, 255, 255, 0.015);
-}
-.input {
-  color: #fff;
-  background: rgba(255, 255, 255, 0.1);
-  box-shadow: 8px 8px 0 rgba(97, 55, 142, 0.66);
-  transition: 200ms ease-in;
-  transform: translate3d(0, 0, 0);
-}
-::placeholder {
-  color: rgba(255, 255, 255, 0.1) !important;
-  opacity: 1 !important;
-}
-.button.chat.is-loading {
-  position: absolute;
-  width: 32px;
-  height: 32px;
-  right: 10px;
-  bottom: 14px;
-  border: none !important;
-  box-shadow: none !important;
-}
-.is-loading {
-  text-shadow: none !important;
-}
-input[type="radio"] {
-  display: none;
-}
-input[type="radio"] + label {
-  padding: 3px 12px 9px;
-  color: rgba(255, 255, 255, 0.3) !important;
-  border: 1px solid rgba(255, 255, 255, 0.3);
-  border-radius: 4px;
-}
-input[type="radio"]:checked + label {
-  color: rgba(255, 255, 255, 1) !important;
-  border: 1px solid rgba(255, 255, 255, 1) !important;
-  background: rgba(97, 55, 142, 0.33) !important;
-  backdrop-filter: blur(64px) !important;
-}
-label.radio.quality {
-  margin: 0 3px;
-  padding: 3px 6px 0;
 }
 h1 {
   margin-top: 0 !important;

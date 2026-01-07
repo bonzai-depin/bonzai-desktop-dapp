@@ -55,17 +55,65 @@
           <div class="models__activity--payouts">
             <div class="columns">
               <div class="column is-12">
-                <!-- MODE TOGGLES -->
-                <div class="control mb-5 has-text-left">
+                <!-- MODEL SELECTION -->
+                <div class="control mb-4 has-text-left">
+                  <label class="label has-text-white mb-2">Model</label>
+                  <input
+                    v-model="selectedModel"
+                    :value="'multilingual'"
+                    id="model_multilingual"
+                    type="radio"
+                    name="model"
+                    checked
+                  />
+                  <label for="model_multilingual" class="radio mr-3">
+                    <span
+                      class="material-symbols-outlined"
+                      style="font-size: 28px !important"
+                    >
+                      language
+                    </span>
+                    Multilingual
+                    <span class="tag is-info is-light ml-1">23 Languages</span>
+                  </label>
+
+                  <input
+                    v-model="selectedModel"
+                    :value="'turbo'"
+                    id="model_turbo"
+                    type="radio"
+                    name="model"
+                  />
+                  <label for="model_turbo" class="radio">
+                    <span
+                      class="material-symbols-outlined"
+                      style="font-size: 28px !important"
+                    >
+                      bolt
+                    </span>
+                    Turbo
+                    <span class="tag is-warning is-light ml-1">
+                      Fast + Tags
+                    </span>
+                  </label>
+                </div>
+
+                <!-- MODE TOGGLES (TTS vs Clone) -->
+                <div class="control mb-4 has-text-left">
                   <input
                     v-model="mode"
                     :value="'tts'"
                     id="mode_tts"
                     type="radio"
                     name="mode"
-                    checked
+                    :checked="mode === 'tts'"
+                    :disabled="selectedModel === 'turbo'"
                   />
-                  <label for="mode_tts" class="radio mr-2">
+                  <label
+                    for="mode_tts"
+                    class="radio mr-2"
+                    :class="{ 'is-disabled': selectedModel === 'turbo' }"
+                  >
                     <span
                       class="material-symbols-outlined"
                       style="font-size: 32px !important"
@@ -90,10 +138,19 @@
                       voice_over_off
                     </span>
                     Voice Clone
+                    <span
+                      v-if="selectedModel === 'turbo'"
+                      class="tag is-danger is-light ml-1"
+                    >
+                      Required
+                    </span>
                   </label>
 
-                  <!-- LANGUAGE SELECTOR -->
-                  <span class="control ml-4">
+                  <!-- LANGUAGE SELECTOR (only for multilingual) -->
+                  <span
+                    v-if="selectedModel === 'multilingual'"
+                    class="control ml-4"
+                  >
                     <div class="select is-dark">
                       <select v-model="language">
                         <option
@@ -107,8 +164,11 @@
                     </div>
                   </span>
 
-                  <!-- EXPRESSION SLIDER -->
-                  <span class="control ml-4">
+                  <!-- EXPRESSION SLIDER (only for multilingual) -->
+                  <span
+                    v-if="selectedModel === 'multilingual'"
+                    class="control ml-4"
+                  >
                     <label class="label is-small has-text-white">
                       Expression
                     </label>
@@ -124,8 +184,40 @@
                   </span>
                 </div>
 
+                <!-- TURBO INFO PANEL -->
+                <div
+                  v-if="selectedModel === 'turbo'"
+                  class="notification is-warning is-light mb-4"
+                >
+                  <p class="is-size-6">
+                    <strong>Chatterbox Turbo</strong>
+                    - Ultra-fast inference (~200ms)
+                  </p>
+                  <p class="is-size-7 mt-2">
+                    <span class="material-symbols-outlined is-size-6 mr-1">
+                      info
+                    </span>
+                    Requires a 5-10 second voice reference. Supports
+                    paralinguistic tags:
+                  </p>
+                  <div class="tags mt-2">
+                    <span
+                      v-for="tag in turboTags"
+                      :key="tag"
+                      class="tag is-dark is-clickable"
+                      @click="insertTag(tag)"
+                      :title="'Click to insert ' + tag"
+                    >
+                      {{ tag }}
+                    </span>
+                  </div>
+                </div>
+
                 <!-- VOICE CLONE FILE INPUT -->
-                <div v-if="mode === 'clone'" class="mb-5">
+                <div
+                  v-if="mode === 'clone' || selectedModel === 'turbo'"
+                  class="mb-5"
+                >
                   <div class="file has-name is-fullwidth">
                     <label class="file-label">
                       <input
@@ -140,7 +232,15 @@
                             upload_file
                           </span>
                         </span>
-                        <span class="file-label">Reference Voice (5-10s)</span>
+                        <span class="file-label">
+                          Reference Voice (5-10s)
+                          <span
+                            v-if="selectedModel === 'turbo'"
+                            class="has-text-danger"
+                          >
+                            *
+                          </span>
+                        </span>
                       </span>
                       <span class="file-name">
                         {{ synthesisFileName || "No file selected" }}
@@ -148,8 +248,13 @@
                     </label>
                   </div>
                   <p class="help has-text-grey-light">
-                    Upload a 5-10 second audio clip to clone the voice. Works
-                    across all 23 languages.
+                    <span v-if="selectedModel === 'turbo'">
+                      <strong class="has-text-warning">Required:</strong>
+                    </span>
+                    Upload a 5-10 second audio clip to clone the voice.
+                    <span v-if="selectedModel === 'multilingual'">
+                      Works across all 23 languages.
+                    </span>
                   </p>
                 </div>
 
@@ -222,7 +327,7 @@
                   style="margin-bottom: 1rem"
                 >
                   <strong>I wasn't able to generate your audio.</strong>
-                  Please retry, with different, lower settings or upgrade your hardware.
+                  {{ generation.error }}
                 </div>
 
                 <!-- DOWNLOAD PROGRESS -->
@@ -285,6 +390,7 @@
                 <!-- PROMPT -->
                 <form ref="promptForm" @submit.prevent>
                   <input
+                    ref="promptInput"
                     class="input is-large is-fullwidth"
                     type="text"
                     :placeholder="promptPlaceholder"
@@ -326,7 +432,17 @@
                           class="audio-player"
                         ></audio>
                         <div class="audio-meta">
-                          <span class="tag is-dark">
+                          <span class="tag is-dark mr-2">
+                            {{
+                              inference.model === "turbo"
+                                ? "⚡ Turbo"
+                                : "🌍 Multilingual"
+                            }}
+                          </span>
+                          <span
+                            v-if="inference.model !== 'turbo'"
+                            class="tag is-dark"
+                          >
                             {{
                               languageFlags[inference.language] ||
                               inference.language
@@ -341,6 +457,15 @@
                               voice_over_off
                             </span>
                             Cloned
+                          </span>
+                          <span
+                            v-if="inference.hasTags"
+                            class="tag is-info ml-2"
+                          >
+                            <span class="material-symbols-outlined is-size-6">
+                              emoji_emotions
+                            </span>
+                            Tags
                           </span>
                         </div>
                       </div>
@@ -443,6 +568,7 @@ export default {
   name: "GenerativeAudio",
   setup() {
     // ------------ basic state -------------
+    const selectedModel = ref("multilingual"); // 'multilingual' or 'turbo'
     const mode = ref("tts"); // 'tts' or 'clone'
     const language = ref("en");
     const exaggerationPct = ref(50); // 0-100 -> maps to 0.0-1.0
@@ -450,8 +576,22 @@ export default {
     const form = reactive({ prompt: "" });
     const inferences = reactive([]);
     const hasCopy = reactive([]);
+    const promptInput = ref(null);
 
-    // Supported languages (23 languages)
+    // Turbo paralinguistic tags
+    const turboTags = [
+      "[laugh]",
+      "[chuckle]",
+      "[sigh]",
+      "[gasp]",
+      "[cough]",
+      "[sniff]",
+      "[groan]",
+      "[yawn]",
+      "[clearing throat]",
+    ];
+
+    // Supported languages (23 languages) - for Multilingual model
     const languages = {
       ar: "Arabic",
       da: "Danish",
@@ -537,15 +677,22 @@ export default {
     const canGenerate = computed(() => {
       if (!readiness.ok || readiness.authRequired || generation.active)
         return false;
+      // Turbo always requires voice reference
+      if (selectedModel.value === "turbo" && !synthesisBase64.value)
+        return false;
+      // Clone mode requires voice reference
       if (mode.value === "clone" && !synthesisBase64.value) return false;
       return true;
     });
 
-    const promptPlaceholder = computed(() =>
-      mode.value === "clone"
+    const promptPlaceholder = computed(() => {
+      if (selectedModel.value === "turbo") {
+        return "Enter text with optional tags like [laugh] or [sigh]...";
+      }
+      return mode.value === "clone"
         ? `Enter text in ${languages[language.value]} to speak in the cloned voice...`
-        : `Enter text in ${languages[language.value]} to convert to speech...`
-    );
+        : `Enter text in ${languages[language.value]} to convert to speech...`;
+    });
 
     // ------------ generation --------------
     const generation = reactive({
@@ -558,7 +705,9 @@ export default {
     });
 
     // ------------ pipeline/endpoint maps --
-    const endpointForMode = () => `/audio`;
+    const endpointForMode = () => {
+      return selectedModel.value === "turbo" ? "/audio/turbo" : "/audio";
+    };
     const pipelineForMode = () => "chatterbox";
     const currentPipeline = computed(() => pipelineForMode());
 
@@ -1021,22 +1170,43 @@ export default {
       reader.readAsDataURL(file);
     };
 
+    // ------------ insert paralinguistic tag
+    const insertTag = (tag) => {
+      const cursorPos = promptInput.value?.selectionStart || form.prompt.length;
+      const before = form.prompt.slice(0, cursorPos);
+      const after = form.prompt.slice(cursorPos);
+      form.prompt = before + tag + " " + after;
+      // Focus back on input
+      promptInput.value?.focus();
+    };
+
     // ------------ actions -----------------
     const sendMessage = async (prompt) => {
       if (!prompt) return;
       if (!canGenerate.value) return;
 
+      const isTurbo = selectedModel.value === "turbo";
       const payload = {
         prompt,
-        language: language.value,
         auto_download: true,
-        exaggeration: exaggerationPct.value / 100,
-        cfg_weight: 0.5,
-        temperature: 0.8,
       };
 
-      if (mode.value === "clone" && synthesisBase64.value)
+      if (isTurbo) {
+        // Turbo endpoint
         payload.synthesis_base64 = synthesisBase64.value;
+        payload.cfg_weight = 0.5;
+        payload.temperature = 0.8;
+      } else {
+        // Multilingual endpoint
+        payload.language = language.value;
+        payload.exaggeration = exaggerationPct.value / 100;
+        payload.cfg_weight = 0.5;
+        payload.temperature = 0.8;
+
+        if (mode.value === "clone" && synthesisBase64.value) {
+          payload.synthesis_base64 = synthesisBase64.value;
+        }
+      }
 
       const url = `${API_BASE}${endpointForMode()}`;
 
@@ -1050,12 +1220,15 @@ export default {
 
       const onSuccess = async (response) => {
         if (response?.data?.audio_path) {
+          const hasTags = turboTags.some((tag) => prompt.includes(tag));
           inferences.push({
             question: prompt,
             answer: response,
             id: uuid(),
-            language: language.value,
-            hasClone: mode.value === "clone",
+            language: isTurbo ? "en" : language.value,
+            model: selectedModel.value,
+            hasClone: isTurbo || mode.value === "clone",
+            hasTags: hasTags,
           });
           try {
             await window.electronAPI?.store?.set?.(
@@ -1169,6 +1342,14 @@ export default {
         });
     });
 
+    // ------------ watchers ----------------
+    // Force clone mode when turbo is selected
+    watch(selectedModel, (newModel) => {
+      if (newModel === "turbo") {
+        mode.value = "clone";
+      }
+    });
+
     // ------------ lifecycle ----------------
     onMounted(async () => {
       ensureGenerationSocket();
@@ -1204,11 +1385,13 @@ export default {
     watch(mode, () => probeCurrentMode(), { immediate: true });
 
     return {
+      selectedModel,
       mode,
       language,
       languages,
       languageFlags,
       exaggerationPct,
+      turboTags,
       form,
       isLoading,
       inferences,
@@ -1222,6 +1405,7 @@ export default {
       downloads,
       downloadTaskList,
       downloadMatchesMode,
+      promptInput,
       sendMessage,
       copy,
       downloadAudio,
@@ -1231,6 +1415,7 @@ export default {
       retryCurrentPipeline,
       probeCurrentMode,
       handleSynthesisFile,
+      insertTag,
       fileUrl,
     };
   },
@@ -1264,7 +1449,7 @@ export default {
   z-index: -1;
   height: 100%;
   width: 100%;
-  background: url("src/assets/bonzai_audio.jpg") no-repeat;
+  background: url("src/assets/bonzai_music.jpg") no-repeat;
   background-size: cover;
   filter: blur(6px);
   animation: move 40s ease infinite;
@@ -1369,6 +1554,12 @@ input[type="radio"] + label {
   color: rgba(255, 255, 255, 0.3) !important;
   border: 1px solid rgba(255, 255, 255, 0.3);
   border-radius: 4px;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+input[type="radio"] + label.is-disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
 }
 input[type="radio"]:checked + label {
   color: rgba(255, 255, 255, 1) !important;
@@ -1425,6 +1616,14 @@ input[type="radio"]:checked + label {
   background: rgba(255, 221, 87, 0.8);
   color: #000;
 }
+.tag.is-clickable {
+  cursor: pointer;
+  transition: transform 0.1s ease;
+}
+.tag.is-clickable:hover {
+  transform: scale(1.05);
+  background: rgba(50, 50, 50, 0.8);
+}
 ul,
 ol {
   padding: 0;
@@ -1436,5 +1635,12 @@ ol.chat {
 }
 ol.chat li {
   position: relative;
+}
+.notification.is-warning.is-light {
+  background: rgba(255, 221, 87, 0.15);
+  color: #fff;
+}
+.label.has-text-white {
+  color: #fff !important;
 }
 </style>
