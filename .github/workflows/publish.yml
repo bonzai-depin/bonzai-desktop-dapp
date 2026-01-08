@@ -2,7 +2,7 @@ name: Release
 on:
   release:
     types:
-      - created 
+      - created
 
 jobs:
   publish_on_mac:
@@ -74,7 +74,7 @@ jobs:
           KEYCHAIN_PW: ${{ secrets.KEYCHAIN_PASSWORD }}
         run: |
           security unlock-keychain -p "$KEYCHAIN_PW" build.keychain
-          
+
           BINARY_PATH="binaries/${{ env.OS_KEY }}-${{ env.ARCH_KEY }}/diffuser"
           if [ -f "$BINARY_PATH" ]; then
             codesign --force --sign "Developer ID Application" \
@@ -82,10 +82,10 @@ jobs:
               --entitlements ./entitlements.mac.plist \
               --timestamp \
               "$BINARY_PATH"
-            echo "✅ Signed Python binary: $BINARY_PATH"
+            echo "Signed Python binary: $BINARY_PATH"
             codesign --verify --verbose "$BINARY_PATH"
           else
-            echo "❌ Python binary not found at: $BINARY_PATH"
+            echo "Python binary not found at: $BINARY_PATH"
             exit 1
           fi
 
@@ -95,35 +95,31 @@ jobs:
           node-version: 20
 
       - name: Install Node dependencies
-        run: |
-          npm ci
-          # Ensure appdmg is installed for DMG creation
-          npm install appdmg --save-optional || true
+        run: npm ci
 
       - name: Sign ffmpeg binary (macOS ARM64)
         env:
           KEYCHAIN_PW: ${{ secrets.KEYCHAIN_PASSWORD }}
         run: |
           security unlock-keychain -p "$KEYCHAIN_PW" build.keychain
-          
+
           FFMPEG_PATH="node_modules/ffmpeg-static-electron-forge/dist/bin/darwin/arm64/ffmpeg"
-          
+
           if [ -f "$FFMPEG_PATH" ]; then
             codesign --force --sign "Developer ID Application" \
               --options runtime \
               --entitlements ./entitlements.mac.plist \
               --timestamp \
               "$FFMPEG_PATH"
-            echo "✅ Signed ffmpeg at: $FFMPEG_PATH"
+            echo "Signed ffmpeg at: $FFMPEG_PATH"
             codesign --verify --verbose "$FFMPEG_PATH"
           else
-            echo "❌ ffmpeg not found at: $FFMPEG_PATH"
-            echo "Available files:"
+            echo "ffmpeg not found at: $FFMPEG_PATH"
             find node_modules/ffmpeg-static-electron-forge -name ffmpeg -type f || true
             exit 1
           fi
 
-      - name: Build macOS ARM64 app
+      - name: Build and Publish macOS ARM64 app
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           APPLE_ID: ${{ secrets.APPLE_ID }}
@@ -132,43 +128,38 @@ jobs:
           KEYCHAIN_PASSWORD: ${{ secrets.KEYCHAIN_PASSWORD }}
           DEBUG: electron-forge:*
         run: |
-          set -o pipefail
           security unlock-keychain -p "${{ secrets.KEYCHAIN_PASSWORD }}" build.keychain
-          echo "Starting Electron Forge make for ARM64..."
-          npm run make -- --arch=arm64 --platform=darwin 2>&1 | tee make-output.log
-          MAKE_EXIT=$?
-          echo ""
-          echo "Make command completed with exit code: $MAKE_EXIT"
-          echo "Checking for output files..."
-          ls -laR out/ 2>/dev/null || echo "out/ directory not found after make"
-          if [ $MAKE_EXIT -ne 0 ]; then
-            echo "❌ Make command failed!"
-            exit $MAKE_EXIT
-          fi
+          npm run publish
 
-      - name: Upload ARM64 DMG to Release
+      - name: Verify and fallback upload ARM64
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          echo "Current directory: $(pwd)"
-          echo "Looking for DMG files anywhere..."
-          find . -name "*.dmg" -type f 2>/dev/null || true
+          echo "=== Build artifacts ==="
+          find out -name "*.dmg" -type f 2>/dev/null || echo "No DMG in out/"
+          ls -laR out/make 2>/dev/null || echo "out/make not found"
 
           echo ""
-          echo "Listing out/ directory structure:"
-          ls -laR out/ 2>/dev/null || echo "out/ directory not found"
+          echo "=== Current release assets ==="
+          gh release view "${{ github.event.release.tag_name }}" --json assets --jq '.assets[].name' || echo "Could not fetch release assets"
 
-          DMG_FILE=$(find . -name "*.dmg" -type f 2>/dev/null | head -1)
-          if [ -n "$DMG_FILE" ] && [ -f "$DMG_FILE" ]; then
-            # Rename to include architecture
-            NEW_NAME="bonzai-${{ github.event.release.tag_name }}-arm64.dmg"
-            cp "$DMG_FILE" "$NEW_NAME"
-            echo "Uploading $NEW_NAME to release ${{ github.event.release.tag_name }}..."
-            gh release upload "${{ github.event.release.tag_name }}" "$NEW_NAME" --clobber
-            echo "✅ Uploaded: $NEW_NAME"
+          echo ""
+          echo "=== Fallback upload if needed ==="
+          DMG_FILE=$(find out -name "*.dmg" -type f 2>/dev/null | head -1)
+          if [ -n "$DMG_FILE" ]; then
+            # Check if already uploaded by looking for any dmg with arm64 or similar
+            EXISTING=$(gh release view "${{ github.event.release.tag_name }}" --json assets --jq '.assets[].name' | grep -i "arm64\|darwin" || true)
+            if [ -z "$EXISTING" ]; then
+              NEW_NAME="bonzai-${{ github.event.release.tag_name }}-arm64.dmg"
+              cp "$DMG_FILE" "$NEW_NAME"
+              echo "Forge publisher may have failed. Uploading manually: $NEW_NAME"
+              gh release upload "${{ github.event.release.tag_name }}" "$NEW_NAME" --clobber
+              echo "Uploaded: $NEW_NAME"
+            else
+              echo "DMG already attached to release: $EXISTING"
+            fi
           else
-            echo "❌ No DMG file found!"
-            echo "Build output may have failed. Check the 'Build macOS ARM64 app' step."
+            echo "No DMG file found to upload!"
             exit 1
           fi
 
@@ -241,7 +232,7 @@ jobs:
           KEYCHAIN_PW: ${{ secrets.KEYCHAIN_PASSWORD }}
         run: |
           security unlock-keychain -p "$KEYCHAIN_PW" build.keychain
-          
+
           BINARY_PATH="binaries/${{ env.OS_KEY }}-${{ env.ARCH_KEY }}/diffuser"
           if [ -f "$BINARY_PATH" ]; then
             codesign --force --sign "Developer ID Application" \
@@ -249,10 +240,10 @@ jobs:
               --entitlements ./entitlements.mac.plist \
               --timestamp \
               "$BINARY_PATH"
-            echo "✅ Signed Python binary: $BINARY_PATH"
+            echo "Signed Python binary: $BINARY_PATH"
             codesign --verify --verbose "$BINARY_PATH"
           else
-            echo "❌ Python binary not found at: $BINARY_PATH"
+            echo "Python binary not found at: $BINARY_PATH"
             exit 1
           fi
 
@@ -262,35 +253,31 @@ jobs:
           node-version: 20
 
       - name: Install Node dependencies
-        run: |
-          npm ci
-          # Ensure appdmg is installed for DMG creation
-          npm install appdmg --save-optional || true
+        run: npm ci
 
       - name: Sign ffmpeg binary (macOS x64)
         env:
           KEYCHAIN_PW: ${{ secrets.KEYCHAIN_PASSWORD }}
         run: |
           security unlock-keychain -p "$KEYCHAIN_PW" build.keychain
-          
+
           FFMPEG_PATH="node_modules/ffmpeg-static-electron-forge/dist/bin/darwin/x64/ffmpeg"
-          
+
           if [ -f "$FFMPEG_PATH" ]; then
             codesign --force --sign "Developer ID Application" \
               --options runtime \
               --entitlements ./entitlements.mac.plist \
               --timestamp \
               "$FFMPEG_PATH"
-            echo "✅ Signed ffmpeg at: $FFMPEG_PATH"
+            echo "Signed ffmpeg at: $FFMPEG_PATH"
             codesign --verify --verbose "$FFMPEG_PATH"
           else
-            echo "❌ ffmpeg not found at: $FFMPEG_PATH"
-            echo "Available files:"
+            echo "ffmpeg not found at: $FFMPEG_PATH"
             find node_modules/ffmpeg-static-electron-forge -name ffmpeg -type f || true
             exit 1
           fi
 
-      - name: Build macOS x64 app
+      - name: Build and Publish macOS x64 app
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           APPLE_ID: ${{ secrets.APPLE_ID }}
@@ -299,41 +286,37 @@ jobs:
           KEYCHAIN_PASSWORD: ${{ secrets.KEYCHAIN_PASSWORD }}
           DEBUG: electron-forge:*
         run: |
-          set -o pipefail
           security unlock-keychain -p "${{ secrets.KEYCHAIN_PASSWORD }}" build.keychain
-          echo "Starting Electron Forge make for x64..."
-          npm run make -- --arch=x64 --platform=darwin 2>&1 | tee make-output.log
-          MAKE_EXIT=$?
-          echo ""
-          echo "Make command completed with exit code: $MAKE_EXIT"
-          echo "Checking for output files..."
-          ls -laR out/ 2>/dev/null || echo "out/ directory not found after make"
-          if [ $MAKE_EXIT -ne 0 ]; then
-            echo "❌ Make command failed!"
-            exit $MAKE_EXIT
-          fi
+          npm run publish -- --arch=x64
 
-      - name: Upload x64 DMG to Release
+      - name: Verify and fallback upload x64
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          echo "Current directory: $(pwd)"
-          echo "Looking for DMG files anywhere..."
-          find . -name "*.dmg" -type f 2>/dev/null || true
+          echo "=== Build artifacts ==="
+          find out -name "*.dmg" -type f 2>/dev/null || echo "No DMG in out/"
+          ls -laR out/make 2>/dev/null || echo "out/make not found"
 
           echo ""
-          echo "Listing out/ directory structure:"
-          ls -laR out/ 2>/dev/null || echo "out/ directory not found"
+          echo "=== Current release assets ==="
+          gh release view "${{ github.event.release.tag_name }}" --json assets --jq '.assets[].name' || echo "Could not fetch release assets"
 
-          DMG_FILE=$(find . -name "*.dmg" -type f 2>/dev/null | head -1)
-          if [ -n "$DMG_FILE" ] && [ -f "$DMG_FILE" ]; then
-            # Rename to include architecture
-            NEW_NAME="bonzai-${{ github.event.release.tag_name }}-x64.dmg"
-            cp "$DMG_FILE" "$NEW_NAME"
-            echo "Uploading $NEW_NAME to release ${{ github.event.release.tag_name }}..."
-            gh release upload "${{ github.event.release.tag_name }}" "$NEW_NAME" --clobber
-            echo "✅ Uploaded: $NEW_NAME"
+          echo ""
+          echo "=== Fallback upload if needed ==="
+          DMG_FILE=$(find out -name "*.dmg" -type f 2>/dev/null | head -1)
+          if [ -n "$DMG_FILE" ]; then
+            # Check if already uploaded by looking for any dmg with x64 or similar
+            EXISTING=$(gh release view "${{ github.event.release.tag_name }}" --json assets --jq '.assets[].name' | grep -i "x64\|intel" || true)
+            if [ -z "$EXISTING" ]; then
+              NEW_NAME="bonzai-${{ github.event.release.tag_name }}-x64.dmg"
+              cp "$DMG_FILE" "$NEW_NAME"
+              echo "Forge publisher may have failed. Uploading manually: $NEW_NAME"
+              gh release upload "${{ github.event.release.tag_name }}" "$NEW_NAME" --clobber
+              echo "Uploaded: $NEW_NAME"
+            else
+              echo "DMG already attached to release: $EXISTING"
+            fi
           else
-            echo "❌ No DMG file found!"
+            echo "No DMG file found to upload!"
             exit 1
           fi
