@@ -95,7 +95,10 @@ jobs:
           node-version: 20
 
       - name: Install Node dependencies
-        run: npm ci
+        run: |
+          npm ci
+          # Ensure appdmg is installed for DMG creation
+          npm install appdmg --save-optional || true
 
       - name: Sign ffmpeg binary (macOS ARM64)
         env:
@@ -127,18 +130,35 @@ jobs:
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
           APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
           KEYCHAIN_PASSWORD: ${{ secrets.KEYCHAIN_PASSWORD }}
+          DEBUG: electron-forge:*
         run: |
+          set -o pipefail
           security unlock-keychain -p "${{ secrets.KEYCHAIN_PASSWORD }}" build.keychain
-          npm run make
+          echo "Starting Electron Forge make for ARM64..."
+          npm run make -- --arch=arm64 --platform=darwin 2>&1 | tee make-output.log
+          MAKE_EXIT=$?
+          echo ""
+          echo "Make command completed with exit code: $MAKE_EXIT"
+          echo "Checking for output files..."
+          ls -laR out/ 2>/dev/null || echo "out/ directory not found after make"
+          if [ $MAKE_EXIT -ne 0 ]; then
+            echo "❌ Make command failed!"
+            exit $MAKE_EXIT
+          fi
 
       - name: Upload ARM64 DMG to Release
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          echo "Looking for DMG files..."
-          find out/make -name "*.dmg" -type f
+          echo "Current directory: $(pwd)"
+          echo "Looking for DMG files anywhere..."
+          find . -name "*.dmg" -type f 2>/dev/null || true
 
-          DMG_FILE=$(find out/make -name "*.dmg" -type f | head -1)
+          echo ""
+          echo "Listing out/ directory structure:"
+          ls -laR out/ 2>/dev/null || echo "out/ directory not found"
+
+          DMG_FILE=$(find . -name "*.dmg" -type f 2>/dev/null | head -1)
           if [ -n "$DMG_FILE" ] && [ -f "$DMG_FILE" ]; then
             # Rename to include architecture
             NEW_NAME="bonzai-${{ github.event.release.tag_name }}-arm64.dmg"
@@ -148,6 +168,7 @@ jobs:
             echo "✅ Uploaded: $NEW_NAME"
           else
             echo "❌ No DMG file found!"
+            echo "Build output may have failed. Check the 'Build macOS ARM64 app' step."
             exit 1
           fi
 
@@ -241,7 +262,10 @@ jobs:
           node-version: 20
 
       - name: Install Node dependencies
-        run: npm ci
+        run: |
+          npm ci
+          # Ensure appdmg is installed for DMG creation
+          npm install appdmg --save-optional || true
 
       - name: Sign ffmpeg binary (macOS x64)
         env:
@@ -273,18 +297,35 @@ jobs:
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
           APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
           KEYCHAIN_PASSWORD: ${{ secrets.KEYCHAIN_PASSWORD }}
+          DEBUG: electron-forge:*
         run: |
+          set -o pipefail
           security unlock-keychain -p "${{ secrets.KEYCHAIN_PASSWORD }}" build.keychain
-          npm run make -- --arch=x64
+          echo "Starting Electron Forge make for x64..."
+          npm run make -- --arch=x64 --platform=darwin 2>&1 | tee make-output.log
+          MAKE_EXIT=$?
+          echo ""
+          echo "Make command completed with exit code: $MAKE_EXIT"
+          echo "Checking for output files..."
+          ls -laR out/ 2>/dev/null || echo "out/ directory not found after make"
+          if [ $MAKE_EXIT -ne 0 ]; then
+            echo "❌ Make command failed!"
+            exit $MAKE_EXIT
+          fi
 
       - name: Upload x64 DMG to Release
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          echo "Looking for DMG files..."
-          find out/make -name "*.dmg" -type f
+          echo "Current directory: $(pwd)"
+          echo "Looking for DMG files anywhere..."
+          find . -name "*.dmg" -type f 2>/dev/null || true
 
-          DMG_FILE=$(find out/make -name "*.dmg" -type f | head -1)
+          echo ""
+          echo "Listing out/ directory structure:"
+          ls -laR out/ 2>/dev/null || echo "out/ directory not found"
+
+          DMG_FILE=$(find . -name "*.dmg" -type f 2>/dev/null | head -1)
           if [ -n "$DMG_FILE" ] && [ -f "$DMG_FILE" ]; then
             # Rename to include architecture
             NEW_NAME="bonzai-${{ github.event.release.tag_name }}-x64.dmg"
