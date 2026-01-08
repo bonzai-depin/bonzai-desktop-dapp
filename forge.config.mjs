@@ -28,24 +28,39 @@ export default {
     icon: "./src/assets/logo",
     executableName: appName,
 
+    // Ignore large build artifacts (anchored to root to not match .vite/build)
+    ignore: [
+      /^[/\\]dist$/,
+      /^[/\\]build$/,
+      /^[/\\]bonzai$/,
+      /^[/\\]binaries$/,
+      /^[/\\]out$/,
+      /^[/\\]out-test$/,
+      /\.pyc$/,
+      /^[/\\]\.venv$/,
+      /^[/\\]venv$/,
+    ],
+
     // ship your scripts (optional if you only need the PyInstaller binary)
     extraResource: [path.resolve(__dirname, "src", "server")],
 
-    // ───────── macOS signing & notarization (forge uses electron-osx-sign / @electron/notarize)
-    osxSign: {
-      identity: process.env.MAC_CODESIGN_IDENTITY || "Developer ID Application",
-      "hardened-runtime": true,
-      entitlements: "./entitlements.mac.plist", // Root of project
-      "entitlements-inherit": "./entitlements.mac.plist",
-      "signature-flags": "library",
-      "gatekeeper-assess": false,
-    },
-    osxNotarize: {
-      tool: "notarytool",
-      appleId: process.env.APPLE_ID,
-      teamId: process.env.APPLE_TEAM_ID,
-      password: process.env.APPLE_APP_SPECIFIC_PASSWORD,
-    },
+    // ───────── macOS signing & notarization (only on CI where certs are available)
+    ...(process.env.CI ? {
+      osxSign: {
+        identity: process.env.MAC_CODESIGN_IDENTITY || "Developer ID Application",
+        "hardened-runtime": true,
+        entitlements: "./entitlements.mac.plist",
+        "entitlements-inherit": "./entitlements.mac.plist",
+        "signature-flags": "library",
+        "gatekeeper-assess": false,
+      },
+      osxNotarize: {
+        tool: "notarytool",
+        appleId: process.env.APPLE_ID,
+        teamId: process.env.APPLE_TEAM_ID,
+        password: process.env.APPLE_APP_SPECIFIC_PASSWORD,
+      },
+    } : {}),
 
     // After extraResource is copied, embed the correct PyInstaller output
     afterCopyExtraResources: [
@@ -72,7 +87,9 @@ export default {
           `${platformKey}-${arch}`
         );
         if (!fs.existsSync(pyDist)) {
-          throw new Error(`Binary directory not found: ${pyDist}`);
+          // Skip on local dev where PyInstaller binaries don't exist
+          console.log(`[forge] Skipping python runtime copy - binaries not found at ${pyDist} (this is normal for local dev)`);
+          return;
         }
 
         // If there's a single subfolder, descend (e.g. binaries/macos-arm64/diffuser/)
@@ -149,15 +166,16 @@ export default {
   ],
 
   plugins: [
-    {
-      name: "@electron-forge/plugin-vite",
-      config: {
-        build: [
-          { entry: "src/main.js", config: "vite.main.config.ts" },
-          { entry: "src/preload.js", config: "vite.preload.config.ts" },
-        ],
-        renderer: [{ name: "main_window", config: "vite.renderer.config.ts" }],
-      },
-    },
+    // Vite plugin disabled - build manually with npm run build:vite before packaging
+    // {
+    //   name: "@electron-forge/plugin-vite",
+    //   config: {
+    //     build: [
+    //       { entry: "src/main.js", config: "vite.main.config.ts" },
+    //       { entry: "src/preload.js", config: "vite.preload.config.ts" },
+    //     ],
+    //     renderer: [{ name: "main_window", config: "vite.renderer.config.ts" }],
+    //   },
+    // },
   ],
 };

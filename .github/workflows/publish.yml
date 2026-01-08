@@ -12,6 +12,7 @@ jobs:
       OS_KEY: macos
       ARCH_KEY: arm64
       HF_TOKEN: ${{ secrets.HF_TOKEN }}
+      CI: true
     steps:
       - uses: actions/checkout@v3
 
@@ -45,49 +46,36 @@ jobs:
             --specpath $RUNNER_TEMP \
             ${{ env.MAIN_PY_FILE }}
 
-      - name: Decode & Import App Certificate
+      - name: Decode & Import Certificates
         env:
           CERT_BASE64: ${{ secrets.MAC_APP_CERT_BASE64 }}
           CERT_PASS: ${{ secrets.MAC_APP_CERT_PASSWORD }}
+          INSTALLER_CERT_BASE64: ${{ secrets.MAC_INSTALLER_CERT_BASE64 }}
+          INSTALLER_CERT_PASS: ${{ secrets.MAC_INSTALLER_CERT_PASSWORD }}
           KEYCHAIN_PW: ${{ secrets.KEYCHAIN_PASSWORD }}
         run: |
           echo "$CERT_BASE64" | base64 --decode > app.p12
+          echo "$INSTALLER_CERT_BASE64" | base64 --decode > installer.p12
           security create-keychain -p "$KEYCHAIN_PW" build.keychain
           security import app.p12 -k build.keychain -P "$CERT_PASS" -T /usr/bin/codesign
+          security import installer.p12 -k build.keychain -P "$INSTALLER_CERT_PASS" -T /usr/bin/codesign
           security set-keychain-settings -t 3600 -u build.keychain
           security default-keychain -s build.keychain
           security unlock-keychain -p "$KEYCHAIN_PW" build.keychain
           security set-key-partition-list -S apple-tool:,apple: -s -k "$KEYCHAIN_PW" build.keychain
 
-      - name: Decode & Import Installer Certificate
-        env:
-          CERT_BASE64: ${{ secrets.MAC_INSTALLER_CERT_BASE64 }}
-          CERT_PASS: ${{ secrets.MAC_INSTALLER_CERT_PASSWORD }}
-          KEYCHAIN_PW: ${{ secrets.KEYCHAIN_PASSWORD }}
-        run: |
-          echo "$CERT_BASE64" | base64 --decode > installer.p12
-          security import installer.p12 -k build.keychain -P "$CERT_PASS" -T /usr/bin/codesign
-          security set-key-partition-list -S apple-tool:,apple: -s -k "$KEYCHAIN_PW" build.keychain
-
-      - name: Sign Python binary (macOS ARM64)
+      - name: Sign Python binary
         env:
           KEYCHAIN_PW: ${{ secrets.KEYCHAIN_PASSWORD }}
         run: |
           security unlock-keychain -p "$KEYCHAIN_PW" build.keychain
-
           BINARY_PATH="binaries/${{ env.OS_KEY }}-${{ env.ARCH_KEY }}/diffuser"
-          if [ -f "$BINARY_PATH" ]; then
-            codesign --force --sign "Developer ID Application" \
-              --options runtime \
-              --entitlements ./entitlements.mac.plist \
-              --timestamp \
-              "$BINARY_PATH"
-            echo "Signed Python binary: $BINARY_PATH"
-            codesign --verify --verbose "$BINARY_PATH"
-          else
-            echo "Python binary not found at: $BINARY_PATH"
-            exit 1
-          fi
+          codesign --force --sign "Developer ID Application" \
+            --options runtime \
+            --entitlements ./entitlements.mac.plist \
+            --timestamp \
+            "$BINARY_PATH"
+          codesign --verify --verbose "$BINARY_PATH"
 
       - name: Set up Node.js
         uses: actions/setup-node@v3
@@ -95,73 +83,85 @@ jobs:
           node-version: 20
 
       - name: Install Node dependencies
-        run: |
-          npm ci
-          # appdmg is required for DMG creation but is optional - ensure it's installed
-          npm install appdmg
+        run: npm ci
 
-      - name: Sign ffmpeg binary (macOS ARM64)
+      - name: Sign ffmpeg binary
         env:
           KEYCHAIN_PW: ${{ secrets.KEYCHAIN_PASSWORD }}
         run: |
           security unlock-keychain -p "$KEYCHAIN_PW" build.keychain
-
           FFMPEG_PATH="node_modules/ffmpeg-static-electron-forge/dist/bin/darwin/arm64/ffmpeg"
-
           if [ -f "$FFMPEG_PATH" ]; then
             codesign --force --sign "Developer ID Application" \
               --options runtime \
               --entitlements ./entitlements.mac.plist \
               --timestamp \
               "$FFMPEG_PATH"
-            echo "Signed ffmpeg at: $FFMPEG_PATH"
             codesign --verify --verbose "$FFMPEG_PATH"
-          else
-            echo "ffmpeg not found at: $FFMPEG_PATH"
-            find node_modules/ffmpeg-static-electron-forge -name ffmpeg -type f || true
-            exit 1
           fi
 
-      - name: Build macOS ARM64 app
+      - name: Build Vite bundles
+        run: npm run build:vite
+
+      - name: Package Electron app
+        run: |
+          npx electron-packager . bonzai \
+            --platform=darwin \
+            --arch=arm64 \
+            --out=out \
+            --overwrite \
+            --icon=src/assets/logo \
+            --ignore="^/(dist|bonzai|binaries|out|\.venv|venv|build)$"
+
+      - name: Copy Python runtime to app
+        run: |
+          APP_RESOURCES="out/bonzai-darwin-arm64/bonzai.app/Contents/Resources"
+          mkdir -p "$APP_RESOURCES/server/python-runtime/macos-arm64"
+          cp binaries/macos-arm64/diffuser "$APP_RESOURCES/server/python-runtime/macos-arm64/"
+          echo "Copied diffuser binary to app bundle"
+
+      - name: Sign Electron app
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          KEYCHAIN_PW: ${{ secrets.KEYCHAIN_PASSWORD }}
+        run: |
+          security unlock-keychain -p "$KEYCHAIN_PW" build.keychain
+          codesign --force --deep --sign "Developer ID Application" \
+            --options runtime \
+            --entitlements ./entitlements.mac.plist \
+            --timestamp \
+            "out/bonzai-darwin-arm64/bonzai.app"
+          codesign --verify --verbose "out/bonzai-darwin-arm64/bonzai.app"
+
+      - name: Create DMG
+        run: |
+          mkdir -p out/make
+          npx electron-installer-dmg \
+            "out/bonzai-darwin-arm64/bonzai.app" \
+            "bonzai-${{ github.event.release.tag_name }}-arm64" \
+            --out=out/make \
+            --overwrite
+
+      - name: Notarize DMG
+        env:
           APPLE_ID: ${{ secrets.APPLE_ID }}
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
           APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
-          KEYCHAIN_PASSWORD: ${{ secrets.KEYCHAIN_PASSWORD }}
-          DEBUG: electron-forge:*,electron-packager
         run: |
-          security unlock-keychain -p "${{ secrets.KEYCHAIN_PASSWORD }}" build.keychain
+          DMG_PATH="out/make/bonzai-${{ github.event.release.tag_name }}-arm64.dmg"
+          xcrun notarytool submit "$DMG_PATH" \
+            --apple-id "$APPLE_ID" \
+            --team-id "$APPLE_TEAM_ID" \
+            --password "$APPLE_APP_SPECIFIC_PASSWORD" \
+            --wait
+          xcrun stapler staple "$DMG_PATH"
 
-          echo "=== Running electron-forge make ==="
-          npx electron-forge make --platform=darwin --arch=arm64 2>&1 || {
-            echo "Make failed with exit code $?"
-            echo "=== Checking what exists ==="
-            ls -laR out/ 2>/dev/null || echo "out/ not found"
-            ls -la $RUNNER_TEMP/ 2>/dev/null | head -20 || echo "RUNNER_TEMP not found"
-            exit 1
-          }
-
-          echo ""
-          echo "=== Build complete. Listing artifacts ==="
-          find out -type f -name "*.dmg" 2>/dev/null || echo "No DMG files found"
-          ls -laR out/ 2>/dev/null || echo "out/ directory not found"
-
-      - name: Upload ARM64 DMG to Release
+      - name: Upload DMG to Release
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          DMG_FILE=$(find out -name "*.dmg" -type f 2>/dev/null | head -1)
-          if [ -n "$DMG_FILE" ] && [ -f "$DMG_FILE" ]; then
-            NEW_NAME="bonzai-${{ github.event.release.tag_name }}-arm64.dmg"
-            cp "$DMG_FILE" "$NEW_NAME"
-            echo "Uploading $NEW_NAME to release ${{ github.event.release.tag_name }}..."
-            gh release upload "${{ github.event.release.tag_name }}" "$NEW_NAME" --clobber
-            echo "Uploaded: $NEW_NAME"
-          else
-            echo "No DMG file found!"
-            exit 1
-          fi
+          DMG_PATH="out/make/bonzai-${{ github.event.release.tag_name }}-arm64.dmg"
+          gh release upload "${{ github.event.release.tag_name }}" "$DMG_PATH" --clobber
+          echo "Uploaded: $DMG_PATH"
 
   publish_on_mac_intel:
     runs-on: macos-15
@@ -170,6 +170,7 @@ jobs:
       OS_KEY: macos
       ARCH_KEY: x64
       HF_TOKEN: ${{ secrets.HF_TOKEN }}
+      CI: true
     steps:
       - uses: actions/checkout@v3
 
@@ -203,49 +204,36 @@ jobs:
             --specpath $RUNNER_TEMP \
             ${{ env.MAIN_PY_FILE }}
 
-      - name: Decode & Import App Certificate
+      - name: Decode & Import Certificates
         env:
           CERT_BASE64: ${{ secrets.MAC_APP_CERT_BASE64 }}
           CERT_PASS: ${{ secrets.MAC_APP_CERT_PASSWORD }}
+          INSTALLER_CERT_BASE64: ${{ secrets.MAC_INSTALLER_CERT_BASE64 }}
+          INSTALLER_CERT_PASS: ${{ secrets.MAC_INSTALLER_CERT_PASSWORD }}
           KEYCHAIN_PW: ${{ secrets.KEYCHAIN_PASSWORD }}
         run: |
           echo "$CERT_BASE64" | base64 --decode > app.p12
+          echo "$INSTALLER_CERT_BASE64" | base64 --decode > installer.p12
           security create-keychain -p "$KEYCHAIN_PW" build.keychain
           security import app.p12 -k build.keychain -P "$CERT_PASS" -T /usr/bin/codesign
+          security import installer.p12 -k build.keychain -P "$INSTALLER_CERT_PASS" -T /usr/bin/codesign
           security set-keychain-settings -t 3600 -u build.keychain
           security default-keychain -s build.keychain
           security unlock-keychain -p "$KEYCHAIN_PW" build.keychain
           security set-key-partition-list -S apple-tool:,apple: -s -k "$KEYCHAIN_PW" build.keychain
 
-      - name: Decode & Import Installer Certificate
-        env:
-          CERT_BASE64: ${{ secrets.MAC_INSTALLER_CERT_BASE64 }}
-          CERT_PASS: ${{ secrets.MAC_INSTALLER_CERT_PASSWORD }}
-          KEYCHAIN_PW: ${{ secrets.KEYCHAIN_PASSWORD }}
-        run: |
-          echo "$CERT_BASE64" | base64 --decode > installer.p12
-          security import installer.p12 -k build.keychain -P "$CERT_PASS" -T /usr/bin/codesign
-          security set-key-partition-list -S apple-tool:,apple: -s -k "$KEYCHAIN_PW" build.keychain
-
-      - name: Sign Python binary (macOS x64)
+      - name: Sign Python binary
         env:
           KEYCHAIN_PW: ${{ secrets.KEYCHAIN_PASSWORD }}
         run: |
           security unlock-keychain -p "$KEYCHAIN_PW" build.keychain
-
           BINARY_PATH="binaries/${{ env.OS_KEY }}-${{ env.ARCH_KEY }}/diffuser"
-          if [ -f "$BINARY_PATH" ]; then
-            codesign --force --sign "Developer ID Application" \
-              --options runtime \
-              --entitlements ./entitlements.mac.plist \
-              --timestamp \
-              "$BINARY_PATH"
-            echo "Signed Python binary: $BINARY_PATH"
-            codesign --verify --verbose "$BINARY_PATH"
-          else
-            echo "Python binary not found at: $BINARY_PATH"
-            exit 1
-          fi
+          codesign --force --sign "Developer ID Application" \
+            --options runtime \
+            --entitlements ./entitlements.mac.plist \
+            --timestamp \
+            "$BINARY_PATH"
+          codesign --verify --verbose "$BINARY_PATH"
 
       - name: Set up Node.js
         uses: actions/setup-node@v3
@@ -253,70 +241,82 @@ jobs:
           node-version: 20
 
       - name: Install Node dependencies
-        run: |
-          npm ci
-          # appdmg is required for DMG creation but is optional - ensure it's installed
-          npm install appdmg
+        run: npm ci
 
-      - name: Sign ffmpeg binary (macOS x64)
+      - name: Sign ffmpeg binary
         env:
           KEYCHAIN_PW: ${{ secrets.KEYCHAIN_PASSWORD }}
         run: |
           security unlock-keychain -p "$KEYCHAIN_PW" build.keychain
-
           FFMPEG_PATH="node_modules/ffmpeg-static-electron-forge/dist/bin/darwin/x64/ffmpeg"
-
           if [ -f "$FFMPEG_PATH" ]; then
             codesign --force --sign "Developer ID Application" \
               --options runtime \
               --entitlements ./entitlements.mac.plist \
               --timestamp \
               "$FFMPEG_PATH"
-            echo "Signed ffmpeg at: $FFMPEG_PATH"
             codesign --verify --verbose "$FFMPEG_PATH"
-          else
-            echo "ffmpeg not found at: $FFMPEG_PATH"
-            find node_modules/ffmpeg-static-electron-forge -name ffmpeg -type f || true
-            exit 1
           fi
 
-      - name: Build macOS x64 app
+      - name: Build Vite bundles
+        run: npm run build:vite
+
+      - name: Package Electron app
+        run: |
+          npx electron-packager . bonzai \
+            --platform=darwin \
+            --arch=x64 \
+            --out=out \
+            --overwrite \
+            --icon=src/assets/logo \
+            --ignore="^/(dist|bonzai|binaries|out|\.venv|venv|build)$"
+
+      - name: Copy Python runtime to app
+        run: |
+          APP_RESOURCES="out/bonzai-darwin-x64/bonzai.app/Contents/Resources"
+          mkdir -p "$APP_RESOURCES/server/python-runtime/macos-x64"
+          cp binaries/macos-x64/diffuser "$APP_RESOURCES/server/python-runtime/macos-x64/"
+          echo "Copied diffuser binary to app bundle"
+
+      - name: Sign Electron app
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          KEYCHAIN_PW: ${{ secrets.KEYCHAIN_PASSWORD }}
+        run: |
+          security unlock-keychain -p "$KEYCHAIN_PW" build.keychain
+          codesign --force --deep --sign "Developer ID Application" \
+            --options runtime \
+            --entitlements ./entitlements.mac.plist \
+            --timestamp \
+            "out/bonzai-darwin-x64/bonzai.app"
+          codesign --verify --verbose "out/bonzai-darwin-x64/bonzai.app"
+
+      - name: Create DMG
+        run: |
+          mkdir -p out/make
+          npx electron-installer-dmg \
+            "out/bonzai-darwin-x64/bonzai.app" \
+            "bonzai-${{ github.event.release.tag_name }}-x64" \
+            --out=out/make \
+            --overwrite
+
+      - name: Notarize DMG
+        env:
           APPLE_ID: ${{ secrets.APPLE_ID }}
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
           APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
-          KEYCHAIN_PASSWORD: ${{ secrets.KEYCHAIN_PASSWORD }}
-          DEBUG: electron-forge:*,electron-packager
         run: |
-          security unlock-keychain -p "${{ secrets.KEYCHAIN_PASSWORD }}" build.keychain
+          DMG_PATH="out/make/bonzai-${{ github.event.release.tag_name }}-x64.dmg"
+          xcrun notarytool submit "$DMG_PATH" \
+            --apple-id "$APPLE_ID" \
+            --team-id "$APPLE_TEAM_ID" \
+            --password "$APPLE_APP_SPECIFIC_PASSWORD" \
+            --wait
+          xcrun stapler staple "$DMG_PATH"
 
-          echo "=== Running electron-forge make ==="
-          npx electron-forge make --platform=darwin --arch=x64 2>&1 || {
-            echo "Make failed with exit code $?"
-            echo "=== Checking what exists ==="
-            ls -laR out/ 2>/dev/null || echo "out/ not found"
-            ls -la $RUNNER_TEMP/ 2>/dev/null | head -20 || echo "RUNNER_TEMP not found"
-            exit 1
-          }
-
-          echo ""
-          echo "=== Build complete. Listing artifacts ==="
-          find out -type f -name "*.dmg" 2>/dev/null || echo "No DMG files found"
-          ls -laR out/ 2>/dev/null || echo "out/ directory not found"
-
-      - name: Upload x64 DMG to Release
+      - name: Upload DMG to Release
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          DMG_FILE=$(find out -name "*.dmg" -type f 2>/dev/null | head -1)
-          if [ -n "$DMG_FILE" ] && [ -f "$DMG_FILE" ]; then
-            NEW_NAME="bonzai-${{ github.event.release.tag_name }}-x64.dmg"
-            cp "$DMG_FILE" "$NEW_NAME"
-            echo "Uploading $NEW_NAME to release ${{ github.event.release.tag_name }}..."
-            gh release upload "${{ github.event.release.tag_name }}" "$NEW_NAME" --clobber
-            echo "Uploaded: $NEW_NAME"
-          else
-            echo "No DMG file found!"
-            exit 1
-          fi
+          DMG_PATH="out/make/bonzai-${{ github.event.release.tag_name }}-x64.dmg"
+          gh release upload "${{ github.event.release.tag_name }}" "$DMG_PATH" --clobber
+          echo "Uploaded: $DMG_PATH"

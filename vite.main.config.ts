@@ -1,16 +1,29 @@
 import { defineConfig } from 'vite';
 import { resolve } from 'path';
+import { builtinModules } from 'module';
 import { viteStaticCopy } from "vite-plugin-static-copy";
 
 // https://vitejs.dev/config
 export default defineConfig({
   build: {
+    target: 'node18',
+    ssr: true,
+    emptyOutDir: false,
     rollupOptions: {
       external: [
+        "electron",
         "node-llama-cpp",
         "ps-tree",
         /^.*\/lib\/python\/.*$/,
+        // Externalize all Node.js built-ins
+        ...builtinModules,
+        ...builtinModules.map(m => `node:${m}`),
       ],
+    },
+    lib: {
+      entry: resolve(__dirname, 'src/main.js'),
+      formats: ['es'],
+      fileName: () => 'main.js',
     },
   },
   plugins: [
@@ -18,18 +31,16 @@ export default defineConfig({
       targets: [
         {
           src: resolve(__dirname, "src/server/diffuser.py"),
-          dest: "", // Copies to the root of the `.vite/build` directory
+          dest: "",
         },
-                {
+        {
           src: resolve(__dirname, "src/template.jinja"),
-          dest: "", // Copies to the root of the `.vite/build` directory
+          dest: "",
         },
       ],
     }),
   ],
   resolve: {
-    // Some libs that can run in both Web and Node.js, such as `axios`, we need
-    // to tell Vite to build them in Node.js.
     browserField: false,
     conditions: ['node'],
     mainFields: ['module', 'jsnext:main', 'jsnext'],
