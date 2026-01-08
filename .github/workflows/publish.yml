@@ -122,7 +122,7 @@ jobs:
             exit 1
           fi
 
-      - name: Build and Publish macOS ARM64 app
+      - name: Build macOS ARM64 app
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           APPLE_ID: ${{ secrets.APPLE_ID }}
@@ -132,37 +132,26 @@ jobs:
           DEBUG: electron-forge:*
         run: |
           security unlock-keychain -p "${{ secrets.KEYCHAIN_PASSWORD }}" build.keychain
-          npm run publish
+          echo "=== Running npm run make ==="
+          npm run make
+          echo ""
+          echo "=== Build complete. Listing artifacts ==="
+          find out -type f -name "*.dmg" 2>/dev/null || echo "No DMG files found"
+          ls -laR out/ 2>/dev/null || echo "out/ directory not found"
 
-      - name: Verify and fallback upload ARM64
+      - name: Upload ARM64 DMG to Release
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          echo "=== Build artifacts ==="
-          find out -name "*.dmg" -type f 2>/dev/null || echo "No DMG in out/"
-          ls -laR out/make 2>/dev/null || echo "out/make not found"
-
-          echo ""
-          echo "=== Current release assets ==="
-          gh release view "${{ github.event.release.tag_name }}" --json assets --jq '.assets[].name' || echo "Could not fetch release assets"
-
-          echo ""
-          echo "=== Fallback upload if needed ==="
           DMG_FILE=$(find out -name "*.dmg" -type f 2>/dev/null | head -1)
-          if [ -n "$DMG_FILE" ]; then
-            # Check if already uploaded by looking for any dmg with arm64 or similar
-            EXISTING=$(gh release view "${{ github.event.release.tag_name }}" --json assets --jq '.assets[].name' | grep -i "arm64\|darwin" || true)
-            if [ -z "$EXISTING" ]; then
-              NEW_NAME="bonzai-${{ github.event.release.tag_name }}-arm64.dmg"
-              cp "$DMG_FILE" "$NEW_NAME"
-              echo "Forge publisher may have failed. Uploading manually: $NEW_NAME"
-              gh release upload "${{ github.event.release.tag_name }}" "$NEW_NAME" --clobber
-              echo "Uploaded: $NEW_NAME"
-            else
-              echo "DMG already attached to release: $EXISTING"
-            fi
+          if [ -n "$DMG_FILE" ] && [ -f "$DMG_FILE" ]; then
+            NEW_NAME="bonzai-${{ github.event.release.tag_name }}-arm64.dmg"
+            cp "$DMG_FILE" "$NEW_NAME"
+            echo "Uploading $NEW_NAME to release ${{ github.event.release.tag_name }}..."
+            gh release upload "${{ github.event.release.tag_name }}" "$NEW_NAME" --clobber
+            echo "Uploaded: $NEW_NAME"
           else
-            echo "No DMG file found to upload!"
+            echo "No DMG file found!"
             exit 1
           fi
 
@@ -283,7 +272,7 @@ jobs:
             exit 1
           fi
 
-      - name: Build and Publish macOS x64 app
+      - name: Build macOS x64 app
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           APPLE_ID: ${{ secrets.APPLE_ID }}
@@ -293,36 +282,25 @@ jobs:
           DEBUG: electron-forge:*
         run: |
           security unlock-keychain -p "${{ secrets.KEYCHAIN_PASSWORD }}" build.keychain
-          npm run publish -- --arch=x64
+          echo "=== Running npm run make --arch=x64 ==="
+          npm run make -- --arch=x64
+          echo ""
+          echo "=== Build complete. Listing artifacts ==="
+          find out -type f -name "*.dmg" 2>/dev/null || echo "No DMG files found"
+          ls -laR out/ 2>/dev/null || echo "out/ directory not found"
 
-      - name: Verify and fallback upload x64
+      - name: Upload x64 DMG to Release
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          echo "=== Build artifacts ==="
-          find out -name "*.dmg" -type f 2>/dev/null || echo "No DMG in out/"
-          ls -laR out/make 2>/dev/null || echo "out/make not found"
-
-          echo ""
-          echo "=== Current release assets ==="
-          gh release view "${{ github.event.release.tag_name }}" --json assets --jq '.assets[].name' || echo "Could not fetch release assets"
-
-          echo ""
-          echo "=== Fallback upload if needed ==="
           DMG_FILE=$(find out -name "*.dmg" -type f 2>/dev/null | head -1)
-          if [ -n "$DMG_FILE" ]; then
-            # Check if already uploaded by looking for any dmg with x64 or similar
-            EXISTING=$(gh release view "${{ github.event.release.tag_name }}" --json assets --jq '.assets[].name' | grep -i "x64\|intel" || true)
-            if [ -z "$EXISTING" ]; then
-              NEW_NAME="bonzai-${{ github.event.release.tag_name }}-x64.dmg"
-              cp "$DMG_FILE" "$NEW_NAME"
-              echo "Forge publisher may have failed. Uploading manually: $NEW_NAME"
-              gh release upload "${{ github.event.release.tag_name }}" "$NEW_NAME" --clobber
-              echo "Uploaded: $NEW_NAME"
-            else
-              echo "DMG already attached to release: $EXISTING"
-            fi
+          if [ -n "$DMG_FILE" ] && [ -f "$DMG_FILE" ]; then
+            NEW_NAME="bonzai-${{ github.event.release.tag_name }}-x64.dmg"
+            cp "$DMG_FILE" "$NEW_NAME"
+            echo "Uploading $NEW_NAME to release ${{ github.event.release.tag_name }}..."
+            gh release upload "${{ github.event.release.tag_name }}" "$NEW_NAME" --clobber
+            echo "Uploaded: $NEW_NAME"
           else
-            echo "No DMG file found to upload!"
+            echo "No DMG file found!"
             exit 1
           fi
