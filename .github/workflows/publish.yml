@@ -120,7 +120,7 @@ jobs:
             exit 1
           fi
 
-      - name: Publish macOS ARM64 build
+      - name: Build macOS ARM64 app
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           APPLE_ID: ${{ secrets.APPLE_ID }}
@@ -129,7 +129,27 @@ jobs:
           KEYCHAIN_PASSWORD: ${{ secrets.KEYCHAIN_PASSWORD }}
         run: |
           security unlock-keychain -p "${{ secrets.KEYCHAIN_PASSWORD }}" build.keychain
-          npm run publish
+          npm run make
+
+      - name: Upload ARM64 DMG to Release
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          echo "Looking for DMG files..."
+          find out/make -name "*.dmg" -type f
+
+          DMG_FILE=$(find out/make -name "*.dmg" -type f | head -1)
+          if [ -n "$DMG_FILE" ] && [ -f "$DMG_FILE" ]; then
+            # Rename to include architecture
+            NEW_NAME="bonzai-${{ github.event.release.tag_name }}-arm64.dmg"
+            cp "$DMG_FILE" "$NEW_NAME"
+            echo "Uploading $NEW_NAME to release ${{ github.event.release.tag_name }}..."
+            gh release upload "${{ github.event.release.tag_name }}" "$NEW_NAME" --clobber
+            echo "✅ Uploaded: $NEW_NAME"
+          else
+            echo "❌ No DMG file found!"
+            exit 1
+          fi
 
   publish_on_mac_intel:
     runs-on: macos-15
@@ -246,7 +266,7 @@ jobs:
             exit 1
           fi
 
-      - name: Publish macOS x64 build
+      - name: Build macOS x64 app
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           APPLE_ID: ${{ secrets.APPLE_ID }}
@@ -255,4 +275,24 @@ jobs:
           KEYCHAIN_PASSWORD: ${{ secrets.KEYCHAIN_PASSWORD }}
         run: |
           security unlock-keychain -p "${{ secrets.KEYCHAIN_PASSWORD }}" build.keychain
-          npm run publish -- --arch=x64
+          npm run make -- --arch=x64
+
+      - name: Upload x64 DMG to Release
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          echo "Looking for DMG files..."
+          find out/make -name "*.dmg" -type f
+
+          DMG_FILE=$(find out/make -name "*.dmg" -type f | head -1)
+          if [ -n "$DMG_FILE" ] && [ -f "$DMG_FILE" ]; then
+            # Rename to include architecture
+            NEW_NAME="bonzai-${{ github.event.release.tag_name }}-x64.dmg"
+            cp "$DMG_FILE" "$NEW_NAME"
+            echo "Uploading $NEW_NAME to release ${{ github.event.release.tag_name }}..."
+            gh release upload "${{ github.event.release.tag_name }}" "$NEW_NAME" --clobber
+            echo "✅ Uploaded: $NEW_NAME"
+          else
+            echo "❌ No DMG file found!"
+            exit 1
+          fi
