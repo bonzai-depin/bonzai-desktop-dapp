@@ -146,7 +146,7 @@ export default {
       config: {
         repository: { owner: "bonzai-depin", name: "bonzai-desktop-dapp" },
         prerelease: false,
-        draft: true,
+        draft: false,
       },
     },
   ],
