@@ -29,10 +29,10 @@ jobs:
       - name: Install Python deps & PyInstaller
         run: |
           pip install git+https://github.com/huggingface/diffusers.git
+          pip install git+https://github.com/huggingface/transformers
           pip install -r requirements.txt
           pip install https://github.com/vBaiCai/python-pesq/archive/master.zip
           pip install pyinstaller
-          pip install git+https://github.com/huggingface/transformers
 
       - name: Build Python binary (macOS ARM64)
         run: |
@@ -154,10 +154,10 @@ jobs:
       - name: Install Python deps & PyInstaller
         run: |
           pip install git+https://github.com/huggingface/diffusers.git
+          pip install git+https://github.com/huggingface/transformers
           pip install -r requirements.txt
           pip install https://github.com/vBaiCai/python-pesq/archive/master.zip
           pip install pyinstaller
-          pip install git+https://github.com/huggingface/transformers
 
       - name: Build Python binary (macOS x64)
         run: |
