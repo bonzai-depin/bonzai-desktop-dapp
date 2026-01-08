@@ -11,6 +11,7 @@ jobs:
       MAIN_PY_FILE: src/server/diffuser.py
       OS_KEY: macos
       ARCH_KEY: arm64
+      HF_TOKEN: ${{ secrets.HF_TOKEN }}
     steps:
       - uses: actions/checkout@v3
 
@@ -102,7 +103,7 @@ jobs:
         run: |
           security unlock-keychain -p "$KEYCHAIN_PW" build.keychain
           
-          FFMPEG_PATH="node_modules/ffmpeg-static-electron-forge/bin/darwin/arm64/ffmpeg"
+          FFMPEG_PATH="node_modules/ffmpeg-static-electron-forge/dist/bin/darwin/arm64/ffmpeg"
           
           if [ -f "$FFMPEG_PATH" ]; then
             codesign --force --sign "Developer ID Application" \
@@ -131,11 +132,12 @@ jobs:
           npm run publish
 
   publish_on_mac_intel:
-    runs-on: macos-13
+    runs-on: macos-15
     env:
       MAIN_PY_FILE: src/server/diffuser.py
       OS_KEY: macos
       ARCH_KEY: x64
+      HF_TOKEN: ${{ secrets.HF_TOKEN }}
     steps:
       - uses: actions/checkout@v3
 
@@ -227,7 +229,7 @@ jobs:
         run: |
           security unlock-keychain -p "$KEYCHAIN_PW" build.keychain
           
-          FFMPEG_PATH="node_modules/ffmpeg-static-electron-forge/bin/darwin/x64/ffmpeg"
+          FFMPEG_PATH="node_modules/ffmpeg-static-electron-forge/dist/bin/darwin/x64/ffmpeg"
           
           if [ -f "$FFMPEG_PATH" ]; then
             codesign --force --sign "Developer ID Application" \
