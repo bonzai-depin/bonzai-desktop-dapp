@@ -95,7 +95,10 @@ jobs:
           node-version: 20
 
       - name: Install Node dependencies
-        run: npm ci
+        run: |
+          npm ci
+          # appdmg is required for DMG creation but is optional - ensure it's installed
+          npm install appdmg
 
       - name: Sign ffmpeg binary (macOS ARM64)
         env:
@@ -253,7 +256,10 @@ jobs:
           node-version: 20
 
       - name: Install Node dependencies
-        run: npm ci
+        run: |
+          npm ci
+          # appdmg is required for DMG creation but is optional - ensure it's installed
+          npm install appdmg
 
       - name: Sign ffmpeg binary (macOS x64)
         env:
