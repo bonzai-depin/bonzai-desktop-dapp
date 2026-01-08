@@ -28,9 +28,6 @@ export default {
     icon: "./src/assets/logo",
     executableName: appName,
 
-    // keep temp outside repo on CI
-    tmpdir: process.env.RUNNER_TEMP,
-
     // ship your scripts (optional if you only need the PyInstaller binary)
     extraResource: [path.resolve(__dirname, "src", "server")],
 

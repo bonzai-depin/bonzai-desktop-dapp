@@ -131,22 +131,20 @@ jobs:
           KEYCHAIN_PASSWORD: ${{ secrets.KEYCHAIN_PASSWORD }}
           DEBUG: electron-forge:*,electron-packager
         run: |
-          set -x
           security unlock-keychain -p "${{ secrets.KEYCHAIN_PASSWORD }}" build.keychain
 
-          echo "=== Step 1: Package the app ==="
-          npx electron-forge package --platform=darwin --arch=arm64
-          echo "Package exit code: $?"
-          ls -la out/ 2>/dev/null || echo "out/ not found after package"
-
-          echo ""
-          echo "=== Step 2: Make the DMG ==="
-          npx electron-forge make --platform=darwin --arch=arm64 --skip-package
-          echo "Make exit code: $?"
+          echo "=== Running electron-forge make ==="
+          npx electron-forge make --platform=darwin --arch=arm64 2>&1 || {
+            echo "Make failed with exit code $?"
+            echo "=== Checking what exists ==="
+            ls -laR out/ 2>/dev/null || echo "out/ not found"
+            ls -la $RUNNER_TEMP/ 2>/dev/null | head -20 || echo "RUNNER_TEMP not found"
+            exit 1
+          }
 
           echo ""
           echo "=== Build complete. Listing artifacts ==="
-          find . -type f -name "*.dmg" 2>/dev/null || echo "No DMG files found"
+          find out -type f -name "*.dmg" 2>/dev/null || echo "No DMG files found"
           ls -laR out/ 2>/dev/null || echo "out/ directory not found"
 
       - name: Upload ARM64 DMG to Release
@@ -291,22 +289,20 @@ jobs:
           KEYCHAIN_PASSWORD: ${{ secrets.KEYCHAIN_PASSWORD }}
           DEBUG: electron-forge:*,electron-packager
         run: |
-          set -x
           security unlock-keychain -p "${{ secrets.KEYCHAIN_PASSWORD }}" build.keychain
 
-          echo "=== Step 1: Package the app ==="
-          npx electron-forge package --platform=darwin --arch=x64
-          echo "Package exit code: $?"
-          ls -la out/ 2>/dev/null || echo "out/ not found after package"
-
-          echo ""
-          echo "=== Step 2: Make the DMG ==="
-          npx electron-forge make --platform=darwin --arch=x64 --skip-package
-          echo "Make exit code: $?"
+          echo "=== Running electron-forge make ==="
+          npx electron-forge make --platform=darwin --arch=x64 2>&1 || {
+            echo "Make failed with exit code $?"
+            echo "=== Checking what exists ==="
+            ls -laR out/ 2>/dev/null || echo "out/ not found"
+            ls -la $RUNNER_TEMP/ 2>/dev/null | head -20 || echo "RUNNER_TEMP not found"
+            exit 1
+          }
 
           echo ""
           echo "=== Build complete. Listing artifacts ==="
-          find . -type f -name "*.dmg" 2>/dev/null || echo "No DMG files found"
+          find out -type f -name "*.dmg" 2>/dev/null || echo "No DMG files found"
           ls -laR out/ 2>/dev/null || echo "out/ directory not found"
 
       - name: Upload x64 DMG to Release
