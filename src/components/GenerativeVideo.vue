@@ -92,6 +92,23 @@
                     Quality
                   </label>
 
+                  <input
+                    v-model="mode"
+                    :value="'ltx2'"
+                    id="mode_ltx2"
+                    type="radio"
+                    name="mode"
+                  />
+                  <label for="mode_ltx2" class="radio mr-1">
+                    <span
+                      class="material-symbols-outlined"
+                      style="font-size: 32px !important"
+                    >
+                      auto_awesome
+                    </span>
+                    LTX-2
+                  </label>
+
                   <span class="control">
                     <input
                       v-model="quality"
@@ -404,11 +421,21 @@ import {
   onMounted,
   onBeforeUnmount,
   watch,
+  toRefs,
 } from "vue";
 import { v4 as uuid } from "uuid";
 import useClipboard from "vue-clipboard3";
 import axios from "axios";
 import { io } from "socket.io-client";
+import {
+  generationStore,
+  ensureGenerationSocket,
+  startGeneration,
+  setBlocked,
+  setError,
+  stopGeneration,
+  clearError,
+} from "../stores/generationStore";
 
 const API_BASE =
   (typeof process !== "undefined" && process.env?.VITE_API_BASE) ||
@@ -441,14 +468,8 @@ export default {
       authRepos: [],
     });
 
-    const generation = reactive({
-      active: false,
-      id: null,
-      pct: 0,
-      stage: "starting",
-      error: null,
-      blocked: false,
-    });
+    // Use shared generation store for persistent state across view navigation
+    const generation = computed(() => generationStore.state.video);
 
     const showUpdateCTA = computed(
       () =>
@@ -472,10 +493,16 @@ export default {
       return Math.max(5, 1 + 4 * k);
     };
 
-    const endpointForMode = () =>
-      mode.value === "turbo" ? "/image/video/turbo" : "/image/video/quality";
-    const pipelineForMode = () =>
-      mode.value === "turbo" ? "ltx_video" : "wan_video";
+    const endpointForMode = () => {
+      if (mode.value === "turbo") return "/image/video/turbo";
+      if (mode.value === "ltx2") return "/video/ltx2";
+      return "/image/video/quality";
+    };
+    const pipelineForMode = () => {
+      if (mode.value === "turbo") return "ltx_video";
+      if (mode.value === "ltx2") return "ltx2_video";
+      return "wan_video";
+    };
 
     const normalizeFramesForWan = (frames) => {
       const n = Math.max(5, Number(frames) || 5);
@@ -564,12 +591,21 @@ export default {
       const tasksPct = computeTotalFromTasks(merged);
       let next =
         Number.isFinite(serverPct) && serverPct > 0 ? serverPct : tasksPct;
-      const anyActive = Object.values(merged).some((t) =>
+      const tasksList = Object.values(merged);
+      const anyActive = tasksList.some((t) =>
         ["downloading", "pending"].includes(t.status)
       );
       if (anyActive) next = Math.min(next, 99.9);
       downloads.total_progress = next;
       downloads.progress = next;
+
+      // Safety check: if all tasks are completed but status wasn't updated, force completion
+      const allTasksComplete = tasksList.length > 0 && tasksList.every((t) => t.status === "completed");
+      if (allTasksComplete && downloads.status === "downloading") {
+        console.log("[Downloads] All tasks completed, forcing status to completed");
+        downloads.status = "completed";
+      }
+
       downloads.active = !["completed", "failed", "cancelled"].includes(
         downloads.status
       );
@@ -724,6 +760,16 @@ export default {
         !readiness.authRequired &&
         readiness.missingRepos.length === 0 &&
         !readiness.missingGguf;
+
+      // If files are still missing after a "completed" download, reset download state
+      // This prevents showing 100% progress when work is actually needed
+      if (!readiness.ok && downloads.status === "completed") {
+        downloads.status = "pending";
+        downloads.progress = 0;
+        downloads.total_progress = 0;
+        downloads.active = false;
+        downloads.pipeline = { tasks: {} };
+      }
     };
 
     const apply403ToReadiness = (res) => {
@@ -739,12 +785,12 @@ export default {
         }
       }
       if (res?.data?.hint) readiness.notes.push(res.data.hint);
-      generation.blocked = true;
+      setBlocked("video", true);
     };
 
     const apply409ToReadiness = (res) => {
       readiness.ok = false;
-      generation.blocked = true;
+      setBlocked("video", true);
       const rs = res?.data?.repo_status;
       if (rs?.repo) {
         const missingCount = Array.isArray(rs?.missing)
@@ -768,6 +814,36 @@ export default {
       if (hint) readiness.notes.push(hint);
     };
 
+    // Cache key for plan results
+    const getPlanCacheKey = (pipeline) => `planCache_video_${pipeline}`;
+
+    // Load cached plan result
+    const loadCachedPlan = async (pipeline) => {
+      try {
+        const key = getPlanCacheKey(pipeline);
+        const cached = await window.electronAPI?.store?.get?.(key, null);
+        if (cached && cached.timestamp) {
+          // Cache is valid for 24 hours
+          const age = Date.now() - cached.timestamp;
+          if (age < 24 * 60 * 60 * 1000) {
+            return cached.data;
+          }
+        }
+      } catch {}
+      return null;
+    };
+
+    // Save plan result to cache
+    const savePlanToCache = async (pipeline, data) => {
+      try {
+        const key = getPlanCacheKey(pipeline);
+        await window.electronAPI?.store?.set?.(key, {
+          timestamp: Date.now(),
+          data,
+        });
+      } catch {}
+    };
+
     const probeCurrentMode = async () => {
       readiness.ok = true;
       readiness.missingRepos = [];
@@ -777,7 +853,7 @@ export default {
       readiness.notes = [];
       readiness.authRequired = false;
       readiness.authRepos = [];
-      generation.blocked = false;
+      setBlocked("video", false);
       const pipeline = pipelineForMode();
       try {
         planReq.controller?.abort();
@@ -789,11 +865,14 @@ export default {
         const { data, status } = await axios.post(
           `${API_BASE}/pipelines/plan`,
           { pipeline, deep_validate: true },
-          { signal: controller.signal, validateStatus: () => true }
+          { signal: controller.signal, validateStatus: () => true, timeout: 10000 }
         );
         if (mySeq !== planReq.seq) return;
-        if (status >= 200 && status < 300) applyPlanToReadiness(data);
-        else {
+        if (status >= 200 && status < 300) {
+          applyPlanToReadiness(data);
+          // Cache successful result for offline mode
+          await savePlanToCache(pipeline, data);
+        } else {
           readiness.ok = false;
           readiness.notes = [`Planner returned HTTP ${status}.`];
         }
@@ -803,8 +882,15 @@ export default {
           e?.name === "CanceledError" ||
           e?.message === "canceled";
         if (!aborted) {
-          readiness.ok = false;
-          readiness.notes = [e?.message || "Network error while planning"];
+          // Try to use cached plan for offline mode
+          const cachedPlan = await loadCachedPlan(pipeline);
+          if (cachedPlan && cachedPlan.ok) {
+            applyPlanToReadiness(cachedPlan);
+            readiness.notes.push("Using cached status (offline mode)");
+          } else {
+            readiness.ok = false;
+            readiness.notes = [e?.message || "Network error while planning"];
+          }
         }
       } finally {
         if (planReq.controller === controller) planReq.controller = null;
@@ -842,56 +928,13 @@ export default {
           await probeCurrentMode();
           return;
         }
-        generation.error =
-          res?.data?.error || `Prefetch failed (${res.status})`;
+        setError("video", res?.data?.error || `Prefetch failed (${res.status})`);
       } catch (e) {
-        generation.error = e?.message || "Network error";
+        setError("video", e?.message || "Network error");
       }
     };
 
-    const genSocket = ref(null);
-    const ensureGenerationSocket = (base = WS_GEN) => {
-      if (genSocket.value && genSocket.value.connected) return;
-      genSocket.value = io(base, socketOpts);
-      genSocket.value.on("gen_started", ({ generation_id }) => {
-        Object.assign(generation, {
-          id: generation_id,
-          active: true,
-          error: null,
-          stage: "starting",
-          pct: 0,
-        });
-      });
-      genSocket.value.on(
-        "gen_progress",
-        ({ generation_id, stage, step, total, pct }) => {
-          if (generation.id && generation_id && generation_id !== generation.id)
-            return;
-          generation.stage = stage || generation.stage;
-          if (typeof pct === "number")
-            generation.pct = Math.max(generation.pct, pct);
-          else if (total)
-            generation.pct = Math.max(
-              generation.pct,
-              (Number(step) / Number(total)) * 100
-            );
-        }
-      );
-      genSocket.value.on("gen_finished", ({ generation_id }) => {
-        if (generation.id && generation_id && generation_id !== generation.id)
-          return;
-        generation.pct = 100;
-        generation.stage = "finished";
-        generation.active = false;
-      });
-      genSocket.value.on("gen_error", ({ generation_id, error }) => {
-        if (generation.id && generation_id && generation_id !== generation.id)
-          return;
-        generation.error = error || "Unknown error";
-        generation.stage = "error";
-        generation.active = false;
-      });
-    };
+    // Socket is managed by the shared generationStore
 
     const requestWithDownloadTracking = async (url, payload, onSuccess) => {
       try {
@@ -913,7 +956,7 @@ export default {
           return;
         }
         if (res.status >= 200 && res.status < 300) {
-          generation.blocked = false;
+          setBlocked("video", false);
           await onSuccess(res);
           return;
         }
@@ -923,11 +966,9 @@ export default {
           await probeCurrentMode();
           return;
         }
-        generation.error = res?.data?.error || `Request failed (${res.status})`;
-        generation.active = false;
+        setError("video", res?.data?.error || `Request failed (${res.status})`);
       } catch (err) {
-        generation.error = err?.message || "Network error";
-        generation.active = false;
+        setError("video", err?.message || "Network error");
       } finally {
         isLoading.value = false;
       }
@@ -970,10 +1011,11 @@ export default {
       const sizeMaps = {
         turbo: { sd: [480, 640], hd: [480, 832], fhd: [768, 1280] },
         quality: { sd: [480, 640], hd: [480, 832], fhd: [1024, 1728] },
+        ltx2: { sd: [512, 768], hd: [576, 1024], fhd: [768, 1280] },
       };
       const pick = sizeMaps[mode.value] || sizeMaps.turbo;
       const [h, w] = pick[quality.value] || pick.sd;
-      let frames = mode.value === "turbo" ? 96 : 41;
+      let frames = mode.value === "turbo" ? 96 : mode.value === "ltx2" ? 97 : 41;
       let payload;
       if (mode.value === "quality") {
         frames = normalizeFramesForWan(frames);
@@ -986,6 +1028,28 @@ export default {
           steps: 10,
           guidance_scale: 3,
           auto_download: true,
+          image_base64:
+            uploadedImageBase64.value ||
+            (props.existingImageBase64 || "").trim(),
+        };
+      } else if (mode.value === "ltx2") {
+        // LTX-2: Fast distilled model with FP8 quantization
+        // Frames must be (n*8)+1 for LTX-2
+        frames = ((frames - 1) >> 3) * 8 + 1;
+        payload = {
+          prompt,
+          height: h,
+          width: w,
+          frames: frames,
+          fps: 24,
+          steps: 8, // Distilled model uses 4-10 steps
+          guidance_scale: 1.0, // Distilled uses guidance 1.0
+          use_fp8: true, // Enable FP8 quantization (CUDA only)
+          enable_memory_offloading: true,
+          auto_download: true,
+          negative_prompt:
+            "worst quality, inconsistent motion, blurry, jittery, distorted, " +
+            "deformed, bad anatomy, extra limbs, low resolution, watermark",
           image_base64:
             uploadedImageBase64.value ||
             (props.existingImageBase64 || "").trim(),
@@ -1014,6 +1078,7 @@ export default {
       }
       const url = `${API_BASE}${endpointForMode()}`;
       ensureGenerationSocket();
+      startGeneration("video"); // Initialize generation state
       const onSuccess = async (response) => {
         // UPDATED: Check for video_url OR video_path
         if (response?.data?.video_path || response?.data?.video_url) {
@@ -1040,22 +1105,27 @@ export default {
       } catch {}
     };
 
-    // UPDATED: Get video URL - prefer HTTP streaming URL, fallback to file://
+    // Get video URL - use streaming endpoint for local files
     const getVideoUrl = (inference) => {
       const data = inference?.answer?.data;
       if (!data) return "";
-      // Prefer HTTP streaming URL (works in Electron)
+      // Prefer HTTP streaming URL if already provided
       if (data.video_url) return data.video_url;
-      // Fallback to file:// for backwards compatibility
+      // Use streaming endpoint for local file paths
       if (data.video_path) {
         if (/^https?:\/\//i.test(data.video_path)) return data.video_path;
-        return `file://${data.video_path}`;
+        // Use the streaming endpoint for local files
+        return `${API_BASE}/media/stream?path=${encodeURIComponent(data.video_path)}`;
       }
       return "";
     };
 
-    const fileUrl = (p) =>
-      p && /^https?:\/\//i.test(p) ? p : p ? `file://${p}` : "";
+    // Convert local path to streaming URL
+    const fileUrl = (p) => {
+      if (!p) return "";
+      if (/^https?:\/\//i.test(p)) return p;
+      return `${API_BASE}/media/stream?path=${encodeURIComponent(p)}`;
+    };
 
     const downloadVideo = async (idx) => {
       const data = inferences[idx]?.answer?.data;
@@ -1129,11 +1199,7 @@ export default {
         clearInterval(httpPollTimer);
         httpPollTimer = null;
       }
-      if (genSocket.value?.connected) {
-        try {
-          genSocket.value.disconnect();
-        } catch {}
-      }
+      // Note: generation socket is shared and managed by generationStore
     });
 
     watch(
@@ -1176,7 +1242,7 @@ export default {
 </script>
 
 <style scoped>
-@import url("https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:opsz,wght,FILL,GRAD@20..48,100..700,0..1,-50..200");
+/* Fonts imported from App.vue for offline mode */
 .generation {
   position: fixed;
   width: 33%;

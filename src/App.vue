@@ -1,4 +1,62 @@
 <template>
+  <!-- Server Status Notification (using standard notification pattern) -->
+  <div
+    v-if="serverStatus.show"
+    class="server-notification notification"
+    :class="{
+      'is-info': serverStatus.type === 'restarting' || serverStatus.type === 'starting',
+      'is-success': serverStatus.type === 'ready',
+      'is-danger': serverStatus.type === 'crashed' || serverStatus.type === 'error',
+      'is-warning': serverStatus.type === 'stopped'
+    }"
+  >
+    <button class="delete" @click="serverStatus.show = false"></button>
+    <p class="mb-2">
+      <span class="fira-sans-condensed-black-italic is-size-4">
+        <button
+          v-if="serverStatus.type === 'restarting' || serverStatus.type === 'starting'"
+          disabled
+          class="button is-loading is-info is-small mr-2 p-4"
+        ></button>
+        <span
+          v-else
+          class="material-symbols-outlined mr-2"
+          style="vertical-align: middle"
+        >
+          {{
+            serverStatus.type === "ready"
+              ? "check_circle"
+              : serverStatus.type === "crashed" || serverStatus.type === "error"
+                ? "error"
+                : "info"
+          }}
+        </span>
+        {{ serverStatus.message }}
+      </span>
+      <span
+        v-if="serverStatus.canRetry"
+        class="is-pulled-right"
+      >
+        <button
+          class="button is-small is-warning"
+          @click="handleServerRestart"
+        >
+          <span class="material-symbols-outlined mr-1" style="font-size: 16px">refresh</span>
+          Retry
+        </button>
+      </span>
+    </p>
+    <progress
+      v-if="serverStatus.type === 'restarting' || serverStatus.type === 'starting'"
+      class="progress is-small"
+      :class="{
+        'is-info': serverStatus.type === 'starting',
+        'is-warning': serverStatus.type === 'restarting'
+      }"
+      max="100"
+    ></progress>
+  </div>
+
   <div id="bonzai" class="columns">
     <div class="column is-4 is-paddingless">
       <div class="models tabs menu">
@@ -7,7 +65,7 @@
             <div class="shade"></div>
             <div class="logo">
               <span
-                v-if="systemValues.value"
+                v-if="systemValues && systemValues.ram !== undefined"
                 class="system tag is-info is-large is-pulled-right memory fira-sans-condensed-black-italic is-size-2"
               >
                 <span
@@ -18,7 +76,7 @@
                 </span>
                 {{
                   (
-                    (systemValues.value.ram + systemValues.value.vram) /
+                    ((systemValues.ram || 0) + (systemValues.vram || 0)) /
                     1024 ** 3
                   ).toFixed(0)
                 }}
@@ -134,7 +192,7 @@
 </template>
 
 <script>
-import { ref } from "vue";
+import { ref, reactive, onMounted, onUnmounted } from "vue";
 import GenerativeText from "./components/GenerativeText.vue";
 import GenerativeImage from "./components/GenerativeImage.vue";
 import GenerativeVideo from "./components/GenerativeVideo.vue";
@@ -160,29 +218,99 @@ export default {
     const systemValues = ref({});
     const videoImageBase64 = ref("");
 
+    // Server status tracking for self-healing notifications
+    const serverStatus = reactive({
+      show: false,
+      type: "info", // 'ready', 'restarting', 'crashed', 'error', 'starting', 'stopped'
+      message: "",
+      canRetry: false,
+    });
+
+    let unsubscribeServerStatus = null;
+    let autoHideTimeout = null;
+
     const goAnimateToVideo = (b64) => {
       videoImageBase64.value = b64 || "";
       modelMode.value = "video"; // switch view
     };
+
+    const handleServerRestart = async () => {
+      serverStatus.show = true;
+      serverStatus.type = "restarting";
+      serverStatus.message = "Manually restarting server...";
+      serverStatus.canRetry = false;
+
+      try {
+        const result = await window.electronAPI.restartServer();
+        if (result.success) {
+          serverStatus.type = "ready";
+          serverStatus.message = "Server restarted successfully!";
+        } else {
+          serverStatus.type = "error";
+          serverStatus.message = result.error || "Failed to restart server";
+          serverStatus.canRetry = true;
+        }
+      } catch (e) {
+        serverStatus.type = "error";
+        serverStatus.message = e.message || "Failed to restart server";
+        serverStatus.canRetry = true;
+      }
+    };
+
+    onMounted(async () => {
+      // Get system info
+      const mySystemValues = await window.electronAPI.systemInformation();
+      systemValues.value = mySystemValues;
+      console.log("Ready to start, sir.", systemValues.value);
+
+      // Subscribe to server status events
+      unsubscribeServerStatus = window.electronAPI.onServerStatus((data) => {
+        console.log("[App] Server status:", data);
+
+        // Clear any pending auto-hide
+        if (autoHideTimeout) {
+          clearTimeout(autoHideTimeout);
+          autoHideTimeout = null;
+        }
+
+        serverStatus.show = true;
+        serverStatus.type = data.status;
+        serverStatus.message = data.message || "";
+        serverStatus.canRetry = data.canRetry || false;
+
+        // Auto-hide success messages after 3 seconds
+        if (data.status === "ready") {
+          autoHideTimeout = setTimeout(() => {
+            serverStatus.show = false;
+          }, 3000);
+        }
+      });
+    });
+
+    onUnmounted(() => {
+      if (unsubscribeServerStatus) {
+        unsubscribeServerStatus();
+      }
+      if (autoHideTimeout) {
+        clearTimeout(autoHideTimeout);
+      }
+    });
 
     return {
       systemValues,
       modelMode,
       videoImageBase64,
       goAnimateToVideo,
+      serverStatus,
+      handleServerRestart,
     };
-  },
-  async mounted() {
-    const mySystemValues = await window.electronAPI.systemInformation();
-    this.systemValues.value = mySystemValues;
-    console.log("Ready to start, sir.", this.systemValues);
   },
 };
 </script>
 
 <style>
-@import url("https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:opsz,wght,FILL,GRAD@20..48,100..700,0..1,-50..200");
-@import url("https://fonts.googleapis.com/css2?family=Fira+Sans+Condensed:ital,wght@0,100;1,900&family=Fira+Sans:wght@100;400&display=swap");
+/* Local fonts for offline mode - bundled with the app */
+@import "./assets/fonts/fonts.css";
 
 .material-symbols-outlined {
   font-variation-settings:
@@ -384,7 +512,9 @@ body {
 .tabs.menu li a h1 {
   color: #fff;
   font-size: 48px;
-  font-weight: 100;
+  font-family: "Fira Sans", sans-serif;
+  font-weight: 100 !important;
+  font-style: normal;
   text-shadow: 1px 1px 1px #000;
   border: none;
 }
@@ -510,5 +640,48 @@ div.answer table thead tr th {
 div.answer table td {
   text-align: left;
   padding-bottom: 20px !important;
+}
+
+/* Server Status Notification */
+.server-notification {
+  position: fixed;
+  top: 20px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 9999;
+  min-width: 400px;
+  max-width: 600px;
+  padding: 1.25rem 2.5rem 1.25rem 1.5rem;
+  border-radius: 8px;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.4);
+  backdrop-filter: blur(10px);
+  animation: slideDown 0.3s ease-out;
+}
+
+@keyframes slideDown {
+  from {
+    transform: translateX(-50%) translateY(-100%);
+    opacity: 0;
+  }
+  to {
+    transform: translateX(-50%) translateY(0);
+    opacity: 1;
+  }
+}
+
+.server-notification p {
+  margin-bottom: 0.5rem !important;
+  font-size: 16px;
+  text-align: left;
+}
+
+.server-notification .progress {
+  margin-top: 0.5rem;
+}
+
+.server-notification .delete {
+  position: absolute;
+  right: 0.5rem;
+  top: 0.5rem;
 }
 </style>

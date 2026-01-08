@@ -77,25 +77,6 @@
                     <span class="tag is-info is-light ml-1">23 Languages</span>
                   </label>
 
-                  <input
-                    v-model="selectedModel"
-                    :value="'turbo'"
-                    id="model_turbo"
-                    type="radio"
-                    name="model"
-                  />
-                  <label for="model_turbo" class="radio">
-                    <span
-                      class="material-symbols-outlined"
-                      style="font-size: 28px !important"
-                    >
-                      bolt
-                    </span>
-                    Turbo
-                    <span class="tag is-warning is-light ml-1">
-                      Fast + Tags
-                    </span>
-                  </label>
                 </div>
 
                 <!-- MODE TOGGLES (TTS vs Clone) -->
@@ -107,13 +88,8 @@
                     type="radio"
                     name="mode"
                     :checked="mode === 'tts'"
-                    :disabled="selectedModel === 'turbo'"
                   />
-                  <label
-                    for="mode_tts"
-                    class="radio mr-2"
-                    :class="{ 'is-disabled': selectedModel === 'turbo' }"
-                  >
+                  <label for="mode_tts" class="radio mr-2">
                     <span
                       class="material-symbols-outlined"
                       style="font-size: 32px !important"
@@ -138,19 +114,10 @@
                       voice_over_off
                     </span>
                     Voice Clone
-                    <span
-                      v-if="selectedModel === 'turbo'"
-                      class="tag is-danger is-light ml-1"
-                    >
-                      Required
-                    </span>
                   </label>
 
-                  <!-- LANGUAGE SELECTOR (only for multilingual) -->
-                  <span
-                    v-if="selectedModel === 'multilingual'"
-                    class="control ml-4"
-                  >
+                  <!-- LANGUAGE SELECTOR -->
+                  <span class="control ml-4">
                     <div class="select is-dark">
                       <select v-model="language">
                         <option
@@ -164,11 +131,8 @@
                     </div>
                   </span>
 
-                  <!-- EXPRESSION SLIDER (only for multilingual) -->
-                  <span
-                    v-if="selectedModel === 'multilingual'"
-                    class="control ml-4"
-                  >
+                  <!-- EXPRESSION SLIDER -->
+                  <span class="control ml-4">
                     <label class="label is-small has-text-white">
                       Expression
                     </label>
@@ -184,40 +148,8 @@
                   </span>
                 </div>
 
-                <!-- TURBO INFO PANEL -->
-                <div
-                  v-if="selectedModel === 'turbo'"
-                  class="notification is-warning is-light mb-4"
-                >
-                  <p class="is-size-6">
-                    <strong>Chatterbox Turbo</strong>
-                    - Ultra-fast inference (~200ms)
-                  </p>
-                  <p class="is-size-7 mt-2">
-                    <span class="material-symbols-outlined is-size-6 mr-1">
-                      info
-                    </span>
-                    Requires a 5-10 second voice reference. Supports
-                    paralinguistic tags:
-                  </p>
-                  <div class="tags mt-2">
-                    <span
-                      v-for="tag in turboTags"
-                      :key="tag"
-                      class="tag is-dark is-clickable"
-                      @click="insertTag(tag)"
-                      :title="'Click to insert ' + tag"
-                    >
-                      {{ tag }}
-                    </span>
-                  </div>
-                </div>
-
                 <!-- VOICE CLONE FILE INPUT -->
-                <div
-                  v-if="mode === 'clone' || selectedModel === 'turbo'"
-                  class="mb-5"
-                >
+                <div v-if="mode === 'clone'" class="mb-5">
                   <div class="file has-name is-fullwidth">
                     <label class="file-label">
                       <input
@@ -234,12 +166,6 @@
                         </span>
                         <span class="file-label">
                           Reference Voice (5-10s)
-                          <span
-                            v-if="selectedModel === 'turbo'"
-                            class="has-text-danger"
-                          >
-                            *
-                          </span>
                         </span>
                       </span>
                       <span class="file-name">
@@ -248,13 +174,8 @@
                     </label>
                   </div>
                   <p class="help has-text-grey-light">
-                    <span v-if="selectedModel === 'turbo'">
-                      <strong class="has-text-warning">Required:</strong>
-                    </span>
                     Upload a 5-10 second audio clip to clone the voice.
-                    <span v-if="selectedModel === 'multilingual'">
-                      Works across all 23 languages.
-                    </span>
+                    Works across all 23 languages.
                   </p>
                 </div>
 
@@ -433,16 +354,9 @@
                         ></audio>
                         <div class="audio-meta">
                           <span class="tag is-dark mr-2">
-                            {{
-                              inference.model === "turbo"
-                                ? "⚡ Turbo"
-                                : "🌍 Multilingual"
-                            }}
+                            🌍 Multilingual
                           </span>
-                          <span
-                            v-if="inference.model !== 'turbo'"
-                            class="tag is-dark"
-                          >
+                          <span class="tag is-dark">
                             {{
                               languageFlags[inference.language] ||
                               inference.language
@@ -457,15 +371,6 @@
                               voice_over_off
                             </span>
                             Cloned
-                          </span>
-                          <span
-                            v-if="inference.hasTags"
-                            class="tag is-info ml-2"
-                          >
-                            <span class="material-symbols-outlined is-size-6">
-                              emoji_emotions
-                            </span>
-                            Tags
                           </span>
                         </div>
                       </div>
@@ -555,6 +460,15 @@ import { v4 as uuid } from "uuid";
 import useClipboard from "vue-clipboard3";
 import axios from "axios";
 import { io } from "socket.io-client";
+import {
+  generationStore,
+  ensureGenerationSocket,
+  startGeneration,
+  setBlocked,
+  setError,
+  stopGeneration,
+  clearError,
+} from "../stores/generationStore";
 
 const API_BASE =
   (typeof process !== "undefined" && process.env?.VITE_API_BASE) ||
@@ -568,7 +482,7 @@ export default {
   name: "GenerativeAudio",
   setup() {
     // ------------ basic state -------------
-    const selectedModel = ref("multilingual"); // 'multilingual' or 'turbo'
+    const selectedModel = ref("multilingual");
     const mode = ref("tts"); // 'tts' or 'clone'
     const language = ref("en");
     const exaggerationPct = ref(50); // 0-100 -> maps to 0.0-1.0
@@ -577,19 +491,6 @@ export default {
     const inferences = reactive([]);
     const hasCopy = reactive([]);
     const promptInput = ref(null);
-
-    // Turbo paralinguistic tags
-    const turboTags = [
-      "[laugh]",
-      "[chuckle]",
-      "[sigh]",
-      "[gasp]",
-      "[cough]",
-      "[sniff]",
-      "[groan]",
-      "[yawn]",
-      "[clearing throat]",
-    ];
 
     // Supported languages (23 languages) - for Multilingual model
     const languages = {
@@ -677,37 +578,23 @@ export default {
     const canGenerate = computed(() => {
       if (!readiness.ok || readiness.authRequired || generation.active)
         return false;
-      // Turbo always requires voice reference
-      if (selectedModel.value === "turbo" && !synthesisBase64.value)
-        return false;
       // Clone mode requires voice reference
       if (mode.value === "clone" && !synthesisBase64.value) return false;
       return true;
     });
 
     const promptPlaceholder = computed(() => {
-      if (selectedModel.value === "turbo") {
-        return "Enter text with optional tags like [laugh] or [sigh]...";
-      }
       return mode.value === "clone"
         ? `Enter text in ${languages[language.value]} to speak in the cloned voice...`
         : `Enter text in ${languages[language.value]} to convert to speech...`;
     });
 
     // ------------ generation --------------
-    const generation = reactive({
-      active: false,
-      id: null,
-      pct: 0,
-      stage: "starting",
-      error: null,
-      blocked: false,
-    });
+    // Use shared generation store for persistent state across view navigation
+    const generation = computed(() => generationStore.state.audio);
 
     // ------------ pipeline/endpoint maps --
-    const endpointForMode = () => {
-      return selectedModel.value === "turbo" ? "/audio/turbo" : "/audio";
-    };
+    const endpointForMode = () => "/audio";
     const pipelineForMode = () => "chatterbox";
     const currentPipeline = computed(() => pipelineForMode());
 
@@ -803,13 +690,21 @@ export default {
       let next =
         Number.isFinite(serverPct) && serverPct > 0 ? serverPct : tasksPct;
 
-      const anyActive = Object.values(merged).some((t) =>
+      const tasksList = Object.values(merged);
+      const anyActive = tasksList.some((t) =>
         ["downloading", "pending"].includes(t.status)
       );
       if (anyActive) next = Math.min(next, 99.9);
 
       downloads.total_progress = next;
       downloads.progress = next;
+
+      // Safety check: if all tasks are completed but status wasn't updated, force completion
+      const allTasksComplete = tasksList.length > 0 && tasksList.every((t) => t.status === "completed");
+      if (allTasksComplete && downloads.status === "downloading") {
+        console.log("[Downloads] All tasks completed, forcing status to completed");
+        downloads.status = "completed";
+      }
 
       downloads.active = !["completed", "failed", "cancelled"].includes(
         downloads.status
@@ -969,6 +864,15 @@ export default {
         !readiness.authRequired &&
         readiness.missingRepos.length === 0 &&
         !readiness.missingGguf;
+
+      // If files are still missing after a "completed" download, reset download state
+      if (!readiness.ok && downloads.status === "completed") {
+        downloads.status = "pending";
+        downloads.progress = 0;
+        downloads.total_progress = 0;
+        downloads.active = false;
+        downloads.pipeline = { tasks: {} };
+      }
     };
 
     const apply403ToReadiness = (res) => {
@@ -984,12 +888,12 @@ export default {
         }
       }
       if (res?.data?.hint) readiness.notes.push(res.data.hint);
-      generation.blocked = true;
+      setBlocked("audio", true);
     };
 
     const apply409ToReadiness = (res) => {
       readiness.ok = false;
-      generation.blocked = true;
+      setBlocked("audio", true);
       const rs = res?.data?.repo_status;
       if (rs?.repo) {
         const missingCount = Array.isArray(rs?.missing)
@@ -1010,6 +914,36 @@ export default {
       if (hint) readiness.notes.push(hint);
     };
 
+    // Cache key for plan results
+    const getPlanCacheKey = (pipeline) => `planCache_audio_${pipeline}`;
+
+    // Load cached plan result
+    const loadCachedPlan = async (pipeline) => {
+      try {
+        const key = getPlanCacheKey(pipeline);
+        const cached = await window.electronAPI?.store?.get?.(key, null);
+        if (cached && cached.timestamp) {
+          // Cache is valid for 24 hours
+          const age = Date.now() - cached.timestamp;
+          if (age < 24 * 60 * 60 * 1000) {
+            return cached.data;
+          }
+        }
+      } catch {}
+      return null;
+    };
+
+    // Save plan result to cache
+    const savePlanToCache = async (pipeline, data) => {
+      try {
+        const key = getPlanCacheKey(pipeline);
+        await window.electronAPI?.store?.set?.(key, {
+          timestamp: Date.now(),
+          data,
+        });
+      } catch {}
+    };
+
     const probeCurrentMode = async () => {
       readiness.ok = true;
       readiness.missingRepos = [];
@@ -1019,7 +953,7 @@ export default {
       readiness.notes = [];
       readiness.authRequired = false;
       readiness.authRepos = [];
-      generation.blocked = false;
+      setBlocked("audio", false);
 
       const pipeline = currentPipeline.value;
       readiness.currentMode = mode.value;
@@ -1035,13 +969,16 @@ export default {
         const { data, status } = await axios.post(
           `${API_BASE}/pipelines/plan`,
           { pipeline, deep_validate: true },
-          { signal: controller.signal, validateStatus: () => true }
+          { signal: controller.signal, validateStatus: () => true, timeout: 10000 }
         );
 
         if (mySeq !== planReq.seq) return;
 
-        if (status >= 200 && status < 300) applyPlanToReadiness(data);
-        else {
+        if (status >= 200 && status < 300) {
+          applyPlanToReadiness(data);
+          // Cache successful result for offline mode
+          await savePlanToCache(pipeline, data);
+        } else {
           readiness.ok = false;
           readiness.notes = [`Planner returned HTTP ${status}.`];
         }
@@ -1051,8 +988,15 @@ export default {
           e?.name === "CanceledError" ||
           e?.message === "canceled";
         if (!aborted) {
-          readiness.ok = false;
-          readiness.notes = [e?.message || "Network error while planning"];
+          // Try to use cached plan for offline mode
+          const cachedPlan = await loadCachedPlan(pipeline);
+          if (cachedPlan && cachedPlan.ok) {
+            applyPlanToReadiness(cachedPlan);
+            readiness.notes.push("Using cached status (offline mode)");
+          } else {
+            readiness.ok = false;
+            readiness.notes = [e?.message || "Network error while planning"];
+          }
         }
       } finally {
         if (planReq.controller === controller) planReq.controller = null;
@@ -1095,58 +1039,14 @@ export default {
           return;
         }
 
-        generation.error =
-          res?.data?.error || `Prefetch failed (${res.status})`;
+        setError("audio", res?.data?.error || `Prefetch failed (${res.status})`);
       } catch (e) {
-        generation.error = e?.message || "Network error";
+        setError("audio", e?.message || "Network error");
       }
     };
 
     // ------------ generation socket -------
-    const genSocket = ref(null);
-    const ensureGenerationSocket = (base = WS_GEN) => {
-      if (genSocket.value && genSocket.value.connected) return;
-      genSocket.value = io(base, socketOpts);
-
-      genSocket.value.on("gen_started", ({ generation_id }) => {
-        Object.assign(generation, {
-          id: generation_id,
-          active: true,
-          error: null,
-          stage: "starting",
-          pct: 0,
-        });
-      });
-      genSocket.value.on(
-        "gen_progress",
-        ({ generation_id, stage, step, total, pct }) => {
-          if (generation.id && generation_id && generation_id !== generation.id)
-            return;
-          generation.stage = stage || generation.stage;
-          if (typeof pct === "number")
-            generation.pct = Math.max(generation.pct, pct);
-          else if (total)
-            generation.pct = Math.max(
-              generation.pct,
-              (Number(step) / Number(total)) * 100
-            );
-        }
-      );
-      genSocket.value.on("gen_finished", ({ generation_id }) => {
-        if (generation.id && generation_id && generation_id !== generation.id)
-          return;
-        generation.pct = 100;
-        generation.stage = "finished";
-        generation.active = false;
-      });
-      genSocket.value.on("gen_error", ({ generation_id, error }) => {
-        if (generation.id && generation_id && generation_id !== generation.id)
-          return;
-        generation.error = error || "Unknown error";
-        generation.stage = "error";
-        generation.active = false;
-      });
-    };
+    // Socket is managed by the shared generationStore
 
     // ------------ voice clone file handler
     const handleSynthesisFile = async (event) => {
@@ -1170,65 +1070,38 @@ export default {
       reader.readAsDataURL(file);
     };
 
-    // ------------ insert paralinguistic tag
-    const insertTag = (tag) => {
-      const cursorPos = promptInput.value?.selectionStart || form.prompt.length;
-      const before = form.prompt.slice(0, cursorPos);
-      const after = form.prompt.slice(cursorPos);
-      form.prompt = before + tag + " " + after;
-      // Focus back on input
-      promptInput.value?.focus();
-    };
-
     // ------------ actions -----------------
     const sendMessage = async (prompt) => {
       if (!prompt) return;
       if (!canGenerate.value) return;
 
-      const isTurbo = selectedModel.value === "turbo";
       const payload = {
         prompt,
         auto_download: true,
+        language: language.value,
+        exaggeration: exaggerationPct.value / 100,
+        cfg_weight: 0.5,
+        temperature: 0.8,
       };
 
-      if (isTurbo) {
-        // Turbo endpoint
+      if (mode.value === "clone" && synthesisBase64.value) {
         payload.synthesis_base64 = synthesisBase64.value;
-        payload.cfg_weight = 0.5;
-        payload.temperature = 0.8;
-      } else {
-        // Multilingual endpoint
-        payload.language = language.value;
-        payload.exaggeration = exaggerationPct.value / 100;
-        payload.cfg_weight = 0.5;
-        payload.temperature = 0.8;
-
-        if (mode.value === "clone" && synthesisBase64.value) {
-          payload.synthesis_base64 = synthesisBase64.value;
-        }
       }
 
       const url = `${API_BASE}${endpointForMode()}`;
 
       ensureGenerationSocket();
-      Object.assign(generation, {
-        active: true,
-        stage: "starting",
-        pct: 0,
-        error: null,
-      });
+      startGeneration("audio"); // Initialize generation state
 
       const onSuccess = async (response) => {
         if (response?.data?.audio_path) {
-          const hasTags = turboTags.some((tag) => prompt.includes(tag));
           inferences.push({
             question: prompt,
             answer: response,
             id: uuid(),
-            language: isTurbo ? "en" : language.value,
-            model: selectedModel.value,
-            hasClone: isTurbo || mode.value === "clone",
-            hasTags: hasTags,
+            language: language.value,
+            model: "multilingual",
+            hasClone: mode.value === "clone",
           });
           try {
             await window.electronAPI?.store?.set?.(
@@ -1266,7 +1139,7 @@ export default {
         }
 
         if (res.status >= 200 && res.status < 300) {
-          generation.blocked = false;
+          setBlocked("audio", false);
           await onSuccess(res);
           return;
         }
@@ -1278,11 +1151,9 @@ export default {
           return;
         }
 
-        generation.error = res?.data?.error || `Request failed (${res.status})`;
-        generation.active = false;
+        setError("audio", res?.data?.error || `Request failed (${res.status})`);
       } catch (err) {
-        generation.error = err?.message || "Network error";
-        generation.active = false;
+        setError("audio", err?.message || "Network error");
       } finally {
         isLoading.value = false;
       }
@@ -1296,8 +1167,12 @@ export default {
       } catch {}
     };
 
-    const fileUrl = (p) =>
-      p && /^https?:\/\//i.test(p) ? p : p ? `file://${p}` : "";
+    // Convert local path to streaming URL
+    const fileUrl = (p) => {
+      if (!p) return "";
+      if (/^https?:\/\//i.test(p)) return p;
+      return `${API_BASE}/media/stream?path=${encodeURIComponent(p)}`;
+    };
 
     const downloadAudio = async (idx) => {
       const path = inferences[idx]?.answer?.data?.audio_path;
@@ -1342,14 +1217,6 @@ export default {
         });
     });
 
-    // ------------ watchers ----------------
-    // Force clone mode when turbo is selected
-    watch(selectedModel, (newModel) => {
-      if (newModel === "turbo") {
-        mode.value = "clone";
-      }
-    });
-
     // ------------ lifecycle ----------------
     onMounted(async () => {
       ensureGenerationSocket();
@@ -1375,11 +1242,7 @@ export default {
         clearInterval(httpPollTimer);
         httpPollTimer = null;
       }
-      if (genSocket.value?.connected) {
-        try {
-          genSocket.value.disconnect();
-        } catch {}
-      }
+      // Note: generation socket is shared and managed by generationStore
     });
 
     watch(mode, () => probeCurrentMode(), { immediate: true });
@@ -1391,7 +1254,6 @@ export default {
       languages,
       languageFlags,
       exaggerationPct,
-      turboTags,
       form,
       isLoading,
       inferences,
@@ -1415,7 +1277,6 @@ export default {
       retryCurrentPipeline,
       probeCurrentMode,
       handleSynthesisFile,
-      insertTag,
       fileUrl,
     };
   },
@@ -1423,7 +1284,7 @@ export default {
 </script>
 
 <style scoped>
-@import url("https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:opsz,wght,FILL,GRAD@20..48,100..700,0..1,-50..200");
+/* Fonts imported from App.vue for offline mode */
 
 .generation {
   position: fixed;

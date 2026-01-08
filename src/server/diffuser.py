@@ -67,7 +67,7 @@ import torchaudio as ta
 from PIL import Image
 
 from appdirs import user_data_dir
-from flask import Flask, request, jsonify
+from flask import Flask, request, jsonify, send_file, Response
 from flask_cors import CORS
 from flask_socketio import SocketIO, emit, join_room
 
@@ -80,11 +80,13 @@ except Exception:
 
 from diffusers import (
     AutoPipelineForText2Image,
+    AutoModel,
     StableDiffusionXLPipeline,
     StableDiffusionXLImg2ImgPipeline,
     LTXPipeline,
     LTXLatentUpsamplePipeline,
     LTXImageToVideoPipeline,
+    LTXConditionPipeline,
     GGUFQuantizationConfig,
     FluxPipeline,
     FluxImg2ImgPipeline,
@@ -124,6 +126,8 @@ def get_safe_model_dir() -> Path:
 MODEL_DIR = get_safe_model_dir()
 USER_BIN_DIR = MODEL_DIR / "bin"
 USER_BIN_DIR.mkdir(parents=True, exist_ok=True)
+FILES_DIR = MODEL_DIR / "files"
+FILES_DIR.mkdir(parents=True, exist_ok=True)
 
 os.environ["HF_HOME"] = str(MODEL_DIR / "hf")
 os.environ["TRANSFORMERS_CACHE"] = str(MODEL_DIR / "hf")
@@ -155,6 +159,18 @@ Z_GGUF_URL = "https://huggingface.co/jayn7/Z-Image-Turbo-GGUF/resolve/main/z_ima
 LTX_REPO = "Lightricks/LTX-Video"
 LTX_UPSAMPLER_REPO = "linoyts/LTX-Video-spatial-upscaler-0.9.8"
 
+# LTX-2 Model Configuration
+LTX2_REPO = "Lightricks/LTX-2"
+LTX2_DISTILLED_FP8_NAME = "ltx-2-19b-distilled-fp8.safetensors"
+LTX2_DISTILLED_FP8_URL = "https://huggingface.co/Lightricks/LTX-2/resolve/main/ltx-2-19b-distilled-fp8.safetensors"
+LTX2_SPATIAL_UPSCALER_NAME = "ltx-2-spatial-upscaler-x2-1.0.safetensors"
+LTX2_SPATIAL_UPSCALER_URL = "https://huggingface.co/Lightricks/LTX-2/resolve/main/ltx-2-spatial-upscaler-x2-1.0.safetensors"
+LTX2_DISTILLED_LORA_NAME = "ltx-2-19b-distilled-lora-384.safetensors"
+LTX2_DISTILLED_LORA_URL = "https://huggingface.co/Lightricks/LTX-2/resolve/main/ltx-2-19b-distilled-lora-384.safetensors"
+# Gemma FP8 text encoder for LTX-2 (optional, more memory efficient)
+LTX2_GEMMA_FP8_NAME = "gemma_3_12B_it_fp8_e4m3fn.safetensors"
+LTX2_GEMMA_FP8_URL = "https://huggingface.co/GitMylo/LTX-2-comfy_gemma_fp8_e4m3fn/resolve/main/gemma_3_12B_it_fp8_e4m3fn.safetensors"
+
 WAN_REPO = "Wan-AI/Wan2.2-I2V-A14B-Diffusers"
 WAN22_GGUF_HIGH_NAME = "Wan2.2-I2V-A14B-HighNoise-Q5_K_M.gguf"
 WAN22_GGUF_HIGH_URL = "https://huggingface.co/QuantStack/Wan2.2-I2V-A14B-GGUF/resolve/main/HighNoise/Wan2.2-I2V-A14B-HighNoise-Q5_K_M.gguf"
@@ -169,7 +185,6 @@ WAN_21_VAE_URL = "https://huggingface.co/Comfy-Org/Wan_2.1_ComfyUI_repackaged/re
 
 CHATTERBOX_REPO = "ResembleAI/chatterbox"
 
-CHATTERBOX_TURBO_MODEL_ID = "ResembleAI/chatterbox-turbo-ONNX"
 CHATTERBOX_MULTILINGUAL_MODEL_ID = "onnx-community/chatterbox-multilingual-ONNX"
 
 LLAMA_REPOS = {
@@ -186,13 +201,6 @@ CHATTERBOX_LANGUAGES = {
     "sv": "Swedish", "sw": "Swahili", "tr": "Turkish", "zh": "Chinese",
 }
 
-CHATTERBOX_TURBO_REPO = "ResembleAI/chatterbox-turbo"
-
-# Paralinguistic tags supported by Turbo
-TURBO_PARALINGUISTIC_TAGS = [
-    "[laugh]", "[chuckle]", "[sigh]", "[gasp]", "[cough]",
-    "[sniff]", "[groan]", "[yawn]", "[clearing throat]"
-]
 
 EXPECTED_SIZES = {
     "flux1-krea-dev-Q5_K_M.gguf": 8_419_501_344,
@@ -203,6 +211,11 @@ EXPECTED_SIZES = {
     "Wan2.2-I2V-A14B-HighNoise-Q3_K_M.gguf": 7_176_106_496,
     "Wan2.2-I2V-A14B-LowNoise-Q3_K_M.gguf": 7_176_106_496,
     "wan_2.1_vae.safetensors": 534_096_904,
+    # LTX-2 files
+    "ltx-2-19b-distilled-fp8.safetensors": 27_100_000_000,  # ~27.1 GB
+    "ltx-2-spatial-upscaler-x2-1.0.safetensors": 996_000_000,  # ~996 MB
+    "ltx-2-19b-distilled-lora-384.safetensors": 7_670_000_000,  # ~7.67 GB
+    "gemma_3_12B_it_fp8_e4m3fn.safetensors": 13_200_000_000,  # ~13.2 GB
 }
 
 # =============================================================================
@@ -374,52 +387,60 @@ class ChatterboxONNX:
         self.tokenizer = tokenizer
         self.cache_dir = cache_dir
         
-        # Model architecture
-        self._num_layers = 16 if model_type == "turbo" else 30
+        # Model architecture - detect from ONNX inputs
+        self._kv_dtype = np.float32
+        layer_indices = set()
+        for inp in self.language_model.get_inputs():
+            if "past_key_values" in inp.name:
+                if inp.type == 'tensor(float16)':
+                    self._kv_dtype = np.float16
+                # Extract layer number from name like "past_key_values.16.key"
+                parts = inp.name.split(".")
+                if len(parts) >= 2 and parts[1].isdigit():
+                    layer_indices.add(int(parts[1]))
+
+        # Detect actual number of layers from ONNX model inputs
+        self._num_layers = max(layer_indices) + 1 if layer_indices else (16 if model_type == "turbo" else 30)
         self._num_kv_heads = 16
         self._head_dim = 64
-        self._kv_dtype = np.float32
-        for inp in self.language_model.get_inputs():
-            if "past_key_values" in inp.name and inp.type == 'tensor(float16)':
-                self._kv_dtype = np.float16
-                break
+        logger.info(f"[Chatterbox {model_type}] Detected {self._num_layers} transformer layers, dtype={self._kv_dtype}")
     
     @classmethod
-    def from_pretrained(cls, model_type="turbo", device="cpu", dtype="fp32", cache_dir=None):
+    def from_pretrained(cls, model_type="multilingual", device="cpu", dtype="fp32", cache_dir=None, local_files_only=True):
         import onnxruntime as ort
         from huggingface_hub import hf_hub_download
         from transformers import AutoTokenizer
-        
-        if model_type not in ("turbo", "multilingual"):
-            raise ValueError(f"model_type must be 'turbo' or 'multilingual'")
-        
-        model_id = CHATTERBOX_TURBO_MODEL_ID if model_type == "turbo" else CHATTERBOX_MULTILINGUAL_MODEL_ID
-        
+
+        if model_type != "multilingual":
+            raise ValueError(f"model_type must be 'multilingual'")
+
+        model_id = CHATTERBOX_MULTILINGUAL_MODEL_ID
+
         # CoreML fails with external .onnx_data files - use CPU
         providers = ['CUDAExecutionProvider', 'CPUExecutionProvider'] if device == "cuda" and torch.cuda.is_available() else ['CPUExecutionProvider']
-        
-        logger.info(f"[Chatterbox {model_type}] Loading ONNX models...")
-        
+
+        logger.info(f"[Chatterbox {model_type}] Loading ONNX models (local_files_only={local_files_only})...")
+
         def download(name):
             suffix = "" if dtype == "fp32" else "_quantized" if dtype == "q8" else f"_{dtype}"
             filename = f"{name}{suffix}.onnx"
-            path = hf_hub_download(model_id, subfolder="onnx", filename=filename, cache_dir=cache_dir)
+            path = hf_hub_download(model_id, subfolder="onnx", filename=filename, cache_dir=cache_dir, local_files_only=local_files_only)
             try:
-                hf_hub_download(model_id, subfolder="onnx", filename=f"{filename}_data", cache_dir=cache_dir)
+                hf_hub_download(model_id, subfolder="onnx", filename=f"{filename}_data", cache_dir=cache_dir, local_files_only=local_files_only)
             except:
                 pass
             return path
-        
+
         opts = ort.SessionOptions()
         opts.graph_optimization_level = ort.GraphOptimizationLevel.ORT_ENABLE_ALL
-        
+
         return cls(
             model_type=model_type,
             speech_encoder=ort.InferenceSession(download("speech_encoder"), opts, providers=providers),
             embed_tokens=ort.InferenceSession(download("embed_tokens"), opts, providers=providers),
             language_model=ort.InferenceSession(download("language_model"), opts, providers=providers),
             cond_decoder=ort.InferenceSession(download("conditional_decoder"), opts, providers=providers),
-            tokenizer=AutoTokenizer.from_pretrained(model_id, cache_dir=cache_dir),
+            tokenizer=AutoTokenizer.from_pretrained(model_id, cache_dir=cache_dir, local_files_only=local_files_only),
             cache_dir=cache_dir,
         )
     
@@ -526,11 +547,7 @@ class ChatterboxONNX:
     @staticmethod
     def get_supported_languages():
         return CHATTERBOX_LANGUAGES.copy()
-    
-    @staticmethod
-    def get_paralinguistic_tags():
-        return TURBO_PARALINGUISTIC_TAGS.copy()
-    
+
 # =============================================================================
 # FLASK / SOCKET.IO SETUP
 # =============================================================================
@@ -824,7 +841,9 @@ class DownloadManager:
     def emit(self, pipeline_id: str):
         pl = self.pipelines.get(pipeline_id)
         if pl:
-            socketio.emit("download_progress", _json_sanitize({"pipeline": pl.to_dict()}),
+            data = pl.to_dict()
+            logger.debug(f"[Download] Emitting status={data.get('status')} progress={data.get('total_progress')} for {pipeline_id}")
+            socketio.emit("download_progress", _json_sanitize({"pipeline": data}),
                           namespace="/downloads", room=pipeline_id)
             socketio.sleep(0)
 
@@ -898,18 +917,25 @@ class DownloadManager:
 
     def finalize_if_done(self, pl: PipelineDownload):
         if not pl.tasks:
+            logger.info(f"[Download] Finalizing {pl.pipeline_id}: no tasks, marking completed")
             pl.status = "completed"
             self.emit(pl.pipeline_id)
             return
         states = {t.status for t in pl.tasks.values()}
+        task_details = {t.name: (t.status, t.progress) for t in pl.tasks.values()}
+        logger.info(f"[Download] Finalizing {pl.pipeline_id}: states={states}, tasks={task_details}")
         if states <= {"completed"}:
             pl.status = "completed"
+            logger.info(f"[Download] Pipeline {pl.pipeline_id} -> COMPLETED")
         elif "failed" in states and not any(s in states for s in ("pending", "downloading")):
             pl.status = "failed"
+            logger.info(f"[Download] Pipeline {pl.pipeline_id} -> FAILED")
         elif "cancelled" in states and not any(s in states for s in ("pending", "downloading")):
             pl.status = "cancelled"
+            logger.info(f"[Download] Pipeline {pl.pipeline_id} -> CANCELLED")
         else:
             pl.status = "downloading"
+            logger.warning(f"[Download] Pipeline {pl.pipeline_id} still DOWNLOADING despite finalize_if_done call")
         self.emit(pl.pipeline_id)
 
     def cancel_pipeline(self, pipeline_id: str):
@@ -987,6 +1013,27 @@ def allow_patterns_for_repo(repo_id: str) -> Optional[List[str]]:
         return _ltx_patterns_strict()
     if repo_id == LTX_UPSAMPLER_REPO:
         return _ltx_upscaler_patterns()
+    if repo_id == LTX2_REPO:
+        # LTX-2: Download distilled FP8 model + all component weights
+        # Uses specific patterns to avoid downloading 43GB dev models
+        return [
+            "model_index.json", "config.json",
+            "scheduler/**",
+            "tokenizer/**",
+            "text_encoder/**",
+            "transformer/**",
+            "vae/**",
+            "connectors/**",  # LTX2TextConnectors weights (2.86 GB)
+            "vocoder/**",     # LTX2Vocoder weights (111 MB)
+            "audio_vae/**",   # Audio VAE if present
+            "latent_upsampler/**",
+            # Subdirectory weights (config + model files)
+            "**/config.json",
+            "**/diffusion_pytorch_model*.safetensors",
+            "**/model*.safetensors",
+            # Only the distilled FP8 top-level model (27GB), not the 43GB dev models
+            "ltx-2-19b-distilled-fp8.safetensors",
+        ]
     if repo_id == WAN_REPO:
         return _wan_patterns()
     if repo_id == CHATTERBOX_REPO:
@@ -1030,6 +1077,12 @@ REPO_SPECS = {
         "must_weight_dirs": ["text_encoder", "vae"],
         "extra_dirs": ["scheduler", "transformer", "transformer_2"],
     },
+    "Lightricks/LTX-2": {
+        "must_files": ["model_index.json"],
+        "must_tokenizers": ["tokenizer"],
+        "must_weight_dirs": ["text_encoder", "transformer", "vae", "connectors", "vocoder"],
+        "extra_dirs": ["scheduler", "audio_vae", "latent_upsampler"],
+    },
     "Tongyi-MAI/Z-Image-Turbo": {
         "must_files": ["model_index.json"],
         "must_tokenizers": ["tokenizer"],
@@ -1038,6 +1091,14 @@ REPO_SPECS = {
     },
     "ResembleAI/chatterbox": {
         "must_files": [], "must_tokenizers": [], "must_weight_dirs": [], "extra_dirs": [],
+    },
+    # Chatterbox Multilingual ONNX - check for ONNX model files
+    "onnx-community/chatterbox-multilingual-ONNX": {
+        "must_files": [],
+        "must_tokenizers": [],
+        "must_weight_dirs": [],
+        "extra_dirs": ["onnx"],
+        "onnx_files": ["speech_encoder.onnx", "embed_tokens.onnx", "language_model.onnx", "conditional_decoder.onnx"],
     },
 }
 
@@ -1114,6 +1175,12 @@ def _repo_completeness(repo_id: str) -> Dict[str, Any]:
         dp = root / d
         if not dp.exists() or not any(x.is_file() and _nonzero(x) for x in dp.rglob("*")):
             report["missing"].append(f"{d}/")
+    # Check for ONNX files (used by Chatterbox audio models)
+    for onnx_file in spec.get("onnx_files", []):
+        # ONNX files are typically in the onnx subdirectory
+        onnx_path = root / "onnx" / onnx_file
+        if not _nonzero(onnx_path):
+            report["missing"].append(f"onnx/{onnx_file}")
     report["ok"] = len(report["missing"]) == 0
     return report
 
@@ -1123,6 +1190,66 @@ def _repo_readiness(repo_id: str) -> Dict[str, Any]:
         return _repo_completeness(repo_id)
     except Exception as e:
         return {"repo": repo_id, "ok": False, "missing": [f"error: {str(e)}"]}
+
+
+def _is_pipeline_complete(pipeline: str) -> bool:
+    """Check if all repos for a pipeline are fully downloaded."""
+    try:
+        plan = _plan_for(pipeline)
+        repos = plan.get("repos_to_fetch", [])
+        for repo_id in repos:
+            report = _repo_completeness(repo_id)
+            if not report.get("ok", False):
+                return False
+        # Also check single files
+        for sf in plan.get("single_files", []):
+            name = sf.get("name", "")
+            if name:
+                path = MODEL_DIR / name
+                if not path.exists() or path.stat().st_size == 0:
+                    return False
+        return True
+    except Exception:
+        return False
+
+
+from contextlib import contextmanager
+
+@contextmanager
+def offline_mode_if_complete(pipeline: str):
+    """
+    Context manager that enables offline mode if the pipeline is fully downloaded.
+
+    Usage:
+        with offline_mode_if_complete("ltx2_video"):
+            pipe = Pipeline.from_pretrained(...)
+
+    - If complete: blocks ALL HTTP requests (HF_HUB_OFFLINE=1, TRANSFORMERS_OFFLINE=1)
+    - If incomplete: allows HTTP for downloading missing files
+    """
+    is_complete = _is_pipeline_complete(pipeline)
+    old_hf_offline = os.environ.get("HF_HUB_OFFLINE")
+    old_transformers_offline = os.environ.get("TRANSFORMERS_OFFLINE")
+
+    if is_complete:
+        os.environ["HF_HUB_OFFLINE"] = "1"
+        os.environ["TRANSFORMERS_OFFLINE"] = "1"
+        logger.info(f"[{pipeline}] Running in offline mode (all files present)")
+    else:
+        logger.info(f"[{pipeline}] Running in online mode (downloading may occur)")
+
+    try:
+        yield is_complete
+    finally:
+        # Restore original environment
+        if old_hf_offline is None:
+            os.environ.pop("HF_HUB_OFFLINE", None)
+        else:
+            os.environ["HF_HUB_OFFLINE"] = old_hf_offline
+        if old_transformers_offline is None:
+            os.environ.pop("TRANSFORMERS_OFFLINE", None)
+        else:
+            os.environ["TRANSFORMERS_OFFLINE"] = old_transformers_offline
 
 
 # =============================================================================
@@ -1181,12 +1308,21 @@ def _plan_for(pipeline: str) -> Dict[str, Any]:
                 _sf(WAN_21_VAE_NAME, WAN_21_VAE_URL),
             ],
         }
+    if pipeline == "ltx2_video":
+        # LTX-2: repo for model components + Gemma FP8 text encoder as single file
+        return {
+            "repos_to_fetch": [LTX2_REPO],
+            "single_files": [
+                _sf(LTX2_GEMMA_FP8_NAME, LTX2_GEMMA_FP8_URL),
+            ],
+        }
     if pipeline == "sdxl":
         return {"repos_to_fetch": [SDXL_BASE_REPO, SDXL_REFINER_REPO], "single_files": []}
     if pipeline == "z_image_turbo":
         return {"repos_to_fetch": [Z_REPO], "single_files": [_sf(Z_GGUF_NAME, Z_GGUF_URL)]}
     if pipeline == "chatterbox":
-        return {"repos_to_fetch": [CHATTERBOX_REPO], "single_files": []}
+        # Use the ONNX repo for inference (multilingual only)
+        return {"repos_to_fetch": [CHATTERBOX_MULTILINGUAL_MODEL_ID], "single_files": []}
     raise ValueError(f"Unknown pipeline: {pipeline}")
 
 
@@ -1268,8 +1404,9 @@ def _list_required_remote_files(repo_id: str, allow_patterns: Optional[List[str]
             if getattr(it, "type", None) == "file" and _match(it.path):
                 size = int(getattr(it, "size", 0) or 0)
                 files.append({"path": it.path, "size": size})
-    except Exception:
-        pass
+        logger.info(f"[Download] Listed {len(files)} files from {repo_id} (tree API)")
+    except Exception as e:
+        logger.warning(f"[Download] list_repo_tree failed for {repo_id}: {e}")
 
     if not files:
         try:
@@ -1277,8 +1414,12 @@ def _list_required_remote_files(repo_id: str, allow_patterns: Optional[List[str]
             for pth in paths or []:
                 if _match(pth):
                     files.append({"path": pth, "size": 0})
-        except Exception:
-            pass
+            logger.info(f"[Download] Listed {len(files)} files from {repo_id} (files API)")
+        except Exception as e:
+            logger.warning(f"[Download] list_repo_files failed for {repo_id}: {e}")
+
+    if not files:
+        logger.error(f"[Download] No files found for {repo_id} with patterns {allow_patterns}")
 
     return files
 
@@ -1287,15 +1428,22 @@ def _start_prefetch_pipeline(pipeline: str) -> Dict[str, Any]:
     plan = _cached_plan_for(pipeline)
     pl = download_manager.new(pipeline)
     download_manager.set_status(pl, "downloading")
+    logger.info(f"[Download] Starting pipeline {pipeline}, id={pl.pipeline_id}")
 
     def _worker():
         try:
-            for rid in plan.get("repos_to_fetch", []):
+            repos = plan.get("repos_to_fetch", [])
+            single_files = plan.get("single_files", [])
+            logger.info(f"[Download] Pipeline {pipeline}: {len(repos)} repos, {len(single_files)} single files")
+
+            for rid in repos:
                 if pl.cancelled:
                     break
                 allow = allow_patterns_for_repo(rid)
+                logger.info(f"[Download] Fetching manifest for {rid} with patterns: {allow}")
                 manifest = _list_required_remote_files(rid, allow_patterns=allow)
                 total = sum(int(f.get("size") or 0) for f in manifest) or max(len(manifest), 1)
+                logger.info(f"[Download] Manifest for {rid}: {len(manifest)} files, {total} bytes total")
                 tid = download_manager.add_repo_task(pl, rid, total_estimate=total)
                 download_manager.mark_downloading(pl, tid)
                 try:
@@ -1886,6 +2034,148 @@ def downloads_cancel(pipeline_id):
 
 
 # =============================================================================
+# REST API: MEDIA STREAMING
+# =============================================================================
+
+# MIME types for common media formats
+MEDIA_MIME_TYPES = {
+    ".mp4": "video/mp4",
+    ".webm": "video/webm",
+    ".mov": "video/quicktime",
+    ".avi": "video/x-msvideo",
+    ".mkv": "video/x-matroska",
+    ".wav": "audio/wav",
+    ".mp3": "audio/mpeg",
+    ".ogg": "audio/ogg",
+    ".flac": "audio/flac",
+    ".m4a": "audio/mp4",
+    ".aac": "audio/aac",
+    ".png": "image/png",
+    ".jpg": "image/jpeg",
+    ".jpeg": "image/jpeg",
+    ".gif": "image/gif",
+    ".webp": "image/webp",
+}
+
+
+@app.route("/media/stream", methods=["GET"])
+def stream_media():
+    """
+    Stream a media file from the local filesystem.
+    Query params:
+      - path: Absolute path to the media file
+    Supports range requests for video seeking.
+    """
+    file_path = request.args.get("path", "").strip()
+    if not file_path:
+        return jsonify({"error": "Missing 'path' parameter"}), 400
+
+    # Security: Only allow files in known safe directories
+    cwd = os.getcwd()
+    allowed_dirs = [
+        cwd,
+        str(MODEL_DIR),
+        os.path.expanduser("~"),
+        "/tmp",
+        "/var/folders",  # macOS temp
+    ]
+
+    # Normalize path to prevent directory traversal
+    file_path = os.path.abspath(file_path)
+    is_allowed = any(file_path.startswith(os.path.abspath(d)) for d in allowed_dirs)
+
+    if not is_allowed:
+        logger.warning(f"[Media] Blocked access to path outside allowed dirs: {file_path}")
+        return jsonify({"error": "Access denied"}), 403
+
+    if not os.path.isfile(file_path):
+        return jsonify({"error": "File not found"}), 404
+
+    # Determine MIME type
+    ext = os.path.splitext(file_path)[1].lower()
+    mime_type = MEDIA_MIME_TYPES.get(ext, "application/octet-stream")
+    file_size = os.path.getsize(file_path)
+
+    # Handle range requests for video seeking
+    range_header = request.headers.get("Range")
+    if range_header:
+        # Parse range header (e.g., "bytes=0-1023")
+        try:
+            range_match = range_header.replace("bytes=", "").split("-")
+            start = int(range_match[0]) if range_match[0] else 0
+            end = int(range_match[1]) if range_match[1] else file_size - 1
+            end = min(end, file_size - 1)
+            length = end - start + 1
+
+            def generate():
+                with open(file_path, "rb") as f:
+                    f.seek(start)
+                    remaining = length
+                    while remaining > 0:
+                        chunk_size = min(8192, remaining)
+                        data = f.read(chunk_size)
+                        if not data:
+                            break
+                        remaining -= len(data)
+                        yield data
+
+            response = Response(
+                generate(),
+                status=206,
+                mimetype=mime_type,
+                direct_passthrough=True,
+            )
+            response.headers["Content-Range"] = f"bytes {start}-{end}/{file_size}"
+            response.headers["Accept-Ranges"] = "bytes"
+            response.headers["Content-Length"] = length
+            response.headers["Cache-Control"] = "no-cache"
+            return response
+        except (ValueError, IndexError):
+            pass  # Fall through to full file response
+
+    # Full file response
+    def generate_full():
+        with open(file_path, "rb") as f:
+            while True:
+                chunk = f.read(8192)
+                if not chunk:
+                    break
+                yield chunk
+
+    response = Response(
+        generate_full(),
+        status=200,
+        mimetype=mime_type,
+        direct_passthrough=True,
+    )
+    response.headers["Accept-Ranges"] = "bytes"
+    response.headers["Content-Length"] = file_size
+    response.headers["Cache-Control"] = "no-cache"
+    return response
+
+
+@app.route("/media/info", methods=["GET"])
+def media_info():
+    """Get info about a media file (exists, size, type)."""
+    file_path = request.args.get("path", "").strip()
+    if not file_path:
+        return jsonify({"error": "Missing 'path' parameter"}), 400
+
+    file_path = os.path.abspath(file_path)
+    if not os.path.isfile(file_path):
+        return jsonify({"exists": False}), 200
+
+    ext = os.path.splitext(file_path)[1].lower()
+    return jsonify({
+        "exists": True,
+        "path": file_path,
+        "size": os.path.getsize(file_path),
+        "mime_type": MEDIA_MIME_TYPES.get(ext, "application/octet-stream"),
+        "stream_url": f"/media/stream?path={file_path}",
+    }), 200
+
+
+# =============================================================================
 # REST API: IMAGE GENERATION - SDXL
 # =============================================================================
 
@@ -1944,29 +2234,31 @@ def image_turbo_sdxl():
 
         genbus.progress(gen_id, "loading_model", 0, 4)
 
-        base = None
-        if ckpt_filename:
-            try:
-                ckpt_path = (MODEL_DIR / ckpt_filename).resolve()
-                if ckpt_path.exists() and ckpt_path.stat().st_size > 0 and ckpt_path.suffix.lower() == ".safetensors":
-                    base = StableDiffusionXLPipeline.from_single_file(
-                        str(ckpt_path),
-                        dtype=dtype,
-                        use_safetensors=True,
-                        local_files_only=True,
-                    ).to(device)
-                    logger.info(f"[sdxl] Loaded base from single-file checkpoint: {ckpt_path.name}")
-            except Exception as e:
-                logger.warning(f"[sdxl] Single-file load failed; falling back to repo: {e}")
+        # Use offline mode if pipeline is fully downloaded
+        with offline_mode_if_complete("sdxl") as is_offline:
+            base = None
+            if ckpt_filename:
+                try:
+                    ckpt_path = (MODEL_DIR / ckpt_filename).resolve()
+                    if ckpt_path.exists() and ckpt_path.stat().st_size > 0 and ckpt_path.suffix.lower() == ".safetensors":
+                        base = StableDiffusionXLPipeline.from_single_file(
+                            str(ckpt_path),
+                            dtype=dtype,
+                            use_safetensors=True,
+                            local_files_only=is_offline,
+                        ).to(device)
+                        logger.info(f"[sdxl] Loaded base from single-file checkpoint: {ckpt_path.name}")
+                except Exception as e:
+                    logger.warning(f"[sdxl] Single-file load failed; falling back to repo: {e}")
 
-        if base is None:
-            base = StableDiffusionXLPipeline.from_pretrained(
-                str(repo_local_dir(SDXL_BASE_REPO)),
-                dtype=dtype,
-                use_safetensors=True,
-                variant="fp16",
-                local_files_only=True,
-            ).to(device)
+            if base is None:
+                base = StableDiffusionXLPipeline.from_pretrained(
+                    str(repo_local_dir(SDXL_BASE_REPO)),
+                    dtype=dtype,
+                    use_safetensors=True,
+                    variant="fp16",
+                    local_files_only=is_offline,
+                ).to(device)
 
         def _apply_lora(pipe, lora_path: Path, strength: float, tag: str):
             try:
@@ -2069,14 +2361,15 @@ def image_turbo_sdxl():
 
         genbus.progress(gen_id, "loading_refiner", 2, 4)
 
-        refiner = StableDiffusionXLImg2ImgPipeline.from_pretrained(
-            str(repo_local_dir(SDXL_REFINER_REPO)),
-            text_encoder_2=getattr(base, "text_encoder_2", None),
-            vae=getattr(base, "vae", None),
-            use_safetensors=True,
-            variant="fp16",
-            local_files_only=True,
-        ).to(device)
+        with offline_mode_if_complete("sdxl") as is_offline:
+            refiner = StableDiffusionXLImg2ImgPipeline.from_pretrained(
+                str(repo_local_dir(SDXL_REFINER_REPO)),
+                text_encoder_2=getattr(base, "text_encoder_2", None),
+                vae=getattr(base, "vae", None),
+                use_safetensors=True,
+                variant="fp16",
+                local_files_only=is_offline,
+            ).to(device)
 
         refiner.unet = refiner.unet.to(dtype=dtype)
         if refiner.text_encoder_2 is not None:
@@ -2178,12 +2471,14 @@ def z_image_turbo():
 
         base_root = repo_local_dir(Z_REPO)
 
-        pipe = ZImagePipeline.from_pretrained(
-            str(base_root),
-            torch_dtype=compute_dtype,
-            local_files_only=True,
-            low_cpu_mem_usage=False,
-        )
+        # Use offline mode if pipeline is fully downloaded
+        with offline_mode_if_complete("z_image_turbo") as is_offline:
+            pipe = ZImagePipeline.from_pretrained(
+                str(base_root),
+                torch_dtype=compute_dtype,
+                local_files_only=is_offline,
+                low_cpu_mem_usage=False,
+            )
         pipe = pipe.to(device)
 
         generator = (
@@ -2264,19 +2559,22 @@ def image_quality_flux_krea():
             compute_dtype = torch.float32
 
         tr_cfg = repo_local_dir(FLUX_KREA_REPO) / "transformer" / "config.json"
-        transformer = FluxTransformer2DModel.from_single_file(
-            str(MODEL_DIR / FLUX_KREA_GGUF_NAME),
-            config=str(tr_cfg),
-            quantization_config=GGUFQuantizationConfig(compute_dtype=compute_dtype),
-            dtype=compute_dtype,
-        ).to(device)
 
-        pipe = FluxPipeline.from_pretrained(
-            str(repo_local_dir(FLUX_KREA_REPO)),
-            transformer=transformer,
-            dtype=compute_dtype,
-            local_files_only=True,
-        ).to(device)
+        # Use offline mode if pipeline is fully downloaded
+        with offline_mode_if_complete("flux_krea") as is_offline:
+            transformer = FluxTransformer2DModel.from_single_file(
+                str(MODEL_DIR / FLUX_KREA_GGUF_NAME),
+                config=str(tr_cfg),
+                quantization_config=GGUFQuantizationConfig(compute_dtype=compute_dtype),
+                dtype=compute_dtype,
+            ).to(device)
+
+            pipe = FluxPipeline.from_pretrained(
+                str(repo_local_dir(FLUX_KREA_REPO)),
+                transformer=transformer,
+                dtype=compute_dtype,
+                local_files_only=is_offline,
+            ).to(device)
 
         pipe.text_encoder = pipe.text_encoder.to(dtype=compute_dtype)
         pipe.text_encoder_2 = pipe.text_encoder_2.to(dtype=compute_dtype)
@@ -2347,18 +2645,20 @@ def image_kontext_i2i():
         device = DeviceManager.get_device()
         compute_dtype = torch.bfloat16 if device.type in ("cuda", "mps") else torch.float32
 
-        transformer = FluxTransformer2DModel.from_single_file(
-            str(MODEL_DIR / FLUX_KONTEXT_GGUF_NAME),
-            quantization_config=GGUFQuantizationConfig(compute_dtype=compute_dtype),
-            dtype=compute_dtype,
-        ).to(device)
+        # Use offline mode if pipeline is fully downloaded
+        with offline_mode_if_complete("flux_kontext") as is_offline:
+            transformer = FluxTransformer2DModel.from_single_file(
+                str(MODEL_DIR / FLUX_KONTEXT_GGUF_NAME),
+                quantization_config=GGUFQuantizationConfig(compute_dtype=compute_dtype),
+                dtype=compute_dtype,
+            ).to(device)
 
-        pipe = FluxImg2ImgPipeline.from_pretrained(
-            str(repo_local_dir(FLUX_KONTEXT_REPO)),
-            transformer=transformer,
-            dtype=compute_dtype,
-            local_files_only=True,
-        ).to(device)
+            pipe = FluxImg2ImgPipeline.from_pretrained(
+                str(repo_local_dir(FLUX_KONTEXT_REPO)),
+                transformer=transformer,
+                dtype=compute_dtype,
+                local_files_only=is_offline,
+            ).to(device)
 
         init_img = load_image(image_url).convert("RGB") if image_url else _img_b64_to_pil(image_b64)
 
@@ -2397,83 +2697,6 @@ def image_kontext_i2i():
 # REST API: AUDIO GENERATION - CHATTERBOX
 # =============================================================================
 
-@app.route("/audio/turbo", methods=["POST"])
-def audio_turbo():
-    '''Fast English TTS with paralinguistic tags (ONNX).'''
-    data = request.get_json(silent=True) or {}
-    
-    prompt = (data.get("prompt") or "").strip()
-    synthesis_b64 = (data.get("synthesis_base64") or "").strip()
-    synthesis_url = (data.get("synthesis_url") or "").strip()
-    max_tokens = int(data.get("max_tokens", 1024))
-    temperature = float(data.get("temperature", 1.0))
-    repetition_penalty = float(data.get("repetition_penalty", 1.2))
-    
-    if not prompt:
-        return jsonify({"error": "Missing 'prompt'"}), 400
-    if not synthesis_b64 and not synthesis_url:
-        return jsonify({
-            "error": "Voice reference required (5-10 seconds audio)",
-            "hint": "Provide 'synthesis_base64' or 'synthesis_url'",
-            "supported_tags": TURBO_PARALINGUISTIC_TAGS,
-        }), 400
-    
-    gen_id = genbus.new("chatterbox_turbo", {"endpoint": "/audio/turbo"})
-    
-    try:
-        gc.collect()
-        genbus.progress(gen_id, "loading_model", 0, 4)
-        
-        model = ChatterboxONNX.from_pretrained(
-            model_type="turbo", device="cpu", cache_dir=str(MODEL_DIR / "hf")
-        )
-        
-        genbus.progress(gen_id, "processing_reference", 1, 4)
-        
-        temp_file = os.path.join(os.getcwd(), f"_ref_{int(time.time())}.wav")
-        if synthesis_url:
-            resp = requests.get(synthesis_url, timeout=30)
-            resp.raise_for_status()
-            with open(temp_file, "wb") as f:
-                f.write(resp.content)
-        else:
-            with open(temp_file, "wb") as f:
-                f.write(base64.b64decode(synthesis_b64))
-        
-        genbus.progress(gen_id, "generating", 2, 4)
-        
-        wav = model.generate(
-            text=prompt, audio_prompt_path=temp_file,
-            max_new_tokens=max_tokens, temperature=temperature,
-            repetition_penalty=repetition_penalty
-        )
-        
-        genbus.progress(gen_id, "saving", 3, 4)
-        
-        out_path = os.path.join(os.getcwd(), f"tts_turbo_{int(time.time())}.wav")
-        model.save_audio(wav, out_path)
-        
-        if os.path.exists(temp_file):
-            os.remove(temp_file)
-        del model, wav
-        
-        genbus.progress(gen_id, "complete", 4, 4)
-        genbus.finish(gen_id, {"audio_path": out_path})
-        
-        return jsonify({
-            "ok": True, "audio_path": out_path, "model": "turbo-onnx",
-            "generation_id": gen_id, "generation_websocket_url": generation_url(),
-            "paralinguistic_tags": TURBO_PARALINGUISTIC_TAGS,
-        }), 201
-    
-    except Exception as e:
-        logger.exception("Turbo TTS failed")
-        genbus.error(gen_id, str(e))
-        return jsonify({"error": str(e)}), 500
-    finally:
-        DeviceManager.free_memory()
-
-
 @app.route("/audio", methods=["POST"])
 def audio_multilingual():
     '''Multilingual TTS with 23 languages and emotion control (ONNX).'''
@@ -2501,25 +2724,28 @@ def audio_multilingual():
     try:
         gc.collect()
         genbus.progress(gen_id, "loading_model", 0, 4)
-        
-        model = ChatterboxONNX.from_pretrained(
-            model_type="multilingual", device="cpu", cache_dir=str(MODEL_DIR / "hf")
-        )
-        
+
+        # Use offline mode if pipeline is fully downloaded
+        with offline_mode_if_complete("chatterbox") as is_offline:
+            model = ChatterboxONNX.from_pretrained(
+                model_type="multilingual", device="cpu", cache_dir=str(MODEL_DIR / "hf"),
+                local_files_only=is_offline
+            )
+
         genbus.progress(gen_id, "processing", 1, 4)
         
         temp_file = None
         audio_path = None
         
         if synthesis_url:
-            temp_file = os.path.join(os.getcwd(), f"_ref_{int(time.time())}.wav")
+            temp_file = str(FILES_DIR / f"_ref_{int(time.time())}.wav")
             resp = requests.get(synthesis_url, timeout=30)
             resp.raise_for_status()
             with open(temp_file, "wb") as f:
                 f.write(resp.content)
             audio_path = temp_file
         elif synthesis_b64:
-            temp_file = os.path.join(os.getcwd(), f"_ref_{int(time.time())}.wav")
+            temp_file = str(FILES_DIR / f"_ref_{int(time.time())}.wav")
             with open(temp_file, "wb") as f:
                 f.write(base64.b64decode(synthesis_b64))
             audio_path = temp_file
@@ -2542,7 +2768,7 @@ def audio_multilingual():
         
         genbus.progress(gen_id, "saving", 3, 4)
         
-        out_path = os.path.join(os.getcwd(), f"tts_{language}_{int(time.time())}.wav")
+        out_path = str(FILES_DIR / f"tts_{language}_{int(time.time())}.wav")
         model.save_audio(wav, out_path)
         
         if temp_file and os.path.exists(temp_file):
@@ -2570,14 +2796,6 @@ def audio_info():
     '''Audio model capabilities.'''
     return jsonify({
         "models": {
-            "turbo": {
-                "name": "Chatterbox Turbo (ONNX)",
-                "endpoint": "/audio/turbo",
-                "languages": {"en": "English"},
-                "features": ["paralinguistic_tags", "voice_cloning", "low_latency"],
-                "paralinguistic_tags": TURBO_PARALINGUISTIC_TAGS,
-                "requires_voice_reference": True,
-            },
             "multilingual": {
                 "name": "Chatterbox Multilingual (ONNX)",
                 "endpoint": "/audio",
@@ -2586,7 +2804,7 @@ def audio_info():
                 "requires_voice_reference": False,  # Has default voice
             },
         },
-        "note": "Both models use ONNX - no dependency conflicts",
+        "note": "Uses ONNX for inference",
     }), 200
 # =============================================================================
 # REST API: VIDEO GENERATION - LTX
@@ -2655,14 +2873,16 @@ def ltx_image_to_video():
         
         base_root = repo_local_dir(LTX_REPO)
         genbus.progress(gen_id, "loading_model", 0, 4)
-        
-        pipe = LTXImageToVideoPipeline.from_pretrained(
-            str(base_root),
-            torch_dtype=compute_dtype,
-            local_files_only=True,
-            use_safetensors=True,
-            low_cpu_mem_usage=True,
-        )
+
+        # Use offline mode if pipeline is fully downloaded
+        with offline_mode_if_complete("ltx_video") as is_offline:
+            pipe = LTXImageToVideoPipeline.from_pretrained(
+                str(base_root),
+                torch_dtype=compute_dtype,
+                local_files_only=is_offline,
+                use_safetensors=True,
+                low_cpu_mem_usage=True,
+            )
         gc.collect()
         
         if hasattr(pipe, "tokenizer") and pipe.tokenizer is not None:
@@ -2726,11 +2946,11 @@ def ltx_image_to_video():
         
         frames = out.frames[0] if hasattr(out, "frames") else out
         logger.info(f"[LTX] Generated {len(frames)} frames at {W}x{H}")
-        
+
         genbus.progress(gen_id, "encoding", 3, 4)
-        
+
         out_name = f"ltx_{int(time.time())}.mp4"
-        out_path = os.path.join(os.getcwd(), out_name)
+        out_path = str(FILES_DIR / out_name)
         
         write_video(
             out_path, frames,
@@ -2812,17 +3032,19 @@ def ltx_text_to_video():
             torch.cuda.empty_cache()
         
         compute_dtype = torch.float32 if device.type != "cuda" else torch.bfloat16
-        
+
         base_root = repo_local_dir(LTX_REPO)
         genbus.progress(gen_id, "loading_model", 0, 4)
-        
-        pipe = LTXPipeline.from_pretrained(
-            str(base_root),
-            torch_dtype=compute_dtype,
-            local_files_only=True,
-            use_safetensors=True,
-            low_cpu_mem_usage=True,
-        )
+
+        # Use offline mode if pipeline is fully downloaded
+        with offline_mode_if_complete("ltx_video") as is_offline:
+            pipe = LTXPipeline.from_pretrained(
+                str(base_root),
+                torch_dtype=compute_dtype,
+                local_files_only=is_offline,
+                use_safetensors=True,
+                low_cpu_mem_usage=True,
+            )
         gc.collect()
         
         if hasattr(pipe, 'tokenizer') and pipe.tokenizer is not None:
@@ -2887,11 +3109,11 @@ def ltx_text_to_video():
             frames = _as_pil_list(frames_tensor)
         
         logger.info(f"[LTX T2V] Generated {len(frames)} frames at {W}x{H}")
-        
+
         genbus.progress(gen_id, "encoding", 2, 4)
-        
+
         out_name = f"ltx_{int(time.time())}.mp4"
-        out_path = os.path.join(os.getcwd(), out_name)
+        out_path = str(FILES_DIR / out_name)
         
         write_video(
             out_path, frames,
@@ -3000,13 +3222,22 @@ def wan_image_to_video():
             torch.cuda.empty_cache()
             torch.cuda.synchronize()
     
+    # Check if we should run in offline mode (all files present)
+    _wan_offline = _is_pipeline_complete("wan_video")
+    _wan_old_hf_offline = os.environ.get("HF_HUB_OFFLINE")
+    _wan_old_transformers_offline = os.environ.get("TRANSFORMERS_OFFLINE")
+    if _wan_offline:
+        os.environ["HF_HUB_OFFLINE"] = "1"
+        os.environ["TRANSFORMERS_OFFLINE"] = "1"
+        logger.info("[wan_video] Running in offline mode (all files present)")
+
     try:
         device = DeviceManager.get_device()
         aggressive_cleanup()
-        
+
         if device.type == "mps":
             os.environ["DIFFUSERS_ATTENTION_BACKEND"] = "eager"
-        
+
         compute_dtype = torch.bfloat16 if device.type in ("cuda", "mps") else torch.float32
         storage_dtype = torch.float16
         
@@ -3157,10 +3388,10 @@ def wan_image_to_video():
         aggressive_cleanup()
         
         logger.info("[Wan] Loading text encoder...")
-        tokenizer = AutoTokenizer.from_pretrained(base_path, subfolder="tokenizer", local_files_only=True)
+        tokenizer = AutoTokenizer.from_pretrained(base_path, subfolder="tokenizer", local_files_only=_wan_offline)
         text_encoder = UMT5EncoderModel.from_pretrained(
             base_path, subfolder="text_encoder", torch_dtype=compute_dtype,
-            local_files_only=True, low_cpu_mem_usage=True,
+            local_files_only=_wan_offline, low_cpu_mem_usage=True,
         ).to(device)
         text_encoder.eval()
         
@@ -3188,10 +3419,10 @@ def wan_image_to_video():
         image_embeds = None
         if transformer_config.get('image_dim') is not None:
             aggressive_cleanup()
-            clip_processor = CLIPImageProcessor.from_pretrained(base_path, subfolder="image_processor", local_files_only=True)
+            clip_processor = CLIPImageProcessor.from_pretrained(base_path, subfolder="image_processor", local_files_only=_wan_offline)
             clip_encoder = CLIPVisionModel.from_pretrained(
                 base_path, subfolder="image_encoder", torch_dtype=torch.float32,
-                local_files_only=True, low_cpu_mem_usage=True,
+                local_files_only=_wan_offline, low_cpu_mem_usage=True,
             ).to(device)
             clip_encoder.eval()
             
@@ -3289,7 +3520,7 @@ def wan_image_to_video():
             config_low_path = config_high_path
         
         scheduler = FlowMatchEulerDiscreteScheduler.from_pretrained(
-            base_path, subfolder="scheduler", local_files_only=True, shift=8.0,
+            base_path, subfolder="scheduler", local_files_only=_wan_offline, shift=8.0,
         )
         scheduler.set_timesteps(steps, device=device)
         timesteps = scheduler.timesteps
@@ -3432,7 +3663,7 @@ def wan_image_to_video():
         # ============================================================
         genbus.progress(gen_id, "encoding_video", 9, 10)
         
-        out_path = os.path.join(os.getcwd(), f"wan22_{int(time.time())}.mp4")
+        out_path = str(FILES_DIR / f"wan22_{int(time.time())}.mp4")
         
         write_video(
             out_path, frames,
@@ -3471,8 +3702,430 @@ def wan_image_to_video():
         genbus.error(gen_id, str(e))
         return jsonify({"error": str(e)}), 500
     finally:
+        # Restore offline mode environment variables
+        if _wan_old_hf_offline is None:
+            os.environ.pop("HF_HUB_OFFLINE", None)
+        else:
+            os.environ["HF_HUB_OFFLINE"] = _wan_old_hf_offline
+        if _wan_old_transformers_offline is None:
+            os.environ.pop("TRANSFORMERS_OFFLINE", None)
+        else:
+            os.environ["TRANSFORMERS_OFFLINE"] = _wan_old_transformers_offline
         aggressive_cleanup()
-        
+
+
+# =============================================================================
+# REST API: LTX-2 VIDEO GENERATION
+# =============================================================================
+
+def _apply_ltx2_memory_offloading(pipe, device: torch.device, use_fp8: bool = True):
+    """
+    Apply aggressive memory offloading for LTX-2 pipeline.
+
+    Implements:
+    - FP8 layerwise casting (CUDA only) for ~50% memory reduction
+    - Group offloading for transformer (leaf_level)
+    - Block-level offloading for text encoder
+    - VAE tiling and slicing
+
+    Cross-platform: Works on CUDA, MPS, and CPU.
+    """
+    offload_device = torch.device("cpu")
+    use_stream = (device.type == "cuda")
+
+    # FP8 layerwise casting (CUDA only - requires FP8 tensor core support)
+    if use_fp8 and device.type == "cuda":
+        try:
+            if hasattr(pipe, 'transformer') and pipe.transformer is not None:
+                # Enable FP8 storage with bfloat16 compute
+                pipe.transformer.enable_layerwise_casting(
+                    storage_dtype=torch.float8_e4m3fn,
+                    compute_dtype=torch.bfloat16
+                )
+                logger.info("[LTX-2] Enabled FP8 layerwise casting on transformer")
+        except Exception as e:
+            logger.warning(f"[LTX-2] FP8 layerwise casting failed (requires diffusers>=0.32): {e}")
+
+    # VAE configuration - fp32 on MPS for stability
+    try:
+        if hasattr(pipe, "vae") and pipe.vae is not None:
+            vae_dtype = torch.float32 if device.type == "mps" else torch.bfloat16
+            pipe.vae.to(device, dtype=vae_dtype)
+            if hasattr(pipe.vae, "enable_tiling"):
+                pipe.vae.enable_tiling()
+            if hasattr(pipe.vae, "enable_slicing"):
+                pipe.vae.enable_slicing()
+            logger.info(f"[LTX-2] VAE on {device} dtype={vae_dtype} with tiling/slicing")
+    except Exception as e:
+        logger.warning(f"[LTX-2] VAE config failed: {e}")
+
+    # Transformer group offloading
+    try:
+        if hasattr(pipe, 'transformer') and pipe.transformer is not None:
+            pipe.transformer.enable_group_offload(
+                onload_device=device,
+                offload_device=offload_device,
+                offload_type="leaf_level",
+                use_stream=use_stream
+            )
+            logger.info(f"[LTX-2] Transformer: leaf_level offload (stream={use_stream})")
+    except Exception as e:
+        logger.warning(f"[LTX-2] Transformer offload failed: {e}")
+        try:
+            pipe.enable_model_cpu_offload(device=device)
+            logger.info("[LTX-2] Fallback to model CPU offload")
+        except Exception:
+            pipe = pipe.to(device)
+
+    # Text encoder offloading
+    try:
+        if hasattr(pipe, 'text_encoder') and pipe.text_encoder is not None:
+            apply_group_offloading(
+                pipe.text_encoder,
+                onload_device=device,
+                offload_type="block_level",
+                num_blocks_per_group=2
+            )
+            logger.info("[LTX-2] Text encoder: block_level offload")
+    except Exception as e:
+        logger.warning(f"[LTX-2] Text encoder offload failed: {e}")
+
+    gc.collect()
+    return pipe
+
+
+@app.route("/video/ltx2", methods=["POST"])
+def ltx2_video_generation():
+    """
+    LTX-2 Video Generation with FP8 quantization and memory optimization.
+
+    Supports:
+    - Text-to-video (prompt only)
+    - Image-to-video (with conditioning image)
+    - FP8 quantization for ~50% VRAM reduction (CUDA)
+    - Aggressive memory offloading (all platforms)
+    - Distilled model for fast inference (4-10 steps)
+
+    Cross-platform: CUDA, MPS (Apple Silicon), CPU
+
+    Request JSON:
+    {
+        "prompt": str,                    # Required: Text prompt
+        "negative_prompt": str,           # Optional: Negative prompt
+        "image_base64": str,              # Optional: Conditioning image (base64)
+        "image_url": str,                 # Optional: Conditioning image URL
+        "height": int,                    # Default: 512 (must be divisible by 32)
+        "width": int,                     # Default: 768 (must be divisible by 32)
+        "frames": int,                    # Default: 97 (must be (n*8)+1)
+        "fps": int,                       # Default: 24
+        "steps": int,                     # Default: 8 (distilled supports 4-10)
+        "guidance_scale": float,          # Default: 1.0 (distilled uses 1.0)
+        "seed": int,                      # Optional: Random seed
+        "use_fp8": bool,                  # Default: true (CUDA only)
+        "use_upscaler": bool,             # Default: false
+        "auto_download": bool             # Default: false
+    }
+    """
+    data = request.get_json(force=True) or {}
+
+    prompt = (data.get("prompt") or "").strip()
+    negative_prompt = data.get("negative_prompt",
+        "worst quality, inconsistent motion, blurry, jittery, distorted, "
+        "deformed, bad anatomy, extra limbs, low resolution, watermark"
+    )
+
+    H = int(data.get("height", 512))
+    W = int(data.get("width", 768))
+    frames_count = int(data.get("frames", 97))
+    fps = int(data.get("fps", 24))
+    steps = int(data.get("steps", 8))
+    guidance_scale = float(data.get("guidance_scale", 1.0))  # Distilled uses 1.0
+    seed = data.get("seed")
+    auto_dl = bool(data.get("auto_download", False))
+
+    image_b64 = (data.get("image_base64") or "").strip()
+    image_url = (data.get("image_url") or "").strip()
+
+    use_fp8 = bool(data.get("use_fp8", True))
+    use_upscaler = bool(data.get("use_upscaler", False))
+    enable_offloading = bool(data.get("enable_memory_offloading", True))
+
+    _mps_clear_memory()
+
+    if not prompt:
+        return jsonify({"error": "Missing 'prompt'"}), 400
+
+    # Validate dimensions (LTX-2 requires divisible by 32)
+    H = max(32, (H // 32) * 32)
+    W = max(32, (W // 32) * 32)
+    # Frames must be (n*8)+1 for LTX-2
+    frames_count = ((frames_count - 1) // 8) * 8 + 1
+
+    # Check for required repo files (uses HuggingFace cache)
+    guard = _ensure_files_present_or_start("ltx2_video", auto_download=auto_dl)
+    if guard:
+        return guard
+
+    has_image = bool(image_b64 or image_url)
+    mode = "i2v" if has_image else "t2v"
+
+    gen_id = genbus.new(f"ltx2_{mode}", {
+        "endpoint": "/video/ltx2",
+        "mode": mode,
+        "w": W, "h": H, "frames": frames_count, "fps": fps,
+        "use_fp8": use_fp8,
+    })
+
+    def aggressive_cleanup():
+        gc.collect()
+        if torch.backends.mps.is_available():
+            torch.mps.empty_cache()
+            torch.mps.synchronize()
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+            torch.cuda.synchronize()
+
+    try:
+        device = DeviceManager.get_device()
+        aggressive_cleanup()
+
+        # Determine compute dtype based on device and FP8 setting
+        if device.type == "cuda":
+            compute_dtype = torch.bfloat16
+        elif device.type == "mps":
+            compute_dtype = torch.float32  # MPS needs float32 for stability
+            use_fp8 = False  # FP8 not supported on MPS
+        else:
+            compute_dtype = torch.float32
+            use_fp8 = False
+
+        logger.info(f"[LTX-2] Device: {device}, dtype: {compute_dtype}, FP8: {use_fp8}")
+
+        genbus.progress(gen_id, "loading_model", 0, 5)
+
+        # Load LTX-2 pipeline
+        # LTX-2 requires diffusers 0.37+ with LTX2Pipeline support
+        # First check if LTX2Pipeline is available
+        try:
+            from diffusers import LTX2Pipeline as _LTX2Pipeline
+            HAS_LTX2 = True
+            logger.info("[LTX-2] LTX2Pipeline available in diffusers")
+        except ImportError:
+            HAS_LTX2 = False
+            logger.warning("[LTX-2] LTX2Pipeline not available - diffusers 0.37+ required")
+
+        if not HAS_LTX2:
+            # LTX-2 requires newer diffusers - provide helpful error
+            error_msg = (
+                "LTX-2 requires diffusers 0.37+ which is not yet released. "
+                "Please use LTX v1 (turbo/quality modes) instead, or upgrade diffusers: "
+                "pip install git+https://github.com/huggingface/diffusers.git"
+            )
+            logger.error(f"[LTX-2] {error_msg}")
+            genbus.error(gen_id, error_msg)
+            return jsonify({"error": error_msg, "hint": "Use LTX v1 or upgrade diffusers"}), 400
+
+        # Get local path for the repo
+        local_repo_path = repo_local_dir(LTX2_REPO)
+        logger.info(f"[LTX-2] Loading from local path: {local_repo_path}")
+
+        # Clean up memory before loading this massive model
+        aggressive_cleanup()
+        gc.collect()
+
+        # Use offline mode if pipeline is fully downloaded
+        with offline_mode_if_complete("ltx2_video") as is_offline:
+            try:
+                # LTX-2 is ~80GB+ so we need very aggressive memory management
+                pipe = _LTX2Pipeline.from_pretrained(
+                    str(local_repo_path),
+                    torch_dtype=compute_dtype,
+                    low_cpu_mem_usage=True,
+                    local_files_only=is_offline,  # Only enforce if offline
+                )
+
+                # Immediately enable sequential CPU offload to minimize memory
+                pipe.enable_sequential_cpu_offload(device=device)
+                logger.info("[LTX-2] Sequential CPU offload enabled")
+
+                logger.info("[LTX-2] Pipeline loaded successfully")
+
+            except Exception as e:
+                logger.error(f"[LTX-2] Failed to load LTX2Pipeline: {e}")
+                genbus.error(gen_id, str(e))
+                return jsonify({"error": str(e)}), 500
+
+        aggressive_cleanup()
+
+        # VAE optimizations (tiling/slicing help with memory)
+        if hasattr(pipe, "vae") and pipe.vae is not None:
+            try:
+                if hasattr(pipe.vae, "enable_tiling"):
+                    pipe.vae.enable_tiling()
+                if hasattr(pipe.vae, "enable_slicing"):
+                    pipe.vae.enable_slicing()
+                logger.info("[LTX-2] VAE tiling/slicing enabled")
+            except Exception as e:
+                logger.warning(f"[LTX-2] VAE optimization failed: {e}")
+
+        genbus.progress(gen_id, "preprocessing", 1, 5)
+
+        # Load conditioning image if provided
+        cond_image = None
+        if has_image:
+            if image_url:
+                cond_image = load_image(image_url).convert("RGB")
+            else:
+                cond_image = Image.open(io.BytesIO(base64.b64decode(image_b64))).convert("RGB")
+            cond_image = cond_image.resize((W, H), Image.LANCZOS)
+            logger.info(f"[LTX-2] Loaded conditioning image: {W}x{H}")
+
+        # Prepare generator
+        gen_device = device if device.type != "mps" else "cpu"
+        generator = torch.Generator(device=gen_device).manual_seed(seed) if isinstance(seed, int) else None
+
+        genbus.progress(gen_id, "generating", 2, 5)
+        logger.info(f"[LTX-2] Generating {frames_count} frames @ {W}x{H}, {steps} steps")
+
+        # LTX-2 distilled model uses specific timesteps for best quality
+        # Recommended: [1000, 993, 987, 981, 975, 909, 725, 0.03] for 8 steps
+        distilled_timesteps = None
+        if steps <= 10:
+            if steps == 8:
+                distilled_timesteps = [1000, 993, 987, 981, 975, 909, 725, 0.03]
+            elif steps == 4:
+                distilled_timesteps = [1000, 975, 725, 0.03]
+            elif steps == 6:
+                distilled_timesteps = [1000, 987, 975, 909, 725, 0.03]
+
+        # Generate video
+        try:
+            if hasattr(pipe, '__class__') and 'Condition' in pipe.__class__.__name__:
+                # Using LTXConditionPipeline
+                from diffusers.pipelines.ltx.pipeline_ltx_condition import LTXVideoCondition
+
+                conditions = None
+                if cond_image is not None:
+                    conditions = [LTXVideoCondition(image=cond_image, frame_index=0)]
+
+                out = pipe(
+                    conditions=conditions,
+                    prompt=prompt,
+                    negative_prompt=negative_prompt,
+                    width=W,
+                    height=H,
+                    num_frames=frames_count,
+                    num_inference_steps=steps,
+                    timesteps=distilled_timesteps,
+                    guidance_scale=guidance_scale,
+                    guidance_rescale=0.7 if guidance_scale > 1.0 else 0.0,
+                    decode_timestep=0.05,
+                    decode_noise_scale=0.025,
+                    generator=generator,
+                    output_type="pil",
+                )
+            else:
+                # Using standard LTXPipeline (T2V only)
+                out = pipe(
+                    prompt=prompt,
+                    negative_prompt=negative_prompt,
+                    width=W,
+                    height=H,
+                    num_frames=frames_count,
+                    num_inference_steps=steps,
+                    timesteps=distilled_timesteps,
+                    guidance_scale=guidance_scale,
+                    decode_timestep=0.05,
+                    decode_noise_scale=0.025,
+                    generator=generator,
+                    output_type="pil",
+                )
+        except Exception as gen_err:
+            logger.warning(f"[LTX-2] Generation with timesteps failed: {gen_err}, retrying without")
+            # Retry without custom timesteps
+            if hasattr(pipe, '__class__') and 'Condition' in pipe.__class__.__name__:
+                out = pipe(
+                    conditions=conditions if 'conditions' in dir() else None,
+                    prompt=prompt,
+                    negative_prompt=negative_prompt,
+                    width=W,
+                    height=H,
+                    num_frames=frames_count,
+                    num_inference_steps=steps,
+                    guidance_scale=guidance_scale,
+                    generator=generator,
+                    output_type="pil",
+                )
+            else:
+                out = pipe(
+                    prompt=prompt,
+                    negative_prompt=negative_prompt,
+                    width=W,
+                    height=H,
+                    num_frames=frames_count,
+                    num_inference_steps=steps,
+                    guidance_scale=guidance_scale,
+                    generator=generator,
+                    output_type="pil",
+                )
+
+        frames = out.frames[0] if hasattr(out, "frames") else out
+        logger.info(f"[LTX-2] Generated {len(frames)} frames")
+
+        # Clean up pipeline
+        del pipe
+        if 'transformer' in dir():
+            del transformer
+        aggressive_cleanup()
+
+        genbus.progress(gen_id, "encoding", 3, 5)
+
+        # Write video
+        out_name = f"ltx2_{mode}_{int(time.time())}.mp4"
+        out_path = str(FILES_DIR / out_name)
+
+        write_video(
+            out_path, frames,
+            source_fps=fps,
+            target_fps=24,
+            target_size=(W, H),
+            crf=15,
+            preset="slow",
+            interpolate=True,
+            add_grain=0.08,
+            sharpen=0.15,
+            deband=True,
+            gen_id=gen_id,
+        )
+
+        duration = len(frames) / fps
+        del frames
+        aggressive_cleanup()
+
+        genbus.progress(gen_id, "complete", 5, 5)
+        genbus.finish(gen_id, {"video_path": out_path})
+
+        logger.info(f"[LTX-2] Complete: {out_path} ({duration:.1f}s @ {W}x{H})")
+
+        return jsonify(_json_sanitize({
+            "status": "success",
+            "video_path": out_path,
+            "frames": int(duration * fps),
+            "duration_seconds": round(duration, 2),
+            "resolution": f"{W}x{H}",
+            "mode": mode,
+            "fp8_enabled": use_fp8 and device.type == "cuda",
+            "generation_websocket_url": generation_url(),
+        }))
+
+    except Exception as e:
+        logger.exception("LTX-2 video generation failed")
+        genbus.error(gen_id, str(e))
+        return jsonify({"error": str(e)}), 500
+    finally:
+        aggressive_cleanup()
+
+
 # =============================================================================
 # REST API: TRAINING - DATASET MANAGEMENT
 # =============================================================================

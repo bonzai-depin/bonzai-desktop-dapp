@@ -449,6 +449,15 @@ import { v4 as uuid } from "uuid";
 import useClipboard from "vue-clipboard3";
 import axios from "axios";
 import { io } from "socket.io-client";
+import {
+  generationStore,
+  ensureGenerationSocket,
+  startGeneration,
+  setBlocked,
+  setError,
+  stopGeneration,
+  clearError,
+} from "../stores/generationStore";
 
 const API_BASE =
   (typeof process !== "undefined" && process.env?.VITE_API_BASE) ||
@@ -499,14 +508,8 @@ export default {
     );
 
     // ------------ generation --------------
-    const generation = reactive({
-      active: false,
-      id: null,
-      pct: 0,
-      stage: "starting",
-      error: null,
-      blocked: false,
-    });
+    // Use shared generation store for persistent state across view navigation
+    const generation = computed(() => generationStore.state.image);
 
     // ------------ pipeline/endpoint maps --
     const endpointForMode = () => `/image`;
@@ -618,13 +621,21 @@ export default {
         Number.isFinite(serverPct) && serverPct > 0 ? serverPct : tasksPct;
 
       // Don't show 100% until every task is finished (prevents the "100% while tasks pending" bug)
-      const anyActive = Object.values(merged).some((t) =>
+      const tasksList = Object.values(merged);
+      const anyActive = tasksList.some((t) =>
         ["downloading", "pending"].includes(t.status)
       );
       if (anyActive) next = Math.min(next, 99.9);
 
       downloads.total_progress = next;
       downloads.progress = next;
+
+      // Safety check: if all tasks are completed but status wasn't updated, force completion
+      const allTasksComplete = tasksList.length > 0 && tasksList.every((t) => t.status === "completed");
+      if (allTasksComplete && downloads.status === "downloading") {
+        console.log("[Downloads] All tasks completed, forcing status to completed");
+        downloads.status = "completed";
+      }
 
       downloads.active = !["completed", "failed", "cancelled"].includes(
         downloads.status
@@ -786,6 +797,15 @@ export default {
         !readiness.authRequired &&
         readiness.missingRepos.length === 0 &&
         !readiness.missingGguf;
+
+      // If files are still missing after a "completed" download, reset download state
+      if (!readiness.ok && downloads.status === "completed") {
+        downloads.status = "pending";
+        downloads.progress = 0;
+        downloads.total_progress = 0;
+        downloads.active = false;
+        downloads.pipeline = { tasks: {} };
+      }
     };
 
     const apply403ToReadiness = (res) => {
@@ -801,12 +821,12 @@ export default {
         }
       }
       if (res?.data?.hint) readiness.notes.push(res.data.hint);
-      generation.blocked = true;
+      setBlocked("image", true);
     };
 
     const apply409ToReadiness = (res) => {
       readiness.ok = false;
-      generation.blocked = true;
+      setBlocked("image", true);
       const rs = res?.data?.repo_status;
       if (rs?.repo) {
         const missingCount = Array.isArray(rs?.missing)
@@ -830,6 +850,36 @@ export default {
       if (hint) readiness.notes.push(hint);
     };
 
+    // Cache key for plan results
+    const getPlanCacheKey = (pipeline) => `planCache_image_${pipeline}`;
+
+    // Load cached plan result
+    const loadCachedPlan = async (pipeline) => {
+      try {
+        const key = getPlanCacheKey(pipeline);
+        const cached = await window.electronAPI?.store?.get?.(key, null);
+        if (cached && cached.timestamp) {
+          // Cache is valid for 24 hours
+          const age = Date.now() - cached.timestamp;
+          if (age < 24 * 60 * 60 * 1000) {
+            return cached.data;
+          }
+        }
+      } catch {}
+      return null;
+    };
+
+    // Save plan result to cache
+    const savePlanToCache = async (pipeline, data) => {
+      try {
+        const key = getPlanCacheKey(pipeline);
+        await window.electronAPI?.store?.set?.(key, {
+          timestamp: Date.now(),
+          data,
+        });
+      } catch {}
+    };
+
     const probeCurrentMode = async () => {
       readiness.ok = true;
       readiness.missingRepos = [];
@@ -839,7 +889,7 @@ export default {
       readiness.notes = [];
       readiness.authRequired = false;
       readiness.authRepos = [];
-      generation.blocked = false;
+      setBlocked("image", false);
 
       const pipeline = currentPipeline.value;
       readiness.currentMode = mode.value;
@@ -856,13 +906,15 @@ export default {
         const { data, status } = await axios.post(
           `${API_BASE}/pipelines/plan`,
           { pipeline, deep_validate: true },
-          { signal: controller.signal, validateStatus: () => true }
+          { signal: controller.signal, validateStatus: () => true, timeout: 10000 }
         );
 
         if (mySeq !== planReq.seq) return; // stale response
 
         if (status >= 200 && status < 300) {
           applyPlanToReadiness(data);
+          // Cache successful result for offline mode
+          await savePlanToCache(pipeline, data);
         } else {
           readiness.ok = false;
           readiness.notes = [`Planner returned HTTP ${status}.`];
@@ -873,8 +925,15 @@ export default {
           e?.name === "CanceledError" ||
           e?.message === "canceled";
         if (!aborted) {
-          readiness.ok = false;
-          readiness.notes = [e?.message || "Network error while planning"];
+          // Try to use cached plan for offline mode
+          const cachedPlan = await loadCachedPlan(pipeline);
+          if (cachedPlan && cachedPlan.ok) {
+            applyPlanToReadiness(cachedPlan);
+            readiness.notes.push("Using cached status (offline mode)");
+          } else {
+            readiness.ok = false;
+            readiness.notes = [e?.message || "Network error while planning"];
+          }
         }
       } finally {
         if (planReq.controller === controller) planReq.controller = null;
@@ -917,58 +976,14 @@ export default {
           return;
         }
 
-        generation.error =
-          res?.data?.error || `Prefetch failed (${res.status})`;
+        setError("image", res?.data?.error || `Prefetch failed (${res.status})`);
       } catch (e) {
-        generation.error = e?.message || "Network error";
+        setError("image", e?.message || "Network error");
       }
     };
 
     // ------------ generation socket -------
-    const genSocket = ref(null);
-    const ensureGenerationSocket = (base = WS_GEN) => {
-      if (genSocket.value && genSocket.value.connected) return;
-      genSocket.value = io(base, socketOpts);
-
-      genSocket.value.on("gen_started", ({ generation_id }) => {
-        Object.assign(generation, {
-          id: generation_id,
-          active: true,
-          error: null,
-          stage: "starting",
-          pct: 0,
-        });
-      });
-      genSocket.value.on(
-        "gen_progress",
-        ({ generation_id, stage, step, total, pct }) => {
-          if (generation.id && generation_id && generation_id !== generation.id)
-            return;
-          generation.stage = stage || generation.stage;
-          if (typeof pct === "number")
-            generation.pct = Math.max(generation.pct, pct);
-          else if (total)
-            generation.pct = Math.max(
-              generation.pct,
-              (Number(step) / Number(total)) * 100
-            );
-        }
-      );
-      genSocket.value.on("gen_finished", ({ generation_id }) => {
-        if (generation.id && generation_id && generation_id !== generation.id)
-          return;
-        generation.pct = 100;
-        generation.stage = "finished";
-        generation.active = false;
-      });
-      genSocket.value.on("gen_error", ({ generation_id, error }) => {
-        if (generation.id && generation_id && generation_id !== generation.id)
-          return;
-        generation.error = error || "Unknown error";
-        generation.stage = "error";
-        generation.active = false;
-      });
-    };
+    // Socket is managed by the shared generationStore
 
     // ------------ actions -----------------
     const sendMessage = async (prompt) => {
@@ -994,12 +1009,7 @@ export default {
       const url = `${API_BASE}${endpointForMode()}/${mode.value}`;
 
       ensureGenerationSocket();
-      Object.assign(generation, {
-        active: true,
-        stage: "starting",
-        pct: 0,
-        error: null,
-      });
+      startGeneration("image"); // Initialize generation state
 
       const onSuccess = async (response) => {
         if (response?.data?.image) {
@@ -1040,7 +1050,7 @@ export default {
         }
 
         if (res.status >= 200 && res.status < 300) {
-          generation.blocked = false;
+          setBlocked("image", false);
           await onSuccess(res);
           return;
         }
@@ -1052,11 +1062,9 @@ export default {
           return;
         }
 
-        generation.error = res?.data?.error || `Request failed (${res.status})`;
-        generation.active = false;
+        setError("image", res?.data?.error || `Request failed (${res.status})`);
       } catch (err) {
-        generation.error = err?.message || "Network error";
-        generation.active = false;
+        setError("image", err?.message || "Network error");
       } finally {
         isLoading.value = false;
       }
@@ -1134,11 +1142,7 @@ export default {
         clearInterval(httpPollTimer);
         httpPollTimer = null;
       }
-      if (genSocket.value?.connected) {
-        try {
-          genSocket.value.disconnect();
-        } catch {}
-      }
+      // Note: generation socket is shared and managed by generationStore
     });
     watch(
       mode,
@@ -1180,7 +1184,7 @@ export default {
 };
 </script>
 <style scoped>
-@import url("https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:opsz,wght,FILL,GRAD@20..48,100..700,0..1,-50..200");
+/* Fonts imported from App.vue for offline mode */
 
 .generation {
   position: fixed;

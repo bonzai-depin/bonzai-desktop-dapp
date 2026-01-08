@@ -32,6 +32,18 @@ const __dirname = path.dirname(__filename);
 let subpy = null;
 const PY_SERVER_PORT = 65000;
 
+// ─────────────────────────────────────────────────────────────────────────────
+// Server self-healing configuration
+// ─────────────────────────────────────────────────────────────────────────────
+let serverRestartCount = 0;
+let lastRestartTime = 0;
+let restartBackoffMs = 2000; // Start with 2 seconds
+const MAX_RESTART_ATTEMPTS = 5;
+const RESTART_COOLDOWN_MS = 60000; // Reset counter after 1 minute of stability
+const MAX_BACKOFF_MS = 30000; // Max 30 seconds between restarts
+let isIntentionalShutdown = false; // Track if shutdown was intentional
+let mainWindow = null; // Reference to main window for IPC
+
 const PLATFORM_KEY =
   process.platform === "darwin"
     ? "macos"
@@ -103,6 +115,61 @@ function resolvePythonLaunch(port = PY_SERVER_PORT) {
   );
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// Server status notifications to renderer
+// ─────────────────────────────────────────────────────────────────────────────
+const notifyServerStatus = (status, details = {}) => {
+  const windows = BrowserWindow.getAllWindows();
+  windows.forEach((win) => {
+    if (!win.isDestroyed()) {
+      win.webContents.send("server-status", { status, ...details });
+    }
+  });
+  console.log(`[Server Status] ${status}`, details);
+};
+
+const scheduleServerRestart = () => {
+  const now = Date.now();
+
+  // Reset counter if server was stable for a while
+  if (now - lastRestartTime > RESTART_COOLDOWN_MS) {
+    serverRestartCount = 0;
+    restartBackoffMs = 2000;
+  }
+
+  serverRestartCount++;
+  lastRestartTime = now;
+
+  if (serverRestartCount > MAX_RESTART_ATTEMPTS) {
+    console.error(
+      `[Self-Healing] Max restart attempts (${MAX_RESTART_ATTEMPTS}) exceeded. Server will not restart.`
+    );
+    notifyServerStatus("crashed", {
+      message: "Server crashed too many times. Please restart the application.",
+      restartCount: serverRestartCount,
+      canRetry: true,
+    });
+    return;
+  }
+
+  console.log(
+    `[Self-Healing] Scheduling restart attempt ${serverRestartCount}/${MAX_RESTART_ATTEMPTS} in ${restartBackoffMs}ms`
+  );
+  notifyServerStatus("restarting", {
+    message: `Server crashed. Restarting in ${Math.round(restartBackoffMs / 1000)}s...`,
+    restartCount: serverRestartCount,
+    backoffMs: restartBackoffMs,
+  });
+
+  setTimeout(() => {
+    console.log(`[Self-Healing] Attempting restart...`);
+    startPythonSubprocess();
+  }, restartBackoffMs);
+
+  // Exponential backoff with cap
+  restartBackoffMs = Math.min(restartBackoffMs * 2, MAX_BACKOFF_MS);
+};
+
 const killPort = (port = PY_SERVER_PORT) => {
   try {
     if (process.platform === "win32") {
@@ -123,18 +190,21 @@ const killPort = (port = PY_SERVER_PORT) => {
 
 const startPythonSubprocess = () => {
   killPort(PY_SERVER_PORT);
+  isIntentionalShutdown = false; // Reset flag on new start
 
   let launch;
   try {
     launch = resolvePythonLaunch(PY_SERVER_PORT);
   } catch (e) {
     console.error(e.message);
+    notifyServerStatus("error", { message: e.message });
     return;
   }
 
   console.log(
     `Starting diffuser [${launch.mode}] → ${launch.cmd} ${launch.args.join(" ")}`
   );
+  notifyServerStatus("starting", { message: "Starting ML server..." });
 
   const env = { ...process.env, PYTHONUNBUFFERED: "1" };
 
@@ -150,15 +220,36 @@ const startPythonSubprocess = () => {
 
   subpy.on("close", (code) => {
     console.log(`Python subprocess exited with code ${code}`);
+    const wasRunning = subpy !== null;
     subpy = null;
+
+    // Don't restart if it was intentional (user/app triggered)
+    if (isIntentionalShutdown) {
+      console.log("[Self-Healing] Intentional shutdown, not restarting.");
+      notifyServerStatus("stopped", { message: "Server stopped." });
+      return;
+    }
+
+    // Crash detected - schedule restart
+    if (wasRunning || code !== 0 || code === null) {
+      console.log(`[Self-Healing] Unexpected exit (code=${code}), triggering restart...`);
+      notifyServerStatus("crashed", {
+        message: `Server crashed (exit code: ${code ?? "OOM/killed"})`,
+        exitCode: code,
+      });
+      scheduleServerRestart();
+    }
   });
+
   subpy.on("error", (err) => {
     console.error(`Failed to start Python subprocess: ${err}`);
+    notifyServerStatus("error", { message: err.message });
   });
 };
 
 const killPythonSubprocess = () => {
   console.log("Killing diffuser...");
+  isIntentionalShutdown = true; // Mark as intentional to prevent auto-restart
   return new Promise((resolve) => {
     if (!subpy || !subpy.pid) return resolve();
     const pid = subpy.pid;
@@ -177,17 +268,40 @@ const killPythonSubprocess = () => {
   });
 };
 
-const checkPythonServer = async (url) => {
+const checkPythonServer = async (url, silent = false) => {
   const deadlineMs = Date.now() + 30000; // 30s
   while (Date.now() < deadlineMs) {
     try {
       const res = await fetch(url);
-      if (res.ok) return true;
+      if (res.ok) {
+        // Server is ready - reset restart counter (stability achieved)
+        serverRestartCount = 0;
+        restartBackoffMs = 2000;
+        notifyServerStatus("ready", { message: "ML server is ready." });
+        return true;
+      }
     } catch {}
-    console.log("Waiting for Python server…");
+    if (!silent) console.log("Waiting for Python server…");
     await new Promise((r) => setTimeout(r, 1000));
   }
   throw new Error("Python server did not start within timeout.");
+};
+
+// Manual restart handler (can be called from renderer when max restarts exceeded)
+const restartServerManually = async () => {
+  console.log("[Manual Restart] User requested server restart");
+  serverRestartCount = 0; // Reset counter for manual restart
+  restartBackoffMs = 2000;
+  isIntentionalShutdown = true; // Prevent auto-restart from killing
+  await killPythonSubprocess();
+  isIntentionalShutdown = false;
+  startPythonSubprocess();
+  try {
+    await checkPythonServer(`http://127.0.0.1:${PY_SERVER_PORT}`, true);
+    return { success: true };
+  } catch (e) {
+    return { success: false, error: e.message };
+  }
 };
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -453,6 +567,7 @@ app.on("ready", async () => {
 
 ipcMain.handle("start-server", startPythonSubprocess);
 ipcMain.handle("stop-server", killPythonSubprocess);
+ipcMain.handle("restart-server", restartServerManually);
 ipcMain.handle("system-information", systemInformation);
 
 // Quit on all windows closed (non-mac)

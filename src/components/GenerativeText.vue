@@ -658,9 +658,42 @@ export default {
       Object.assign(form, initialState);
     }
 
-    function resetChat() {
+    async function resetChat() {
       inferences.splice(0);
+      // Clear persisted text inferences
+      try {
+        await window.electronAPI?.store?.set?.("textInferences", []);
+      } catch (e) {
+        console.error("Failed to clear text inferences:", e);
+      }
     }
+
+    // Load persisted text inferences on component mount
+    const loadHistory = async () => {
+      try {
+        const saved = await window.electronAPI?.store?.get?.(
+          "textInferences",
+          []
+        );
+        if (Array.isArray(saved)) {
+          saved.forEach((item) => inferences.push(item));
+        }
+      } catch (e) {
+        console.error("Failed to load text inferences:", e);
+      }
+    };
+
+    // Persist inferences after changes
+    const persistInferences = async () => {
+      try {
+        await window.electronAPI?.store?.set?.(
+          "textInferences",
+          JSON.parse(JSON.stringify(inferences))
+        );
+      } catch (e) {
+        console.error("Failed to persist text inferences:", e);
+      }
+    };
 
     const sendMessage = async (prompt) => {
       isLoading.value = true;
@@ -672,11 +705,14 @@ export default {
         const assistantMessage = {
           id: uuid(),
           text: assistantResult,
-          // role: MessageRole.Assistant,
         };
 
         console.log("prompt", assistantMessage);
         inferences.push({ question: prompt, answer: assistantMessage });
+
+        // Persist to local store
+        await persistInferences();
+
         resetForm();
         isLoading.value = false;
       } catch (e) {
@@ -721,6 +757,16 @@ export default {
       this.currentModel.filename
     );
     console.log("Ready to prompt, sir.", readyToPrompt);
+
+    // Load persisted chat history
+    try {
+      const saved = await window.electronAPI?.store?.get?.("textInferences", []);
+      if (Array.isArray(saved)) {
+        saved.forEach((item) => this.inferences.push(item));
+      }
+    } catch (e) {
+      console.error("Failed to load text inferences:", e);
+    }
   },
 };
 </script>

@@ -5,6 +5,7 @@ const { contextBridge, ipcRenderer } = require("electron");
 contextBridge.exposeInMainWorld("electronAPI", {
   startServer: () => ipcRenderer.invoke("start-server"),
   stopServer: () => ipcRenderer.invoke("stop-server"),
+  restartServer: () => ipcRenderer.invoke("restart-server"),
   systemInformation: () => ipcRenderer.invoke("system-information"),
   checkModel: (modelname) => ipcRenderer.invoke("model-check", modelname),
   downloadModel: (url, filename) =>
@@ -21,6 +22,13 @@ contextBridge.exposeInMainWorld("electronAPI", {
   },
   saveImage: (defaultName, base64Data) =>
     ipcRenderer.invoke("agent-save-image", defaultName, base64Data),
+  // Server status events (for self-healing notifications)
+  onServerStatus: (callback) => {
+    const handler = (_event, data) => callback(data);
+    ipcRenderer.on("server-status", handler);
+    // Return unsubscribe function
+    return () => ipcRenderer.removeListener("server-status", handler);
+  },
 });
 
 // ─────────────────────────────────────────────────────────────────────────────

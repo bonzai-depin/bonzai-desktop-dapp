@@ -622,6 +622,8 @@
                 v-for="(project, idx) in purchasedProjects"
                 :key="idx"
                 class="market-access-card mb-4"
+                @click="openMarketDetails(project)"
+                style="cursor: pointer;"
               >
                 <div class="columns">
                   <div class="column is-8">
@@ -654,10 +656,10 @@
                   <div class="column is-4 has-text-right">
                     <button
                       class="button is-info is-large"
-                      @click="viewMarkets(project)"
+                      @click.stop="openMarketDetails(project)"
                     >
                       <span class="material-symbols-outlined mr-2">launch</span>
-                      View Markets
+                      View Details
                     </button>
                   </div>
                 </div>
@@ -823,51 +825,133 @@
       </div>
     </div>
 
-    <!-- AI Generation Modal -->
-    <div class="models__deployment-use" v-if="showAIModal">
-      <div class="columns">
-        <div class="column is-12 p-5">
-          <div class="level">
-            <div class="level-left">
-              <div class="level-item"></div>
+    <!-- AI Generation Progress Notification (inline, fixed position) -->
+    <div
+      v-if="showAIModal"
+      class="generation notification is-info"
+      style="margin-bottom: 1rem"
+    >
+      <p class="mb-2">
+        <span class="fira-sans-condensed-black-italic is-size-4">
+          <button
+            disabled
+            class="button is-loading is-info is-small mr-2 p-4"
+          ></button>
+          {{ aiModalMessage || "Processing..." }}
+        </span>
+        <span
+          class="fira-sans-condensed-black-italic is-pulled-right is-size-4"
+        >
+          <span class="material-symbols-outlined rotating" style="font-size: 24px">
+            progress_activity
+          </span>
+        </span>
+      </p>
+      <progress
+        class="progress is-success"
+        :value="aiProgress"
+        max="100"
+      >
+        {{ aiProgress }}%
+      </progress>
+    </div>
+  </div>
+
+  <!-- Market Details Modal (using levels-style dialog) -->
+  <Teleport to="body">
+    <Transition name="fade">
+      <div
+        v-if="selectedMarketDetails"
+        class="market-modal-overlay"
+        @click.self="selectedMarketDetails = null"
+      >
+        <div class="market-modal">
+          <div class="has-text-right">
+            <button
+              class="button is-danger"
+              @click="selectedMarketDetails = null"
+              title="Close"
+            >
+              <span class="material-symbols-outlined">close</span>
+            </button>
+          </div>
+          <div class="modal-header">
+            <span class="material-symbols-outlined is-size-1">
+              {{ selectedMarketDetails.icon || "finance_mode" }}
+            </span>
+            <span
+              class="modal-market-badge fira-sans-condensed-black-italic is-size-2"
+            >
+              {{ selectedMarketDetails.token }}
+            </span>
+            <h2 class="fira-sans-condensed-black-italic is-size-3">
+              {{ selectedMarketDetails.name }}
+            </h2>
+          </div>
+
+          <div class="modal-body">
+            <div class="market-description models__activity--payouts ok">
+              <div class="modal-status mb-5">
+                <span class="status-pill fira-sans-condensed-black-italic is-size-4 ok">
+                  {{ selectedMarketDetails.markets }} Markets Available
+                </span>
+              </div>
+              <p v-if="selectedMarketDetails.description">
+                {{ selectedMarketDetails.description }}
+              </p>
+              <p v-else>
+                Access prediction markets and deploy your AI trading agents on this platform.
+              </p>
             </div>
-            <div class="level-right">
-              <div class="level-item">
-                <button
-                  class="button is-outlined is-info is-large fira-sans-condensed-black-italic ml-5"
-                  @click="showAIModal = false"
-                >
-                  <span class="material-symbols-outlined is-size-1">close</span>
-                </button>
+
+            <div class="features-list fira-sans-condensed-black-italic mt-4">
+              <ul>
+                <li><strong>Active Positions:</strong> {{ selectedMarketDetails.yourPositions || 0 }}</li>
+                <li><strong>P&L:</strong> {{ selectedMarketDetails.pnl >= 0 ? "+" : "" }}{{ selectedMarketDetails.pnl || 0 }}%</li>
+                <li><strong>Exposure:</strong> {{ selectedMarketDetails.exposure || 0 }} {{ selectedMarketDetails.token }}</li>
+                <li><strong>Pending Resolutions:</strong> {{ selectedMarketDetails.pendingResolutions || 0 }}</li>
+              </ul>
+            </div>
+
+            <div class="requirements-summary mt-4">
+              <h3 class="requirements-title fira-sans-condensed-black-italic is-size-4">
+                Market Access
+              </h3>
+              <div class="req-row">
+                <span class="material-symbols-outlined">check_circle</span>
+                <span class="req-text">Full access to all {{ selectedMarketDetails.markets }} SLAs</span>
+                <span class="req-status met">✓</span>
+              </div>
+              <div class="req-row">
+                <span class="material-symbols-outlined">analytics</span>
+                <span class="req-text">Real-time market analytics</span>
+                <span class="req-status met">✓</span>
+              </div>
+              <div class="req-row">
+                <span class="material-symbols-outlined">psychology</span>
+                <span class="req-text">AI agent deployment</span>
+                <span class="req-status met">✓</span>
               </div>
             </div>
           </div>
-          <div class="notification is-info">
-            <h1 class="fira-sans-condensed-black-italic has-text-centered">
-              <span
-                class="material-symbols-outlined"
-                style="font-size: 92px !important"
-              >
-                neurology
-              </span>
-            </h1>
-            <div class="has-text-centered mb-5">
-              <span
-                class="material-symbols-outlined rotating"
-                style="font-size: 64px"
-              >
-                progress_activity
-              </span>
-            </div>
+
+          <div class="modal-footer has-text-centered">
+            <button
+              class="button is-success is-medium"
+              @click="selectedMarketDetails = null"
+            >
+              <span class="material-symbols-outlined mr-2">launch</span>
+              Enter Market
+            </button>
           </div>
         </div>
       </div>
-    </div>
-  </div>
+    </Transition>
+  </Teleport>
 </template>
 
 <script>
-import { ref, reactive, onMounted } from "vue";
+import { ref, reactive, onMounted, Teleport, Transition } from "vue";
 import polymarketAgent from "./polymarketAgent.js";
 
 /**
@@ -892,12 +976,15 @@ function useCurrentModel() {
 
 export default {
   name: "PredictionMarkets",
+  components: { Teleport, Transition },
   setup() {
     const activeTab = ref("buy");
     const selectedProject = ref("polimarket");
     const selectedAgent = ref("copymaster");
     const showAIModal = ref(false);
     const aiModalMessage = ref("");
+    const aiProgress = ref(0);
+    const selectedMarketDetails = ref(null);
 
     const projectForm = reactive({
       name: "",
@@ -1452,12 +1539,19 @@ export default {
       }
     };
 
+    // Open market details modal
+    const openMarketDetails = (project) => {
+      selectedMarketDetails.value = project;
+    };
+
     return {
       activeTab,
       selectedProject,
       selectedAgent,
       showAIModal,
       aiModalMessage,
+      aiProgress,
+      selectedMarketDetails,
       projectForm,
       purchasedProjects,
       deployedAgents,
@@ -1469,6 +1563,7 @@ export default {
       toggleAgent,
       viewAgentDetails,
       runCopyMasterAnalysis,
+      openMarketDetails,
       // DSLA-related state and helpers
       dslaUseCases,
       selectedUseCase,
@@ -1485,7 +1580,7 @@ export default {
 </script>
 
 <style scoped>
-@import url("https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:opsz,wght,FILL,GRAD@20..48,100..700,0..1,-50..200");
+/* Fonts imported from App.vue for offline mode */
 
 .material-symbols-outlined {
   font-variation-settings:
@@ -1696,6 +1791,13 @@ input[type="radio"]:checked + label {
   border-radius: 8px;
   background: rgba(0, 0, 0, 0.3);
   backdrop-filter: blur(16px);
+  transition: all 0.2s ease;
+}
+
+.market-access-card:hover {
+  border-color: rgba(16, 185, 129, 0.5);
+  background: rgba(16, 185, 129, 0.05);
+  transform: translateY(-2px);
 }
 
 .models__deployment-use {
@@ -1733,5 +1835,204 @@ ol {
 
 .bonzai__agent-description .notification p {
   font-weight: 300;
+}
+
+/* Generation Progress Notification */
+.generation {
+  position: fixed;
+  width: 33%;
+  top: 1em;
+  right: 1em;
+  z-index: 1;
+  opacity: 0.9;
+}
+
+.rotating {
+  animation: spin 1s linear infinite;
+}
+
+@keyframes spin {
+  from {
+    transform: rotate(0deg);
+  }
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+/* Market Modal (same pattern as levels modal) */
+.market-modal-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.78);
+  backdrop-filter: blur(16px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 10000;
+}
+
+.market-modal {
+  width: 92%;
+  max-width: 520px;
+  background: #0a0a0f;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 16px;
+  padding: 24px;
+  position: relative;
+  color: #fff;
+}
+
+.market-modal .modal-header {
+  text-align: center;
+  margin-bottom: 18px;
+}
+
+.market-modal .modal-market-badge {
+  display: inline-block;
+  padding: 6px 16px;
+  background: #10b981;
+  border-radius: 20px;
+  font-weight: 900;
+  color: #fff;
+  margin-bottom: 10px;
+}
+
+.market-modal .modal-header h2 {
+  margin: 0;
+  color: #fff;
+}
+
+.market-modal .modal-status {
+  margin-top: 10px;
+}
+
+.market-modal .market-description {
+  color: rgba(255, 255, 255, 0.92);
+  text-align: center;
+  margin-bottom: 16px;
+  line-height: 1.35;
+}
+
+.market-modal .market-description p {
+  font-size: 16px;
+  text-align: center;
+}
+
+.market-modal .status-pill {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 6px 10px;
+  border-radius: 999px;
+  border: 3px solid rgba(16, 185, 129, 0.55);
+  color: rgba(16, 185, 129, 1);
+  font-size: 12px;
+  font-weight: 100;
+  background: rgba(16, 185, 129, 0.12);
+}
+
+.market-modal .status-pill.ok {
+  color: rgba(16, 185, 129, 1);
+  border-color: rgba(16, 185, 129, 0.55);
+  background: rgba(16, 185, 129, 0.12);
+}
+
+.market-modal .features-list ul {
+  list-style: none;
+  padding: 0 0 0 14px;
+  margin: 0 0 16px 0;
+}
+
+.market-modal .features-list li {
+  padding: 8px 0;
+  color: rgba(255, 255, 255, 0.92);
+  list-style-type: circle;
+}
+
+.market-modal .features-list strong {
+  color: rgba(16, 185, 129, 1);
+}
+
+.market-modal .requirements-summary {
+  background: rgba(255, 255, 255, 0.04);
+  border-radius: 10px;
+  padding: 1.5em;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+.market-modal .requirements-title {
+  color: rgba(255, 255, 255, 0.95);
+  margin: 0 0 8px 0;
+  font-weight: 900;
+  letter-spacing: 0.2px;
+}
+
+.market-modal .req-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 0;
+  font-size: 13px;
+  color: rgba(255, 255, 255, 0.92);
+}
+
+.market-modal .req-text {
+  flex: 1;
+}
+
+.market-modal .req-status {
+  font-size: 14px;
+  font-weight: 900;
+  color: rgba(255, 255, 255, 0.75);
+}
+
+.market-modal .req-status.met {
+  color: #10b981;
+}
+
+.market-modal .modal-footer {
+  display: flex;
+  gap: 20px;
+  margin-top: 16px;
+  padding-top: 16px;
+  justify-content: center;
+}
+
+.market-modal .modal-footer .button {
+  cursor: pointer;
+  text-align: center;
+  text-decoration: none;
+}
+
+/* Fade transition */
+.fade-enter-active,
+.fade-leave-active {
+  transition: opacity 0.2s ease;
+}
+.fade-enter-from,
+.fade-leave-to {
+  opacity: 0;
+}
+
+/* Pulse animation for active cards */
+@keyframes pulse {
+  0% {
+    box-shadow: 0 0 0 0 rgba(16, 185, 129, 0.1);
+  }
+  50% {
+    box-shadow: 0 0 0 12px rgba(16, 185, 129, 0);
+  }
+  100% {
+    box-shadow: 0 0 0 0 rgba(16, 185, 129, 0);
+  }
+}
+
+.models__activity--payouts.ok {
+  background: rgba(16, 185, 129, 0.04);
+  border-radius: 10px;
+  padding: 2em;
+  border: 1px solid rgba(16, 185, 129, 0.25);
+  animation: 2s pulse infinite;
 }
 </style>

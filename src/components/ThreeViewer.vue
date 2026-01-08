@@ -3017,7 +3017,7 @@ export default {
 };
 </script>
 <style scoped>
-@import url("https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:opsz,wght,FILL,GRAD@20..48,100..700,0..1,-50..200");
+/* Fonts imported from App.vue for offline mode */
 .material-symbols-outlined {
   font-variation-settings:
     "FILL" 0,
