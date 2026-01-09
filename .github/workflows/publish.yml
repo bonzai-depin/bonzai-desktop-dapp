@@ -44,6 +44,12 @@ jobs:
             --distpath binaries/${{ env.OS_KEY }}-${{ env.ARCH_KEY }} \
             --workpath $RUNNER_TEMP/pybuild \
             --specpath $RUNNER_TEMP \
+            --hidden-import=eventlet.hubs.epolls \
+            --hidden-import=eventlet.hubs.kqueue \
+            --hidden-import=eventlet.hubs.poll \
+            --hidden-import=eventlet.hubs.selects \
+            --hidden-import=eventlet.hubs.hub \
+            --collect-submodules=eventlet \
             ${{ env.MAIN_PY_FILE }}
 
       - name: Decode & Import Certificates
@@ -344,6 +350,12 @@ jobs:
             --distpath binaries/${{ env.OS_KEY }}-${{ env.ARCH_KEY }} \
             --workpath $RUNNER_TEMP/pybuild \
             --specpath $RUNNER_TEMP \
+            --hidden-import=eventlet.hubs.epolls \
+            --hidden-import=eventlet.hubs.kqueue \
+            --hidden-import=eventlet.hubs.poll \
+            --hidden-import=eventlet.hubs.selects \
+            --hidden-import=eventlet.hubs.hub \
+            --collect-submodules=eventlet \
             ${{ env.MAIN_PY_FILE }}
 
       - name: Decode & Import Certificates
