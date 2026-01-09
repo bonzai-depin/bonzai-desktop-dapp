@@ -127,6 +127,29 @@ jobs:
             fi
           done
 
+          # Sign frameworks (like Python.framework) from inside out
+          echo "Signing framework bundles in _internal..."
+          find "$RUNTIME_DIR/_internal" -name "*.framework" -type d | while read -r framework; do
+            echo "Signing framework: $framework"
+            # Sign all binaries inside the framework first
+            find "$framework" -type f -perm +111 | while read -r bin; do
+              if file "$bin" | grep -q "Mach-O"; then
+                echo "  Signing framework binary: $bin"
+                codesign --force --sign "$IDENTITY" \
+                  --options runtime \
+                  --entitlements ./entitlements.mac.plist \
+                  --timestamp \
+                  "$bin" 2>/dev/null || true
+              fi
+            done
+            # Sign the framework bundle itself
+            codesign --force --sign "$IDENTITY" \
+              --options runtime \
+              --entitlements ./entitlements.mac.plist \
+              --timestamp \
+              "$framework"
+          done
+
           # Sign the main executable last
           echo "Signing main executable..."
           codesign --force --sign "$IDENTITY" \
@@ -475,6 +498,29 @@ jobs:
                 --timestamp \
                 "$binary" 2>/dev/null || true
             fi
+          done
+
+          # Sign frameworks (like Python.framework) from inside out
+          echo "Signing framework bundles in _internal..."
+          find "$RUNTIME_DIR/_internal" -name "*.framework" -type d | while read -r framework; do
+            echo "Signing framework: $framework"
+            # Sign all binaries inside the framework first
+            find "$framework" -type f -perm +111 | while read -r bin; do
+              if file "$bin" | grep -q "Mach-O"; then
+                echo "  Signing framework binary: $bin"
+                codesign --force --sign "$IDENTITY" \
+                  --options runtime \
+                  --entitlements ./entitlements.mac.plist \
+                  --timestamp \
+                  "$bin" 2>/dev/null || true
+              fi
+            done
+            # Sign the framework bundle itself
+            codesign --force --sign "$IDENTITY" \
+              --options runtime \
+              --entitlements ./entitlements.mac.plist \
+              --timestamp \
+              "$framework"
           done
 
           # Sign the main executable last
