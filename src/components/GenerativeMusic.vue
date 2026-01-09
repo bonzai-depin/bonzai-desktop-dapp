@@ -93,40 +93,22 @@
                   </label>
 
                   <!-- LANGUAGE SELECTOR -->
-                  <span class="control ml-4">
-                    <div class="select is-dark">
-                      <select v-model="language">
-                        <option
-                          v-for="(name, code) in languages"
-                          :key="code"
-                          :value="code"
-                        >
-                          {{ languageFlags[code] }} {{ name }}
-                        </option>
-                      </select>
-                    </div>
-                  </span>
-
-                  <!-- EXPRESSION SLIDER -->
-                  <span class="control ml-4">
-                    <label class="label is-small has-text-white">
-                      Expression
-                    </label>
-                    <input
-                      type="range"
-                      min="0"
-                      max="100"
-                      v-model.number="exaggerationPct"
-                      class="slider"
-                      style="width: 100px; vertical-align: middle"
-                    />
-                    <span class="ml-2 is-size-7">{{ exaggerationPct }}%</span>
-                  </span>
+                  <div class="select is-dark is-pulled-right">
+                    <select v-model="language">
+                      <option
+                        v-for="(name, code) in languages"
+                        :key="code"
+                        :value="code"
+                      >
+                        {{ languageFlags[code] }} {{ name }}
+                      </option>
+                    </select>
+                  </div>
                 </div>
 
                 <!-- VOICE CLONE FILE INPUT -->
-                <div v-if="mode === 'clone'" class="mb-5">
-                  <div class="file has-name is-fullwidth">
+                <div v-if="mode === 'clone'">
+                  <div class="file is-fullwidth is-medium">
                     <label class="file-label">
                       <input
                         class="file-input"
@@ -140,19 +122,13 @@
                             upload_file
                           </span>
                         </span>
-                        <span class="file-label">
-                          Reference Voice (5-10s)
-                        </span>
+                        <span class="file-label">Reference Voice (5-10s)</span>
                       </span>
                       <span class="file-name">
                         {{ synthesisFileName || "No file selected" }}
                       </span>
                     </label>
                   </div>
-                  <p class="help has-text-grey-light">
-                    Upload a 5-10 second audio clip to clone the voice.
-                    Works across all 23 languages.
-                  </p>
                 </div>
 
                 <!-- READINESS CTA -->
@@ -292,6 +268,7 @@
                   :is-generating="isLoading"
                   @access-changed="onAccessChanged"
                   @demo-generate="onDemoGenerate"
+                   class="mt-5"
                 />
 
                 <!-- PROMPT -->
@@ -302,7 +279,9 @@
                     type="text"
                     :placeholder="promptPlaceholder"
                     v-model="form.prompt"
-                    @keyup.enter="canGenerateWithAccess && sendMessage(form.prompt)"
+                    @keyup.enter="
+                      canGenerateWithAccess && sendMessage(form.prompt)
+                    "
                     :disabled="isLoading || !canGenerateWithAccess"
                   />
                   <button
@@ -318,6 +297,24 @@
                     :key="inference.id || index"
                   >
                     <div class="question">
+                      <div class="audio-meta">
+                        <span class="tag is-dark">
+                          {{
+                            languageFlags[inference.language] ||
+                            inference.language
+                          }}
+                          {{ languages[inference.language] || "" }}
+                        </span>
+                        <span
+                          v-if="inference.hasClone"
+                          class="tag is-info ml-2"
+                        >
+                          <span class="material-symbols-outlined is-size-6">
+                            genetics
+                          </span>
+                          Cloned
+                        </span>
+                      </div>
                       <!-- Audio Player -->
                       <div class="audio-container">
                         <audio
@@ -326,27 +323,6 @@
                           controls
                           class="audio-player"
                         ></audio>
-                        <div class="audio-meta">
-                          <span class="tag is-dark mr-2">
-                            🌍 Multilingual
-                          </span>
-                          <span class="tag is-dark">
-                            {{
-                              languageFlags[inference.language] ||
-                              inference.language
-                            }}
-                            {{ languages[inference.language] || "" }}
-                          </span>
-                          <span
-                            v-if="inference.hasClone"
-                            class="tag is-warning ml-2"
-                          >
-                            <span class="material-symbols-outlined is-size-6">
-                              genetics
-                            </span>
-                            Cloned
-                          </span>
-                        </div>
                       </div>
                       <hr />
                       <p class="prompt-text mt-3">
@@ -689,9 +665,13 @@ export default {
       downloads.progress = next;
 
       // Safety check: if all tasks are completed but status wasn't updated, force completion
-      const allTasksComplete = tasksList.length > 0 && tasksList.every((t) => t.status === "completed");
+      const allTasksComplete =
+        tasksList.length > 0 &&
+        tasksList.every((t) => t.status === "completed");
       if (allTasksComplete && downloads.status === "downloading") {
-        console.log("[Downloads] All tasks completed, forcing status to completed");
+        console.log(
+          "[Downloads] All tasks completed, forcing status to completed"
+        );
         downloads.status = "completed";
       }
 
@@ -958,7 +938,11 @@ export default {
         const { data, status } = await axios.post(
           `${API_BASE}/pipelines/plan`,
           { pipeline, deep_validate: true },
-          { signal: controller.signal, validateStatus: () => true, timeout: 10000 }
+          {
+            signal: controller.signal,
+            validateStatus: () => true,
+            timeout: 10000,
+          }
         );
 
         if (mySeq !== planReq.seq) return;
@@ -1028,7 +1012,10 @@ export default {
           return;
         }
 
-        setError("audio", res?.data?.error || `Prefetch failed (${res.status})`);
+        setError(
+          "audio",
+          res?.data?.error || `Prefetch failed (${res.status})`
+        );
       } catch (e) {
         setError("audio", e?.message || "Network error");
       }
@@ -1368,6 +1355,9 @@ div.question {
   border-radius: 4px;
 }
 .audio-meta {
+  top: -12px;
+  right: 32px;
+  position: absolute;
   display: flex;
   align-items: center;
 }

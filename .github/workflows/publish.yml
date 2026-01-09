@@ -103,6 +103,25 @@ jobs:
           # With --onedir mode, we have a directory structure
           RUNTIME_DIR="binaries/${{ env.OS_KEY }}-${{ env.ARCH_KEY }}/diffuser"
 
+          # Handle Python hardlink issue: if Python.framework exists, the standalone
+          # Python binary is likely a hardlink. Remove it to avoid signature conflicts.
+          if [ -d "$RUNTIME_DIR/_internal/Python.framework" ] && [ -f "$RUNTIME_DIR/_internal/Python" ]; then
+            echo "Removing standalone Python (hardlink to framework) to avoid signature conflicts..."
+            rm -f "$RUNTIME_DIR/_internal/Python"
+          fi
+
+          # Sign framework bundles FIRST - codesign --deep handles internal structure
+          echo "Signing framework bundles in _internal..."
+          find "$RUNTIME_DIR/_internal" -name "*.framework" -type d -depth | while read -r framework; do
+            echo "Signing framework bundle: $framework"
+            codesign --force --deep --sign "$IDENTITY" \
+              --options runtime \
+              --entitlements ./entitlements.mac.plist \
+              --timestamp \
+              "$framework"
+            codesign --verify --verbose "$framework"
+          done
+
           # Sign all .dylib and .so files EXCLUDING those inside .framework bundles
           echo "Signing libraries in _internal (excluding frameworks)..."
           find "$RUNTIME_DIR/_internal" -type f \( -name "*.dylib" -o -name "*.so" \) | grep -v "\.framework/" | while read -r lib; do
@@ -125,18 +144,6 @@ jobs:
                 --timestamp \
                 "$binary" 2>/dev/null || true
             fi
-          done
-
-          # Sign framework bundles - codesign handles the internal structure
-          echo "Signing framework bundles in _internal..."
-          find "$RUNTIME_DIR/_internal" -name "*.framework" -type d -depth | while read -r framework; do
-            echo "Signing framework bundle: $framework"
-            codesign --force --deep --sign "$IDENTITY" \
-              --options runtime \
-              --entitlements ./entitlements.mac.plist \
-              --timestamp \
-              "$framework"
-            codesign --verify --verbose "$framework"
           done
 
           # Sign the main executable last
@@ -468,6 +475,25 @@ jobs:
           # With --onedir mode, we have a directory structure
           RUNTIME_DIR="binaries/${{ env.OS_KEY }}-${{ env.ARCH_KEY }}/diffuser"
 
+          # Handle Python hardlink issue: if Python.framework exists, the standalone
+          # Python binary is likely a hardlink. Remove it to avoid signature conflicts.
+          if [ -d "$RUNTIME_DIR/_internal/Python.framework" ] && [ -f "$RUNTIME_DIR/_internal/Python" ]; then
+            echo "Removing standalone Python (hardlink to framework) to avoid signature conflicts..."
+            rm -f "$RUNTIME_DIR/_internal/Python"
+          fi
+
+          # Sign framework bundles FIRST - codesign --deep handles internal structure
+          echo "Signing framework bundles in _internal..."
+          find "$RUNTIME_DIR/_internal" -name "*.framework" -type d -depth | while read -r framework; do
+            echo "Signing framework bundle: $framework"
+            codesign --force --deep --sign "$IDENTITY" \
+              --options runtime \
+              --entitlements ./entitlements.mac.plist \
+              --timestamp \
+              "$framework"
+            codesign --verify --verbose "$framework"
+          done
+
           # Sign all .dylib and .so files EXCLUDING those inside .framework bundles
           echo "Signing libraries in _internal (excluding frameworks)..."
           find "$RUNTIME_DIR/_internal" -type f \( -name "*.dylib" -o -name "*.so" \) | grep -v "\.framework/" | while read -r lib; do
@@ -490,18 +516,6 @@ jobs:
                 --timestamp \
                 "$binary" 2>/dev/null || true
             fi
-          done
-
-          # Sign framework bundles - codesign handles the internal structure
-          echo "Signing framework bundles in _internal..."
-          find "$RUNTIME_DIR/_internal" -name "*.framework" -type d -depth | while read -r framework; do
-            echo "Signing framework bundle: $framework"
-            codesign --force --deep --sign "$IDENTITY" \
-              --options runtime \
-              --entitlements ./entitlements.mac.plist \
-              --timestamp \
-              "$framework"
-            codesign --verify --verbose "$framework"
           done
 
           # Sign the main executable last

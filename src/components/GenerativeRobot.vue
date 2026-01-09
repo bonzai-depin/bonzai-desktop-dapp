@@ -12,9 +12,9 @@
                     class="material-symbols-outlined mr-2"
                     style="font-size: 92px !important"
                   >
-                    model_training
+                    exercise
                   </span>
-                  Model Training
+                  Training
                 </h1>
               </div>
             </div>
@@ -65,6 +65,7 @@
                   ref="accessRef"
                   level="LVL6"
                   @access-changed="onAccessChanged"
+                  class="pr-0"
                 />
 
                 <!-- TRAINING TYPE SELECTION -->
@@ -82,9 +83,9 @@
                       class="material-symbols-outlined"
                       style="font-size: 32px !important"
                     >
-                      psychology
+                      chat
                     </span>
-                    LLM LoRA
+                    Chat
                     <span class="tag is-info is-light ml-1">Llama</span>
                   </label>
 
@@ -102,21 +103,21 @@
                     >
                       image
                     </span>
-                    SDXL LoRA
+                    Image
                     <span class="tag is-warning is-light ml-1">Images</span>
                   </label>
                 </div>
 
                 <!-- DATASET MANAGEMENT -->
                 <div class="notification is-dark mb-5">
-                  <h3 class="fira-sans-condensed-black-italic is-size-4 mb-3">
+                  <h3 class="fira-sans-condensed-black-italic is-size-4 mb-3 has-text-left">
                     <span class="material-symbols-outlined mr-2">dataset</span>
                     Training Datasets
                   </h3>
 
                   <div class="buttons mb-3">
                     <button
-                      class="button is-success is-medium"
+                      class="button is-success is-medium mr-5"
                       @click="showCreateDataset = true"
                     >
                       <span class="material-symbols-outlined mr-1">add</span>
@@ -164,9 +165,6 @@
                       </button>
                     </div>
                   </div>
-                  <p v-else class="has-text-grey-light">
-                    No datasets yet. Create one to start training.
-                  </p>
                 </div>
 
                 <!-- LLM TRAINING CONFIGURATION -->
@@ -179,9 +177,9 @@
                     LLM LoRA Configuration
                   </h3>
 
-                  <div class="field">
+                  <div class="field has-text-left mt-5">
                     <label class="label">Base Model</label>
-                    <div class="select is-fullwidth">
+                    <div class="select is-fullwidth is-medium mb-5">
                       <select v-model="llmConfig.base_model">
                         <option value="llama-3.2-1b">
                           Llama 3.2 1B (Fastest)
@@ -196,7 +194,7 @@
                     </div>
                   </div>
 
-                  <div class="columns">
+                  <div class="columns has-text-left mb-5">
                     <div class="column">
                       <div class="field">
                         <label class="label">
@@ -227,7 +225,7 @@
                     </div>
                   </div>
 
-                  <div class="columns">
+                  <div class="columns has-text-left mb-5">
                     <div class="column">
                       <div class="field">
                         <label class="label">
@@ -260,7 +258,7 @@
                     </div>
                   </div>
 
-                  <div class="field">
+                  <div class="field has-text-left">
                     <label class="label">Learning Rate</label>
                     <input
                       class="input"
@@ -966,8 +964,10 @@ export default {
   z-index: -1;
   height: 100%;
   width: 100%;
-  background: linear-gradient(135deg, #1a1a2e 0%, #16213e 50%, #0f3460 100%);
+  background: url("src/assets/bonzai_robots.jpg") no-repeat;
   background-size: cover;
+  filter: blur(6px);
+  animation: move 40s ease infinite;
   overflow: hidden;
 }
 

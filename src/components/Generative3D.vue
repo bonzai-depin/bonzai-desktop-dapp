@@ -167,15 +167,6 @@
             >
               {{ downloadProgress }}%
             </progress>
-
-            <button
-              class="button is-danger is-large is-fullwidth"
-              @click="deleteModel(currentModel.filename)"
-              v-if="isModel"
-            >
-              <span class="material-symbols-outlined mr-2"> delete </span>
-              Delete {{ currentModel.modelname }}
-            </button>
           </div>
 
           <div class="models__activity--payouts">

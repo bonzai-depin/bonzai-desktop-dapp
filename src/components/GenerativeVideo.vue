@@ -368,13 +368,14 @@
                     ></video>
                     <div class="pb-5 mb-5 mt-5">
                       <button
-                        class="button is-medium is-success copy is-pulled-right ml-5 mr-0 p-0 pl-1 pr-1"
+                        class="button is-medium is-success copy is-pulled-right ml-5 mr-0 p-0 pl-1 pr-4"
                         @click="downloadVideo(index)"
                         title="Save video"
                       >
-                        <span class="material-symbols-outlined is-size-2">
+                        <span class="material-symbols-outlined is-size-2 mr-2">
                           save
                         </span>
+                        Download
                       </button>
                       <button
                         class="button is-medium is-danger is-pulled-right ml-2 p-0 pl-1 pr-1"

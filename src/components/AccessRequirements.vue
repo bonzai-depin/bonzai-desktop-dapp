@@ -7,7 +7,7 @@
         <div class="header-text fira-sans-condensed-black-italic is-size-4">
           <span class="requirement-text">
             <template v-if="!isConnected">
-              Connect wallet to unlock
+              Connect your Wallet to unlock this module.
             </template>
             <template v-else>
               Hold {{ holdingRequired.toLocaleString() }} BONZAI to unlock
