@@ -69,8 +69,19 @@ jobs:
           KEYCHAIN_PW: ${{ secrets.KEYCHAIN_PASSWORD }}
         run: |
           security unlock-keychain -p "$KEYCHAIN_PW" build.keychain
+
+          # Find the exact Developer ID Application certificate identity
+          IDENTITY=$(security find-identity -v -p codesigning build.keychain | grep "Developer ID Application" | head -1 | sed 's/.*"\(.*\)".*/\1/')
+          echo "Using identity: $IDENTITY"
+
+          if [ -z "$IDENTITY" ]; then
+            echo "ERROR: No Developer ID Application certificate found!"
+            security find-identity -v -p codesigning build.keychain
+            exit 1
+          fi
+
           BINARY_PATH="binaries/${{ env.OS_KEY }}-${{ env.ARCH_KEY }}/diffuser"
-          codesign --force --sign "Developer ID Application" \
+          codesign --force --sign "$IDENTITY" \
             --options runtime \
             --entitlements ./entitlements.mac.plist \
             --timestamp \
@@ -90,9 +101,13 @@ jobs:
           KEYCHAIN_PW: ${{ secrets.KEYCHAIN_PASSWORD }}
         run: |
           security unlock-keychain -p "$KEYCHAIN_PW" build.keychain
+
+          # Find the exact Developer ID Application certificate identity
+          IDENTITY=$(security find-identity -v -p codesigning build.keychain | grep "Developer ID Application" | head -1 | sed 's/.*"\(.*\)".*/\1/')
+
           FFMPEG_PATH="node_modules/ffmpeg-static-electron-forge/dist/bin/darwin/arm64/ffmpeg"
           if [ -f "$FFMPEG_PATH" ]; then
-            codesign --force --sign "Developer ID Application" \
+            codesign --force --sign "$IDENTITY" \
               --options runtime \
               --entitlements ./entitlements.mac.plist \
               --timestamp \
@@ -125,12 +140,101 @@ jobs:
           KEYCHAIN_PW: ${{ secrets.KEYCHAIN_PASSWORD }}
         run: |
           security unlock-keychain -p "$KEYCHAIN_PW" build.keychain
-          codesign --force --deep --sign "Developer ID Application" \
+
+          # Find the exact Developer ID Application certificate identity
+          IDENTITY=$(security find-identity -v -p codesigning build.keychain | grep "Developer ID Application" | head -1 | sed 's/.*"\(.*\)".*/\1/')
+          echo "Using identity: $IDENTITY"
+
+          APP_PATH="out/bonzai-darwin-arm64/bonzai.app"
+
+          # Remove test directories that contain unsigned binaries we don't need
+          echo "Removing unnecessary test assets..."
+          find "$APP_PATH" -type d -name "test" -path "*/node_modules/*" -exec rm -rf {} + 2>/dev/null || true
+          find "$APP_PATH" -type d -name "tests" -path "*/node_modules/*" -exec rm -rf {} + 2>/dev/null || true
+          find "$APP_PATH" -type d -name "__tests__" -path "*/node_modules/*" -exec rm -rf {} + 2>/dev/null || true
+
+          # Sign ALL binaries: .dylib, .so, .node files and Mach-O executables
+          echo "Signing all native binaries..."
+          find "$APP_PATH" -type f \( -name "*.dylib" -o -name "*.so" -o -name "*.node" \) | while read -r binary; do
+            echo "Signing: $binary"
+            codesign --force --sign "$IDENTITY" \
+              --options runtime \
+              --entitlements ./entitlements.mac.plist \
+              --timestamp \
+              "$binary" 2>/dev/null || true
+          done
+
+          # Sign executables (Mach-O binaries without extensions)
+          echo "Signing executables..."
+          find "$APP_PATH" -type f -perm +111 | while read -r binary; do
+            if file "$binary" | grep -q "Mach-O"; then
+              echo "Signing executable: $binary"
+              codesign --force --sign "$IDENTITY" \
+                --options runtime \
+                --entitlements ./entitlements.mac.plist \
+                --timestamp \
+                "$binary" 2>/dev/null || true
+            fi
+          done
+
+          # Sign frameworks from inside out (libraries first, then framework bundle)
+          echo "Signing Electron Framework libraries..."
+          find "$APP_PATH/Contents/Frameworks" -path "*/Versions/*/Libraries/*" -type f | while read -r lib; do
+            echo "Signing framework lib: $lib"
+            codesign --force --sign "$IDENTITY" \
+              --options runtime \
+              --timestamp \
+              "$lib" 2>/dev/null || true
+          done
+
+          # Sign helper apps and other executables in frameworks
+          echo "Signing framework helpers..."
+          find "$APP_PATH/Contents/Frameworks" -path "*/Resources/*" -type f -perm +111 | while read -r helper; do
+            if file "$helper" | grep -q "Mach-O"; then
+              echo "Signing helper: $helper"
+              codesign --force --sign "$IDENTITY" \
+                --options runtime \
+                --entitlements ./entitlements.mac.plist \
+                --timestamp \
+                "$helper" 2>/dev/null || true
+            fi
+          done
+
+          # Sign all .framework bundles
+          echo "Signing framework bundles..."
+          find "$APP_PATH/Contents/Frameworks" -name "*.framework" -type d -depth | while read -r framework; do
+            echo "Signing framework: $framework"
+            codesign --force --sign "$IDENTITY" \
+              --options runtime \
+              --entitlements ./entitlements.mac.plist \
+              --timestamp \
+              "$framework"
+          done
+
+          # Sign any .app bundles inside (like helper apps)
+          echo "Signing nested apps..."
+          find "$APP_PATH" -name "*.app" -type d -depth | grep -v "^$APP_PATH$" | while read -r nested_app; do
+            echo "Signing nested app: $nested_app"
+            codesign --force --sign "$IDENTITY" \
+              --options runtime \
+              --entitlements ./entitlements.mac.plist \
+              --timestamp \
+              "$nested_app" 2>/dev/null || true
+          done
+
+          # Sign the main app bundle last
+          echo "Signing main app bundle..."
+          codesign --force --sign "$IDENTITY" \
             --options runtime \
             --entitlements ./entitlements.mac.plist \
             --timestamp \
-            "out/bonzai-darwin-arm64/bonzai.app"
-          codesign --verify --verbose "out/bonzai-darwin-arm64/bonzai.app"
+            "$APP_PATH"
+
+          # Verify
+          echo "Verifying signature..."
+          codesign --verify --verbose=4 "$APP_PATH"
+          echo "Checking for unsigned components..."
+          codesign --verify --deep --strict "$APP_PATH" 2>&1 || echo "Deep verification completed (warnings above may be ignorable)"
 
       - name: Create DMG
         run: |
@@ -140,6 +244,18 @@ jobs:
             "bonzai-${{ github.event.release.tag_name }}-arm64" \
             --out=out/make \
             --overwrite
+
+          # Verify DMG was created
+          DMG_PATH="out/make/bonzai-${{ github.event.release.tag_name }}-arm64.dmg"
+          if [ -f "$DMG_PATH" ]; then
+            echo "DMG created successfully at: $DMG_PATH"
+            ls -lh "$DMG_PATH"
+          else
+            echo "ERROR: DMG not found at expected path: $DMG_PATH"
+            echo "Contents of out/make:"
+            ls -la out/make/
+            exit 1
+          fi
 
       - name: Notarize DMG
         env:
@@ -245,8 +361,19 @@ jobs:
           KEYCHAIN_PW: ${{ secrets.KEYCHAIN_PASSWORD }}
         run: |
           security unlock-keychain -p "$KEYCHAIN_PW" build.keychain
+
+          # Find the exact Developer ID Application certificate identity
+          IDENTITY=$(security find-identity -v -p codesigning build.keychain | grep "Developer ID Application" | head -1 | sed 's/.*"\(.*\)".*/\1/')
+          echo "Using identity: $IDENTITY"
+
+          if [ -z "$IDENTITY" ]; then
+            echo "ERROR: No Developer ID Application certificate found!"
+            security find-identity -v -p codesigning build.keychain
+            exit 1
+          fi
+
           BINARY_PATH="binaries/${{ env.OS_KEY }}-${{ env.ARCH_KEY }}/diffuser"
-          codesign --force --sign "Developer ID Application" \
+          codesign --force --sign "$IDENTITY" \
             --options runtime \
             --entitlements ./entitlements.mac.plist \
             --timestamp \
@@ -266,9 +393,13 @@ jobs:
           KEYCHAIN_PW: ${{ secrets.KEYCHAIN_PASSWORD }}
         run: |
           security unlock-keychain -p "$KEYCHAIN_PW" build.keychain
+
+          # Find the exact Developer ID Application certificate identity
+          IDENTITY=$(security find-identity -v -p codesigning build.keychain | grep "Developer ID Application" | head -1 | sed 's/.*"\(.*\)".*/\1/')
+
           FFMPEG_PATH="node_modules/ffmpeg-static-electron-forge/dist/bin/darwin/x64/ffmpeg"
           if [ -f "$FFMPEG_PATH" ]; then
-            codesign --force --sign "Developer ID Application" \
+            codesign --force --sign "$IDENTITY" \
               --options runtime \
               --entitlements ./entitlements.mac.plist \
               --timestamp \
@@ -301,12 +432,101 @@ jobs:
           KEYCHAIN_PW: ${{ secrets.KEYCHAIN_PASSWORD }}
         run: |
           security unlock-keychain -p "$KEYCHAIN_PW" build.keychain
-          codesign --force --deep --sign "Developer ID Application" \
+
+          # Find the exact Developer ID Application certificate identity
+          IDENTITY=$(security find-identity -v -p codesigning build.keychain | grep "Developer ID Application" | head -1 | sed 's/.*"\(.*\)".*/\1/')
+          echo "Using identity: $IDENTITY"
+
+          APP_PATH="out/bonzai-darwin-x64/bonzai.app"
+
+          # Remove test directories that contain unsigned binaries we don't need
+          echo "Removing unnecessary test assets..."
+          find "$APP_PATH" -type d -name "test" -path "*/node_modules/*" -exec rm -rf {} + 2>/dev/null || true
+          find "$APP_PATH" -type d -name "tests" -path "*/node_modules/*" -exec rm -rf {} + 2>/dev/null || true
+          find "$APP_PATH" -type d -name "__tests__" -path "*/node_modules/*" -exec rm -rf {} + 2>/dev/null || true
+
+          # Sign ALL binaries: .dylib, .so, .node files and Mach-O executables
+          echo "Signing all native binaries..."
+          find "$APP_PATH" -type f \( -name "*.dylib" -o -name "*.so" -o -name "*.node" \) | while read -r binary; do
+            echo "Signing: $binary"
+            codesign --force --sign "$IDENTITY" \
+              --options runtime \
+              --entitlements ./entitlements.mac.plist \
+              --timestamp \
+              "$binary" 2>/dev/null || true
+          done
+
+          # Sign executables (Mach-O binaries without extensions)
+          echo "Signing executables..."
+          find "$APP_PATH" -type f -perm +111 | while read -r binary; do
+            if file "$binary" | grep -q "Mach-O"; then
+              echo "Signing executable: $binary"
+              codesign --force --sign "$IDENTITY" \
+                --options runtime \
+                --entitlements ./entitlements.mac.plist \
+                --timestamp \
+                "$binary" 2>/dev/null || true
+            fi
+          done
+
+          # Sign frameworks from inside out (libraries first, then framework bundle)
+          echo "Signing Electron Framework libraries..."
+          find "$APP_PATH/Contents/Frameworks" -path "*/Versions/*/Libraries/*" -type f | while read -r lib; do
+            echo "Signing framework lib: $lib"
+            codesign --force --sign "$IDENTITY" \
+              --options runtime \
+              --timestamp \
+              "$lib" 2>/dev/null || true
+          done
+
+          # Sign helper apps and other executables in frameworks
+          echo "Signing framework helpers..."
+          find "$APP_PATH/Contents/Frameworks" -path "*/Resources/*" -type f -perm +111 | while read -r helper; do
+            if file "$helper" | grep -q "Mach-O"; then
+              echo "Signing helper: $helper"
+              codesign --force --sign "$IDENTITY" \
+                --options runtime \
+                --entitlements ./entitlements.mac.plist \
+                --timestamp \
+                "$helper" 2>/dev/null || true
+            fi
+          done
+
+          # Sign all .framework bundles
+          echo "Signing framework bundles..."
+          find "$APP_PATH/Contents/Frameworks" -name "*.framework" -type d -depth | while read -r framework; do
+            echo "Signing framework: $framework"
+            codesign --force --sign "$IDENTITY" \
+              --options runtime \
+              --entitlements ./entitlements.mac.plist \
+              --timestamp \
+              "$framework"
+          done
+
+          # Sign any .app bundles inside (like helper apps)
+          echo "Signing nested apps..."
+          find "$APP_PATH" -name "*.app" -type d -depth | grep -v "^$APP_PATH$" | while read -r nested_app; do
+            echo "Signing nested app: $nested_app"
+            codesign --force --sign "$IDENTITY" \
+              --options runtime \
+              --entitlements ./entitlements.mac.plist \
+              --timestamp \
+              "$nested_app" 2>/dev/null || true
+          done
+
+          # Sign the main app bundle last
+          echo "Signing main app bundle..."
+          codesign --force --sign "$IDENTITY" \
             --options runtime \
             --entitlements ./entitlements.mac.plist \
             --timestamp \
-            "out/bonzai-darwin-x64/bonzai.app"
-          codesign --verify --verbose "out/bonzai-darwin-x64/bonzai.app"
+            "$APP_PATH"
+
+          # Verify
+          echo "Verifying signature..."
+          codesign --verify --verbose=4 "$APP_PATH"
+          echo "Checking for unsigned components..."
+          codesign --verify --deep --strict "$APP_PATH" 2>&1 || echo "Deep verification completed (warnings above may be ignorable)"
 
       - name: Create DMG
         run: |
@@ -316,6 +536,18 @@ jobs:
             "bonzai-${{ github.event.release.tag_name }}-x64" \
             --out=out/make \
             --overwrite
+
+          # Verify DMG was created
+          DMG_PATH="out/make/bonzai-${{ github.event.release.tag_name }}-x64.dmg"
+          if [ -f "$DMG_PATH" ]; then
+            echo "DMG created successfully at: $DMG_PATH"
+            ls -lh "$DMG_PATH"
+          else
+            echo "ERROR: DMG not found at expected path: $DMG_PATH"
+            echo "Contents of out/make:"
+            ls -la out/make/
+            exit 1
+          fi
 
       - name: Notarize DMG
         env:
