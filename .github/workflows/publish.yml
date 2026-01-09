@@ -103,9 +103,9 @@ jobs:
           # With --onedir mode, we have a directory structure
           RUNTIME_DIR="binaries/${{ env.OS_KEY }}-${{ env.ARCH_KEY }}/diffuser"
 
-          # Sign all .dylib and .so files in _internal first
-          echo "Signing libraries in _internal..."
-          find "$RUNTIME_DIR/_internal" -type f \( -name "*.dylib" -o -name "*.so" \) | while read -r lib; do
+          # Sign all .dylib and .so files EXCLUDING those inside .framework bundles
+          echo "Signing libraries in _internal (excluding frameworks)..."
+          find "$RUNTIME_DIR/_internal" -type f \( -name "*.dylib" -o -name "*.so" \) | grep -v "\.framework/" | while read -r lib; do
             echo "Signing: $lib"
             codesign --force --sign "$IDENTITY" \
               --options runtime \
@@ -114,9 +114,9 @@ jobs:
               "$lib" 2>/dev/null || true
           done
 
-          # Sign any Mach-O executables in _internal
-          echo "Signing executables in _internal..."
-          find "$RUNTIME_DIR/_internal" -type f -perm +111 | while read -r binary; do
+          # Sign Mach-O executables EXCLUDING those inside .framework bundles
+          echo "Signing executables in _internal (excluding frameworks)..."
+          find "$RUNTIME_DIR/_internal" -type f -perm +111 | grep -v "\.framework/" | while read -r binary; do
             if file "$binary" | grep -q "Mach-O"; then
               echo "Signing executable: $binary"
               codesign --force --sign "$IDENTITY" \
@@ -127,27 +127,16 @@ jobs:
             fi
           done
 
-          # Sign frameworks (like Python.framework) from inside out
+          # Sign framework bundles - codesign handles the internal structure
           echo "Signing framework bundles in _internal..."
-          find "$RUNTIME_DIR/_internal" -name "*.framework" -type d | while read -r framework; do
-            echo "Signing framework: $framework"
-            # Sign all binaries inside the framework first
-            find "$framework" -type f -perm +111 | while read -r bin; do
-              if file "$bin" | grep -q "Mach-O"; then
-                echo "  Signing framework binary: $bin"
-                codesign --force --sign "$IDENTITY" \
-                  --options runtime \
-                  --entitlements ./entitlements.mac.plist \
-                  --timestamp \
-                  "$bin" 2>/dev/null || true
-              fi
-            done
-            # Sign the framework bundle itself
-            codesign --force --sign "$IDENTITY" \
+          find "$RUNTIME_DIR/_internal" -name "*.framework" -type d -depth | while read -r framework; do
+            echo "Signing framework bundle: $framework"
+            codesign --force --deep --sign "$IDENTITY" \
               --options runtime \
               --entitlements ./entitlements.mac.plist \
               --timestamp \
               "$framework"
+            codesign --verify --verbose "$framework"
           done
 
           # Sign the main executable last
@@ -479,9 +468,9 @@ jobs:
           # With --onedir mode, we have a directory structure
           RUNTIME_DIR="binaries/${{ env.OS_KEY }}-${{ env.ARCH_KEY }}/diffuser"
 
-          # Sign all .dylib and .so files in _internal first
-          echo "Signing libraries in _internal..."
-          find "$RUNTIME_DIR/_internal" -type f \( -name "*.dylib" -o -name "*.so" \) | while read -r lib; do
+          # Sign all .dylib and .so files EXCLUDING those inside .framework bundles
+          echo "Signing libraries in _internal (excluding frameworks)..."
+          find "$RUNTIME_DIR/_internal" -type f \( -name "*.dylib" -o -name "*.so" \) | grep -v "\.framework/" | while read -r lib; do
             echo "Signing: $lib"
             codesign --force --sign "$IDENTITY" \
               --options runtime \
@@ -490,9 +479,9 @@ jobs:
               "$lib" 2>/dev/null || true
           done
 
-          # Sign any Mach-O executables in _internal
-          echo "Signing executables in _internal..."
-          find "$RUNTIME_DIR/_internal" -type f -perm +111 | while read -r binary; do
+          # Sign Mach-O executables EXCLUDING those inside .framework bundles
+          echo "Signing executables in _internal (excluding frameworks)..."
+          find "$RUNTIME_DIR/_internal" -type f -perm +111 | grep -v "\.framework/" | while read -r binary; do
             if file "$binary" | grep -q "Mach-O"; then
               echo "Signing executable: $binary"
               codesign --force --sign "$IDENTITY" \
@@ -503,27 +492,16 @@ jobs:
             fi
           done
 
-          # Sign frameworks (like Python.framework) from inside out
+          # Sign framework bundles - codesign handles the internal structure
           echo "Signing framework bundles in _internal..."
-          find "$RUNTIME_DIR/_internal" -name "*.framework" -type d | while read -r framework; do
-            echo "Signing framework: $framework"
-            # Sign all binaries inside the framework first
-            find "$framework" -type f -perm +111 | while read -r bin; do
-              if file "$bin" | grep -q "Mach-O"; then
-                echo "  Signing framework binary: $bin"
-                codesign --force --sign "$IDENTITY" \
-                  --options runtime \
-                  --entitlements ./entitlements.mac.plist \
-                  --timestamp \
-                  "$bin" 2>/dev/null || true
-              fi
-            done
-            # Sign the framework bundle itself
-            codesign --force --sign "$IDENTITY" \
+          find "$RUNTIME_DIR/_internal" -name "*.framework" -type d -depth | while read -r framework; do
+            echo "Signing framework bundle: $framework"
+            codesign --force --deep --sign "$IDENTITY" \
               --options runtime \
               --entitlements ./entitlements.mac.plist \
               --timestamp \
               "$framework"
+            codesign --verify --verbose "$framework"
           done
 
           # Sign the main executable last
