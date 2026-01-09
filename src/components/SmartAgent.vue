@@ -626,7 +626,7 @@
                 style="cursor: pointer;"
               >
                 <div class="columns">
-                  <div class="column is-8">
+                  <div class="column is-12">
                     <h3
                       class="fira-sans-condensed-black-italic is-size-4 has-text-white"
                     >
@@ -652,15 +652,6 @@
                         {{ project.yourPositions }} Active Positions
                       </span>
                     </div>
-                  </div>
-                  <div class="column is-4 has-text-right">
-                    <button
-                      class="button is-info is-large"
-                      @click.stop="openMarketDetails(project)"
-                    >
-                      <span class="material-symbols-outlined mr-2">launch</span>
-                      View Details
-                    </button>
                   </div>
                 </div>
                 <hr />
@@ -707,8 +698,13 @@
                 class="fira-sans-condensed-black-italic is-size-3 has-text-white has-text-left mb-4"
               >
                 <span class="material-symbols-outlined mr-2">psychology</span>
-                Your Trading Agents
+                Your Autonomous Trading Agents
               </h2>
+              <p class="has-text-grey-light is-size-6 mb-4">
+                Autonomous agents monitor markets and execute trades on your behalf.
+                <strong class="has-text-success">Active</strong> = trading automatically.
+                <strong class="has-text-warning">Paused</strong> = monitoring only, no trades.
+              </p>
 
               <div
                 v-for="(agent, idx) in deployedAgents"
@@ -733,8 +729,12 @@
                             ? 'is-success'
                             : 'is-warning'
                         "
+                        :title="agent.status === 'active' ? 'Agent is actively executing trades' : 'Agent is paused - monitoring only'"
                       >
-                        {{ agent.status === "active" ? "Active" : "Paused" }}
+                        <span class="material-symbols-outlined mr-1" style="font-size: 14px;">
+                          {{ agent.status === "active" ? "play_circle" : "pause_circle" }}
+                        </span>
+                        {{ agent.status === "active" ? "Autonomous Trading" : "Paused" }}
                       </span>
                       <span
                         class="tag is-info fira-sans-condensed-black-italic"
@@ -750,6 +750,7 @@
                         agent.status === 'active' ? 'is-warning' : 'is-success'
                       "
                       @click="toggleAgent(agent)"
+                      :title="agent.status === 'active' ? 'Pause autonomous trading' : 'Resume autonomous trading'"
                     >
                       <span class="material-symbols-outlined mr-2">
                         {{ agent.status === "active" ? "pause" : "play_arrow" }}
@@ -759,6 +760,7 @@
                     <button
                       class="button is-info is-outlined is-medium ml-2"
                       @click="viewAgentDetails(agent)"
+                      title="View agent details and performance"
                     >
                       <span class="material-symbols-outlined mr-2">
                         analytics
@@ -770,6 +772,7 @@
                       v-if="agent.name === 'Copy Master'"
                       class="button is-success is-outlined is-medium ml-2"
                       @click="runAgentAnalysis(agent)"
+                      title="Run market analysis now"
                     >
                       <span class="material-symbols-outlined mr-2">
                         auto_read_play
@@ -948,6 +951,174 @@
       </div>
     </Transition>
   </Teleport>
+
+  <!-- Alert Modal (replaces native alerts) -->
+  <Teleport to="body">
+    <Transition name="fade">
+      <div
+        v-if="alertModal.show"
+        class="market-modal-overlay"
+        @click.self="closeAlert"
+      >
+        <div class="market-modal alert-modal">
+          <div class="has-text-right">
+            <button
+              class="button is-danger"
+              @click="closeAlert"
+              title="Close"
+            >
+              <span class="material-symbols-outlined">close</span>
+            </button>
+          </div>
+          <div class="modal-header">
+            <span
+              class="material-symbols-outlined is-size-1"
+              :class="{
+                'has-text-info': alertModal.type === 'info',
+                'has-text-success': alertModal.type === 'success',
+                'has-text-warning': alertModal.type === 'warning',
+                'has-text-danger': alertModal.type === 'error',
+              }"
+            >
+              {{ alertModal.icon }}
+            </span>
+            <h2 class="fira-sans-condensed-black-italic is-size-3">
+              {{ alertModal.title }}
+            </h2>
+          </div>
+
+          <div class="modal-body">
+            <div class="market-description models__activity--payouts">
+              <p style="white-space: pre-wrap;">{{ alertModal.message }}</p>
+            </div>
+          </div>
+
+          <div class="modal-footer has-text-centered">
+            <button
+              class="button is-medium"
+              :class="{
+                'is-info': alertModal.type === 'info',
+                'is-success': alertModal.type === 'success',
+                'is-warning': alertModal.type === 'warning',
+                'is-danger': alertModal.type === 'error',
+              }"
+              @click="closeAlert"
+            >
+              <span class="material-symbols-outlined mr-2">check</span>
+              OK
+            </button>
+          </div>
+        </div>
+      </div>
+    </Transition>
+  </Teleport>
+
+  <!-- Agent Details Modal -->
+  <Teleport to="body">
+    <Transition name="fade">
+      <div
+        v-if="agentDetailsModal.show && agentDetailsModal.agent"
+        class="market-modal-overlay"
+        @click.self="closeAgentDetails"
+      >
+        <div class="market-modal">
+          <div class="has-text-right">
+            <button
+              class="button is-danger"
+              @click="closeAgentDetails"
+              title="Close"
+            >
+              <span class="material-symbols-outlined">close</span>
+            </button>
+          </div>
+          <div class="modal-header">
+            <span class="material-symbols-outlined is-size-1">
+              {{ agentDetailsModal.agent.icon || "psychology" }}
+            </span>
+            <span
+              class="modal-market-badge fira-sans-condensed-black-italic is-size-2"
+              :class="agentDetailsModal.agent.status === 'active' ? 'is-success' : 'is-warning'"
+            >
+              {{ agentDetailsModal.agent.status === 'active' ? 'ACTIVE' : 'PAUSED' }}
+            </span>
+            <h2 class="fira-sans-condensed-black-italic is-size-3">
+              {{ agentDetailsModal.agent.name }}
+            </h2>
+          </div>
+
+          <div class="modal-body">
+            <div class="market-description models__activity--payouts">
+              <div class="modal-status mb-5">
+                <span
+                  class="status-pill fira-sans-condensed-black-italic is-size-5"
+                  :class="agentDetailsModal.agent.status === 'active' ? 'ok' : 'warning'"
+                >
+                  {{ agentDetailsModal.agent.status === 'active' ? 'Autonomous Trading Enabled' : 'Autonomous Trading Paused' }}
+                </span>
+              </div>
+              <p class="mb-4">
+                <strong>What does this status mean?</strong><br/>
+                <span v-if="agentDetailsModal.agent.status === 'active'">
+                  This agent is <strong>actively monitoring markets</strong> and will automatically execute trades based on its strategy.
+                  It operates autonomously, analyzing market conditions and placing trades without requiring your approval for each transaction.
+                </span>
+                <span v-else>
+                  This agent is <strong>paused</strong> and will not execute any trades.
+                  Market analysis continues in the background, but no autonomous actions are taken.
+                  Resume the agent to enable automatic trading.
+                </span>
+              </p>
+            </div>
+
+            <div class="features-list fira-sans-condensed-black-italic mt-4">
+              <h3 class="is-size-5 mb-3">Performance Metrics</h3>
+              <ul>
+                <li><strong>Total Trades:</strong> {{ agentDetailsModal.agent.tradesCount }}</li>
+                <li><strong>7-Day Return:</strong> <span :class="agentDetailsModal.agent.return7d >= 0 ? 'has-text-success' : 'has-text-danger'">{{ agentDetailsModal.agent.return7d >= 0 ? '+' : '' }}{{ agentDetailsModal.agent.return7d }}%</span></li>
+                <li><strong>Win Rate:</strong> {{ agentDetailsModal.agent.winRate }}%</li>
+                <li><strong>Avg Trade Size:</strong> {{ agentDetailsModal.agent.avgTradeSize }} BONZAI</li>
+                <li><strong>Last Trade:</strong> {{ agentDetailsModal.agent.lastTrade }}</li>
+              </ul>
+            </div>
+
+            <div class="requirements-summary mt-4">
+              <h3 class="requirements-title fira-sans-condensed-black-italic is-size-4">
+                Agent Capabilities
+              </h3>
+              <div class="req-row">
+                <span class="material-symbols-outlined">analytics</span>
+                <span class="req-text">Real-time market analysis</span>
+                <span class="req-status met">✓</span>
+              </div>
+              <div class="req-row">
+                <span class="material-symbols-outlined">content_copy</span>
+                <span class="req-text">Copy-trading from top performers</span>
+                <span class="req-status met">✓</span>
+              </div>
+              <div class="req-row">
+                <span class="material-symbols-outlined">shield</span>
+                <span class="req-text">Risk management controls</span>
+                <span class="req-status met">✓</span>
+              </div>
+            </div>
+          </div>
+
+          <div class="modal-footer has-text-centered">
+            <button
+              class="button is-medium"
+              :class="agentDetailsModal.agent.status === 'active' ? 'is-warning' : 'is-success'"
+              @click="toggleAgent(agentDetailsModal.agent); closeAgentDetails()"
+            >
+              <span class="material-symbols-outlined mr-2">
+                {{ agentDetailsModal.agent.status === 'active' ? 'pause' : 'play_arrow' }}
+              </span>
+              {{ agentDetailsModal.agent.status === 'active' ? 'Pause Agent' : 'Resume Agent' }}
+            </button>
+          </div>
+        </div>
+      </div>
+    </Transition>
+  </Teleport>
 </template>
 
 <script>
@@ -985,6 +1156,49 @@ export default {
     const aiModalMessage = ref("");
     const aiProgress = ref(0);
     const selectedMarketDetails = ref(null);
+
+    // Alert modal state (replaces native alerts)
+    const alertModal = reactive({
+      show: false,
+      title: "",
+      message: "",
+      type: "info", // info, success, warning, error
+      icon: "info",
+    });
+
+    const showAlert = (title, message, type = "info") => {
+      const icons = {
+        info: "info",
+        success: "check_circle",
+        warning: "warning",
+        error: "error",
+      };
+      alertModal.title = title;
+      alertModal.message = message;
+      alertModal.type = type;
+      alertModal.icon = icons[type] || "info";
+      alertModal.show = true;
+    };
+
+    const closeAlert = () => {
+      alertModal.show = false;
+    };
+
+    // Agent details modal state
+    const agentDetailsModal = reactive({
+      show: false,
+      agent: null,
+    });
+
+    const openAgentDetails = (agent) => {
+      agentDetailsModal.agent = agent;
+      agentDetailsModal.show = true;
+    };
+
+    const closeAgentDetails = () => {
+      agentDetailsModal.show = false;
+      agentDetailsModal.agent = null;
+    };
 
     const projectForm = reactive({
       name: "",
@@ -1076,11 +1290,13 @@ export default {
       if (!prompt || typeof prompt !== "string") {
         return null;
       }
-      // Check if the model file exists on disk. If not, alert the user.
+      // Check if the model file exists on disk. If not, show modal.
       const available = await isModelAvailable();
       if (!available) {
-        alert(
-          `The selected model (${currentModel.modelname}) is not downloaded. Please download it via the model manager before using AI features.`
+        showAlert(
+          "Model Not Available",
+          `The selected model (${currentModel.modelname}) is not downloaded. Please download it via the model manager before using AI features.`,
+          "warning"
         );
         return null;
       }
@@ -1104,7 +1320,7 @@ export default {
           return resp;
         }
       } catch (e) {
-        alert("An error occurred while communicating with the local model.");
+        showAlert("Communication Error", "An error occurred while communicating with the local model.", "error");
       }
       return null;
     };
@@ -1116,8 +1332,10 @@ export default {
     });
 
     const buyProjectAccess = (projectName) => {
-      alert(
-        `Purchasing access to ${projectName}...\n\nThis will allow you to trade in all ${projectName} prediction markets and deploy your agents there.`
+      showAlert(
+        "Purchasing Access",
+        `Purchasing access to ${projectName}...\n\nThis will allow you to trade in all ${projectName} prediction markets and deploy your agents there.`,
+        "info"
       );
       // Built‑in DSLA projects with static data. Dynamic projects created in Sell tab are
       // stored in `marketProjects`. We merge both when purchasing access.
@@ -1221,12 +1439,12 @@ export default {
             );
           }
         }
-        alert(messages.join("\n\n---\n\n"));
+        showAlert("Market Analysis", messages.join("\n\n---\n\n"), "success");
       } catch (err) {
-        alert(
-          `An error occurred while analysing Polymarket markets: ${
-            err && err.message ? err.message : err
-          }`
+        showAlert(
+          "Analysis Error",
+          `An error occurred while analysing Polymarket markets: ${err && err.message ? err.message : err}`,
+          "error"
         );
       } finally {
         showAIModal.value = false;
@@ -1234,8 +1452,10 @@ export default {
     };
 
     const buyAgent = async (agentName) => {
-      alert(
-        `Deploying ${agentName}...\n\nThis agent will begin analysing markets and providing recommendations.`
+      showAlert(
+        "Deploying Agent",
+        `Deploying ${agentName}...\n\nThis agent will begin analysing markets and providing recommendations.`,
+        "info"
       );
       // Only Copy Master is available. Define its default state.
       const copyMasterData = {
@@ -1336,15 +1556,17 @@ export default {
 
     const launchProject = () => {
       if (!projectForm.name || !projectForm.tokenSymbol) {
-        alert("Please fill in required fields: Project Name and Token Symbol");
+        showAlert("Missing Fields", "Please fill in required fields: Project Name and Token Symbol", "warning");
         return;
       }
       aiModalMessage.value = `Deploying ${projectForm.name} to blockchain...`;
       showAIModal.value = true;
       setTimeout(() => {
         showAIModal.value = false;
-        alert(
-          `🚀 ${projectForm.name} launched successfully!\n\nYour prediction market project is now live with the ${projectForm.tokenSymbol} token.`
+        showAlert(
+          "Project Launched",
+          `${projectForm.name} launched successfully!\n\nYour prediction market project is now live with the ${projectForm.tokenSymbol} token.`,
+          "success"
         );
         // Compute the number of markets from the marketIdeas field
         const marketsCount = projectForm.marketIdeas
@@ -1379,8 +1601,10 @@ export default {
     };
 
     const viewMarkets = (project) => {
-      alert(
-        `Opening ${project.name} markets...\n\nYou have access to ${project.markets} active SLAs. You can place predictions, view odds, and monitor resolutions.`
+      showAlert(
+        `${project.name} Markets`,
+        `You have access to ${project.markets} active SLAs. You can place predictions, view odds, and monitor resolutions.`,
+        "info"
       );
     };
 
@@ -1389,9 +1613,7 @@ export default {
     };
 
     const viewAgentDetails = (agent) => {
-      alert(
-        `${agent.name} Details\n\nStatus: ${agent.status}\nTrades: ${agent.tradesCount}\n7d Return: ${agent.return7d}%\nWin Rate: ${agent.winRate}%`
-      );
+      openAgentDetails(agent);
     };
 
     /**
@@ -1411,7 +1633,7 @@ export default {
      */
     const populateDSLAFields = async () => {
       if (!selectedUseCase.value) {
-        alert("Please select a DSLA use case to populate.");
+        showAlert("No Use Case Selected", "Please select a DSLA use case to populate.", "warning");
         return;
       }
       aiModalMessage.value = `Generating ${selectedUseCase.value.label} market template...`;
@@ -1535,7 +1757,7 @@ export default {
       if (agent.name === "Copy Master") {
         await runCopyMasterAnalysis();
       } else {
-        alert("Analysis not available for this agent.");
+        showAlert("Analysis Unavailable", "Analysis not available for this agent.", "info");
       }
     };
 
@@ -1574,6 +1796,12 @@ export default {
       isModelAvailable,
       sendMessage,
       modelLoaded,
+      // Alert modal
+      alertModal,
+      closeAlert,
+      // Agent details modal
+      agentDetailsModal,
+      closeAgentDetails,
     };
   },
 };
@@ -1936,6 +2164,12 @@ ol {
   color: rgba(16, 185, 129, 1);
   border-color: rgba(16, 185, 129, 0.55);
   background: rgba(16, 185, 129, 0.12);
+}
+
+.market-modal .status-pill.warning {
+  color: rgba(255, 193, 7, 1);
+  border-color: rgba(255, 193, 7, 0.55);
+  background: rgba(255, 193, 7, 0.12);
 }
 
 .market-modal .features-list ul {

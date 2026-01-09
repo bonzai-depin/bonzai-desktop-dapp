@@ -305,6 +305,16 @@
                   </div>
                 </div>
 
+                <!-- ACCESS REQUIREMENTS -->
+                <AccessRequirements
+                  ref="accessRef"
+                  level="LVL4"
+                  :demo-prompt="DEMO_PROMPT"
+                  :is-generating="isLoading"
+                  @access-changed="onAccessChanged"
+                  @demo-generate="onDemoGenerate"
+                />
+
                 <form ref="promptForm" @submit.prevent>
                   <div class="columns">
                     <div class="column is-8">
@@ -313,14 +323,14 @@
                         type="text"
                         placeholder="Describe your animation..."
                         v-model="form.prompt"
-                        @keyup.enter="sendMessage(form.prompt)"
-                        :disabled="isLoading"
+                        @keyup.enter="canGenerateWithAccess && sendMessage(form.prompt)"
+                        :disabled="isLoading || !hasAccess"
                       />
                     </div>
                     <div class="column is-4">
                       <button
                         class="button is-warning is-large pl-2 is-fullwidth"
-                        :disabled="isLoading || !hasAnyImage"
+                        :disabled="isLoading || !hasAnyImage || !hasAccess"
                         @click="sendMessage(form.prompt)"
                         title="Generate video from image"
                       >
@@ -436,6 +446,9 @@ import {
   stopGeneration,
   clearError,
 } from "../stores/generationStore";
+import AccessRequirements from "./AccessRequirements.vue";
+
+const DEMO_PROMPT = "A bonsai tree gently swaying in a soft breeze, leaves rustling";
 
 const API_BASE =
   (typeof process !== "undefined" && process.env?.VITE_API_BASE) ||
@@ -447,6 +460,7 @@ const WS_GEN = `${API_BASE}/generation`;
 
 export default {
   name: "GenerativeVideo",
+  components: { AccessRequirements },
   props: { existingImageBase64: { type: String, default: "" } },
   setup(props) {
     const mode = ref("turbo");
@@ -456,6 +470,21 @@ export default {
     const inferences = reactive([]);
     const hasCopy = reactive([]);
     const planReq = reactive({ controller: null, seq: 0 });
+
+    // ------------ access control -----------
+    const accessRef = ref(null);
+    const hasAccess = ref(false);
+
+    const onAccessChanged = (access) => {
+      hasAccess.value = access;
+    };
+
+    const onDemoGenerate = (demoPrompt) => {
+      form.prompt = demoPrompt;
+      sendMessage(demoPrompt, true); // true = isDemo
+    };
+
+    const canGenerateWithAccess = computed(() => hasAccess.value && !isLoading.value);
 
     const readiness = reactive({
       ok: true,
@@ -1005,9 +1034,12 @@ export default {
         reader.readAsDataURL(file);
       });
 
-    const sendMessage = async (prompt) => {
+    const sendMessage = async (prompt, isDemo = false) => {
       if (!prompt) return;
       if (!hasAnyImage.value) return;
+      // Allow demo generation even without access
+      if (!isDemo && !hasAccess.value) return;
+
       const sizeMaps = {
         turbo: { sd: [480, 640], hd: [480, 832], fhd: [768, 1280] },
         quality: { sd: [480, 640], hd: [480, 832], fhd: [1024, 1728] },
@@ -1020,7 +1052,7 @@ export default {
       if (mode.value === "quality") {
         frames = normalizeFramesForWan(frames);
         payload = {
-          prompt,
+          prompt: actualPrompt,
           height: h,
           width: w,
           frames: Math.min(frames, 81),
@@ -1037,7 +1069,7 @@ export default {
         // Frames must be (n*8)+1 for LTX-2
         frames = ((frames - 1) >> 3) * 8 + 1;
         payload = {
-          prompt,
+          prompt: actualPrompt,
           height: h,
           width: w,
           frames: frames,
@@ -1056,7 +1088,7 @@ export default {
         };
       } else {
         payload = {
-          prompt,
+          prompt: actualPrompt,
           height: h,
           width: w,
           frames: frames,
@@ -1226,6 +1258,14 @@ export default {
       pickedImageName,
       hasAnyImage,
       imagePreviewUrl,
+      // access control
+      accessRef,
+      hasAccess,
+      canGenerateWithAccess,
+      onAccessChanged,
+      onDemoGenerate,
+      DEMO_PROMPT,
+      // actions
       sendMessage,
       copy,
       downloadVideo,

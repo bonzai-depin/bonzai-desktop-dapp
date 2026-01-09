@@ -148,14 +148,24 @@
           <div class="models__activity--payouts">
             <div class="columns">
               <div class="column is-12">
+                <!-- ACCESS REQUIREMENTS -->
+                <AccessRequirements
+                  ref="accessRef"
+                  level="LVL5"
+                  :demo-prompt="DEMO_PROMPT"
+                  :is-generating="isLoading"
+                  @access-changed="onAccessChanged"
+                  @demo-generate="onDemoGenerate"
+                />
+
                 <form ref="promptForm" @submit.prevent="onSubmit">
                   <textarea
                     id="prompt"
                     class="input is-large is-fullwidth"
-                    placeholder="Describe a 3D object... (e.g., 'A mystical crystal orb with inner glow')"
+                    placeholder="Describe a 3D object... (e.g., A mystical crystal orb with inner glow)"
                     v-model="form.prompt"
-                    :disabled="isLoading"
-                    @keydown.enter.exact.prevent="onSubmit"
+                    :disabled="isLoading || !hasAccess"
+                    @keydown.enter.exact.prevent="canSubmitWithAccess && onSubmit()"
                     style="min-height: 5em"
                   ></textarea>
                   <button
@@ -257,9 +267,12 @@
 </template>
 
 <script>
-import { ref, reactive, onMounted, nextTick } from "vue";
+import { ref, reactive, computed, onMounted, nextTick } from "vue";
 import ThreeViewer from "./ThreeViewer.vue";
+import AccessRequirements from "./AccessRequirements.vue";
 import useClipboard from "vue-clipboard3";
+
+const DEMO_PROMPT = "A glowing crystal on a stone pedestal";
 
 function uuid() {
   return "xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx".replace(/[xy]/g, function (c) {
@@ -638,7 +651,7 @@ const createMockHelpers = () => {
 
 export default {
   name: "Generative3D",
-  components: { ThreeViewer },
+  components: { ThreeViewer, AccessRequirements },
   setup() {
     // ═══════════════════════════════════════════════════════════════════════
     // REACTIVE STATE
@@ -657,6 +670,24 @@ export default {
     const form = reactive({ prompt: "" });
 
     const MAX_RETRY_ATTEMPTS = 3;
+
+    // ═══════════════════════════════════════════════════════════════════════
+    // ACCESS CONTROL
+    // ═══════════════════════════════════════════════════════════════════════
+    const accessRef = ref(null);
+    const hasAccess = ref(false);
+
+    const onAccessChanged = (val) => {
+      hasAccess.value = val;
+    };
+    const onDemoGenerate = (demoPrompt) => {
+      form.prompt = demoPrompt;
+      onSubmit(true); // true = isDemo
+    };
+
+    const canSubmitWithAccess = computed(() => {
+      return form.prompt.trim() && !isLoading.value && hasAccess.value;
+    });
 
     // ═══════════════════════════════════════════════════════════════════════
     // STATIC DATA
@@ -1360,8 +1391,11 @@ OUTPUT ONLY THE FIXED JAVASCRIPT CODE. No markdown, no explanation.`;
     // ═══════════════════════════════════════════════════════════════════════
     // MAIN SUBMIT HANDLER
     // ═══════════════════════════════════════════════════════════════════════
-    const onSubmit = async () => {
+    const onSubmit = async (isDemo = false) => {
       if (!form.prompt.trim()) return;
+      // Allow demo generation even without access
+      if (!isDemo && !canSubmitWithAccess.value) return;
+
       isLoading.value = true;
       lastStatus.value = "Preparing...";
 
@@ -1455,6 +1489,13 @@ OUTPUT ONLY THE FIXED JAVASCRIPT CODE. No markdown, no explanation.`;
       removeInference,
       applyInference,
       onSubmit,
+      // Access control
+      accessRef,
+      hasAccess,
+      canSubmitWithAccess,
+      onAccessChanged,
+      onDemoGenerate,
+      DEMO_PROMPT,
     };
   },
 };

@@ -60,6 +60,13 @@
           <div class="models__activity--payouts">
             <div class="columns">
               <div class="column is-12">
+                <!-- ACCESS REQUIREMENTS (no demo for training - requires real datasets) -->
+                <AccessRequirements
+                  ref="accessRef"
+                  level="LVL6"
+                  @access-changed="onAccessChanged"
+                />
+
                 <!-- TRAINING TYPE SELECTION -->
                 <div class="control mb-5 has-text-left">
                   <input
@@ -583,6 +590,7 @@ import {
 import { v4 as uuid } from "uuid";
 import axios from "axios";
 import { io } from "socket.io-client";
+import AccessRequirements from "./AccessRequirements.vue";
 
 const API_BASE =
   (typeof process !== "undefined" && process.env?.VITE_API_BASE) ||
@@ -593,6 +601,9 @@ const WS_TRAINING = `${API_BASE}/training`;
 
 export default {
   name: "GenerativeTraining",
+  components: {
+    AccessRequirements,
+  },
   setup() {
     // Training type selection
     const trainingType = ref("llm"); // 'llm' or 'sdxl'
@@ -650,6 +661,14 @@ export default {
       error: null,
     });
 
+    // Access control
+    const accessRef = ref(null);
+    const hasAccess = ref(false);
+
+    const onAccessChanged = (val) => {
+      hasAccess.value = val;
+    };
+
     // Socket
     const trainingSocket = ref(null);
 
@@ -663,6 +682,7 @@ export default {
       if (!selectedDataset.value) return false;
       if (trainingType.value === "sdxl" && !sdxlConfig.instance_prompt)
         return false;
+      if (!hasAccess.value) return false;
       return true;
     });
 
@@ -920,6 +940,10 @@ export default {
       exportModel,
       deleteModel,
       mintModelNFT,
+      // Access control
+      accessRef,
+      hasAccess,
+      onAccessChanged,
     };
   },
 };

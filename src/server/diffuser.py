@@ -81,6 +81,7 @@ except Exception:
 from diffusers import (
     AutoPipelineForText2Image,
     AutoModel,
+    FluxKontextPipeline,
     StableDiffusionXLPipeline,
     StableDiffusionXLImg2ImgPipeline,
     LTXPipeline,
@@ -1292,7 +1293,8 @@ def _plan_for(pipeline: str) -> Dict[str, Any]:
     if pipeline == "flux_krea":
         return {"repos_to_fetch": [FLUX_KREA_REPO], "single_files": [_sf(FLUX_KREA_GGUF_NAME, FLUX_KREA_GGUF_URL)]}
     if pipeline == "flux_kontext":
-        return {"repos_to_fetch": [FLUX_KONTEXT_REPO], "single_files": [_sf(FLUX_KONTEXT_GGUF_NAME, FLUX_KONTEXT_GGUF_URL)]}
+        # Need both Kontext (for GGUF) and Krea (for pipeline structure - text encoders, vae, scheduler)
+        return {"repos_to_fetch": [FLUX_KREA_REPO], "single_files": [_sf(FLUX_KONTEXT_GGUF_NAME, FLUX_KONTEXT_GGUF_URL)]}
     if pipeline == "ltx_video":
         return {"repos_to_fetch": [LTX_REPO, LTX_UPSAMPLER_REPO], "single_files": []}
     if pipeline == "ltx_upscaler":
@@ -1502,8 +1504,13 @@ def _download_repo_files(pl: PipelineDownload, tid: str, repo_id: str, manifest:
     headers = {"Authorization": f"Bearer {_hf_token()}"} if _hf_token() else {}
     base = repo_local_dir(repo_id)
     base.mkdir(parents=True, exist_ok=True)
+
+    # Calculate total bytes; if sizes unknown, use file count for consistent tracking
+    byte_total = sum(int(f.get("size") or 0) for f in manifest)
+    use_bytes = byte_total > 0
+    total = byte_total if use_bytes else max(len(manifest), 1)
     done = 0
-    total = sum(int(f.get("size") or 0) for f in manifest) or 1
+    files_done = 0
     download_manager.update_progress(pl, tid, done, total)
 
     for f in manifest:
@@ -1514,14 +1521,26 @@ def _download_repo_files(pl: PipelineDownload, tid: str, repo_id: str, manifest:
         dest = base / rel
         dest.parent.mkdir(parents=True, exist_ok=True)
         if dest.exists() and (rsz == 0 or dest.stat().st_size == rsz):
-            done += (rsz or dest.stat().st_size)
+            if use_bytes:
+                done += (rsz or dest.stat().st_size)
+            else:
+                files_done += 1
+                done = files_done
             download_manager.update_progress(pl, tid, done, total)
             continue
         url = hf_hub_url(repo_id=repo_id, filename=rel, repo_type="model", revision="main")
-        _stream_download(url, dest, headers=headers,
-                         update=lambda inc: download_manager.update_progress(pl, tid, min(done + inc, total), total),
-                         is_cancelled=lambda: pl.cancelled)
-        done = min(done + (rsz or (dest.stat().st_size if dest.exists() else 0)), total)
+        if use_bytes:
+            current_done = done
+            _stream_download(url, dest, headers=headers,
+                             update=lambda inc, cd=current_done: download_manager.update_progress(pl, tid, min(cd + inc, total), total),
+                             is_cancelled=lambda: pl.cancelled)
+            done = min(done + (rsz or (dest.stat().st_size if dest.exists() else 0)), total)
+        else:
+            _stream_download(url, dest, headers=headers,
+                             update=lambda inc: None,  # No byte-level progress when tracking by file count
+                             is_cancelled=lambda: pl.cancelled)
+            files_done += 1
+            done = files_done
         download_manager.update_progress(pl, tid, done, total)
         eventlet.sleep(0)
 
@@ -2195,7 +2214,6 @@ def _img_b64_to_pil(b64: str) -> Image.Image:
 
 @app.route("/image/turbo", methods=["POST"])
 def image_turbo_sdxl():
-    """SDXL image generation with optional LoRA and refiner."""
     import logging as _logging
     _logging.getLogger("transformers.tokenization_utils_base").setLevel(_logging.ERROR)
 
@@ -2204,17 +2222,16 @@ def image_turbo_sdxl():
     if not prompt:
         return jsonify(_json_sanitize({"error": "Prompt is required"})), 400
 
-    negative_prompt = data.get("negative_prompt", 
-        "bad anatomy, extra hands, extra legs, extra fingers, poorly drawn face, fused face, cloned face")
+    negative_prompt = data.get("negative_prompt", "bad anatomy, extra hands, extra legs, extra fingers, poorly drawn face, fused face, cloned face")
     height = int(data.get("height", 1024))
-    width = int(data.get("width", 1024))
+    width  = int(data.get("width", 1024))
 
     ckpt_filename = (data.get("ckpt") or "cyberrealistic.safetensors").strip()
     lora_filename = (data.get("lora") or "cyberrealistic.safetensors").strip()
     lora_strength = float(data.get("lora_strength", 1.0))
 
     steps_base = int(data.get("steps_base", 40))
-    steps_ref = int(data.get("steps_refiner", 40))
+    steps_ref  = int(data.get("steps_refiner", 40))
     denoising_split = float(data.get("denoising_split", 0.9))
     cb_steps = int(data.get("callback_steps", 5))
     auto_dl = bool(data.get("auto_download", False))
@@ -2222,39 +2239,37 @@ def image_turbo_sdxl():
     guard = _repos_ready_or_resp(SDXL_BASE_REPO, SDXL_REFINER_REPO)
     if guard:
         if auto_dl:
-            started = _start_prefetch_pipeline("sdxl")
+            started = _start_prefetch_pipeline("sdxl_intermediate")
             return jsonify(_json_sanitize(started["json"])), started["http_status"]
         return guard
 
-    gen_id = genbus.new("sdxl", {"endpoint": "/image/turbo", "prompt": prompt})
+    gen_id = genbus.new("sdxl_intermediate", {"endpoint": "/image/intermediate", "prompt": prompt})
 
     try:
         device = DeviceManager.get_device()
-        dtype = DeviceManager.get_dtype(device)
+        dtype  = DeviceManager.get_dtype(device)
 
-        genbus.progress(gen_id, "loading_model", 0, 4)
+        base = None
+        if ckpt_filename:
+            try:
+                ckpt_path = (MODEL_DIR / ckpt_filename).resolve()
+                if ckpt_path.exists() and ckpt_path.stat().st_size > 0 and ckpt_path.suffix.lower() == ".safetensors":
+                    base = StableDiffusionXLPipeline.from_single_file(
+                        str(ckpt_path),
+                        torch_dtype=dtype,
+                        use_safetensors=True,
+                        local_files_only=True,
+                    ).to(device)
+                    logger.info(f"[sdxl] Loaded base from single-file checkpoint: {ckpt_path.name}")
+            except Exception as e:
+                logger.warning(f"[sdxl] Single-file load failed; falling back to repo: {e}")
 
-        # Use offline mode if pipeline is fully downloaded
-        with offline_mode_if_complete("sdxl") as is_offline:
-            base = None
-            if ckpt_filename:
-                try:
-                    ckpt_path = (MODEL_DIR / ckpt_filename).resolve()
-                    if ckpt_path.exists() and ckpt_path.stat().st_size > 0 and ckpt_path.suffix.lower() == ".safetensors":
-                        base = StableDiffusionXLPipeline.from_single_file(
-                            str(ckpt_path),
-                            dtype=dtype,
-                            use_safetensors=True,
-                            local_files_only=is_offline,
-                        ).to(device)
-                        logger.info(f"[sdxl] Loaded base from single-file checkpoint: {ckpt_path.name}")
-                except Exception as e:
-                    logger.warning(f"[sdxl] Single-file load failed; falling back to repo: {e}")
-
-            if base is None:
+        if base is None:
+            # Use offline mode if pipeline is fully downloaded
+            with offline_mode_if_complete("sdxl_intermediate") as is_offline:
                 base = StableDiffusionXLPipeline.from_pretrained(
                     str(repo_local_dir(SDXL_BASE_REPO)),
-                    dtype=dtype,
+                    torch_dtype=dtype,
                     use_safetensors=True,
                     variant="fp16",
                     local_files_only=is_offline,
@@ -2279,7 +2294,7 @@ def image_turbo_sdxl():
                         pipe.fuse_lora(lora_scale=strength)
                     except Exception:
                         pass
-                    logger.info(f"[sdxl] UNet attn_procs LoRA applied to {tag}")
+                    logger.info(f"[sdxl] UNet attn_procs LoRA applied to {tag}: {lora_path.name} (strength={strength})")
                     return True
                 except Exception:
                     logger.warning(f"[sdxl] Skipping {tag} LoRA: {e1}")
@@ -2297,19 +2312,14 @@ def image_turbo_sdxl():
             pass
 
         from compel import Compel, ReturnedEmbeddingsType
-
         def _make_compel(pipe):
             tok_list, enc_list, requires_pooled = [], [], []
             te1, tok1 = getattr(pipe, "text_encoder", None), getattr(pipe, "tokenizer", None)
             te2, tok2 = getattr(pipe, "text_encoder_2", None), getattr(pipe, "tokenizer_2", None)
             if te1 is not None and tok1 is not None:
-                tok_list.append(tok1)
-                enc_list.append(te1)
-                requires_pooled.append(False)
+                tok_list.append(tok1); enc_list.append(te1); requires_pooled.append(False)
             if te2 is not None and tok2 is not None:
-                tok_list.append(tok2)
-                enc_list.append(te2)
-                requires_pooled.append(True)
+                tok_list.append(tok2); enc_list.append(te2); requires_pooled.append(True)
             if not tok_list:
                 raise RuntimeError("Pipeline lacks text encoders/tokenizers required for Compel.")
             return Compel(
@@ -2325,8 +2335,7 @@ def image_turbo_sdxl():
                 return a, b
             max_len = max(a.shape[1], b.shape[1])
             def pad(t):
-                if t.shape[1] == max_len:
-                    return t
+                if t.shape[1] == max_len: return t
                 pad_len = max_len - t.shape[1]
                 pad_tensor = torch.zeros(t.shape[0], pad_len, t.shape[2], dtype=t.dtype, device=t.device)
                 return torch.cat([t, pad_tensor], dim=1)
@@ -2340,10 +2349,6 @@ def image_turbo_sdxl():
 
         def cb_base(step, timestep, latents):
             genbus.progress(gen_id, "base_sampling", int(step), steps_base)
-
-        base = _force_pipeline_dtype(base, dtype)
-
-        genbus.progress(gen_id, "base_sampling", 0, steps_base)
 
         latents = base(
             prompt_embeds=prompt_embeds_base,
@@ -2359,22 +2364,17 @@ def image_turbo_sdxl():
             callback_steps=max(1, cb_steps),
         ).images
 
-        genbus.progress(gen_id, "loading_refiner", 2, 4)
-
-        with offline_mode_if_complete("sdxl") as is_offline:
+        # Use offline mode if pipeline is fully downloaded
+        with offline_mode_if_complete("sdxl_intermediate") as is_offline:
             refiner = StableDiffusionXLImg2ImgPipeline.from_pretrained(
                 str(repo_local_dir(SDXL_REFINER_REPO)),
                 text_encoder_2=getattr(base, "text_encoder_2", None),
                 vae=getattr(base, "vae", None),
+                torch_dtype=dtype,
                 use_safetensors=True,
                 variant="fp16",
                 local_files_only=is_offline,
             ).to(device)
-
-        refiner.unet = refiner.unet.to(dtype=dtype)
-        if refiner.text_encoder_2 is not None:
-            refiner.text_encoder_2 = refiner.text_encoder_2.to(dtype=dtype)
-        refiner.vae = refiner.vae.to(dtype=torch.float32, device=device)
 
         if lora_filename:
             lp = (MODEL_DIR / lora_filename).resolve()
@@ -2396,8 +2396,6 @@ def image_turbo_sdxl():
         def cb_ref(step, timestep, latents_):
             genbus.progress(gen_id, "refine_sampling", int(step), steps_ref)
 
-        genbus.progress(gen_id, "refine_sampling", 0, steps_ref)
-
         image = refiner(
             image=latents,
             prompt_embeds=prompt_embeds_ref,
@@ -2411,20 +2409,19 @@ def image_turbo_sdxl():
             callback_steps=max(1, cb_steps),
         ).images[0]
 
-        buf = BytesIO()
-        _apply_watermark(image).save(buf, format="PNG")
+        buf = BytesIO(); _apply_watermark(image).save(buf, format="PNG")
         encoded = base64.b64encode(buf.getvalue()).decode("utf-8")
-        
-        genbus.progress(gen_id, "complete", 4, 4)
         genbus.finish(gen_id, {"ok": True})
-        
         return jsonify(_json_sanitize({
-            "prompt": prompt, "negative_prompt": negative_prompt, "image": encoded,
-            "generation_id": gen_id, "generation_websocket_url": generation_url()
+            "prompt": prompt,
+            "negative_prompt": negative_prompt,
+            "image": encoded,
+            "generation_id": gen_id,
+            "generation_websocket_url": generation_url()
         })), 201
 
     except Exception as e:
-        logger.exception("SDXL generation failed")
+        logger.exception("SDXL intermediate failed")
         genbus.error(gen_id, str(e))
         return jsonify(_json_sanitize({"error": str(e)})), 500
     finally:
@@ -2624,8 +2621,8 @@ def image_kontext_i2i():
     image_url = (data.get("image_url") or "").strip()
     h = int(data.get("height", 512))
     w = int(data.get("width", 768))
-    steps = int(data.get("steps", 6))
-    strength = float(data.get("strength", 0.5))
+    steps = int(data.get("steps", 28))  # FluxKontextPipeline default is 28
+    guidance = float(data.get("guidance_scale", 3.5))
     auto_dl = bool(data.get("auto_download", False))
 
     if not prompt:
@@ -2638,39 +2635,84 @@ def image_kontext_i2i():
         return guard
 
     gen_id = genbus.new("flux_kontext", {"endpoint": "/image/kontext", "w": w, "h": h, "steps": steps})
-    
+
     try:
         genbus.progress(gen_id, "loading_model", 0, 3)
-        
-        device = DeviceManager.get_device()
-        compute_dtype = torch.bfloat16 if device.type in ("cuda", "mps") else torch.float32
 
-        # Use offline mode if pipeline is fully downloaded
-        with offline_mode_if_complete("flux_kontext") as is_offline:
+        device = DeviceManager.get_device()
+        if device.type == "cuda":
+            compute_dtype = torch.bfloat16
+        elif device.type == "mps":
+            compute_dtype = torch.float16  # MPS doesn't support bfloat16 well
+        else:
+            compute_dtype = torch.float32
+
+        # Kontext repo doesn't have standard diffusers structure (no transformer/config.json)
+        # Use FLUX Krea repo as base (has text encoders, scheduler, vae, transformer config)
+        # and inject the Kontext GGUF transformer
+        tr_cfg = repo_local_dir(FLUX_KREA_REPO) / "transformer" / "config.json"
+
+        # Use offline mode if pipeline is fully downloaded (uses Krea repo for structure)
+        with offline_mode_if_complete("flux_krea") as is_offline:
             transformer = FluxTransformer2DModel.from_single_file(
                 str(MODEL_DIR / FLUX_KONTEXT_GGUF_NAME),
+                config=str(tr_cfg),
                 quantization_config=GGUFQuantizationConfig(compute_dtype=compute_dtype),
                 dtype=compute_dtype,
             ).to(device)
 
-            pipe = FluxImg2ImgPipeline.from_pretrained(
-                str(repo_local_dir(FLUX_KONTEXT_REPO)),
+            # Use FluxKontextPipeline with Krea repo base (has proper diffusers structure)
+            # and inject the Kontext transformer
+            pipe = FluxKontextPipeline.from_pretrained(
+                str(repo_local_dir(FLUX_KREA_REPO)),
                 transformer=transformer,
-                dtype=compute_dtype,
+                torch_dtype=compute_dtype,
                 local_files_only=is_offline,
-            ).to(device)
+            )
+
+        # Memory optimizations for MPS/limited VRAM
+        if device.type == "mps":
+            # CPU offload moves models to CPU when not in use (compatible with GGUF)
+            pipe.enable_model_cpu_offload()
+            # Enable attention slicing for lower memory usage
+            if hasattr(pipe, 'enable_attention_slicing'):
+                pipe.enable_attention_slicing("max")
+            # Enable VAE slicing/tiling
+            if hasattr(pipe, 'vae') and hasattr(pipe.vae, 'enable_slicing'):
+                pipe.vae.enable_slicing()
+            if hasattr(pipe, 'vae') and hasattr(pipe.vae, 'enable_tiling'):
+                pipe.vae.enable_tiling()
+        else:
+            pipe = pipe.to(device)
+            # Ensure components are in correct dtype
+            pipe.text_encoder = pipe.text_encoder.to(dtype=compute_dtype)
+            pipe.text_encoder_2 = pipe.text_encoder_2.to(dtype=compute_dtype)
+            if hasattr(pipe, 'vae'):
+                pipe.vae = pipe.vae.to(dtype=compute_dtype)
 
         init_img = load_image(image_url).convert("RGB") if image_url else _img_b64_to_pil(image_b64)
 
+        # Resize input image to fit within memory constraints on MPS
+        max_dim = 768 if device.type == "mps" else 1024
+        if init_img.width > max_dim or init_img.height > max_dim:
+            ratio = min(max_dim / init_img.width, max_dim / init_img.height)
+            new_size = (int(init_img.width * ratio), int(init_img.height * ratio))
+            init_img = init_img.resize(new_size, Image.LANCZOS)
+            h, w = new_size[1], new_size[0]
+            logger.info(f"[Kontext] Resized input to {new_size} for memory constraints")
+
         genbus.progress(gen_id, "generating", 1, 3)
 
+        # FluxKontextPipeline uses guidance_scale for edit strength (not strength param)
+        # Disable auto-resize to use our controlled dimensions
         out = pipe(
             prompt=prompt,
             image=init_img,
-            strength=strength,
-            height=h,
-            width=w,
+            height=min(h, max_dim),
+            width=min(w, max_dim),
             num_inference_steps=steps,
+            guidance_scale=guidance,
+            _auto_resize=False,
         ).images[0]
 
         buf = BytesIO()

@@ -14,11 +14,14 @@ export default defineConfig({
         ...builtinModules,
         ...builtinModules.map(m => `node:${m}`),
       ],
+      output: {
+        entryFileNames: 'preload.js',
+        format: 'cjs',
+      },
     },
     lib: {
       entry: resolve(__dirname, 'src/preload.js'),
       formats: ['cjs'],
-      fileName: () => 'preload.js',
     },
   },
   resolve: {

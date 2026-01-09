@@ -303,14 +303,24 @@
               </div>
             </div>
           </div>
+          <!-- ACCESS REQUIREMENTS -->
+          <AccessRequirements
+            ref="accessRef"
+            level="LVL1"
+            :demo-prompt="DEMO_PROMPT"
+            :is-generating="isLoading"
+            @access-changed="onAccessChanged"
+            @demo-generate="onDemoGenerate"
+          />
+
           <form ref="promptForm" @submit.prevent>
             <input
               class="input is-large is-fullwidth"
               type="text"
               placeholder="Ask me something and press enter..."
               v-model="form.prompt"
-              @keyup.enter.native="sendMessage(form.prompt)"
-              :disabled="isLoading"
+              @keyup.enter.native="hasAccess && sendMessage(form.prompt)"
+              :disabled="isLoading || !hasAccess"
             />
             <button
               class="button chat is-loading is-outlined is-info is-large is-fullwidth"
@@ -351,18 +361,22 @@
 </template>
 
 <script>
-import { ref, reactive, toRaw } from "vue";
+import { ref, reactive, toRaw, computed } from "vue";
 import { v4 as uuid } from "uuid";
 import VueMarkdown from "vue-markdown-render";
 import useClipboard from "vue-clipboard3";
 
 import GenerativeImage from "./GenerativeImage.vue";
+import AccessRequirements from "./AccessRequirements.vue";
+
+const DEMO_PROMPT = "Explain what makes a bonsai tree special in exactly 3 sentences.";
 
 export default {
   name: "GenerativeText",
   components: {
     VueMarkdown,
     GenerativeImage,
+    AccessRequirements,
   },
   setup() {
     const downloadProgress = ref(0);
@@ -370,6 +384,19 @@ export default {
     const isModel = ref(false);
     const openModel = ref(false);
     const openChat = ref(false);
+
+    // ------------ access control -----------
+    const accessRef = ref(null);
+    const hasAccess = ref(false);
+
+    const onAccessChanged = (access) => {
+      hasAccess.value = access;
+    };
+
+    const onDemoGenerate = (demoPrompt) => {
+      form.prompt = demoPrompt;
+      sendMessage(demoPrompt, true); // true = isDemo
+    };
     const availableModels = ref({
       codestral_22_B: {
         modelname: "Codestral 22B",
@@ -695,12 +722,15 @@ export default {
       }
     };
 
-    const sendMessage = async (prompt) => {
+    const sendMessage = async (prompt, isDemo = false) => {
+      // Allow demo generation even without access
+      if (!isDemo && !hasAccess.value) return;
+
       isLoading.value = true;
 
       try {
         // Inference
-        const assistantResult = await window.electronAPI.chat(form.prompt);
+        const assistantResult = await window.electronAPI.chat(prompt);
 
         const assistantMessage = {
           id: uuid(),
@@ -750,6 +780,12 @@ export default {
       resetChat,
       copy,
       hasCopy,
+      // access control
+      accessRef,
+      hasAccess,
+      onAccessChanged,
+      onDemoGenerate,
+      DEMO_PROMPT,
     };
   },
   async mounted() {

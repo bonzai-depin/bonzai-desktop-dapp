@@ -127,7 +127,6 @@
             class="models__list-item model video"
             :class="{ 'is-active': modelMode == 'video' }"
             @click="modelMode = 'video'"
-            :existingImageBase64="videoImageBase64"
           >
             <a>
               <h1>
@@ -152,7 +151,7 @@
           </li>
           <li
             class="models__list-item model robot"
-            :class="{ 'is-active': modelMode == '3D' }"
+            :class="{ 'is-active': modelMode == 'robot' }"
             @click="modelMode = 'robot'"
           >
             <a>
@@ -181,23 +180,26 @@
         </ul>
       </div>
     </div>
+    <!-- Each component has inline access requirements with demo mode -->
     <GenerativeText v-if="modelMode == 'chat'" />
-    <GenerativeImage v-if="modelMode == 'image'" />
-    <GenerativeVideo v-if="modelMode == 'video'" />
     <GenerativeMusic v-if="modelMode == 'music'" />
+    <GenerativeImage v-if="modelMode == 'image'" />
+    <GenerativeVideo v-if="modelMode == 'video'" :existingImageBase64="videoImageBase64" />
     <Generative3D v-if="modelMode == '3D'" />
+    <GenerativeRobot v-if="modelMode == 'robot'" />
     <SmartAgent v-if="modelMode == 'agent'" />
   </div>
   <BonzaiBottomBar />
 </template>
 
 <script>
-import { ref, reactive, onMounted, onUnmounted } from "vue";
+import { ref, reactive, provide, onMounted, onUnmounted } from "vue";
 import GenerativeText from "./components/GenerativeText.vue";
 import GenerativeImage from "./components/GenerativeImage.vue";
 import GenerativeVideo from "./components/GenerativeVideo.vue";
 import GenerativeMusic from "./components/GenerativeMusic.vue";
 import Generative3D from "./components/Generative3D.vue";
+import GenerativeRobot from "./components/GenerativeRobot.vue";
 import SmartAgent from "./components/SmartAgent.vue";
 import BonzaiBottomBar from "./components/BonzaiBottomBar.vue";
 
@@ -210,6 +212,7 @@ export default {
     GenerativeVideo,
     GenerativeMusic,
     Generative3D,
+    GenerativeRobot,
     SmartAgent,
     BonzaiBottomBar,
   },
@@ -233,6 +236,9 @@ export default {
       videoImageBase64.value = b64 || "";
       modelMode.value = "video"; // switch view
     };
+
+    // Provide goAnimateToVideo so child components can use it
+    provide("goAnimateToVideo", goAnimateToVideo);
 
     const handleServerRestart = async () => {
       serverStatus.show = true;

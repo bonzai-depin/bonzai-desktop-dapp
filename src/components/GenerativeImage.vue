@@ -109,6 +109,23 @@
                     Quality
                   </label>
 
+                  <input
+                    v-model="mode"
+                    :value="'edit'"
+                    id="mode_edit"
+                    type="radio"
+                    name="mode"
+                  />
+                  <label for="mode_edit" class="radio mr-1">
+                    <span
+                      class="material-symbols-outlined"
+                      style="font-size: 32px !important"
+                    >
+                      edit
+                    </span>
+                    Edit
+                  </label>
+
                   <span class="control">
                     <input
                       v-model="quality"
@@ -322,15 +339,53 @@
                   </div>
                 </div>
 
+                <!-- ACCESS REQUIREMENTS -->
+                <AccessRequirements
+                  ref="accessRef"
+                  level="LVL3"
+                  :demo-prompt="DEMO_PROMPT"
+                  :is-generating="isLoading"
+                  @access-changed="onAccessChanged"
+                  @demo-generate="onDemoGenerate"
+                />
+
+                <!-- IMAGE PICKER (Edit mode only) -->
+                <div class="notification p-4 preview mb-5" v-if="mode === 'edit'">
+                  <div class="file is-fullwidth is-medium">
+                    <label class="file-label">
+                      <input
+                        class="file-input"
+                        type="file"
+                        accept="image/*"
+                        @change="onImagePicked"
+                      />
+                      <span class="file-cta">
+                        <span class="file-icon">
+                          <span class="material-symbols-outlined">image</span>
+                        </span>
+                        <span class="file-label">Browse image to edit...</span>
+                      </span>
+                    </label>
+                  </div>
+                  <div class="mt-4" v-if="imagePreviewUrl">
+                    <img
+                      :src="imagePreviewUrl"
+                      class="preview-image"
+                      alt="preview"
+                    />
+                  </div>
+                </div>
+
                 <!-- PROMPT -->
                 <form ref="promptForm" @submit.prevent>
                   <input
+                    ref="promptInput"
                     class="input is-large is-fullwidth"
                     type="text"
-                    placeholder="Describe your image and press enter to generate..."
+                    :placeholder="mode === 'edit' ? 'Describe how to edit the image...' : 'Describe your image and press enter to generate...'"
                     v-model="form.prompt"
-                    @keyup.enter="canGenerate && sendMessage(form.prompt)"
-                    :disabled="isLoading || !canGenerate"
+                    @keyup.enter="canGenerateWithAccess && (mode !== 'edit' || hasInputImage) && sendMessage(form.prompt)"
+                    :disabled="isLoading || !canGenerateWithAccess || (mode === 'edit' && !hasInputImage)"
                   />
                   <button
                     class="button chat is-loading is-outlined is-info is-large is-fullwidth"
@@ -412,6 +467,17 @@
                       </button>
                       <button
                         class="button is-medium is-warning copy is-pulled-left ml-5 pl-2"
+                        @click="loadImageForEdit(inference)"
+                        :disabled="!inference?.answer?.data?.image"
+                        title="Edit this image with Flux Kontext"
+                      >
+                        <span class="material-symbols-outlined is-size-2 mr-1">
+                          edit
+                        </span>
+                        Edit
+                      </button>
+                      <button
+                        class="button is-medium is-warning copy is-pulled-left ml-5 pl-2"
                         @click="animate(inference)"
                         :disabled="!inference?.answer?.data?.image"
                         title="Animate this image"
@@ -441,6 +507,7 @@ import {
   ref,
   reactive,
   computed,
+  inject,
   onMounted,
   onBeforeUnmount,
   watch,
@@ -458,6 +525,9 @@ import {
   stopGeneration,
   clearError,
 } from "../stores/generationStore";
+import AccessRequirements from "./AccessRequirements.vue";
+
+const DEMO_PROMPT = "A majestic bonsai tree on a floating island, sunset lighting, digital art";
 
 const API_BASE =
   (typeof process !== "undefined" && process.env?.VITE_API_BASE) ||
@@ -469,7 +539,18 @@ const WS_GEN = `${API_BASE}/generation`;
 
 export default {
   name: "GenerativeImage",
+  components: { AccessRequirements },
   setup() {
+    // ------------ injected from App -------
+    const goAnimateToVideo = inject("goAnimateToVideo", () => {});
+
+    // Animate an inference image by switching to video tab
+    const animate = (inference) => {
+      const img = inference?.answer?.data?.image;
+      if (!img) return;
+      goAnimateToVideo(img);
+    };
+
     // ------------ basic state -------------
     const mode = ref("turbo");
     const quality = ref("sd");
@@ -477,6 +558,32 @@ export default {
     const form = reactive({ prompt: "" });
     const inferences = reactive([]);
     const hasCopy = reactive([]);
+
+    // ------------ image editing state -----
+    const pickedImageName = ref("");
+    const uploadedImageBase64 = ref("");
+    const imagePreviewUrl = computed(() => {
+      if (uploadedImageBase64.value)
+        return "data:image/png;base64," + uploadedImageBase64.value;
+      return "";
+    });
+    const hasInputImage = computed(() => !!uploadedImageBase64.value);
+
+    // ------------ refs ---------------------
+    const promptInput = ref(null);
+
+    // ------------ access control -----------
+    const accessRef = ref(null);
+    const hasAccess = ref(false);
+
+    const onAccessChanged = (access) => {
+      hasAccess.value = access;
+    };
+
+    const onDemoGenerate = (demoPrompt) => {
+      form.prompt = demoPrompt;
+      sendMessage(demoPrompt, true); // true = isDemo
+    };
 
     // controller for abortable /plan calls (parity w/ Video view)
     const planReq = reactive({ controller: null, seq: 0 });
@@ -507,18 +614,25 @@ export default {
       () => readiness.ok && !readiness.authRequired && !generation.active
     );
 
+    // Combined check: technical readiness AND access rights
+    const canGenerateWithAccess = computed(
+      () => canGenerate.value && hasAccess.value
+    );
+
     // ------------ generation --------------
     // Use shared generation store for persistent state across view navigation
     const generation = computed(() => generationStore.state.image);
 
     // ------------ pipeline/endpoint maps --
-    const endpointForMode = () => `/image`;
+    const endpointForMode = () => (mode.value === "edit" ? "/image/image/quality" : `/image/${mode.value}`);
     const pipelineForMode = (m) =>
-      m === "quality"
-        ? "flux_krea"
-        : m === "intermediate"
-          ? "z_image_turbo"
-          : "sdxl";
+      m === "edit"
+        ? "flux_kontext"
+        : m === "quality"
+          ? "flux_krea"
+          : m === "intermediate"
+            ? "z_image_turbo"
+            : "sdxl";
     const currentPipeline = computed(() => pipelineForMode(mode.value));
 
     // ------------ downloads state/socket --
@@ -986,9 +1100,13 @@ export default {
     // Socket is managed by the shared generationStore
 
     // ------------ actions -----------------
-    const sendMessage = async (prompt) => {
+    const sendMessage = async (prompt, isDemo = false) => {
       if (!prompt) return;
-      if (!canGenerate.value) return;
+      // Allow demo generation even without access
+      if (!isDemo && !canGenerateWithAccess.value) return;
+
+      // Edit mode requires an input image
+      if (mode.value === "edit" && !uploadedImageBase64.value) return;
 
       const payload = { prompt, auto_download: true, mode: mode.value };
       const sizes = {
@@ -1002,11 +1120,24 @@ export default {
       const [h, w] = sizes[quality.value] || sizes.default;
       payload.height = h;
       payload.width = w;
-      if (mode.value === "intermediate")
+
+      if (mode.value === "edit") {
+        // Edit mode: use Flux Kontext for image-to-image
+        // Use smaller resolution for memory efficiency (12B model is heavy)
+        payload.height = Math.min(payload.height, 512);
+        payload.width = Math.min(payload.width, 768);
+        payload.image_base64 = uploadedImageBase64.value;
+        payload.guidance_scale = 3.5;
+        payload.steps = 28;  // FluxKontextPipeline default
+      } else if (mode.value === "intermediate") {
         payload.lora = "cyberrealistic-xl-v6.safetensors";
+      }
       payload.pipeline = currentPipeline.value;
 
-      const url = `${API_BASE}${endpointForMode()}/${mode.value}`;
+      // Edit mode uses the full endpoint path, others append mode
+      const url = mode.value === "edit"
+        ? `${API_BASE}${endpointForMode()}`
+        : `${API_BASE}${endpointForMode()}`;
 
       ensureGenerationSocket();
       startGeneration("image"); // Initialize generation state
@@ -1077,6 +1208,44 @@ export default {
         await toClipboard(txt);
       } catch {}
     };
+
+    // ------------ image picker (edit mode) --
+    const fileToBase64 = (file) =>
+      new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => resolve(reader.result);
+        reader.onerror = (err) => reject(err);
+        reader.readAsDataURL(file);
+      });
+
+    const onImagePicked = async (e) => {
+      const file = e.target.files?.[0];
+      if (!file) return;
+      pickedImageName.value = file.name;
+      const b64 = await fileToBase64(file);
+      uploadedImageBase64.value = String(b64).replace(
+        /^data:image\/[a-zA-Z+]+;base64,/,
+        ""
+      );
+    };
+
+    // Load an existing inference image into edit mode
+    const loadImageForEdit = (inference) => {
+      const img = inference?.answer?.data?.image;
+      if (!img) return;
+      // Switch to edit mode
+      mode.value = "edit";
+      // Set the image (already base64 without prefix)
+      uploadedImageBase64.value = img;
+      pickedImageName.value = "Generated image";
+      // Scroll to top and focus prompt input
+      window.scrollTo({ top: 0, behavior: "smooth" });
+      // Focus after scroll completes and Vue updates the DOM
+      setTimeout(() => {
+        promptInput.value?.focus();
+      }, 300);
+    };
+
     const downloadImage = async (idx) => {
       const img = inferences[idx]?.answer?.data?.image;
       if (!img) return;
@@ -1160,9 +1329,18 @@ export default {
       isLoading,
       inferences,
       hasCopy,
+      // image editing
+      pickedImageName,
+      uploadedImageBase64,
+      imagePreviewUrl,
+      hasInputImage,
+      onImagePicked,
+      loadImageForEdit,
+      promptInput,
       // readiness
       readiness,
       canGenerate,
+      canGenerateWithAccess,
       showUpdateCTA,
       // generation
       generation,
@@ -1170,6 +1348,12 @@ export default {
       downloads,
       downloadTaskList,
       downloadMatchesMode,
+      // access control
+      accessRef,
+      hasAccess,
+      onAccessChanged,
+      onDemoGenerate,
+      DEMO_PROMPT,
       // actions
       sendMessage,
       copy,
@@ -1179,6 +1363,7 @@ export default {
       cancelCurrentPipeline,
       retryCurrentPipeline,
       probeCurrentMode,
+      animate,
     };
   },
 };
@@ -1354,5 +1539,13 @@ ol.chat li {
   top: -5em;
   right: -2em;
   opacity: 0.5;
+}
+.notification.preview {
+  box-shadow: 8px 8px 0 rgba(97, 55, 142, 0.66);
+}
+.preview-image {
+  width: 100%;
+  border: 1px solid rgba(255, 255, 255, 0.25);
+  border-radius: 4px;
 }
 </style>

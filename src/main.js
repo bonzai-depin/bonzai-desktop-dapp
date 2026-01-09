@@ -29,6 +29,10 @@ const llama = await getLlama();
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
+// Dev/prod detection - app.isPackaged is true when running from packaged app
+const isDev = !app.isPackaged;
+const VITE_DEV_SERVER_URL = isDev ? "http://localhost:5173" : null;
+
 let subpy = null;
 const PY_SERVER_PORT = 65000;
 
@@ -359,6 +363,24 @@ ipcMain.handle("agent-save-image", async (_event, defaultName, base64Data) => {
   }
 });
 
+ipcMain.handle("agent-save-audio", async (_event, defaultName, sourcePath) => {
+  // Determine file extension from source path
+  const ext = path.extname(sourcePath).slice(1) || "wav";
+  const { canceled, filePath } = await dialog.showSaveDialog({
+    defaultPath: defaultName,
+    filters: [{ name: "Audio", extensions: [ext, "wav", "mp3", "flac"] }],
+  });
+  if (canceled || !filePath) return { success: false };
+
+  try {
+    fs.copyFileSync(sourcePath, filePath);
+    return { success: true, path: filePath };
+  } catch (e) {
+    console.error("Failed to save audio:", e);
+    return { success: false, error: e.message };
+  }
+});
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Polymarket API Proxy (bypasses CORS for renderer process)
 // ─────────────────────────────────────────────────────────────────────────────
@@ -538,11 +560,11 @@ const createWindow = async (width, height) => {
 
   mainWindow.maximize();
 
-  if (MAIN_WINDOW_VITE_DEV_SERVER_URL) {
-    await mainWindow.loadURL(MAIN_WINDOW_VITE_DEV_SERVER_URL);
+  if (VITE_DEV_SERVER_URL) {
+    await mainWindow.loadURL(VITE_DEV_SERVER_URL);
   } else {
     await mainWindow.loadFile(
-      path.join(__dirname, `../renderer/${MAIN_WINDOW_VITE_NAME}/index.html`)
+      path.join(__dirname, "../renderer/main_window/index.html")
     );
   }
 };

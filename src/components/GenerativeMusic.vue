@@ -55,30 +55,6 @@
           <div class="models__activity--payouts">
             <div class="columns">
               <div class="column is-12">
-                <!-- MODEL SELECTION -->
-                <div class="control mb-4 has-text-left">
-                  <label class="label has-text-white mb-2">Model</label>
-                  <input
-                    v-model="selectedModel"
-                    :value="'multilingual'"
-                    id="model_multilingual"
-                    type="radio"
-                    name="model"
-                    checked
-                  />
-                  <label for="model_multilingual" class="radio mr-3">
-                    <span
-                      class="material-symbols-outlined"
-                      style="font-size: 28px !important"
-                    >
-                      language
-                    </span>
-                    Multilingual
-                    <span class="tag is-info is-light ml-1">23 Languages</span>
-                  </label>
-
-                </div>
-
                 <!-- MODE TOGGLES (TTS vs Clone) -->
                 <div class="control mb-4 has-text-left">
                   <input
@@ -111,7 +87,7 @@
                       class="material-symbols-outlined"
                       style="font-size: 32px !important"
                     >
-                      voice_over_off
+                      genetics
                     </span>
                     Voice Clone
                   </label>
@@ -308,6 +284,16 @@
                   </div>
                 </div>
 
+                <!-- ACCESS REQUIREMENTS -->
+                <AccessRequirements
+                  ref="accessRef"
+                  level="LVL2"
+                  :demo-prompt="DEMO_PROMPT"
+                  :is-generating="isLoading"
+                  @access-changed="onAccessChanged"
+                  @demo-generate="onDemoGenerate"
+                />
+
                 <!-- PROMPT -->
                 <form ref="promptForm" @submit.prevent>
                   <input
@@ -316,8 +302,8 @@
                     type="text"
                     :placeholder="promptPlaceholder"
                     v-model="form.prompt"
-                    @keyup.enter="canGenerate && sendMessage(form.prompt)"
-                    :disabled="isLoading || !canGenerate"
+                    @keyup.enter="canGenerateWithAccess && sendMessage(form.prompt)"
+                    :disabled="isLoading || !canGenerateWithAccess"
                   />
                   <button
                     class="button chat is-loading is-outlined is-info is-large is-fullwidth"
@@ -332,18 +318,6 @@
                     :key="inference.id || index"
                   >
                     <div class="question">
-                      <div
-                        class="logo watermark"
-                        style="
-                          position: absolute;
-                          width: 64px;
-                          bottom: 5em;
-                          right: 2em;
-                        "
-                      >
-                        <img src="src/assets/bonzai_logo-full.png" />
-                      </div>
-
                       <!-- Audio Player -->
                       <div class="audio-container">
                         <audio
@@ -368,21 +342,14 @@
                             class="tag is-warning ml-2"
                           >
                             <span class="material-symbols-outlined is-size-6">
-                              voice_over_off
+                              genetics
                             </span>
                             Cloned
                           </span>
                         </div>
                       </div>
-
+                      <hr />
                       <p class="prompt-text mt-3">
-                        <span class="material-symbols-outlined mr-1">
-                          {{
-                            inference.hasClone
-                              ? "voice_over_off"
-                              : "record_voice_over"
-                          }}
-                        </span>
                         {{ inference.question }}
                       </p>
 
@@ -469,6 +436,9 @@ import {
   stopGeneration,
   clearError,
 } from "../stores/generationStore";
+import AccessRequirements from "./AccessRequirements.vue";
+
+const DEMO_PROMPT = "Hello, welcome to BonzAI, the decentralized AI assistant.";
 
 const API_BASE =
   (typeof process !== "undefined" && process.env?.VITE_API_BASE) ||
@@ -480,6 +450,9 @@ const WS_GEN = `${API_BASE}/generation`;
 
 export default {
   name: "GenerativeAudio",
+  components: {
+    AccessRequirements,
+  },
   setup() {
     // ------------ basic state -------------
     const selectedModel = ref("multilingual");
@@ -491,6 +464,22 @@ export default {
     const inferences = reactive([]);
     const hasCopy = reactive([]);
     const promptInput = ref(null);
+
+    // ------------ access control -----------
+    const accessRef = ref(null);
+    const hasAccess = ref(false);
+
+    const onAccessChanged = (val) => {
+      hasAccess.value = val;
+    };
+    const onDemoGenerate = (demoPrompt) => {
+      form.prompt = demoPrompt;
+      sendMessage(demoPrompt, true); // true = isDemo
+    };
+
+    const canGenerateWithAccess = computed(() => {
+      return canGenerate.value && hasAccess.value;
+    });
 
     // Supported languages (23 languages) - for Multilingual model
     const languages = {
@@ -1071,9 +1060,10 @@ export default {
     };
 
     // ------------ actions -----------------
-    const sendMessage = async (prompt) => {
+    const sendMessage = async (prompt, isDemo = false) => {
       if (!prompt) return;
-      if (!canGenerate.value) return;
+      // Allow demo generation even without access
+      if (!isDemo && !canGenerateWithAccess.value) return;
 
       const payload = {
         prompt,
@@ -1261,6 +1251,7 @@ export default {
       synthesisFileName,
       readiness,
       canGenerate,
+      canGenerateWithAccess,
       showUpdateCTA,
       promptPlaceholder,
       generation,
@@ -1278,6 +1269,12 @@ export default {
       probeCurrentMode,
       handleSynthesisFile,
       fileUrl,
+      // Access control
+      accessRef,
+      hasAccess,
+      onAccessChanged,
+      onDemoGenerate,
+      DEMO_PROMPT,
     };
   },
 };
@@ -1431,6 +1428,7 @@ input[type="radio"]:checked + label {
 .select.is-dark select {
   background: rgba(255, 255, 255, 0.1);
   border-color: rgba(255, 255, 255, 0.3);
+  height: 48px;
   color: #fff;
 }
 .select.is-dark select:hover {

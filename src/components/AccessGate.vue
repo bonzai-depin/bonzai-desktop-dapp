@@ -120,7 +120,7 @@
 <script setup>
 import { computed } from "vue";
 import { useBonzaiWeb3 } from "../composables/useBonzaiWeb3.js";
-import { CONFIG } from "../../config/web3.config.js";
+import { CONFIG } from "../config/web3.config.js";
 
 // Holder-based tiering (derived from current BONZAI holder distribution)
 // LVL1 ≥ 100   | LVL2 ≥ 500   | LVL3 ≥ 2,000   | LVL4 ≥ 10,000   | LVL5 ≥ 50,000   | LVL6 ≥ 200,000
