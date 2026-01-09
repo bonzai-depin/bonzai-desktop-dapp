@@ -96,7 +96,7 @@ jobs:
       - name: Install Node dependencies
         run: npm ci
 
-      - name: Sign ffmpeg binary
+      - name: Sign ffmpeg binaries
         env:
           KEYCHAIN_PW: ${{ secrets.KEYCHAIN_PASSWORD }}
         run: |
@@ -104,16 +104,24 @@ jobs:
 
           # Find the exact Developer ID Application certificate identity
           IDENTITY=$(security find-identity -v -p codesigning build.keychain | grep "Developer ID Application" | head -1 | sed 's/.*"\(.*\)".*/\1/')
+          echo "Using identity: $IDENTITY"
 
-          FFMPEG_PATH="node_modules/ffmpeg-static-electron-forge/dist/bin/darwin/arm64/ffmpeg"
-          if [ -f "$FFMPEG_PATH" ]; then
-            codesign --force --sign "$IDENTITY" \
-              --options runtime \
-              --entitlements ./entitlements.mac.plist \
-              --timestamp \
-              "$FFMPEG_PATH"
-            codesign --verify --verbose "$FFMPEG_PATH"
-          fi
+          # Sign ALL ffmpeg binaries (both architectures, ffmpeg and ffprobe)
+          FFMPEG_BASE="node_modules/ffmpeg-static-electron-forge/dist/bin/darwin"
+          for arch in arm64 x64; do
+            for binary in ffmpeg ffprobe; do
+              BINARY_PATH="$FFMPEG_BASE/$arch/$binary"
+              if [ -f "$BINARY_PATH" ]; then
+                echo "Signing: $BINARY_PATH"
+                codesign --force --sign "$IDENTITY" \
+                  --options runtime \
+                  --entitlements ./entitlements.mac.plist \
+                  --timestamp \
+                  "$BINARY_PATH"
+                codesign --verify --verbose "$BINARY_PATH"
+              fi
+            done
+          done
 
       - name: Build Vite bundles
         run: npm run build:vite
@@ -388,7 +396,7 @@ jobs:
       - name: Install Node dependencies
         run: npm ci
 
-      - name: Sign ffmpeg binary
+      - name: Sign ffmpeg binaries
         env:
           KEYCHAIN_PW: ${{ secrets.KEYCHAIN_PASSWORD }}
         run: |
@@ -396,16 +404,24 @@ jobs:
 
           # Find the exact Developer ID Application certificate identity
           IDENTITY=$(security find-identity -v -p codesigning build.keychain | grep "Developer ID Application" | head -1 | sed 's/.*"\(.*\)".*/\1/')
+          echo "Using identity: $IDENTITY"
 
-          FFMPEG_PATH="node_modules/ffmpeg-static-electron-forge/dist/bin/darwin/x64/ffmpeg"
-          if [ -f "$FFMPEG_PATH" ]; then
-            codesign --force --sign "$IDENTITY" \
-              --options runtime \
-              --entitlements ./entitlements.mac.plist \
-              --timestamp \
-              "$FFMPEG_PATH"
-            codesign --verify --verbose "$FFMPEG_PATH"
-          fi
+          # Sign ALL ffmpeg binaries (both architectures, ffmpeg and ffprobe)
+          FFMPEG_BASE="node_modules/ffmpeg-static-electron-forge/dist/bin/darwin"
+          for arch in arm64 x64; do
+            for binary in ffmpeg ffprobe; do
+              BINARY_PATH="$FFMPEG_BASE/$arch/$binary"
+              if [ -f "$BINARY_PATH" ]; then
+                echo "Signing: $BINARY_PATH"
+                codesign --force --sign "$IDENTITY" \
+                  --options runtime \
+                  --entitlements ./entitlements.mac.plist \
+                  --timestamp \
+                  "$BINARY_PATH"
+                codesign --verify --verbose "$BINARY_PATH"
+              fi
+            done
+          done
 
       - name: Build Vite bundles
         run: npm run build:vite
