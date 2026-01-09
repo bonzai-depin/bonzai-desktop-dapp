@@ -361,10 +361,19 @@
 </template>
 
 <script>
-import { ref, reactive, toRaw, computed } from "vue";
+import { ref, reactive, shallowRef, toRaw, computed } from "vue";
 import { v4 as uuid } from "uuid";
 import VueMarkdown from "vue-markdown-render";
 import useClipboard from "vue-clipboard3";
+
+// Debounce utility for persistence
+const debounce = (fn, delay) => {
+  let timeoutId;
+  return (...args) => {
+    clearTimeout(timeoutId);
+    timeoutId = setTimeout(() => fn(...args), delay);
+  };
+};
 
 import GenerativeImage from "./GenerativeImage.vue";
 import AccessRequirements from "./AccessRequirements.vue";
@@ -671,9 +680,16 @@ export default {
       await window.electronAPI.loadModel(payload);
     };
 
-    const inferences = reactive([]);
+    // Use shallowRef for better performance with large chat histories
+    const inferences = shallowRef([]);
+    const hasCopy = shallowRef([]);
 
-    const hasCopy = reactive([]);
+    // Debounced persistence
+    const persistInferences = debounce(async (data) => {
+      try {
+        await window.electronAPI?.store?.set?.("textInferences", data);
+      } catch {}
+    }, 500);
 
     const initialState = {
       prompt: "",
@@ -686,7 +702,7 @@ export default {
     }
 
     async function resetChat() {
-      inferences.splice(0);
+      inferences.value = [];
       // Clear persisted text inferences
       try {
         await window.electronAPI?.store?.set?.("textInferences", []);
@@ -703,22 +719,11 @@ export default {
           []
         );
         if (Array.isArray(saved)) {
-          saved.forEach((item) => inferences.push(item));
+          inferences.value = saved;
+          hasCopy.value = new Array(saved.length).fill(false);
         }
       } catch (e) {
         console.error("Failed to load text inferences:", e);
-      }
-    };
-
-    // Persist inferences after changes
-    const persistInferences = async () => {
-      try {
-        await window.electronAPI?.store?.set?.(
-          "textInferences",
-          JSON.parse(JSON.stringify(inferences))
-        );
-      } catch (e) {
-        console.error("Failed to persist text inferences:", e);
       }
     };
 
@@ -738,10 +743,13 @@ export default {
         };
 
         console.log("prompt", assistantMessage);
-        inferences.push({ question: prompt, answer: assistantMessage });
+        // Update shallowRef by replacing array
+        const newInference = { question: prompt, answer: assistantMessage };
+        inferences.value = [...inferences.value, newInference];
+        hasCopy.value = [...hasCopy.value, false];
 
-        // Persist to local store
-        await persistInferences();
+        // Debounced persistence
+        persistInferences([...inferences.value]);
 
         resetForm();
         isLoading.value = false;

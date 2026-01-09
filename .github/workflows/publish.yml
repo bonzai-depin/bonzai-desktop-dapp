@@ -148,11 +148,29 @@ jobs:
           APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
         run: |
           DMG_PATH="out/make/bonzai-${{ github.event.release.tag_name }}-arm64.dmg"
-          xcrun notarytool submit "$DMG_PATH" \
+
+          # Submit and capture output
+          SUBMIT_OUTPUT=$(xcrun notarytool submit "$DMG_PATH" \
             --apple-id "$APPLE_ID" \
             --team-id "$APPLE_TEAM_ID" \
             --password "$APPLE_APP_SPECIFIC_PASSWORD" \
-            --wait
+            --wait 2>&1) || true
+
+          echo "$SUBMIT_OUTPUT"
+
+          # Extract submission ID
+          SUBMISSION_ID=$(echo "$SUBMIT_OUTPUT" | grep -o 'id: [a-f0-9-]*' | head -1 | cut -d' ' -f2)
+
+          # Check if notarization failed
+          if echo "$SUBMIT_OUTPUT" | grep -q "Invalid"; then
+            echo "❌ Notarization failed. Fetching detailed log..."
+            xcrun notarytool log "$SUBMISSION_ID" \
+              --apple-id "$APPLE_ID" \
+              --team-id "$APPLE_TEAM_ID" \
+              --password "$APPLE_APP_SPECIFIC_PASSWORD"
+            exit 1
+          fi
+
           xcrun stapler staple "$DMG_PATH"
 
       - name: Upload DMG to Release
@@ -306,11 +324,29 @@ jobs:
           APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
         run: |
           DMG_PATH="out/make/bonzai-${{ github.event.release.tag_name }}-x64.dmg"
-          xcrun notarytool submit "$DMG_PATH" \
+
+          # Submit and capture output
+          SUBMIT_OUTPUT=$(xcrun notarytool submit "$DMG_PATH" \
             --apple-id "$APPLE_ID" \
             --team-id "$APPLE_TEAM_ID" \
             --password "$APPLE_APP_SPECIFIC_PASSWORD" \
-            --wait
+            --wait 2>&1) || true
+
+          echo "$SUBMIT_OUTPUT"
+
+          # Extract submission ID
+          SUBMISSION_ID=$(echo "$SUBMIT_OUTPUT" | grep -o 'id: [a-f0-9-]*' | head -1 | cut -d' ' -f2)
+
+          # Check if notarization failed
+          if echo "$SUBMIT_OUTPUT" | grep -q "Invalid"; then
+            echo "❌ Notarization failed. Fetching detailed log..."
+            xcrun notarytool log "$SUBMISSION_ID" \
+              --apple-id "$APPLE_ID" \
+              --team-id "$APPLE_TEAM_ID" \
+              --password "$APPLE_APP_SPECIFIC_PASSWORD"
+            exit 1
+          fi
+
           xcrun stapler staple "$DMG_PATH"
 
       - name: Upload DMG to Release

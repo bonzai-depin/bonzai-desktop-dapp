@@ -2669,7 +2669,6 @@ def image_qwen_edit_i2i():
 
         # Memory optimizations
         if device.type == "mps":
-            pipe.enable_model_cpu_offload()
             if hasattr(pipe, 'enable_attention_slicing'):
                 pipe.enable_attention_slicing("max")
             if hasattr(pipe, 'vae') and hasattr(pipe.vae, 'enable_slicing'):

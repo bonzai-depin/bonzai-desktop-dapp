@@ -40,15 +40,15 @@
               <span
                 class="fira-sans-condensed-black-italic is-pulled-right is-size-4"
               >
-                {{ Math.round(generation.pct) }}%
+                {{ generationPctRounded }}%
               </span>
             </p>
             <progress
               class="progress is-success"
-              :value="Math.max(0, Math.min(100, generation.pct))"
+              :value="generationPctClamped"
               max="100"
             >
-              {{ Math.round(generation.pct) }}%
+              {{ generationPctRounded }}%
             </progress>
           </div>
 
@@ -438,10 +438,7 @@
                       </button>
                       <button
                         class="button is-medium is-success copy is-pulled-left p-0 pl-1 pr-1"
-                        @click="
-                          copy(inference.question);
-                          hasCopy[index] = true;
-                        "
+                        @click="copy(inference.question); setCopied(index)"
                       >
                         <span
                           class="material-symbols-outlined is-size-2"
@@ -506,6 +503,7 @@
 import {
   ref,
   reactive,
+  shallowRef,
   computed,
   inject,
   onMounted,
@@ -516,6 +514,33 @@ import { v4 as uuid } from "uuid";
 import useClipboard from "vue-clipboard3";
 import axios from "axios";
 import { io } from "socket.io-client";
+
+// ═══════════════════════════════════════════════════════════════════════════
+// PERFORMANCE UTILITIES
+// ═══════════════════════════════════════════════════════════════════════════
+
+// Debounce function for persistence operations
+const debounce = (fn, delay) => {
+  let timeoutId;
+  return (...args) => {
+    clearTimeout(timeoutId);
+    timeoutId = setTimeout(() => fn(...args), delay);
+  };
+};
+
+// RAF-throttled function for high-frequency events (socket progress)
+const rafThrottle = (fn) => {
+  let rafId = null;
+  let lastArgs = null;
+  return (...args) => {
+    lastArgs = args;
+    if (rafId) return;
+    rafId = requestAnimationFrame(() => {
+      fn(...lastArgs);
+      rafId = null;
+    });
+  };
+};
 import {
   generationStore,
   ensureGenerationSocket,
@@ -556,8 +581,16 @@ export default {
     const quality = ref("sd");
     const isLoading = ref(false);
     const form = reactive({ prompt: "" });
-    const inferences = reactive([]);
-    const hasCopy = reactive([]);
+    // Use shallowRef for inferences - base64 images are large and don't need deep reactivity
+    const inferences = shallowRef([]);
+    const hasCopy = shallowRef([]);
+
+    // Debounced persistence to avoid excessive writes
+    const persistInferences = debounce(async (data) => {
+      try {
+        await window.electronAPI?.store?.set?.("imageInferences", data);
+      } catch {}
+    }, 500);
 
     // ------------ image editing state -----
     const pickedImageName = ref("");
@@ -622,6 +655,10 @@ export default {
     // ------------ generation --------------
     // Use shared generation store for persistent state across view navigation
     const generation = computed(() => generationStore.state.image);
+
+    // Computed properties for progress display (avoid repeated Math.round in template)
+    const generationPctRounded = computed(() => Math.round(generation.value.pct));
+    const generationPctClamped = computed(() => Math.max(0, Math.min(100, generation.value.pct)));
 
     // ------------ pipeline/endpoint maps --
     const endpointForMode = () => (mode.value === "edit" ? "/image/image/quality" : `/image/${mode.value}`);
@@ -773,11 +810,13 @@ export default {
         }
       });
 
-      downloadsSocket.value.on("download_progress", ({ pipeline }) => {
+      // Throttle download_progress events with RAF to avoid excessive re-renders
+      const throttledProgressHandler = rafThrottle(({ pipeline }) => {
         lastDlEventAt.value = Date.now();
         if (!pipeline) return;
         applyPipelineUpdate(pipeline);
       });
+      downloadsSocket.value.on("download_progress", throttledProgressHandler);
 
       downloadsSocket.value.on("connect_error", (e) =>
         console.warn("[downloads] connect_error", e?.message || e)
@@ -1144,13 +1183,12 @@ export default {
 
       const onSuccess = async (response) => {
         if (response?.data?.image) {
-          inferences.push({ question: prompt, answer: response, id: uuid() });
-          try {
-            await window.electronAPI?.store?.set?.(
-              "imageInferences",
-              JSON.parse(JSON.stringify(inferences))
-            );
-          } catch {}
+          // Update shallowRef by replacing array (triggers reactivity)
+          const newInference = { question: prompt, answer: response, id: uuid() };
+          inferences.value = [...inferences.value, newInference];
+          hasCopy.value = [...hasCopy.value, false];
+          // Debounced persistence - no deep clone needed
+          persistInferences([...inferences.value]);
           form.prompt = "";
         }
       };
@@ -1209,6 +1247,19 @@ export default {
       } catch {}
     };
 
+    // Set copy state for an index (works with shallowRef)
+    const setCopied = (index) => {
+      const newHasCopy = [...hasCopy.value];
+      newHasCopy[index] = true;
+      hasCopy.value = newHasCopy;
+      // Auto-reset after 2 seconds
+      setTimeout(() => {
+        const reset = [...hasCopy.value];
+        reset[index] = false;
+        hasCopy.value = reset;
+      }, 2000);
+    };
+
     // ------------ image picker (edit mode) --
     const fileToBase64 = (file) =>
       new Promise((resolve, reject) => {
@@ -1255,15 +1306,12 @@ export default {
         console.error("Save cancelled or failed", result?.error);
     };
     const removeInference = async (idx) => {
-      if (idx < 0 || idx >= inferences.length) return;
-      inferences.splice(idx, 1);
-      hasCopy.splice(idx, 1);
-      try {
-        await window.electronAPI?.store?.set?.(
-          "imageInferences",
-          JSON.parse(JSON.stringify(inferences))
-        );
-      } catch {}
+      if (idx < 0 || idx >= inferences.value.length) return;
+      // Update shallowRef by replacing arrays
+      inferences.value = inferences.value.filter((_, i) => i !== idx);
+      hasCopy.value = hasCopy.value.filter((_, i) => i !== idx);
+      // Debounced persistence
+      persistInferences([...inferences.value]);
     };
 
     // --------- derived: stable ordered task list
@@ -1296,8 +1344,11 @@ export default {
           "imageInferences",
           []
         );
-        if (Array.isArray(saved))
-          saved.forEach((item) => inferences.push(item));
+        if (Array.isArray(saved)) {
+          // Load into shallowRef by replacing the array
+          inferences.value = saved;
+          hasCopy.value = new Array(saved.length).fill(false);
+        }
       } catch {}
       await probeCurrentMode();
     });
@@ -1344,6 +1395,8 @@ export default {
       showUpdateCTA,
       // generation
       generation,
+      generationPctRounded,
+      generationPctClamped,
       // downloads
       downloads,
       downloadTaskList,
@@ -1357,6 +1410,7 @@ export default {
       // actions
       sendMessage,
       copy,
+      setCopied,
       downloadImage,
       removeInference,
       prefetchForMode,

@@ -40,15 +40,15 @@
               <span
                 class="fira-sans-condensed-black-italic is-pulled-right is-size-4"
               >
-                {{ Math.round(generation.pct || 0) }}%
+                {{ generationPctRounded }}%
               </span>
             </p>
             <progress
               class="progress is-success"
-              :value="Math.max(0, Math.min(100, generation.pct || 0))"
+              :value="generationPctClamped"
               max="100"
             >
-              {{ Math.round(generation.pct || 0) }}%
+              {{ generationPctRounded }}%
             </progress>
           </div>
 
@@ -387,7 +387,7 @@
                       </button>
                       <button
                         class="button is-medium is-success copy is-pulled-left p-0 pl-1 pr-1"
-                        @click="copy(inference?.answer?.data?.video_path || '')"
+                        @click="copy(inference?.answer?.data?.video_path || ''); setCopied(index)"
                       >
                         <span
                           class="material-symbols-outlined is-size-2"
@@ -427,6 +427,7 @@
 import {
   ref,
   reactive,
+  shallowRef,
   computed,
   onMounted,
   onBeforeUnmount,
@@ -437,6 +438,31 @@ import { v4 as uuid } from "uuid";
 import useClipboard from "vue-clipboard3";
 import axios from "axios";
 import { io } from "socket.io-client";
+
+// ═══════════════════════════════════════════════════════════════════════════
+// PERFORMANCE UTILITIES
+// ═══════════════════════════════════════════════════════════════════════════
+
+const debounce = (fn, delay) => {
+  let timeoutId;
+  return (...args) => {
+    clearTimeout(timeoutId);
+    timeoutId = setTimeout(() => fn(...args), delay);
+  };
+};
+
+const rafThrottle = (fn) => {
+  let rafId = null;
+  let lastArgs = null;
+  return (...args) => {
+    lastArgs = args;
+    if (rafId) return;
+    rafId = requestAnimationFrame(() => {
+      fn(...lastArgs);
+      rafId = null;
+    });
+  };
+};
 import {
   generationStore,
   ensureGenerationSocket,
@@ -467,9 +493,17 @@ export default {
     const quality = ref("sd");
     const isLoading = ref(false);
     const form = reactive({ prompt: "" });
-    const inferences = reactive([]);
-    const hasCopy = reactive([]);
+    // Use shallowRef for inferences - video data is large
+    const inferences = shallowRef([]);
+    const hasCopy = shallowRef([]);
     const planReq = reactive({ controller: null, seq: 0 });
+
+    // Debounced persistence
+    const persistInferences = debounce(async (data) => {
+      try {
+        await window.electronAPI?.store?.set?.("videoInferences", data);
+      } catch {}
+    }, 500);
 
     // ------------ access control -----------
     const accessRef = ref(null);
@@ -499,6 +533,10 @@ export default {
 
     // Use shared generation store for persistent state across view navigation
     const generation = computed(() => generationStore.state.video);
+
+    // Computed properties for progress display (avoid repeated Math.round in template)
+    const generationPctRounded = computed(() => Math.round(generation.value?.pct || 0));
+    const generationPctClamped = computed(() => Math.max(0, Math.min(100, generation.value?.pct || 0)));
 
     const showUpdateCTA = computed(
       () =>
@@ -654,11 +692,13 @@ export default {
             pipeline_id: downloads.pipelineId,
           });
       });
-      downloadsSocket.value.on("download_progress", ({ pipeline }) => {
+      // Throttle download_progress events with RAF to avoid excessive re-renders
+      const throttledProgressHandler = rafThrottle(({ pipeline }) => {
         lastDlEventAt.value = Date.now();
         if (!pipeline) return;
         applyPipelineUpdate(pipeline);
       });
+      downloadsSocket.value.on("download_progress", throttledProgressHandler);
       downloadsSocket.value.on("connect_error", (e) =>
         console.warn("[downloads] connect_error", e?.message || e)
       );
@@ -1114,17 +1154,16 @@ export default {
       const onSuccess = async (response) => {
         // UPDATED: Check for video_url OR video_path
         if (response?.data?.video_path || response?.data?.video_url) {
-          inferences.push({
+          // Update shallowRef by replacing array
+          const newInference = {
             question: `${mode.value}-i2v`,
             answer: response,
             id: uuid(),
-          });
-          try {
-            await window.electronAPI?.store?.set?.(
-              "videoInferences",
-              JSON.parse(JSON.stringify(inferences))
-            );
-          } catch {}
+          };
+          inferences.value = [...inferences.value, newInference];
+          hasCopy.value = [...hasCopy.value, false];
+          // Debounced persistence
+          persistInferences([...inferences.value]);
         }
       };
       await requestWithDownloadTracking(url, payload, onSuccess);
@@ -1172,15 +1211,24 @@ export default {
     };
 
     const removeInference = async (idx) => {
-      if (idx < 0 || idx >= inferences.length) return;
-      inferences.splice(idx, 1);
-      hasCopy.splice(idx, 1);
-      try {
-        await window.electronAPI?.store?.set?.(
-          "videoInferences",
-          JSON.parse(JSON.stringify(inferences))
-        );
-      } catch {}
+      if (idx < 0 || idx >= inferences.value.length) return;
+      // Update shallowRef by replacing arrays
+      inferences.value = inferences.value.filter((_, i) => i !== idx);
+      hasCopy.value = hasCopy.value.filter((_, i) => i !== idx);
+      // Debounced persistence
+      persistInferences([...inferences.value]);
+    };
+
+    // Set copy state for an index (works with shallowRef)
+    const setCopied = (index) => {
+      const newHasCopy = [...hasCopy.value];
+      newHasCopy[index] = true;
+      hasCopy.value = newHasCopy;
+      setTimeout(() => {
+        const reset = [...hasCopy.value];
+        reset[index] = false;
+        hasCopy.value = reset;
+      }, 2000);
     };
 
     const loadHistory = async () => {
@@ -1189,8 +1237,10 @@ export default {
           "videoInferences",
           []
         );
-        if (Array.isArray(saved))
-          saved.forEach((item) => inferences.push(item));
+        if (Array.isArray(saved)) {
+          inferences.value = saved;
+          hasCopy.value = new Array(saved.length).fill(false);
+        }
       } catch {}
     };
 
@@ -1252,6 +1302,8 @@ export default {
       readiness,
       showUpdateCTA,
       generation,
+      generationPctRounded,
+      generationPctClamped,
       downloads,
       downloadTaskList,
       onImagePicked,
@@ -1268,6 +1320,7 @@ export default {
       // actions
       sendMessage,
       copy,
+      setCopied,
       downloadVideo,
       removeInference,
       prefetchForMode,
