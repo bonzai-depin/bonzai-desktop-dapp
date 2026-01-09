@@ -235,8 +235,10 @@ jobs:
           find "$APP_PATH" -type d -name "__tests__" -path "*/node_modules/*" -exec rm -rf {} + 2>/dev/null || true
 
           # Sign ALL binaries: .dylib, .so, .node files and Mach-O executables
+          # EXCLUDE python-runtime as it's already signed with proper framework structure
           echo "Signing all native binaries..."
-          find "$APP_PATH" -type f \( -name "*.dylib" -o -name "*.so" -o -name "*.node" \) | while read -r binary; do
+          find "$APP_PATH" -type f \( -name "*.dylib" -o -name "*.so" -o -name "*.node" \) \
+            -not -path "*/python-runtime/*" | while read -r binary; do
             echo "Signing: $binary"
             codesign --force --sign "$IDENTITY" \
               --options runtime \
@@ -246,8 +248,9 @@ jobs:
           done
 
           # Sign executables (Mach-O binaries without extensions)
+          # EXCLUDE python-runtime as it's already signed with proper framework structure
           echo "Signing executables..."
-          find "$APP_PATH" -type f -perm +111 | while read -r binary; do
+          find "$APP_PATH" -type f -perm +111 -not -path "*/python-runtime/*" | while read -r binary; do
             if file "$binary" | grep -q "Mach-O"; then
               echo "Signing executable: $binary"
               codesign --force --sign "$IDENTITY" \
@@ -608,8 +611,10 @@ jobs:
           find "$APP_PATH" -type d -name "__tests__" -path "*/node_modules/*" -exec rm -rf {} + 2>/dev/null || true
 
           # Sign ALL binaries: .dylib, .so, .node files and Mach-O executables
+          # EXCLUDE python-runtime as it's already signed with proper framework structure
           echo "Signing all native binaries..."
-          find "$APP_PATH" -type f \( -name "*.dylib" -o -name "*.so" -o -name "*.node" \) | while read -r binary; do
+          find "$APP_PATH" -type f \( -name "*.dylib" -o -name "*.so" -o -name "*.node" \) \
+            -not -path "*/python-runtime/*" | while read -r binary; do
             echo "Signing: $binary"
             codesign --force --sign "$IDENTITY" \
               --options runtime \
@@ -619,8 +624,9 @@ jobs:
           done
 
           # Sign executables (Mach-O binaries without extensions)
+          # EXCLUDE python-runtime as it's already signed with proper framework structure
           echo "Signing executables..."
-          find "$APP_PATH" -type f -perm +111 | while read -r binary; do
+          find "$APP_PATH" -type f -perm +111 -not -path "*/python-runtime/*" | while read -r binary; do
             if file "$binary" | grep -q "Mach-O"; then
               echo "Signing executable: $binary"
               codesign --force --sign "$IDENTITY" \
