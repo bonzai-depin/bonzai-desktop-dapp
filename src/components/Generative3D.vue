@@ -145,6 +145,39 @@
             </div>
           </div>
 
+          <!-- MODEL DOWNLOAD -->
+          <div
+            class="models__deployment-install--cta has-text-right p-0 mb-4"
+            v-if="!hasAccess"
+          >
+            <button
+              class="button is-success is-large is-fullwidth"
+              @click="downloadModel(currentModel.url, currentModel.filename)"
+              v-if="!isModel"
+            >
+              <span class="material-symbols-outlined mr-2"> download </span>
+              Download {{ currentModel.modelname }}
+              <span class="tag ml-4">{{ currentModel.filesize }}</span>
+            </button>
+            <progress
+              class="progress is-success mt-2"
+              :value="downloadProgress"
+              max="100"
+              v-if="downloadProgress"
+            >
+              {{ downloadProgress }}%
+            </progress>
+
+            <button
+              class="button is-danger is-large is-fullwidth"
+              @click="deleteModel(currentModel.filename)"
+              v-if="isModel"
+            >
+              <span class="material-symbols-outlined mr-2"> delete </span>
+              Delete {{ currentModel.modelname }}
+            </button>
+          </div>
+
           <div class="models__activity--payouts">
             <div class="columns">
               <div class="column is-12">
@@ -668,6 +701,8 @@ export default {
     const lightIntensity = ref(1.0);
     const isModelLoaded = ref(false);
     const form = reactive({ prompt: "" });
+    const downloadProgress = ref(0);
+    const isModel = ref(false);
 
     const MAX_RETRY_ATTEMPTS = 3;
 
@@ -812,56 +847,56 @@ export default {
     // PROMPT BUILDERS
     // ═══════════════════════════════════════════════════════════════════════
     const buildObjectPrompt = (userText) => {
-      return `You are an expert Three.js developer. Generate a 3D object for:
+      return `You are a creative 3D artist using Three.js. Generate a UNIQUE object for:
 
 "${userText}"
 
 ════════════════════════════════════════════════════════════════════
-🚨 CRITICAL RULES — VIOLATIONS WILL BREAK THE CODE
+🎨 CREATIVE MANDATE — MAKE IT UNIQUE
 ════════════════════════════════════════════════════════════════════
 
-1. OUTPUT RAW JAVASCRIPT ONLY — No markdown, no \`\`\`, no JSON, no explanations
+NEVER just call a single helper function. Every object should be ONE-OF-A-KIND.
+
+✗ BORING: const potion = H.potionBottle({liquidColor: 0xff0000}); root.add(potion);
+✓ CREATIVE: Build a unique bottle from primitives with distinctive features
+
+For ANY object, add 2-3 unique characteristics:
+• Unusual proportions (elongated, squat, twisted, asymmetric)
+• Surface details (engravings, wrapped rope, dripping liquid, cracks, gems)
+• Animated elements (floating particles, pulsing glow, swirling contents)
+• Environmental storytelling (cobwebs, moss, battle damage, magical auras)
+
+════════════════════════════════════════════════════════════════════
+🚨 CRITICAL RULES
+════════════════════════════════════════════════════════════════════
+
+1. OUTPUT RAW JAVASCRIPT ONLY — No markdown, no \`\`\`, no explanations
 2. ALL objects must have y > 0 (above ground plane)
 3. ALL objects must be added to \`root\` (not scene)
-4. ALWAYS capture helper returns: const sword = H.sword({...});
-5. Helper parameters are COLORS (hex numbers), not materials
-
-WRONG:  H.sword({...});  sword.position.set(0,1,0);  // Missing assignment!
-RIGHT:  const sword = H.sword({...}); sword.position.set(0,1,0); root.add(sword);
-
+4. ALWAYS capture helper returns: const x = H.something(); x.position.set(...);
 
 ════════════════════════════════════════════════════════════════════
 AVAILABLE CONTEXT
 ════════════════════════════════════════════════════════════════════
 
-THREE        — Full Three.js library (use for custom geometry/materials)
+THREE        — Full Three.js library
 root         — THREE.Group to add all objects to
-H / helpers  — Convenience helpers (see below)
+H / helpers  — Convenience helpers (materials, particles, basic shapes)
 addUpdateCallback(fn) — Register animation: fn({deltaTime, time})
 
 ════════════════════════════════════════════════════════════════════
-APPROACH 1: USE HELPERS (Recommended for RPG/game items)
+BUILDING BLOCKS — Combine these creatively
 ════════════════════════════════════════════════════════════════════
 
-MATERIALS — Pass to H.mesh() or use directly
-  H.metal(color, {roughness, glow, clearcoat})
+MATERIALS (use with H.mesh() or raw Three.js)
   H.glass(color, {roughness, transmission, ior})
   H.gem(color, {glow, ior})
+  H.metal(color, {roughness, glow, clearcoat})
   H.matte(color, {roughness})
   H.glow(color, {intensity, opacity})
   H.liquid(color, {transmission, thickness, glow})
-  H.fire({color, intensity, opacity})
-  H.ice(color)
-  H.lava({color, intensity})
-  H.leather(color)
-  H.velvet(color)
-  H.lowPoly(color)  // Flat shading, stylized
-  H.toon(color)
-  H.cartoon(color)
-
-LIGHTS
-  H.light(color, intensity, distance) → PointLight
-  H.spot(color, intensity, {angle, penumbra, distance}) → SpotLight
+  H.fire(), H.ice(), H.lava(), H.leather(), H.velvet()
+  H.lowPoly(color), H.toon(color), H.cartoon(color)
 
 PARTICLES (auto-animated)
   H.particles(count, {color, size, spread, baseY, heightRange})
@@ -870,164 +905,166 @@ PARTICLES (auto-animated)
   H.smoke(count, {color, spread})
   H.dust(count, {color, spread, size, opacity})
 
-RPG ITEMS — All return THREE.Group or Mesh
-  H.crystal({color, height, radius, glow, lowPoly})
-  H.gemstone({color, size, shape, lowPoly})  // shape: "round" or "octahedron"
-  H.coin({color, radius, thickness, lowPoly})
-  H.heart({color, size, depth, lowPoly})
-  H.star({color, points, outer, inner, depth, lowPoly})
-  H.key({color, lowPoly})
-  H.potionBottle({shape, liquidColor, glassColor, glow, lowPoly})  // shape: round/flask/vial/diamond
-  H.sword({bladeColor, handleColor, guardColor, bladeLength, lowPoly})
-  H.axe({bladeColor, handleColor, lowPoly})
-  H.shield({shape, faceColor, trimColor, frameColor, studs, lowPoly})  // shape: heater/round/kite
-  H.book({open, coverColor, trimColor, lowPoly})
-  H.scroll({color, lowPoly})
-  H.chest({open, width, height, depth, woodColor, metalColor, lowPoly})
-  H.crown({color, gemColor, points, lowPoly})
-  H.ring(radius, tube, material)
-  H.chain(length, linkSize, material)
-  H.rope(pointsArray, radius, material)
-  H.plank(width, height, depth, material)
-  H.flame({height, radius})  // Animated fire
+LIGHTS
+  H.light(color, intensity, distance)
+  H.spot(color, intensity, {angle, penumbra, distance})
 
-LIQUIDS
-  H.liquidVolume({width, height, depth, color, waveSpeed, waveHeight, glow})
-  H.liquidSphere({radius, color, scaleY, glow})
+SIMPLE SHAPES (use as starting points, then modify)
+  H.crystal(), H.coin(), H.heart(), H.star(), H.key()
+  H.ring(), H.chain(), H.plank(), H.flame()
 
-PHYSICS
-  H.addPhysics(mesh, {mass, shape, friction, restitution})  // shape: box/sphere/cylinder
-  H.makeDraggable(group)
-
-UTILITY
-  H.mesh(geometry, material) — Creates mesh with shadows enabled
+RAW THREE.JS — Use for unique shapes!
+  new THREE.LatheGeometry(points, segments) — spin a profile
+  new THREE.ExtrudeGeometry(shape, {depth, bevelEnabled}) — extrude 2D
+  new THREE.TubeGeometry(curve, segments, radius) — pipes, tentacles
+  new THREE.TorusKnotGeometry() — complex organic forms
+  BufferGeometry with custom vertices — total freedom
 
 ════════════════════════════════════════════════════════════════════
-APPROACH 2: RAW THREE.JS (For custom/complex objects)
+EXAMPLES OF CREATIVE VARIATION
 ════════════════════════════════════════════════════════════════════
 
-You can use any Three.js class directly:
+PROMPT: "A health potion"
 
-// Custom geometry
-const geo = new THREE.BoxGeometry(1, 1, 1);
-const mat = new THREE.MeshPhysicalMaterial({
-  color: 0xff0000,
-  metalness: 0.5,
-  roughness: 0.3,
-  clearcoat: 0.8
-});
-const mesh = new THREE.Mesh(geo, mat);
-mesh.position.y = 0.5;
-mesh.castShadow = true;
-root.add(mesh);
+VERSION A — Twisted Alchemist's Vial:
+─────────────────────────────────────
+// Twisted bottle using LatheGeometry
+const bottleProfile = [
+  new THREE.Vector2(0, 0),
+  new THREE.Vector2(0.15, 0.05),
+  new THREE.Vector2(0.18, 0.15),
+  new THREE.Vector2(0.12, 0.35),  // pinch
+  new THREE.Vector2(0.2, 0.5),    // bulge
+  new THREE.Vector2(0.08, 0.7),   // neck
+  new THREE.Vector2(0.1, 0.75),
+  new THREE.Vector2(0, 0.75),
+];
+const bottleGeo = new THREE.LatheGeometry(bottleProfile, 24);
+const bottle = H.mesh(bottleGeo, H.glass(0x88ff88, {transmission: 0.9}));
+bottle.position.y = 0.4;
+root.add(bottle);
 
-// Custom shapes with ExtrudeGeometry
-const shape = new THREE.Shape();
-shape.moveTo(0, 0);
-shape.lineTo(1, 0);
-shape.lineTo(0.5, 1);
-shape.closePath();
-const extrudeGeo = new THREE.ExtrudeGeometry(shape, { depth: 0.2, bevelEnabled: true });
+// Liquid inside (slightly smaller)
+const liquidProfile = bottleProfile.map(v => new THREE.Vector2(v.x * 0.85, v.y * 0.6));
+const liquid = H.mesh(new THREE.LatheGeometry(liquidProfile, 24), H.liquid(0xff3366, {glow: 0.5}));
+liquid.position.y = 0.42;
+root.add(liquid);
 
-// Curves
-const curve = new THREE.CatmullRomCurve3([
-  new THREE.Vector3(0, 0, 0),
-  new THREE.Vector3(1, 1, 0),
-  new THREE.Vector3(2, 0, 0)
-]);
-const tubeGeo = new THREE.TubeGeometry(curve, 20, 0.1, 8);
+// Cork with wax seal
+const cork = H.mesh(new THREE.CylinderGeometry(0.09, 0.08, 0.12, 12), H.matte(0x8b6914));
+cork.position.set(0, 0.82, 0);
+root.add(cork);
+const seal = H.mesh(new THREE.CylinderGeometry(0.12, 0.12, 0.02, 16), H.matte(0xcc0000));
+seal.position.set(0, 0.88, 0);
+root.add(seal);
 
-// Animation
+// Hanging tag
+const tag = H.mesh(new THREE.BoxGeometry(0.15, 0.1, 0.01), H.matte(0xf5deb3));
+tag.position.set(0.15, 0.6, 0.1);
+tag.rotation.z = 0.3;
+root.add(tag);
+
+// Rising bubbles inside
+root.add(H.bubbles(15, {color: 0xff6688, spread: 0.1, baseY: 0.45, height: 0.3}));
+root.add(H.light(0xff3366, 1.5, 2));
+
+VERSION B — Ancient Crystalline Flask:
+─────────────────────────────────────
+// Faceted crystal bottle (octahedron-based)
+const crystalGeo = new THREE.OctahedronGeometry(0.25, 0);
+crystalGeo.scale(1, 1.8, 1);
+const bottle = H.mesh(crystalGeo, H.gem(0xffffff, {glow: 0.2}));
+bottle.position.y = 0.5;
+root.add(bottle);
+
+// Glowing core
+const core = H.mesh(new THREE.SphereGeometry(0.12, 8, 8), H.glow(0xff0044, {intensity: 2}));
+core.position.y = 0.45;
+root.add(core);
+
+// Ornate gold cage around bottle
+for (let i = 0; i < 4; i++) {
+  const band = H.mesh(new THREE.TorusGeometry(0.28, 0.015, 8, 24), H.metal(0xffd700));
+  band.position.y = 0.3 + i * 0.15;
+  band.rotation.x = Math.PI / 2;
+  root.add(band);
+}
+
+// Vertical gold bars
+for (let i = 0; i < 6; i++) {
+  const angle = (i / 6) * Math.PI * 2;
+  const bar = H.mesh(new THREE.CylinderGeometry(0.012, 0.012, 0.6, 8), H.metal(0xffd700));
+  bar.position.set(Math.cos(angle) * 0.27, 0.45, Math.sin(angle) * 0.27);
+  root.add(bar);
+}
+
+// Pulsing animation
 addUpdateCallback(({deltaTime, time}) => {
-  mesh.rotation.y += deltaTime;
-  mesh.position.y = 0.5 + Math.sin(time * 2) * 0.1;
+  core.scale.setScalar(1 + Math.sin(time * 3) * 0.1);
+  core.material.emissiveIntensity = 1.5 + Math.sin(time * 4) * 0.5;
 });
 
-════════════════════════════════════════════════════════════════════
-COMPLETE EXAMPLES
-════════════════════════════════════════════════════════════════════
+root.add(H.sparks(20, {color: 0xff4488, spread: 0.3, baseY: 0.3, maxY: 1}));
 
-EXAMPLE A — Magic Sword (using helpers)
-─────────────────────────────────────────
-const sword = H.sword({
-  bladeColor: 0xccccff,
-  handleColor: 0x4a3728,
-  guardColor: 0xffd700,
-  bladeLength: 1.0,
-  lowPoly: false
-});
-sword.position.set(0, 0.8, 0);
-sword.rotation.z = -0.3;
-root.add(sword);
-
-const glow = H.light(0x6688ff, 2, 3);
-glow.position.set(0, 1.2, 0);
-root.add(glow);
-
-const fx = H.sparks(30, { color: 0x88ccff, spread: 0.3, baseY: 0.5, maxY: 1.5 });
-root.add(fx);
-
-EXAMPLE B — Crystal Cluster (hybrid approach)
-─────────────────────────────────────────
-const base = new THREE.Mesh(
-  new THREE.CylinderGeometry(0.6, 0.8, 0.2, 8),
-  H.matte(0x333344)
+VERSION C — Witch's Bubbling Cauldron Bottle:
+─────────────────────────────────────
+// Cauldron-shaped bottle
+const cauldronProfile = [
+  new THREE.Vector2(0.08, 0),
+  new THREE.Vector2(0.25, 0.1),
+  new THREE.Vector2(0.3, 0.25),
+  new THREE.Vector2(0.28, 0.4),
+  new THREE.Vector2(0.15, 0.5),
+  new THREE.Vector2(0.12, 0.55),
+];
+const cauldron = H.mesh(
+  new THREE.LatheGeometry(cauldronProfile, 32),
+  H.metal(0x1a1a1a, {roughness: 0.7})
 );
-base.position.y = 0.1;
-root.add(base);
+cauldron.position.y = 0.3;
+root.add(cauldron);
 
-for (let i = 0; i < 7; i++) {
-  const crystal = H.crystal({
-    color: [0x9966ff, 0xff66aa, 0x66ffff][i % 3],
-    height: 0.4 + Math.random() * 0.5,
-    radius: 0.08 + Math.random() * 0.1,
-    glow: 0.4
-  });
-  const angle = (i / 7) * Math.PI * 2;
-  const r = 0.2 + Math.random() * 0.25;
-  crystal.position.set(Math.cos(angle) * r, 0.2, Math.sin(angle) * r);
-  crystal.rotation.set(Math.random() * 0.3, 0, Math.random() * 0.3);
-  root.add(crystal);
+// Bubbling liquid surface
+const liquidSurface = H.mesh(
+  new THREE.CircleGeometry(0.14, 24),
+  H.liquid(0x44ff44, {glow: 0.8})
+);
+liquidSurface.rotation.x = -Math.PI / 2;
+liquidSurface.position.y = 0.52;
+root.add(liquidSurface);
+
+// Steam/smoke rising
+root.add(H.smoke(30, {color: 0x88ff88, spread: 0.2}));
+
+// Tiny skulls decoration
+for (let i = 0; i < 3; i++) {
+  const skull = H.mesh(new THREE.SphereGeometry(0.04, 8, 6), H.matte(0xfffff0));
+  const angle = (i / 3) * Math.PI * 2 + 0.5;
+  skull.position.set(Math.cos(angle) * 0.26, 0.35, Math.sin(angle) * 0.26);
+  skull.scale.set(1, 1.2, 0.9);
+  root.add(skull);
 }
 
-root.add(H.dust(50, { color: 0xccbbff, spread: 1.2 }));
-root.add(H.light(0x9966ff, 1.5, 4));
-
-EXAMPLE C — Animated Treasure (raw Three.js + animation)
-─────────────────────────────────────────
-const chest = H.chest({ open: true, woodColor: 0x6b4423, metalColor: 0xffd700 });
-chest.position.y = 0.3;
-root.add(chest);
-
-// Floating coins using raw Three.js
-const coins = [];
-const coinGeo = new THREE.CylinderGeometry(0.08, 0.08, 0.02, 16);
-const coinMat = H.metal(0xffd700, { roughness: 0.2 });
-
-for (let i = 0; i < 8; i++) {
-  const coin = new THREE.Mesh(coinGeo, coinMat);
-  coin.rotation.x = Math.PI / 2;
-  coin.userData.phase = i * 0.8;
-  coin.userData.baseY = 0.6 + Math.random() * 0.3;
-  coins.push(coin);
-  root.add(coin);
+// Handles
+for (let i = 0; i < 2; i++) {
+  const handle = H.mesh(new THREE.TorusGeometry(0.08, 0.02, 8, 16, Math.PI), H.metal(0x1a1a1a));
+  handle.position.set(i === 0 ? 0.32 : -0.32, 0.35, 0);
+  handle.rotation.y = i === 0 ? Math.PI / 2 : -Math.PI / 2;
+  root.add(handle);
 }
 
-addUpdateCallback(({time}) => {
-  coins.forEach((coin, i) => {
-    const angle = time * 0.5 + coin.userData.phase;
-    coin.position.x = Math.cos(angle) * 0.3;
-    coin.position.z = Math.sin(angle) * 0.3;
-    coin.position.y = coin.userData.baseY + Math.sin(time * 2 + i) * 0.1;
-    coin.rotation.z = time * 2;
-  });
-});
-
-root.add(H.sparks(40, { color: 0xffdd66, spread: 0.5, baseY: 0.4, maxY: 1.2 }));
+root.add(H.light(0x44ff44, 2, 3));
 
 ════════════════════════════════════════════════════════════════════
-NOW GENERATE CODE FOR: "${userText}"
+NOW CREATE A UNIQUE "${userText}"
 ════════════════════════════════════════════════════════════════════
+
+Think about what makes YOUR version special:
+• What's the story behind this object?
+• What unusual shape or proportion could work?
+• What details show its history or magic?
+• What animated elements bring it to life?
+
 Output raw JavaScript code only. No markdown. No explanation.`;
     };
 
@@ -1227,6 +1264,43 @@ OUTPUT ONLY THE FIXED JAVASCRIPT CODE. No markdown, no explanation.`;
           JSON.parse(JSON.stringify(objectInferences.value))
         );
       } catch (e) {}
+    };
+
+    // ═══════════════════════════════════════════════════════════════════════
+    // MODEL MANAGEMENT
+    // ═══════════════════════════════════════════════════════════════════════
+    const isModelAvailable = async (filename) => {
+      const available = await window.electronAPI.checkModel(filename);
+      isModel.value = available;
+      return available;
+    };
+
+    const downloadModel = async (url, filename) => {
+      if (!url || !filename) return;
+
+      downloadProgress.value = 0;
+
+      window.electronAPI.onDownloadProgress((data) => {
+        downloadProgress.value = Math.round(data.percent * 100);
+      });
+
+      const success = await window.electronAPI.downloadModel(url, filename);
+
+      downloadProgress.value = 0;
+
+      if (success) {
+        isModel.value = true;
+      }
+    };
+
+    const deleteModel = async (filename) => {
+      if (!filename) return;
+      const success = await window.electronAPI.deleteModel(filename);
+
+      if (success) {
+        isModel.value = false;
+        isModelLoaded.value = false;
+      }
     };
 
     // ═══════════════════════════════════════════════════════════════════════
@@ -1455,6 +1529,10 @@ OUTPUT ONLY THE FIXED JAVASCRIPT CODE. No markdown, no explanation.`;
         );
         if (Array.isArray(saved)) objectInferences.value = saved;
       } catch (e) {}
+
+      // Check if the model is already downloaded
+      await isModelAvailable(currentModel.value.filename);
+
       await nextTick();
       setTimeout(() => loadDefaultObject(), 500);
     });
@@ -1496,6 +1574,13 @@ OUTPUT ONLY THE FIXED JAVASCRIPT CODE. No markdown, no explanation.`;
       onAccessChanged,
       onDemoGenerate,
       DEMO_PROMPT,
+      // Model management
+      currentModel,
+      downloadProgress,
+      isModel,
+      isModelAvailable,
+      downloadModel,
+      deleteModel,
     };
   },
 };

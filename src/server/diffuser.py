@@ -81,7 +81,8 @@ except Exception:
 from diffusers import (
     AutoPipelineForText2Image,
     AutoModel,
-    FluxKontextPipeline,
+    QwenImageTransformer2DModel,
+    QwenImageEditPlusPipeline,
     StableDiffusionXLPipeline,
     StableDiffusionXLImg2ImgPipeline,
     LTXPipeline,
@@ -148,10 +149,12 @@ FLUX_KREA_GGUF_NAME = os.getenv("FLUX_GGUF_FILENAME", "flux1-krea-dev-Q5_K_M.ggu
 FLUX_KREA_GGUF_URL = os.getenv("FLUX_KREA_GGUF_URL",
     "https://huggingface.co/QuantStack/FLUX.1-Krea-dev-GGUF/resolve/main/flux1-krea-dev-Q5_K_M.gguf").strip()
 
-FLUX_KONTEXT_REPO = "black-forest-labs/FLUX.1-Kontext-dev"
-FLUX_KONTEXT_GGUF_NAME = os.getenv("KONTEXT_GGUF_FILENAME", "flux1-kontext-dev-Q2_K.gguf").strip()
-FLUX_KONTEXT_GGUF_URL = os.getenv("FLUX_KONTEXT_GGUF_URL",
-    "https://huggingface.co/QuantStack/FLUX.1-Kontext-dev-GGUF/resolve/main/flux1-kontext-dev-Q5_K_M.gguf").strip()
+# Qwen Image Edit (replaces Flux Kontext for image editing)
+QWEN_IMAGE_EDIT_REPO = "Qwen/Qwen-Image-Edit-2511"
+QWEN_IMAGE_EDIT_GGUF_REPO = "unsloth/Qwen-Image-Edit-2511-GGUF"
+QWEN_IMAGE_EDIT_GGUF_NAME = os.getenv("QWEN_IMAGE_EDIT_GGUF_FILENAME", "qwen-image-edit-2511-Q4_0.gguf").strip()
+QWEN_IMAGE_EDIT_GGUF_URL = os.getenv("QWEN_IMAGE_EDIT_GGUF_URL",
+    "https://huggingface.co/unsloth/Qwen-Image-Edit-2511-GGUF/resolve/main/qwen-image-edit-2511-Q4_0.gguf").strip()
 
 Z_REPO = "Tongyi-MAI/Z-Image-Turbo"
 Z_GGUF_NAME = "z_image_turbo-Q5_K_M.gguf"
@@ -205,7 +208,7 @@ CHATTERBOX_LANGUAGES = {
 
 EXPECTED_SIZES = {
     "flux1-krea-dev-Q5_K_M.gguf": 8_419_501_344,
-    "flux1-kontext-dev-Q2_K.gguf": 4_023_690_528,
+    "qwen-image-edit-2511-Q4_0.gguf": 11_900_000_000,  # ~11.9 GB
     "z_image_turbo-Q5_K_M.gguf": 5_522_742_336,
     "Wan2.2-I2V-A14B-HighNoise-Q5_K_M.gguf": 11_596_584_160,
     "Wan2.2-I2V-A14B-LowNoise-Q5_K_M.gguf": 11_596_584_160,
@@ -1292,9 +1295,9 @@ def _plan_for(pipeline: str) -> Dict[str, Any]:
     pipeline = pipeline.strip().lower()
     if pipeline == "flux_krea":
         return {"repos_to_fetch": [FLUX_KREA_REPO], "single_files": [_sf(FLUX_KREA_GGUF_NAME, FLUX_KREA_GGUF_URL)]}
-    if pipeline == "flux_kontext":
-        # Need both Kontext (for GGUF) and Krea (for pipeline structure - text encoders, vae, scheduler)
-        return {"repos_to_fetch": [FLUX_KREA_REPO], "single_files": [_sf(FLUX_KONTEXT_GGUF_NAME, FLUX_KONTEXT_GGUF_URL)]}
+    if pipeline == "qwen_image_edit":
+        # Qwen Image Edit: repo for pipeline structure + GGUF for transformer
+        return {"repos_to_fetch": [QWEN_IMAGE_EDIT_REPO], "single_files": [_sf(QWEN_IMAGE_EDIT_GGUF_NAME, QWEN_IMAGE_EDIT_GGUF_URL)]}
     if pipeline == "ltx_video":
         return {"repos_to_fetch": [LTX_REPO, LTX_UPSAMPLER_REPO], "single_files": []}
     if pipeline == "ltx_upscaler":
@@ -2609,20 +2612,21 @@ def image_quality_flux_krea():
 
 
 # =============================================================================
-# REST API: IMAGE GENERATION - FLUX KONTEXT (I2I)
+# REST API: IMAGE GENERATION - QWEN IMAGE EDIT (I2I)
 # =============================================================================
 
 @app.route("/image/image/quality", methods=["POST"])
-def image_kontext_i2i():
-    """FLUX Kontext image-to-image generation."""
+def image_qwen_edit_i2i():
+    """Qwen Image Edit image-to-image generation."""
     data = request.get_json(silent=True) or {}
     prompt = (data.get("prompt") or "").strip()
     image_b64 = (data.get("image_base64") or "").strip()
     image_url = (data.get("image_url") or "").strip()
     h = int(data.get("height", 512))
     w = int(data.get("width", 768))
-    steps = int(data.get("steps", 28))  # FluxKontextPipeline default is 28
-    guidance = float(data.get("guidance_scale", 3.5))
+    steps = int(data.get("steps", 40))  # QwenImageEditPlusPipeline recommended default
+    true_cfg = float(data.get("true_cfg_scale", 4.0))
+    guidance = float(data.get("guidance_scale", 1.0))
     auto_dl = bool(data.get("auto_download", False))
 
     if not prompt:
@@ -2630,105 +2634,99 @@ def image_kontext_i2i():
     if not image_b64 and not image_url:
         return jsonify(_json_sanitize({"error": "Provide 'image_base64' or 'image_url'"})), 400
 
-    guard = _ensure_files_present_or_start("flux_kontext", auto_download=auto_dl)
+    guard = _ensure_files_present_or_start("qwen_image_edit", auto_download=auto_dl)
     if guard:
         return guard
 
-    gen_id = genbus.new("flux_kontext", {"endpoint": "/image/kontext", "w": w, "h": h, "steps": steps})
+    gen_id = genbus.new("qwen_image_edit", {"endpoint": "/image/edit", "w": w, "h": h, "steps": steps})
 
     try:
         genbus.progress(gen_id, "loading_model", 0, 3)
 
         device = DeviceManager.get_device()
-        if device.type == "cuda":
-            compute_dtype = torch.bfloat16
-        elif device.type == "mps":
-            compute_dtype = torch.float16  # MPS doesn't support bfloat16 well
-        else:
-            compute_dtype = torch.float32
+        # Qwen Image Edit works best with float16 (bfloat16 has issues on some hardware)
+        compute_dtype = torch.float16
 
-        # Kontext repo doesn't have standard diffusers structure (no transformer/config.json)
-        # Use FLUX Krea repo as base (has text encoders, scheduler, vae, transformer config)
-        # and inject the Kontext GGUF transformer
-        tr_cfg = repo_local_dir(FLUX_KREA_REPO) / "transformer" / "config.json"
+        # Load GGUF transformer using local config from downloaded repo
+        gguf_path = str(MODEL_DIR / QWEN_IMAGE_EDIT_GGUF_NAME)
+        tr_cfg = repo_local_dir(QWEN_IMAGE_EDIT_REPO) / "transformer" / "config.json"
 
-        # Use offline mode if pipeline is fully downloaded (uses Krea repo for structure)
-        with offline_mode_if_complete("flux_krea") as is_offline:
-            transformer = FluxTransformer2DModel.from_single_file(
-                str(MODEL_DIR / FLUX_KONTEXT_GGUF_NAME),
+        with offline_mode_if_complete("qwen_image_edit") as is_offline:
+            transformer = QwenImageTransformer2DModel.from_single_file(
+                gguf_path,
                 config=str(tr_cfg),
                 quantization_config=GGUFQuantizationConfig(compute_dtype=compute_dtype),
-                dtype=compute_dtype,
-            ).to(device)
+                torch_dtype=compute_dtype,
+            )
 
-            # Use FluxKontextPipeline with Krea repo base (has proper diffusers structure)
-            # and inject the Kontext transformer
-            pipe = FluxKontextPipeline.from_pretrained(
-                str(repo_local_dir(FLUX_KREA_REPO)),
+            # Create pipeline with the GGUF transformer (use local path, not repo ID)
+            pipe = QwenImageEditPlusPipeline.from_pretrained(
+                str(repo_local_dir(QWEN_IMAGE_EDIT_REPO)),
                 transformer=transformer,
                 torch_dtype=compute_dtype,
                 local_files_only=is_offline,
             )
 
-        # Memory optimizations for MPS/limited VRAM
+        # Memory optimizations
         if device.type == "mps":
-            # CPU offload moves models to CPU when not in use (compatible with GGUF)
             pipe.enable_model_cpu_offload()
-            # Enable attention slicing for lower memory usage
             if hasattr(pipe, 'enable_attention_slicing'):
                 pipe.enable_attention_slicing("max")
-            # Enable VAE slicing/tiling
             if hasattr(pipe, 'vae') and hasattr(pipe.vae, 'enable_slicing'):
                 pipe.vae.enable_slicing()
             if hasattr(pipe, 'vae') and hasattr(pipe.vae, 'enable_tiling'):
                 pipe.vae.enable_tiling()
+        elif device.type == "cuda":
+            pipe = pipe.to(device)
+            # Enable memory efficient attention if available
+            if hasattr(pipe, 'enable_xformers_memory_efficient_attention'):
+                try:
+                    pipe.enable_xformers_memory_efficient_attention()
+                except Exception:
+                    pass
         else:
             pipe = pipe.to(device)
-            # Ensure components are in correct dtype
-            pipe.text_encoder = pipe.text_encoder.to(dtype=compute_dtype)
-            pipe.text_encoder_2 = pipe.text_encoder_2.to(dtype=compute_dtype)
-            if hasattr(pipe, 'vae'):
-                pipe.vae = pipe.vae.to(dtype=compute_dtype)
 
         init_img = load_image(image_url).convert("RGB") if image_url else _img_b64_to_pil(image_b64)
 
-        # Resize input image to fit within memory constraints on MPS
+        # Resize input image to fit within memory constraints
         max_dim = 768 if device.type == "mps" else 1024
         if init_img.width > max_dim or init_img.height > max_dim:
             ratio = min(max_dim / init_img.width, max_dim / init_img.height)
             new_size = (int(init_img.width * ratio), int(init_img.height * ratio))
             init_img = init_img.resize(new_size, Image.LANCZOS)
             h, w = new_size[1], new_size[0]
-            logger.info(f"[Kontext] Resized input to {new_size} for memory constraints")
+            logger.info(f"[QwenEdit] Resized input to {new_size} for memory constraints")
 
         genbus.progress(gen_id, "generating", 1, 3)
 
-        # FluxKontextPipeline uses guidance_scale for edit strength (not strength param)
-        # Disable auto-resize to use our controlled dimensions
-        out = pipe(
-            prompt=prompt,
-            image=init_img,
-            height=min(h, max_dim),
-            width=min(w, max_dim),
-            num_inference_steps=steps,
-            guidance_scale=guidance,
-            _auto_resize=False,
-        ).images[0]
+        # QwenImageEditPlusPipeline inference
+        with torch.inference_mode():
+            out = pipe(
+                image=[init_img],
+                prompt=prompt,
+                negative_prompt=" ",
+                generator=torch.Generator(device="cpu").manual_seed(int(time.time())),
+                true_cfg_scale=true_cfg,
+                guidance_scale=guidance,
+                num_inference_steps=steps,
+                num_images_per_prompt=1,
+            ).images[0]
 
         buf = BytesIO()
         _apply_watermark(out).save(buf, format="PNG")
         encoded = base64.b64encode(buf.getvalue()).decode("utf-8")
-        
+
         genbus.progress(gen_id, "complete", 3, 3)
         genbus.finish(gen_id, {"ok": True})
-        
+
         return jsonify(_json_sanitize({
-            "prompt": prompt, "image": encoded, "generation_id": gen_id, 
+            "prompt": prompt, "image": encoded, "generation_id": gen_id,
             "generation_websocket_url": generation_url()
         })), 201
 
     except Exception as e:
-        logger.exception("Kontext i2i failed")
+        logger.exception("Qwen Image Edit failed")
         genbus.error(gen_id, str(e))
         return jsonify(_json_sanitize({"error": str(e)})), 500
     finally:

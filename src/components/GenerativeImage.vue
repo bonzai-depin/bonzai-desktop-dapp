@@ -627,7 +627,7 @@ export default {
     const endpointForMode = () => (mode.value === "edit" ? "/image/image/quality" : `/image/${mode.value}`);
     const pipelineForMode = (m) =>
       m === "edit"
-        ? "flux_kontext"
+        ? "qwen_image_edit"
         : m === "quality"
           ? "flux_krea"
           : m === "intermediate"
