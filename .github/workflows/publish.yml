@@ -44,12 +44,30 @@ jobs:
             --distpath binaries/${{ env.OS_KEY }}-${{ env.ARCH_KEY }} \
             --workpath $RUNNER_TEMP/pybuild \
             --specpath $RUNNER_TEMP \
-            --hidden-import=eventlet.hubs.epolls \
-            --hidden-import=eventlet.hubs.kqueue \
-            --hidden-import=eventlet.hubs.poll \
-            --hidden-import=eventlet.hubs.selects \
-            --hidden-import=eventlet.hubs.hub \
-            --collect-submodules=eventlet \
+            --collect-all=eventlet \
+            --collect-all=dns \
+            --collect-all=engineio \
+            --collect-all=socketio \
+            --collect-submodules=diffusers \
+            --collect-submodules=transformers \
+            --collect-submodules=huggingface_hub \
+            --collect-submodules=accelerate \
+            --collect-submodules=safetensors \
+            --collect-submodules=peft \
+            --collect-submodules=datasets \
+            --hidden-import=pytorch_lightning \
+            --hidden-import=torchaudio \
+            --hidden-import=torchaudio.functional \
+            --hidden-import=torchvision \
+            --hidden-import=torchvision.transforms \
+            --hidden-import=soundfile \
+            --hidden-import=compel \
+            --hidden-import=onnxruntime \
+            --hidden-import=psutil \
+            --hidden-import=scipy \
+            --hidden-import=scipy.signal \
+            --hidden-import=PIL \
+            --hidden-import=PIL.Image \
             ${{ env.MAIN_PY_FILE }}
 
       - name: Decode & Import Certificates
@@ -350,12 +368,30 @@ jobs:
             --distpath binaries/${{ env.OS_KEY }}-${{ env.ARCH_KEY }} \
             --workpath $RUNNER_TEMP/pybuild \
             --specpath $RUNNER_TEMP \
-            --hidden-import=eventlet.hubs.epolls \
-            --hidden-import=eventlet.hubs.kqueue \
-            --hidden-import=eventlet.hubs.poll \
-            --hidden-import=eventlet.hubs.selects \
-            --hidden-import=eventlet.hubs.hub \
-            --collect-submodules=eventlet \
+            --collect-all=eventlet \
+            --collect-all=dns \
+            --collect-all=engineio \
+            --collect-all=socketio \
+            --collect-submodules=diffusers \
+            --collect-submodules=transformers \
+            --collect-submodules=huggingface_hub \
+            --collect-submodules=accelerate \
+            --collect-submodules=safetensors \
+            --collect-submodules=peft \
+            --collect-submodules=datasets \
+            --hidden-import=pytorch_lightning \
+            --hidden-import=torchaudio \
+            --hidden-import=torchaudio.functional \
+            --hidden-import=torchvision \
+            --hidden-import=torchvision.transforms \
+            --hidden-import=soundfile \
+            --hidden-import=compel \
+            --hidden-import=onnxruntime \
+            --hidden-import=psutil \
+            --hidden-import=scipy \
+            --hidden-import=scipy.signal \
+            --hidden-import=PIL \
+            --hidden-import=PIL.Image \
             ${{ env.MAIN_PY_FILE }}
 
       - name: Decode & Import Certificates
