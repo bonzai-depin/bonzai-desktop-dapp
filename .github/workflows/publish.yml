@@ -44,10 +44,10 @@ jobs:
             --distpath binaries/${{ env.OS_KEY }}-${{ env.ARCH_KEY }} \
             --workpath $RUNNER_TEMP/pybuild \
             --specpath $RUNNER_TEMP \
-            --collect-all=eventlet \
-            --collect-all=dns \
-            --collect-all=engineio \
-            --collect-all=socketio \
+            --collect-submodules=eventlet \
+            --collect-submodules=dns \
+            --collect-submodules=engineio \
+            --collect-submodules=socketio \
             --collect-submodules=diffusers \
             --collect-submodules=transformers \
             --collect-submodules=huggingface_hub \
@@ -64,8 +64,6 @@ jobs:
             --hidden-import=compel \
             --hidden-import=onnxruntime \
             --hidden-import=psutil \
-            --hidden-import=scipy \
-            --hidden-import=scipy.signal \
             --hidden-import=PIL \
             --hidden-import=PIL.Image \
             ${{ env.MAIN_PY_FILE }}
@@ -368,10 +366,10 @@ jobs:
             --distpath binaries/${{ env.OS_KEY }}-${{ env.ARCH_KEY }} \
             --workpath $RUNNER_TEMP/pybuild \
             --specpath $RUNNER_TEMP \
-            --collect-all=eventlet \
-            --collect-all=dns \
-            --collect-all=engineio \
-            --collect-all=socketio \
+            --collect-submodules=eventlet \
+            --collect-submodules=dns \
+            --collect-submodules=engineio \
+            --collect-submodules=socketio \
             --collect-submodules=diffusers \
             --collect-submodules=transformers \
             --collect-submodules=huggingface_hub \
@@ -388,8 +386,6 @@ jobs:
             --hidden-import=compel \
             --hidden-import=onnxruntime \
             --hidden-import=psutil \
-            --hidden-import=scipy \
-            --hidden-import=scipy.signal \
             --hidden-import=PIL \
             --hidden-import=PIL.Image \
             ${{ env.MAIN_PY_FILE }}

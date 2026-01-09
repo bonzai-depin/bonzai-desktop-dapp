@@ -9,8 +9,14 @@ Clean, consolidated version with:
 - Proper progress reporting for all pipelines
 - Blend interpolation (no ghosting artifacts)
 """
-
 from __future__ import annotations
+
+# ============================================================================
+# CRITICAL: eventlet monkey_patch MUST run before ANY other imports
+# This is required for PyInstaller compatibility
+# ============================================================================
+import eventlet
+eventlet.monkey_patch(all=True, socket=True, time=True, select=True, thread=True, os=True)
 
 import os
 os.environ["TRANSFORMERS_ATTN_IMPLEMENTATION"] = "eager"
@@ -36,10 +42,6 @@ from decimal import Decimal
 from dataclasses import dataclass, field
 from typing import Optional, Dict, Any, List, Tuple
 from fnmatch import fnmatch
-
-# ---- eventlet first (MUST be before other imports)
-import eventlet
-eventlet.monkey_patch(all=True, socket=True, time=True, select=True, thread=True, os=True)
 
 import requests
 import torch
