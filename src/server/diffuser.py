@@ -11,12 +11,8 @@ Clean, consolidated version with:
 """
 from __future__ import annotations
 
-# ============================================================================
-# CRITICAL: eventlet monkey_patch MUST run before ANY other imports
-# This is required for PyInstaller compatibility
-# ============================================================================
-import eventlet
-eventlet.monkey_patch(all=True, socket=True, time=True, select=True, thread=True, os=True)
+# Note: Using threading mode for Flask-SocketIO (PyInstaller compatible)
+# eventlet was removed due to incompatibility with PyInstaller + numpy
 
 import os
 os.environ["TRANSFORMERS_ATTN_IMPLEMENTATION"] = "eager"
@@ -81,8 +77,6 @@ except Exception:
     _safetensors_open = None
 
 from diffusers import (
-    AutoPipelineForText2Image,
-    AutoModel,
     QwenImageTransformer2DModel,
     QwenImageEditPlusPipeline,
     StableDiffusionXLPipeline,
@@ -565,7 +559,7 @@ CORS(app)
 socketio = SocketIO(
     app,
     cors_allowed_origins="*",
-    async_mode="eventlet",
+    async_mode="threading",
     logger=False,
     engineio_logger=False,
     ping_interval=25,
@@ -1498,7 +1492,7 @@ def _start_prefetch_pipeline(pipeline: str) -> Dict[str, Any]:
         finally:
             download_manager.finalize_if_done(pl)
 
-    eventlet.spawn_n(_worker)
+    threading.Thread(target=_worker, daemon=True).start()
     return {
         "json": {"ok": True, "message": "Prefetch started", "pipeline_id": pl.pipeline_id, "pipeline": pl.to_dict()},
         "http_status": 202,
@@ -1547,7 +1541,7 @@ def _download_repo_files(pl: PipelineDownload, tid: str, repo_id: str, manifest:
             files_done += 1
             done = files_done
         download_manager.update_progress(pl, tid, done, total)
-        eventlet.sleep(0)
+        time.sleep(0)
 
 
 def _download_single_file(pl: PipelineDownload, tid: str, name: str, url: str, size_hint: int = 0):
@@ -1601,7 +1595,7 @@ def _stream_download(url, dest, headers, update, is_cancelled=None):
                     update(len(chunk))
                 except Exception:
                     pass
-                eventlet.sleep(0)
+                time.sleep(0)
     try:
         tmp.replace(dest)
     except FileNotFoundError:
@@ -4563,7 +4557,7 @@ def start_llm_finetuning():
         finally:
             DeviceManager.free_memory()
     
-    eventlet.spawn_n(_train_worker)
+    threading.Thread(target=_train_worker, daemon=True).start()
     
     return jsonify(_json_sanitize({
         "ok": True,
@@ -4913,7 +4907,7 @@ def start_sdxl_lora_training():
         finally:
             DeviceManager.free_memory()
     
-    eventlet.spawn_n(_train_worker)
+    threading.Thread(target=_train_worker, daemon=True).start()
     
     return jsonify(_json_sanitize({
         "ok": True,
@@ -5053,4 +5047,4 @@ if __name__ == "__main__":
     logger.info("Starting BonzAI Media Generation Server")
     logger.info(f"Device: {DeviceManager.get_device()}")
     logger.info(f"Model directory: {MODEL_DIR}")
-    socketio.run(app, host="0.0.0.0", port=65000, debug=False, use_reloader=False)
+    socketio.run(app, host="0.0.0.0", port=65000, debug=False, use_reloader=False, allow_unsafe_werkzeug=True)

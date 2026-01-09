@@ -59,8 +59,8 @@ const ARCH_KEY = process.arch === "arm64" ? "arm64" : "x64";
 // ─────────────────────────────────────────────────────────────────────────────
 // Python server launcher
 // - dev: run system python on src/server/diffuser.py
-// - packaged (mac onefile): resources/server/python-binary
-// - packaged (linux/win onedir): resources/server/python-runtime/<platform>-<arch>/diffuser(.exe)
+// - packaged (onedir): resources/server/python-runtime/<platform>-<arch>/diffuser(.exe)
+//   PyInstaller onedir mode - executable + _internal/ folder with shared libraries
 // ─────────────────────────────────────────────────────────────────────────────
 function resolvePythonLaunch(port = PY_SERVER_PORT) {
   if (!app.isPackaged) {
