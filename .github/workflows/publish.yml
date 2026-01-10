@@ -16,14 +16,10 @@ jobs:
     steps:
       - uses: actions/checkout@v3
 
-      - name: Set up Python via Homebrew (macOS ARM64)
-        run: |
-          brew update
-          brew install python@3.11
-          BREW_PYTHON="$(brew --prefix python@3.11)/libexec/bin"
-          echo "$BREW_PYTHON" >> $GITHUB_PATH
-          "$BREW_PYTHON/python3" --version
-          "$BREW_PYTHON/pip3" install --upgrade pip
+      - name: Set up Python (macOS ARM64)
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.11'
 
       - name: Install nightly PyTorch (CPU)
         run: |
@@ -43,7 +39,7 @@ jobs:
         run: |
           mkdir -p binaries/${{ env.OS_KEY }}-${{ env.ARCH_KEY }}
           pyinstaller \
-            --onedir \
+            --onefile \
             --distpath binaries/${{ env.OS_KEY }}-${{ env.ARCH_KEY }} \
             --workpath $RUNNER_TEMP/pybuild \
             --specpath $RUNNER_TEMP \
@@ -87,7 +83,7 @@ jobs:
           security unlock-keychain -p "$KEYCHAIN_PW" build.keychain
           security set-key-partition-list -S apple-tool:,apple: -s -k "$KEYCHAIN_PW" build.keychain
 
-      - name: Sign Python runtime (onedir)
+      - name: Sign Python runtime (onefile)
         env:
           KEYCHAIN_PW: ${{ secrets.KEYCHAIN_PASSWORD }}
         run: |
@@ -103,82 +99,16 @@ jobs:
             exit 1
           fi
 
-          # With --onedir mode, we have a directory structure
-          RUNTIME_DIR="binaries/${{ env.OS_KEY }}-${{ env.ARCH_KEY }}/diffuser"
+          # With --onefile mode, we have a single executable
+          BINARY_PATH="binaries/${{ env.OS_KEY }}-${{ env.ARCH_KEY }}/diffuser"
 
-          # Handle Python hardlink issue: if Python.framework exists, the standalone
-          # Python binary is likely a hardlink. Remove it to avoid signature conflicts.
-          if [ -d "$RUNTIME_DIR/_internal/Python.framework" ] && [ -f "$RUNTIME_DIR/_internal/Python" ]; then
-            echo "Removing standalone Python (hardlink to framework) to avoid signature conflicts..."
-            rm -f "$RUNTIME_DIR/_internal/Python"
-          fi
-
-          # Sign framework bundles FIRST - manually sign internals then bundle
-          echo "Signing framework bundles in _internal..."
-          find "$RUNTIME_DIR/_internal" -name "*.framework" -type d -depth | while read -r framework; do
-            echo "Signing framework: $framework"
-
-            # Find and sign all Mach-O binaries inside the framework (excluding symlinks)
-            find "$framework" -type f -perm +111 ! -type l | while read -r bin; do
-              if file "$bin" | grep -q "Mach-O"; then
-                echo "  Signing framework binary: $bin"
-                codesign --force --sign "$IDENTITY" \
-                  --options runtime \
-                  --timestamp \
-                  "$bin"
-              fi
-            done
-
-            # Sign all dylibs inside the framework
-            find "$framework" -type f -name "*.dylib" ! -type l | while read -r lib; do
-              echo "  Signing framework lib: $lib"
-              codesign --force --sign "$IDENTITY" \
-                --options runtime \
-                --timestamp \
-                "$lib" 2>/dev/null || true
-            done
-
-            # Sign the framework bundle itself (no entitlements for frameworks)
-            echo "  Signing framework bundle..."
-            codesign --force --sign "$IDENTITY" \
-              --options runtime \
-              --timestamp \
-              "$framework"
-            codesign --verify --verbose "$framework"
-          done
-
-          # Sign all .dylib and .so files EXCLUDING those inside .framework bundles
-          echo "Signing libraries in _internal (excluding frameworks)..."
-          find "$RUNTIME_DIR/_internal" -type f \( -name "*.dylib" -o -name "*.so" \) | grep -v "\.framework/" | while read -r lib; do
-            echo "Signing: $lib"
-            codesign --force --sign "$IDENTITY" \
-              --options runtime \
-              --entitlements ./entitlements.mac.plist \
-              --timestamp \
-              "$lib" 2>/dev/null || true
-          done
-
-          # Sign Mach-O executables EXCLUDING those inside .framework bundles
-          echo "Signing executables in _internal (excluding frameworks)..."
-          find "$RUNTIME_DIR/_internal" -type f -perm +111 | grep -v "\.framework/" | while read -r binary; do
-            if file "$binary" | grep -q "Mach-O"; then
-              echo "Signing executable: $binary"
-              codesign --force --sign "$IDENTITY" \
-                --options runtime \
-                --entitlements ./entitlements.mac.plist \
-                --timestamp \
-                "$binary" 2>/dev/null || true
-            fi
-          done
-
-          # Sign the main executable last
-          echo "Signing main executable..."
+          echo "Signing onefile executable..."
           codesign --force --sign "$IDENTITY" \
             --options runtime \
             --entitlements ./entitlements.mac.plist \
             --timestamp \
-            "$RUNTIME_DIR/diffuser"
-          codesign --verify --verbose "$RUNTIME_DIR/diffuser"
+            "$BINARY_PATH"
+          codesign --verify --verbose "$BINARY_PATH"
 
       - name: Set up Node.js
         uses: actions/setup-node@v3
@@ -232,9 +162,10 @@ jobs:
         run: |
           APP_RESOURCES="out/bonzai-darwin-arm64/bonzai.app/Contents/Resources"
           mkdir -p "$APP_RESOURCES/server/python-runtime/macos-arm64"
-          # With --onedir, copy the entire directory structure
-          cp -r binaries/macos-arm64/diffuser/* "$APP_RESOURCES/server/python-runtime/macos-arm64/"
-          echo "Copied diffuser runtime (onedir) to app bundle"
+          # With --onefile, copy the single executable
+          cp binaries/macos-arm64/diffuser "$APP_RESOURCES/server/python-runtime/macos-arm64/"
+          chmod +x "$APP_RESOURCES/server/python-runtime/macos-arm64/diffuser"
+          echo "Copied diffuser executable (onefile) to app bundle"
           ls -la "$APP_RESOURCES/server/python-runtime/macos-arm64/"
 
       - name: Sign Electron app
@@ -413,21 +344,14 @@ jobs:
     steps:
       - uses: actions/checkout@v3
 
-      - name: Set up Python via Homebrew (macOS x64)
-        run: |
-          brew update
-          brew install python@3.11 || true
-          brew link --overwrite python@3.11 || true
-          BREW_PYTHON="$(brew --prefix python@3.11)/libexec/bin"
-          echo "$BREW_PYTHON" >> $GITHUB_PATH
-          "$BREW_PYTHON/python3" --version
-          "$BREW_PYTHON/pip3" install --upgrade pip
+      - name: Set up Python (macOS x64)
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.11'
 
-      - name: Install nightly PyTorch (CPU)
+      - name: Install PyTorch (x64 - stable release)
         run: |
-          pip install --no-cache-dir --upgrade --pre \
-            torch torchvision torchaudio \
-            --index-url https://download.pytorch.org/whl/nightly/cpu
+          pip install --no-cache-dir torch torchvision torchaudio
 
       - name: Install Python deps & PyInstaller
         run: |
@@ -441,7 +365,7 @@ jobs:
         run: |
           mkdir -p binaries/${{ env.OS_KEY }}-${{ env.ARCH_KEY }}
           pyinstaller \
-            --onedir \
+            --onefile \
             --distpath binaries/${{ env.OS_KEY }}-${{ env.ARCH_KEY }} \
             --workpath $RUNNER_TEMP/pybuild \
             --specpath $RUNNER_TEMP \
@@ -485,7 +409,7 @@ jobs:
           security unlock-keychain -p "$KEYCHAIN_PW" build.keychain
           security set-key-partition-list -S apple-tool:,apple: -s -k "$KEYCHAIN_PW" build.keychain
 
-      - name: Sign Python runtime (onedir)
+      - name: Sign Python runtime (onefile)
         env:
           KEYCHAIN_PW: ${{ secrets.KEYCHAIN_PASSWORD }}
         run: |
@@ -501,82 +425,16 @@ jobs:
             exit 1
           fi
 
-          # With --onedir mode, we have a directory structure
-          RUNTIME_DIR="binaries/${{ env.OS_KEY }}-${{ env.ARCH_KEY }}/diffuser"
+          # With --onefile mode, we have a single executable
+          BINARY_PATH="binaries/${{ env.OS_KEY }}-${{ env.ARCH_KEY }}/diffuser"
 
-          # Handle Python hardlink issue: if Python.framework exists, the standalone
-          # Python binary is likely a hardlink. Remove it to avoid signature conflicts.
-          if [ -d "$RUNTIME_DIR/_internal/Python.framework" ] && [ -f "$RUNTIME_DIR/_internal/Python" ]; then
-            echo "Removing standalone Python (hardlink to framework) to avoid signature conflicts..."
-            rm -f "$RUNTIME_DIR/_internal/Python"
-          fi
-
-          # Sign framework bundles FIRST - manually sign internals then bundle
-          echo "Signing framework bundles in _internal..."
-          find "$RUNTIME_DIR/_internal" -name "*.framework" -type d -depth | while read -r framework; do
-            echo "Signing framework: $framework"
-
-            # Find and sign all Mach-O binaries inside the framework (excluding symlinks)
-            find "$framework" -type f -perm +111 ! -type l | while read -r bin; do
-              if file "$bin" | grep -q "Mach-O"; then
-                echo "  Signing framework binary: $bin"
-                codesign --force --sign "$IDENTITY" \
-                  --options runtime \
-                  --timestamp \
-                  "$bin"
-              fi
-            done
-
-            # Sign all dylibs inside the framework
-            find "$framework" -type f -name "*.dylib" ! -type l | while read -r lib; do
-              echo "  Signing framework lib: $lib"
-              codesign --force --sign "$IDENTITY" \
-                --options runtime \
-                --timestamp \
-                "$lib" 2>/dev/null || true
-            done
-
-            # Sign the framework bundle itself (no entitlements for frameworks)
-            echo "  Signing framework bundle..."
-            codesign --force --sign "$IDENTITY" \
-              --options runtime \
-              --timestamp \
-              "$framework"
-            codesign --verify --verbose "$framework"
-          done
-
-          # Sign all .dylib and .so files EXCLUDING those inside .framework bundles
-          echo "Signing libraries in _internal (excluding frameworks)..."
-          find "$RUNTIME_DIR/_internal" -type f \( -name "*.dylib" -o -name "*.so" \) | grep -v "\.framework/" | while read -r lib; do
-            echo "Signing: $lib"
-            codesign --force --sign "$IDENTITY" \
-              --options runtime \
-              --entitlements ./entitlements.mac.plist \
-              --timestamp \
-              "$lib" 2>/dev/null || true
-          done
-
-          # Sign Mach-O executables EXCLUDING those inside .framework bundles
-          echo "Signing executables in _internal (excluding frameworks)..."
-          find "$RUNTIME_DIR/_internal" -type f -perm +111 | grep -v "\.framework/" | while read -r binary; do
-            if file "$binary" | grep -q "Mach-O"; then
-              echo "Signing executable: $binary"
-              codesign --force --sign "$IDENTITY" \
-                --options runtime \
-                --entitlements ./entitlements.mac.plist \
-                --timestamp \
-                "$binary" 2>/dev/null || true
-            fi
-          done
-
-          # Sign the main executable last
-          echo "Signing main executable..."
+          echo "Signing onefile executable..."
           codesign --force --sign "$IDENTITY" \
             --options runtime \
             --entitlements ./entitlements.mac.plist \
             --timestamp \
-            "$RUNTIME_DIR/diffuser"
-          codesign --verify --verbose "$RUNTIME_DIR/diffuser"
+            "$BINARY_PATH"
+          codesign --verify --verbose "$BINARY_PATH"
 
       - name: Set up Node.js
         uses: actions/setup-node@v3
@@ -630,9 +488,10 @@ jobs:
         run: |
           APP_RESOURCES="out/bonzai-darwin-x64/bonzai.app/Contents/Resources"
           mkdir -p "$APP_RESOURCES/server/python-runtime/macos-x64"
-          # With --onedir, copy the entire directory structure
-          cp -r binaries/macos-x64/diffuser/* "$APP_RESOURCES/server/python-runtime/macos-x64/"
-          echo "Copied diffuser runtime (onedir) to app bundle"
+          # With --onefile, copy the single executable
+          cp binaries/macos-x64/diffuser "$APP_RESOURCES/server/python-runtime/macos-x64/"
+          chmod +x "$APP_RESOURCES/server/python-runtime/macos-x64/diffuser"
+          echo "Copied diffuser executable (onefile) to app bundle"
           ls -la "$APP_RESOURCES/server/python-runtime/macos-x64/"
 
       - name: Sign Electron app

@@ -5044,7 +5044,12 @@ logger.info(f"HF_HOME={os.environ.get('HF_HOME')}")
 logger.info(f"HF token present? {bool(_hf_token())}")
 
 if __name__ == "__main__":
+    import argparse
+    parser = argparse.ArgumentParser(description="BonzAI Media Generation Server")
+    parser.add_argument("--port", type=int, default=65000, help="Port to run the server on")
+    args = parser.parse_args()
+
     logger.info("Starting BonzAI Media Generation Server")
     logger.info(f"Device: {DeviceManager.get_device()}")
     logger.info(f"Model directory: {MODEL_DIR}")
-    socketio.run(app, host="0.0.0.0", port=65000, debug=False, use_reloader=False, allow_unsafe_werkzeug=True)
+    socketio.run(app, host="0.0.0.0", port=args.port, debug=False, use_reloader=False, allow_unsafe_werkzeug=True)
