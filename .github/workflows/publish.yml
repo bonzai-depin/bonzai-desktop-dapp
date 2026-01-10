@@ -416,7 +416,8 @@ jobs:
       - name: Set up Python via Homebrew (macOS x64)
         run: |
           brew update
-          brew install python@3.11
+          brew install python@3.11 || true
+          brew link --overwrite python@3.11 || true
           BREW_PYTHON="$(brew --prefix python@3.11)/libexec/bin"
           echo "$BREW_PYTHON" >> $GITHUB_PATH
           "$BREW_PYTHON/python3" --version
