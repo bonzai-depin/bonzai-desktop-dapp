@@ -20,9 +20,10 @@ jobs:
         run: |
           brew update
           brew install python@3.11
-          echo "/opt/homebrew/opt/python@3.11/libexec/bin" >> $GITHUB_PATH
-          /opt/homebrew/opt/python@3.11/libexec/bin/python3 --version
-          /opt/homebrew/opt/python@3.11/libexec/bin/pip3 install --upgrade pip
+          BREW_PYTHON="$(brew --prefix python@3.11)/libexec/bin"
+          echo "$BREW_PYTHON" >> $GITHUB_PATH
+          "$BREW_PYTHON/python3" --version
+          "$BREW_PYTHON/pip3" install --upgrade pip
 
       - name: Install nightly PyTorch (CPU)
         run: |
@@ -402,7 +403,7 @@ jobs:
           echo "Uploaded: $DMG_PATH"
 
   publish_on_mac_intel:
-    runs-on: macos-15
+    runs-on: macos-15-intel
     env:
       MAIN_PY_FILE: src/server/diffuser.py
       OS_KEY: macos
@@ -416,9 +417,10 @@ jobs:
         run: |
           brew update
           brew install python@3.11
-          echo "/usr/local/opt/python@3.11/libexec/bin" >> $GITHUB_PATH
-          /usr/local/opt/python@3.11/libexec/bin/python3 --version
-          /usr/local/opt/python@3.11/libexec/bin/pip3 install --upgrade pip
+          BREW_PYTHON="$(brew --prefix python@3.11)/libexec/bin"
+          echo "$BREW_PYTHON" >> $GITHUB_PATH
+          "$BREW_PYTHON/python3" --version
+          "$BREW_PYTHON/pip3" install --upgrade pip
 
       - name: Install nightly PyTorch (CPU)
         run: |
