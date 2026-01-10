@@ -110,13 +110,35 @@ jobs:
             rm -f "$RUNTIME_DIR/_internal/Python"
           fi
 
-          # Sign framework bundles FIRST - codesign --deep handles internal structure
+          # Sign framework bundles FIRST - manually sign internals then bundle
           echo "Signing framework bundles in _internal..."
           find "$RUNTIME_DIR/_internal" -name "*.framework" -type d -depth | while read -r framework; do
-            echo "Signing framework bundle: $framework"
-            codesign --force --deep --sign "$IDENTITY" \
+            echo "Signing framework: $framework"
+
+            # Find and sign all Mach-O binaries inside the framework (excluding symlinks)
+            find "$framework" -type f -perm +111 ! -type l | while read -r bin; do
+              if file "$bin" | grep -q "Mach-O"; then
+                echo "  Signing framework binary: $bin"
+                codesign --force --sign "$IDENTITY" \
+                  --options runtime \
+                  --timestamp \
+                  "$bin"
+              fi
+            done
+
+            # Sign all dylibs inside the framework
+            find "$framework" -type f -name "*.dylib" ! -type l | while read -r lib; do
+              echo "  Signing framework lib: $lib"
+              codesign --force --sign "$IDENTITY" \
+                --options runtime \
+                --timestamp \
+                "$lib" 2>/dev/null || true
+            done
+
+            # Sign the framework bundle itself (no entitlements for frameworks)
+            echo "  Signing framework bundle..."
+            codesign --force --sign "$IDENTITY" \
               --options runtime \
-              --entitlements ./entitlements.mac.plist \
               --timestamp \
               "$framework"
             codesign --verify --verbose "$framework"
@@ -482,13 +504,35 @@ jobs:
             rm -f "$RUNTIME_DIR/_internal/Python"
           fi
 
-          # Sign framework bundles FIRST - codesign --deep handles internal structure
+          # Sign framework bundles FIRST - manually sign internals then bundle
           echo "Signing framework bundles in _internal..."
           find "$RUNTIME_DIR/_internal" -name "*.framework" -type d -depth | while read -r framework; do
-            echo "Signing framework bundle: $framework"
-            codesign --force --deep --sign "$IDENTITY" \
+            echo "Signing framework: $framework"
+
+            # Find and sign all Mach-O binaries inside the framework (excluding symlinks)
+            find "$framework" -type f -perm +111 ! -type l | while read -r bin; do
+              if file "$bin" | grep -q "Mach-O"; then
+                echo "  Signing framework binary: $bin"
+                codesign --force --sign "$IDENTITY" \
+                  --options runtime \
+                  --timestamp \
+                  "$bin"
+              fi
+            done
+
+            # Sign all dylibs inside the framework
+            find "$framework" -type f -name "*.dylib" ! -type l | while read -r lib; do
+              echo "  Signing framework lib: $lib"
+              codesign --force --sign "$IDENTITY" \
+                --options runtime \
+                --timestamp \
+                "$lib" 2>/dev/null || true
+            done
+
+            # Sign the framework bundle itself (no entitlements for frameworks)
+            echo "  Signing framework bundle..."
+            codesign --force --sign "$IDENTITY" \
               --options runtime \
-              --entitlements ./entitlements.mac.plist \
               --timestamp \
               "$framework"
             codesign --verify --verbose "$framework"

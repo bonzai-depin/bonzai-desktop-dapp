@@ -271,9 +271,10 @@ export const disconnectWallet = async () => {
 
     removeEventListeners();
 
-    // Clear providers
+    // Clear providers - including wcProvider to force fresh instance on reconnect
     browserProvider = null;
     eip1193Provider = null;
+    wcProvider = null;
 
     // Do not hard-delete window.ethereum; only clear if it was ours
     // (If in a browser with an injected provider, leave it intact)

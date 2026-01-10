@@ -407,7 +407,7 @@ const unlockLevel = async (levelId) => {
 }
 
 .bonzai-bottom-bar {
-  padding-top: 0.5em;
+  padding-top: 0.15em;
   position: fixed;
   bottom: 0;
   left: 0;

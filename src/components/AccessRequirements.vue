@@ -1,6 +1,6 @@
 <template>
   <!-- Inline access requirements - shown next to prompt area -->
-  <div v-if="!hasAccess" class="access-requirements notification is-info" :class="{ 'is-success': hasAccess }">
+  <div v-if="!hasAccess" class="access-requirements notification is-info pr-5" :class="{ 'is-success': hasAccess }">
     <!-- Requirements panel when no access -->
     <div class="requirements-panel">
       <div class="requirements-header">
