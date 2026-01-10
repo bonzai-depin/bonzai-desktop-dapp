@@ -16,11 +16,13 @@ jobs:
     steps:
       - uses: actions/checkout@v3
 
-      - name: Set up Python (macOS ARM64)
-        uses: actions/setup-python@v4
-        with:
-          python-version: '3.11.x'
-          architecture: 'arm64'
+      - name: Set up Python via Homebrew (macOS ARM64)
+        run: |
+          brew update
+          brew install python@3.11
+          echo "/opt/homebrew/opt/python@3.11/libexec/bin" >> $GITHUB_PATH
+          /opt/homebrew/opt/python@3.11/libexec/bin/python3 --version
+          /opt/homebrew/opt/python@3.11/libexec/bin/pip3 install --upgrade pip
 
       - name: Install nightly PyTorch (CPU)
         run: |
@@ -410,11 +412,13 @@ jobs:
     steps:
       - uses: actions/checkout@v3
 
-      - name: Set up Python (macOS x64)
-        uses: actions/setup-python@v4
-        with:
-          python-version: '3.11.x'
-          architecture: 'x64'
+      - name: Set up Python via Homebrew (macOS x64)
+        run: |
+          brew update
+          brew install python@3.11
+          echo "/usr/local/opt/python@3.11/libexec/bin" >> $GITHUB_PATH
+          /usr/local/opt/python@3.11/libexec/bin/python3 --version
+          /usr/local/opt/python@3.11/libexec/bin/pip3 install --upgrade pip
 
       - name: Install nightly PyTorch (CPU)
         run: |
