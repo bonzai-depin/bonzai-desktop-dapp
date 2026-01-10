@@ -5,4 +5,5 @@ import tsconfigPaths from "vite-tsconfig-paths";
 // https://vitejs.dev/config
 export default defineConfig({
   plugins: [VuePlugin(), tsconfigPaths()],
+  base: './', // Required for Electron file:// protocol
 });
