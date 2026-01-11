@@ -396,8 +396,8 @@
                 <!-- RESULTS -->
                 <ol class="chat" v-if="inferences.length">
                   <li
-                    v-for="(inference, index) in inferences"
-                    :key="inference.id || index"
+                    v-for="inference in paginatedInferences"
+                    :key="inference.id || inference._originalIndex"
                   >
                     <div class="question">
                       <div
@@ -420,7 +420,7 @@
                       <hr />
                       <button
                         class="button is-medium is-success copy is-pulled-right ml-5 mr-0 p-0 pl-1 pr-4"
-                        @click="downloadImage(index)"
+                        @click="downloadImage(inference._originalIndex)"
                       >
                         <span class="material-symbols-outlined is-size-2 mr-1">
                           save
@@ -429,7 +429,7 @@
                       </button>
                       <button
                         class="button is-medium is-danger is-pulled-right ml-2 p-0 pl-1 pr-1"
-                        @click="removeInference(index)"
+                        @click="removeInference(inference._originalIndex)"
                         title="Remove this result"
                       >
                         <span class="material-symbols-outlined is-size-2">
@@ -438,11 +438,11 @@
                       </button>
                       <button
                         class="button is-medium is-success copy is-pulled-left p-0 pl-1 pr-1"
-                        @click="copy(inference.question); setCopied(index)"
+                        @click="copy(inference.question); setCopied(inference._originalIndex)"
                       >
                         <span
                           class="material-symbols-outlined is-size-2"
-                          v-if="!hasCopy[index]"
+                          v-if="!hasCopy[inference._originalIndex]"
                         >
                           content_copy
                         </span>
@@ -487,6 +487,33 @@
                     </div>
                   </li>
                 </ol>
+
+                <!-- PAGINATION CONTROLS -->
+                <nav
+                  v-if="totalPages > 1"
+                  class="pagination is-centered mt-4"
+                  role="navigation"
+                  aria-label="pagination"
+                >
+                  <button
+                    class="pagination-previous"
+                    :disabled="currentPage <= 1"
+                    @click="prevPage"
+                  >
+                    <span class="material-symbols-outlined">chevron_left</span>
+                  </button>
+                  <span class="pagination-info ml-3 mr-3">
+                    Page {{ currentPage }} of {{ totalPages }}
+                    <small class="has-text-grey ml-2">({{ inferences.length }} images)</small>
+                  </span>
+                  <button
+                    class="pagination-next"
+                    :disabled="currentPage >= totalPages"
+                    @click="nextPage"
+                  >
+                    <span class="material-symbols-outlined">chevron_right</span>
+                  </button>
+                </nav>
               </div>
             </div>
           </div>
@@ -584,6 +611,40 @@ export default {
     // Use shallowRef for inferences - base64 images are large and don't need deep reactivity
     const inferences = shallowRef([]);
     const hasCopy = shallowRef([]);
+
+    // ------------ pagination ----------------
+    const ITEMS_PER_PAGE = 10;
+    const currentPage = ref(1);
+
+    // Total number of pages
+    const totalPages = computed(() => Math.max(1, Math.ceil(inferences.value.length / ITEMS_PER_PAGE)));
+
+    // Paginated inferences (most recent first, then slice for current page)
+    // Each item includes its original index for operations like download/delete
+    const paginatedInferences = computed(() => {
+      const len = inferences.value.length;
+      const reversed = inferences.value.map((item, idx) => ({
+        ...item,
+        _originalIndex: idx,
+      })).reverse();
+      const start = (currentPage.value - 1) * ITEMS_PER_PAGE;
+      const end = start + ITEMS_PER_PAGE;
+      return reversed.slice(start, end);
+    });
+
+    // Pagination navigation
+    const goToPage = (page) => {
+      if (page >= 1 && page <= totalPages.value) {
+        currentPage.value = page;
+      }
+    };
+    const nextPage = () => goToPage(currentPage.value + 1);
+    const prevPage = () => goToPage(currentPage.value - 1);
+
+    // Reset to first page when new inference is added
+    const resetToFirstPage = () => {
+      currentPage.value = 1;
+    };
 
     // Debounced persistence to avoid excessive writes
     const persistInferences = debounce(async (data) => {
@@ -1190,6 +1251,8 @@ export default {
           // Debounced persistence - no deep clone needed
           persistInferences([...inferences.value]);
           form.prompt = "";
+          // Reset to first page to show the new result
+          resetToFirstPage();
         }
       };
 
@@ -1380,6 +1443,12 @@ export default {
       isLoading,
       inferences,
       hasCopy,
+      // pagination
+      paginatedInferences,
+      currentPage,
+      totalPages,
+      nextPage,
+      prevPage,
       // image editing
       pickedImageName,
       uploadedImageBase64,
@@ -1449,7 +1518,7 @@ export default {
   z-index: -1;
   height: 100%;
   width: 100%;
-  background: url("src/assets/bonzai_image.jpg") no-repeat;
+  background: url("../assets/bonzai_image.jpg") no-repeat;
   background-size: cover;
   filter: blur(6px);
   animation: move 40s ease infinite;

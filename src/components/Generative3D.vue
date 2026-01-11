@@ -1252,7 +1252,7 @@ OUTPUT ONLY THE FIXED JAVASCRIPT CODE. No markdown, no explanation.`;
       try {
         await window.electronAPI?.store?.set?.(
           "objectInferences",
-          JSON.parse(JSON.stringify(objectInferences.value))
+          [...objectInferences.value]
         );
       } catch (e) {}
     };
@@ -1597,7 +1597,7 @@ OUTPUT ONLY THE FIXED JAVASCRIPT CODE. No markdown, no explanation.`;
   width: 100%;
   left: 0;
   top: 0;
-  background: url("src/assets/bonzai_3d.jpg") no-repeat center center;
+  background: url("../assets/bonzai_3d.jpg") no-repeat center center;
   background-size: cover;
   filter: blur(6px);
   animation: move 40s ease infinite;

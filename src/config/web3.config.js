@@ -47,56 +47,56 @@ export const CONFIG = {
     LVL1: {
       id: 1,
       name: "Text Generation",
-      description: "Instant Chat. Offline, Private & Personal.",
+      description: "Local chat with 20+ models.",
       icon: "chat",
-      holdingRequired: 99, // BONZAI tokens required
+      holdingRequired: 100, // BONZAI tokens required
       nftTokenId: 1, // ERC1155 token ID for this level
-      features: ["unlimited-text-generation", "unlimited-character-roleplay", "unlimited-vibe-coding"],
+      features: ["Unlimited Text Generation", "Unlimited Character Roleplay", "Unlimited Vibe Coding"],
     },
     LVL2: {
       id: 2,
       name: "Audio Generation",
-      description: "Generate music and sound",
-      icon: "music_note",
-      holdingRequired: 599, // 99 + 500
+      description: "Text-to-Speech and more.",
+      icon: "headphones",
+      holdingRequired: 500,
       nftTokenId: 2,
-      features: ["audio-generation", "voice-synthesis", "music-creation"],
+      features: ["Audio Generation", "Voice Cloning", "Music Creation"],
     },
     LVL3: {
       id: 3,
       name: "Image Generation",
-      description: "Create AI images",
+      description: "Turn text into images",
       icon: "image",
-      holdingRequired: 1099, // 599 + 500
+      holdingRequired: 2000,
       nftTokenId: 3,
-      features: ["image-generation", "flux", "sdxl", "img2img"],
+      features: ["Uncensored Images", "Image Edition", "Style Transfer"],
     },
     LVL4: {
       id: 4,
       name: "Video Generation",
-      description: "Generate AI videos",
-      icon: "videocam",
-      holdingRequired: 1599, // 1099 + 500
+      description: "Turn text and images into videos.",
+      icon: "movie",
+      holdingRequired: 10000,
       nftTokenId: 4,
-      features: ["video-generation", "ltx", "wan", "hunyuan"],
+      features: ["LTX-Video model", "Wan 2.2 model", "Image-to-video"],
     },
     LVL5: {
       id: 5,
       name: "Game Generation",
-      description: "Generate 2D/3D games",
-      icon: "sports_esports",
-      holdingRequired: 2099, // 1599 + 500
+      description: "Turn text into 3D assets.",
+      icon: "3d_rotation",
+      holdingRequired: 50000,
       nftTokenId: 5,
-      features: ["game-generation", "2d-games", "3d-games", "p5js", "threejs"],
+      features: ["2D games (P5.js)", "3D games (Three.js)", "Interactive assets"],
     },
     LVL6: {
       id: 6,
-      name: "Training",
-      description: "Train custom models",
-      icon: "model_training",
-      holdingRequired: 2599, // 2099 + 500
+      name: "Model Training",
+      description: "Train models and robots.",
+      icon: "exercise",
+      holdingRequired: 200000,
       nftTokenId: 6,
-      features: ["model-training", "fine-tuning", "lerobot"],
+      features: ["Robotics Neural Networks", "Consistent Characters", "Custom Large Language Models"],
     },
   },
 

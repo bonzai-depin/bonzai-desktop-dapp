@@ -293,8 +293,8 @@
                 <!-- RESULTS -->
                 <ol class="chat" v-if="inferences.length">
                   <li
-                    v-for="(inference, index) in inferences"
-                    :key="inference.id || index"
+                    v-for="inference in paginatedInferences"
+                    :key="inference.id || inference._originalIndex"
                   >
                     <div class="question">
                       <div class="audio-meta">
@@ -333,7 +333,7 @@
 
                       <button
                         class="button is-medium is-success copy is-pulled-right ml-5 mr-0 p-0 pl-1 pr-4"
-                        @click="downloadAudio(index)"
+                        @click="downloadAudio(inference._originalIndex)"
                       >
                         <span class="material-symbols-outlined is-size-2 mr-1">
                           save
@@ -342,7 +342,7 @@
                       </button>
                       <button
                         class="button is-medium is-danger is-pulled-right ml-2 p-0 pl-1 pr-1"
-                        @click="removeInference(index)"
+                        @click="removeInference(inference._originalIndex)"
                         title="Remove this result"
                       >
                         <span class="material-symbols-outlined is-size-2">
@@ -353,12 +353,12 @@
                         class="button is-medium is-success copy is-pulled-left p-0 pl-1 pr-1"
                         @click="
                           copy(inference.question);
-                          hasCopy[index] = true;
+                          hasCopy[inference._originalIndex] = true;
                         "
                       >
                         <span
                           class="material-symbols-outlined is-size-2"
-                          v-if="!hasCopy[index]"
+                          v-if="!hasCopy[inference._originalIndex]"
                         >
                           content_copy
                         </span>
@@ -381,6 +381,33 @@
                     </div>
                   </li>
                 </ol>
+
+                <!-- PAGINATION CONTROLS -->
+                <nav
+                  v-if="totalPages > 1"
+                  class="pagination is-centered mt-4"
+                  role="navigation"
+                  aria-label="pagination"
+                >
+                  <button
+                    class="pagination-previous"
+                    :disabled="currentPage <= 1"
+                    @click="prevPage"
+                  >
+                    <span class="material-symbols-outlined">chevron_left</span>
+                  </button>
+                  <span class="pagination-info ml-3 mr-3">
+                    Page {{ currentPage }} of {{ totalPages }}
+                    <small class="has-text-grey ml-2">({{ inferences.length }} audios)</small>
+                  </span>
+                  <button
+                    class="pagination-next"
+                    :disabled="currentPage >= totalPages"
+                    @click="nextPage"
+                  >
+                    <span class="material-symbols-outlined">chevron_right</span>
+                  </button>
+                </nav>
               </div>
             </div>
           </div>
@@ -440,6 +467,34 @@ export default {
     const inferences = reactive([]);
     const hasCopy = reactive([]);
     const promptInput = ref(null);
+
+    // ------------ pagination ----------------
+    const ITEMS_PER_PAGE = 10;
+    const currentPage = ref(1);
+
+    // Total number of pages
+    const totalPages = computed(() => Math.max(1, Math.ceil(inferences.length / ITEMS_PER_PAGE)));
+
+    // Paginated inferences (most recent first, includes original index)
+    const paginatedInferences = computed(() => {
+      const reversed = inferences.map((item, idx) => ({
+        ...item,
+        _originalIndex: idx,
+      })).reverse();
+      const start = (currentPage.value - 1) * ITEMS_PER_PAGE;
+      const end = start + ITEMS_PER_PAGE;
+      return reversed.slice(start, end);
+    });
+
+    // Pagination navigation
+    const goToPage = (page) => {
+      if (page >= 1 && page <= totalPages.value) {
+        currentPage.value = page;
+      }
+    };
+    const nextPage = () => goToPage(currentPage.value + 1);
+    const prevPage = () => goToPage(currentPage.value - 1);
+    const resetToFirstPage = () => { currentPage.value = 1; };
 
     // ------------ access control -----------
     const accessRef = ref(null);
@@ -680,6 +735,24 @@ export default {
       );
     };
 
+    // Throttle download progress updates using requestAnimationFrame
+    let pendingPipelineUpdate = null;
+    let rafPending = false;
+
+    const throttledApplyPipelineUpdate = (pipeline) => {
+      pendingPipelineUpdate = pipeline;
+      if (!rafPending) {
+        rafPending = true;
+        requestAnimationFrame(() => {
+          if (pendingPipelineUpdate) {
+            applyPipelineUpdate(pendingPipelineUpdate);
+            pendingPipelineUpdate = null;
+          }
+          rafPending = false;
+        });
+      }
+    };
+
     const ensureDownloadsSocket = (base = WS_DL) => {
       if (downloadsSocket.value) {
         try {
@@ -699,7 +772,7 @@ export default {
       downloadsSocket.value.on("download_progress", ({ pipeline }) => {
         lastDlEventAt.value = Date.now();
         if (!pipeline) return;
-        applyPipelineUpdate(pipeline);
+        throttledApplyPipelineUpdate(pipeline);
       });
 
       downloadsSocket.value.on("connect_error", (e) =>
@@ -1083,10 +1156,12 @@ export default {
           try {
             await window.electronAPI?.store?.set?.(
               "audioInferences",
-              JSON.parse(JSON.stringify(inferences))
+              [...inferences]
             );
           } catch {}
           form.prompt = "";
+          // Reset to first page to show the new result
+          resetToFirstPage();
         }
       };
 
@@ -1168,7 +1243,7 @@ export default {
       try {
         await window.electronAPI?.store?.set?.(
           "audioInferences",
-          JSON.parse(JSON.stringify(inferences))
+          [...inferences]
         );
       } catch {}
     };
@@ -1235,6 +1310,12 @@ export default {
       isLoading,
       inferences,
       hasCopy,
+      // pagination
+      paginatedInferences,
+      currentPage,
+      totalPages,
+      nextPage,
+      prevPage,
       synthesisFileName,
       readiness,
       canGenerate,
@@ -1294,7 +1375,7 @@ export default {
   z-index: -1;
   height: 100%;
   width: 100%;
-  background: url("src/assets/bonzai_music.jpg") no-repeat;
+  background: url("../assets/bonzai_music.jpg") no-repeat;
   background-size: cover;
   filter: blur(6px);
   animation: move 40s ease infinite;

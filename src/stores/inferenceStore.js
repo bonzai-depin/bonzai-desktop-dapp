@@ -42,7 +42,7 @@ const persist = async (key) => {
   if (!store?.set) return false;
   
   try {
-    await store.set(key, JSON.parse(JSON.stringify(state[key])));
+    await store.set(key, [...state[key]]);
     state.lastSyncTime = Date.now();
     return true;
   } catch (e) {
@@ -322,6 +322,91 @@ export const markAsPeerOffloaded = async (type, inferenceId, peerData) => {
   return false;
 };
 
+// ==================== Media Validation ====================
+
+/**
+ * Check if a media file exists (for file:// paths or local paths)
+ */
+const checkMediaExists = async (path) => {
+  if (!path) return false;
+
+  // For base64 data URLs, they're embedded so always "exist"
+  if (path.startsWith('data:')) return true;
+
+  // For file paths, check via electronAPI
+  if (window.electronAPI?.fileExists) {
+    try {
+      return await window.electronAPI.fileExists(path);
+    } catch {
+      return false;
+    }
+  }
+
+  // For http/https URLs, do a HEAD request
+  if (path.startsWith('http://') || path.startsWith('https://')) {
+    try {
+      const response = await fetch(path, { method: 'HEAD' });
+      return response.ok;
+    } catch {
+      return false;
+    }
+  }
+
+  // Fallback: assume exists if we can't check
+  return true;
+};
+
+/**
+ * Validate a single inference's media and return whether it's valid
+ */
+export const validateInferenceMedia = async (inference) => {
+  if (!inference) return false;
+
+  switch (inference.type) {
+    case 'video':
+      return await checkMediaExists(inference.videoPath);
+    case 'audio':
+      return await checkMediaExists(inference.audioPath);
+    case 'image':
+      // Images are stored as base64, always valid
+      return !!inference.imageData;
+    default:
+      return true;
+  }
+};
+
+/**
+ * Remove inferences with missing/invalid media files
+ * Returns array of removed inference IDs
+ */
+export const cleanupInvalidMedia = async () => {
+  const removed = [];
+
+  // Check videos
+  for (const video of [...state.videoInferences]) {
+    const exists = await checkMediaExists(video.videoPath);
+    if (!exists) {
+      await removeInference('video', video.id);
+      removed.push({ type: 'video', id: video.id, path: video.videoPath });
+    }
+  }
+
+  // Check audio
+  for (const audio of [...state.audioInferences]) {
+    const exists = await checkMediaExists(audio.audioPath);
+    if (!exists) {
+      await removeInference('audio', audio.id);
+      removed.push({ type: 'audio', id: audio.id, path: audio.audioPath });
+    }
+  }
+
+  if (removed.length > 0) {
+    console.log(`[InferenceStore] Cleaned up ${removed.length} invalid media entries:`, removed);
+  }
+
+  return removed;
+};
+
 // ==================== Removal ====================
 
 export const removeInference = async (type, inferenceId) => {
@@ -365,46 +450,48 @@ export const peerOffloadedInferences = computed(() =>
 
 export const inferenceStore = {
   state: readonly(state),
-  
+
   // Initialization
   initializeStore,
-  
+
   // Text
   addTextInference,
   loadTextInferences,
-  
+
   // Image
   addImageInference,
   loadImageInferences,
-  
+
   // Video
   addVideoInference,
   loadVideoInferences,
-  
+
   // Audio
   addAudioInference,
   loadAudioInferences,
-  
+
   // Game
   addGameInference,
   loadGameInferences,
-  
+
   // Robotic
   addRoboticDataset,
   loadRoboticDatasets,
-  
+
   // NFT
   markAsMinted,
-  
+
   // ZK
   markWithZKProof,
-  
+
   // Peer
   markAsPeerOffloaded,
-  
-  // Removal
+
+  // Removal & Validation
   removeInference,
-  
+  validateInferenceMedia,
+  cleanupInvalidMedia,
+
   // Computed
   allInferences,
   mintedInferences,

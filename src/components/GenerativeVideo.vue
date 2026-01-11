@@ -351,8 +351,8 @@
               <!-- RESULTS -->
               <ol class="chat" v-if="inferences && inferences.length">
                 <li
-                  v-for="(inference, index) in inferences"
-                  :key="inference.id || index"
+                  v-for="inference in paginatedInferences"
+                  :key="inference.id || inference._originalIndex"
                 >
                   <div class="question">
                     <!-- Video Player - UPDATED: Use HTTP streaming URL -->
@@ -369,7 +369,7 @@
                     <div class="pb-5 mb-5 mt-5">
                       <button
                         class="button is-medium is-success copy is-pulled-right ml-5 mr-0 p-0 pl-1 pr-4"
-                        @click="downloadVideo(index)"
+                        @click="downloadVideo(inference._originalIndex)"
                         title="Save video"
                       >
                         <span class="material-symbols-outlined is-size-2 mr-2">
@@ -379,7 +379,7 @@
                       </button>
                       <button
                         class="button is-medium is-danger is-pulled-right ml-2 p-0 pl-1 pr-1"
-                        @click="removeInference(index)"
+                        @click="removeInference(inference._originalIndex)"
                         title="Remove this result"
                       >
                         <span class="material-symbols-outlined is-size-2">
@@ -388,11 +388,11 @@
                       </button>
                       <button
                         class="button is-medium is-success copy is-pulled-left p-0 pl-1 pr-1"
-                        @click="copy(inference?.answer?.data?.video_path || ''); setCopied(index)"
+                        @click="copy(inference?.answer?.data?.video_path || ''); setCopied(inference._originalIndex)"
                       >
                         <span
                           class="material-symbols-outlined is-size-2"
-                          v-if="!hasCopy[index]"
+                          v-if="!hasCopy[inference._originalIndex]"
                         >
                           content_copy
                         </span>
@@ -416,6 +416,33 @@
                   </div>
                 </li>
               </ol>
+
+              <!-- PAGINATION CONTROLS -->
+              <nav
+                v-if="totalPages > 1"
+                class="pagination is-centered mt-4"
+                role="navigation"
+                aria-label="pagination"
+              >
+                <button
+                  class="pagination-previous"
+                  :disabled="currentPage <= 1"
+                  @click="prevPage"
+                >
+                  <span class="material-symbols-outlined">chevron_left</span>
+                </button>
+                <span class="pagination-info ml-3 mr-3">
+                  Page {{ currentPage }} of {{ totalPages }}
+                  <small class="has-text-grey ml-2">({{ inferences.length }} videos)</small>
+                </span>
+                <button
+                  class="pagination-next"
+                  :disabled="currentPage >= totalPages"
+                  @click="nextPage"
+                >
+                  <span class="material-symbols-outlined">chevron_right</span>
+                </button>
+              </nav>
             </div>
           </div>
         </div>
@@ -498,6 +525,34 @@ export default {
     const inferences = shallowRef([]);
     const hasCopy = shallowRef([]);
     const planReq = reactive({ controller: null, seq: 0 });
+
+    // ------------ pagination ----------------
+    const ITEMS_PER_PAGE = 5;
+    const currentPage = ref(1);
+
+    // Total number of pages
+    const totalPages = computed(() => Math.max(1, Math.ceil(inferences.value.length / ITEMS_PER_PAGE)));
+
+    // Paginated inferences (most recent first, includes original index)
+    const paginatedInferences = computed(() => {
+      const reversed = inferences.value.map((item, idx) => ({
+        ...item,
+        _originalIndex: idx,
+      })).reverse();
+      const start = (currentPage.value - 1) * ITEMS_PER_PAGE;
+      const end = start + ITEMS_PER_PAGE;
+      return reversed.slice(start, end);
+    });
+
+    // Pagination navigation
+    const goToPage = (page) => {
+      if (page >= 1 && page <= totalPages.value) {
+        currentPage.value = page;
+      }
+    };
+    const nextPage = () => goToPage(currentPage.value + 1);
+    const prevPage = () => goToPage(currentPage.value - 1);
+    const resetToFirstPage = () => { currentPage.value = 1; };
 
     // Debounced persistence
     const persistInferences = debounce(async (data) => {
@@ -1165,6 +1220,8 @@ export default {
           hasCopy.value = [...hasCopy.value, false];
           // Debounced persistence
           persistInferences([...inferences.value]);
+          // Reset to first page to show the new result
+          resetToFirstPage();
         }
       };
       await requestWithDownloadTracking(url, payload, onSuccess);
@@ -1300,6 +1357,12 @@ export default {
       isLoading,
       inferences,
       hasCopy,
+      // pagination
+      paginatedInferences,
+      currentPage,
+      totalPages,
+      nextPage,
+      prevPage,
       readiness,
       showUpdateCTA,
       generation,
@@ -1367,7 +1430,7 @@ export default {
   z-index: -1;
   height: 100%;
   width: 100%;
-  background: url("src/assets/bonzai_video.jpg") no-repeat;
+  background: url("../assets/bonzai_video.jpg") no-repeat;
   background-size: cover;
   filter: blur(6px);
   animation: move 40s ease infinite;

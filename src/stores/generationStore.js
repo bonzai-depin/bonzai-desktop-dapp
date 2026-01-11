@@ -30,6 +30,12 @@ let genSocket = null;
 
 // Shared generation state for each modality
 const state = reactive({
+  // Global lock - only one generation at a time
+  globalLock: {
+    isLocked: false,
+    lockedBy: null, // which modality holds the lock
+    startedAt: null,
+  },
   // Per-modality generation state
   image: {
     active: false,
@@ -164,6 +170,14 @@ export const ensureGenerationSocket = () => {
     gen.pct = 100;
     gen.stage = 'finished';
     gen.active = false;
+
+    // Release global lock
+    if (state.globalLock.lockedBy === modality) {
+      state.globalLock.isLocked = false;
+      state.globalLock.lockedBy = null;
+      state.globalLock.startedAt = null;
+    }
+
     // Clean up mapping after a delay to allow final UI update
     setTimeout(() => {
       delete state._idToModality[generation_id];
@@ -180,6 +194,14 @@ export const ensureGenerationSocket = () => {
     gen.error = error || 'Unknown error';
     gen.stage = 'error';
     gen.active = false;
+
+    // Release global lock
+    if (state.globalLock.lockedBy === modality) {
+      state.globalLock.isLocked = false;
+      state.globalLock.lockedBy = null;
+      state.globalLock.startedAt = null;
+    }
+
     // Clean up mapping
     setTimeout(() => {
       delete state._idToModality[generation_id];
@@ -194,11 +216,42 @@ export const ensureGenerationSocket = () => {
 };
 
 /**
+ * Check if a generation can be started (global lock not held)
+ */
+export const canStartGeneration = () => {
+  return !state.globalLock.isLocked;
+};
+
+/**
+ * Get info about the current locked generation
+ */
+export const getLockedGeneration = () => {
+  if (!state.globalLock.isLocked) return null;
+  return {
+    modality: state.globalLock.lockedBy,
+    startedAt: state.globalLock.startedAt,
+    elapsed: Date.now() - state.globalLock.startedAt,
+  };
+};
+
+/**
  * Start tracking a new generation for a specific modality.
  * Call this before making the HTTP request.
+ * Returns false if another generation is already in progress.
  */
 export const startGeneration = (modality, generationId = null) => {
-  if (!state[modality]) return;
+  if (!state[modality]) return false;
+
+  // Check global lock - only one generation at a time
+  if (state.globalLock.isLocked && state.globalLock.lockedBy !== modality) {
+    console.warn(`[generationStore] Cannot start ${modality} - ${state.globalLock.lockedBy} generation already in progress`);
+    return false;
+  }
+
+  // Acquire global lock
+  state.globalLock.isLocked = true;
+  state.globalLock.lockedBy = modality;
+  state.globalLock.startedAt = Date.now();
 
   // Reset state for new generation
   Object.assign(state[modality], {
@@ -216,6 +269,20 @@ export const startGeneration = (modality, generationId = null) => {
 
   // Ensure socket is connected
   ensureGenerationSocket();
+  return true;
+};
+
+/**
+ * Release the global generation lock
+ */
+const releaseGlobalLock = (modality = null) => {
+  // Only release if the requesting modality holds the lock (or force release)
+  if (modality && state.globalLock.lockedBy !== modality) {
+    return;
+  }
+  state.globalLock.isLocked = false;
+  state.globalLock.lockedBy = null;
+  state.globalLock.startedAt = null;
 };
 
 /**
@@ -246,6 +313,7 @@ export const setError = (modality, error) => {
     state[modality].error = error;
     state[modality].stage = 'error';
     state[modality].active = false;
+    releaseGlobalLock(modality);
   }
 };
 
@@ -255,6 +323,7 @@ export const setError = (modality, error) => {
 export const stopGeneration = (modality) => {
   if (state[modality]) {
     state[modality].active = false;
+    releaseGlobalLock(modality);
   }
 };
 
@@ -284,7 +353,18 @@ export const resetGeneration = (modality) => {
     if (oldId) {
       delete state._idToModality[oldId];
     }
+    releaseGlobalLock(modality);
   }
+};
+
+/**
+ * Force release the global lock (for error recovery)
+ */
+export const forceReleaseLock = () => {
+  console.warn(`[generationStore] Force releasing global lock (was: ${state.globalLock.lockedBy})`);
+  state.globalLock.isLocked = false;
+  state.globalLock.lockedBy = null;
+  state.globalLock.startedAt = null;
 };
 
 /**
@@ -312,6 +392,8 @@ export const disconnectSocket = () => {
 export const generationStore = {
   state: readonly(state),
   ensureGenerationSocket,
+  canStartGeneration,
+  getLockedGeneration,
   startGeneration,
   registerGeneration,
   clearError,
@@ -319,6 +401,7 @@ export const generationStore = {
   setBlocked,
   stopGeneration,
   resetGeneration,
+  forceReleaseLock,
   getGeneration,
   disconnectSocket,
 };

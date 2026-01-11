@@ -345,6 +345,15 @@ ipcMain.handle("store-delete", (_event, key) => {
   return true;
 });
 
+// File existence check for media validation
+ipcMain.handle("file-exists", (_event, filePath) => {
+  try {
+    return fs.existsSync(filePath);
+  } catch {
+    return false;
+  }
+});
+
 ipcMain.handle("agent-save-image", async (_event, defaultName, base64Data) => {
   const { canceled, filePath } = await dialog.showSaveDialog({
     defaultPath: defaultName,

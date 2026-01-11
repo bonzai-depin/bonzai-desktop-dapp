@@ -539,7 +539,7 @@ body {
   margin: 5px;
   height: 11.33vh;
   width: 100%;
-  background: url("assets/bonzai_logo-full.png") no-repeat;
+  background: url("./assets/bonzai_logo-full.png") no-repeat;
   background-size: contain;
 }
 
@@ -550,44 +550,44 @@ body {
 .tabs.menu li.chat {
   /* aspect-ratio: 16/9; */
   height: 11.33vh;
-  background: url("assets/bonzai_chat.jpg") no-repeat;
+  background: url("./assets/bonzai_chat.jpg") no-repeat;
   background-size: cover;
 }
 
 .tabs.menu li.image {
   height: 11.33vh;
-  background: url("assets/bonzai_image.jpg") no-repeat;
+  background: url("./assets/bonzai_image.jpg") no-repeat;
   background-size: cover;
 }
 
 .tabs.menu li.video {
   height: 11.33vh;
-  background: url("assets/bonzai_video.jpg") no-repeat;
+  background: url("./assets/bonzai_video.jpg") no-repeat;
   background-size: cover;
 }
 
 .tabs.menu li.music {
   height: 11.33vh;
-  background: url("assets/bonzai_music.jpg") no-repeat;
+  background: url("./assets/bonzai_music.jpg") no-repeat;
   background-size: cover;
 }
 
 .tabs.menu li.three {
   height: 11.33vh;
-  background: url("assets/bonzai_3d.jpg") no-repeat;
+  background: url("./assets/bonzai_3d.jpg") no-repeat;
   background-size: cover;
 }
 
 .tabs.menu li.robot {
   height: 11.33vh;
-  background: url("assets/bonzai_robots.jpg") no-repeat;
+  background: url("./assets/bonzai_robots.jpg") no-repeat;
   background-size: cover;
   background-position: center 33%;
 }
 
 .tabs.menu li.agent {
   height: 11.33vh;
-  background: url("assets/bonzai_agent.jpg") no-repeat;
+  background: url("./assets/bonzai_agent.jpg") no-repeat;
 
   background-size: cover;
   background-position: center 66%;

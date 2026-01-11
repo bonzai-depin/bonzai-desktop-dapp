@@ -842,7 +842,7 @@ export default {
   z-index: -1;
   height: 100%;
   width: 100%;
-  background: url("src/assets/bonzai_chat.jpg") no-repeat;
+  background: url("../assets/bonzai_chat.jpg") no-repeat;
   background-size: cover;
   filter: blur(6px);
   animation: move 40s ease infinite;
@@ -927,32 +927,32 @@ export default {
 .tabs li.bonzai .logo {
   height: 20vh;
   width: 100%;
-  background: url("src/assets/bonzai_logo-full.png") no-repeat;
+  background: url("../assets/bonzai_logo-full.png") no-repeat;
   background-size: contain;
 }
 
 .tabs li.chat {
   /* aspect-ratio: 16/9; */
   height: 20vh;
-  background: url("src/assets/bonzai_chat.jpg") no-repeat;
+  background: url("../assets/bonzai_chat.jpg") no-repeat;
   background-size: cover;
 }
 
 .tabs li.image {
   height: 20vh;
-  background: url("src/assets/bonzai_image.jpg") no-repeat;
+  background: url("../assets/bonzai_image.jpg") no-repeat;
   background-size: cover;
 }
 
 .tabs li.video {
   height: 20vh;
-  background: url("src/assets/bonzai_video.jpg") no-repeat;
+  background: url("../assets/bonzai_video.jpg") no-repeat;
   background-size: cover;
 }
 
 .tabs li.music {
   height: 20vh;
-  background: url("src/assets/bonzai_music.jpg") no-repeat;
+  background: url("../assets/bonzai_music.jpg") no-repeat;
   background-size: cover;
 }
 

@@ -134,7 +134,8 @@ export const ensureWalletProvider = async (opts = {}) => {
       metadata: {
         name: "BonzAI",
         description: "BonzAI Desktop DApp",
-        url: "https://bonzai.ai",
+        // Use localhost for Electron - must match WalletConnect Cloud allowed domains
+        url: "http://localhost",
         icons: ["https://bonzai.ai/icon.png"],
       },
       methods: [
@@ -149,6 +150,8 @@ export const ensureWalletProvider = async (opts = {}) => {
         "wallet_addEthereumChain",
       ],
       events: ["accountsChanged", "chainChanged", "disconnect"],
+      // Disable provider ping to reduce connection issues in Electron
+      disableProviderPing: true,
     });
   } else {
     // Update QR modal behavior if caller toggles auto/interactive
