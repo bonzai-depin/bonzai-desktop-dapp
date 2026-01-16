@@ -205,6 +205,34 @@ export const useWeb3Store = defineStore('web3', () => {
   };
 
   /**
+   * Mint a Level NFT
+   * @param {number} levelId - Level to mint (1-6)
+   */
+  const mintLevelNFT = async (levelId) => {
+    const result = await levelService.mintLevelNFT(levelId);
+    if (result.success) {
+      await refreshLevels();
+    }
+    return result;
+  };
+
+  /**
+   * Get NFT price for a level
+   * @param {number} levelId - Level (1-6)
+   */
+  const getNFTPrice = (levelId) => {
+    return levelService.getNFTPrice(levelId);
+  };
+
+  /**
+   * Get remaining NFT supply for a level
+   * @param {number} levelId - Level (1-6)
+   */
+  const getNFTRemainingSupply = (levelId) => {
+    return levelService.getNFTRemainingSupply(levelId);
+  };
+
+  /**
    * Check if user can access a feature
    */
   const canAccess = (feature) => {
@@ -332,6 +360,11 @@ export const useWeb3Store = defineStore('web3', () => {
     isLevelActive,
     getLevelBlockReason,
     getLevelUnlockOptions,
+
+    // NFT minting
+    mintLevelNFT,
+    getNFTPrice,
+    getNFTRemainingSupply,
 
     // Agent actions
     hasAgentPurchased,

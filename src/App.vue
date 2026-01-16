@@ -182,11 +182,11 @@
     </div>
     <!-- Each component has inline access requirements with demo mode -->
     <GenerativeText v-if="modelMode == 'chat'" />
-    <GenerativeMusic v-if="modelMode == 'music'" />
+    <GenerativeAudio v-if="modelMode == 'music'" />
     <GenerativeImage v-if="modelMode == 'image'" />
     <GenerativeVideo v-if="modelMode == 'video'" :existingImageBase64="videoImageBase64" />
     <Generative3D v-if="modelMode == '3D'" />
-    <GenerativeRobot v-if="modelMode == 'robot'" />
+    <GenerativeTraining v-if="modelMode == 'robot'" />
     <SmartAgent v-if="modelMode == 'agent'" />
   </div>
   <BonzaiBottomBar />
@@ -197,9 +197,9 @@ import { ref, reactive, provide, onMounted, onUnmounted } from "vue";
 import GenerativeText from "./components/GenerativeText.vue";
 import GenerativeImage from "./components/GenerativeImage.vue";
 import GenerativeVideo from "./components/GenerativeVideo.vue";
-import GenerativeMusic from "./components/GenerativeMusic.vue";
+import GenerativeAudio from "./components/GenerativeAudio.vue";
 import Generative3D from "./components/Generative3D.vue";
-import GenerativeRobot from "./components/GenerativeRobot.vue";
+import GenerativeTraining from "./components/GenerativeTraining.vue";
 import SmartAgent from "./components/SmartAgent.vue";
 import BonzaiBottomBar from "./components/BonzaiBottomBar.vue";
 
@@ -210,9 +210,9 @@ export default {
     GenerativeText,
     GenerativeImage,
     GenerativeVideo,
-    GenerativeMusic,
+    GenerativeAudio,
     Generative3D,
-    GenerativeRobot,
+    GenerativeTraining,
     SmartAgent,
     BonzaiBottomBar,
   },
@@ -251,6 +251,11 @@ export default {
         if (result.success) {
           serverStatus.type = "ready";
           serverStatus.message = "Server restarted successfully!";
+          // Auto-hide after 3 seconds
+          if (autoHideTimeout) clearTimeout(autoHideTimeout);
+          autoHideTimeout = setTimeout(() => {
+            serverStatus.show = false;
+          }, 3000);
         } else {
           serverStatus.type = "error";
           serverStatus.message = result.error || "Failed to restart server";
@@ -318,174 +323,173 @@ export default {
 /* Local fonts for offline mode - bundled with the app */
 @import "./assets/fonts/fonts.css";
 
+/* ═══════════════════════════════════════════════════════════════════════════
+   BASE STYLES
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+html,
+body {
+  -webkit-app-region: no-drag;
+  -webkit-user-select: none;
+  box-sizing: border-box !important;
+  overflow: hidden;
+}
+
+#app {
+  -moz-osx-font-smoothing: grayscale;
+  -webkit-font-smoothing: antialiased;
+  color: #2c3e50;
+  font-family: "Fira Sans", sans-serif;
+  font-style: normal;
+  font-weight: 400;
+  margin: 0 !important;
+  padding: 0 !important;
+  position: relative;
+  text-align: center;
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   TYPOGRAPHY HELPERS
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+.fira-sans-condensed-black-italic {
+  font-family: "Fira Sans Condensed", sans-serif;
+  font-style: italic;
+  font-weight: 900;
+}
+
+.fira-sans-condensed-thin {
+  font-family: "Fira Sans Condensed", sans-serif;
+  font-style: normal;
+  font-weight: 100;
+}
+
+.fira-sans-regular {
+  font-family: "Fira Sans", sans-serif;
+  font-style: normal;
+  font-weight: 400;
+}
+
+.fira-sans-thin {
+  font-family: "Fira Sans", sans-serif;
+  font-style: normal;
+  font-weight: 100;
+}
+
 .material-symbols-outlined {
+  border-radius: 100%;
   font-variation-settings:
     "FILL" 0,
     "wght" 100,
     "GRAD" -25,
     "opsz" 48;
-
-  border-radius: 100%;
 }
 
-.fira-sans-thin {
-  font-family: "Fira Sans", sans-serif;
-  font-weight: 100;
-  font-style: normal;
-}
-
-.fira-sans-regular {
-  font-family: "Fira Sans", sans-serif;
-  font-weight: 400;
-  font-style: normal;
-}
-
-.fira-sans-condensed-thin {
-  font-family: "Fira Sans Condensed", sans-serif;
-  font-weight: 100;
-  font-style: normal;
-}
-
-.fira-sans-condensed-black-italic {
-  font-family: "Fira Sans Condensed", sans-serif;
-  font-weight: 900;
-  font-style: italic;
-}
-
-#app {
-  position: relative;
-  font-family: "Fira Sans", sans-serif;
-  font-weight: 400;
-  font-style: normal;
-  -webkit-font-smoothing: antialiased;
-  -moz-osx-font-smoothing: grayscale;
-  text-align: center;
-  color: #2c3e50;
-  margin: 0 !important;
-  padding: 0 !important;
-}
-
-#bonzai {
-}
-
-html,
-body {
-  box-sizing: border-box !important;
-  -webkit-user-select: none;
-  -webkit-app-region: no-drag;
-  overflow: hidden;
-}
-
-.system {
-  position: absolute;
-  top: 32px;
-  right: 18px;
-  height: 9.5vh !important;
-  z-index: 777;
-}
+/* ═══════════════════════════════════════════════════════════════════════════
+   BUTTONS
+   ═══════════════════════════════════════════════════════════════════════════ */
 
 .button {
-  font-family: "Fira Sans Condensed", sans-serif;
-  font-weight: 900;
-  font-style: italic !important;
   border-radius: 6px;
-  cursor: pointer !important;
-  text-transform: none;
-  /* box-shadow: 8px 8px 0 rgba(#61378e, 0.2); */
   box-shadow: 8px 8px 0 rgba(97, 55, 142, 0.66);
-  transition: 200ms ease-in;
+  cursor: pointer !important;
+  font-family: "Fira Sans Condensed", sans-serif;
+  font-style: italic !important;
+  font-weight: 900;
+  text-transform: none;
   transform: translate3d(0, 0, 0);
+  transition: 200ms ease-in;
+}
+
+.button:hover {
+  box-shadow: 18px 18px 0 rgba(97, 55, 142, 0.66);
+  transition: 200ms ease-in;
 }
 
 .button.is-success {
   background: linear-gradient(rgba(57, 213, 130, 0.66), #26b569);
   border: 4px solid #1d8b51 !important;
-  text-shadow: 1px -1px 1px #22a05d;
   border-width: 0px 0px 3px !important;
+  text-shadow: 1px -1px 1px #22a05d;
 }
 
-.button:hover {
-  transition: 200ms ease-in;
-  box-shadow: 18px 18px 0 rgba(97, 55, 142, 0.66);
+/* ═══════════════════════════════════════════════════════════════════════════
+   SYSTEM INFO
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+.system {
+  height: 9.5vh !important;
+  position: absolute;
+  right: 18px;
+  top: 32px;
+  z-index: 777;
 }
 
-@keyframes move {
-  0% {
-    -webkit-transform-origin: bottom left;
-    -moz-transform-origin: bottom left;
-    -ms-transform-origin: bottom left;
-    -o-transform-origin: bottom left;
-    transform-origin: bottom left;
-    transform: scale(1.3);
-    -ms-transform: scale(1.3);
-    /* IE 9 */
-
-    -webkit-transform: scale(1.3);
-    /* Safari and Chrome */
-
-    -o-transform: scale(1.3);
-    /* Opera */
-
-    -moz-transform: scale(1.3);
-    /* Firefox */
-  }
-  50% {
-    transform: scale(1.6);
-    -ms-transform: scale(1.6);
-    /* IE 9 */
-
-    -webkit-transform: scale(1.6);
-    /* Safari and Chrome */
-
-    -o-transform: scale(1.6);
-    /* Opera */
-
-    -moz-transform: scale(1.6);
-    /* Firefox */
-  }
-  100% {
-    transform-origin: bottom left;
-    transform: scale(1.3);
-    -ms-transform: scale(1.3);
-    /* IE 9 */
-
-    -webkit-transform: scale(1.3);
-    /* Safari and Chrome */
-
-    -o-transform: scale(1.3);
-    /* Opera */
-
-    -moz-transform: scale(1.3);
-    /* Firefox */
-  }
-}
+/* ═══════════════════════════════════════════════════════════════════════════
+   NAVIGATION TABS / MENU
+   ═══════════════════════════════════════════════════════════════════════════ */
 
 .tabs.menu {
   width: 100%;
 }
 
 .tabs.menu ul {
-  -webkit-flex-direction: column;
   flex-direction: column;
 }
 
 .tabs.menu ul li {
-  transition: 400ms ease-in;
-  transform: translate3d(0, 0, 0);
   box-shadow: 10px 0 25px #000;
   cursor: pointer;
+  transform: translate3d(0, 0, 0);
+  transition: 400ms ease-in;
 }
 
 .tabs.menu li + li {
-  width: 100%;
   margin-left: 0;
+  width: 100%;
+}
+
+.tabs.menu li a {
+  -moz-osx-font-smoothing: grayscale;
+  -webkit-font-smoothing: antialiased;
+  border: none;
+  justify-content: left;
+}
+
+.tabs.menu li a h1 {
+  align-items: center;
+  border: none;
+  color: #fff;
+  display: flex;
+  font-family: "Fira Sans", sans-serif;
+  font-size: 48px;
+  font-style: normal;
+  font-weight: 100 !important;
+  gap: 0.5rem;
+  text-shadow: 1px 1px 1px #000;
+}
+
+/* Fixed icon sizing to prevent layout shift on font load */
+.tabs.menu li a h1 .material-symbols-outlined {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  height: 48px;
+  min-width: 48px;
+  width: 48px;
+}
+
+.tabs.menu li.disabled {
+  cursor: not-allowed !important;
+  filter: grayscale(100%) !important;
 }
 
 .tabs.menu li.is-active {
-  width: 100%;
   font-family: "Fira Sans", sans-serif;
-  font-weight: 300;
   font-style: normal;
+  font-weight: 300;
+  width: 100%;
 }
 
 .tabs.menu li.is-active a {
@@ -495,52 +499,37 @@ body {
 
 .tabs.menu li:not(.is-active) {
   filter: grayscale(100%);
-  transition: 400ms ease-in;
   transform: translate3d(0, 0, 0);
+  transition: 400ms ease-in;
 }
 
 .tabs.menu li:not(.is-active):hover {
   filter: none;
 }
 
-.tabs.menu li.disabled {
-  filter: grayscale(100%) !important;
-  cursor: not-allowed !important;
-}
-
-.tabs.menu li a {
-  justify-content: left;
-  border: none;
-  -webkit-font-smoothing: antialiased;
-  -moz-osx-font-smoothing: grayscale;
-}
-
-.tabs.menu li a h1 {
-  color: #fff;
-  font-size: 48px;
-  font-family: "Fira Sans", sans-serif;
-  font-weight: 100 !important;
-  font-style: normal;
-  text-shadow: 1px 1px 1px #000;
-  border: none;
+/* Menu Item Backgrounds */
+.tabs.menu li.agent {
+  background: url("./assets/bonzai_agent.jpg") no-repeat;
+  background-position: center 66%;
+  background-size: cover;
+  height: 11.33vh;
 }
 
 .tabs.menu li.bonzai {
-  /* aspect-ratio: 16/9; */
-  padding-top: 1em;
-  height: 14vh;
-  width: 100%;
   background: #61378e;
   border-bottom: 10vh solid #61378e;
   filter: none !important;
+  height: 14vh;
+  padding-top: 1em;
+  width: 100%;
 }
 
 .tabs.menu li.bonzai .logo {
-  margin: 5px;
-  height: 11.33vh;
-  width: 100%;
   background: url("./assets/bonzai_logo-full.png") no-repeat;
   background-size: contain;
+  height: 11.33vh;
+  margin: 5px;
+  width: 100%;
 }
 
 .tabs.menu li.bonzai .memory {
@@ -548,146 +537,148 @@ body {
 }
 
 .tabs.menu li.chat {
-  /* aspect-ratio: 16/9; */
-  height: 11.33vh;
   background: url("./assets/bonzai_chat.jpg") no-repeat;
   background-size: cover;
+  height: 11.33vh;
 }
 
 .tabs.menu li.image {
-  height: 11.33vh;
   background: url("./assets/bonzai_image.jpg") no-repeat;
   background-size: cover;
-}
-
-.tabs.menu li.video {
   height: 11.33vh;
-  background: url("./assets/bonzai_video.jpg") no-repeat;
-  background-size: cover;
 }
 
 .tabs.menu li.music {
-  height: 11.33vh;
   background: url("./assets/bonzai_music.jpg") no-repeat;
   background-size: cover;
-}
-
-.tabs.menu li.three {
   height: 11.33vh;
-  background: url("./assets/bonzai_3d.jpg") no-repeat;
-  background-size: cover;
 }
 
 .tabs.menu li.robot {
-  height: 11.33vh;
   background: url("./assets/bonzai_robots.jpg") no-repeat;
-  background-size: cover;
   background-position: center 33%;
-}
-
-.tabs.menu li.agent {
-  height: 11.33vh;
-  background: url("./assets/bonzai_agent.jpg") no-repeat;
-
   background-size: cover;
-  background-position: center 66%;
+  height: 11.33vh;
 }
 
-p.question {
-  border: 1px solid rgba(255, 255, 255, 0.25);
-  padding: 1em;
-  margin-top: 2em !important;
-  margin-bottom: 1em !important;
-  font-weight: 700;
-  box-shadow: 8px 8px 0 rgba(97, 55, 142, 0.66);
-  border-radius: 4px;
-  backdrop-filter: blur(6px);
+.tabs.menu li.three {
+  background: url("./assets/bonzai_3d.jpg") no-repeat;
+  background-size: cover;
+  height: 11.33vh;
 }
+
+.tabs.menu li.video {
+  background: url("./assets/bonzai_video.jpg") no-repeat;
+  background-size: cover;
+  height: 11.33vh;
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   CHAT MESSAGES
+   ═══════════════════════════════════════════════════════════════════════════ */
 
 div.answer {
-  margin-bottom: 2em !important;
-  padding: 1em;
-  border: 1px solid rgba(255, 255, 255, 0.25);
-  box-shadow: -8px 8px 0 rgba(57, 213, 130, 0.25);
-  border-radius: 4px;
+  -moz-osx-font-smoothing: grayscale;
+  -webkit-font-smoothing: antialiased;
   backdrop-filter: blur(6px);
   background: rgba(255, 255, 255, 0.1);
-  font-size: 24px;
+  border: 1px solid rgba(255, 255, 255, 0.25);
+  border-radius: 4px;
+  box-shadow: -8px 8px 0 rgba(57, 213, 130, 0.25);
   color: #fff;
-  text-align: justify;
   font-family: "Fira Sans", sans-serif;
-  font-weight: 100;
+  font-size: 24px;
   font-style: normal;
-  -webkit-font-smoothing: antialiased;
-  -moz-osx-font-smoothing: grayscale;
+  font-weight: 100;
+  margin-bottom: 2em !important;
+  padding: 1em;
+  text-align: justify;
   transform: translate3d(0, 0, 0);
-}
-
-div.answer strong {
-  color: rgba(57, 213, 130, 0.75);
-}
-
-div.answer p {
-  margin-bottom: 0 !important;
 }
 
 div.answer ol {
   padding-left: 1em !important;
 }
 
-div.answer table thead tr th {
-  font-family: "Fira Sans Condensed", sans-serif;
-  font-style: italic;
-  font: 900;
-  color: #fff !important;
-  text-transform: uppercase;
+div.answer p {
+  margin-bottom: 0 !important;
+}
+
+div.answer strong {
+  color: rgba(57, 213, 130, 0.75);
 }
 
 div.answer table td {
-  text-align: left;
   padding-bottom: 20px !important;
+  text-align: left;
 }
 
-/* Server Status Notification */
+div.answer table thead tr th {
+  color: #fff !important;
+  font: 900;
+  font-family: "Fira Sans Condensed", sans-serif;
+  font-style: italic;
+  text-transform: uppercase;
+}
+
+p.question {
+  backdrop-filter: blur(6px);
+  border: 1px solid rgba(255, 255, 255, 0.25);
+  border-radius: 4px;
+  box-shadow: 8px 8px 0 rgba(97, 55, 142, 0.66);
+  font-weight: 700;
+  margin-bottom: 1em !important;
+  margin-top: 2em !important;
+  padding: 1em;
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   SERVER STATUS NOTIFICATION
+   ═══════════════════════════════════════════════════════════════════════════ */
+
 .server-notification {
-  position: fixed;
-  top: 20px;
-  left: 50%;
-  transform: translateX(-50%);
-  z-index: 9999;
-  min-width: 400px;
-  max-width: 600px;
-  padding: 1.25rem 2.5rem 1.25rem 1.5rem;
+  animation: slideIn 0.3s ease-out;
+  backdrop-filter: blur(10px);
   border-radius: 8px;
   box-shadow: 0 8px 32px rgba(0, 0, 0, 0.4);
-  backdrop-filter: blur(10px);
-  animation: slideDown 0.3s ease-out;
-}
-
-@keyframes slideDown {
-  from {
-    transform: translateX(-50%) translateY(-100%);
-    opacity: 0;
-  }
-  to {
-    transform: translateX(-50%) translateY(0);
-    opacity: 1;
-  }
-}
-
-.server-notification p {
-  margin-bottom: 0.5rem !important;
-  font-size: 16px;
-  text-align: left;
-}
-
-.server-notification .progress {
-  margin-top: 0.5rem;
+  max-width: 400px;
+  min-width: 300px;
+  padding: 1.25rem 2.5rem 1.25rem 1.5rem;
+  position: fixed;
+  right: 1em;
+  top: 1em;
+  width: 33%;
+  z-index: 9999;
 }
 
 .server-notification .delete {
   position: absolute;
   right: 0.5rem;
   top: 0.5rem;
+}
+
+.server-notification .progress {
+  margin-top: 0.5rem;
+}
+
+.server-notification p {
+  font-size: 16px;
+  margin-bottom: 0.5rem !important;
+  text-align: left;
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   ANIMATIONS
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+@keyframes slideIn {
+  from {
+    opacity: 0;
+    transform: translateX(100%);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(0);
+  }
 }
 </style>

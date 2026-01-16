@@ -126,6 +126,37 @@
             </div>
           </div>
 
+          <!-- GENERATION MODE SELECTOR -->
+          <div class="environment-controls models__activity--payouts mb-4">
+            <div class="columns">
+              <div class="column is-12">
+                <label class="control-label fira-sans-condensed-black-italic">
+                  Generation Mode
+                </label>
+                <div class="mode-buttons">
+                  <button
+                    v-for="mode in generationModes"
+                    :key="mode.id"
+                    class="mode-btn"
+                    :class="{ active: generationMode === mode.id }"
+                    @click="generationMode = mode.id"
+                    :title="mode.description"
+                  >
+                    <span class="mode-icon">
+                      <span class="material-symbols-outlined is-size-3">
+                        {{ mode.icon }}
+                      </span>
+                    </span>
+                    <span class="mode-label">{{ mode.label }}</span>
+                  </button>
+                </div>
+                <p class="mode-description has-text-grey-light mt-2" style="font-size: 14px;">
+                  {{ generationModes.find(m => m.id === generationMode)?.description }}
+                </p>
+              </div>
+            </div>
+          </div>
+
           <!-- Example Prompts -->
           <div
             class="examples-panel models__activity--payouts"
@@ -151,22 +182,23 @@
             v-if="!hasAccess"
           >
             <button
-              class="button is-success is-large is-fullwidth"
+              class="button is-success is-large fira-sans-condensed-black-italic mr-5"
               @click="downloadModel(currentModel.url, currentModel.filename)"
               v-if="!isModel"
             >
-              <span class="material-symbols-outlined mr-2"> download </span>
-              Download {{ currentModel.modelname }}
-              <span class="tag ml-4">{{ currentModel.filesize }}</span>
+              <span class="material-symbols-outlined is-size-3 mr-2">deployed_code_update</span>
+              Download
+              <span
+                class="filesize"
+                style="font-size: 15px; top: -20px; right: -25px; text-shadow: none;"
+                v-if="downloadProgress"
+              >{{ downloadProgress }}%</span>
+              <span
+                v-else
+                class="filesize"
+                style="font-size: 15px; top: -20px; right: -25px; text-shadow: none;"
+              >{{ currentModel.filesize }}</span>
             </button>
-            <progress
-              class="progress is-success mt-2"
-              :value="downloadProgress"
-              max="100"
-              v-if="downloadProgress"
-            >
-              {{ downloadProgress }}%
-            </progress>
           </div>
 
           <div class="models__activity--payouts">
@@ -212,10 +244,55 @@
             </div>
           </div>
 
+          <!-- GENERATION HISTORY HEADER -->
+          <div class="level mb-4 mt-5" v-if="objectInferences.length > 0">
+            <div class="level-left">
+              <div class="level-item">
+                <h2 class="fira-sans-condensed-black-italic has-text-white is-size-2">
+                  <span class="material-symbols-outlined is-size-1 mr-2">
+                    history
+                  </span>
+                  Generation History
+                </h2>
+              </div>
+            </div>
+            <div class="level-right">
+              <div class="level-item buttons">
+                <button
+                  class="button is-warning is-small"
+                  @click="importHistory()"
+                >
+                  <span class="material-symbols-outlined mr-2">upload</span>
+                  Import
+                </button>
+                <button
+                  class="button is-warning is-small ml-4"
+                  @click="exportHistory()"
+                  :disabled="objectInferences.length === 0"
+                >
+                  <span class="material-symbols-outlined mr-2">download</span>
+                  Export
+                </button>
+                <button
+                  class="button is-danger is-small ml-4"
+                  @click="clearHistory()"
+                >
+                  <span class="material-symbols-outlined mr-2">ink_eraser</span>
+                  Clear
+                </button>
+              </div>
+            </div>
+          </div>
+
           <!-- History -->
           <div v-if="objectInferences.length > 0">
             <ol class="chat">
-              <li v-for="(item, index) in objectInferences" :key="item.id">
+              <li
+                v-for="(item, displayIndex) in paginatedInferences"
+                :key="item.id"
+                class="history-item"
+                :style="{ animationDelay: `${Math.min(displayIndex * 50, 500)}ms` }"
+              >
                 <div class="question">
                   <div class="history-header">
                     <span
@@ -250,11 +327,11 @@
                   <hr />
                   <button
                     class="button is-medium is-success copy is-pulled-left p-0 pl-1 pr-1"
-                    @click="copyPrompt(item.prompt, index)"
+                    @click="copyPrompt(item.prompt, item._originalIndex)"
                   >
                     <span
                       class="material-symbols-outlined is-size-2"
-                      v-if="!hasCopy[index]"
+                      v-if="!hasCopy[item._originalIndex]"
                     >
                       content_copy
                     </span>
@@ -266,14 +343,31 @@
                     v-if="item.success"
                     class="button is-medium is-warning ml-5 is-pulled-left"
                     @click="applyInference(item)"
-                    title="Load"
+                    title="Load this scene"
                   >
-                    <span class="material-symbols-outlined mr-1">refresh</span>
+                    <span class="material-symbols-outlined mr-1">visibility</span>
                     Load
                   </button>
                   <button
+                    class="button is-medium is-info ml-2 is-pulled-left"
+                    @click="regenerateFromInference(item)"
+                    :disabled="isLoading"
+                    title="Regenerate with same prompt"
+                  >
+                    <span class="material-symbols-outlined mr-1">autorenew</span>
+                    Retry
+                  </button>
+                  <button
+                    disabled
+                    class="button is-medium is-warning ml-2 is-pulled-left"
+                    title="Mint as NFT (coming soon)"
+                  >
+                    <span class="material-symbols-outlined mr-1">token</span>
+                    Mint
+                  </button>
+                  <button
                     class="button is-medium is-danger is-pulled-right p-0 pl-1 pr-1"
-                    @click="removeInference(index)"
+                    @click="removeInference(item._originalIndex)"
                     title="Delete"
                   >
                     <span class="material-symbols-outlined is-size-2">
@@ -283,6 +377,26 @@
                 </div>
               </li>
             </ol>
+            <!-- LAZY LOAD SENTINEL -->
+            <div
+              ref="loadMoreSentinel"
+              v-if="hasMore"
+              class="load-more-sentinel has-text-centered p-4"
+            >
+              <span v-if="isLoadingMore" class="has-text-grey">
+                Loading more...
+              </span>
+            </div>
+
+            <!-- SCROLL TO TOP BUTTON -->
+            <button
+              v-if="showScrollTop"
+              class="scroll-to-top-btn"
+              @click="scrollToTop"
+              title="Scroll to top"
+            >
+              <span class="material-symbols-outlined">arrow_upward</span>
+            </button>
           </div>
         </div>
       </div>
@@ -291,12 +405,33 @@
 </template>
 
 <script>
-import { ref, reactive, computed, onMounted, nextTick } from "vue";
+import { ref, reactive, computed, onMounted, onBeforeUnmount, nextTick } from "vue";
 import ThreeViewer from "./ThreeViewer.vue";
 import AccessRequirements from "./AccessRequirements.vue";
 import useClipboard from "vue-clipboard3";
 
-const DEMO_PROMPT = "A glowing crystal on a stone pedestal";
+// Array of impressive demo prompts for variety
+const DEMO_PROMPTS = [
+  "A floating ancient spellbook with glowing runes and orbiting magical particles",
+  "A dragon egg on a nest of gold coins, cracking with inner fire glow",
+  "A mystical hourglass with swirling cosmic sand and floating stars",
+  "An enchanted sword embedded in a crystal formation, pulsing with energy",
+  "A steampunk mechanical heart with brass gears and glowing tubes",
+  "A wizard's staff topped with a swirling galaxy orb and lightning sparks",
+  "A phoenix feather quill in an inkwell with magical mist rising",
+  "An alchemist's bubbling cauldron with floating ingredient bottles",
+  "A crystalline tree with luminescent fruit and fairy dust particles",
+  "A treasure map scroll with a glowing compass and floating coins",
+  "A magical music box with dancing holographic ballerina",
+  "An ancient astrolabe with rotating celestial rings and star particles",
+];
+
+// Get a random demo prompt
+const getRandomDemoPrompt = () => {
+  return DEMO_PROMPTS[Math.floor(Math.random() * DEMO_PROMPTS.length)];
+};
+
+const DEMO_PROMPT = getRandomDemoPrompt();
 
 function uuid() {
   return "xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx".replace(/[xy]/g, function (c) {
@@ -497,6 +632,49 @@ ${indent(out, 4)}
 `;
 }
 
+// Extract the inner code from a normalized module (for multi-pass generation)
+function extractInnerCode(normalizedCode) {
+  // Try multiple regex patterns to extract the inner code
+
+  // Pattern 1: Match content between "try {" and "scene.add(root);"
+  let match = normalizedCode.match(/try\s*\{\s*([\s\S]*?)\n\s*scene\.add\(root\);/);
+
+  // Pattern 2: If that fails, try matching until "return root;"
+  if (!match || !match[1] || match[1].trim().length < 20) {
+    match = normalizedCode.match(/try\s*\{\s*([\s\S]*?)\n\s*return\s+root\s*;/);
+  }
+
+  // Pattern 3: Try a more lenient match
+  if (!match || !match[1] || match[1].trim().length < 20) {
+    match = normalizedCode.match(/try\s*\{([\s\S]+?)(?=\s*scene\.add\(root\)|return\s+root)/);
+  }
+
+  if (match && match[1]) {
+    // Remove leading indentation (4 spaces) from each line
+    const extracted = match[1]
+      .split('\n')
+      .map(line => line.replace(/^    /, ''))
+      .join('\n')
+      .trim();
+
+    // Verify we got meaningful code (not just whitespace or tiny fragments)
+    if (extracted.length > 20) {
+      console.log("[extractInnerCode] Extracted", extracted.length, "chars from normalized code");
+      return extracted;
+    }
+  }
+
+  // Fallback: If this looks like already raw code (no wrapper), return as-is
+  if (!normalizedCode.includes('export default async function generate')) {
+    console.log("[extractInnerCode] Code appears to be raw, returning as-is");
+    return normalizedCode;
+  }
+
+  // Last resort: warn and return original
+  console.warn("[extractInnerCode] Could not extract inner code, falling back to original");
+  return normalizedCode;
+}
+
 function createMockTHREE() {
   const mockMesh = {
     position: { set: () => {}, x: 0, y: 0, z: 0 },
@@ -695,7 +873,96 @@ export default {
     const downloadProgress = ref(0);
     const isModel = ref(false);
 
+    // ═══════════════════════════════════════════════════════════════════════
+    // GENERATION MODE
+    // ═══════════════════════════════════════════════════════════════════════
+    const generationMode = ref("normal");
+    const generationModes = ref([
+      { id: "normal", label: "Normal", icon: "bolt", description: "Single-pass generation (fastest)" },
+      { id: "specialized", label: "Specialized", icon: "layers", description: "Structure → Details → Polish (3 passes)" },
+      { id: "critique", label: "Critique", icon: "rate_review", description: "Generate → Review & Improve (2 passes)" },
+      { id: "additive", label: "Additive", icon: "add_circle", description: "Base → Accessories → Effects (3 passes)" },
+      { id: "extreme", label: "Extreme", icon: "diamond", description: "Reference-quality with 50+ meshes (slowest)" },
+    ]);
+
     const MAX_RETRY_ATTEMPTS = 3;
+
+    // ═══════════════════════════════════════════════════════════════════════
+    // LAZY LOADING PAGINATION
+    // ═══════════════════════════════════════════════════════════════════════
+    const ITEMS_PER_PAGE = 10;
+    const displayedCount = ref(ITEMS_PER_PAGE);
+    const loadMoreSentinel = ref(null);
+    const isLoadingMore = ref(false);
+    const showScrollTop = ref(false);
+    const scrollContainer = ref(null);
+
+    // Reversed inferences (most recent first) with original index
+    const reversedInferences = computed(() => {
+      return objectInferences.value.map((item, idx) => ({
+        ...item,
+        _originalIndex: idx,
+      })).reverse();
+    });
+
+    // Displayed inferences (lazy loaded subset)
+    const paginatedInferences = computed(() => {
+      return reversedInferences.value.slice(0, displayedCount.value);
+    });
+
+    // Check if there are more items to load
+    const hasMore = computed(() => displayedCount.value < objectInferences.value.length);
+
+    // Load more items
+    const loadMore = () => {
+      if (isLoadingMore.value || !hasMore.value) return;
+      isLoadingMore.value = true;
+      setTimeout(() => {
+        displayedCount.value = Math.min(
+          displayedCount.value + ITEMS_PER_PAGE,
+          objectInferences.value.length
+        );
+        isLoadingMore.value = false;
+      }, 100);
+    };
+
+    // Intersection Observer for infinite scroll
+    let scrollObserver = null;
+    const setupScrollObserver = () => {
+      if (scrollObserver) scrollObserver.disconnect();
+      if (!loadMoreSentinel.value) return;
+
+      // Use the scroll container as root for proper intersection detection
+      const root = scrollContainer.value || document.querySelector('.models__deployment-install');
+      scrollObserver = new IntersectionObserver(
+        (entries) => {
+          if (entries[0].isIntersecting && hasMore.value) {
+            loadMore();
+          }
+        },
+        { root, rootMargin: '100px' }
+      );
+      scrollObserver.observe(loadMoreSentinel.value);
+    };
+
+    // Scroll to top handler
+    const scrollToTop = () => {
+      const container = scrollContainer.value || document.querySelector('.models__deployment-install');
+      if (container) {
+        container.scrollTo({ top: 0, behavior: 'smooth' });
+      }
+    };
+
+    // Handle scroll to show/hide scroll-to-top button (throttled)
+    let scrollRafId = null;
+    const handleScroll = (e) => {
+      if (scrollRafId) return;
+      scrollRafId = requestAnimationFrame(() => {
+        const scrollTop = e.target?.scrollTop || 0;
+        showScrollTop.value = scrollTop > 400;
+        scrollRafId = null;
+      });
+    };
 
     // ═══════════════════════════════════════════════════════════════════════
     // ACCESS CONTROL
@@ -706,8 +973,10 @@ export default {
     const onAccessChanged = (val) => {
       hasAccess.value = val;
     };
-    const onDemoGenerate = (demoPrompt) => {
-      form.prompt = demoPrompt;
+    const onDemoGenerate = () => {
+      // Pick a fresh random prompt each time for variety
+      const randomPrompt = getRandomDemoPrompt();
+      form.prompt = randomPrompt;
       onSubmit(true); // true = isDemo
     };
 
@@ -838,56 +1107,58 @@ export default {
     // PROMPT BUILDERS
     // ═══════════════════════════════════════════════════════════════════════
     const buildObjectPrompt = (userText) => {
-      return `You are a creative 3D artist using Three.js. Generate a UNIQUE object for:
+      return `You are an expert Three.js developer. Generate a 3D object for:
 
 "${userText}"
 
 ════════════════════════════════════════════════════════════════════
-🎨 CREATIVE MANDATE — MAKE IT UNIQUE
+🚨 CRITICAL RULES — VIOLATIONS WILL BREAK THE CODE
 ════════════════════════════════════════════════════════════════════
 
-NEVER just call a single helper function. Every object should be ONE-OF-A-KIND.
-
-✗ BORING: const potion = H.potionBottle({liquidColor: 0xff0000}); root.add(potion);
-✓ CREATIVE: Build a unique bottle from primitives with distinctive features
-
-For ANY object, add 2-3 unique characteristics:
-• Unusual proportions (elongated, squat, twisted, asymmetric)
-• Surface details (engravings, wrapped rope, dripping liquid, cracks, gems)
-• Animated elements (floating particles, pulsing glow, swirling contents)
-• Environmental storytelling (cobwebs, moss, battle damage, magical auras)
-
-════════════════════════════════════════════════════════════════════
-🚨 CRITICAL RULES
-════════════════════════════════════════════════════════════════════
-
-1. OUTPUT RAW JAVASCRIPT ONLY — No markdown, no \`\`\`, no explanations
-2. ALL objects must have y > 0 (above ground plane)
+1. OUTPUT RAW JAVASCRIPT ONLY — No markdown, no \`\`\`, no JSON, no explanations
+2. ALL objects must float slightly above ground: y >= 0.15 (base of object)
 3. ALL objects must be added to \`root\` (not scene)
-4. ALWAYS capture helper returns: const x = H.something(); x.position.set(...);
+4. ALWAYS capture helper returns: const sword = H.sword({...});
+5. Helper parameters are COLORS (hex numbers), not materials
+6. SIZE CONSTRAINT: Objects must fit within 1x1 unit footprint (x: -0.5 to 0.5, z: -0.5 to 0.5)
+7. HEIGHT: Objects should be 0.3-1.5 units tall (compact, detailed)
+
+WRONG:  H.sword({...});  sword.position.set(0,1,0);  // Missing assignment!
+RIGHT:  const sword = H.sword({...}); sword.position.set(0,0.15,0); root.add(sword);
+
 
 ════════════════════════════════════════════════════════════════════
 AVAILABLE CONTEXT
 ════════════════════════════════════════════════════════════════════
 
-THREE        — Full Three.js library
+THREE        — Full Three.js library (use for custom geometry/materials)
 root         — THREE.Group to add all objects to
-H / helpers  — Convenience helpers (materials, particles, basic shapes)
+H / helpers  — Convenience helpers (see below)
 addUpdateCallback(fn) — Register animation: fn({deltaTime, time})
 
 ════════════════════════════════════════════════════════════════════
-BUILDING BLOCKS — Combine these creatively
+APPROACH 1: USE HELPERS (Recommended for RPG/game items)
 ════════════════════════════════════════════════════════════════════
 
-MATERIALS (use with H.mesh() or raw Three.js)
+MATERIALS — Pass to H.mesh() or use directly
+  H.metal(color, {roughness, glow, clearcoat})
   H.glass(color, {roughness, transmission, ior})
   H.gem(color, {glow, ior})
-  H.metal(color, {roughness, glow, clearcoat})
   H.matte(color, {roughness})
   H.glow(color, {intensity, opacity})
   H.liquid(color, {transmission, thickness, glow})
-  H.fire(), H.ice(), H.lava(), H.leather(), H.velvet()
-  H.lowPoly(color), H.toon(color), H.cartoon(color)
+  H.fire({color, intensity, opacity})
+  H.ice(color)
+  H.lava({color, intensity})
+  H.leather(color)
+  H.velvet(color)
+  H.lowPoly(color)  // Flat shading, stylized
+  H.toon(color)
+  H.cartoon(color)
+
+LIGHTS
+  H.light(color, intensity, distance) → PointLight
+  H.spot(color, intensity, {angle, penumbra, distance}) → SpotLight
 
 PARTICLES (auto-animated)
   H.particles(count, {color, size, spread, baseY, heightRange})
@@ -896,166 +1167,167 @@ PARTICLES (auto-animated)
   H.smoke(count, {color, spread})
   H.dust(count, {color, spread, size, opacity})
 
-LIGHTS
-  H.light(color, intensity, distance)
-  H.spot(color, intensity, {angle, penumbra, distance})
+RPG ITEMS — All return THREE.Group or Mesh
+  H.crystal({color, height, radius, glow, lowPoly})
+  H.gemstone({color, size, shape, lowPoly})  // shape: "round" or "octahedron"
+  H.coin({color, radius, thickness, lowPoly})
+  H.heart({color, size, depth, lowPoly})
+  H.star({color, points, outer, inner, depth, lowPoly})
+  H.key({color, lowPoly})
+  H.potionBottle({shape, liquidColor, glassColor, glow, lowPoly})  // shape: round/flask/vial/diamond
+  H.sword({bladeColor, handleColor, guardColor, bladeLength, lowPoly})
+  H.axe({bladeColor, handleColor, lowPoly})
+  H.shield({shape, faceColor, trimColor, frameColor, studs, lowPoly})  // shape: heater/round/kite
+  H.book({open, coverColor, trimColor, lowPoly})
+  H.scroll({color, lowPoly})
+  H.chest({open, width, height, depth, woodColor, metalColor, lowPoly})
+  H.crown({color, gemColor, points, lowPoly})
+  H.ring(radius, tube, material)
+  H.chain(length, linkSize, material)
+  H.rope(pointsArray, radius, material)
+  H.plank(width, height, depth, material)
+  H.flame({height, radius})  // Animated fire
 
-SIMPLE SHAPES (use as starting points, then modify)
-  H.crystal(), H.coin(), H.heart(), H.star(), H.key()
-  H.ring(), H.chain(), H.plank(), H.flame()
+LIQUIDS
+  H.liquidVolume({width, height, depth, color, waveSpeed, waveHeight, glow})
+  H.liquidSphere({radius, color, scaleY, glow})
 
-RAW THREE.JS — Use for unique shapes!
-  new THREE.LatheGeometry(points, segments) — spin a profile
-  new THREE.ExtrudeGeometry(shape, {depth, bevelEnabled}) — extrude 2D
-  new THREE.TubeGeometry(curve, segments, radius) — pipes, tentacles
-  new THREE.TorusKnotGeometry() — complex organic forms
-  BufferGeometry with custom vertices — total freedom
+PHYSICS
+  H.addPhysics(mesh, {mass, shape, friction, restitution})  // shape: box/sphere/cylinder
+  H.makeDraggable(group)
+
+UTILITY
+  H.mesh(geometry, material) — Creates mesh with shadows enabled
 
 ════════════════════════════════════════════════════════════════════
-EXAMPLES OF CREATIVE VARIATION
+APPROACH 2: RAW THREE.JS (For custom/complex objects)
 ════════════════════════════════════════════════════════════════════
 
-PROMPT: "A health potion"
+You can use any Three.js class directly:
 
-VERSION A — Twisted Alchemist's Vial:
-─────────────────────────────────────
-// Twisted bottle using LatheGeometry
-const bottleProfile = [
-  new THREE.Vector2(0, 0),
-  new THREE.Vector2(0.15, 0.05),
-  new THREE.Vector2(0.18, 0.15),
-  new THREE.Vector2(0.12, 0.35),  // pinch
-  new THREE.Vector2(0.2, 0.5),    // bulge
-  new THREE.Vector2(0.08, 0.7),   // neck
-  new THREE.Vector2(0.1, 0.75),
-  new THREE.Vector2(0, 0.75),
-];
-const bottleGeo = new THREE.LatheGeometry(bottleProfile, 24);
-const bottle = H.mesh(bottleGeo, H.glass(0x88ff88, {transmission: 0.9}));
-bottle.position.y = 0.4;
-root.add(bottle);
+// Custom geometry
+const geo = new THREE.BoxGeometry(1, 1, 1);
+const mat = new THREE.MeshPhysicalMaterial({
+  color: 0xff0000,
+  metalness: 0.5,
+  roughness: 0.3,
+  clearcoat: 0.8
+});
+const mesh = new THREE.Mesh(geo, mat);
+mesh.position.y = 0.25;  // Slightly above ground
+mesh.scale.set(0.4, 0.4, 0.4);  // Fit within 1x1 footprint
+mesh.castShadow = true;
+root.add(mesh);
 
-// Liquid inside (slightly smaller)
-const liquidProfile = bottleProfile.map(v => new THREE.Vector2(v.x * 0.85, v.y * 0.6));
-const liquid = H.mesh(new THREE.LatheGeometry(liquidProfile, 24), H.liquid(0xff3366, {glow: 0.5}));
-liquid.position.y = 0.42;
-root.add(liquid);
+// Custom shapes with ExtrudeGeometry (scaled down)
+const shape = new THREE.Shape();
+shape.moveTo(0, 0);
+shape.lineTo(0.4, 0);
+shape.lineTo(0.2, 0.4);
+shape.closePath();
+const extrudeGeo = new THREE.ExtrudeGeometry(shape, { depth: 0.1, bevelEnabled: true });
 
-// Cork with wax seal
-const cork = H.mesh(new THREE.CylinderGeometry(0.09, 0.08, 0.12, 12), H.matte(0x8b6914));
-cork.position.set(0, 0.82, 0);
-root.add(cork);
-const seal = H.mesh(new THREE.CylinderGeometry(0.12, 0.12, 0.02, 16), H.matte(0xcc0000));
-seal.position.set(0, 0.88, 0);
-root.add(seal);
+// Curves (compact)
+const curve = new THREE.CatmullRomCurve3([
+  new THREE.Vector3(-0.3, 0.2, 0),
+  new THREE.Vector3(0, 0.5, 0),
+  new THREE.Vector3(0.3, 0.2, 0)
+]);
+const tubeGeo = new THREE.TubeGeometry(curve, 20, 0.05, 8);
 
-// Hanging tag
-const tag = H.mesh(new THREE.BoxGeometry(0.15, 0.1, 0.01), H.matte(0xf5deb3));
-tag.position.set(0.15, 0.6, 0.1);
-tag.rotation.z = 0.3;
-root.add(tag);
-
-// Rising bubbles inside
-root.add(H.bubbles(15, {color: 0xff6688, spread: 0.1, baseY: 0.45, height: 0.3}));
-root.add(H.light(0xff3366, 1.5, 2));
-
-VERSION B — Ancient Crystalline Flask:
-─────────────────────────────────────
-// Faceted crystal bottle (octahedron-based)
-const crystalGeo = new THREE.OctahedronGeometry(0.25, 0);
-crystalGeo.scale(1, 1.8, 1);
-const bottle = H.mesh(crystalGeo, H.gem(0xffffff, {glow: 0.2}));
-bottle.position.y = 0.5;
-root.add(bottle);
-
-// Glowing core
-const core = H.mesh(new THREE.SphereGeometry(0.12, 8, 8), H.glow(0xff0044, {intensity: 2}));
-core.position.y = 0.45;
-root.add(core);
-
-// Ornate gold cage around bottle
-for (let i = 0; i < 4; i++) {
-  const band = H.mesh(new THREE.TorusGeometry(0.28, 0.015, 8, 24), H.metal(0xffd700));
-  band.position.y = 0.3 + i * 0.15;
-  band.rotation.x = Math.PI / 2;
-  root.add(band);
-}
-
-// Vertical gold bars
-for (let i = 0; i < 6; i++) {
-  const angle = (i / 6) * Math.PI * 2;
-  const bar = H.mesh(new THREE.CylinderGeometry(0.012, 0.012, 0.6, 8), H.metal(0xffd700));
-  bar.position.set(Math.cos(angle) * 0.27, 0.45, Math.sin(angle) * 0.27);
-  root.add(bar);
-}
-
-// Pulsing animation
+// Animation
 addUpdateCallback(({deltaTime, time}) => {
-  core.scale.setScalar(1 + Math.sin(time * 3) * 0.1);
-  core.material.emissiveIntensity = 1.5 + Math.sin(time * 4) * 0.5;
+  mesh.rotation.y += deltaTime;
+  mesh.position.y = 0.25 + Math.sin(time * 2) * 0.05;
 });
 
-root.add(H.sparks(20, {color: 0xff4488, spread: 0.3, baseY: 0.3, maxY: 1}));
-
-VERSION C — Witch's Bubbling Cauldron Bottle:
-─────────────────────────────────────
-// Cauldron-shaped bottle
-const cauldronProfile = [
-  new THREE.Vector2(0.08, 0),
-  new THREE.Vector2(0.25, 0.1),
-  new THREE.Vector2(0.3, 0.25),
-  new THREE.Vector2(0.28, 0.4),
-  new THREE.Vector2(0.15, 0.5),
-  new THREE.Vector2(0.12, 0.55),
-];
-const cauldron = H.mesh(
-  new THREE.LatheGeometry(cauldronProfile, 32),
-  H.metal(0x1a1a1a, {roughness: 0.7})
-);
-cauldron.position.y = 0.3;
-root.add(cauldron);
-
-// Bubbling liquid surface
-const liquidSurface = H.mesh(
-  new THREE.CircleGeometry(0.14, 24),
-  H.liquid(0x44ff44, {glow: 0.8})
-);
-liquidSurface.rotation.x = -Math.PI / 2;
-liquidSurface.position.y = 0.52;
-root.add(liquidSurface);
-
-// Steam/smoke rising
-root.add(H.smoke(30, {color: 0x88ff88, spread: 0.2}));
-
-// Tiny skulls decoration
-for (let i = 0; i < 3; i++) {
-  const skull = H.mesh(new THREE.SphereGeometry(0.04, 8, 6), H.matte(0xfffff0));
-  const angle = (i / 3) * Math.PI * 2 + 0.5;
-  skull.position.set(Math.cos(angle) * 0.26, 0.35, Math.sin(angle) * 0.26);
-  skull.scale.set(1, 1.2, 0.9);
-  root.add(skull);
-}
-
-// Handles
-for (let i = 0; i < 2; i++) {
-  const handle = H.mesh(new THREE.TorusGeometry(0.08, 0.02, 8, 16, Math.PI), H.metal(0x1a1a1a));
-  handle.position.set(i === 0 ? 0.32 : -0.32, 0.35, 0);
-  handle.rotation.y = i === 0 ? Math.PI / 2 : -Math.PI / 2;
-  root.add(handle);
-}
-
-root.add(H.light(0x44ff44, 2, 3));
-
 ════════════════════════════════════════════════════════════════════
-NOW CREATE A UNIQUE "${userText}"
+COMPLETE EXAMPLES (all fit within 1x1 footprint, y >= 0.15)
 ════════════════════════════════════════════════════════════════════
 
-Think about what makes YOUR version special:
-• What's the story behind this object?
-• What unusual shape or proportion could work?
-• What details show its history or magic?
-• What animated elements bring it to life?
+EXAMPLE A — Magic Sword (using helpers)
+─────────────────────────────────────────
+const sword = H.sword({
+  bladeColor: 0xccccff,
+  handleColor: 0x4a3728,
+  guardColor: 0xffd700,
+  bladeLength: 0.6,
+  lowPoly: false
+});
+sword.position.set(0, 0.2, 0);
+sword.rotation.z = -0.3;
+sword.scale.set(0.7, 0.7, 0.7);
+root.add(sword);
 
+const glow = H.light(0x6688ff, 1.5, 2);
+glow.position.set(0, 0.5, 0);
+root.add(glow);
+
+const fx = H.sparks(20, { color: 0x88ccff, spread: 0.2, baseY: 0.2, maxY: 0.8 });
+root.add(fx);
+
+EXAMPLE B — Crystal Cluster (hybrid approach, fits in 1x1)
+─────────────────────────────────────────
+const base = new THREE.Mesh(
+  new THREE.CylinderGeometry(0.35, 0.4, 0.1, 8),
+  H.matte(0x333344)
+);
+base.position.y = 0.15;
+root.add(base);
+
+for (let i = 0; i < 5; i++) {
+  const crystal = H.crystal({
+    color: [0x9966ff, 0xff66aa, 0x66ffff][i % 3],
+    height: 0.25 + Math.random() * 0.3,
+    radius: 0.05 + Math.random() * 0.06,
+    glow: 0.4
+  });
+  const angle = (i / 5) * Math.PI * 2;
+  const r = 0.12 + Math.random() * 0.15;
+  crystal.position.set(Math.cos(angle) * r, 0.2, Math.sin(angle) * r);
+  crystal.rotation.set(Math.random() * 0.3, 0, Math.random() * 0.3);
+  root.add(crystal);
+}
+
+root.add(H.dust(30, { color: 0xccbbff, spread: 0.5 }));
+root.add(H.light(0x9966ff, 1.2, 2));
+
+EXAMPLE C — Animated Treasure (raw Three.js + animation, compact)
+─────────────────────────────────────────
+const chest = H.chest({ open: true, woodColor: 0x6b4423, metalColor: 0xffd700 });
+chest.position.y = 0.2;
+chest.scale.set(0.5, 0.5, 0.5);
+root.add(chest);
+
+// Floating coins using raw Three.js
+const coins = [];
+const coinGeo = new THREE.CylinderGeometry(0.08, 0.08, 0.02, 16);
+const coinMat = H.metal(0xffd700, { roughness: 0.2 });
+
+for (let i = 0; i < 8; i++) {
+  const coin = new THREE.Mesh(coinGeo, coinMat);
+  coin.rotation.x = Math.PI / 2;
+  coin.userData.phase = i * 0.8;
+  coin.userData.baseY = 0.6 + Math.random() * 0.3;
+  coins.push(coin);
+  root.add(coin);
+}
+
+addUpdateCallback(({time}) => {
+  coins.forEach((coin, i) => {
+    const angle = time * 0.5 + coin.userData.phase;
+    coin.position.x = Math.cos(angle) * 0.3;
+    coin.position.z = Math.sin(angle) * 0.3;
+    coin.position.y = coin.userData.baseY + Math.sin(time * 2 + i) * 0.1;
+    coin.rotation.z = time * 2;
+  });
+});
+
+root.add(H.sparks(40, { color: 0xffdd66, spread: 0.5, baseY: 0.4, maxY: 1.2 }));
+
+════════════════════════════════════════════════════════════════════
+NOW GENERATE CODE FOR: "${userText}"
+════════════════════════════════════════════════════════════════════
 Output raw JavaScript code only. No markdown. No explanation.`;
     };
 
@@ -1074,6 +1346,366 @@ COMMON FIXES:
 - Syntax errors → Fix the syntax
 
 OUTPUT ONLY THE FIXED JAVASCRIPT CODE. No markdown, no explanation.`;
+    };
+
+    // ═══════════════════════════════════════════════════════════════════════
+    // MULTI-PASS PROMPT BUILDERS
+    // ═══════════════════════════════════════════════════════════════════════
+
+    // SPECIALIZED MODE: Structure → Details → Polish (3 passes)
+    const buildSpecializedPrompts = (userText) => ({
+      pass1_structure: `You are an expert Three.js developer. Create the BASIC STRUCTURE for:
+
+"${userText}"
+
+RULES:
+- OUTPUT RAW JAVASCRIPT ONLY — No markdown, no \`\`\`, no JSON
+- ALL objects must have y > 0 (above ground plane)
+- ALL objects must be added to \`root\` (not scene)
+- ALWAYS capture helper returns: const x = H.something({...});
+
+CONTEXT: THREE, root, H/helpers, addUpdateCallback(fn)
+
+THIS PASS: Focus ONLY on basic geometry and structure:
+- Main shapes and forms (boxes, cylinders, spheres)
+- Basic positioning and scale
+- Simple materials (H.matte, H.metal)
+- NO particles, NO complex materials, NO animations yet
+
+HELPERS: H.mesh(geometry, material), H.matte(color), H.metal(color), H.glass(color)
+
+Generate the basic structure. Output raw JavaScript only:`,
+
+      pass2_details: (previousCode) => `You are an expert Three.js developer. ENHANCE this 3D object with details.
+
+ORIGINAL REQUEST: "${userText}"
+
+CURRENT CODE:
+${previousCode}
+
+THIS PASS: Add DETAILS and MATERIALS:
+- Replace simple materials with rich ones (H.gem, H.glass, H.glow, H.liquid)
+- Add decorative elements (trim, studs, engravings)
+- Add small detail meshes
+- Improve material properties (metalness, roughness, emissive)
+
+AVAILABLE MATERIALS:
+H.metal(color, {roughness, glow, clearcoat}), H.glass(color, {transmission}),
+H.gem(color, {glow}), H.glow(color, {intensity}), H.liquid(color, {glow}),
+H.fire(), H.ice(), H.lava(), H.leather(color), H.velvet(color)
+
+RULES:
+- Keep ALL existing geometry and structure
+- ONLY add materials and detail meshes
+- Output the COMPLETE enhanced code
+- Raw JavaScript only, no markdown
+
+Output the enhanced code:`,
+
+      pass3_polish: (previousCode) => `You are an expert Three.js developer. POLISH this 3D object with effects.
+
+ORIGINAL REQUEST: "${userText}"
+
+CURRENT CODE:
+${previousCode}
+
+THIS PASS: Add POLISH and EFFECTS:
+- Add particles (H.sparks, H.bubbles, H.dust, H.smoke)
+- Add lights (H.light, H.spot)
+- Add animations with addUpdateCallback
+- Fine-tune positions and visual balance
+
+AVAILABLE EFFECTS:
+H.sparks(count, {color, spread}), H.bubbles(count, {color}),
+H.dust(count, {color}), H.smoke(count), H.particles(count, {color, size})
+H.light(color, intensity, distance), H.spot(color, intensity)
+
+ANIMATION EXAMPLE:
+addUpdateCallback(({deltaTime, time}) => {
+  mesh.rotation.y += deltaTime;
+  material.emissiveIntensity = 1 + Math.sin(time * 2) * 0.3;
+});
+
+RULES:
+- Keep ALL existing code
+- ADD particles, lights, and animations
+- Output the COMPLETE polished code
+- Raw JavaScript only, no markdown
+
+Output the final polished code:`,
+    });
+
+    // CRITIQUE MODE: Generate → Review & Improve (2 passes)
+    const buildCritiquePrompts = (userText) => ({
+      pass1_generate: `You are an expert Three.js developer. Generate a 3D object for:
+
+"${userText}"
+
+RULES:
+- OUTPUT RAW JAVASCRIPT ONLY — No markdown, no \`\`\`, no JSON
+- ALL objects must have y > 0 (above ground plane)
+- ALL objects must be added to \`root\` (not scene)
+- ALWAYS capture helper returns: const x = H.something({...});
+
+CONTEXT: THREE, root, H/helpers, addUpdateCallback(fn)
+
+HELPERS:
+Materials: H.metal, H.glass, H.gem, H.matte, H.glow, H.liquid, H.fire, H.ice, H.lava
+Particles: H.sparks, H.bubbles, H.dust, H.smoke, H.particles
+Lights: H.light, H.spot
+Items: H.crystal, H.coin, H.heart, H.star, H.key, H.sword, H.shield, H.chest, H.crown
+
+Generate a complete 3D object with materials, particles, lights, and animation.
+Output raw JavaScript only:`,
+
+      pass2_critique: (previousCode) => `You are an expert Three.js code reviewer. CRITIQUE and IMPROVE this code.
+
+ORIGINAL REQUEST: "${userText}"
+
+CURRENT CODE:
+${previousCode}
+
+REVIEW CHECKLIST:
+1. Does it match the user's request? If not, fix it.
+2. Are there enough details? Add more meshes if sparse.
+3. Are materials interesting? Upgrade boring materials.
+4. Are there particles? Add if missing.
+5. Is there lighting? Add point lights for drama.
+6. Is there animation? Add subtle movement.
+7. Is the scale appropriate? Objects must fit within 1x1 footprint, height 0.3-1.5 units.
+8. Is it visually balanced? Center and arrange properly.
+
+IMPROVEMENTS TO MAKE:
+- Add at least 2 more detail meshes
+- Ensure at least one emissive/glowing element
+- Add particles if none exist
+- Add animation if static
+- Improve material variety
+
+OUTPUT: The COMPLETE improved code (not a diff).
+Raw JavaScript only, no markdown, no explanations:`,
+    });
+
+    // ADDITIVE MODE: Base → Accessories → Effects (3 passes)
+    const buildAdditivePrompts = (userText) => ({
+      pass1_base: `You are an expert Three.js developer. Create the BASE OBJECT for:
+
+"${userText}"
+
+RULES:
+- OUTPUT RAW JAVASCRIPT ONLY — No markdown, no \`\`\`
+- ALL objects must have y > 0 (above ground plane)
+- ALL objects must be added to \`root\` (not scene)
+
+THIS PASS: Create ONLY the main/central object:
+- The primary shape that defines what this is
+- 3-5 meshes maximum for the core form
+- Basic but appropriate materials
+- NO accessories, NO effects, NO particles
+
+CONTEXT: THREE, root, H/helpers
+
+Example for "treasure chest": Just the chest box and lid, nothing else.
+Example for "magic sword": Just the blade and handle, nothing else.
+
+Generate the base object. Raw JavaScript only:`,
+
+      pass2_accessories: (previousCode) => `You are an expert Three.js developer. ADD ACCESSORIES to this object.
+
+ORIGINAL REQUEST: "${userText}"
+
+BASE OBJECT CODE:
+${previousCode}
+
+THIS PASS: Add ACCESSORIES and DECORATIONS:
+- Items that complement the main object
+- Decorative elements (gems, studs, trim, engravings)
+- Supporting props (stand, base, holder)
+- Small related items around/on the main object
+
+EXAMPLES:
+- Treasure chest → Add coins, gems, jewelry around it
+- Magic sword → Add floating runes, gem in pommel
+- Potion → Add cork, label, bubbles inside
+- Crown → Add gems in each point, velvet cushion
+
+RULES:
+- Keep ALL existing base code unchanged
+- ADD 5-10 new accessory meshes
+- Position accessories relative to the base
+- Use complementary materials
+
+Output the COMPLETE code with accessories. Raw JavaScript only:`,
+
+      pass3_effects: (previousCode) => `You are an expert Three.js developer. ADD EFFECTS to complete this object.
+
+ORIGINAL REQUEST: "${userText}"
+
+CURRENT CODE:
+${previousCode}
+
+THIS PASS: Add MAGICAL EFFECTS to bring it to life:
+- Particle systems (sparks, dust, bubbles, smoke)
+- Dynamic lighting (point lights, spotlights)
+- Animations (rotation, floating, pulsing, glowing)
+- Atmospheric effects
+
+AVAILABLE EFFECTS:
+H.sparks(count, {color, spread, baseY, maxY})
+H.bubbles(count, {color, spread, baseY, height})
+H.dust(count, {color, spread, size})
+H.smoke(count, {color, spread})
+H.light(color, intensity, distance)
+H.spot(color, intensity, {angle, penumbra})
+
+ANIMATION:
+addUpdateCallback(({deltaTime, time}) => {
+  // Rotate, pulse, float, etc.
+});
+
+RULES:
+- Keep ALL existing code unchanged
+- ADD particles, lights, and animations
+- Make it feel magical/alive
+- At least 2 particle systems
+- At least 1 animated element
+
+Output the COMPLETE final code. Raw JavaScript only:`,
+    });
+
+    // EXTREME MODE: Reference-quality generation with explicit complexity requirements
+    const buildExtremePrompt = (userText) => {
+      // Condensed reference code showing the QUALITY level expected
+      const referenceCode = `// QUALITY REFERENCE - Match this complexity level:
+// This treasure chest has 300+ meshes, procedural textures, nested groups, and custom animations
+
+// Procedural wood texture via canvas
+const woodCanvas = document.createElement("canvas"); woodCanvas.width = 512; woodCanvas.height = 512;
+const wctx = woodCanvas.getContext("2d");
+wctx.fillStyle = "#3a2415"; wctx.fillRect(0, 0, 512, 512);
+for (let i = 0; i < 160; i++) {
+  const y = Math.random() * 512;
+  wctx.strokeStyle = "rgba(80,60,40," + (0.08 + Math.random() * 0.08) + ")";
+  wctx.lineWidth = 1 + Math.random() * 3;
+  wctx.beginPath(); wctx.moveTo(0, y); wctx.lineTo(512, y + (Math.random() * 40 - 20)); wctx.stroke();
+}
+const woodTex = new THREE.CanvasTexture(woodCanvas);
+const woodMat = new THREE.MeshPhysicalMaterial({ map: woodTex, roughness: 0.55, metalness: 0.05, clearcoat: 0.3, color: 0x6e4429 });
+
+// Multiple material variations
+const goldTrimMat = H.metal(0xe8c35f, { roughness: 0.25, glow: 0.1 });
+const goldMatBright = H.metal(0xffe38a, { roughness: 0.15, glow: 0.35 });
+const gemColors = [0xff2e4d, 0x33ffb6, 0x3385ff, 0xdd55ff, 0xffffff, 0xffaa00];
+
+// Mass object generation with loops (coins: 50+ per layer × 6 layers = 300+ meshes)
+const coinGeo = new THREE.CylinderGeometry(0.11, 0.11, 0.028, 24);
+for (let layer = 0; layer < 6; layer++) {
+  for (let i = 0; i < 50 + layer * 15; i++) {
+    const c = H.mesh(coinGeo, goldMatBright);
+    c.position.set(innerMinX + Math.random() * (innerMaxX - innerMinX), baseY + layer * 0.15, innerMinZ + Math.random() * (innerMaxZ - innerMinZ));
+    root.add(c);
+  }
+}
+
+// 80+ gems with random colors
+const allGems = [];
+for (let i = 0; i < 80; i++) {
+  const gem = H.mesh(new THREE.OctahedronGeometry(0.12), H.gem(gemColors[i % gemColors.length]));
+  gem.position.set(Math.random() * 2 - 1, 0.5 + Math.random() * 0.8, Math.random() * 2 - 1);
+  root.add(gem); allGems.push(gem);
+}
+
+// Nested groups for complex objects (crown with 6 points + gems)
+const crown = new THREE.Group();
+const crownBase = H.mesh(new THREE.TorusGeometry(0.22, 0.055, 12, 36), goldMatBright);
+crown.add(crownBase);
+for (let i = 0; i < 6; i++) {
+  const angle = (i / 6) * Math.PI * 2;
+  const tip = H.mesh(new THREE.ConeGeometry(0.06, 0.17, 6), goldMatBright);
+  tip.position.set(Math.cos(angle) * 0.22, 0.10, Math.sin(angle) * 0.22);
+  crown.add(tip);
+  const tipGem = H.mesh(new THREE.SphereGeometry(0.035), H.gem(gemColors[i]));
+  tipGem.position.set(Math.cos(angle) * 0.22, 0.17, Math.sin(angle) * 0.22);
+  crown.add(tipGem);
+}
+root.add(crown);
+
+// 70 particles with per-particle animation data
+const sparkles = H.particles(70, { color: 0xffffcc, size: 0.055, spread: 1.2, baseY: 0.25, heightRange: 1.1 });
+root.add(sparkles);
+const sparkleSpeed = []; for (let i = 0; i < 70; i++) sparkleSpeed.push(0.25 + Math.random() * 0.45);
+
+// Complex animation with multiple animated elements
+let t = 0;
+addUpdateCallback(function(ctx) {
+  const dt = ctx.deltaTime; if (!dt) return; t += dt;
+  // Animate particles
+  const p = sparkles.geometry.attributes.position;
+  for (let i = 0; i < 70; i++) {
+    let y = p.getY(i); y += sparkleSpeed[i] * dt * 0.25;
+    if (y > 1.5) y = 0.25;
+    p.setY(i, y);
+  }
+  p.needsUpdate = true;
+  // Animate gems
+  for (let g of allGems) { g.rotation.y += dt * 0.35; }
+  // Animate material
+  goldMatBright.emissiveIntensity = 0.25 + Math.sin(t * 5) * 0.08;
+});`;
+
+      return `You are an expert Three.js developer creating MUSEUM-QUALITY 3D objects.
+
+Generate a highly detailed 3D object for: "${userText}"
+
+════════════════════════════════════════════════════════════════════
+QUALITY REFERENCE - YOUR OUTPUT MUST MATCH THIS COMPLEXITY:
+════════════════════════════════════════════════════════════════════
+
+${referenceCode}
+
+════════════════════════════════════════════════════════════════════
+MANDATORY COMPLEXITY REQUIREMENTS:
+════════════════════════════════════════════════════════════════════
+
+1. MESH COUNT: Minimum 50 meshes (use loops to generate many similar objects)
+2. MATERIAL VARIETY: At least 4 different materials
+3. PROCEDURAL TEXTURES: Create at least one canvas-based texture
+4. NESTED GROUPS: Use THREE.Group for complex multi-part objects
+5. PARTICLES: 50+ particles with custom animation
+6. ANIMATION: Multiple animated elements (rotation, pulsing, floating)
+7. DETAIL OBJECTS: Small decorative meshes (gems, studs, trim pieces)
+8. ARRAYS FOR ANIMATION: Store references for batch animation
+
+════════════════════════════════════════════════════════════════════
+TECHNIQUES TO USE:
+════════════════════════════════════════════════════════════════════
+
+- Canvas textures: document.createElement("canvas"), getContext("2d"), THREE.CanvasTexture
+- Mass generation: for loops creating 50+ similar objects with random variation
+- Nested groups: const group = new THREE.Group(); for complex parts
+- Array tracking: const allGems = []; ... allGems.push(gem); for animation
+- Per-object data: Store random values in arrays for unique animation per object
+- Material glow: emissiveIntensity animation for magical effects
+
+════════════════════════════════════════════════════════════════════
+CONTEXT: THREE, root, H/helpers, addUpdateCallback({deltaTime, time})
+
+HELPERS:
+Materials: H.metal(color, {roughness, glow}), H.glass(color), H.gem(color, {glow}), H.matte(color), H.glow(color), H.liquid(color)
+Particles: H.particles(count, {color, size, spread, baseY, heightRange}), H.sparks, H.dust
+Utility: H.mesh(geometry, material) — auto-enables shadows
+
+RULES:
+- OUTPUT RAW JAVASCRIPT ONLY — No markdown, no \`\`\`
+- ALL objects y > 0
+- Add to \`root\` not scene
+- ALWAYS capture returns: const x = H.something();
+
+════════════════════════════════════════════════════════════════════
+NOW GENERATE MUSEUM-QUALITY CODE FOR: "${userText}"
+════════════════════════════════════════════════════════════════════
+
+Output raw JavaScript code only. Match the reference complexity. No explanations.`;
     };
 
     // ═══════════════════════════════════════════════════════════════════════
@@ -1129,19 +1761,23 @@ OUTPUT ONLY THE FIXED JAVASCRIPT CODE. No markdown, no explanation.`;
     const generateWithRetry = async (
       initialPrompt,
       userDescription,
-      maxAttempts
+      maxAttempts,
+      passLabel = ""
     ) => {
+      const label = passLabel ? `[${passLabel}] ` : "";
       let rawCode = null;
       let normalizedCode = null;
       let lastError = null;
 
+      console.log(`${label}Starting generation...`);
+
       for (let attempt = 1; attempt <= maxAttempts; attempt++) {
         try {
           if (attempt === 1) {
-            lastStatus.value = `Generating...`;
+            lastStatus.value = passLabel ? `${passLabel}: Generating...` : `Generating...`;
             rawCode = await callLLM(initialPrompt);
           } else {
-            lastStatus.value = `Healing...`;
+            lastStatus.value = passLabel ? `${passLabel}: Healing...` : `Healing...`;
             const fixPrompt = buildErrorFixPrompt(
               rawCode,
               lastError,
@@ -1152,28 +1788,28 @@ OUTPUT ONLY THE FIXED JAVASCRIPT CODE. No markdown, no explanation.`;
 
           normalizedCode = normalizeLLMCode(rawCode);
           console.log(
-            `Attempt ${attempt} - Normalized code:`,
+            `${label}Attempt ${attempt} - Normalized code:`,
             normalizedCode.substring(0, 500)
           );
 
-          lastStatus.value = `Validating...`;
+          lastStatus.value = passLabel ? `${passLabel}: Validating...` : `Validating...`;
           const validationError = await validateCode(normalizedCode);
 
           if (!validationError) {
-            console.log(`✅ Code valid on attempt ${attempt}`);
+            console.log(`${label}✅ Code valid on attempt ${attempt}`);
             return normalizedCode;
           }
 
           lastError = validationError;
-          console.warn(`Attempt ${attempt} failed:`, validationError);
+          console.warn(`${label}Attempt ${attempt} failed:`, validationError);
         } catch (e) {
           lastError = e.message;
-          console.error(`Attempt ${attempt} error:`, e);
+          console.error(`${label}Attempt ${attempt} error:`, e);
         }
       }
 
       console.error(
-        `All ${maxAttempts} attempts failed. Last error:`,
+        `${label}All ${maxAttempts} attempts failed. Last error:`,
         lastError
       );
       return normalizedCode; // Return last attempt anyway
@@ -1230,9 +1866,8 @@ OUTPUT ONLY THE FIXED JAVASCRIPT CODE. No markdown, no explanation.`;
     const handleSuccess = (data) => console.log("Generation success:", data);
     const handleError = (data) => console.error("Generation error:", data);
 
-    const removeInference = async (index) => {
-      const realIndex = objectInferences.value.length - 1 - index;
-      objectInferences.value.splice(realIndex, 1);
+    const removeInference = async (originalIndex) => {
+      objectInferences.value.splice(originalIndex, 1);
       await saveInferences();
     };
 
@@ -1245,6 +1880,18 @@ OUTPUT ONLY THE FIXED JAVASCRIPT CODE. No markdown, no explanation.`;
       }
     };
 
+    const regenerateFromInference = async (item) => {
+      if (!item.prompt) return;
+      // Set the prompt from the inference
+      form.prompt = item.prompt;
+      // Optionally set the same generation mode
+      if (item.mode && generationModes.value.some(m => m.value === item.mode)) {
+        generationMode.value = item.mode;
+      }
+      // Trigger generation
+      await onSubmit();
+    };
+
     // ═══════════════════════════════════════════════════════════════════════
     // PERSISTENCE
     // ═══════════════════════════════════════════════════════════════════════
@@ -1255,6 +1902,53 @@ OUTPUT ONLY THE FIXED JAVASCRIPT CODE. No markdown, no explanation.`;
           [...objectInferences.value]
         );
       } catch (e) {}
+    };
+
+    const clearHistory = async () => {
+      objectInferences.value = [];
+      hasCopy.length = 0;
+      try {
+        await window.electronAPI?.store?.set?.("objectInferences", []);
+      } catch (e) {
+        console.error("Failed to clear 3D inferences:", e);
+      }
+    };
+
+    const exportHistory = () => {
+      if (objectInferences.value.length === 0) return;
+      const data = JSON.stringify(objectInferences.value, null, 2);
+      const blob = new Blob([data], { type: "application/json" });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `bonzai-3d-history-${Date.now()}.json`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+    };
+
+    const importHistory = () => {
+      const input = document.createElement("input");
+      input.type = "file";
+      input.accept = ".json";
+      input.onchange = async (e) => {
+        const file = e.target.files[0];
+        if (!file) return;
+        try {
+          const text = await file.text();
+          const data = JSON.parse(text);
+          if (Array.isArray(data)) {
+            objectInferences.value = [...data, ...objectInferences.value];
+            hasCopy.length = objectInferences.value.length;
+            hasCopy.fill(false);
+            await saveInferences();
+          }
+        } catch (err) {
+          console.error("Failed to import history:", err);
+        }
+      };
+      input.click();
     };
 
     // ═══════════════════════════════════════════════════════════════════════
@@ -1472,29 +2166,128 @@ OUTPUT ONLY THE FIXED JAVASCRIPT CODE. No markdown, no explanation.`;
         title: "",
         notes: "",
         code: "",
+        mode: generationMode.value,
       };
 
       try {
         await loadModelForGeneration();
 
-        const llmPrompt = buildObjectPrompt(form.prompt);
-        const code = await generateWithRetry(
-          llmPrompt,
-          form.prompt,
-          MAX_RETRY_ATTEMPTS
-        );
+        let finalCode = null;
+        const mode = generationMode.value;
 
-        if (!code) throw new Error("Failed to generate valid code");
+        if (mode === "normal") {
+          // ═══════════════════════════════════════════════════════════════
+          // NORMAL MODE: Single pass (original behavior)
+          // ═══════════════════════════════════════════════════════════════
+          lastStatus.value = "Generating...";
+          const llmPrompt = buildObjectPrompt(form.prompt);
+          finalCode = await generateWithRetry(llmPrompt, form.prompt, MAX_RETRY_ATTEMPTS);
+
+        } else if (mode === "specialized") {
+          // ═══════════════════════════════════════════════════════════════
+          // SPECIALIZED MODE: Structure → Details → Polish (3 passes)
+          // ═══════════════════════════════════════════════════════════════
+          console.log("═══════════════════════════════════════════════════════");
+          console.log("SPECIALIZED MODE: Starting 3-pass generation");
+          console.log("═══════════════════════════════════════════════════════");
+          const prompts = buildSpecializedPrompts(form.prompt);
+
+          // Pass 1: Structure
+          let code = await generateWithRetry(prompts.pass1_structure, form.prompt, MAX_RETRY_ATTEMPTS, "Pass 1/3 Structure");
+          if (!code) throw new Error("Failed at structure pass");
+          console.log("[Specialized] Pass 1 DONE, code length:", code.length);
+
+          // Pass 2: Details (extract inner code to avoid wrapper duplication)
+          const innerCode1 = extractInnerCode(code);
+          console.log("[Specialized] Extracted inner code for Pass 2, length:", innerCode1.length);
+          code = await generateWithRetry(prompts.pass2_details(innerCode1), form.prompt, MAX_RETRY_ATTEMPTS, "Pass 2/3 Details");
+          if (!code) throw new Error("Failed at details pass");
+          console.log("[Specialized] Pass 2 DONE, code length:", code.length);
+
+          // Pass 3: Polish
+          const innerCode2 = extractInnerCode(code);
+          console.log("[Specialized] Extracted inner code for Pass 3, length:", innerCode2.length);
+          finalCode = await generateWithRetry(prompts.pass3_polish(innerCode2), form.prompt, MAX_RETRY_ATTEMPTS, "Pass 3/3 Polish");
+          console.log("═══════════════════════════════════════════════════════");
+          console.log("SPECIALIZED MODE: ALL 3 PASSES COMPLETE");
+          console.log("═══════════════════════════════════════════════════════");
+
+        } else if (mode === "critique") {
+          // ═══════════════════════════════════════════════════════════════
+          // CRITIQUE MODE: Generate → Review & Improve (2 passes)
+          // ═══════════════════════════════════════════════════════════════
+          console.log("═══════════════════════════════════════════════════════");
+          console.log("CRITIQUE MODE: Starting 2-pass generation");
+          console.log("═══════════════════════════════════════════════════════");
+          const prompts = buildCritiquePrompts(form.prompt);
+
+          // Pass 1: Initial generation
+          let code = await generateWithRetry(prompts.pass1_generate, form.prompt, MAX_RETRY_ATTEMPTS, "Pass 1/2 Generate");
+          if (!code) throw new Error("Failed at initial generation");
+          console.log("[Critique] Pass 1 DONE, code length:", code.length);
+
+          // Pass 2: Critique and improve (extract inner code)
+          const innerCode = extractInnerCode(code);
+          console.log("[Critique] Extracted inner code for Pass 2, length:", innerCode.length);
+          finalCode = await generateWithRetry(prompts.pass2_critique(innerCode), form.prompt, MAX_RETRY_ATTEMPTS, "Pass 2/2 Improve");
+          console.log("═══════════════════════════════════════════════════════");
+          console.log("CRITIQUE MODE: ALL PASSES COMPLETE");
+          console.log("═══════════════════════════════════════════════════════");
+
+        } else if (mode === "additive") {
+          // ═══════════════════════════════════════════════════════════════
+          // ADDITIVE MODE: Base → Accessories → Effects (3 passes)
+          // ═══════════════════════════════════════════════════════════════
+          console.log("═══════════════════════════════════════════════════════");
+          console.log("ADDITIVE MODE: Starting 3-pass generation");
+          console.log("═══════════════════════════════════════════════════════");
+          const prompts = buildAdditivePrompts(form.prompt);
+
+          // Pass 1: Base object
+          let code = await generateWithRetry(prompts.pass1_base, form.prompt, MAX_RETRY_ATTEMPTS, "Pass 1/3 Base");
+          if (!code) throw new Error("Failed at base creation");
+          console.log("[Additive] Pass 1 DONE, code length:", code.length);
+
+          // Pass 2: Accessories (extract inner code)
+          const innerCode1 = extractInnerCode(code);
+          console.log("[Additive] Extracted inner code for Pass 2, length:", innerCode1.length);
+          code = await generateWithRetry(prompts.pass2_accessories(innerCode1), form.prompt, MAX_RETRY_ATTEMPTS, "Pass 2/3 Accessories");
+          if (!code) throw new Error("Failed at accessories pass");
+          console.log("[Additive] Pass 2 DONE, code length:", code.length);
+
+          // Pass 3: Effects
+          const innerCode2 = extractInnerCode(code);
+          console.log("[Additive] Extracted inner code for Pass 3, length:", innerCode2.length);
+          finalCode = await generateWithRetry(prompts.pass3_effects(innerCode2), form.prompt, MAX_RETRY_ATTEMPTS, "Pass 3/3 Effects");
+          console.log("═══════════════════════════════════════════════════════");
+          console.log("ADDITIVE MODE: ALL 3 PASSES COMPLETE");
+          console.log("═══════════════════════════════════════════════════════");
+
+        } else if (mode === "extreme") {
+          // ═══════════════════════════════════════════════════════════════
+          // EXTREME MODE: Reference-quality with 50+ meshes
+          // ═══════════════════════════════════════════════════════════════
+          console.log("═══════════════════════════════════════════════════════");
+          console.log("EXTREME MODE: Starting museum-quality generation");
+          console.log("═══════════════════════════════════════════════════════");
+          const llmPrompt = buildExtremePrompt(form.prompt);
+          finalCode = await generateWithRetry(llmPrompt, form.prompt, MAX_RETRY_ATTEMPTS, "Extreme Quality");
+          console.log("═══════════════════════════════════════════════════════");
+          console.log("EXTREME MODE: GENERATION COMPLETE");
+          console.log("═══════════════════════════════════════════════════════");
+        }
+
+        if (!finalCode) throw new Error("Failed to generate valid code");
 
         lastStatus.value = "Crafting Object...";
         const viewer = threeViewer.value;
         if (!viewer) throw new Error("Viewer not initialized");
 
-        await viewer.applyModuleCode(code, "replace");
+        await viewer.applyModuleCode(finalCode, "replace");
 
         lastStatus.value = "Crafted!";
         inference.success = true;
-        inference.code = code;
+        inference.code = finalCode;
         objectInferences.value.push(inference);
         await saveInferences();
         form.prompt = "";
@@ -1526,6 +2319,26 @@ OUTPUT ONLY THE FIXED JAVASCRIPT CODE. No markdown, no explanation.`;
 
       await nextTick();
       setTimeout(() => loadDefaultObject(), 500);
+      // Setup scroll observer after DOM is rendered
+      setTimeout(setupScrollObserver, 100);
+      // Attach scroll listener for scroll-to-top button
+      const container = document.querySelector('.models__deployment-install');
+      if (container) {
+        scrollContainer.value = container;
+        container.addEventListener('scroll', handleScroll, { passive: true });
+      }
+    });
+
+    onBeforeUnmount(() => {
+      // Cleanup scroll observer
+      if (scrollObserver) {
+        scrollObserver.disconnect();
+        scrollObserver = null;
+      }
+      // Cleanup scroll listener
+      if (scrollContainer.value) {
+        scrollContainer.value.removeEventListener('scroll', handleScroll);
+      }
     });
 
     // ═══════════════════════════════════════════════════════════════════════
@@ -1537,6 +2350,14 @@ OUTPUT ONLY THE FIXED JAVASCRIPT CODE. No markdown, no explanation.`;
       lastStatus,
       showExamples,
       objectInferences,
+      // lazy loading pagination
+      paginatedInferences,
+      loadMoreSentinel,
+      hasMore,
+      isLoadingMore,
+      // scroll to top
+      showScrollTop,
+      scrollToTop,
       hasCopy,
       autoRotate,
       currentTime,
@@ -1544,6 +2365,9 @@ OUTPUT ONLY THE FIXED JAVASCRIPT CODE. No markdown, no explanation.`;
       lightIntensity,
       lightingPresets,
       weatherOptions,
+      // Generation mode
+      generationMode,
+      generationModes,
       form,
       examplePrompts,
       setTimeOfDay,
@@ -1556,7 +2380,11 @@ OUTPUT ONLY THE FIXED JAVASCRIPT CODE. No markdown, no explanation.`;
       handleError,
       useExample,
       removeInference,
+      clearHistory,
+      exportHistory,
+      importHistory,
       applyInference,
+      regenerateFromInference,
       onSubmit,
       // Access control
       accessRef,
@@ -1638,6 +2466,7 @@ OUTPUT ONLY THE FIXED JAVASCRIPT CODE. No markdown, no explanation.`;
   margin: 0 !important;
 }
 .models__deployment-install {
+  position: relative;
   overflow-y: auto;
   padding: 6em;
   height: 100vh;
@@ -1691,13 +2520,13 @@ p {
 .time-buttons,
 .weather-buttons {
   display: flex;
-  gap: 0.5em;
+  gap: 0.6em;
   flex-wrap: wrap;
 }
 .time-btn,
 .weather-btn {
   width: 4.2em;
-  font-size: 1.3em !important;
+  font-size: 1em !important;
   font-weight: 400;
   display: flex;
   flex-direction: column;
@@ -1734,6 +2563,51 @@ p {
   font-family: "Fira Sans", sans-serif;
   font-weight: 500;
   margin-top: 0.25em;
+}
+.mode-buttons {
+  display: flex;
+  gap: 0.8em;
+  flex-wrap: wrap;
+}
+.mode-btn {
+  min-width: 6em;
+  font-size: 1em !important;
+  font-weight: 400;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: 12px 16px;
+  color: rgba(255, 255, 255, 0.3) !important;
+  border: 1px solid rgba(255, 255, 255, 0.3);
+  border-radius: 4px;
+  background: transparent;
+  cursor: pointer;
+  transition: 400ms ease-in;
+  transform: translate3d(0, 0, 0);
+}
+.mode-btn:hover {
+  color: rgba(255, 255, 255, 1) !important;
+  background: rgba(97, 55, 142, 0.4);
+  border-color: rgba(255, 255, 255, 1);
+}
+.mode-btn.active {
+  color: rgba(255, 255, 255, 1) !important;
+  border: 2px solid rgba(255, 255, 255, 1) !important;
+  background: rgba(97, 55, 142, 0.5) !important;
+  backdrop-filter: blur(64px) !important;
+}
+.mode-icon {
+  font-size: 1.6em;
+}
+.mode-label {
+  font-size: 0.8em;
+  font-family: "Fira Sans", sans-serif;
+  font-weight: 500;
+  margin-top: 0.25em;
+}
+.mode-description {
+  font-family: "Fira Sans", sans-serif;
+  text-align: left !important;
 }
 .examples-panel {
   margin-bottom: 2em;
@@ -1863,7 +2737,7 @@ ol {
 }
 ol.chat {
   display: flex;
-  flex-direction: column-reverse;
+  flex-direction: column;
 }
 .button.copy {
   transition: all 0.15s ease;
@@ -1878,5 +2752,58 @@ ol.chat {
   overflow: hidden;
   min-width: 300px;
   min-height: 300px;
+}
+
+/* Fade-in animation for history items */
+.history-item {
+  animation: fadeInUp 0.4s ease-out forwards;
+  opacity: 0;
+}
+
+@keyframes fadeInUp {
+  from {
+    opacity: 0;
+    transform: translateY(20px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.load-more-sentinel {
+  min-height: 20px;
+}
+
+/* Scroll to top button */
+.scroll-to-top-btn {
+  position: absolute;
+  bottom: 2rem;
+  right: 2rem;
+  width: 48px;
+  height: 48px;
+  border-radius: 50%;
+  background: rgba(97, 55, 142, 0.9);
+  border: 2px solid rgba(255, 255, 255, 0.3);
+  color: #fff;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+  transition: all 0.2s ease;
+  z-index: 100;
+  animation: fadeInUp 0.3s ease-out;
+}
+
+.scroll-to-top-btn:hover {
+  background: rgba(97, 55, 142, 1);
+  transform: translateY(-2px);
+  box-shadow: 0 6px 16px rgba(0, 0, 0, 0.4);
+}
+
+.scroll-to-top-btn .material-symbols-outlined {
+  font-size: 24px;
+  border: none;
 }
 </style>

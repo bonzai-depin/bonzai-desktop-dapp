@@ -6,7 +6,7 @@ import fs from "node:fs";
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-const appName = "bonzai";
+const appName = "BonzAI";
 
 // tiny helper
 function copyRecursive(src, dst) {
@@ -143,8 +143,16 @@ export default {
       config: {
         background: "./src/assets/background.png",
         format: "ULFO",
-        iconSize: 192,
-        window: { width: 1000, height: 560 },
+        iconSize: 128,
+        window: { width: 660, height: 400 },
+        contents: [
+          { x: 180, y: 170, type: "file", path: "" }, // App icon position (path filled by forge)
+          { x: 480, y: 170, type: "link", path: "/Applications" }, // Applications folder
+        ],
+        additionalDMGOptions: {
+          "background-color": "transparent",
+          "icon-size": 128,
+        },
       },
     },
     { name: "@electron-forge/maker-deb", config: { bin: appName } },

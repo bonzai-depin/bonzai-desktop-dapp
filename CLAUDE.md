@@ -37,8 +37,8 @@ npm run publish
 │ Vue 3 Renderer (src/components/*.vue)                   │
 │ - GenerativeText (local llama-cpp)                      │
 │ - GenerativeImage (FLUX/SDXL via Flask)                 │
-│ - GenerativeVideo (LTX/Wan via Flask)                   │
-│ - GenerativeMusic (MusicGen via Flask)                  │
+│ - GenerativeVideo (Wan 2.2 via Flask)                   │
+│ - GenerativeMusic (ChatterBox via Flask)                  │
 │ - Generative3D, GenerativeRobot, SmartAgent             │
 │ State: Pinia (inferenceStore.js, web3.store.js)         │
 └─────────────────────┬───────────────────────────────────┘
@@ -54,7 +54,7 @@ npm run publish
 ┌─────────────────────▼───────────────────────────────────┐
 │ Python Flask Server (src/server/diffuser.py)            │
 │ Endpoints: /image, /video, /audio/music, /3d, /robot/*  │
-│ Models: FLUX, SDXL, LTX, LTX-2, Wan, MusicGen, LeRobot  │
+│ Models: FLUX, SDXL, Wan 2.2, MusicGen, LeRobot          │
 │ Socket.IO for real-time progress                        │
 └─────────────────────────────────────────────────────────┘
 ```
@@ -123,32 +123,30 @@ BONZAI_SERVER_PORT    # Flask server port (default: 65000)
 5. Result saved to inferenceStore
 6. Optional NFT minting via Pinata + smart contract
 
-## Video Generation Endpoints
+## Video Generation Endpoint
 
 | Endpoint | Model | Description |
 |----------|-------|-------------|
-| `/image/video/turbo` | LTX-Video | Image-to-video with memory offloading |
-| `/text/video/turbo` | LTX-Video | Text-to-video generation |
-| `/image/video/quality` | Wan 2.2 I2V | High-quality I2V with MoE switching |
-| `/video/ltx2` | LTX-2 | Latest model with FP8 quantization |
+| `/image/video/quality` | Wan 2.2 I2V | High-quality I2V with Q2_K GGUF quantization |
 
-### LTX-2 Memory Optimization
+### Wan 2.2 I2V Configuration
 
-The `/video/ltx2` endpoint implements aggressive memory optimization:
-- **FP8 layerwise casting** (CUDA): `storage_dtype=torch.float8_e4m3fn` for ~50% VRAM reduction
-- **Group offloading**: Leaf-level for transformer, block-level for text encoder
-- **VAE tiling/slicing**: Reduces memory during encoding/decoding
+The `/image/video/quality` endpoint uses Wan 2.2 Image-to-Video with Q4 GGUF quantization (~9.65GB per model file):
+- **HighNoise model**: For initial frame generation
+- **LowNoise model**: For refinement passes
+- **MoE switching**: Automatic model selection based on noise level
 - **Cross-platform**: Works on CUDA, MPS (Apple Silicon), and CPU
 
 Request example:
 ```json
 {
   "prompt": "A cat walking in the garden",
-  "height": 512,
-  "width": 768,
-  "frames": 97,
-  "steps": 8,
-  "use_fp8": true,
+  "height": 480,
+  "width": 640,
+  "frames": 41,
+  "fps": 8,
+  "steps": 10,
+  "guidance_scale": 3,
   "image_base64": "..."
 }
 ```

@@ -5,70 +5,70 @@
 
 /* Material Symbols Outlined - Variable icon font */
 @font-face {
+  font-display: block;
   font-family: 'Material Symbols Outlined';
   font-style: normal;
   font-weight: 100 700;
-  font-display: block;
   src: url('./MaterialSymbolsOutlined.woff2') format('woff2');
 }
 
 /* Fira Sans - Light (100) */
 @font-face {
+  font-display: swap;
   font-family: 'Fira Sans';
   font-style: normal;
   font-weight: 100;
-  font-display: swap;
   src: url('./FiraSans-Light.ttf') format('truetype');
 }
 
 /* Fira Sans - Regular (400) */
 @font-face {
+  font-display: swap;
   font-family: 'Fira Sans';
   font-style: normal;
   font-weight: 400;
-  font-display: swap;
   src: url('./FiraSans-Regular.ttf') format('truetype');
 }
 
 /* Fira Sans Condensed - Light Italic (100 italic) */
 @font-face {
+  font-display: swap;
   font-family: 'Fira Sans Condensed';
   font-style: italic;
   font-weight: 100;
-  font-display: swap;
   src: url('./FiraSansCondensed-LightItalic.ttf') format('truetype');
 }
 
 /* Fira Sans Condensed - Black Italic (900 italic) */
 @font-face {
+  font-display: swap;
   font-family: 'Fira Sans Condensed';
   font-style: italic;
   font-weight: 900;
-  font-display: swap;
   src: url('./FiraSansCondensed-BlackItalic.ttf') format('truetype');
 }
 
 /* Material Symbols configuration */
 .material-symbols-outlined {
-  font-family: 'Material Symbols Outlined';
-  font-weight: normal;
-  font-style: normal;
-  font-size: 24px;
-  line-height: 1;
-  letter-spacing: normal;
-  text-transform: none;
+  -webkit-font-feature-settings: 'liga';
+  -webkit-font-smoothing: antialiased;
+  direction: ltr;
   display: inline-block;
+  font-family: 'Material Symbols Outlined';
+  font-feature-settings: 'liga';
+  font-size: 24px;
+  font-style: normal;
+  font-weight: normal;
+  letter-spacing: normal;
+  line-height: 1;
+  text-transform: none;
   white-space: nowrap;
   word-wrap: normal;
-  direction: ltr;
-  -webkit-font-feature-settings: 'liga';
-  font-feature-settings: 'liga';
-  -webkit-font-smoothing: antialiased;
 }
 
 /* Fira Sans Condensed Black Italic helper class */
 .fira-sans-condensed-black-italic {
   font-family: 'Fira Sans Condensed', sans-serif;
-  font-weight: 900;
   font-style: italic;
+  font-weight: 900;
 }

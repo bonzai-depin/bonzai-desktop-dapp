@@ -354,6 +354,16 @@ ipcMain.handle("file-exists", (_event, filePath) => {
   }
 });
 
+// Open URL in default browser
+ipcMain.handle("open-external", async (_event, url) => {
+  if (typeof url === "string" && url.startsWith("https://")) {
+    // shell is already imported at top of file
+    await shell.openExternal(url);
+    return { success: true };
+  }
+  return { success: false, error: "Invalid URL" };
+});
+
 ipcMain.handle("agent-save-image", async (_event, defaultName, base64Data) => {
   const { canceled, filePath } = await dialog.showSaveDialog({
     defaultPath: defaultName,
@@ -390,6 +400,24 @@ ipcMain.handle("agent-save-audio", async (_event, defaultName, sourcePath) => {
   }
 });
 
+ipcMain.handle("agent-save-video", async (_event, defaultName, sourcePath) => {
+  // Determine file extension from source path
+  const ext = path.extname(sourcePath).slice(1) || "mp4";
+  const { canceled, filePath } = await dialog.showSaveDialog({
+    defaultPath: defaultName,
+    filters: [{ name: "Video", extensions: [ext, "mp4", "webm", "mov"] }],
+  });
+  if (canceled || !filePath) return { success: false };
+
+  try {
+    fs.copyFileSync(sourcePath, filePath);
+    return { success: true, path: filePath };
+  } catch (e) {
+    console.error("Failed to save video:", e);
+    return { success: false, error: e.message };
+  }
+});
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Polymarket API Proxy (bypasses CORS for renderer process)
 // ─────────────────────────────────────────────────────────────────────────────
@@ -398,6 +426,8 @@ const POLYMARKET_ENDPOINTS = {
   holders: "https://data-api.polymarket.com/holders",
   events: "https://gamma-api.polymarket.com/events",
   prices: "https://clob.polymarket.com/prices",
+  leaderboard: "https://data-api.polymarket.com/v1/leaderboard",
+  positions: "https://data-api.polymarket.com/positions",
 };
 
 /**
@@ -734,22 +764,25 @@ function computeMaxContextForModel(currentModel, sysInfo) {
     else if (memBudgetGB < 16) baseCtx = 16384;
     else baseCtx = 32768;
   } else if (params <= 8_000_000_000) {
-    // 7–8B class
-    if (memBudgetGB < 16) baseCtx = 4096;
-    else if (memBudgetGB < 24) baseCtx = 8192;
-    else if (memBudgetGB < 32) baseCtx = 16384;
+    // 7–8B class (8B Q4 uses ~4-5GB, plenty of room for KV cache)
+    if (memBudgetGB < 8) baseCtx = 4096;
+    else if (memBudgetGB < 12) baseCtx = 8192;
+    else if (memBudgetGB < 20) baseCtx = 16384;
     else baseCtx = 32768;
   } else if (params <= 20_000_000_000) {
-    // 13–20B class
-    if (memBudgetGB < 16) baseCtx = 2048;
-    else if (memBudgetGB < 24) baseCtx = 4096;
-    else if (memBudgetGB < 32) baseCtx = 8192;
+    // 13–20B class (14B Q4 uses ~8-9GB, KV cache ~0.2GB per 1K ctx at fp16)
+    if (memBudgetGB < 12) baseCtx = 2048;
+    else if (memBudgetGB < 16) baseCtx = 4096;
+    else if (memBudgetGB < 20) baseCtx = 8192;
+    else if (memBudgetGB < 28) baseCtx = 16384;
     else baseCtx = 32768;
   } else {
     // 30B+ monsters (DeepSeek 32B, Qwen3 Coder 30B, etc.)
-    if (memBudgetGB < 32) baseCtx = 4096;
-    else if (memBudgetGB < 64) baseCtx = 8192;
-    else if (memBudgetGB < 128) baseCtx = 16384;
+    // These need ~16-20GB for weights, so need more headroom
+    if (memBudgetGB < 24) baseCtx = 2048;
+    else if (memBudgetGB < 32) baseCtx = 4096;
+    else if (memBudgetGB < 48) baseCtx = 8192;
+    else if (memBudgetGB < 80) baseCtx = 16384;
     else baseCtx = 32768;
   }
 

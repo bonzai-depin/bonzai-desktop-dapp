@@ -290,11 +290,53 @@
                   ></button>
                 </form>
 
+                <!-- GENERATION HISTORY HEADER -->
+                <div class="level mb-4 mt-5" v-if="inferences.length">
+                  <div class="level-left">
+                    <div class="level-item">
+                      <h2 class="fira-sans-condensed-black-italic has-text-white is-size-2">
+                        <span class="material-symbols-outlined is-size-1 mr-2">
+                          history
+                        </span>
+                        Generation History
+                      </h2>
+                    </div>
+                  </div>
+                  <div class="level-right">
+                    <div class="level-item buttons">
+                      <button
+                        class="button is-warning is-small"
+                        @click="importHistory()"
+                      >
+                        <span class="material-symbols-outlined mr-2">upload</span>
+                        Import
+                      </button>
+                      <button
+                        class="button is-warning is-small ml-4"
+                        @click="exportHistory()"
+                        :disabled="inferences.length === 0"
+                      >
+                        <span class="material-symbols-outlined mr-2">download</span>
+                        Export
+                      </button>
+                      <button
+                        class="button is-danger is-small ml-4"
+                        @click="clearHistory()"
+                      >
+                        <span class="material-symbols-outlined mr-2">ink_eraser</span>
+                        Clear
+                      </button>
+                    </div>
+                  </div>
+                </div>
+
                 <!-- RESULTS -->
                 <ol class="chat" v-if="inferences.length">
                   <li
-                    v-for="inference in paginatedInferences"
+                    v-for="(inference, displayIndex) in paginatedInferences"
                     :key="inference.id || inference._originalIndex"
+                    class="history-item"
+                    :style="{ animationDelay: `${Math.min(displayIndex * 50, 500)}ms` }"
                   >
                     <div class="question">
                       <div class="audio-meta">
@@ -382,32 +424,26 @@
                   </li>
                 </ol>
 
-                <!-- PAGINATION CONTROLS -->
-                <nav
-                  v-if="totalPages > 1"
-                  class="pagination is-centered mt-4"
-                  role="navigation"
-                  aria-label="pagination"
+                <!-- LAZY LOAD SENTINEL -->
+                <div
+                  ref="loadMoreSentinel"
+                  v-if="hasMore"
+                  class="load-more-sentinel has-text-centered p-4"
                 >
-                  <button
-                    class="pagination-previous"
-                    :disabled="currentPage <= 1"
-                    @click="prevPage"
-                  >
-                    <span class="material-symbols-outlined">chevron_left</span>
-                  </button>
-                  <span class="pagination-info ml-3 mr-3">
-                    Page {{ currentPage }} of {{ totalPages }}
-                    <small class="has-text-grey ml-2">({{ inferences.length }} audios)</small>
+                  <span v-if="isLoadingMore" class="has-text-grey">
+                    Loading more...
                   </span>
-                  <button
-                    class="pagination-next"
-                    :disabled="currentPage >= totalPages"
-                    @click="nextPage"
-                  >
-                    <span class="material-symbols-outlined">chevron_right</span>
-                  </button>
-                </nav>
+                </div>
+
+                <!-- SCROLL TO TOP BUTTON -->
+                <button
+                  v-if="showScrollTop"
+                  class="scroll-to-top-btn"
+                  @click="scrollToTop"
+                  title="Scroll to top"
+                >
+                  <span class="material-symbols-outlined">arrow_upward</span>
+                </button>
               </div>
             </div>
           </div>
@@ -468,33 +504,85 @@ export default {
     const hasCopy = reactive([]);
     const promptInput = ref(null);
 
-    // ------------ pagination ----------------
+    // ------------ lazy loading pagination ----------------
     const ITEMS_PER_PAGE = 10;
-    const currentPage = ref(1);
+    const displayedCount = ref(ITEMS_PER_PAGE);
+    const loadMoreSentinel = ref(null);
+    const isLoadingMore = ref(false);
+    const showScrollTop = ref(false);
+    const scrollContainer = ref(null);
 
-    // Total number of pages
-    const totalPages = computed(() => Math.max(1, Math.ceil(inferences.length / ITEMS_PER_PAGE)));
-
-    // Paginated inferences (most recent first, includes original index)
-    const paginatedInferences = computed(() => {
-      const reversed = inferences.map((item, idx) => ({
+    // Reversed inferences (most recent first) with original index
+    const reversedInferences = computed(() => {
+      return inferences.map((item, idx) => ({
         ...item,
         _originalIndex: idx,
       })).reverse();
-      const start = (currentPage.value - 1) * ITEMS_PER_PAGE;
-      const end = start + ITEMS_PER_PAGE;
-      return reversed.slice(start, end);
     });
 
-    // Pagination navigation
-    const goToPage = (page) => {
-      if (page >= 1 && page <= totalPages.value) {
-        currentPage.value = page;
+    // Displayed inferences (lazy loaded subset)
+    const paginatedInferences = computed(() => {
+      return reversedInferences.value.slice(0, displayedCount.value);
+    });
+
+    // Check if there are more items to load
+    const hasMore = computed(() => displayedCount.value < inferences.length);
+
+    // Load more items
+    const loadMore = () => {
+      if (isLoadingMore.value || !hasMore.value) return;
+      isLoadingMore.value = true;
+      setTimeout(() => {
+        displayedCount.value = Math.min(
+          displayedCount.value + ITEMS_PER_PAGE,
+          inferences.length
+        );
+        isLoadingMore.value = false;
+      }, 100);
+    };
+
+    // Reset to initial count when new inference is added
+    const resetToFirstPage = () => {
+      displayedCount.value = ITEMS_PER_PAGE;
+    };
+
+    // Intersection Observer for infinite scroll
+    let scrollObserver = null;
+    const setupScrollObserver = () => {
+      if (scrollObserver) scrollObserver.disconnect();
+      if (!loadMoreSentinel.value) return;
+
+      // Use the scroll container as root for proper intersection detection
+      const root = scrollContainer.value || document.querySelector('.models__deployment-install');
+      scrollObserver = new IntersectionObserver(
+        (entries) => {
+          if (entries[0].isIntersecting && hasMore.value) {
+            loadMore();
+          }
+        },
+        { root, rootMargin: '100px' }
+      );
+      scrollObserver.observe(loadMoreSentinel.value);
+    };
+
+    // Scroll to top handler
+    const scrollToTop = () => {
+      const container = scrollContainer.value || document.querySelector('.models__deployment-install');
+      if (container) {
+        container.scrollTo({ top: 0, behavior: 'smooth' });
       }
     };
-    const nextPage = () => goToPage(currentPage.value + 1);
-    const prevPage = () => goToPage(currentPage.value - 1);
-    const resetToFirstPage = () => { currentPage.value = 1; };
+
+    // Handle scroll to show/hide scroll-to-top button (throttled)
+    let scrollRafId = null;
+    const handleScroll = (e) => {
+      if (scrollRafId) return;
+      scrollRafId = requestAnimationFrame(() => {
+        const scrollTop = e.target?.scrollTop || 0;
+        showScrollTop.value = scrollTop > 400;
+        scrollRafId = null;
+      });
+    };
 
     // ------------ access control -----------
     const accessRef = ref(null);
@@ -1145,9 +1233,13 @@ export default {
 
       const onSuccess = async (response) => {
         if (response?.data?.audio_path) {
+          // Only store serializable data - axios response contains non-serializable properties
           inferences.push({
             question: prompt,
-            answer: response,
+            answer: {
+              status: response.status,
+              data: response.data,
+            },
             id: uuid(),
             language: language.value,
             model: "multilingual",
@@ -1248,6 +1340,55 @@ export default {
       } catch {}
     };
 
+    const clearHistory = async () => {
+      inferences.length = 0;
+      hasCopy.length = 0;
+      try {
+        await window.electronAPI?.store?.set?.("audioInferences", []);
+      } catch (e) {
+        console.error("Failed to clear audio inferences:", e);
+      }
+    };
+
+    const exportHistory = () => {
+      if (inferences.length === 0) return;
+      const data = JSON.stringify([...inferences], null, 2);
+      const blob = new Blob([data], { type: "application/json" });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `bonzai-audio-history-${Date.now()}.json`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+    };
+
+    const importHistory = () => {
+      const input = document.createElement("input");
+      input.type = "file";
+      input.accept = ".json";
+      input.onchange = async (e) => {
+        const file = e.target.files[0];
+        if (!file) return;
+        try {
+          const text = await file.text();
+          const data = JSON.parse(text);
+          if (Array.isArray(data)) {
+            inferences.unshift(...data);
+            hasCopy.length = inferences.length;
+            hasCopy.fill(false);
+            await window.electronAPI?.store?.set?.("audioInferences", [
+              ...inferences,
+            ]);
+          }
+        } catch (err) {
+          console.error("Failed to import history:", err);
+        }
+      };
+      input.click();
+    };
+
     // --------- derived: stable ordered task list
     const downloadTaskList = computed(() => {
       const tasks = downloads.pipeline?.tasks || {};
@@ -1282,6 +1423,14 @@ export default {
           saved.forEach((item) => inferences.push(item));
       } catch {}
       await probeCurrentMode();
+      // Setup scroll observer after DOM is rendered
+      setTimeout(setupScrollObserver, 100);
+      // Attach scroll listener for scroll-to-top button
+      const container = document.querySelector('.models__deployment-install');
+      if (container) {
+        scrollContainer.value = container;
+        container.addEventListener('scroll', handleScroll, { passive: true });
+      }
     });
 
     onBeforeUnmount(() => {
@@ -1293,6 +1442,15 @@ export default {
       if (httpPollTimer) {
         clearInterval(httpPollTimer);
         httpPollTimer = null;
+      }
+      // Cleanup scroll observer
+      if (scrollObserver) {
+        scrollObserver.disconnect();
+        scrollObserver = null;
+      }
+      // Cleanup scroll listener
+      if (scrollContainer.value) {
+        scrollContainer.value.removeEventListener('scroll', handleScroll);
       }
       // Note: generation socket is shared and managed by generationStore
     });
@@ -1310,12 +1468,14 @@ export default {
       isLoading,
       inferences,
       hasCopy,
-      // pagination
+      // lazy loading pagination
       paginatedInferences,
-      currentPage,
-      totalPages,
-      nextPage,
-      prevPage,
+      loadMoreSentinel,
+      hasMore,
+      isLoadingMore,
+      // scroll to top
+      showScrollTop,
+      scrollToTop,
       synthesisFileName,
       readiness,
       canGenerate,
@@ -1331,6 +1491,9 @@ export default {
       copy,
       downloadAudio,
       removeInference,
+      clearHistory,
+      exportHistory,
+      importHistory,
       prefetchForMode,
       cancelCurrentPipeline,
       retryCurrentPipeline,
@@ -1388,6 +1551,7 @@ export default {
   margin: 0 !important;
 }
 .models__deployment-install {
+  position: relative;
   overflow-y: auto;
   padding: 6em;
   height: 100vh;
@@ -1561,7 +1725,7 @@ ol {
 }
 ol.chat {
   display: flex;
-  flex-direction: column-reverse;
+  flex-direction: column;
 }
 ol.chat li {
   position: relative;
@@ -1572,5 +1736,73 @@ ol.chat li {
 }
 .label.has-text-white {
   color: #fff !important;
+}
+
+/* Fade-in animation for history items */
+.history-item {
+  animation: fadeInUp 0.4s ease-out forwards;
+  opacity: 0;
+}
+
+@keyframes fadeInUp {
+  from {
+    opacity: 0;
+    transform: translateY(20px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.load-more-sentinel {
+  min-height: 20px;
+}
+
+/* Scroll to top button */
+.scroll-to-top-btn {
+  position: absolute;
+  bottom: 2rem;
+  right: 2rem;
+  width: 48px;
+  height: 48px;
+  border-radius: 50%;
+  background: rgba(97, 55, 142, 0.9);
+  border: 2px solid rgba(255, 255, 255, 0.3);
+  color: #fff;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+  transition: all 0.2s ease;
+  z-index: 100;
+  animation: fadeInUp 0.3s ease-out;
+}
+
+.scroll-to-top-btn:hover {
+  background: rgba(97, 55, 142, 1);
+  transform: translateY(-2px);
+  box-shadow: 0 6px 16px rgba(0, 0, 0, 0.4);
+}
+
+.scroll-to-top-btn .material-symbols-outlined {
+  font-size: 24px;
+  border: none;
+}
+
+/* Background animation */
+@keyframes move {
+  0% {
+    transform: scale(1.1);
+    transform-origin: bottom left;
+  }
+  50% {
+    transform: scale(1.2);
+  }
+  100% {
+    transform: scale(1.1);
+    transform-origin: bottom left;
+  }
 }
 </style>

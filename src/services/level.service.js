@@ -1,20 +1,20 @@
 /**
  * BonzAI Level Service
- * 
+ *
  * Manages the 6-tier level system with DUAL access paths:
- * 
+ *
  * A level is ACTIVE when EITHER:
  *   1. User holds >= required BONZAI tokens (across Ethereum + Arbitrum)
  *   OR
- *   2. User has paid 0.1 ETH to unlock the level via BonzaiLevelRegistry
- * 
- * Levels:
- *   - LVL1: Text Generation (100 BONZAI or 0.1 ETH)
- *   - LVL2: Audio Generation (500 BONZAI or 0.1 ETH)
- *   - LVL3: Image Generation (2,000 BONZAI or 0.1 ETH)
- *   - LVL4: Video Generation (10,000 BONZAI or 0.1 ETH)
- *   - LVL5: Game Generation (50,000 BONZAI or 0.1 ETH)
- *   - LVL6: Training (200,000 BONZAI or 0.1 ETH)
+ *   2. User has paid 1 ETH one-time payment to unlock ALL levels via BonzaiUnlock
+ *
+ * Levels (BONZAI holding requirements divided by 5):
+ *   - LVL1: Text Generation (20 BONZAI or 1 ETH for all)
+ *   - LVL2: Audio Generation (100 BONZAI or 1 ETH for all)
+ *   - LVL3: Image Generation (400 BONZAI or 1 ETH for all)
+ *   - LVL4: Video Generation (2,000 BONZAI or 1 ETH for all)
+ *   - LVL5: Game Generation (10,000 BONZAI or 1 ETH for all)
+ *   - LVL6: Training (40,000 BONZAI or 1 ETH for all)
  */
 
 import { ethers } from 'ethers';
@@ -26,21 +26,16 @@ import { web3Service } from './web3.service.js';
 // ABI DEFINITIONS
 // ═══════════════════════════════════════════════════════════════════════════
 
-const LEVEL_REGISTRY_ABI = [
-  'function hasUnlockedLevel(address user, uint8 level) view returns (bool)',
-  'function getUserUnlockedLevels(address user) view returns (bool[6])',
-  'function getHighestUnlockedLevel(address user) view returns (uint8)',
-  'function getNextUnlockableLevel(address user) view returns (uint8)',
-  'function canUnlockLevel(address user, uint8 level) view returns (bool canUnlock, string reason)',
-  'function calculateCostToLevel(address user, uint8 targetLevel) view returns (uint256 cost, uint8 levelsToUnlock)',
-  'function levelPrice() view returns (uint256)',
-  'function bulkPrice() view returns (uint256)',
-  'function buybackPercentage() view returns (uint256)',
-  'function buybackEnabled() view returns (bool)',
-  'function getBuybackConfig() view returns (bool enabled, uint256 percentage, uint256 minOut, uint256 totalBought)',
-  'function unlockLevel(uint8 level) payable',
-  'function unlockLevelRange(uint8 fromLevel, uint8 toLevel) payable',
-  'function unlockAllLevels() payable',
+// BonzaiUnlock contract ABI (simple 1 ETH unlock for all levels)
+const BONZAI_UNLOCK_ABI = [
+  'function UNLOCK_PRICE() view returns (uint256)',
+  'function hasUnlocked(address user) view returns (bool)',
+  'function isUnlocked(address user) view returns (bool)',
+  'function totalUnlocks() view returns (uint256)',
+  'function totalCollected() view returns (uint256)',
+  'function getStats() view returns (uint256 _totalUnlocks, uint256 _totalCollected, uint256 _currentBalance)',
+  'function unlock() payable',
+  'function paused() view returns (bool)',
 ];
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -49,6 +44,7 @@ const LEVEL_REGISTRY_ABI = [
 
 const state = reactive({
   // Level status for each tier
+  // A level is active if: holdingMet OR ethUnlocked (all levels via single 1 ETH payment)
   levels: {
     LVL1: { holdingMet: false, ethUnlocked: false, active: false },
     LVL2: { holdingMet: false, ethUnlocked: false, active: false },
@@ -57,24 +53,20 @@ const state = reactive({
     LVL5: { holdingMet: false, ethUnlocked: false, active: false },
     LVL6: { holdingMet: false, ethUnlocked: false, active: false },
   },
-  
-  // ETH unlock prices (fetched from contract)
-  prices: {
-    perLevel: 0.1,  // ETH
-    bulk: 0.4,      // ETH for all 6
+
+  // ETH unlock price (fixed 1 ETH for ALL levels)
+  unlockPrice: 1.0, // ETH
+
+  // Whether user has paid 1 ETH to unlock all levels
+  allLevelsUnlocked: false,
+
+  // Contract stats
+  contractStats: {
+    totalUnlocks: 0,
+    totalCollected: 0,
+    isPaused: false,
   },
-  
-  // Sequential unlock: next level that can be unlocked via ETH
-  nextUnlockableLevel: 1,
-  
-  // Buyback configuration (fetched from contract)
-  buyback: {
-    enabled: true,
-    percentage: 2000, // basis points (20%)
-    minBonzaiOut: 0,
-    totalBonzaiBought: 0,
-  },
-  
+
   // Loading states
   isLoading: false,
   isUnlocking: false,
@@ -86,22 +78,24 @@ const state = reactive({
 // CONTRACT INSTANCE
 // ═══════════════════════════════════════════════════════════════════════════
 
-let registryContract = null;
-
-const getRegistryContract = async (withSigner = false) => {
+/**
+ * Get the BonzaiUnlock contract instance
+ * @param {boolean} withSigner - If true, returns contract with signer for transactions
+ */
+const getUnlockContract = async (withSigner = false) => {
   const registryAddress = CONFIG.levelUnlock?.registryAddress;
-  
+
   if (!registryAddress || registryAddress === ethers.ZeroAddress) {
     return null;
   }
-  
+
   if (withSigner) {
     const signer = await web3Service.getSigner();
-    return new ethers.Contract(registryAddress, LEVEL_REGISTRY_ABI, signer);
+    return new ethers.Contract(registryAddress, BONZAI_UNLOCK_ABI, signer);
   }
-  
+
   const provider = web3Service.getProvider('arbitrum');
-  return new ethers.Contract(registryAddress, LEVEL_REGISTRY_ABI, provider);
+  return new ethers.Contract(registryAddress, BONZAI_UNLOCK_ABI, provider);
 };
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -114,47 +108,47 @@ const getRegistryContract = async (withSigner = false) => {
 const checkHoldingRequirement = (levelKey) => {
   const levelConfig = CONFIG.levels[levelKey];
   if (!levelConfig) return false;
-  
+
   const totalBalance = web3Service.state.balances.total;
   return totalBalance >= levelConfig.holdingRequired;
 };
 
 /**
- * Check if user has PAID to unlock a level via ETH
+ * Check if user has PAID 1 ETH to unlock ALL levels
+ * Single payment unlocks everything - no per-level unlock
  */
-const checkEthUnlock = async (levelId, userAddress) => {
+const checkEthUnlock = async (userAddress) => {
   try {
-    const contract = await getRegistryContract();
-    
+    const contract = await getUnlockContract();
+
     // If contract not deployed, ETH unlock not available
     if (!contract) {
       return false;
     }
-    
-    const unlocked = await contract.hasUnlockedLevel(userAddress, levelId);
+
+    const unlocked = await contract.isUnlocked(userAddress);
     return unlocked;
   } catch (e) {
-    console.warn(`[Level] ETH unlock check failed for LVL${levelId}:`, e.message);
+    console.warn('[Level] ETH unlock check failed:', e.message);
     return false;
   }
 };
 
 /**
  * Check all requirements for a single level
- * Level is ACTIVE if holdingMet OR ethUnlocked
+ * Level is ACTIVE if holdingMet OR ethUnlocked (all levels unlocked via 1 ETH)
  */
-const checkLevel = async (levelKey, userAddress) => {
+const checkLevel = (levelKey, ethUnlocked) => {
   const levelConfig = CONFIG.levels[levelKey];
   if (!levelConfig) return { holdingMet: false, ethUnlocked: false, active: false };
-  
+
   const holdingMet = checkHoldingRequirement(levelKey);
-  const ethUnlocked = await checkEthUnlock(levelConfig.id, userAddress);
-  
-  // Active if EITHER condition is met
+
+  // Active if EITHER holding requirement is met OR paid 1 ETH unlock
   const active = holdingMet || ethUnlocked;
-  
+
   state.levels[levelKey] = { holdingMet, ethUnlocked, active };
-  
+
   return { holdingMet, ethUnlocked, active };
 };
 
@@ -167,24 +161,26 @@ export const checkAllLevels = async () => {
     console.warn('[Level] No wallet connected');
     return state.levels;
   }
-  
+
   state.isLoading = true;
   state.error = null;
-  
+
   try {
-    // Fetch prices from contract if available
-    await fetchPrices();
-    
-    // Check all levels in parallel
-    await Promise.all([
-      checkLevel('LVL1', userAddress),
-      checkLevel('LVL2', userAddress),
-      checkLevel('LVL3', userAddress),
-      checkLevel('LVL4', userAddress),
-      checkLevel('LVL5', userAddress),
-      checkLevel('LVL6', userAddress),
-    ]);
-    
+    // Fetch contract info (price, stats, pause status)
+    await fetchContractInfo();
+
+    // Check if user has paid 1 ETH to unlock ALL levels (single check)
+    const ethUnlocked = await checkEthUnlock(userAddress);
+    state.allLevelsUnlocked = ethUnlocked;
+
+    // Check each level - ethUnlocked applies to ALL levels
+    checkLevel('LVL1', ethUnlocked);
+    checkLevel('LVL2', ethUnlocked);
+    checkLevel('LVL3', ethUnlocked);
+    checkLevel('LVL4', ethUnlocked);
+    checkLevel('LVL5', ethUnlocked);
+    checkLevel('LVL6', ethUnlocked);
+
     state.lastCheck = Date.now();
     return state.levels;
   } catch (e) {
@@ -197,42 +193,30 @@ export const checkAllLevels = async () => {
 };
 
 /**
- * Fetch current prices and buyback config from contract
+ * Fetch contract info: unlock price, stats, pause status
  */
-const fetchPrices = async () => {
+const fetchContractInfo = async () => {
   try {
-    const contract = await getRegistryContract();
+    const contract = await getUnlockContract();
     if (!contract) {
       // Use config defaults
-      state.prices.perLevel = parseFloat(CONFIG.levelUnlock?.pricePerLevel || '0.1');
-      state.prices.bulk = parseFloat(CONFIG.levelUnlock?.bulkPrice || '0.4');
-      state.buyback.percentage = CONFIG.buyback?.percentage || 2000;
-      state.buyback.enabled = CONFIG.buyback?.enabled ?? true;
+      state.unlockPrice = parseFloat(CONFIG.levelUnlock?.unlockPrice || '1.0');
       return;
     }
-    
-    const userAddress = web3Service.state.walletAddress;
-    
-    // Fetch all config in parallel
-    const [levelPrice, bulkPrice, buybackConfig, nextLevel] = await Promise.all([
-      contract.levelPrice(),
-      contract.bulkPrice(),
-      contract.getBuybackConfig(),
-      userAddress ? contract.getNextUnlockableLevel(userAddress) : Promise.resolve(1),
+
+    // Fetch all info in parallel
+    const [unlockPrice, stats, isPaused] = await Promise.all([
+      contract.UNLOCK_PRICE(),
+      contract.getStats(),
+      contract.paused(),
     ]);
-    
-    state.prices.perLevel = parseFloat(ethers.formatEther(levelPrice));
-    state.prices.bulk = parseFloat(ethers.formatEther(bulkPrice));
-    
-    // Buyback config: [enabled, percentage, minOut, totalBought]
-    state.buyback.enabled = buybackConfig[0];
-    state.buyback.percentage = Number(buybackConfig[1]);
-    state.buyback.minBonzaiOut = Number(buybackConfig[2]);
-    state.buyback.totalBonzaiBought = Number(ethers.formatEther(buybackConfig[3]));
-    
-    state.nextUnlockableLevel = Number(nextLevel);
+
+    state.unlockPrice = parseFloat(ethers.formatEther(unlockPrice));
+    state.contractStats.totalUnlocks = Number(stats._totalUnlocks);
+    state.contractStats.totalCollected = parseFloat(ethers.formatEther(stats._totalCollected));
+    state.contractStats.isPaused = isPaused;
   } catch (e) {
-    console.warn('[Level] Failed to fetch prices:', e.message);
+    console.warn('[Level] Failed to fetch contract info:', e.message);
   }
 };
 
@@ -241,83 +225,53 @@ const fetchPrices = async () => {
 // ═══════════════════════════════════════════════════════════════════════════
 
 /**
- * Check if a level can be unlocked (sequential requirement)
- * @param {number} levelId - Level to check (1-6)
+ * Check if user can unlock all levels with ETH
  * @returns {{ canUnlock: boolean, reason: string | null }}
  */
-export const canUnlockLevel = (levelId) => {
-  const levelKey = `LVL${levelId}`;
-  const levelStatus = state.levels[levelKey];
-  
-  if (!levelStatus) {
-    return { canUnlock: false, reason: 'Invalid level' };
-  }
-  
-  if (levelStatus.ethUnlocked) {
+export const canUnlockWithEth = () => {
+  if (state.allLevelsUnlocked) {
     return { canUnlock: false, reason: 'Already unlocked' };
   }
-  
-  // Check sequential requirement
-  if (levelId > 1) {
-    const prevLevelKey = `LVL${levelId - 1}`;
-    const prevLevelStatus = state.levels[prevLevelKey];
-    if (!prevLevelStatus?.ethUnlocked) {
-      return { 
-        canUnlock: false, 
-        reason: `Unlock LVL${levelId - 1} first` 
-      };
-    }
+
+  if (state.contractStats.isPaused) {
+    return { canUnlock: false, reason: 'Unlocking is currently paused' };
   }
-  
+
   return { canUnlock: true, reason: null };
 };
 
 /**
- * Get the next level that can be unlocked via ETH
- * @returns {number} Next unlockable level (1-6), or 0 if all unlocked
- */
-export const getNextUnlockableLevel = () => {
-  for (let lvl = 1; lvl <= 6; lvl++) {
-    const levelKey = `LVL${lvl}`;
-    if (!state.levels[levelKey]?.ethUnlocked) {
-      return lvl;
-    }
-  }
-  return 0; // All unlocked
-};
-
-/**
- * Unlock a single level by paying ETH
- * @param {number} levelId - Level to unlock (1-6)
+ * Unlock ALL levels by paying 1 ETH
+ * Single payment permanently unlocks all 6 levels
  * @returns {Promise<{success: boolean, txHash?: string, error?: string}>}
  */
-export const unlockLevelWithEth = async (levelId) => {
-  // Validate sequential requirement
-  const { canUnlock, reason } = canUnlockLevel(levelId);
+export const unlockAllWithEth = async () => {
+  // Validate can unlock
+  const { canUnlock, reason } = canUnlockWithEth();
   if (!canUnlock) {
     return { success: false, error: reason };
   }
-  
+
   state.isUnlocking = true;
-  
+
   try {
-    const contract = await getRegistryContract(true);
+    const contract = await getUnlockContract(true);
     if (!contract) {
-      throw new Error('Level registry contract not configured');
+      throw new Error('BonzaiUnlock contract not configured');
     }
-    
-    const price = await contract.levelPrice();
-    
-    const tx = await contract.unlockLevel(levelId, { value: price });
+
+    // Get price from contract (should be 1 ETH)
+    const price = await contract.UNLOCK_PRICE();
+
+    // Call unlock function with exact payment
+    const tx = await contract.unlock({ value: price });
     const receipt = await tx.wait();
-    
-    // Refresh level status
-    const userAddress = web3Service.state.walletAddress;
-    await checkLevel(`LVL${levelId}`, userAddress);
-    
-    // Update next unlockable level
-    state.nextUnlockableLevel = getNextUnlockableLevel();
-    
+
+    console.log('[Level] All levels unlocked via ETH payment:', receipt.hash);
+
+    // Refresh all levels
+    await checkAllLevels();
+
     return { success: true, txHash: receipt.hash };
   } catch (e) {
     const error = e.shortMessage || e.message || String(e);
@@ -328,105 +282,6 @@ export const unlockLevelWithEth = async (levelId) => {
   }
 };
 
-/**
- * Unlock a range of sequential levels by paying ETH
- * @param {number} fromLevel - Starting level (1-6)
- * @param {number} toLevel - Ending level (1-6, inclusive)
- */
-export const unlockLevelRangeWithEth = async (fromLevel, toLevel) => {
-  // Validate range
-  if (fromLevel < 1 || toLevel > 6 || fromLevel > toLevel) {
-    return { success: false, error: 'Invalid level range' };
-  }
-  
-  // Check sequential requirement for starting level
-  if (fromLevel > 1) {
-    const prevLevelKey = `LVL${fromLevel - 1}`;
-    if (!state.levels[prevLevelKey]?.ethUnlocked) {
-      return { 
-        success: false, 
-        error: `Unlock LVL${fromLevel - 1} first` 
-      };
-    }
-  }
-  
-  state.isUnlocking = true;
-  
-  try {
-    const contract = await getRegistryContract(true);
-    if (!contract) {
-      throw new Error('Level registry contract not configured');
-    }
-    
-    const userAddress = web3Service.state.walletAddress;
-    const [cost, count] = await contract.calculateCostToLevel(userAddress, toLevel);
-    
-    if (count === 0) {
-      return { success: false, error: 'Nothing to unlock' };
-    }
-    
-    const tx = await contract.unlockLevelRange(fromLevel, toLevel, { value: cost });
-    const receipt = await tx.wait();
-    
-    // Refresh all levels
-    await checkAllLevels();
-    
-    return { success: true, txHash: receipt.hash, levelsUnlocked: Number(count) };
-  } catch (e) {
-    const error = e.shortMessage || e.message || String(e);
-    console.error('[Level] Range unlock failed:', error);
-    return { success: false, error };
-  } finally {
-    state.isUnlocking = false;
-  }
-};
-
-/**
- * Unlock multiple levels by paying ETH (convenience wrapper)
- * @param {number[]} levelIds - Levels to unlock (must be sequential)
- * @deprecated Use unlockLevelRangeWithEth instead
- */
-export const unlockLevelsWithEth = async (levelIds) => {
-  if (!levelIds.length) {
-    return { success: false, error: 'No levels specified' };
-  }
-  
-  const sorted = [...levelIds].sort((a, b) => a - b);
-  const fromLevel = sorted[0];
-  const toLevel = sorted[sorted.length - 1];
-  
-  return unlockLevelRangeWithEth(fromLevel, toLevel);
-};
-
-/**
- * Unlock ALL levels at discounted bulk price
- */
-export const unlockAllLevelsWithEth = async () => {
-  state.isUnlocking = true;
-  
-  try {
-    const contract = await getRegistryContract(true);
-    if (!contract) {
-      throw new Error('Level registry contract not configured');
-    }
-    
-    const bulkPrice = await contract.bulkPrice();
-    
-    const tx = await contract.unlockAllLevels({ value: bulkPrice });
-    const receipt = await tx.wait();
-    
-    // Refresh all levels
-    await checkAllLevels();
-    
-    return { success: true, txHash: receipt.hash };
-  } catch (e) {
-    const error = e.shortMessage || e.message || String(e);
-    console.error('[Level] Bulk unlock failed:', error);
-    return { success: false, error };
-  } finally {
-    state.isUnlocking = false;
-  }
-};
 
 // ═══════════════════════════════════════════════════════════════════════════
 // ACCESS VERIFICATION
@@ -457,14 +312,14 @@ export const isLevelActive = (levelKey) => {
 export const getLevelBlockReason = (levelKey) => {
   const level = state.levels[levelKey];
   const config = CONFIG.levels[levelKey];
-  
+
   if (!level || !config) return 'Invalid level';
   if (level.active) return null;
-  
+
   const currentBalance = web3Service.state.balances.total;
   const needed = config.holdingRequired - currentBalance;
-  
-  return `Hold ${config.holdingRequired.toLocaleString()} BONZAI (need ${needed.toLocaleString()} more) or pay ${state.prices.perLevel} ETH to unlock`;
+
+  return `Hold ${config.holdingRequired.toLocaleString()} BONZAI (need ${needed.toLocaleString()} more) or pay ${state.unlockPrice} ETH to unlock all levels`;
 };
 
 /**
@@ -473,22 +328,20 @@ export const getLevelBlockReason = (levelKey) => {
 export const getLevelUnlockOptions = (levelKey) => {
   const config = CONFIG.levels[levelKey];
   if (!config) return null;
-  
-  const levelId = config.id;
+
   const currentBalance = web3Service.state.balances.total;
-  const { canUnlock, reason } = canUnlockLevel(levelId);
-  
+  const { canUnlock, reason } = canUnlockWithEth();
+
   return {
-    levelId,
+    levelId: config.id,
     holdingRequired: config.holdingRequired,
     currentBalance,
     holdingNeeded: Math.max(0, config.holdingRequired - currentBalance),
-    ethPrice: state.prices.perLevel,
+    ethPrice: state.unlockPrice,
     canUnlockViaHolding: currentBalance >= config.holdingRequired,
     canUnlockViaEth: canUnlock,
     unlockBlockedReason: reason,
-    isNextUnlockable: levelId === state.nextUnlockableLevel,
-    buybackPercentage: state.buyback.percentage / 100, // Convert to percentage
+    allLevelsUnlocked: state.allLevelsUnlocked,
   };
 };
 
@@ -527,12 +380,19 @@ export const levelProgress = computed(() => {
 });
 
 /**
- * Get levels that could be unlocked via ETH (not yet unlocked, not met via holding)
+ * Get levels that could be unlocked (not yet active)
  */
-export const unlockableLevels = computed(() => {
+export const inactiveLevels = computed(() => {
   return Object.entries(state.levels)
-    .filter(([_, status]) => !status.active && !status.ethUnlocked)
+    .filter(([_, status]) => !status.active)
     .map(([key, _]) => key);
+});
+
+/**
+ * Check if all levels are unlocked via ETH payment
+ */
+export const allUnlockedViaEth = computed(() => {
+  return state.allLevelsUnlocked;
 });
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -564,36 +424,31 @@ export const getAllLevelsWithStatus = computed(() => {
 
 export const levelService = {
   state: readonly(state),
-  
+
   // Level checking
   checkAllLevels,
-  
-  // Sequential unlock helpers
-  canUnlockLevel,
-  getNextUnlockableLevel,
-  
-  // ETH unlock
-  unlockLevelWithEth,
-  unlockLevelRangeWithEth,
-  unlockLevelsWithEth,
-  unlockAllLevelsWithEth,
-  
+
+  // ETH unlock (single 1 ETH payment for ALL levels)
+  canUnlockWithEth,
+  unlockAllWithEth,
+
   // Access verification
   canAccessFeature,
   isLevelActive,
   getLevelBlockReason,
   getLevelUnlockOptions,
-  
+
   // Computed
   highestActiveLevel,
   activeLevels,
   levelProgress,
-  unlockableLevels,
-  
+  inactiveLevels,
+  allUnlockedViaEth,
+
   // Info helpers
   getLevelConfig,
   getAllLevelsWithStatus,
-  
+
   // Config reference
   CONFIG,
 };

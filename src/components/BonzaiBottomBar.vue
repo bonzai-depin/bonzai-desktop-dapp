@@ -4,20 +4,23 @@
     <div class="bar-content">
       <!-- Left: Wallet Section -->
       <div class="wallet-section">
-        <button
-          v-if="!isConnected"
-          class="button is-success is-large"
-          @click="connect"
-          :disabled="isConnecting"
-        >
-          <span class="material-symbols-outlined mr-2">wallet</span>
+        <!-- Show connect button when not connected OR still connecting (prevents flash) -->
+        <Transition name="wallet-fade" mode="out-in">
+          <button
+            v-if="!isConnected || isConnecting"
+            key="connect-btn"
+            class="button is-success is-medium"
+            @click="connect"
+            :disabled="isConnecting"
+          >
+            <span class="material-symbols-outlined mr-2">wallet</span>
+            <span class="btn-text">
+              {{ isConnecting ? "Connecting..." : "Connect Wallet" }}
+            </span>
+          </button>
 
-          <span class="btn-text">
-            {{ isConnecting ? "Connecting..." : "Connect Wallet" }}
-          </span>
-        </button>
-
-        <div v-else class="wallet-info">
+          <!-- Only show wallet info when fully connected with a valid address -->
+          <div v-else-if="isConnected && walletAddress" key="wallet-info" class="wallet-info">
           <div class="wallet-address p-3" @click="copyAddress">
             <span class="address-text">{{ truncatedAddress }}</span>
             <span class="network-badge" :class="{ arbitrum: isOnArbitrum }">
@@ -39,6 +42,7 @@
             <span class="material-symbols-outlined">logout</span>
           </button>
         </div>
+        </Transition>
       </div>
 
       <!-- Center: Level Progress -->
@@ -163,7 +167,7 @@
                 <h3
                   class="requirements-title fira-sans-condensed-black-italic is-size-3"
                 >
-                  Unlock Requirements
+                  Unlock Options
                 </h3>
 
                 <div class="req-row">
@@ -198,18 +202,19 @@
                 </div>
                 <hr />
                 <div class="req-row">
-                  <span class="material-symbols-outlined">key_vertical</span>
+                  <span class="material-symbols-outlined">lock_open</span>
                   <span class="req-text">
-                    Spend
-                    <strong>{{ levelPrice }}</strong>
-                    ETH
-                    <strong>once</strong>
+                    Pay
+                    <strong>{{ unlockPrice }} ETH</strong>
+                    to unlock
+                    <strong>ALL 6 levels</strong>
+                    permanently
                   </span>
                   <span
                     class="req-status"
-                    :class="{ met: isLevelManuallyUnlocked(selectedLevel) }"
+                    :class="{ met: allLevelsUnlocked }"
                   >
-                    {{ isLevelManuallyUnlocked(selectedLevel) ? "✓" : "✗" }}
+                    {{ allLevelsUnlocked ? "✓" : "✗" }}
                   </span>
                 </div>
               </div>
@@ -225,22 +230,25 @@
                 Buy BONZAI
               </a>
               <button
-                v-if="!isLevelUnlockedOrHolding(selectedLevel)"
+                v-if="!isLevelUnlockedOrHolding(selectedLevel) && !allLevelsUnlocked"
                 class="button is-success mr-2 is-medium"
-                @click="unlockLevel(selectedLevel)"
+                @click="unlockAllLevels"
                 :disabled="isUnlocking"
-                title="Unlock with ETH"
+                title="Unlock All Levels"
               >
                 <span
-                  v-if="isUnlocking === selectedLevel"
+                  v-if="isUnlocking"
                   class="spinner"
                 ></span>
-                <span v-else>Unlock Now</span>
+                <span v-else>
+                  <span class="material-symbols-outlined mr-1" style="vertical-align: middle; font-size: 18px">lock_open</span>
+                  Unlock All
+                </span>
                 <div class="tags has-addons">
                   <span
                     class="tag is-warning partner fira-sans-condensed-black-italic is-small"
                   >
-                    0.1 ETH
+                    {{ unlockPrice }} ETH
                   </span>
                 </div>
               </button>
@@ -262,9 +270,10 @@
 </template>
 
 <script setup>
-import { ref, computed } from "vue";
+import { ref, computed, onMounted, watch } from "vue";
 import { useBonzaiWeb3 } from "../composables/useBonzaiWeb3.js";
 import { CONFIG } from "../config/web3.config.js";
+import { levelService, checkAllLevels, canUnlockWithEth, unlockAllWithEth } from "../services/level.service.js";
 
 const {
   isConnected,
@@ -283,10 +292,13 @@ const {
 } = useBonzaiWeb3();
 
 const isRefreshing = ref(false);
-const isUnlocking = ref(null);
+const isUnlocking = ref(false);
 const selectedLevel = ref(null);
 
-const levelPrice = computed(() => CONFIG.levelUnlock?.price || 0.1);
+// ETH unlock state from levelService
+const unlockPrice = computed(() => levelService.state.unlockPrice || 1.0);
+const allLevelsUnlocked = computed(() => levelService.state.allLevelsUnlocked);
+
 const buyLink = CONFIG.links.buyBonzai;
 
 // Helpers
@@ -294,15 +306,27 @@ const getLevelConfig = (lvl) => CONFIG.levels[`LVL${lvl}`];
 
 const hasEnoughBonzai = (required) => totalBalance.value >= required;
 
-// Manual unlock flag (ETH unlock)
-const isLevelManuallyUnlocked = (levelId) =>
-  store.unlockedLevels?.[levelId] ?? false;
+// Manual unlock flag (ETH unlock for all levels)
+const isLevelManuallyUnlocked = (levelId) => {
+  // Check if user paid 1 ETH to unlock all levels
+  if (allLevelsUnlocked.value) return true;
+  // Check from levels state (ethUnlocked flag)
+  const levelKey = `LVL${levelId}`;
+  if (levels.value[levelKey]?.ethUnlocked) return true;
+  return false;
+};
 
-// New rule: unlocking is either holdings OR manual ETH unlock.
+// New rule: unlocking is either holdings OR ETH unlock (1 ETH for all levels).
 // Once unlocked => user can use the tier.
 const isLevelUnlockedOrHolding = (levelId) => {
+  // If all levels unlocked via ETH, this level is unlocked
+  if (allLevelsUnlocked.value) return true;
+
   const cfg = getLevelConfig(levelId);
   const required = cfg?.holdingRequired || 0;
+  // Check if level is active via the levels state
+  const levelKey = `LVL${levelId}`;
+  if (levels.value[levelKey]?.active) return true;
   return isLevelManuallyUnlocked(levelId) || hasEnoughBonzai(required);
 };
 
@@ -368,6 +392,7 @@ const disconnect = async () => {
 const refresh = async () => {
   isRefreshing.value = true;
   await doRefresh();
+  await checkAllLevels();
   setTimeout(() => (isRefreshing.value = false), 500);
 };
 
@@ -380,16 +405,42 @@ const openLevelModal = (lvl) => {
   selectedLevel.value = lvl;
 };
 
-const unlockLevel = async (levelId) => {
-  isUnlocking.value = levelId;
+// Unlock all levels with 1 ETH payment
+const unlockAllLevels = async () => {
+  if (isUnlocking.value) return;
+
+  isUnlocking.value = true;
   try {
-    await store.unlockLevel(levelId);
+    const result = await unlockAllWithEth();
+    if (result.success) {
+      console.log('[BonzaiBottomBar] All levels unlocked!', result.txHash);
+      await checkAllLevels();
+      // Success - close modal
+      selectedLevel.value = null;
+    } else {
+      console.error('[BonzaiBottomBar] Unlock failed:', result.error);
+      alert(`Unlock failed: ${result.error}`);
+    }
   } catch (e) {
-    console.error("Unlock failed:", e);
+    console.error('[BonzaiBottomBar] Unlock error:', e);
+    alert(`Unlock error: ${e.message || e}`);
   } finally {
-    isUnlocking.value = null;
+    isUnlocking.value = false;
   }
 };
+
+// Check levels on mount and when wallet connects
+onMounted(async () => {
+  if (isConnected.value) {
+    await checkAllLevels();
+  }
+});
+
+watch(isConnected, async (connected) => {
+  if (connected) {
+    await checkAllLevels();
+  }
+});
 </script>
 
 <style scoped>
@@ -407,7 +458,6 @@ const unlockLevel = async (levelId) => {
 }
 
 .bonzai-bottom-bar {
-  padding-top: 0.15em;
   position: fixed;
   bottom: 0;
   left: 0;
@@ -426,7 +476,7 @@ const unlockLevel = async (levelId) => {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 12px 24px;
+  padding: 6px 12px;
   gap: 24px;
 }
 
@@ -911,6 +961,16 @@ hr {
 }
 .fade-enter-from,
 .fade-leave-to {
+  opacity: 0;
+}
+
+/* Wallet state transition - prevents jarring flash */
+.wallet-fade-enter-active,
+.wallet-fade-leave-active {
+  transition: opacity 0.15s ease-out;
+}
+.wallet-fade-enter-from,
+.wallet-fade-leave-to {
   opacity: 0;
 }
 

@@ -24,8 +24,12 @@ contextBridge.exposeInMainWorld("electronAPI", {
     ipcRenderer.invoke("agent-save-image", defaultName, base64Data),
   saveAudio: (defaultName, sourcePath) =>
     ipcRenderer.invoke("agent-save-audio", defaultName, sourcePath),
+  saveVideo: (defaultName, sourcePath) =>
+    ipcRenderer.invoke("agent-save-video", defaultName, sourcePath),
   // File existence check (for media validation)
   fileExists: (filePath) => ipcRenderer.invoke("file-exists", filePath),
+  // Open URL in default browser
+  openExternal: (url) => ipcRenderer.invoke("open-external", url),
   // Server status events (for self-healing notifications)
   onServerStatus: (callback) => {
     const handler = (_event, data) => callback(data);

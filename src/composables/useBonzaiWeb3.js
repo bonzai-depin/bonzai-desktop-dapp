@@ -52,9 +52,7 @@ export const FEATURES = {
 
   // LVL4
   VIDEO_GENERATION: "video-generation",
-  LTX: "ltx",
   WAN: "wan",
-  HUNYUAN: "hunyuan",
 
   // LVL5
   GAME_GENERATION: "game-generation",
@@ -193,6 +191,11 @@ export function useBonzaiWeb3(options = {}) {
   const unlockLevels = async (levelIds) => store.unlockLevels(levelIds);
   const unlockAllLevels = async () => store.unlockAllLevels();
 
+  // NFT minting
+  const mintLevelNFT = async (levelId) => store.mintLevelNFT(levelId);
+  const getNFTPrice = (levelId) => store.getNFTPrice(levelId);
+  const getNFTRemainingSupply = (levelId) => store.getNFTRemainingSupply(levelId);
+
   // Agent helpers
   const hasAgentPurchased = (agentId) => store.hasAgentPurchased(agentId);
   const purchaseAgent = async (agentId) => store.purchaseAgent(agentId);
@@ -257,6 +260,11 @@ export function useBonzaiWeb3(options = {}) {
     unlockLevel,
     unlockLevels,
     unlockAllLevels,
+
+    // NFT minting methods
+    mintLevelNFT,
+    getNFTPrice,
+    getNFTRemainingSupply,
 
     // Agent methods
     hasAgentPurchased,

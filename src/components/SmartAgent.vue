@@ -1,5 +1,24 @@
 <template scoped>
   <div class="background"></div>
+
+  <!-- Status Notification Toast -->
+  <div
+    v-if="statusNotification.show"
+    class="status-notification"
+    :class="'is-' + statusNotification.type"
+  >
+    <span class="material-symbols-outlined mr-2">
+      {{
+        statusNotification.type === "success"
+          ? "check_circle"
+          : statusNotification.type === "danger"
+            ? "error"
+            : "info"
+      }}
+    </span>
+    {{ statusNotification.message }}
+  </div>
+
   <div class="models__deployment column is-8 is-paddingless">
     <div class="models__deployment-install">
       <div class="columns">
@@ -16,16 +35,6 @@
                 </span>
                 Prediction Capital Markets
               </h1>
-            </div>
-            <div class="level-right">
-              <button
-                class="button is-info is-large is-outlined fira-sans-condensed-black-italic"
-              >
-                <span class="material-symbols-outlined mr-2">
-                  shopping_cart
-                </span>
-                Buy BONZAI
-              </button>
             </div>
           </div>
 
@@ -71,7 +80,6 @@
           <!-- BUY TAB -->
           <div v-if="activeTab === 'buy'">
             <div class="models__activity--payouts mb-5">
-              <!-- DSLA Prediction Markets Section -->
               <h2
                 class="fira-sans-condensed-black-italic is-size-2 has-text-white has-text-left mb-5"
               >
@@ -84,7 +92,7 @@
                   :key="'dsla_' + proj.name"
                   class="columns is-8 is-multiline control mt-5 mb-5 has-text-left"
                 >
-                  <div class="bonzai__agent column is-4">
+                  <div class="bonzai__agent column is-6">
                     <input
                       v-model="selectedProject"
                       :value="proj.name"
@@ -95,6 +103,8 @@
                     <label
                       :for="'project_' + proj.name"
                       class="radio p-3 is-size-5"
+                      style="width: 100%;"
+                      @click.prevent="toggleProjectDescription(proj.name)"
                     >
                       <span
                         class="material-symbols-outlined"
@@ -105,21 +115,32 @@
                       {{ proj.name }}
                       <div class="tags has-addons">
                         <span
-                          class="tag partner fira-sans-condensed-black-italic is-medium"
+                          class="tag partner fira-sans-condensed-black-italic is-small"
                         >
                           {{ proj.token }}
                         </span>
                         <span
-                          class="tag is-success partner fira-sans-condensed-black-italic is-medium"
+                          class="tag is-success partner fira-sans-condensed-black-italic is-small"
                         >
-                          {{ proj.markets }} Markets
+                          {{ proj.markets.length }} Markets
+                        </span>
+                        <span
+                          v-if="
+                            purchasedProtocols.some((p) => p.name === proj.name)
+                          "
+                          class="tag is-info partner fira-sans-condensed-black-italic is-small"
+                        >
+                          Owned
                         </span>
                       </div>
                     </label>
                   </div>
-                  <div class="bonzai__agent column is-8">
+                  <div class="bonzai__agent column is-6">
                     <div class="control has-text-right">
                       <button
+                        v-if="
+                          !purchasedProtocols.some((p) => p.name === proj.name)
+                        "
                         class="button chat is-success is-large"
                         @click="buyProjectAccess(proj.name)"
                       >
@@ -131,14 +152,30 @@
                           <span
                             class="tag is-warning partner fira-sans-condensed-black-italic is-medium"
                           >
-                            {{ proj.accessPrice ? proj.accessPrice : "10K" }}
-                            BONZAI
+                            {{ proj.accessPrice }} BONZAI
                           </span>
                         </div>
                       </button>
+                      <button
+                        v-else
+                        class="button chat is-info is-large"
+                        @click="
+                          selectedRunProtocol = proj.name;
+                          selectedRunAgent = null;
+                          activeTab = 'run';
+                        "
+                      >
+                        <span class="material-symbols-outlined is-size-3 mr-2">
+                          auto_read_play
+                        </span>
+                        Run Protocol
+                      </button>
                     </div>
                   </div>
-                  <div class="bonzai__agent-description column is-12">
+                  <div
+                    v-show="expandedProjectDescription === proj.name"
+                    class="bonzai__agent-description column is-12 description-animate"
+                  >
                     <div class="notification is-success description mt-5">
                       <h3
                         class="fira-sans-condensed-black-italic is-size-4 mt-5 mb-3"
@@ -148,9 +185,19 @@
                         </span>
                         {{ proj.useCase }}
                       </h3>
-                      <p>
-                        {{ proj.description }}
-                      </p>
+                      <p>{{ proj.description }}</p>
+                      <div class="mt-4">
+                        <h4
+                          class="fira-sans-condensed-black-italic is-size-5 mb-2"
+                        >
+                          Prediction Markets
+                        </h4>
+                        <ul class="sla-list">
+                          <li v-for="(market, idx) in proj.markets" :key="idx">
+                            {{ market.question }}
+                          </li>
+                        </ul>
+                      </div>
                     </div>
                   </div>
                 </div>
@@ -183,6 +230,8 @@
                 </div>
               </div>
             </div>
+
+            <!-- Smart Agents Section -->
             <div class="models__activity--payouts">
               <h2
                 class="fira-sans-condensed-black-italic is-size-2 has-text-white has-text-left mb-5"
@@ -195,7 +244,6 @@
                   <div
                     class="columns is-8 is-multiline control mb-5 has-text-left"
                   >
-                    <!-- Copy Master -->
                     <div class="bonzai__agent column is-6 is-size-5">
                       <input
                         v-model="selectedAgent"
@@ -204,18 +252,24 @@
                         type="radio"
                         name="agent"
                       />
-                      <label for="agent_copymaster" class="radio p-4">
+                      <label
+                        for="agent_copymaster"
+                        class="radio p-4"
+                        style="width: 100%;"
+                        @click.prevent="toggleAgentDescription('copymaster')"
+                      >
                         Polymarket Copy-Trading
                         <div class="tags has-addons">
                           <span
-                            class="tag is-success partner fira-sans-condensed-black-italic is-medium"
+                            class="tag is-info partner fira-sans-condensed-black-italic is-small"
                           >
-                            +13.37% (24H)
+                            Finance
                           </span>
                           <span
-                            class="tag is-info partner fira-sans-condensed-black-italic is-medium"
+                            v-if="purchasedAgents.includes('copymaster')"
+                            class="tag is-success partner fira-sans-condensed-black-italic is-small"
                           >
-                            80% WIN
+                            Owned
                           </span>
                         </div>
                       </label>
@@ -223,8 +277,9 @@
                     <div class="bonzai__agent column is-6">
                       <div class="control has-text-right">
                         <button
+                          v-if="!purchasedAgents.includes('copymaster')"
                           class="button chat is-success is-large"
-                          @click="buyAgent('Copy Master')"
+                          @click="buyAgent('copymaster')"
                         >
                           <span
                             class="material-symbols-outlined is-size-3 mr-2"
@@ -240,9 +295,24 @@
                             </span>
                           </div>
                         </button>
+                        <button
+                          v-else
+                          class="button chat is-info is-large"
+                          @click="activeTab = 'run'"
+                        >
+                          <span
+                            class="material-symbols-outlined is-size-3 mr-2"
+                          >
+                            auto_read_play
+                          </span>
+                          Run Agent
+                        </button>
                       </div>
                     </div>
-                    <div class="bonzai__agent-description column is-12">
+                    <div
+                      v-show="expandedAgentDescription === 'copymaster'"
+                      class="bonzai__agent-description column is-12 description-animate"
+                    >
                       <div class="notification is-success description mt-5">
                         <h3
                           class="fira-sans-condensed-black-italic is-size-4 mt-5 mb-3"
@@ -256,12 +326,116 @@
                         </h3>
                         <p>
                           Identifies the hottest markets and top traders on
-                          Polymarket, uses AI to analyse event context, and
-                          suggests copy trades. You make the final call.
+                          Polymarket, and suggests copy trades. You make the
+                          final call and execute trades manually.
                         </p>
                       </div>
                     </div>
-                    <hr />
+                  </div>
+
+                  <!-- TCG Prediction Market Agent -->
+                  <div
+                    class="columns is-8 is-multiline control mb-5 has-text-left"
+                  >
+                    <div class="bonzai__agent column is-6 is-size-5">
+                      <input
+                        v-model="selectedAgent"
+                        value="tcg"
+                        id="agent_tcg"
+                        type="radio"
+                        name="agent"
+                      />
+                      <label
+                        for="agent_tcg"
+                        class="radio p-4"
+                        style="width: 100%;"
+                        @click.prevent="toggleAgentDescription('tcg')"
+                      >
+                        TCG Prediction Market
+                        <div class="tags has-addons">
+                          <span
+                            class="tag is-warning partner fira-sans-condensed-black-italic is-small"
+                          >
+                            Trading Cards
+                          </span>
+                          <span
+                            v-if="purchasedAgents.includes('tcg')"
+                            class="tag is-success partner fira-sans-condensed-black-italic is-small"
+                          >
+                            Owned
+                          </span>
+                        </div>
+                      </label>
+                    </div>
+                    <div class="bonzai__agent column is-6">
+                      <div class="control has-text-right">
+                        <button
+                          v-if="!purchasedAgents.includes('tcg')"
+                          class="button chat is-success is-large"
+                          @click="buyAgent('tcg')"
+                        >
+                          <span
+                            class="material-symbols-outlined is-size-3 mr-2"
+                          >
+                            shopping_cart
+                          </span>
+                          Buy Agent
+                          <div class="tags has-addons">
+                            <span
+                              class="tag is-warning partner fira-sans-condensed-black-italic is-medium"
+                            >
+                              0.05 ETH
+                            </span>
+                          </div>
+                        </button>
+                        <button
+                          v-else
+                          class="button chat is-info is-large"
+                          @click="
+                            selectedRunAgent = 'tcg';
+                            selectedRunProtocol = null;
+                            activeTab = 'run';
+                          "
+                        >
+                          <span
+                            class="material-symbols-outlined is-size-3 mr-2"
+                          >
+                            auto_read_play
+                          </span>
+                          Run Agent
+                        </button>
+                      </div>
+                    </div>
+                    <div
+                      v-show="expandedAgentDescription === 'tcg'"
+                      class="bonzai__agent-description column is-12 description-animate"
+                    >
+                      <div class="notification is-success description mt-5">
+                        <h3
+                          class="fira-sans-condensed-black-italic is-size-4 mt-5 mb-3"
+                        >
+                          <span
+                            class="material-symbols-outlined mr-2 is-size-3"
+                          >
+                            style
+                          </span>
+                          Features
+                        </h3>
+                        <p>
+                          Build your TCG portfolio using real-time pricing from
+                          JustTCG.com. Issue or join prediction markets on card
+                          prices across Pokemon, Magic: The Gathering,
+                          Yu-Gi-Oh!, One Piece, and Lorcana.
+                        </p>
+                        <div class="tcg-icons mt-3">
+                          <span class="tag is-dark mr-2">Pokemon</span>
+                          <span class="tag is-dark mr-2">MTG</span>
+                          <span class="tag is-dark mr-2">Yu-Gi-Oh!</span>
+                          <span class="tag is-dark mr-2">One Piece</span>
+                          <span class="tag is-dark">Lorcana</span>
+                        </div>
+                      </div>
+                    </div>
                   </div>
                 </div>
               </div>
@@ -272,7 +446,55 @@
           <div v-if="activeTab === 'sell'">
             <div class="models__activity--payouts">
               <div class="bonzai__agent">
-                <!-- DSLA Use Case Selection -->
+                <!-- Model Download Section -->
+                <div
+                  v-if="!isModelAvailable"
+                  class="notification is-danger mb-5"
+                >
+                  <div class="columns is-vcentered">
+                    <div class="column">
+                      <p
+                        class="fira-sans-condensed-black-italic is-size-5 mb-0"
+                      >
+                        <span
+                          class="material-symbols-outlined mr-2"
+                          style="vertical-align: middle"
+                        >
+                          error
+                        </span>
+                        AI Model Required
+                      </p>
+                    </div>
+                    <div class="column is-narrow">
+                      <button
+                        class="button is-success is-large fira-sans-condensed-black-italic"
+                        @click="downloadModel"
+                        :disabled="isDownloading"
+                      >
+                        <span class="material-symbols-outlined mr-2">
+                          deployed_code_update
+                        </span>
+                        Download
+                        <span
+                          v-if="downloadProgress"
+                          class="filesize ml-2"
+                          style="font-size: 14px"
+                        >
+                          {{ downloadProgress }}%
+                        </span>
+                        <span
+                          v-else
+                          class="filesize ml-2"
+                          style="font-size: 14px"
+                        >
+                          4.08 GB
+                        </span>
+                      </button>
+                    </div>
+                  </div>
+                </div>
+
+                <!-- Use Case Selection -->
                 <h2
                   class="fira-sans-condensed-black-italic is-size-2 has-text-white has-text-left mb-4"
                 >
@@ -280,28 +502,62 @@
                 </h2>
                 <div class="columns">
                   <div class="column is-12">
-                    <div class="buttons">
-                      <button
-                        style="width: 30%; margin: 0 3.33% 3% 0"
+                    <div class="control usecase-selector">
+                      <template
                         v-for="useCase in dslaUseCases"
                         :key="useCase.key"
-                        class="button is-outlined is-info is-medium"
-                        :class="{
-                          'is-selected':
-                            selectedUseCase &&
-                            selectedUseCase.key === useCase.key,
-                        }"
-                        @click="
-                          selectUseCase(useCase);
-                          populateDSLAFields();
-                        "
                       >
-                        {{ useCase.label }}
-                      </button>
+                        <input
+                          type="radio"
+                          name="usecase_selector"
+                          :id="'usecase_' + useCase.key"
+                          :value="useCase.key"
+                          :checked="
+                            selectedUseCase &&
+                            selectedUseCase.key === useCase.key
+                          "
+                          :disabled="!isModelAvailable || isGenerating"
+                          @change="selectUseCaseAndGenerate(useCase)"
+                        />
+                        <label
+                          :for="'usecase_' + useCase.key"
+                          class="radio"
+                          :class="{
+                            'is-loading':
+                              isGenerating &&
+                              selectedUseCase?.key === useCase.key,
+                          }"
+                        >
+                          <span
+                            v-if="
+                              isGenerating &&
+                              selectedUseCase?.key === useCase.key
+                            "
+                            class="material-symbols-outlined rotating mr-1"
+                            style="font-size: 18px !important"
+                          >
+                            progress_activity
+                          </span>
+                          {{ useCase.label }}
+                        </label>
+                      </template>
                     </div>
+                    <p
+                      v-if="!isModelAvailable"
+                      class="has-text-danger is-size-6 mt-2"
+                    >
+                      <span
+                        class="material-symbols-outlined mr-1"
+                        style="font-size: 16px; vertical-align: middle"
+                      >
+                        warning
+                      </span>
+                      Download the AI model above to enable use case selection.
+                    </p>
                   </div>
                 </div>
                 <hr />
+
                 <!-- Project Identity -->
                 <h2
                   class="fira-sans-condensed-black-italic is-size-2 has-text-white has-text-left mb-4 mt-5"
@@ -319,7 +575,8 @@
                       <input
                         class="input is-large"
                         v-model="projectForm.name"
-                        placeholder="e.g. PoliMarket, CryptoOracle, SportsBet"
+                        placeholder="AI-generated..."
+                        :disabled="!selectedUseCase"
                       />
                     </div>
                   </div>
@@ -333,7 +590,8 @@
                       <input
                         class="input is-large"
                         v-model="projectForm.tokenSymbol"
-                        placeholder="e.g. POLI, CRYO, SPRT"
+                        placeholder="AI-generated..."
+                        :disabled="!selectedUseCase"
                       />
                     </div>
                   </div>
@@ -348,21 +606,11 @@
                     <textarea
                       class="textarea is-large"
                       v-model="projectForm.description"
-                      placeholder="Describe your prediction market focus, target audience, and unique value proposition..."
+                      placeholder="AI-generated..."
+                      :disabled="!selectedUseCase"
                     ></textarea>
                   </div>
                 </div>
-                <!-- <div class="control has-text-right mb-5">
-                  <button
-                    class="button is-info is-medium"
-                    @click="generateWithAI('description')"
-                  >
-                    <span class="material-symbols-outlined mr-2">
-                      psychology
-                    </span>
-                    Generate with AI
-                  </button>
-                </div> -->
 
                 <hr />
 
@@ -383,7 +631,8 @@
                       <input
                         class="input is-large"
                         v-model="projectForm.totalSupply"
-                        placeholder="1000000000"
+                        placeholder="AI-generated..."
+                        :disabled="!selectedUseCase"
                       />
                     </div>
                   </div>
@@ -397,7 +646,8 @@
                       <input
                         class="input is-large"
                         v-model="projectForm.initialLiquidity"
-                        placeholder="10"
+                        placeholder="AI-generated..."
+                        :disabled="!selectedUseCase"
                       />
                     </div>
                   </div>
@@ -411,158 +661,126 @@
                       <input
                         class="input is-large"
                         v-model="projectForm.accessPrice"
-                        placeholder="10000"
+                        placeholder="AI-generated..."
+                        :disabled="!selectedUseCase"
                       />
                     </div>
                   </div>
                 </div>
-                <!-- <div class="control has-text-right mb-5">
-                  <button
-                    class="button is-info is-medium"
-                    @click="generateWithAI('tokenomics')"
-                  >
-                    <span class="material-symbols-outlined mr-2">
-                      calculate
-                    </span>
-                    AI Tokenomics Advisor
-                  </button>
-                </div> -->
 
                 <hr />
 
-                <!-- Initial Markets/SLAs -->
+                <!-- SLA-Based Markets -->
                 <h2
                   class="fira-sans-condensed-black-italic is-size-2 has-text-white has-text-left mb-4 mt-5"
                 >
-                  Initial Markets / SLAs
+                  Service Level Agreement Markets
                 </h2>
-                <div class="field">
-                  <label
-                    class="label has-text-white has-text-left fira-sans-condensed-black-italic"
+                <p class="has-text-grey-light is-size-6 mb-4">
+                  Each market is structured as: "Will [Asset/Service]'s [Metric]
+                  [Operator] [Target] by [Date]?"
+                </p>
+
+                <div v-if="slaMarkets.length > 0" class="sla-markets">
+                  <div
+                    v-for="(sla, idx) in slaMarkets"
+                    :key="idx"
+                    class="sla-market-card mb-4"
                   >
-                    Market Ideas (one per line)
-                  </label>
-                  <div class="control">
-                    <textarea
-                      class="textarea is-large"
-                      v-model="projectForm.marketIdeas"
-                      rows="6"
-                      placeholder="Will Bitcoin reach $100k by end of 2025?\nWill AI generate 50% of code by 2026?\nWill fusion power be commercially viable by 2030?"
-                    ></textarea>
+                    <div class="sla-market-header">
+                      <span
+                        class="tag is-info fira-sans-condensed-black-italic mr-2"
+                      >
+                        SLA #{{ idx + 1 }}
+                      </span>
+                      <button
+                        class="delete is-small"
+                        @click="removeSlaMarket(idx)"
+                      ></button>
+                    </div>
+                    <div class="columns mt-3">
+                      <div class="field column is-3">
+                        <label class="label has-text-white is-size-7">
+                          Asset/Service
+                        </label>
+                        <input
+                          class="input"
+                          v-model="sla.asset"
+                          placeholder="e.g. BAYC, Ethereum, Uniswap"
+                        />
+                      </div>
+                      <div class="field column is-3">
+                        <label class="label has-text-white is-size-7">
+                          Metric
+                        </label>
+                        <input
+                          class="input"
+                          v-model="sla.metric"
+                          placeholder="e.g. floor price, uptime, APY"
+                        />
+                      </div>
+                      <div class="field column is-2">
+                        <label class="label has-text-white is-size-7">
+                          Operator
+                        </label>
+                        <div class="select is-fullwidth">
+                          <select v-model="sla.operator">
+                            <option value=">">&gt; (greater than)</option>
+                            <option value="<">&lt; (less than)</option>
+                            <option value=">=">&gt;= (at least)</option>
+                            <option value="<=">&lt;= (at most)</option>
+                            <option value="=">= (exactly)</option>
+                          </select>
+                        </div>
+                      </div>
+                      <div class="field column is-2">
+                        <label class="label has-text-white is-size-7">
+                          Target Value
+                        </label>
+                        <input
+                          class="input"
+                          v-model="sla.target"
+                          placeholder="e.g. 50 ETH, 99.9%"
+                        />
+                      </div>
+                      <div class="field column is-2">
+                        <label class="label has-text-white is-size-7">
+                          Target Date
+                        </label>
+                        <input class="input" type="date" v-model="sla.date" />
+                      </div>
+                    </div>
+                    <div class="sla-preview mt-2">
+                      <span
+                        class="tag is-warning fira-sans-condensed-black-italic"
+                      >
+                        {{ formatSlaQuestion(sla) }}
+                      </span>
+                    </div>
                   </div>
                 </div>
-                <!-- <div class="control has-text-right mb-5">
-                  <button
-                    class="button is-info is-medium"
-                    @click="generateWithAI('markets')"
-                  >
-                    <span class="material-symbols-outlined mr-2">
-                      auto_awesome
+
+                <div v-else class="notification is-info has-text-centered">
+                  <p class="pt-1">
+                    <span class="material-symbols-outlined is-size-1">
+                      wb_incandescent
                     </span>
-                    AI Market Generator
-                  </button>
-                </div> -->
+                    Select a Use Case above to imagine a Prediction Market.
+                  </p>
+                </div>
 
                 <hr />
-
-                <!-- Automation Pipeline -->
-                <!-- <div class="models__activity--payouts has-text-right p-5 mt-5">
-                  <label
-                    class="label has-text-white has-text-left fira-sans-condensed-black-italic is-size-4 mb-4"
-                  >
-                    <span class="material-symbols-outlined mr-2">
-                      settings_suggest
-                    </span>
-                    AI Automation Pipeline
-                  </label>
-
-                  <div class="columns is-multiline">
-                    <div class="column is-6">
-                      <label class="checkbox automation-checkbox">
-                        <input
-                          type="checkbox"
-                          v-model="projectForm.automation.commentary"
-                        />
-                        <span class="material-symbols-outlined">article</span>
-                        <span class="fira-sans-condensed-black-italic">
-                          Automated Market Commentary
-                        </span>
-                      </label>
-                    </div>
-                    <div class="column is-6">
-                      <label class="checkbox automation-checkbox">
-                        <input
-                          type="checkbox"
-                          v-model="projectForm.automation.resolution"
-                        />
-                        <span class="material-symbols-outlined">
-                          fact_check
-                        </span>
-                        <span class="fira-sans-condensed-black-italic">
-                          AI-Powered Oracle Resolution
-                        </span>
-                      </label>
-                    </div>
-                    <div class="column is-6">
-                      <label class="checkbox automation-checkbox">
-                        <input
-                          type="checkbox"
-                          v-model="projectForm.automation.analytics"
-                        />
-                        <span class="material-symbols-outlined">analytics</span>
-                        <span class="fira-sans-condensed-black-italic">
-                          Real-Time Analytics Dashboard
-                        </span>
-                      </label>
-                    </div>
-                    <div class="column is-6">
-                      <label class="checkbox automation-checkbox">
-                        <input
-                          type="checkbox"
-                          v-model="projectForm.automation.social"
-                        />
-                        <span class="material-symbols-outlined">share</span>
-                        <span class="fira-sans-condensed-black-italic">
-                          Social Media Integration
-                        </span>
-                      </label>
-                    </div>
-                    <div class="column is-6">
-                      <label class="checkbox automation-checkbox">
-                        <input
-                          type="checkbox"
-                          v-model="projectForm.automation.copyTrading"
-                        />
-                        <span class="material-symbols-outlined">
-                          currency_exchange
-                        </span>
-                        <span class="fira-sans-condensed-black-italic">
-                          External Market Copy-Trading
-                        </span>
-                      </label>
-                    </div>
-                    <div class="column is-6">
-                      <label class="checkbox automation-checkbox">
-                        <input
-                          type="checkbox"
-                          v-model="projectForm.automation.riskManagement"
-                        />
-                        <span class="material-symbols-outlined">shield</span>
-                        <span class="fira-sans-condensed-black-italic">
-                          AI Risk Management
-                        </span>
-                      </label>
-                    </div>
-                  </div>
-                </div>
-
-                <hr class="mt-5 mb-5" /> -->
 
                 <!-- Launch Button -->
                 <div class="control mt-4 has-text-centered mt-5">
                   <button
                     class="button is-success is-large mt-5"
                     @click="launchProject()"
+                    :disabled="
+                      !projectForm.name ||
+                      !projectForm.tokenSymbol ||
+                      slaMarkets.length === 0
+                    "
                   >
                     <span class="material-symbols-outlined mr-2 is-size-3">
                       storefront
@@ -583,621 +801,1163 @@
 
           <!-- RUN TAB -->
           <div v-if="activeTab === 'run'">
-            <div
-              class="model
-               is-info p-6"
-              style="margin-top: 1.25rem"
-              v-if="
-                purchasedProjects.length === 0 && deployedAgents.length === 0
+            <div>
+              <!-- Protocol/Agent Selector -->
+              <div class="models__activity--payouts mb-5">
+                <div
+                  v-if="!isModelAvailable"
+                  class="notification is-danger mb-5"
+                >
+                  <div class="columns is-vcentered">
+                    <div class="column">
+                      <p
+                        class="fira-sans-condensed-black-italic is-size-5 mb-0"
+                      >
+                        <span
+                          class="material-symbols-outlined mr-2"
+                          style="vertical-align: middle"
+                        >
+                          error
+                        </span>
+                        AI Model Required
+                      </p>
+                    </div>
+                    <div class="column is-narrow">
+                      <button
+                        class="button is-success is-large fira-sans-condensed-black-italic"
+                        @click="downloadModel"
+                        :disabled="isDownloading"
+                      >
+                        <span class="material-symbols-outlined mr-2">
+                          deployed_code_update
+                        </span>
+                        Download
+                        <span
+                          v-if="downloadProgress"
+                          class="filesize ml-2"
+                          style="font-size: 14px"
+                        >
+                          {{ downloadProgress }}%
+                        </span>
+                        <span
+                          v-else
+                          class="filesize ml-2"
+                          style="font-size: 14px"
+                        >
+                          4.08 GB
+                        </span>
+                      </button>
+                    </div>
+                  </div>
+                </div>
+                <h3
+                  class="fira-sans-condensed-black-italic has-text-white has-text-left is-size-2 mb-3"
+                >
+                  Smart Agent Portfolio
+                </h3>
+                <div class="control agent-selector">
+                  <!-- Purchased DSLA Protocols -->
+                  <template
+                    v-for="protocol in purchasedProtocols"
+                    :key="'run_' + protocol.name"
+                  >
+                    <input
+                      type="radio"
+                      name="agent_selector"
+                      :id="'agent_' + protocol.name"
+                      :value="protocol.name"
+                      :checked="selectedRunProtocol === protocol.name"
+                      @change="
+                        selectedRunProtocol = protocol.name;
+                        selectedRunAgent = null;
+                      "
+                    />
+                    <label :for="'agent_' + protocol.name" class="radio">
+                      {{ protocol.name }}
+                    </label>
+                  </template>
+                  <!-- Polymarket Agent (if purchased) -->
+                  <template v-if="purchasedAgents.includes('copymaster')">
+                    <input
+                      type="radio"
+                      name="agent_selector"
+                      id="agent_polymarket"
+                      value="copymaster"
+                      :checked="selectedRunAgent === 'copymaster'"
+                      @change="
+                        selectedRunAgent = 'copymaster';
+                        selectedRunProtocol = null;
+                      "
+                    />
+                    <label for="agent_polymarket" class="radio">
+                      Polymarket Copy-Trading
+                    </label>
+                  </template>
+                  <!-- TCG Agent (if purchased) -->
+                  <template v-if="purchasedAgents.includes('tcg')">
+                    <input
+                      type="radio"
+                      name="agent_selector"
+                      id="agent_tcg_run"
+                      value="tcg"
+                      :checked="selectedRunAgent === 'tcg'"
+                      @change="
+                        selectedRunAgent = 'tcg';
+                        selectedRunProtocol = null;
+                        loadTcgTopCards();
+                      "
+                    />
+                    <label for="agent_tcg_run" class="radio">
+                      TCG Prediction Markets
+                    </label>
+                  </template>
+                </div>
+              </div>
+
+              <hr />
+
+              <!-- DSLA Protocol Trading Interface -->
+              <div
+                v-if="
+                  selectedRunProtocol && getProtocolByName(selectedRunProtocol)
+                "
+                class="protocol-trading"
+              >
+                <div class="protocol-header mb-4">
+                  <h2
+                    class="fira-sans-condensed-black-italic has-text-white is-size-3"
+                  >
+                    {{ getProtocolByName(selectedRunProtocol).name }}
+                  </h2>
+                  <p class="has-text-grey-light">
+                    {{ getProtocolByName(selectedRunProtocol).description }}
+                  </p>
+                  <div class="protocol-tags mt-2">
+                    <span
+                      class="tag is-warning fira-sans-condensed-black-italic is-medium"
+                    >
+                      {{ getProtocolByName(selectedRunProtocol).token }}
+                    </span>
+                    <span
+                      class="tag is-info fira-sans-condensed-black-italic is-medium ml-2"
+                    >
+                      {{
+                        getProtocolByName(selectedRunProtocol).markets.length
+                      }}
+                      Markets
+                    </span>
+                  </div>
+                </div>
+
+                <!-- SLA Markets for Trading (TCG Style) -->
+                <div class="tcg-markets-section mt-5">
+                  <h4
+                    class="fira-sans-condensed-black-italic has-text-white is-size-4 mb-3 has-text-left"
+                  >
+                    <span class="material-symbols-outlined mr-2 is-size-1">
+                      online_prediction
+                    </span>
+                    Active Prediction Markets
+                  </h4>
+                  <div class="tcg-markets-list">
+                    <div
+                      v-for="(market, mIdx) in getProtocolByName(
+                        selectedRunProtocol
+                      ).markets"
+                      :key="mIdx"
+                      class="tcg-market-card models__activity--payouts mt-5"
+                    >
+                      <div class="columns">
+                        <div class="column is-8 has-text-left">
+                          <div class="tcg-market-question pt-2">
+                            <strong>{{ market.question }}</strong>
+                          </div>
+                          <div class="trading-market-details mt-3">
+                            <span class="tag is-dark mr-2">{{
+                              market.asset
+                            }}</span>
+                            <span class="tag is-dark mr-2">{{
+                              market.metric
+                            }}</span>
+                            <span class="tag is-info mr-2">
+                              {{ market.operator }} {{ market.target }}
+                            </span>
+                            <span class="tag is-warning">
+                              {{ formatDate(market.date) }}
+                            </span>
+                          </div>
+                          <!-- Position Display -->
+                          <div
+                            v-if="getPosition(selectedRunProtocol, mIdx)"
+                            class="current-positions mt-3"
+                          >
+                            <span
+                              v-if="
+                                hasPosition(selectedRunProtocol, mIdx, 'for')
+                              "
+                              class="tag is-medium is-success fira-sans-condensed-black-italic mr-2"
+                            >
+                              FOR:
+                              {{
+                                getPosition(selectedRunProtocol, mIdx, "for")
+                                  .amount
+                              }}
+                              {{ getProtocolByName(selectedRunProtocol).token }}
+                            </span>
+                            <span
+                              v-if="
+                                hasPosition(selectedRunProtocol, mIdx, 'against')
+                              "
+                              class="tag is-medium is-danger fira-sans-condensed-black-italic"
+                            >
+                              AGAINST:
+                              {{
+                                getPosition(selectedRunProtocol, mIdx, "against")
+                                  .amount
+                              }}
+                              {{ getProtocolByName(selectedRunProtocol).token }}
+                            </span>
+                          </div>
+                        </div>
+                        <div class="column is-2">
+                          <button
+                            class="button is-success fira-sans-condensed-black-italic is-fullwidth"
+                            @click="
+                              openPositionModal(
+                                selectedRunProtocol,
+                                mIdx,
+                                'for',
+                                market
+                              )
+                            "
+                          >
+                            <span class="material-symbols-outlined mr-1">
+                              thumb_up
+                            </span>
+                            YES
+                          </button>
+                        </div>
+                        <div class="column is-2">
+                          <button
+                            class="button is-danger fira-sans-condensed-black-italic is-fullwidth"
+                            @click="
+                              openPositionModal(
+                                selectedRunProtocol,
+                                mIdx,
+                                'against',
+                                market
+                              )
+                            "
+                          >
+                            <span class="material-symbols-outlined mr-1">
+                              thumb_down
+                            </span>
+                            NO
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              <!-- Polymarket Agent Interface -->
+              <div v-else-if="selectedRunAgent === 'copymaster'">
+                <div class="models__activity--payouts pt-5 pb-5" style="position: relative; bottom: -40px; z-index: 11;">
+                  <!-- Time Period Selector -->
+                  <h2
+                    class="fira-sans-condensed-black-italic is-size-5 has-text-white has-text-left mb-4"
+                  >
+                    Timeframe
+                  </h2>
+                  <div class="columns">
+                    <div class="column is-12">
+                      <div class="control timeperiod-selector">
+                        <template
+                          v-for="period in polymarketPeriods"
+                          :key="period.key"
+                        >
+                          <input
+                            type="radio"
+                            name="timeperiod_selector"
+                            :id="'timeperiod_' + period.key"
+                            :value="period.key"
+                            :checked="polymarketTimePeriod === period.key"
+                            :disabled="isAnalyzing"
+                            @change="selectTimePeriodAndAnalyze(period.key)"
+                          />
+                          <label
+                            :for="'timeperiod_' + period.key"
+                            class="radio"
+                            :class="{
+                              'is-loading':
+                                isAnalyzing &&
+                                polymarketTimePeriod === period.key,
+                            }"
+                          >
+                            <span
+                              v-if="
+                                isAnalyzing &&
+                                polymarketTimePeriod === period.key
+                              "
+                              class="material-symbols-outlined rotating mr-1"
+                              style="font-size: 18px !important"
+                            >
+                              progress_activity
+                            </span>
+                            {{ period.label }}
+                          </label>
+                        </template>
+                      </div>
+                    </div>
+                  </div>
+
+                  <!-- Min Conviction Selector -->
+                  <h2
+                    class="fira-sans-condensed-black-italic is-size-5 has-text-white has-text-left mb-4 mt-5"
+                  >
+                    Consensus
+                  </h2>
+                  <div class="columns">
+                    <div class="column is-12">
+                      <div class="control conviction-selector">
+                        <template
+                          v-for="level in polymarketConvictionLevels"
+                          :key="level.key"
+                        >
+                          <input
+                            type="radio"
+                            name="conviction_selector"
+                            :id="'conviction_' + level.key"
+                            :value="level.key"
+                            :checked="polymarketMinConviction === level.key"
+                            :disabled="isAnalyzing"
+                            @change="selectConvictionAndAnalyze(level.key)"
+                          />
+                          <label
+                            :for="'conviction_' + level.key"
+                            class="radio"
+                            :class="{
+                              'is-loading':
+                                isAnalyzing &&
+                                polymarketMinConviction === level.key,
+                            }"
+                          >
+                            <span
+                              v-if="
+                                isAnalyzing &&
+                                polymarketMinConviction === level.key
+                              "
+                              class="material-symbols-outlined rotating mr-1"
+                              style="font-size: 18px !important"
+                            >
+                              progress_activity
+                            </span>
+                            {{ level.label }}
+                          </label>
+                        </template>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
+                <div v-if="analysisHistory.length > 0" class="analysis-history">
+                  <div
+                    v-for="(analysis, idx) in analysisHistory"
+                    :key="idx"
+                    class="models__activity--payouts mb-5"
+                  >
+                    <div v-if="analysis.error" class="notification is-danger">
+                      <p>{{ analysis.error }}</p>
+                    </div>
+
+                    <!-- Top Traders Panel -->
+                    <div
+                      v-if="
+                        analysis.topTraders && analysis.topTraders.length > 0
+                      "
+                      class="top-traders-panel mt-4 mb-4"
+                    >
+                      <h4
+                        class="fira-sans-condensed-black-italic is-size-2 has-text-info mb-3"
+                      >
+                        <span class="material-symbols-outlined is-size-1 mr-2">
+                          leaderboard
+                        </span>
+                        Leaderboard
+                      </h4>
+                      <div class="top-traders-tags columns is-multiline">
+                        <div
+                          v-for="(trader, tIdx) in analysis.topTraders.slice(
+                            0,
+                            10
+                          )"
+                          :key="tIdx"
+                          class="tags has-addons mt-5 mb-5 column is-6 has-text-left"
+                        >
+                          <span
+                            class="tag is-warning is-large fira-sans-condensed-black-italic m-0"
+                          >
+                            #{{ trader.rank }}
+                          </span>
+                          <span
+                            class="tag is-dark is-large fira-sans-condensed-black-italic m-0"
+                          >
+                            {{
+                              trader.proxyWallet
+                                ? trader.proxyWallet.slice(0, 6) +
+                                  "..." +
+                                  trader.proxyWallet.slice(-4)
+                                : "Unknown"
+                            }}
+                          </span>
+                          <span
+                            class="tag is-success is-large fira-sans-condensed-black-italic m-0"
+                          >
+                            ${{ formatNumber(trader.pnl) }}
+                          </span>
+                        </div>
+                      </div>
+                    </div>
+
+                    <hr />
+
+                    <!-- Conviction Recommendations -->
+                    <div
+                      v-if="
+                        analysis.recommendations &&
+                        analysis.recommendations.length > 0
+                      "
+                      class="has-text-left"
+                    >
+                      <h4
+                        class="fira-sans-condensed-black-italic is-size-2 has-text-success mt-3"
+                      >
+                      <span class="material-symbols-outlined is-size-1 mr-2">
+                          online_prediction
+                        </span>
+                        High Conviction Positions
+                      </h4>
+
+                      <div
+                        v-for="(rec, rIdx) in analysis.recommendations"
+                        :key="rIdx"
+                        class="market-card mt-4 mb-4"
+                      >
+                        <div class="market-question">
+                          <span
+                            class="material-symbols-outlined is-size-3 mr-2"
+                          >
+                            help_outline
+                          </span>
+                          <strong class="has-text-white is-size-4">
+                            {{ rec.question }}
+                          </strong>
+                        </div>
+
+                        <hr />
+
+                        <div class="conviction-info mt-3">
+                          <div class="tags has-addons">
+                            <span
+                              class="tag is-warning is-large fira-sans-condensed-black-italic"
+                            >
+                              {{ rec.outcome }}
+                            </span>
+                            <span
+                              class="tag is-light is-large fira-sans-condensed-black-italic"
+                            >
+                              {{ rec.conviction.traderCount }} TOP PERFORMER
+                              <span v-if="rec.conviction.traderCount > 1">
+                                S
+                              </span>
+                              &nbsp;AGREE
+                              <span v-if="rec.conviction.traderCount == 1">
+                                S
+                              </span>
+                              &nbsp;FOR
+                            </span>
+                            <span
+                              class="tag is-success is-large fira-sans-condensed-black-italic"
+                            >
+                              ${{ formatNumber(rec.conviction.totalSize) }}
+                            </span>
+                          </div>
+                        </div>
+                        <div class="is-pulled-right">
+                          <h2
+                            class="fira-sans-condensed-black-italic is-pulled-right"
+                          >
+                            {{ (rec.market.currentPrice * 100).toFixed(0) }}%
+                          </h2>
+                        </div>
+                        <!-- Traders holding this position -->
+                        <div
+                          v-if="rec.traders && rec.traders.length > 0"
+                          class="traders-holding mt-3"
+                        >
+                          <div class="tags">
+                            <span
+                              v-for="(t, tIdx) in rec.traders"
+                              :key="tIdx"
+                              class="tag is-dark fira-sans-condensed-black-italic"
+                            >
+                              {{
+                                t.proxyWallet
+                                  ? t.proxyWallet.slice(0, 6) +
+                                    "..." +
+                                    t.proxyWallet.slice(-4)
+                                  : t.userName
+                              }}
+                              (${{ formatNumber(t.size) }})
+                            </span>
+                          </div>
+                        </div>
+                        <hr />
+                        <div class="rec-action mt-3 p-0">
+                          <button
+                            class="button is-info is-medium fira-sans-condensed-black-italic mr-5"
+                            @click="generateInvestmentThesis(idx, rIdx, rec)"
+                            :disabled="
+                              getThesis(idx, rIdx)?.loading || !isModelAvailable
+                            "
+                          >
+                            <span
+                              v-if="getThesis(idx, rIdx)?.loading"
+                              class="material-symbols-outlined mr-1 rotating"
+                              style="font-size: 16px"
+                            >
+                              progress_activity
+                            </span>
+                            <span v-else class="material-symbols-outlined mr-2">
+                              neurology
+                            </span>
+                            {{
+                              getThesis(idx, rIdx)?.loading
+                                ? "Analyzing..."
+                                : "Generate Thesis"
+                            }}
+                          </button>
+                          <button
+                            class="button is-success is-medium fira-sans-condensed-black-italic"
+                            @click="openPolymarket(rec.slug)"
+                          >
+                            <span class="material-symbols-outlined mr-2">
+                              open_in_new
+                            </span>
+                            Predict on Polymarket
+                          </button>
+                        </div>
+                        <hr v-if="getThesis(idx, rIdx)?.thesis" />
+                        <!-- Investment Thesis Display -->
+                        <div
+                          v-if="getThesis(idx, rIdx)?.thesis"
+                          class="investment-thesis mt-5"
+                        >
+                          <h3
+                            class="thesis-header is-size-4 fira-sans-condensed-black-italic"
+                          >
+                            <span
+                              class="material-symbols-outlined is-size-3 mr-2"
+                            >
+                              neurology
+                            </span>
+                            Generative Investment Thesis
+                          </h3>
+                          <div class="thesis-content has-text-white">
+                            <vue-markdown
+                              :source="getThesis(idx, rIdx).thesis"
+                            />
+                          </div>
+                        </div>
+                        <div
+                          v-if="getThesis(idx, rIdx)?.error"
+                          class="notification is-danger is-light mt-3"
+                        >
+                          <p>{{ getThesis(idx, rIdx).error }}</p>
+                        </div>
+                      </div>
+                    </div>
+
+                    <div
+                      v-else-if="!analysis.error"
+                      class="no-recommendations mt-3"
+                    >
+                      <span class="has-text-grey-light is-size-6">
+                        <span
+                          class="material-symbols-outlined mr-1"
+                          style="font-size: 16px"
+                        >
+                          info
+                        </span>
+                        No positions found with
+                        {{ analysis.meta?.minConviction || 2 }}+ traders
+                        agreeing.
+                      </span>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              <!-- TCG Agent Interface -->
+              <div v-else-if="selectedRunAgent === 'tcg'" class="tcg-interface">
+                <!-- Collection Selector -->
+                <div class="tcg-header mb-4">
+                  <div class="control collection-selector">
+                    <template v-for="col in tcgCollections" :key="col.id">
+                      <input
+                        type="radio"
+                        name="tcg_collection"
+                        :id="'tcg_col_' + col.id"
+                        :value="col.id"
+                        :checked="selectedTcgCollection === col.id"
+                        @change="
+                          selectedTcgCollection = col.id;
+                          loadTcgTopCards();
+                        "
+                      />
+                      <label :for="'tcg_col_' + col.id" class="radio">
+                        <span
+                          class="material-symbols-outlined mr-1"
+                          style="font-size: 24px !important"
+                        >
+                          {{ col.icon }}
+                        </span>
+                        {{ col.name }}
+                      </label>
+                    </template>
+                  </div>
+                </div>
+
+                <div class="columns">
+                  <!-- Left: Top Cards & Search -->
+                  <div class="column is-7">
+                    <div class="tcg-section models__activity--payouts">
+                      <!-- Search -->
+                      <div class="field has-addons mb-4">
+                        <div class="control is-expanded">
+                          <input
+                            class="input no-shadow"
+                            type="text"
+                            v-model="tcgSearchQuery"
+                            placeholder="Search cards..."
+                            @input="searchTcgCards"
+                          />
+                        </div>
+                        <div class="control">
+                          <button
+                            class="button is-info no-shadow"
+                            @click="searchTcgCards"
+                          >
+                            <span class="material-symbols-outlined">
+                              search
+                            </span>
+                          </button>
+                        </div>
+                      </div>
+
+                      <!-- Loading -->
+                      <div v-if="isTcgLoading" class="has-text-centered p-5">
+                        <span
+                          class="material-symbols-outlined rotating"
+                          style="font-size: 64px"
+                        >
+                          progress_activity
+                        </span>
+                      </div>
+
+                      <!-- Search Results -->
+                      <div
+                        v-else-if="tcgSearchResults.length > 0"
+                        class="tcg-cards has-text-left"
+                      >
+                        <p class="has-text-grey-light is-size-7 mb-2">
+                          Search Results:
+                        </p>
+                        <div
+                          v-for="card in tcgSearchResults"
+                          :key="card.id"
+                          class="tcg-card-item"
+                        >
+                          <div class="tcg-card-info">
+                            <strong>{{ card.name }}</strong>
+                            <span class="has-text-grey-light is-size-7 ml-2">
+                              {{ card.set }}
+                            </span>
+                          </div>
+                          <div class="tcg-card-actions">
+                            <button
+                              class="button is-small is-warning no-shadow"
+                              @click="addToPortfolio(card)"
+                              :disabled="
+                                userTcgPortfolio.some((c) => c.id === card.id)
+                              "
+                            >
+                              <span
+                                class="material-symbols-outlined"
+                                style="font-size: 16px"
+                              >
+                                add
+                              </span>
+                            </button>
+                          </div>
+                        </div>
+                      </div>
+
+                      <!-- Top Cards -->
+                      <div v-else class="tcg-cards has-text-left">
+                        <div
+                          v-for="card in tcgTopCards"
+                          :key="card.id"
+                          class="tcg-card-item"
+                        >
+                          <div class="tcg-card-info">
+                            <strong>{{ card.name }}</strong>
+                            <span class="has-text-grey-light is-size-7 ml-2">
+                              {{ card.set }}
+                            </span>
+                            <span class="tag is-info is-small ml-2">
+                              {{ card.rarity }}
+                            </span>
+                          </div>
+                          <div class="tcg-card-actions">
+                            <button
+                              class="button is-warning no-shadow"
+                              @click="addToPortfolio(card)"
+                              :disabled="
+                                userTcgPortfolio.some((c) => c.id === card.id)
+                              "
+                            >
+                              <span
+                                class="material-symbols-outlined"
+                                style="font-size: 24px"
+                              >
+                                add
+                              </span>
+                            </button>
+                          </div>
+                        </div>
+                        <div
+                          v-if="tcgTopCards.length === 0"
+                          class="has-text-centered p-5"
+                        >
+                          <p class="has-text-grey-light">
+                            Select a collection to load cards
+                          </p>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+
+                  <!-- Right: Your Portfolio -->
+                  <div class="column is-5">
+                    <div
+                      class="tcg-section portfolio-section models__activity--payouts"
+                    >
+                      <h4
+                        class="fira-sans-condensed-black-italic has-text-white is-size-4"
+                      >
+                        <span class="material-symbols-outlined is-size-1">
+                          amp_stories
+                        </span>
+                        My Cards
+                        <span class="tag is-info ml-2 is-pulled-right is-large">
+                          {{ userTcgPortfolio.length }} cards
+                        </span>
+                      </h4>
+
+                      <div class="tcg-portfolio-cards mt-4">
+                        <div
+                          v-for="card in userTcgPortfolio"
+                          :key="'portfolio-' + card.id"
+                          class="tcg-portfolio-card pb-5"
+                        >
+                          <div class="portfolio-card-header">
+                            <strong>
+                              {{ card.collection }} — {{ card.name }}
+                            </strong>
+                          </div>
+                          <hr />
+                          <div class="portfolio-card-actions mt-2">
+                            <button
+                              class="button is-medium is-success fira-sans-condensed-black-italic mr-5"
+                              @click="openTcgMarketModal(card)"
+                            >
+                              <span
+                                class="material-symbols-outlined mr-1 is-size-1"
+                              >
+                                online_prediction
+                              </span>
+                              Issue Market
+                            </button>
+                            <button
+                              class="button is-small is-danger"
+                              @click="removeFromPortfolio(card.id)"
+                            >
+                              <span
+                                class="material-symbols-outlined"
+                                style="font-size: 14px"
+                              >
+                                cancel
+                              </span>
+                            </button>
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
+                <!-- Active TCG Markets -->
+                <div
+                  v-if="tcgMarkets.length > 0"
+                  class="tcg-markets-section mt-5"
+                >
+                  <h4
+                    class="fira-sans-condensed-black-italic has-text-white is-size-4 mb-3 has-text-left"
+                  >
+                    <span class="material-symbols-outlined mr-2 is-size-1">
+                      online_prediction
+                    </span>
+                    Active Prediction Markets
+                  </h4>
+                  <div class="tcg-markets-list">
+                    <div
+                      v-for="market in tcgMarkets"
+                      :key="market.id"
+                      class="tcg-market-card models__activity--payouts mt-5"
+                    >
+                      <div class="columns">
+                        <div class="column is-8 has-text-left">
+                          <div class="tcg-market-question pt-2">
+                            <strong>{{ market.question }}</strong>
+                          </div>
+                        </div>
+                        <div class="column is-2">
+                          <button
+                            class="button is-success fira-sans-condensed-black-italic is-fullwidth"
+                            @click="joinTcgMarket(market.id, 'for', 10)"
+                          >
+                            <span class="material-symbols-outlined mr-1">
+                              thumb_up
+                            </span>
+                            YES
+                          </button>
+                        </div>
+                        <div class="column is-2">
+                          <button
+                            class="button is-danger fira-sans-condensed-black-italic is-fullwidth"
+                            @click="joinTcgMarket(market.id, 'against', 10)"
+                          >
+                            <span class="material-symbols-outlined mr-1">
+                              thumb_down
+                            </span>
+                            NO
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Loading Overlay -->
+    <div v-if="isAnalyzing || isGenerating" class="loading-overlay">
+      <div class="loading-content">
+        <span
+          class="material-symbols-outlined rotating is-size-1"
+          style="font-size: 64px"
+        >
+          progress_activity
+        </span>
+        <p class="fira-sans-condensed-black-italic is-size-4 mt-3">
+          {{ loadingMessage }}
+        </p>
+        <progress class="progress is-success mt-3" max="100"></progress>
+        <button
+          v-if="isGenerating"
+          class="button is-danger mt-4 fira-sans-condensed-black-italic"
+          @click="cancelGeneration"
+        >
+          <span class="material-symbols-outlined mr-2">close</span>
+          Cancel Generation
+        </button>
+      </div>
+    </div>
+
+    <!-- Position Modal -->
+    <div v-if="positionModal.show" class="modal is-active">
+      <div class="modal-background" @click="closePositionModal"></div>
+      <div class="modal-card">
+        <header class="modal-card-head">
+          <p class="modal-card-title fira-sans-condensed-black-italic">
+            Open {{ positionModal.side.toUpperCase() }} Position
+          </p>
+          <button class="delete" @click="closePositionModal"></button>
+        </header>
+        <section class="modal-card-body">
+          <p class="mb-4">{{ positionModal.market?.question }}</p>
+          <div class="field">
+            <label class="label">
+              Amount ({{
+                getProtocolByName(positionModal.protocol)?.token || "tokens"
+              }})
+            </label>
+            <div class="control">
+              <input
+                class="input is-large"
+                type="number"
+                v-model="positionModal.amount"
+                min="1"
+                placeholder="Enter amount"
+              />
+            </div>
+          </div>
+          <p class="has-text-grey is-size-7 mt-3">
+            You are betting that the SLA condition will
+            <strong
+              :class="
+                positionModal.side === 'for'
+                  ? 'has-text-success'
+                  : 'has-text-danger'
               "
             >
-              <span class="fira-sans-condensed-black-italic is-size-4">
-                No Market or Agent available.
-              </span>
-              <div class="control has-text-center mt-5">
-                <button
-                  class="button chat is-success is-large"
-                  @click.prevent="activeTab = 'buy'"
-                >
-                  <span class="material-symbols-outlined is-size-3 mr-2">
-                    shopping_cart
-                  </span>
-                  Browse Marketplace
-                </button>
-              </div>
-            </div>
-            <!-- Active Projects -->
-            <div
-              v-if="purchasedProjects.length > 0"
-              class="models__activity--payouts mb-5"
-            >
-              <h2
-                class="fira-sans-condensed-black-italic is-size-3 has-text-white has-text-left mb-4"
-              >
-                <span class="material-symbols-outlined mr-2">trending_up</span>
-                Your Markets
-              </h2>
-
-              <div
-                v-for="(project, idx) in purchasedProjects"
-                :key="idx"
-                class="market-access-card mb-4"
-                @click="openMarketDetails(project)"
-                style="cursor: pointer;"
-              >
-                <div class="columns">
-                  <div class="column is-12">
-                    <h3
-                      class="fira-sans-condensed-black-italic is-size-4 has-text-white"
-                    >
-                      <span class="material-symbols-outlined mr-2">
-                        {{ project.icon }}
-                      </span>
-                      {{ project.name }}
-                    </h3>
-                    <div class="tags mt-2">
-                      <span
-                        class="tag is-warning fira-sans-condensed-black-italic"
-                      >
-                        {{ project.token }}
-                      </span>
-                      <span
-                        class="tag is-info fira-sans-condensed-black-italic"
-                      >
-                        {{ project.markets }} Available SLAs
-                      </span>
-                      <span
-                        class="tag is-success fira-sans-condensed-black-italic"
-                      >
-                        {{ project.yourPositions }} Active Positions
-                      </span>
-                    </div>
-                  </div>
-                </div>
-                <hr />
-                <div class="columns">
-                  <div class="column is-4 has-text-centered">
-                    <p class="has-text-white is-size-7">Your P&L</p>
-                    <p
-                      class="fira-sans-condensed-black-italic is-size-4"
-                      :class="
-                        project.pnl >= 0
-                          ? 'has-text-success'
-                          : 'has-text-danger'
-                      "
-                    >
-                      {{ project.pnl >= 0 ? "+" : "" }}{{ project.pnl }}%
-                    </p>
-                  </div>
-                  <div class="column is-4 has-text-centered">
-                    <p class="has-text-white is-size-7">Exposure</p>
-                    <p
-                      class="fira-sans-condensed-black-italic is-size-4 has-text-white"
-                    >
-                      {{ project.exposure }} {{ project.token }}
-                    </p>
-                  </div>
-                  <div class="column is-4 has-text-centered">
-                    <p class="has-text-white is-size-7">Pending Resolutions</p>
-                    <p
-                      class="fira-sans-condensed-black-italic is-size-4 has-text-white"
-                    >
-                      {{ project.pendingResolutions }}
-                    </p>
-                  </div>
-                </div>
-              </div>
-            </div>
-
-            <!-- Deployed Agents -->
-            <div
-              v-if="deployedAgents.length > 0"
-              class="models__activity--payouts"
-            >
-              <h2
-                class="fira-sans-condensed-black-italic is-size-3 has-text-white has-text-left mb-4"
-              >
-                <span class="material-symbols-outlined mr-2">psychology</span>
-                Your Autonomous Trading Agents
-              </h2>
-              <p class="has-text-grey-light is-size-6 mb-4">
-                Autonomous agents monitor markets and execute trades on your behalf.
-                <strong class="has-text-success">Active</strong> = trading automatically.
-                <strong class="has-text-warning">Paused</strong> = monitoring only, no trades.
-              </p>
-
-              <div
-                v-for="(agent, idx) in deployedAgents"
-                :key="idx"
-                class="agent-status-card mb-4"
-              >
-                <div class="columns">
-                  <div class="column is-8">
-                    <h3
-                      class="fira-sans-condensed-black-italic is-size-4 has-text-white"
-                    >
-                      <span class="material-symbols-outlined mr-2">
-                        {{ agent.icon }}
-                      </span>
-                      {{ agent.name }}
-                    </h3>
-                    <div class="tags mt-2">
-                      <span
-                        class="tag fira-sans-condensed-black-italic"
-                        :class="
-                          agent.status === 'active'
-                            ? 'is-success'
-                            : 'is-warning'
-                        "
-                        :title="agent.status === 'active' ? 'Agent is actively executing trades' : 'Agent is paused - monitoring only'"
-                      >
-                        <span class="material-symbols-outlined mr-1" style="font-size: 14px;">
-                          {{ agent.status === "active" ? "play_circle" : "pause_circle" }}
-                        </span>
-                        {{ agent.status === "active" ? "Autonomous Trading" : "Paused" }}
-                      </span>
-                      <span
-                        class="tag is-info fira-sans-condensed-black-italic"
-                      >
-                        {{ agent.tradesCount }} Trades
-                      </span>
-                    </div>
-                  </div>
-                  <div class="column is-4 has-text-right">
-                    <button
-                      class="button is-medium"
-                      :class="
-                        agent.status === 'active' ? 'is-warning' : 'is-success'
-                      "
-                      @click="toggleAgent(agent)"
-                      :title="agent.status === 'active' ? 'Pause autonomous trading' : 'Resume autonomous trading'"
-                    >
-                      <span class="material-symbols-outlined mr-2">
-                        {{ agent.status === "active" ? "pause" : "play_arrow" }}
-                      </span>
-                      {{ agent.status === "active" ? "Pause" : "Resume" }}
-                    </button>
-                    <button
-                      class="button is-info is-outlined is-medium ml-2"
-                      @click="viewAgentDetails(agent)"
-                      title="View agent details and performance"
-                    >
-                      <span class="material-symbols-outlined mr-2">
-                        analytics
-                      </span>
-                      Details
-                    </button>
-                    <!-- Run analysis button appears only for Copy Master agent -->
-                    <button
-                      v-if="agent.name === 'Copy Master'"
-                      class="button is-success is-outlined is-medium ml-2"
-                      @click="runAgentAnalysis(agent)"
-                      title="Run market analysis now"
-                    >
-                      <span class="material-symbols-outlined mr-2">
-                        auto_read_play
-                      </span>
-                      Run Analysis
-                    </button>
-                  </div>
-                </div>
-                <hr />
-                <div class="columns">
-                  <div class="column is-3 has-text-centered">
-                    <p class="has-text-white is-size-7">Return (7d)</p>
-                    <p
-                      class="fira-sans-condensed-black-italic is-size-4"
-                      :class="
-                        agent.return7d >= 0
-                          ? 'has-text-success'
-                          : 'has-text-danger'
-                      "
-                    >
-                      {{ agent.return7d >= 0 ? "+" : "" }}{{ agent.return7d }}%
-                    </p>
-                  </div>
-                  <div class="column is-3 has-text-centered">
-                    <p class="has-text-white is-size-7">Win Rate</p>
-                    <p
-                      class="fira-sans-condensed-black-italic is-size-4 has-text-white"
-                    >
-                      {{ agent.winRate }}%
-                    </p>
-                  </div>
-                  <div class="column is-3 has-text-centered">
-                    <p class="has-text-white is-size-7">Avg Trade Size</p>
-                    <p
-                      class="fira-sans-condensed-black-italic is-size-4 has-text-white"
-                    >
-                      {{ agent.avgTradeSize }} BONZAI
-                    </p>
-                  </div>
-                  <div class="column is-3 has-text-centered">
-                    <p class="has-text-white is-size-7">Last Trade</p>
-                    <p
-                      class="fira-sans-condensed-black-italic is-size-4 has-text-white"
-                    >
-                      {{ agent.lastTrade }}
-                    </p>
-                  </div>
-                </div>
-              </div>
-            </div>
-          </div>
-        </div>
+              {{ positionModal.side === "for" ? "be met" : "NOT be met" }}
+            </strong>
+            by the target date.
+          </p>
+        </section>
+        <footer class="modal-card-foot">
+          <button
+            class="button fira-sans-condensed-black-italic"
+            :class="positionModal.side === 'for' ? 'is-success' : 'is-danger'"
+            @click="confirmPosition"
+            :disabled="!positionModal.amount || positionModal.amount <= 0"
+          >
+            <span class="material-symbols-outlined mr-2">check</span>
+            Confirm Position
+          </button>
+          <button class="button" @click="closePositionModal">Cancel</button>
+        </footer>
       </div>
     </div>
 
-    <!-- AI Generation Progress Notification (inline, fixed position) -->
+    <!-- TCG Market Creation Modal (LVL Style) -->
     <div
-      v-if="showAIModal"
-      class="generation notification is-info"
-      style="margin-bottom: 1rem"
+      v-if="tcgMarketModal.show"
+      class="tcg-modal-overlay"
+      @click.self="closeTcgMarketModal"
     >
-      <p class="mb-2">
-        <span class="fira-sans-condensed-black-italic is-size-4">
+      <div class="tcg-modal">
+        <div class="has-text-right">
           <button
-            disabled
-            class="button is-loading is-info is-small mr-2 p-4"
-          ></button>
-          {{ aiModalMessage || "Processing..." }}
-        </span>
-        <span
-          class="fira-sans-condensed-black-italic is-pulled-right is-size-4"
-        >
-          <span class="material-symbols-outlined rotating" style="font-size: 24px">
-            progress_activity
+            class="button is-danger"
+            @click="closeTcgMarketModal"
+            title="Close"
+          >
+            <span class="material-symbols-outlined">close</span>
+          </button>
+        </div>
+
+        <div class="tcg-modal-header has-text-center">
+          <span class="material-symbols-outlined is-size-1">
+            online_prediction
           </span>
-        </span>
-      </p>
-      <progress
-        class="progress is-success"
-        :value="aiProgress"
-        max="100"
-      >
-        {{ aiProgress }}%
-      </progress>
+          <h2
+            class="fira-sans-condensed-black-italic is-size-3 has-text-centered"
+          >
+            New Prediction Market
+          </h2>
+        </div>
+
+        <div class="tcg-modal-body">
+          <!-- Card Info Section -->
+          <div v-if="tcgMarketModal.card" class="tcg-card-preview">
+            <div class="tcg-modal-status mb-4">
+              <span
+                class="tcg-status-pill fira-sans-condensed-black-italic is-size-5"
+              >
+                {{ tcgMarketModal.card.name }}
+              </span>
+            </div>
+            <div class="tcg-card-tags">
+              <span class="tcg-tag fira-sans-condensed-black-italic">
+                {{ tcgMarketModal.card.set }}
+              </span>
+              <span class="tcg-tag is-price fira-sans-condensed-black-italic">
+                ${{ tcgMarketModal.card.price }}
+              </span>
+            </div>
+          </div>
+
+          <!-- Form Fields -->
+          <div class="tcg-form-section has-text-left">
+            <div class="tcg-field">
+              <label class="tcg-label fira-sans-condensed-black-italic">
+                Price Condition
+              </label>
+              <div class="tcg-select-wrapper">
+                <select v-model="tcgMarketModal.operator" class="tcg-select">
+                  <option value=">">&gt; (greater than)</option>
+                  <option value="<">&lt; (less than)</option>
+                  <option value=">=">&gt;= (at least)</option>
+                  <option value="<=">&lt;= (at most)</option>
+                  <option value="=">= (exactly)</option>
+                </select>
+              </div>
+            </div>
+
+            <div class="tcg-field mt-5">
+              <label class="tcg-label fira-sans-condensed-black-italic">
+                Target Price (USD)
+              </label>
+              <input
+                class="tcg-input"
+                type="number"
+                v-model="tcgMarketModal.targetPrice"
+                min="0"
+                step="0.01"
+                placeholder="Enter target price"
+              />
+            </div>
+
+            <div class="tcg-field mt-5">
+              <label class="tcg-label fira-sans-condensed-black-italic">
+                Target Date
+              </label>
+              <input
+                class="tcg-input"
+                type="date"
+                v-model="tcgMarketModal.targetDate"
+              />
+            </div>
+          </div>
+
+          <!-- Preview Section -->
+          <div class="tcg-preview-box">
+            <p class="tcg-preview-text p-0 m-0 has-text-centered">
+              Will
+              <strong>{{ tcgMarketModal.card?.name }}</strong>
+              's market price
+              {{
+                tcgMarketModal.operator === ">"
+                  ? "exceed"
+                  : tcgMarketModal.operator === "<"
+                    ? "fall below"
+                    : tcgMarketModal.operator === ">="
+                      ? "reach at least"
+                      : tcgMarketModal.operator === "<="
+                        ? "stay at or below"
+                        : "equal exactly"
+              }}
+              <strong>${{ tcgMarketModal.targetPrice || "0.00" }}</strong>
+              by
+              <strong>{{ tcgMarketModal.targetDate || "TBD" }}</strong>
+              ?
+            </p>
+          </div>
+        </div>
+
+        <div class="tcg-modal-footer mb-5">
+          <button
+            class="button tcg-primary-btn is-medium fira-sans-condensed-black-italic"
+            @click="createTcgMarket"
+            :disabled="
+              !tcgMarketModal.targetPrice || !tcgMarketModal.targetDate
+            "
+          >
+            <span class="material-symbols-outlined mr-2">
+              online_prediction
+            </span>
+            Ask Now !
+          </button>
+          <button
+            class="button is-danger is-medium"
+            @click="closeTcgMarketModal"
+          >
+            Cancel
+          </button>
+        </div>
+      </div>
     </div>
   </div>
-
-  <!-- Market Details Modal (using levels-style dialog) -->
-  <Teleport to="body">
-    <Transition name="fade">
-      <div
-        v-if="selectedMarketDetails"
-        class="market-modal-overlay"
-        @click.self="selectedMarketDetails = null"
-      >
-        <div class="market-modal">
-          <div class="has-text-right">
-            <button
-              class="button is-danger"
-              @click="selectedMarketDetails = null"
-              title="Close"
-            >
-              <span class="material-symbols-outlined">close</span>
-            </button>
-          </div>
-          <div class="modal-header">
-            <span class="material-symbols-outlined is-size-1">
-              {{ selectedMarketDetails.icon || "finance_mode" }}
-            </span>
-            <span
-              class="modal-market-badge fira-sans-condensed-black-italic is-size-2"
-            >
-              {{ selectedMarketDetails.token }}
-            </span>
-            <h2 class="fira-sans-condensed-black-italic is-size-3">
-              {{ selectedMarketDetails.name }}
-            </h2>
-          </div>
-
-          <div class="modal-body">
-            <div class="market-description models__activity--payouts ok">
-              <div class="modal-status mb-5">
-                <span class="status-pill fira-sans-condensed-black-italic is-size-4 ok">
-                  {{ selectedMarketDetails.markets }} Markets Available
-                </span>
-              </div>
-              <p v-if="selectedMarketDetails.description">
-                {{ selectedMarketDetails.description }}
-              </p>
-              <p v-else>
-                Access prediction markets and deploy your AI trading agents on this platform.
-              </p>
-            </div>
-
-            <div class="features-list fira-sans-condensed-black-italic mt-4">
-              <ul>
-                <li><strong>Active Positions:</strong> {{ selectedMarketDetails.yourPositions || 0 }}</li>
-                <li><strong>P&L:</strong> {{ selectedMarketDetails.pnl >= 0 ? "+" : "" }}{{ selectedMarketDetails.pnl || 0 }}%</li>
-                <li><strong>Exposure:</strong> {{ selectedMarketDetails.exposure || 0 }} {{ selectedMarketDetails.token }}</li>
-                <li><strong>Pending Resolutions:</strong> {{ selectedMarketDetails.pendingResolutions || 0 }}</li>
-              </ul>
-            </div>
-
-            <div class="requirements-summary mt-4">
-              <h3 class="requirements-title fira-sans-condensed-black-italic is-size-4">
-                Market Access
-              </h3>
-              <div class="req-row">
-                <span class="material-symbols-outlined">check_circle</span>
-                <span class="req-text">Full access to all {{ selectedMarketDetails.markets }} SLAs</span>
-                <span class="req-status met">✓</span>
-              </div>
-              <div class="req-row">
-                <span class="material-symbols-outlined">analytics</span>
-                <span class="req-text">Real-time market analytics</span>
-                <span class="req-status met">✓</span>
-              </div>
-              <div class="req-row">
-                <span class="material-symbols-outlined">psychology</span>
-                <span class="req-text">AI agent deployment</span>
-                <span class="req-status met">✓</span>
-              </div>
-            </div>
-          </div>
-
-          <div class="modal-footer has-text-centered">
-            <button
-              class="button is-success is-medium"
-              @click="selectedMarketDetails = null"
-            >
-              <span class="material-symbols-outlined mr-2">launch</span>
-              Enter Market
-            </button>
-          </div>
-        </div>
-      </div>
-    </Transition>
-  </Teleport>
-
-  <!-- Alert Modal (replaces native alerts) -->
-  <Teleport to="body">
-    <Transition name="fade">
-      <div
-        v-if="alertModal.show"
-        class="market-modal-overlay"
-        @click.self="closeAlert"
-      >
-        <div class="market-modal alert-modal">
-          <div class="has-text-right">
-            <button
-              class="button is-danger"
-              @click="closeAlert"
-              title="Close"
-            >
-              <span class="material-symbols-outlined">close</span>
-            </button>
-          </div>
-          <div class="modal-header">
-            <span
-              class="material-symbols-outlined is-size-1"
-              :class="{
-                'has-text-info': alertModal.type === 'info',
-                'has-text-success': alertModal.type === 'success',
-                'has-text-warning': alertModal.type === 'warning',
-                'has-text-danger': alertModal.type === 'error',
-              }"
-            >
-              {{ alertModal.icon }}
-            </span>
-            <h2 class="fira-sans-condensed-black-italic is-size-3">
-              {{ alertModal.title }}
-            </h2>
-          </div>
-
-          <div class="modal-body">
-            <div class="market-description models__activity--payouts">
-              <p style="white-space: pre-wrap;">{{ alertModal.message }}</p>
-            </div>
-          </div>
-
-          <div class="modal-footer has-text-centered">
-            <button
-              class="button is-medium"
-              :class="{
-                'is-info': alertModal.type === 'info',
-                'is-success': alertModal.type === 'success',
-                'is-warning': alertModal.type === 'warning',
-                'is-danger': alertModal.type === 'error',
-              }"
-              @click="closeAlert"
-            >
-              <span class="material-symbols-outlined mr-2">check</span>
-              OK
-            </button>
-          </div>
-        </div>
-      </div>
-    </Transition>
-  </Teleport>
-
-  <!-- Agent Details Modal -->
-  <Teleport to="body">
-    <Transition name="fade">
-      <div
-        v-if="agentDetailsModal.show && agentDetailsModal.agent"
-        class="market-modal-overlay"
-        @click.self="closeAgentDetails"
-      >
-        <div class="market-modal">
-          <div class="has-text-right">
-            <button
-              class="button is-danger"
-              @click="closeAgentDetails"
-              title="Close"
-            >
-              <span class="material-symbols-outlined">close</span>
-            </button>
-          </div>
-          <div class="modal-header">
-            <span class="material-symbols-outlined is-size-1">
-              {{ agentDetailsModal.agent.icon || "psychology" }}
-            </span>
-            <span
-              class="modal-market-badge fira-sans-condensed-black-italic is-size-2"
-              :class="agentDetailsModal.agent.status === 'active' ? 'is-success' : 'is-warning'"
-            >
-              {{ agentDetailsModal.agent.status === 'active' ? 'ACTIVE' : 'PAUSED' }}
-            </span>
-            <h2 class="fira-sans-condensed-black-italic is-size-3">
-              {{ agentDetailsModal.agent.name }}
-            </h2>
-          </div>
-
-          <div class="modal-body">
-            <div class="market-description models__activity--payouts">
-              <div class="modal-status mb-5">
-                <span
-                  class="status-pill fira-sans-condensed-black-italic is-size-5"
-                  :class="agentDetailsModal.agent.status === 'active' ? 'ok' : 'warning'"
-                >
-                  {{ agentDetailsModal.agent.status === 'active' ? 'Autonomous Trading Enabled' : 'Autonomous Trading Paused' }}
-                </span>
-              </div>
-              <p class="mb-4">
-                <strong>What does this status mean?</strong><br/>
-                <span v-if="agentDetailsModal.agent.status === 'active'">
-                  This agent is <strong>actively monitoring markets</strong> and will automatically execute trades based on its strategy.
-                  It operates autonomously, analyzing market conditions and placing trades without requiring your approval for each transaction.
-                </span>
-                <span v-else>
-                  This agent is <strong>paused</strong> and will not execute any trades.
-                  Market analysis continues in the background, but no autonomous actions are taken.
-                  Resume the agent to enable automatic trading.
-                </span>
-              </p>
-            </div>
-
-            <div class="features-list fira-sans-condensed-black-italic mt-4">
-              <h3 class="is-size-5 mb-3">Performance Metrics</h3>
-              <ul>
-                <li><strong>Total Trades:</strong> {{ agentDetailsModal.agent.tradesCount }}</li>
-                <li><strong>7-Day Return:</strong> <span :class="agentDetailsModal.agent.return7d >= 0 ? 'has-text-success' : 'has-text-danger'">{{ agentDetailsModal.agent.return7d >= 0 ? '+' : '' }}{{ agentDetailsModal.agent.return7d }}%</span></li>
-                <li><strong>Win Rate:</strong> {{ agentDetailsModal.agent.winRate }}%</li>
-                <li><strong>Avg Trade Size:</strong> {{ agentDetailsModal.agent.avgTradeSize }} BONZAI</li>
-                <li><strong>Last Trade:</strong> {{ agentDetailsModal.agent.lastTrade }}</li>
-              </ul>
-            </div>
-
-            <div class="requirements-summary mt-4">
-              <h3 class="requirements-title fira-sans-condensed-black-italic is-size-4">
-                Agent Capabilities
-              </h3>
-              <div class="req-row">
-                <span class="material-symbols-outlined">analytics</span>
-                <span class="req-text">Real-time market analysis</span>
-                <span class="req-status met">✓</span>
-              </div>
-              <div class="req-row">
-                <span class="material-symbols-outlined">content_copy</span>
-                <span class="req-text">Copy-trading from top performers</span>
-                <span class="req-status met">✓</span>
-              </div>
-              <div class="req-row">
-                <span class="material-symbols-outlined">shield</span>
-                <span class="req-text">Risk management controls</span>
-                <span class="req-status met">✓</span>
-              </div>
-            </div>
-          </div>
-
-          <div class="modal-footer has-text-centered">
-            <button
-              class="button is-medium"
-              :class="agentDetailsModal.agent.status === 'active' ? 'is-warning' : 'is-success'"
-              @click="toggleAgent(agentDetailsModal.agent); closeAgentDetails()"
-            >
-              <span class="material-symbols-outlined mr-2">
-                {{ agentDetailsModal.agent.status === 'active' ? 'pause' : 'play_arrow' }}
-              </span>
-              {{ agentDetailsModal.agent.status === 'active' ? 'Pause Agent' : 'Resume Agent' }}
-            </button>
-          </div>
-        </div>
-      </div>
-    </Transition>
-  </Teleport>
 </template>
 
 <script>
-import { ref, reactive, onMounted, Teleport, Transition } from "vue";
+import { ref, reactive, onMounted, watch } from "vue";
+import VueMarkdown from "vue-markdown-render";
 import polymarketAgent from "./polymarketAgent.js";
-
-/**
- * Helper to provide the current local language model definition. In a
- * production environment this could be replaced with a composable or
- * global store that reflects the user’s chosen model. For now it
- * returns the LLaMA 3.1 8B model details so that SmartAgent will use
- * this model when checking availability and sending prompts.
- */
-function useCurrentModel() {
-  return {
-    modelname: "LLaMA 3.1 8B",
-    modeldesc:
-      "8B-parameter LLaMA 3.1 instruct model from Meta with a 131,072-token context window. Modern, strong general-purpose assistant with good multilingual and coding performance. Best for: main local chat and coding assistant on a single recent GPU.",
-    url: "https://huggingface.co/lmstudio-community/Meta-Llama-3.1-8B-Instruct-GGUF/resolve/main/Meta-Llama-3.1-8B-Instruct-Q4_K_M.gguf",
-    filename: "meta-llama-3.1-8b-instruct-q4_k_m.gguf",
-    filesize: "4.92 GB",
-    parameters: 8000000000,
-    context: 131072,
-  };
-}
+import tcgAgent from "./tcgAgent.js";
 
 export default {
-  name: "PredictionMarkets",
-  components: { Teleport, Transition },
+  name: "SmartAgent",
+  components: { VueMarkdown },
   setup() {
     const activeTab = ref("buy");
-    const selectedProject = ref("polimarket");
+    const selectedProject = ref("");
     const selectedAgent = ref("copymaster");
-    const showAIModal = ref(false);
-    const aiModalMessage = ref("");
-    const aiProgress = ref(0);
-    const selectedMarketDetails = ref(null);
-
-    // Alert modal state (replaces native alerts)
-    const alertModal = reactive({
+    const expandedAgentDescription = ref(null); // Track which agent description is expanded
+    const expandedProjectDescription = ref(null); // Track which project description is expanded
+    const statusNotification = ref({ show: false, message: "", type: "info" }); // For non-blocking notifications
+    const isAnalyzing = ref(false);
+    const isGenerating = ref(false);
+    const isDownloading = ref(false);
+    const polymarketTimePeriod = ref("WEEK");
+    const polymarketMinConviction = ref(2);
+    const downloadProgress = ref(0);
+    const isModelAvailable = ref(false);
+    const isModelLoaded = ref(false);
+    const loadingMessage = ref("");
+    const analysisHistory = ref([]);
+    const investmentTheses = ref({}); // key: "analysisIdx-recIdx", value: { loading, thesis, error }
+    const purchasedAgents = ref([]);
+    const purchasedProtocols = ref([]);
+    const selectedRunProtocol = ref(null);
+    const selectedRunAgent = ref(null);
+    const positions = ref({});
+    const positionModal = reactive({
       show: false,
-      title: "",
-      message: "",
-      type: "info", // info, success, warning, error
-      icon: "info",
+      protocol: null,
+      marketIdx: null,
+      side: null,
+      market: null,
+      amount: null,
+    });
+    const generationCancelled = ref(false);
+
+    // TCG Agent State
+    const tcgCollections = ref(tcgAgent.collections);
+    const selectedTcgCollection = ref("pokemon");
+    const tcgTopCards = ref([]);
+    const tcgSearchQuery = ref("");
+    const tcgSearchResults = ref([]);
+    const userTcgPortfolio = ref([]);
+    const tcgMarkets = ref([]);
+    const isTcgLoading = ref(false);
+    const tcgLoadingMessage = ref("");
+    const tcgMarketModal = reactive({
+      show: false,
+      card: null,
+      operator: ">",
+      targetPrice: null,
+      targetDate: "",
     });
 
-    const showAlert = (title, message, type = "info") => {
-      const icons = {
-        info: "info",
-        success: "check_circle",
-        warning: "warning",
-        error: "error",
-      };
-      alertModal.title = title;
-      alertModal.message = message;
-      alertModal.type = type;
-      alertModal.icon = icons[type] || "info";
-      alertModal.show = true;
-    };
-
-    const closeAlert = () => {
-      alertModal.show = false;
-    };
-
-    // Agent details modal state
-    const agentDetailsModal = reactive({
-      show: false,
-      agent: null,
-    });
-
-    const openAgentDetails = (agent) => {
-      agentDetailsModal.agent = agent;
-      agentDetailsModal.show = true;
-    };
-
-    const closeAgentDetails = () => {
-      agentDetailsModal.show = false;
-      agentDetailsModal.agent = null;
+    // Model config - using the same model as GenerativeText
+    const modelConfig = {
+      modelname: "LLaMA 3.1 8B",
+      modeldesc:
+        "8B-parameter LLaMA 3.1 instruct model from Meta with a 131,072-token context window. Modern, strong general-purpose assistant with good multilingual and coding performance. Best for: main local chat and coding assistant on a single recent GPU.",
+      url: "https://huggingface.co/lmstudio-community/Meta-Llama-3.1-8B-Instruct-GGUF/resolve/main/Meta-Llama-3.1-8B-Instruct-Q4_K_M.gguf",
+      filename: "meta-llama-3.1-8b-instruct-q4_k_m.gguf",
+      filesize: "4.92 GB",
+      parameters: 8000000000,
+      context: 131072,
     };
 
     const projectForm = reactive({
@@ -1207,660 +1967,881 @@ export default {
       totalSupply: "",
       initialLiquidity: "",
       accessPrice: "",
-      marketIdeas: "",
-      automation: {
-        commentary: true,
-        resolution: true,
-        analytics: true,
-        social: false,
-        copyTrading: false,
-        riskManagement: true,
-      },
     });
 
-    const purchasedProjects = ref([]);
-    const deployedAgents = ref([]);
+    // Structured SLA markets
+    const slaMarkets = ref([]);
 
-    // DSLA use cases represent the possible market themes for DSLA Protocol
-    // markets. Each item has a key (used internally) and a user‑facing label.
     const dslaUseCases = [
-      { key: "vol_returns", label: "Volatility of Returns" },
-      { key: "vol_availability", label: "Volatility of Availability" },
-      { key: "vol_asset_floors", label: "Volatility of Digital Asset Floors" },
+      {
+        key: "vol_returns",
+        label: "Volatility of Returns",
+        context: "DeFi yields, staking rewards, lending rates",
+      },
+      {
+        key: "vol_availability",
+        label: "Volatility of Availability",
+        context: "blockchain uptime, API availability, node reliability",
+      },
+      {
+        key: "vol_asset_floors",
+        label: "Volatility of Asset Floors",
+        context: "NFT floor prices, token minimums, collateral ratios",
+      },
       {
         key: "vol_currency_pegs",
-        label: "Volatility of Digital Currency Pegs",
+        label: "Volatility of Currency Pegs",
+        context: "stablecoin pegs, wrapped token ratios, synthetic assets",
       },
-      { key: "vol_response_time", label: "Volatility of Response Time" },
-      { key: "vol_delivery_time", label: "Volatility of Delivery Time" },
+      {
+        key: "vol_response_time",
+        label: "Volatility of Response Time",
+        context: "block times, transaction confirmations, oracle updates",
+      },
+      {
+        key: "vol_delivery_time",
+        label: "Volatility of Delivery Time",
+        context: "NFT mints, token distributions, airdrop claims",
+      },
     ];
-    // The currently selected DSLA use case in the Sell tab. When a user clicks
-    // one of the use case buttons, this ref will store the selected object.
     const selectedUseCase = ref(null);
-    // A dynamic list of DSLA projects created via the Sell tab. When a user
-    // launches a new prediction market project, it is added to this array so
-    // it can appear in the Buy tab under “Your DSLA Projects”.
     const marketProjects = ref([]);
 
-    // Model availability state. We use this to verify that the recommended
-    // local language model is downloaded and loaded before attempting any
-    // inference. When false, sendMessage will alert the user instead of
-    // sending a prompt to the model.
-    const modelLoaded = ref(false);
-    // Retrieve the current model details. In this simple example this hook
-    // returns the LLaMA 3.1 8B model definition. Should the user select a
-    // different model in another part of the app, this hook can be
-    // customised to return that model instead.
-    const currentModel = useCurrentModel();
+    const polymarketPeriods = [
+      { key: "DAY", label: "Daily" },
+      { key: "WEEK", label: "Weekly" },
+      { key: "MONTH", label: "Monthly" },
+      { key: "ALL", label: "All Time" },
+    ];
 
-    /**
-     * Check if the recommended model is available on disk via electronAPI.
-     * Sets the modelLoaded ref accordingly. Returns true if available.
-     */
-    const isModelAvailable = async () => {
-      if (window.electronAPI && window.electronAPI.checkModel) {
-        try {
-          const available = await window.electronAPI.checkModel(
-            currentModel.filename
-          );
-          modelLoaded.value = !!available;
-          return modelLoaded.value;
-        } catch (e) {
-          modelLoaded.value = false;
-          return false;
-        }
-      }
-      modelLoaded.value = false;
-      return false;
-    };
+    const polymarketConvictionLevels = [
+      { key: 1, label: "1+" },
+      { key: 2, label: "2+" },
+      { key: 3, label: "3+" },
+      { key: 4, label: "4+" },
+      { key: 5, label: "5+" },
+      { key: 6, label: "6+" },
+      { key: 7, label: "7+" },
+      { key: 8, label: "8+" },
+      { key: 9, label: "9+" },
+      { key: 10, label: "10" },
+    ];
 
-    /**
-     * Send a prompt to the locally loaded language model. Before sending the
-     * prompt, this helper ensures that the model file is downloaded and
-     * available (via isModelAvailable). If available, it then calls
-     * electronAPI.loadModel with the current model’s filename, parameters and
-     * context to load it into memory. Finally it sends the prompt via
-     * electronAPI.chat and returns the response. If the model is not
-     * available or an error occurs, a message is shown and null is returned.
-     *
-     * @param {string} prompt The prompt to send to the model.
-     * @returns {Promise<string|null>} The model's response or null on error.
-     */
-    const sendMessage = async (prompt) => {
-      if (!prompt || typeof prompt !== "string") {
-        return null;
-      }
-      // Check if the model file exists on disk. If not, show modal.
-      const available = await isModelAvailable();
-      if (!available) {
-        showAlert(
-          "Model Not Available",
-          `The selected model (${currentModel.modelname}) is not downloaded. Please download it via the model manager before using AI features.`,
-          "warning"
+    const checkModelAvailability = async () => {
+      if (window.electronAPI?.checkModel) {
+        isModelAvailable.value = await window.electronAPI.checkModel(
+          modelConfig.filename
         );
-        return null;
       }
-      // Load the model into memory before sending the prompt.
-      try {
-        if (window.electronAPI && window.electronAPI.loadModel) {
-          await window.electronAPI.loadModel({
-            filename: currentModel.filename,
-            parameters: currentModel.parameters,
-            context: currentModel.context,
-          });
-          modelLoaded.value = true;
-        }
-      } catch (e) {
-        console.error("Error loading model:", e);
-      }
-      try {
-        if (window.electronAPI && window.electronAPI.chat) {
-          const resp = await window.electronAPI.chat(prompt);
-          console.log("Response:", resp);
-          return resp;
-        }
-      } catch (e) {
-        showAlert("Communication Error", "An error occurred while communicating with the local model.", "error");
-      }
-      return null;
     };
 
-    // On mount, check if the recommended model is available. This allows
-    // subsequent AI features to know whether they can send prompts.
-    onMounted(async () => {
-      await isModelAvailable();
-    });
+    const downloadModel = async () => {
+      if (!window.electronAPI?.downloadModel) return;
 
-    const buyProjectAccess = (projectName) => {
-      showAlert(
-        "Purchasing Access",
-        `Purchasing access to ${projectName}...\n\nThis will allow you to trade in all ${projectName} prediction markets and deploy your agents there.`,
-        "info"
+      isDownloading.value = true;
+      downloadProgress.value = 0;
+
+      const removeListener = window.electronAPI.onDownloadProgress(
+        (_event, progress) => {
+          downloadProgress.value = Math.round(progress.percent * 100);
+        }
       );
-      // Built‑in DSLA projects with static data. Dynamic projects created in Sell tab are
-      // stored in `marketProjects`. We merge both when purchasing access.
-      const projectData = {
-        PoliMarket: {
-          name: "PoliMarket",
-          token: "$POLI",
-          icon: "how_to_vote",
-          markets: 12,
-          yourPositions: 0,
-          pnl: 0,
-          exposure: 0,
-          pendingResolutions: 0,
-        },
-        CryptoOracle: {
-          name: "CryptoOracle",
-          token: "$CRYO",
-          icon: "currency_bitcoin",
-          markets: 8,
-          yourPositions: 0,
-          pnl: 0,
-          exposure: 0,
-          pendingResolutions: 0,
-        },
-        SportsBet: {
-          name: "SportsBet",
-          token: "$SPRT",
-          icon: "sports_soccer",
-          markets: 23,
-          yourPositions: 0,
-          pnl: 0,
-          exposure: 0,
-          pendingResolutions: 0,
-        },
-      };
-      // If a dynamic DSLA project with this name exists, use it instead of the static mapping.
-      const dynamic = marketProjects.value.find((p) => p.name === projectName);
-      const dataToAdd = dynamic ? { ...dynamic } : projectData[projectName];
-      if (!purchasedProjects.value.find((p) => p.name === projectName)) {
-        purchasedProjects.value.push(dataToAdd);
+
+      try {
+        const success = await window.electronAPI.downloadModel(
+          modelConfig.url,
+          modelConfig.filename
+        );
+        if (success) {
+          isModelAvailable.value = true;
+        }
+      } catch (err) {
+        console.error("Model download failed:", err);
+      } finally {
+        isDownloading.value = false;
+        downloadProgress.value = 0;
+        if (removeListener) removeListener();
       }
     };
 
-    /**
-     * Run the Polymarket copy‑trading analysis. This helper fetches
-     * market data and top traders via the polymarketAgent, then uses
-     * the locally loaded language model (electronAPI.chat) to
-     * summarise each event. Results are shown in an alert.
-     */
-    const runCopyMasterAnalysis = async () => {
-      aiModalMessage.value = "Analyzing top markets and traders...";
-      showAIModal.value = true;
+    const loadModel = async () => {
+      if (isModelLoaded.value) return;
+
+      const payload = {
+        modelname: modelConfig.modelname,
+        filename: modelConfig.filename,
+      };
+
+      console.log("Loading model for SmartAgent:", payload);
+      await window.electronAPI.loadModel(payload);
+      isModelLoaded.value = true;
+    };
+
+    const loadPurchasedAgents = async () => {
+      if (window.electronAPI?.store?.get) {
+        const stored = await window.electronAPI.store.get(
+          "purchasedAgents",
+          []
+        );
+        purchasedAgents.value = stored || [];
+      }
+    };
+
+    const savePurchasedAgents = async () => {
+      if (window.electronAPI?.store?.set) {
+        // Convert reactive array to plain array for IPC serialization
+        const plainArray = [...purchasedAgents.value];
+        await window.electronAPI.store.set("purchasedAgents", plainArray);
+      }
+    };
+
+    const formatNumber = (num) => {
+      if (!num) return "0";
+      const n = Number(num);
+      if (n >= 1000000) return (n / 1000000).toFixed(1) + "M";
+      if (n >= 1000) return (n / 1000).toFixed(1) + "K";
+      return n.toFixed(2);
+    };
+
+    const formatSlaQuestion = (sla) => {
+      if (
+        !sla.asset ||
+        !sla.metric ||
+        !sla.operator ||
+        !sla.target ||
+        !sla.date
+      ) {
+        return "Complete all fields to see the prediction question";
+      }
+      const operatorText = {
+        ">": "exceed",
+        "<": "fall below",
+        ">=": "reach at least",
+        "<=": "stay at or below",
+        "=": "equal exactly",
+      };
+      const dateFormatted = new Date(sla.date).toLocaleDateString("en-US", {
+        month: "long",
+        day: "numeric",
+        year: "numeric",
+      });
+      return `Will ${sla.asset}'s ${sla.metric} ${operatorText[sla.operator]} ${sla.target} by ${dateFormatted}?`;
+    };
+
+    const removeSlaMarket = (idx) => {
+      slaMarkets.value.splice(idx, 1);
+    };
+
+    const addSlaMarket = () => {
+      slaMarkets.value.push({
+        asset: "",
+        metric: "",
+        operator: ">",
+        target: "",
+        date: "",
+      });
+    };
+
+    const formatDate = (dateStr) => {
+      if (!dateStr) return "";
+      return new Date(dateStr).toLocaleDateString("en-US", {
+        month: "short",
+        day: "numeric",
+        year: "numeric",
+      });
+    };
+
+    const getProtocolByName = (name) => {
+      return purchasedProtocols.value.find((p) => p.name === name);
+    };
+
+    const getPosition = (protocolName, marketIdx, side = null) => {
+      const key = `${protocolName}_${marketIdx}`;
+      const pos = positions.value[key];
+      if (!pos) return null;
+      if (side) return pos[side] || null;
+      return pos;
+    };
+
+    const hasPosition = (protocolName, marketIdx, side) => {
+      const pos = getPosition(protocolName, marketIdx, side);
+      return pos && pos.amount > 0;
+    };
+
+    const openPositionModal = (protocolName, marketIdx, side, market) => {
+      positionModal.show = true;
+      positionModal.protocol = protocolName;
+      positionModal.marketIdx = marketIdx;
+      positionModal.side = side;
+      positionModal.market = market;
+      positionModal.amount = null;
+    };
+
+    const closePositionModal = () => {
+      positionModal.show = false;
+      positionModal.protocol = null;
+      positionModal.marketIdx = null;
+      positionModal.side = null;
+      positionModal.market = null;
+      positionModal.amount = null;
+    };
+
+    const confirmPosition = () => {
+      if (!positionModal.amount || positionModal.amount <= 0) return;
+
+      const key = `${positionModal.protocol}_${positionModal.marketIdx}`;
+      const protocol = getProtocolByName(positionModal.protocol);
+      const side = positionModal.side;
+
+      // Initialize position object if it doesn't exist
+      if (!positions.value[key]) {
+        positions.value[key] = { for: null, against: null };
+      }
+
+      // Store position for this side (allows both FOR and AGAINST)
+      positions.value[key][side] = {
+        amount: Number(positionModal.amount),
+        market: positionModal.market?.question,
+        timestamp: new Date().toISOString(),
+      };
+
+      showNotification(
+        `Position opened: ${side.toUpperCase()} ${positionModal.amount} ${protocol?.token || "tokens"}`,
+        "success"
+      );
+
+      closePositionModal();
+    };
+
+    const cancelGeneration = () => {
+      generationCancelled.value = true;
+      isGenerating.value = false;
+      loadingMessage.value = "";
+      selectedUseCase.value = null;
+    };
+
+    // Toggle agent description visibility
+    const toggleAgentDescription = (agentId) => {
+      selectedAgent.value = agentId;
+      expandedAgentDescription.value =
+        expandedAgentDescription.value === agentId ? null : agentId;
+    };
+
+    // Toggle project description visibility
+    const toggleProjectDescription = (projectName) => {
+      selectedProject.value = projectName;
+      expandedProjectDescription.value =
+        expandedProjectDescription.value === projectName ? null : projectName;
+    };
+
+    // Show status notification (replaces alert)
+    const showNotification = (message, type = "info", duration = 3000) => {
+      statusNotification.value = { show: true, message, type };
+      if (duration > 0) {
+        setTimeout(() => {
+          statusNotification.value.show = false;
+        }, duration);
+      }
+    };
+
+    // TCG Agent Functions
+    const loadTcgTopCards = async () => {
+      isTcgLoading.value = true;
+      tcgLoadingMessage.value = "Loading top cards...";
       try {
-        const result = await polymarketAgent.execute(
-          { numMarkets: 3, copyFraction: 0.1, llmEndpoint: "" },
+        const result = await tcgAgent.execute(
+          { collection: selectedTcgCollection.value, topCount: 10 },
           {}
         );
-        const messages = [];
-        if (result && Array.isArray(result.markets)) {
-          for (const market of result.markets) {
-            let summary = "";
-            if (market.event && market.event.description) {
-              // Only attempt summarisation if a model is loaded
-              if (modelLoaded.value) {
-                try {
-                  const prompt = `Summarize the following prediction market description and highlight key factors that might influence the outcome:\n${market.event.description}`;
-                  const resp = await sendMessage(prompt);
-                  if (resp && typeof resp === "string") {
-                    summary = resp.trim();
-                  }
-                } catch (_) {
-                  // ignore summarisation errors
-                }
-              }
-            }
-            let recs = "";
-            if (
-              Array.isArray(market.recommendations) &&
-              market.recommendations.length > 0
-            ) {
-              recs = market.recommendations
-                .map(
-                  (r) =>
-                    `- ${r.trader} on “${r.outcome}” (whale size: ${Number(
-                      r.originalSize
-                    ).toFixed(2)}, your size: ${Number(r.suggestedSize).toFixed(
-                      2
-                    )})`
-                )
-                .join("\n");
-            } else {
-              recs = "No top traders identified.";
-            }
-            const desc =
-              summary ||
-              (market.event && market.event.description
-                ? market.event.description.slice(0, 200)
-                : "No description available.");
-            messages.push(
-              `Market: ${market.question}\n\nEvent analysis: ${desc}\n\nRecommended copy trades:\n${recs}`
-            );
-          }
-        }
-        showAlert("Market Analysis", messages.join("\n\n---\n\n"), "success");
+        tcgTopCards.value = result.topCards;
       } catch (err) {
-        showAlert(
-          "Analysis Error",
-          `An error occurred while analysing Polymarket markets: ${err && err.message ? err.message : err}`,
-          "error"
-        );
+        console.error("Failed to load TCG cards:", err);
       } finally {
-        showAIModal.value = false;
+        isTcgLoading.value = false;
       }
     };
 
-    const buyAgent = async (agentName) => {
-      showAlert(
-        "Deploying Agent",
-        `Deploying ${agentName}...\n\nThis agent will begin analysing markets and providing recommendations.`,
+    const searchTcgCards = async () => {
+      if (!tcgSearchQuery.value || tcgSearchQuery.value.length < 2) {
+        tcgSearchResults.value = [];
+        return;
+      }
+      isTcgLoading.value = true;
+      tcgLoadingMessage.value = "Searching cards...";
+      try {
+        tcgSearchResults.value = await tcgAgent.searchCards(
+          selectedTcgCollection.value,
+          tcgSearchQuery.value
+        );
+      } catch (err) {
+        console.error("Failed to search TCG cards:", err);
+        tcgSearchResults.value = [];
+      } finally {
+        isTcgLoading.value = false;
+      }
+    };
+
+    const addToPortfolio = (card) => {
+      if (!userTcgPortfolio.value.find((c) => c.id === card.id)) {
+        userTcgPortfolio.value.push({
+          ...card,
+          addedAt: new Date().toISOString(),
+        });
+      }
+    };
+
+    const removeFromPortfolio = (cardId) => {
+      userTcgPortfolio.value = userTcgPortfolio.value.filter(
+        (c) => c.id !== cardId
+      );
+    };
+
+    const openTcgMarketModal = (card) => {
+      tcgMarketModal.show = true;
+      tcgMarketModal.card = card;
+      tcgMarketModal.operator = ">";
+      tcgMarketModal.targetPrice = Math.round(card.price * 1.1); // Default 10% above current
+      const futureDate = new Date();
+      futureDate.setMonth(futureDate.getMonth() + 3);
+      tcgMarketModal.targetDate = futureDate.toISOString().split("T")[0];
+    };
+
+    const closeTcgMarketModal = () => {
+      tcgMarketModal.show = false;
+      tcgMarketModal.card = null;
+      tcgMarketModal.targetPrice = null;
+      tcgMarketModal.targetDate = "";
+    };
+
+    const createTcgMarket = () => {
+      if (
+        !tcgMarketModal.card ||
+        !tcgMarketModal.targetPrice ||
+        !tcgMarketModal.targetDate
+      ) {
+        showNotification("Please fill in all fields", "warning");
+        return;
+      }
+
+      const market = tcgAgent.createPredictionMarket(
+        tcgMarketModal.card,
+        tcgMarketModal.operator,
+        tcgMarketModal.targetPrice,
+        tcgMarketModal.targetDate
+      );
+
+      tcgMarkets.value.push(market);
+      showNotification(`Market created: ${market.card.name}`, "success");
+      closeTcgMarketModal();
+    };
+
+    const joinTcgMarket = (marketId, side, amount) => {
+      const market = tcgMarkets.value.find((m) => m.id === marketId);
+      if (!market) return;
+
+      market.positions[side] += amount;
+      showNotification(
+        `Joined market ${side.toUpperCase()} with ${amount} tokens`,
+        "success"
+      );
+    };
+
+    const getCardMarkets = (cardId) => {
+      return tcgMarkets.value.filter((m) => m.card.id === cardId);
+    };
+
+    const openPolymarket = (slug) => {
+      let url = "https://polymarket.com";
+      if (slug) {
+        url = `https://polymarket.com/event/${slug}`;
+      }
+      if (window.electronAPI?.openExternal) {
+        window.electronAPI.openExternal(url);
+      } else {
+        window.open(url, "_blank");
+      }
+    };
+
+    const selectTimePeriodAndAnalyze = (periodKey) => {
+      polymarketTimePeriod.value = periodKey;
+      runAnalysis();
+    };
+
+    const selectConvictionAndAnalyze = (convictionKey) => {
+      polymarketMinConviction.value = convictionKey;
+      runAnalysis();
+    };
+
+    const runAnalysis = async () => {
+      isAnalyzing.value = true;
+      loadingMessage.value = "Fetching top performers from leaderboard...";
+
+      try {
+        loadingMessage.value = "Analyzing top trader positions...";
+
+        const result = await polymarketAgent.execute(
+          {
+            numTraders: 10,
+            timePeriod: polymarketTimePeriod.value,
+            minConviction: polymarketMinConviction.value,
+            copyFraction: 0.1,
+          },
+          {}
+        );
+
+        loadingMessage.value = "Processing conviction signals...";
+
+        if (result && Array.isArray(result.recommendations)) {
+          const analysisEntry = {
+            timestamp: new Date().toLocaleString(),
+            topTraders: result.topTraders || [],
+            recommendations: result.recommendations.map((rec) => ({
+              question: rec.question,
+              slug: rec.slug || "",
+              outcome: rec.outcome,
+              conviction: rec.conviction,
+              traders: rec.traders || [],
+              market: rec.market,
+              suggestedSize: rec.suggestedSize,
+            })),
+            meta: result.meta,
+          };
+
+          // Replace analysis (no history)
+          analysisHistory.value = [analysisEntry];
+          // Clear any previous theses
+          investmentTheses.value = {};
+        }
+      } catch (err) {
+        console.error("Analysis error:", err);
+        analysisHistory.value = [
+          {
+            timestamp: new Date().toLocaleString(),
+            error: err.message || "Failed to analyze top performers",
+            recommendations: [],
+            topTraders: [],
+          },
+        ];
+      } finally {
+        isAnalyzing.value = false;
+      }
+    };
+
+    const generateInvestmentThesis = async (analysisIdx, recIdx, rec) => {
+      const key = `${analysisIdx}-${recIdx}`;
+
+      // Check if model is available
+      if (!isModelAvailable.value) {
+        showNotification(
+          "Please download the AI model first to generate investment theses.",
+          "warning"
+        );
+        return;
+      }
+
+      // Set loading state
+      investmentTheses.value[key] = {
+        loading: true,
+        thesis: null,
+        error: null,
+      };
+
+      try {
+        // Load model if not loaded
+        if (!isModelLoaded.value) {
+          await loadModel();
+        }
+
+        const traderInfo = rec.traders
+          .map(
+            (t) =>
+              `- ${t.proxyWallet?.slice(0, 10) || "Unknown"}: $${t.size.toLocaleString()} position, ${t.pnl > 0 ? "+" : ""}$${t.pnl.toLocaleString()} PnL`
+          )
+          .join("\n");
+
+        const prompt = `You are a prediction market analyst. Analyze this high-conviction position and provide a brief investment thesis.
+
+MARKET: ${rec.question}
+POSITION: ${rec.outcome}
+CONVICTION: ${rec.conviction.traderCount} top-performing traders hold this position
+TOTAL SIZE: $${rec.conviction.totalSize.toLocaleString()}
+CURRENT PRICE: ${rec.market?.currentPrice ? (rec.market.currentPrice * 100).toFixed(0) + "%" : "N/A"}
+END DATE: ${rec.market?.endDate || "N/A"}
+
+TOP TRADERS HOLDING THIS POSITION:
+${traderInfo}
+
+Provide a concise investment thesis (3-4 sentences) explaining:
+1. Why this might be a good bet based on the conviction signals
+2. Key risks to consider
+3. A brief recommendation
+
+Keep it actionable and data-driven.`;
+
+        const response = await window.electronAPI.chat(prompt);
+
+        investmentTheses.value[key] = {
+          loading: false,
+          thesis: response,
+          error: null,
+        };
+      } catch (err) {
+        console.error("Thesis generation error:", err);
+        investmentTheses.value[key] = {
+          loading: false,
+          thesis: null,
+          error: err.message || "Failed to generate thesis",
+        };
+      }
+    };
+
+    const getThesis = (analysisIdx, recIdx) => {
+      const key = `${analysisIdx}-${recIdx}`;
+      return investmentTheses.value[key] || null;
+    };
+
+    const buyProjectAccess = (projectName) => {
+      const project = marketProjects.value.find((p) => p.name === projectName);
+      if (!project) {
+        showNotification("Protocol not found", "danger");
+        return;
+      }
+
+      // Check if already purchased
+      if (purchasedProtocols.value.some((p) => p.name === projectName)) {
+        showNotification(`You already own access to ${projectName}`, "info");
+        selectedRunProtocol.value = projectName;
+        activeTab.value = "run";
+        return;
+      }
+
+      showNotification(
+        `Purchasing access to ${projectName} for ${project.accessPrice} BONZAI...`,
         "info"
       );
-      // Only Copy Master is available. Define its default state.
-      const copyMasterData = {
-        name: "Copy Master",
-        icon: "content_copy",
-        status: "active",
-        tradesCount: 0,
-        return7d: 0,
-        winRate: 0,
-        avgTradeSize: 150,
-        lastTrade: "Just deployed",
-      };
-      if (!deployedAgents.value.find((a) => a.name === agentName)) {
-        deployedAgents.value.push(copyMasterData);
-      }
-      // Immediately run the Polymarket analysis when the Copy Master agent is deployed.
-      if (agentName === "Copy Master") {
-        await runCopyMasterAnalysis();
-      }
+
+      // Add to purchased protocols
+      purchasedProtocols.value.push({ ...project });
+
+      // Redirect to Run tab and select this protocol
+      selectedRunProtocol.value = projectName;
+      selectedRunAgent.value = null;
+      activeTab.value = "run";
     };
 
-    /**
-     * Generate content with the locally loaded LLM. This function uses
-     * window.electronAPI.chat to call the selected local model. We select
-     * LLaMA 3.1 8B Instruct as our default LLM because it offers a 128K
-     * context window and strong reasoning capabilities【54352987922939†L42-L45】.
-     * If the call fails or no model is loaded, we fall back to static
-     * examples after a short delay.
-     *
-     * @param {string} type - one of 'description', 'tokenomics', 'markets'
-     */
-    const generateWithAI = async (type) => {
-      const messages = {
-        description: "Generating compelling project description...",
-        tokenomics: "Calculating optimal token economics...",
-        markets: "Generating trending prediction markets...",
+    const buyAgent = async (agentId) => {
+      const agentNames = {
+        copymaster: "Polymarket Copy-Trading",
+        tcg: "TCG Prediction Market",
       };
-      aiModalMessage.value = messages[type];
-      showAIModal.value = true;
+      showNotification(
+        `Deploying ${agentNames[agentId] || agentId} agent...`,
+        "success"
+      );
+
+      if (!purchasedAgents.value.includes(agentId)) {
+        purchasedAgents.value.push(agentId);
+        await savePurchasedAgents();
+      }
+
+      // Select this agent in Run tab
+      selectedRunAgent.value = agentId;
+      selectedRunProtocol.value = null;
+      activeTab.value = "run";
+    };
+
+    const selectUseCaseAndGenerate = async (useCase) => {
+      if (!isModelAvailable.value) {
+        showNotification("Please download a model first.", "warning");
+        return;
+      }
+
+      selectedUseCase.value = useCase;
+      isGenerating.value = true;
+      generationCancelled.value = false;
+      loadingMessage.value = "Loading Artificial Intelligence";
+
       try {
-        let prompt;
-        if (type === "description") {
-          const name = projectForm.name || "your prediction market project";
-          prompt = `You are a sophisticated language model. Generate a concise, compelling description for a prediction market project called "${name}". Highlight AI-driven analysis, real-time sentiment tracking, automated resolution and token-based incentives.`;
-          const resp = await sendMessage(prompt);
-          if (typeof resp === "string" && resp.trim()) {
-            projectForm.description = resp.trim();
-            showAIModal.value = false;
-            return;
-          }
-        } else if (type === "tokenomics") {
-          prompt =
-            "You are a token economics expert. Suggest total token supply, initial liquidity (in ETH) and access price (in BONZAI) for a new prediction market token. Return a JSON object with keys totalSupply, initialLiquidity, accessPrice.";
-          const resp = await sendMessage(prompt);
-          try {
-            const data = resp ? JSON.parse(resp) : null;
-            if (data && data.totalSupply !== undefined)
-              projectForm.totalSupply = String(data.totalSupply);
-            if (data && data.initialLiquidity !== undefined)
-              projectForm.initialLiquidity = String(data.initialLiquidity);
-            if (data && data.accessPrice !== undefined)
-              projectForm.accessPrice = String(data.accessPrice);
-            if (data) {
-              showAIModal.value = false;
-              return;
+        // Load model first
+        await loadModel();
+        if (generationCancelled.value) return;
+
+        loadingMessage.value = "Generating Prediction Capital Market";
+
+        // Generate project identity
+        const identityPrompt = `You are a prediction market designer specializing in DSLA (Decentralized Service Level Agreements).
+
+Generate a creative prediction market project for the use case: "${useCase.label}"
+Context: This involves ${useCase.context}.
+
+Respond ONLY with valid JSON, no explanations:
+{
+  "name": "single creative word name",
+  "tokenSymbol": "3-4 letter symbol",
+  "description": "2-3 sentence description of the market focus",
+  "totalSupply": "number like 1000000000",
+  "initialLiquidity": "number like 20",
+  "accessPrice": "number like 5000"
+}`;
+
+        const identityResponse = await window.electronAPI.chat(identityPrompt);
+        if (generationCancelled.value) return;
+        console.log("Identity response:", identityResponse);
+
+        if (identityResponse) {
+          const jsonMatch = identityResponse.match(/\{[\s\S]*?\}/);
+          if (jsonMatch) {
+            try {
+              const data = JSON.parse(jsonMatch[0]);
+              projectForm.name = data.name || "";
+              projectForm.tokenSymbol = data.tokenSymbol || "";
+              projectForm.description = data.description || "";
+              projectForm.totalSupply = data.totalSupply || "";
+              projectForm.initialLiquidity = data.initialLiquidity || "";
+              projectForm.accessPrice = data.accessPrice || "";
+            } catch (e) {
+              console.error("Failed to parse identity JSON:", e);
             }
-          } catch (_) {
-            // ignore JSON parse errors
           }
-        } else if (type === "markets") {
-          prompt =
-            "Generate five trending prediction market questions across technology, finance and society. Provide each question on a new line.";
-          const resp = await sendMessage(prompt);
-          if (typeof resp === "string" && resp.trim()) {
-            projectForm.marketIdeas = resp.trim();
-            showAIModal.value = false;
-            return;
+        }
+
+        loadingMessage.value = "Populating Initial Markets";
+
+        // Generate SLA markets
+        const slaPrompt = `Generate 3 specific Service Level Agreement prediction markets for: "${useCase.label}"
+Context: ${useCase.context}
+
+Each market must specify a real asset/service, a measurable metric, a comparison operator, a target value, and a future date (within the next 6-12 months from January 2026).
+
+Respond ONLY with valid JSON array, no explanations:
+[
+  {"asset": "specific asset name", "metric": "measurable metric", "operator": ">", "target": "value with unit", "date": "YYYY-MM-DD"},
+  {"asset": "specific asset name", "metric": "measurable metric", "operator": "<", "target": "value with unit", "date": "YYYY-MM-DD"},
+  {"asset": "specific asset name", "metric": "measurable metric", "operator": ">=", "target": "value with unit", "date": "YYYY-MM-DD"}
+]
+
+Example for NFT floor prices:
+[{"asset": "BAYC", "metric": "floor price", "operator": ">", "target": "50 ETH", "date": "2026-06-30"}]`;
+
+        const slaResponse = await window.electronAPI.chat(slaPrompt);
+        if (generationCancelled.value) return;
+        console.log("SLA response:", slaResponse);
+
+        if (slaResponse) {
+          const arrayMatch = slaResponse.match(/\[[\s\S]*?\]/);
+          if (arrayMatch) {
+            try {
+              const markets = JSON.parse(arrayMatch[0]);
+              slaMarkets.value = markets.map((m) => ({
+                asset: m.asset || "",
+                metric: m.metric || "",
+                operator: m.operator || ">",
+                target: m.target || "",
+                date: m.date || "",
+              }));
+            } catch (e) {
+              console.error("Failed to parse SLA JSON:", e);
+            }
           }
         }
       } catch (err) {
-        // swallow errors and fall back
+        console.error("Generation Failed:", err);
+        showNotification(
+          "Failed to generate your Prediction Capital Market. Please try again.",
+          "danger"
+        );
+      } finally {
+        isGenerating.value = false;
       }
-      // fallback after a delay
-      setTimeout(() => {
-        if (type === "description" && !projectForm.description) {
-          projectForm.description =
-            "A revolutionary prediction market platform leveraging advanced AI for real-time market analysis, automated resolution, and intelligent trading strategies. Built on DSLA Protocol with BonzAI's cutting-edge automation pipeline.";
-        } else if (type === "tokenomics") {
-          projectForm.totalSupply = "1000000000";
-          projectForm.initialLiquidity = "25";
-          projectForm.accessPrice = "10000";
-        } else if (type === "markets" && !projectForm.marketIdeas) {
-          projectForm.marketIdeas = `Will AI achieve AGI by 2030?\nWill Bitcoin reach $150k in 2025?\nWill fusion energy be commercialized by 2028?\nWill quantum computing break RSA by 2027?\nWill autonomous vehicles dominate by 2029?`;
-        }
-        showAIModal.value = false;
-      }, 2500);
     };
 
     const launchProject = () => {
       if (!projectForm.name || !projectForm.tokenSymbol) {
-        showAlert("Missing Fields", "Please fill in required fields: Project Name and Token Symbol", "warning");
-        return;
-      }
-      aiModalMessage.value = `Deploying ${projectForm.name} to blockchain...`;
-      showAIModal.value = true;
-      setTimeout(() => {
-        showAIModal.value = false;
-        showAlert(
-          "Project Launched",
-          `${projectForm.name} launched successfully!\n\nYour prediction market project is now live with the ${projectForm.tokenSymbol} token.`,
-          "success"
+        showNotification(
+          "Please fill in required fields: Project Name and Token Symbol",
+          "warning"
         );
-        // Compute the number of markets from the marketIdeas field
-        const marketsCount = projectForm.marketIdeas
-          ? projectForm.marketIdeas
-              .split("\n")
-              .map((l) => l.trim())
-              .filter((l) => l.length > 0).length
-          : 0;
-        // Add the new project to the list of DSLA market projects so it appears in the Buy tab
-        marketProjects.value.push({
-          name: projectForm.name,
-          token: `$${projectForm.tokenSymbol.toUpperCase()}`,
-          icon: "query_stats",
-          markets: marketsCount,
-          yourPositions: 0,
-          pnl: 0,
-          exposure: 0,
-          pendingResolutions: 0,
-          description: projectForm.description,
-          useCase: selectedUseCase.value ? selectedUseCase.value.label : null,
-          accessPrice: projectForm.accessPrice,
-        });
-        // Reset form except automation settings
-        Object.keys(projectForm).forEach((key) => {
-          if (key !== "automation") {
-            projectForm[key] = "";
-          }
-        });
-        // Reset selected use case
-        selectedUseCase.value = null;
-      }, 3000);
-    };
-
-    const viewMarkets = (project) => {
-      showAlert(
-        `${project.name} Markets`,
-        `You have access to ${project.markets} active SLAs. You can place predictions, view odds, and monitor resolutions.`,
-        "info"
-      );
-    };
-
-    const toggleAgent = (agent) => {
-      agent.status = agent.status === "active" ? "paused" : "active";
-    };
-
-    const viewAgentDetails = (agent) => {
-      openAgentDetails(agent);
-    };
-
-    /**
-     * Select a DSLA use case. This sets the currently selected use case for the Sell tab.
-     * @param {Object} useCase
-     */
-    const selectUseCase = (useCase) => {
-      selectedUseCase.value = useCase;
-    };
-
-    /**
-     * Populate the Sell tab form fields based on the chosen DSLA use case. This function uses
-     * the local LLM via window.electronAPI.chat to generate a JSON template containing all
-     * required fields: name, tokenSymbol, description, totalSupply, initialLiquidity,
-     * accessPrice and marketIdeas. If the call fails or returns invalid JSON, fallback
-     * static examples are used.
-     */
-    const populateDSLAFields = async () => {
-      if (!selectedUseCase.value) {
-        showAlert("No Use Case Selected", "Please select a DSLA use case to populate.", "warning");
         return;
       }
-      aiModalMessage.value = `Generating ${selectedUseCase.value.label} market template...`;
-      showAIModal.value = true;
-      try {
-        const prompt =
-          `You are helping to create a DSLA prediction market for the use case "${selectedUseCase.value.label}". ` +
-          `Propose a project name (a single word or short phrase), a 3‑4 letter token symbol, ` +
-          `a brief but compelling project description explaining how the market addresses ${selectedUseCase.value.label.toLowerCase()}, ` +
-          `total token supply, initial liquidity in ETH, access price in BONZAI, ` +
-          `and five market questions relevant to this theme. ` +
-          `Return your response as a JSON object with fields: name (string), tokenSymbol (string), ` +
-          `description (string), totalSupply (number), initialLiquidity (number), accessPrice (number), marketIdeas (string with questions separated by newline).` +
-          `Only return a JSON object, nothing else.`;
-        const resp = await sendMessage(prompt);
-        try {
-          const data = resp ? JSON.parse(resp) : null;
-          if (data) {
-            projectForm.name = data.name || projectForm.name;
-            projectForm.tokenSymbol =
-              data.tokenSymbol || projectForm.tokenSymbol;
-            projectForm.description =
-              data.description || projectForm.description;
-            if (data.totalSupply !== undefined)
-              projectForm.totalSupply = String(data.totalSupply);
-            if (data.initialLiquidity !== undefined)
-              projectForm.initialLiquidity = String(data.initialLiquidity);
-            if (data.accessPrice !== undefined)
-              projectForm.accessPrice = String(data.accessPrice);
-            if (data.marketIdeas) projectForm.marketIdeas = data.marketIdeas;
-            showAIModal.value = false;
-            return;
-          }
-        } catch (e) {
-          // ignore JSON parsing errors
-        }
-      } catch (_) {
-        // ignore errors
+
+      if (slaMarkets.value.length === 0) {
+        showNotification("Please add at least one SLA market", "warning");
+        return;
       }
-      // fallback static template for each DSLA use case
-      const fallback = {
-        vol_returns: {
-          name: "ReturnGuard",
-          tokenSymbol: "RET",
-          description:
-            "A DSLA market measuring volatility in user returns across DeFi pools. Traders can hedge against unpredictable yield performance.",
-          totalSupply: "1000000000",
-          initialLiquidity: "20",
-          accessPrice: "5000",
-          marketIdeas: `Will the average DeFi yield stay above 5% for the next 30 days?\nWill protocol X’s APY exceed 10% this month?\nWill the staking returns for token Y drop below 3% next quarter?\nWill the annualised return of major DeFi pools exceed 8% this year?\nWill the yield on stablecoin lending be above 4% at year end?`,
-        },
-        vol_availability: {
-          name: "UptimeWatch",
-          tokenSymbol: "UPT",
-          description:
-            "Track and trade on service availability fluctuations. This market focuses on downtime events across critical decentralised services.",
-          totalSupply: "500000000",
-          initialLiquidity: "15",
-          accessPrice: "4000",
-          marketIdeas: `Will chain Z experience more than 1 hour of downtime this month?\nWill major protocol A have an outage longer than 30 minutes this quarter?\nWill cloud provider B deliver 99.9% uptime next year?\nWill DeFi platform C remain fully available during the next network upgrade?\nWill any top 10 dApp have significant downtime this week?`,
-        },
-        vol_asset_floors: {
-          name: "FloorGuard",
-          tokenSymbol: "FLR",
-          description:
-            "A market observing volatility in the floor prices of popular NFT and token collections. Participants can hedge or speculate on price stability.",
-          totalSupply: "800000000",
-          initialLiquidity: "10",
-          accessPrice: "6000",
-          marketIdeas: `Will the floor price of collection D drop below 50 ETH this month?\nWill project E’s floor price increase by more than 20% this quarter?\nWill any blue‑chip NFT have a new all‑time low within 60 days?\nWill the average floor price of the top 5 collections rise next month?\nWill token F’s price floor stay above 1 USDC this season?`,
-        },
-        vol_currency_pegs: {
-          name: "PegShield",
-          tokenSymbol: "PEG",
-          description:
-            "Monitor the stability of digital currency pegs. This market lets traders insure against depeg events and speculate on currency stability.",
-          totalSupply: "1200000000",
-          initialLiquidity: "30",
-          accessPrice: "7000",
-          marketIdeas: `Will stablecoin G trade below $0.98 at any point this week?\nWill currency H maintain its peg for the next 90 days?\nWill any major stablecoin lose more than 5% of its peg this year?\nWill new algorithmic stablecoin I remain within 1% of its peg after launch?\nWill stablecoin J depeg above $1.02 in the next 6 months?`,
-        },
-        vol_response_time: {
-          name: "LatencyLab",
-          tokenSymbol: "LAT",
-          description:
-            "Trade on network response time fluctuations. This market covers delays in transaction confirmations and API responses across blockchains.",
-          totalSupply: "900000000",
-          initialLiquidity: "18",
-          accessPrice: "5500",
-          marketIdeas: `Will average block time on chain K exceed 15 seconds this month?\nWill transaction confirmation times on network L improve by 20% this quarter?\nWill there be a significant API slowdown for service M this week?\nWill cross‑chain bridge N suffer latency above 30 seconds this year?\nWill any Layer 2 solution achieve sub‑5 second confirmations next quarter?`,
-        },
-        vol_delivery_time: {
-          name: "DeliveryDex",
-          tokenSymbol: "DLV",
-          description:
-            "Predict volatility in digital goods delivery times. Focuses on NFT minting, token claims and airdrops settlement delays.",
-          totalSupply: "750000000",
-          initialLiquidity: "12",
-          accessPrice: "4500",
-          marketIdeas: `Will NFT drop O complete distribution within 24 hours?\nWill token claim P take longer than 3 days to finalise?\nWill airdrop Q experience delays exceeding 48 hours?\nWill any major NFT mint finish under one hour next month?\nWill staking rewards from protocol R be delivered late this season?`,
-        },
-      };
-      const key = selectedUseCase.value.key;
-      if (fallback[key]) {
-        const data = fallback[key];
-        projectForm.name = data.name;
-        projectForm.tokenSymbol = data.tokenSymbol;
-        projectForm.description = data.description;
-        projectForm.totalSupply = data.totalSupply;
-        projectForm.initialLiquidity = data.initialLiquidity;
-        projectForm.accessPrice = data.accessPrice;
-        projectForm.marketIdeas = data.marketIdeas;
-      }
-      showAIModal.value = false;
+
+      const markets = slaMarkets.value
+        .filter((sla) => sla.asset && sla.metric && sla.target && sla.date)
+        .map((sla) => ({
+          asset: sla.asset,
+          metric: sla.metric,
+          operator: sla.operator,
+          target: sla.target,
+          date: sla.date,
+          question: formatSlaQuestion(sla),
+        }));
+
+      marketProjects.value.push({
+        name: projectForm.name,
+        token: `$${projectForm.tokenSymbol.toUpperCase()}`,
+        markets: markets,
+        description: projectForm.description,
+        useCase: selectedUseCase.value ? selectedUseCase.value.label : "Custom",
+        accessPrice: projectForm.accessPrice || "10000",
+      });
+
+      showNotification(
+        `${projectForm.name} launched successfully with ${markets.length} SLA markets!`,
+        "success"
+      );
+
+      // Reset form
+      projectForm.name = "";
+      projectForm.tokenSymbol = "";
+      projectForm.description = "";
+      projectForm.totalSupply = "";
+      projectForm.initialLiquidity = "";
+      projectForm.accessPrice = "";
+      slaMarkets.value = [];
+      selectedUseCase.value = null;
+
+      activeTab.value = "buy";
     };
 
-    /**
-     * Run analysis for a deployed agent. Currently only Copy Master supports analysis.
-     */
-    const runAgentAnalysis = async (agent) => {
-      if (agent.name === "Copy Master") {
-        await runCopyMasterAnalysis();
-      } else {
-        showAlert("Analysis Unavailable", "Analysis not available for this agent.", "info");
-      }
-    };
+    onMounted(async () => {
+      await checkModelAvailability();
+      await loadPurchasedAgents();
+    });
 
-    // Open market details modal
-    const openMarketDetails = (project) => {
-      selectedMarketDetails.value = project;
-    };
+    // Auto-run weekly analysis when copymaster agent is selected
+    watch(selectedRunAgent, (newAgent) => {
+      if (newAgent === "copymaster" && analysisHistory.value.length === 0) {
+        // Run weekly analysis on first load
+        runAnalysis();
+      }
+    });
 
     return {
       activeTab,
       selectedProject,
       selectedAgent,
-      showAIModal,
-      aiModalMessage,
-      aiProgress,
-      selectedMarketDetails,
+      expandedAgentDescription,
+      expandedProjectDescription,
+      statusNotification,
+      toggleAgentDescription,
+      toggleProjectDescription,
+      showNotification,
+      isAnalyzing,
+      isGenerating,
+      isDownloading,
+      downloadProgress,
+      isModelAvailable,
+      loadingMessage,
+      analysisHistory,
+      polymarketTimePeriod,
+      polymarketPeriods,
+      selectTimePeriodAndAnalyze,
+      polymarketMinConviction,
+      polymarketConvictionLevels,
+      selectConvictionAndAnalyze,
+      purchasedAgents,
+      purchasedProtocols,
+      selectedRunProtocol,
+      selectedRunAgent,
+      positions,
+      positionModal,
       projectForm,
-      purchasedProjects,
-      deployedAgents,
-      buyProjectAccess,
-      buyAgent,
-      generateWithAI,
-      launchProject,
-      viewMarkets,
-      toggleAgent,
-      viewAgentDetails,
-      runCopyMasterAnalysis,
-      openMarketDetails,
-      // DSLA-related state and helpers
+      slaMarkets,
       dslaUseCases,
       selectedUseCase,
       marketProjects,
-      selectUseCase,
-      populateDSLAFields,
-      runAgentAnalysis,
-      isModelAvailable,
-      sendMessage,
-      modelLoaded,
-      // Alert modal
-      alertModal,
-      closeAlert,
-      // Agent details modal
-      agentDetailsModal,
-      closeAgentDetails,
+      formatNumber,
+      formatDate,
+      formatSlaQuestion,
+      removeSlaMarket,
+      getProtocolByName,
+      getPosition,
+      hasPosition,
+      openPositionModal,
+      closePositionModal,
+      confirmPosition,
+      cancelGeneration,
+      openPolymarket,
+      runAnalysis,
+      generateInvestmentThesis,
+      getThesis,
+      investmentTheses,
+      buyProjectAccess,
+      buyAgent,
+      selectUseCaseAndGenerate,
+      downloadModel,
+      launchProject,
+      // TCG Agent
+      tcgCollections,
+      selectedTcgCollection,
+      tcgTopCards,
+      tcgSearchQuery,
+      tcgSearchResults,
+      userTcgPortfolio,
+      tcgMarkets,
+      isTcgLoading,
+      tcgLoadingMessage,
+      tcgMarketModal,
+      loadTcgTopCards,
+      searchTcgCards,
+      addToPortfolio,
+      removeFromPortfolio,
+      openTcgMarketModal,
+      closeTcgMarketModal,
+      createTcgMarket,
+      joinTcgMarket,
+      getCardMarkets,
     };
   },
 };
 </script>
 
 <style scoped>
-/* Fonts imported from App.vue for offline mode */
-
 .material-symbols-outlined {
+  border-radius: 100%;
   font-variation-settings:
     "FILL" 0,
     "wght" 100,
     "GRAD" -25,
     "opsz" 48;
-  border-radius: 100%;
 }
 
 .columns {
   position: relative !important;
 }
 
-/* Commented gradient background for reference
 .background {
-  position: absolute;
-  z-index: -1;
-  height: 100%;
-  width: 100%;
-  background: linear-gradient(135deg, #667eea 0%, #764ba2 50%, #f093fb 100%);
-  filter: blur(6px);
-  animation: gradient 15s ease infinite;
-  background-size: 400% 400%;
-}*/
-
-.background {
-  position: absolute;
-  z-index: -1;
-  height: 100%;
-  width: 100%;
+  animation: move 40s ease infinite;
   background: url("../assets/bonzai_agent.jpg") no-repeat;
   background-size: cover;
   filter: blur(6px);
-  animation: move 40s ease infinite;
+  height: 100%;
   overflow: hidden;
+  position: absolute;
+  width: 100%;
+  z-index: -1;
 }
 
-@keyframes gradient {
+@keyframes move {
   0% {
-    background-position: 0% 50%;
+    transform: scale(1.1);
+    transform-origin: bottom left;
   }
   50% {
-    background-position: 100% 50%;
+    transform: scale(1.2);
   }
   100% {
-    background-position: 0% 50%;
+    transform: scale(1.1);
+    transform-origin: bottom left;
   }
 }
 
 .rotating {
-  animation: rotate 2s linear infinite;
+  animation: rotate 1s linear infinite;
 }
 
 @keyframes rotate {
@@ -1873,186 +2854,235 @@ export default {
 }
 
 .models__deployment {
-  position: relative;
   background: transparent;
-  padding: 0 !important;
   margin: 0 !important;
+  padding: 0 !important;
+  position: relative;
 }
 
 .models__deployment-install {
-  overflow-y: auto;
-  padding: 6em;
-  height: 100vh;
   background: rgba(0, 0, 0, 0.5);
+  height: 100vh;
+  overflow-y: auto;
+  padding: 4em;
 }
 
 .models__activity--payouts {
-  padding: 4em;
-  border: 1px solid rgba(255, 255, 255, 0.1);
   backdrop-filter: blur(32px);
+  border: 1px solid rgba(255, 255, 255, 0.1);
   border-radius: 4px !important;
+  padding: 4em;
 }
 
 .tabs li {
-  color: rgba(255, 255, 255, 0.3);
   border-bottom: 1px solid rgba(255, 255, 255, 0.1) !important;
+  color: rgba(255, 255, 255, 0.3);
 }
 
 .tabs li a {
   color: rgba(255, 255, 255, 0.3);
 }
-
 .tabs a:hover {
-  color: rgba(255, 255, 255, 1) !important;
   border-color: rgba(255, 255, 255, 1) !important;
+  color: rgba(255, 255, 255, 1) !important;
 }
-
 .tabs li.is-active a {
-  color: #ffe08a;
   border-color: #ffe08a;
+  color: #ffe08a;
 }
 
 hr {
+  background-color: rgba(255, 255, 255, 0.015);
   margin: 12px 0;
   width: 100%;
-  background-color: rgba(255, 255, 255, 0.015);
 }
 
 h1 {
-  margin-top: 0 !important;
-  font-size: 64px;
   color: #fff;
+  font-size: 64px;
+  margin-top: 0 !important;
   text-align: right;
 }
-
 h2 {
-  font-size: 48px;
   color: #fff;
+  font-size: 48px;
   text-align: right;
 }
 
 p {
-  margin-bottom: 1em;
-  font-size: 24px;
   color: #fff;
-  text-align: justify;
   font-family: "Fira Sans", sans-serif;
-  font-weight: 100;
+  font-size: 24px;
   font-style: normal;
+  font-weight: 100;
+  margin-bottom: 1em;
+  text-align: justify;
 }
 
 .input,
-textarea {
-  color: #fff;
+textarea,
+.select select {
   background: rgba(255, 255, 255, 0.1);
-  box-shadow: 8px 8px 0 rgba(97, 55, 142, 0.66);
-  transition: 200ms ease-in;
-  transform: translate3d(0, 0, 0);
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  box-shadow: 4px 4px 0 rgba(97, 55, 142, 0.4);
+  color: #fff;
   resize: none;
 }
 
+.input:disabled,
+textarea:disabled {
+  background: rgba(255, 255, 255, 0.05);
+  cursor: not-allowed;
+  opacity: 0.5;
+}
+
 ::placeholder {
-  color: rgba(255, 255, 255, 0.1) !important;
-  opacity: 1 !important;
+  color: rgba(255, 255, 255, 0.3) !important;
 }
 
 input[type="radio"] {
   display: none;
 }
-
 input[type="radio"] + label {
-  padding: 3px 12px 9px;
-  width: 100%;
-  height: 100%;
-  color: rgba(255, 255, 255, 0.3) !important;
   border: 1px solid rgba(255, 255, 255, 0.3);
   border-radius: 4px;
+  color: rgba(255, 255, 255, 0.3) !important;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  padding: 3px 12px 9px;
+}
+input[type="radio"]:checked + label {
+  backdrop-filter: blur(64px) !important;
+  background: rgba(97, 55, 142, 0.33) !important;
+  border: 1px solid rgba(255, 255, 255, 1) !important;
+  color: rgba(255, 255, 255, 1) !important;
+}
+input[type="radio"]:disabled + label.locked {
+  cursor: pointer;
+  opacity: 0.5;
+}
+input[type="radio"]:disabled + label.locked:hover {
+  border-color: rgba(255, 255, 255, 0.5);
 }
 
-input[type="radio"]:checked + label {
-  color: rgba(255, 255, 255, 1) !important;
-  border: 1px solid rgba(255, 255, 255, 1) !important;
-  background: rgba(97, 55, 142, 0.33) !important;
-  backdrop-filter: blur(64px) !important;
+.agent-selector,
+.collection-selector,
+.usecase-selector,
+.timeperiod-selector,
+.conviction-selector {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.agent-selector input[type="radio"] + label,
+.collection-selector input[type="radio"] + label,
+.usecase-selector input[type="radio"] + label,
+.timeperiod-selector input[type="radio"] + label {
+  flex: 0 0 calc(25% - 6px);
+  justify-content: center;
+  text-align: center;
+  min-height: 44px;
+  padding: 8px 12px;
+}
+.conviction-selector input[type="radio"] + label {
+  flex: 0 0 calc(10% - 7.2px);
+  justify-content: center;
+  text-align: center;
+  min-height: 44px;
+  padding: 8px 12px;
+}
+input[type="radio"]:disabled + label {
+  cursor: not-allowed;
+  opacity: 0.4;
 }
 
 .tags {
-  position: absolute;
-  top: -16px;
-  right: -16px;
+  position: relative;
   text-shadow: none;
 }
 
-.automation-checkbox {
-  display: flex;
-  align-items: center;
-  padding: 1em;
-  border: 1px solid rgba(255, 255, 255, 0.15);
-  border-radius: 8px;
-  background: rgba(255, 255, 255, 0.05);
-  cursor: pointer;
-  transition: all 0.2s ease;
-  color: white;
-}
-
-.automation-checkbox:hover {
-  background: rgba(255, 255, 255, 0.1);
-  border-color: rgba(255, 224, 138, 0.5);
-}
-
-.automation-checkbox input[type="checkbox"] {
-  margin-right: 1em;
-  width: 20px;
-  height: 20px;
-  cursor: pointer;
-}
-
-.automation-checkbox .material-symbols-outlined {
-  margin-right: 0.5em;
-  color: #ffe08a;
-}
-
-.market-access-card,
-.agent-status-card {
-  padding: 2em;
-  border: 1px solid rgba(255, 255, 255, 0.15);
-  border-radius: 8px;
-  background: rgba(0, 0, 0, 0.3);
-  backdrop-filter: blur(16px);
-  transition: all 0.2s ease;
-}
-
-.market-access-card:hover {
-  border-color: rgba(16, 185, 129, 0.5);
-  background: rgba(16, 185, 129, 0.05);
-  transform: translateY(-2px);
-}
-
-.models__deployment-use {
+/* Agent selection label badge tags - positioned absolutely */
+label.radio .tags {
   position: absolute;
-  z-index: 111;
-  left: 0;
-  top: 0;
-  height: 100%;
-  width: 100%;
-  padding: 6em;
-  background: rgba(0, 0, 0, 0.75);
-  backdrop-filter: blur(6px);
-  transform: translate3d(0, 0, 0);
-  overflow: auto;
+  right: -16px;
+  top: -16px;
 }
 
-ul,
-ol {
-  padding: 0;
-  list-style-type: none;
+/* Button badge tags */
+.button .tags {
+  position: absolute;
+  right: -16px;
+  top: -16px;
 }
 
-/* Highlight selected DSLA use case button */
 .button.is-selected {
   background: rgba(97, 55, 142, 0.33) !important;
   border-color: rgba(255, 255, 255, 1) !important;
   color: #ffffff !important;
+}
+
+/* Description toggle animation */
+.description-animate {
+  animation: fadeInUp 0.4s ease-out forwards;
+}
+
+@keyframes fadeInUp {
+  from {
+    opacity: 0;
+    transform: translateY(20px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+/* Status Notification Toast */
+.status-notification {
+  position: fixed;
+  top: 20px;
+  right: 20px;
+  padding: 1em 1.5em;
+  border-radius: 8px;
+  display: flex;
+  align-items: center;
+  z-index: 10001;
+  animation: slideInRight 0.3s ease-out;
+  font-family: "Fira Sans Condensed", sans-serif;
+  font-weight: 600;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+}
+
+.status-notification.is-success {
+  background: rgba(72, 199, 142, 0.95);
+  color: #fff;
+}
+
+.status-notification.is-info {
+  background: rgba(62, 142, 208, 0.95);
+  color: #fff;
+}
+
+.status-notification.is-danger {
+  background: rgba(241, 70, 104, 0.95);
+  color: #fff;
+}
+
+.status-notification.is-warning {
+  background: rgba(255, 224, 138, 0.95);
+  color: #1a1a2e;
+}
+
+@keyframes slideInRight {
+  from {
+    opacity: 0;
+    transform: translateX(100px);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(0);
+  }
 }
 
 .bonzai__agent-description .notification.is-success {
@@ -2065,31 +3095,419 @@ ol {
   font-weight: 300;
 }
 
-/* Generation Progress Notification */
-.generation {
+.sla-list {
+  list-style: disc;
+  margin-left: 1.5em;
+}
+
+.sla-list li {
+  color: rgba(255, 255, 255, 0.9);
+  font-size: 16px;
+  margin-bottom: 0.5em;
+}
+
+.notification.is-danger {
+  background: rgba(241, 70, 104, 0.2);
+  border: 1px solid rgba(241, 70, 104, 0.6);
+}
+
+.notification.is-danger p {
+  color: #f14668;
+  font-size: 16px;
+  margin-bottom: 0;
+}
+
+.filesize {
+  background: rgba(0, 0, 0, 0.3);
+  border-radius: 4px;
+  padding: 2px 8px;
+}
+
+/* SLA Market Cards */
+.sla-market-card {
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-left: 4px solid #3e8ed0;
+  border-radius: 6px;
+  padding: 1em;
+}
+
+.sla-market-header {
+  align-items: center;
+  display: flex;
+  justify-content: space-between;
+}
+
+.sla-preview {
+  background: rgba(0, 0, 0, 0.2);
+  border-radius: 4px;
+  padding: 0.5em 1em;
+}
+
+.sla-preview .tag {
+  font-size: 14px;
+  height: auto;
+  width: 100%;
+  padding: 0.5em 1em;
+  white-space: normal;
+}
+
+/* Analysis History */
+.analysis-history {
+  max-height: 60vh;
+  overflow-y: auto;
+}
+
+.analysis-entry {
+  backdrop-filter: blur(16px);
+  background: rgba(0, 0, 0, 0.3);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 8px;
+  padding: 1.5em;
+}
+
+.analysis-header {
+  align-items: center;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+  color: rgba(255, 255, 255, 0.6);
+  display: flex;
+  font-size: 14px;
+  margin-bottom: 1em;
+  padding-bottom: 0.5em;
+}
+
+.market-card {
+  margin: 2em 0 3em 0 !important;
+  padding: 2em;
+  backdrop-filter: blur(8px);
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-bottom: 3px solid #10b981;
+  border-radius: 8px;
+  padding: 1.5em;
+}
+
+.market-question {
+  align-items: flex-start;
+  color: #fff;
+  display: flex;
+  font-size: 24px;
+  font-weight: 400;
+  line-height: 1.4;
+}
+
+.market-question strong {
+  flex: 1;
+}
+.market-volume {
+  margin-top: 0.5em;
+}
+
+.market-description {
+  background: rgba(255, 255, 255, 0.03);
+  border-radius: 4px;
+  color: rgba(255, 255, 255, 0.8);
+  font-size: 14px;
+  line-height: 1.6;
+  padding: 1em;
+}
+
+.market-description :deep(p) {
+  font-size: 14px;
+  margin-bottom: 0.5em;
+  text-align: left;
+}
+
+/* Investment Thesis */
+.investment-thesis {
+  background: linear-gradient(
+    135deg,
+    rgba(59, 130, 246, 0.15),
+    rgba(147, 51, 234, 0.15)
+  );
+  background: linear-gradient(
+    135deg,
+    rgba(155, 109, 200, 0.15),
+    rgba(255, 153, 51, 0.33)
+  );
+  border: 1px solid rgba(255, 153, 51, 0.15);
+  border-radius: 8px;
+  padding: 1em;
+}
+
+.thesis-header {
+  align-items: center;
+  color: #fff;
+  display: flex;
+  margin-bottom: 0.75em;
+}
+
+.thesis-content * {
+  color: rgba(255, 255, 255, 0.9);
+  font-size: 14px;
+  line-height: 2;
+}
+
+.thesis-content :deep(p) {
+  margin-bottom: 0.5em;
+  text-align: left;
+}
+
+.thesis-content :deep(ol),
+.thesis-content :deep(ul) {
+  margin-left: 1.5em;
+  text-align: left;
+}
+
+/* Top Traders Tags */
+ol.top-traders-tags {
+  list-style-type: decimal !important;
+  list-style: decimal;
+}
+
+.recommendations h4 {
+  align-items: center;
+  display: flex;
+  font-size: 16px;
+}
+
+.recommendation-card {
+  align-items: center;
+  background: rgba(16, 185, 129, 0.1);
+  border: 1px solid rgba(16, 185, 129, 0.3);
+  border-radius: 6px;
+  display: flex;
+  justify-content: space-between;
+  margin-bottom: 0.75em;
+  padding: 1em;
+}
+
+.rec-info {
+  flex: 1;
+}
+.rec-trader {
+  align-items: center;
+  color: #fff;
+  display: flex;
+  font-size: 14px;
+  font-weight: 600;
+  margin-bottom: 0.5em;
+}
+.trader-name {
+  font-family: monospace;
+  max-width: 200px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.rec-position {
+  align-items: center;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5em;
+}
+
+.no-recommendations {
+  align-items: center;
+  display: flex;
+}
+
+/* Top Traders Panel */
+.top-traders-panel {
+  background: rgba(59, 130, 246, 0.1);
+  border: 1px solid rgba(59, 130, 246, 0.3);
+  border-radius: 8px;
+  padding: 1em;
+}
+
+.top-traders-panel h4 {
+  align-items: center;
+  display: flex;
+  font-size: 14px;
+}
+
+.top-traders-panel .tags {
+  flex-wrap: wrap;
+  gap: 0.5em;
+}
+
+/* Conviction Info */
+.conviction-info {
+  align-items: center;
+  display: flex;
+  flex-wrap: wrap;
+}
+
+/* Traders Holding Position */
+.traders-holding {
+  background: rgba(0, 0, 0, 0.2);
+  border-radius: 4px;
+  padding: 0.75em;
+}
+
+.traders-holding .tags {
+  flex-wrap: wrap;
+  gap: 0.5em;
+}
+
+.empty-state .notification {
+  backdrop-filter: blur(16px);
+  background: rgba(0, 0, 0, 0.4);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+.empty-state .notification.is-warning {
+  background: rgba(255, 224, 138, 0.15);
+  border: 1px solid rgba(255, 224, 138, 0.3);
+}
+
+.loading-overlay {
+  align-items: center;
+  backdrop-filter: blur(8px);
+  background: rgba(0, 0, 0, 0.7);
+  bottom: 0;
+  display: flex;
+  justify-content: center;
+  left: 0;
   position: fixed;
-  width: 33%;
-  top: 1em;
-  right: 1em;
-  z-index: 1;
-  opacity: 0.9;
+  right: 0;
+  top: 0;
+  z-index: 1000;
 }
 
-.rotating {
-  animation: spin 1s linear infinite;
+.loading-content {
+  text-align: center;
+}
+.loading-content .progress {
+  width: 100%;
 }
 
-@keyframes spin {
-  from {
-    transform: rotate(0deg);
-  }
-  to {
-    transform: rotate(360deg);
-  }
+/* Run Tab Styles */
+.run-selector {
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 8px;
+  padding: 1.5em;
 }
 
-/* Market Modal (same pattern as levels modal) */
-.market-modal-overlay {
+.run-selector h3 {
+  font-size: 18px;
+  text-align: left;
+}
+
+.run-selector .buttons {
+  flex-wrap: wrap;
+  gap: 0.75em;
+}
+
+.run-selector .button {
+  margin: 0;
+}
+
+.run-selector .button .tag {
+  position: static;
+}
+
+.protocol-header h2 {
+  font-size: 32px;
+  text-align: left;
+}
+
+.protocol-header p {
+  font-size: 16px;
+  text-align: left;
+}
+
+.protocol-tags {
+  display: flex;
+}
+
+.protocol-tags .tag {
+  position: static;
+}
+
+/* Trading Market Cards */
+.trading-market-card {
+  backdrop-filter: blur(8px);
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-left: 4px solid #3e8ed0;
+  border-radius: 8px;
+  padding: 1.5em;
+}
+
+.trading-market-question {
+  align-items: flex-start;
+  color: #fff;
+  display: flex;
+  font-size: 18px;
+  line-height: 1.4;
+}
+
+.trading-market-question strong {
+  flex: 1;
+}
+
+.trading-market-details .tag {
+  position: static;
+}
+
+.current-position .tag {
+  position: static;
+}
+
+.trading-actions .button {
+  font-size: 16px;
+  padding: 1em 1.5em;
+}
+
+/* Modal Styles */
+.modal-card {
+  background: #1a1a2e;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 8px;
+  max-width: 500px;
+}
+
+.modal-card-head {
+  background: rgba(0, 0, 0, 0.3);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+.modal-card-title {
+  color: #fff;
+}
+
+.modal-card-body {
+  background: #1a1a2e;
+}
+
+.modal-card-body p {
+  color: rgba(255, 255, 255, 0.9);
+  font-size: 16px;
+  text-align: left;
+}
+
+.modal-card-body .label {
+  color: rgba(255, 255, 255, 0.8);
+}
+
+.modal-card-body .input {
+  background: rgba(255, 255, 255, 0.1);
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  color: #fff;
+}
+
+.modal-card-foot {
+  background: rgba(0, 0, 0, 0.3);
+  border-top: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+.modal-background {
+  background: rgba(0, 0, 0, 0.8);
+}
+
+/* TCG Market Modal (LVL Style) */
+.tcg-modal-overlay {
   position: fixed;
   inset: 0;
   background: rgba(0, 0, 0, 0.78);
@@ -2100,7 +3518,7 @@ ol {
   z-index: 10000;
 }
 
-.market-modal {
+.tcg-modal {
   width: 92%;
   max-width: 520px;
   background: #0a0a0f;
@@ -2111,162 +3529,361 @@ ol {
   color: #fff;
 }
 
-.market-modal .modal-header {
+.tcg-modal-header {
   text-align: center;
   margin-bottom: 18px;
 }
 
-.market-modal .modal-market-badge {
+.tcg-modal-header .material-symbols-outlined {
+  color: #f59e0b;
+  display: block;
+  margin-bottom: 8px;
+}
+
+.tcg-modal-badge {
   display: inline-block;
   padding: 6px 16px;
-  background: #10b981;
+  background: linear-gradient(135deg, #f59e0b 0%, #d97706 100%);
   border-radius: 20px;
   font-weight: 900;
   color: #fff;
   margin-bottom: 10px;
 }
 
-.market-modal .modal-header h2 {
+.tcg-modal-header h2 {
   margin: 0;
   color: #fff;
 }
 
-.market-modal .modal-status {
-  margin-top: 10px;
-}
-
-.market-modal .market-description {
-  color: rgba(255, 255, 255, 0.92);
-  text-align: center;
+.tcg-modal-body {
   margin-bottom: 16px;
-  line-height: 1.35;
 }
 
-.market-modal .market-description p {
-  font-size: 16px;
+.tcg-card-preview {
+  background: rgba(255, 255, 255, 0.04);
+  border-radius: 10px;
+  padding: 1.5em;
+  border: 1px solid rgba(245, 158, 11, 0.25);
+  margin-bottom: 16px;
   text-align: center;
 }
 
-.market-modal .status-pill {
+.tcg-modal-status {
+  margin-bottom: 10px;
+}
+
+.tcg-status-pill {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  padding: 6px 10px;
+  padding: 8px 14px;
   border-radius: 999px;
-  border: 3px solid rgba(16, 185, 129, 0.55);
-  color: rgba(16, 185, 129, 1);
+  border: 2px solid rgba(245, 158, 11, 0.6);
+  color: #f59e0b;
+  font-size: 14px;
+  font-weight: 600;
+  background: rgba(245, 158, 11, 0.1);
+  text-transform: uppercase;
+}
+
+.tcg-card-tags {
+  display: flex;
+  gap: 8px;
+  justify-content: center;
+  flex-wrap: wrap;
+}
+
+.tcg-tag {
+  padding: 4px 10px;
+  border-radius: 6px;
+  background: rgba(255, 255, 255, 0.08);
+  color: rgba(255, 255, 255, 0.8);
   font-size: 12px;
-  font-weight: 100;
-  background: rgba(16, 185, 129, 0.12);
 }
 
-.market-modal .status-pill.ok {
-  color: rgba(16, 185, 129, 1);
-  border-color: rgba(16, 185, 129, 0.55);
-  background: rgba(16, 185, 129, 0.12);
+.tcg-tag.is-price {
+  background: rgba(16, 185, 129, 0.15);
+  color: #10b981;
+  font-weight: 600;
 }
 
-.market-modal .status-pill.warning {
-  color: rgba(255, 193, 7, 1);
-  border-color: rgba(255, 193, 7, 0.55);
-  background: rgba(255, 193, 7, 0.12);
-}
-
-.market-modal .features-list ul {
-  list-style: none;
-  padding: 0 0 0 14px;
-  margin: 0 0 16px 0;
-}
-
-.market-modal .features-list li {
-  padding: 8px 0;
-  color: rgba(255, 255, 255, 0.92);
-  list-style-type: circle;
-}
-
-.market-modal .features-list strong {
-  color: rgba(16, 185, 129, 1);
-}
-
-.market-modal .requirements-summary {
+.tcg-form-section {
   background: rgba(255, 255, 255, 0.04);
   border-radius: 10px;
   padding: 1.5em;
   border: 1px solid rgba(255, 255, 255, 0.1);
+  margin-bottom: 16px;
 }
 
-.market-modal .requirements-title {
-  color: rgba(255, 255, 255, 0.95);
-  margin: 0 0 8px 0;
-  font-weight: 900;
-  letter-spacing: 0.2px;
+.tcg-field {
+  margin-bottom: 16px;
 }
 
-.market-modal .req-row {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  padding: 10px 0;
+.tcg-field:last-child {
+  margin-bottom: 0;
+}
+
+.tcg-label {
+  display: block;
+  color: rgba(255, 255, 255, 0.9);
+  margin-bottom: 8px;
+  font-size: 14px;
+}
+
+.tcg-input,
+.tcg-select {
+  width: 100%;
+  padding: 12px 14px;
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  border-radius: 8px;
+  color: #fff;
+  font-size: 16px;
+  transition: border-color 0.2s ease;
+}
+
+.tcg-input:focus,
+.tcg-select:focus {
+  outline: none;
+  border-color: #f59e0b;
+}
+
+.tcg-input::placeholder {
+  color: rgba(255, 255, 255, 0.4);
+}
+
+.tcg-select-wrapper {
+  position: relative;
+}
+
+.tcg-select {
+  appearance: none;
+  cursor: pointer;
+}
+
+.tcg-select option {
+  background: #1a1a2e;
+  color: #fff;
+}
+
+.tcg-preview-box {
+  background: rgba(245, 158, 11, 0.08);
+  border: 1px solid rgba(245, 158, 11, 0.25);
+  border-radius: 10px;
+  padding: 1em 1.25em;
+}
+
+.tcg-preview-box p:first-child {
+  color: #f59e0b;
+  margin-bottom: 8px;
   font-size: 13px;
-  color: rgba(255, 255, 255, 0.92);
 }
 
-.market-modal .req-text {
+.tcg-preview-text {
+  color: rgba(255, 255, 255, 0.85);
+  font-size: 14px;
+  line-height: 1.5;
+}
+
+.tcg-preview-text strong {
+  color: #f59e0b;
+}
+
+.tcg-modal-footer {
+  display: flex;
+  gap: 12px;
+  padding-top: 16px;
+  border-top: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.tcg-modal-footer .button {
+  flex: 1;
+  cursor: pointer;
+}
+
+.tcg-primary-btn {
+  background: linear-gradient(135deg, #f59e0b 0%, #d97706 100%);
+  border: none;
+  color: #fff;
+}
+
+.tcg-primary-btn:hover:not(:disabled) {
+  background: linear-gradient(135deg, #fbbf24 0%, #f59e0b 100%);
+}
+
+.tcg-primary-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.tcg-secondary-btn {
+  background: transparent;
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  color: #fff;
+}
+
+.tcg-secondary-btn:hover {
+  background: rgba(255, 255, 255, 0.05);
+  border-color: rgba(255, 255, 255, 0.3);
+}
+
+/* TCG Interface Styles */
+.tcg-interface {
+  background: rgba(0, 0, 0, 0.2);
+  border-radius: 8px;
+  padding: 1.5em;
+}
+
+.tcg-header .buttons {
+  flex-wrap: wrap;
+  gap: 0.5em;
+}
+
+.tcg-header .button {
+  margin: 0;
+}
+
+.tcg-section {
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 8px;
+  padding: 1.5em;
+}
+
+.no-shadow {
+  box-shadow: none !important;
+}
+
+.tcg-section h4 {
+  text-align: left;
+}
+
+.portfolio-section {
+  max-height: 500px;
+  overflow-y: auto;
+}
+
+.tcg-cards {
+  max-height: 400px;
+  overflow-y: auto;
+}
+
+.tcg-card-item {
+  align-items: center;
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 6px;
+  display: flex;
+  gap: 1em;
+  justify-content: space-between;
+  margin-bottom: 0.5em;
+  padding: 0.75em 1em;
+}
+
+.tcg-card-info {
   flex: 1;
 }
 
-.market-modal .req-status {
-  font-size: 14px;
-  font-weight: 900;
-  color: rgba(255, 255, 255, 0.75);
+.tcg-card-info strong {
+  color: #fff;
+  text-transform: uppercase;
+  font-size: 0.75em;
 }
 
-.market-modal .req-status.met {
-  color: #10b981;
+.tcg-card-price .tag {
+  position: static;
 }
 
-.market-modal .modal-footer {
+.tcg-card-actions .button {
+  padding: 0.25em 0.5em;
+}
+
+.tcg-portfolio-cards {
+  max-height: 400px;
+  overflow-y: auto;
+}
+
+.tcg-portfolio-card {
+  background: rgba(255, 224, 138, 0.1);
+  border: 1px solid rgba(255, 224, 138, 0.3);
+  border-radius: 6px;
+  margin-bottom: 0.75em;
+  padding: 1em;
+}
+
+.portfolio-card-header {
+  align-items: center;
   display: flex;
-  gap: 20px;
-  margin-top: 16px;
-  padding-top: 16px;
-  justify-content: center;
+  justify-content: space-between;
+  text-transform: uppercase;
+  font-size: 0.75em;
 }
 
-.market-modal .modal-footer .button {
-  cursor: pointer;
-  text-align: center;
-  text-decoration: none;
+.portfolio-card-header strong {
+  color: #fff;
 }
 
-/* Fade transition */
-.fade-enter-active,
-.fade-leave-active {
-  transition: opacity 0.2s ease;
-}
-.fade-enter-from,
-.fade-leave-to {
-  opacity: 0;
+.portfolio-card-details .tag {
+  position: static;
 }
 
-/* Pulse animation for active cards */
-@keyframes pulse {
-  0% {
-    box-shadow: 0 0 0 0 rgba(16, 185, 129, 0.1);
-  }
-  50% {
-    box-shadow: 0 0 0 12px rgba(16, 185, 129, 0);
-  }
-  100% {
-    box-shadow: 0 0 0 0 rgba(16, 185, 129, 0);
-  }
+.card-markets {
+  background: rgba(0, 0, 0, 0.2);
+  border-radius: 4px;
+  padding: 0.5em;
 }
 
-.models__activity--payouts.ok {
-  background: rgba(16, 185, 129, 0.04);
-  border-radius: 10px;
-  padding: 2em;
-  border: 1px solid rgba(16, 185, 129, 0.25);
-  animation: 2s pulse infinite;
+.card-market-item {
+  border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+  padding: 0.5em 0;
+}
+
+.card-market-item:last-child {
+  border-bottom: none;
+}
+
+.card-market-item p {
+  color: rgba(255, 255, 255, 0.8);
+  font-size: 12px;
+  margin-bottom: 0;
+  text-align: left;
+}
+
+.tcg-markets-section {
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 8px;
+  padding: 1.5em;
+}
+
+.tcg-market-card {
+  background: rgba(62, 142, 208, 0.1);
+  border: 1px solid rgba(62, 142, 208, 0.2);
+  border-bottom: 3px solid #3e8ed0;
+  border-radius: 6px;
+  margin-bottom: 1em;
+  padding: 1.5em;
+}
+
+.tcg-market-question strong {
+  color: #fff;
+  font-size: 16px;
+}
+
+.tcg-market-details .tag,
+.tcg-market-positions .tag {
+  position: static;
+}
+
+.tcg-market-actions .button {
+  font-size: 14px;
+}
+
+.tcg-icons .tag {
+  position: static;
+}
+
+.current-positions .tag {
+  position: static;
 }
 </style>

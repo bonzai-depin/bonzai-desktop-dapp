@@ -55,70 +55,37 @@
           <div class="models__activity--payouts">
             <div class="columns">
               <div class="column is-12">
-                <!-- MODE/QUALITY TOGGLES -->
+                <!-- MODE SELECTOR (LTX-2 I2V) -->
                 <div class="control mb-5 has-text-left">
                   <input
                     v-model="mode"
                     :value="'turbo'"
-                    id="mode_speed"
+                    id="video_mode_turbo"
                     type="radio"
-                    name="mode"
+                    name="video_mode"
                     checked
                   />
-                  <label for="mode_speed" class="radio mr-2">
+                  <label for="video_mode_turbo" class="radio mr-2">
                     <span
                       class="material-symbols-outlined"
                       style="font-size: 32px !important"
                     >
-                      acute
+                      bolt
                     </span>
-                    Turbo
+                    Turbo (LTX-2)
                   </label>
 
-                  <input
-                    v-model="mode"
-                    :value="'quality'"
-                    id="mode_quality"
-                    type="radio"
-                    name="mode"
-                  />
-                  <label for="mode_quality" class="radio mr-1">
-                    <span
-                      class="material-symbols-outlined"
-                      style="font-size: 32px !important"
-                    >
-                      high_quality
-                    </span>
-                    Quality
-                  </label>
-
-                  <input
-                    v-model="mode"
-                    :value="'ltx2'"
-                    id="mode_ltx2"
-                    type="radio"
-                    name="mode"
-                  />
-                  <label for="mode_ltx2" class="radio mr-1">
-                    <span
-                      class="material-symbols-outlined"
-                      style="font-size: 32px !important"
-                    >
-                      auto_awesome
-                    </span>
-                    LTX-2
-                  </label>
-
+                  <!-- QUALITY TOGGLES -->
                   <span class="control">
                     <input
                       v-model="quality"
                       :value="'sd'"
-                      id="mode_quality_sd"
+                      id="video_quality_sd"
                       type="radio"
-                      name="mode_quality"
+                      name="video_quality"
                       checked
                     />
-                    <label for="mode_quality_sd" class="radio quality">
+                    <label for="video_quality_sd" class="radio quality">
                       <span
                         class="material-symbols-outlined"
                         style="font-size: 32px !important"
@@ -129,11 +96,11 @@
                     <input
                       v-model="quality"
                       :value="'hd'"
-                      id="mode_quality_hd"
+                      id="video_quality_hd"
                       type="radio"
-                      name="mode_quality"
+                      name="video_quality"
                     />
-                    <label for="mode_quality_hd" class="radio quality">
+                    <label for="video_quality_hd" class="radio quality">
                       <span
                         class="material-symbols-outlined"
                         style="font-size: 32px !important"
@@ -144,11 +111,11 @@
                     <input
                       v-model="quality"
                       :value="'fhd'"
-                      id="mode_quality_fhd"
+                      id="video_quality_fhd"
                       type="radio"
-                      name="mode_quality"
+                      name="video_quality"
                     />
-                    <label for="mode_quality_fhd" class="radio quality">
+                    <label for="video_quality_fhd" class="radio quality">
                       <span
                         class="material-symbols-outlined"
                         style="font-size: 32px !important"
@@ -323,7 +290,9 @@
                         type="text"
                         placeholder="Describe your animation..."
                         v-model="form.prompt"
-                        @keyup.enter="canGenerateWithAccess && sendMessage(form.prompt)"
+                        @keyup.enter="
+                          canGenerateWithAccess && sendMessage(form.prompt)
+                        "
                         :disabled="isLoading || !hasAccess"
                       />
                     </div>
@@ -346,13 +315,61 @@
             </div>
           </div>
 
-          <div class="models__activity--payouts mt-5">
+          <div class="models__activity--payouts mt-5"  v-if="inferences && inferences.length">
+            <!-- GENERATION HISTORY HEADER -->
+            <div class="level mb-4">
+              <div class="level-left">
+                <div class="level-item">
+                  <h2
+                    class="fira-sans-condensed-black-italic has-text-left mt-0 is-size-1 has-text-white"
+                    v-if="inferences"
+                  >
+                    <span class="material-symbols-outlined is-size-1 mr-2">
+                      history
+                    </span>
+                    Generation History
+                  </h2>
+                </div>
+              </div>
+              <div class="level-right">
+                <div class="level-item buttons">
+                  <button
+                    class="button is-warning is-small"
+                    @click="importHistory()"
+                  >
+                    <span class="material-symbols-outlined mr-2">upload</span>
+                    Import
+                  </button>
+                  <button
+                    class="button is-warning is-small ml-4"
+                    @click="exportHistory()"
+                    :disabled="!inferences || inferences.length === 0"
+                  >
+                    <span class="material-symbols-outlined mr-2">download</span>
+                    Export
+                  </button>
+                  <button
+                    class="button is-danger is-small ml-4"
+                    @click="clearHistory()"
+                  >
+                    <span class="material-symbols-outlined mr-2">
+                      ink_eraser
+                    </span>
+                    Clear
+                  </button>
+                </div>
+              </div>
+            </div>
             <div class="columns">
               <!-- RESULTS -->
               <ol class="chat" v-if="inferences && inferences.length">
                 <li
-                  v-for="inference in paginatedInferences"
+                  v-for="(inference, displayIndex) in paginatedInferences"
                   :key="inference.id || inference._originalIndex"
+                  class="history-item"
+                  :style="{
+                    animationDelay: `${Math.min(displayIndex * 50, 500)}ms`,
+                  }"
                 >
                   <div class="question">
                     <!-- Video Player - UPDATED: Use HTTP streaming URL -->
@@ -362,6 +379,7 @@
                       controls
                       style="
                         width: 100vh;
+                        object-fit: contain;
                         border: 1px solid rgba(255, 255, 255, 1);
                         border-radius: 4px;
                       "
@@ -388,7 +406,10 @@
                       </button>
                       <button
                         class="button is-medium is-success copy is-pulled-left p-0 pl-1 pr-1"
-                        @click="copy(inference?.answer?.data?.video_path || ''); setCopied(inference._originalIndex)"
+                        @click="
+                          copy(inference?.answer?.data?.video_path || '');
+                          setCopied(inference._originalIndex);
+                        "
                       >
                         <span
                           class="material-symbols-outlined is-size-2"
@@ -417,32 +438,25 @@
                 </li>
               </ol>
 
-              <!-- PAGINATION CONTROLS -->
-              <nav
-                v-if="totalPages > 1"
-                class="pagination is-centered mt-4"
-                role="navigation"
-                aria-label="pagination"
+              <!-- LAZY LOAD SENTINEL -->
+              <div
+                ref="loadMoreSentinel"
+                v-if="hasMore"
+                class="load-more-sentinel has-text-centered p-4"
               >
-                <button
-                  class="pagination-previous"
-                  :disabled="currentPage <= 1"
-                  @click="prevPage"
-                >
-                  <span class="material-symbols-outlined">chevron_left</span>
-                </button>
-                <span class="pagination-info ml-3 mr-3">
-                  Page {{ currentPage }} of {{ totalPages }}
-                  <small class="has-text-grey ml-2">({{ inferences.length }} videos)</small>
+                <span v-if="isLoadingMore" class="has-text-grey">
+                  Loading more...
                 </span>
-                <button
-                  class="pagination-next"
-                  :disabled="currentPage >= totalPages"
-                  @click="nextPage"
-                >
-                  <span class="material-symbols-outlined">chevron_right</span>
-                </button>
-              </nav>
+              </div>
+              <!-- SCROLL TO TOP BUTTON -->
+              <button
+                v-if="showScrollTop"
+                class="scroll-to-top-btn"
+                @click="scrollToTop"
+                title="Scroll to top"
+              >
+                <span class="material-symbols-outlined">arrow_upward</span>
+              </button>
             </div>
           </div>
         </div>
@@ -502,7 +516,8 @@ import {
 } from "../stores/generationStore";
 import AccessRequirements from "./AccessRequirements.vue";
 
-const DEMO_PROMPT = "A bonsai tree gently swaying in a soft breeze, leaves rustling";
+const DEMO_PROMPT =
+  "A bonsai tree gently swaying in a soft breeze, leaves rustling";
 
 const API_BASE =
   (typeof process !== "undefined" && process.env?.VITE_API_BASE) ||
@@ -517,7 +532,7 @@ export default {
   components: { AccessRequirements },
   props: { existingImageBase64: { type: String, default: "" } },
   setup(props) {
-    const mode = ref("turbo");
+    const mode = ref("turbo"); // LTX-2 I2V
     const quality = ref("sd");
     const isLoading = ref(false);
     const form = reactive({ prompt: "" });
@@ -526,33 +541,88 @@ export default {
     const hasCopy = shallowRef([]);
     const planReq = reactive({ controller: null, seq: 0 });
 
-    // ------------ pagination ----------------
+    // ------------ lazy loading pagination ----------------
     const ITEMS_PER_PAGE = 5;
-    const currentPage = ref(1);
+    const displayedCount = ref(ITEMS_PER_PAGE);
+    const loadMoreSentinel = ref(null);
+    const isLoadingMore = ref(false);
+    const showScrollTop = ref(false);
+    const scrollContainer = ref(null);
 
-    // Total number of pages
-    const totalPages = computed(() => Math.max(1, Math.ceil(inferences.value.length / ITEMS_PER_PAGE)));
-
-    // Paginated inferences (most recent first, includes original index)
-    const paginatedInferences = computed(() => {
-      const reversed = inferences.value.map((item, idx) => ({
-        ...item,
-        _originalIndex: idx,
-      })).reverse();
-      const start = (currentPage.value - 1) * ITEMS_PER_PAGE;
-      const end = start + ITEMS_PER_PAGE;
-      return reversed.slice(start, end);
+    // Reversed inferences (most recent first) with original index
+    const reversedInferences = computed(() => {
+      return inferences.value
+        .map((item, idx) => ({
+          ...item,
+          _originalIndex: idx,
+        }))
+        .reverse();
     });
 
-    // Pagination navigation
-    const goToPage = (page) => {
-      if (page >= 1 && page <= totalPages.value) {
-        currentPage.value = page;
+    // Displayed inferences (lazy loaded subset)
+    const paginatedInferences = computed(() => {
+      return reversedInferences.value.slice(0, displayedCount.value);
+    });
+
+    // Check if there are more items to load
+    const hasMore = computed(
+      () => displayedCount.value < inferences.value.length
+    );
+
+    // Load more items
+    const loadMore = () => {
+      if (isLoadingMore.value || !hasMore.value) return;
+      isLoadingMore.value = true;
+      setTimeout(() => {
+        displayedCount.value = Math.min(
+          displayedCount.value + ITEMS_PER_PAGE,
+          inferences.value.length
+        );
+        isLoadingMore.value = false;
+      }, 100);
+    };
+
+    // Reset to initial count when new inference is added
+    const resetToFirstPage = () => {
+      displayedCount.value = ITEMS_PER_PAGE;
+    };
+
+    // Intersection Observer for infinite scroll
+    let scrollObserver = null;
+    const setupScrollObserver = () => {
+      if (scrollObserver) scrollObserver.disconnect();
+      if (!loadMoreSentinel.value) return;
+
+      // Use the scroll container as root for proper intersection detection
+      const root =
+        scrollContainer.value ||
+        document.querySelector(".models__deployment-install");
+      scrollObserver = new IntersectionObserver(
+        (entries) => {
+          if (entries[0].isIntersecting && hasMore.value) {
+            loadMore();
+          }
+        },
+        { root, rootMargin: "100px" }
+      );
+      scrollObserver.observe(loadMoreSentinel.value);
+    };
+
+    // Scroll to top handler
+    const scrollToTop = () => {
+      const container =
+        scrollContainer.value ||
+        document.querySelector(".models__deployment-install");
+      if (container) {
+        container.scrollTo({ top: 0, behavior: "smooth" });
       }
     };
-    const nextPage = () => goToPage(currentPage.value + 1);
-    const prevPage = () => goToPage(currentPage.value - 1);
-    const resetToFirstPage = () => { currentPage.value = 1; };
+
+    // Handle scroll to show/hide scroll-to-top button
+    const handleScroll = rafThrottle((e) => {
+      const scrollTop = e.target?.scrollTop || 0;
+      showScrollTop.value = scrollTop > 400;
+    });
 
     // Debounced persistence
     const persistInferences = debounce(async (data) => {
@@ -574,7 +644,9 @@ export default {
       sendMessage(demoPrompt, true); // true = isDemo
     };
 
-    const canGenerateWithAccess = computed(() => hasAccess.value && !isLoading.value);
+    const canGenerateWithAccess = computed(
+      () => hasAccess.value && !isLoading.value
+    );
 
     const readiness = reactive({
       ok: true,
@@ -591,8 +663,12 @@ export default {
     const generation = computed(() => generationStore.state.video);
 
     // Computed properties for progress display (avoid repeated Math.round in template)
-    const generationPctRounded = computed(() => Math.round(generation.value?.pct || 0));
-    const generationPctClamped = computed(() => Math.max(0, Math.min(100, generation.value?.pct || 0)));
+    const generationPctRounded = computed(() =>
+      Math.round(generation.value?.pct || 0)
+    );
+    const generationPctClamped = computed(() =>
+      Math.max(0, Math.min(100, generation.value?.pct || 0))
+    );
 
     const showUpdateCTA = computed(
       () =>
@@ -603,34 +679,18 @@ export default {
         readiness.missingGguf
     );
 
-    const snap64 = (v) => {
-      const m = 64;
-      const down = Math.floor(v / m) * m;
-      const up = Math.ceil(v / m) * m;
-      const candidate = Math.abs(v - down) <= Math.abs(up - v) ? down : up;
-      return Math.max(256, Math.min(1024, candidate));
-    };
-
-    const toWanFrames = (n) => {
-      const k = Math.round((n - 1) / 4);
-      return Math.max(5, 1 + 4 * k);
-    };
-
     const endpointForMode = () => {
-      if (mode.value === "turbo") return "/image/video/turbo";
-      if (mode.value === "ltx2") return "/video/ltx2";
-      return "/image/video/quality";
+      return "/image/video/turbo"; // LTX-2 I2V endpoint
     };
     const pipelineForMode = () => {
-      if (mode.value === "turbo") return "ltx_video";
-      if (mode.value === "ltx2") return "ltx2_video";
-      return "wan_video";
+      return "ltx2_video"; // LTX-2 I2V pipeline
     };
 
-    const normalizeFramesForWan = (frames) => {
-      const n = Math.max(5, Number(frames) || 5);
-      const k = Math.round((n - 1) / 4);
-      return 1 + 4 * k;
+    const normalizeFramesForLTX2 = (frames) => {
+      // LTX-2 frames must be 8n+1
+      const n = Math.max(9, Number(frames) || 25);
+      const k = Math.round((n - 1) / 8);
+      return 1 + 8 * k;
     };
 
     const downloads = reactive({
@@ -723,9 +783,13 @@ export default {
       downloads.progress = next;
 
       // Safety check: if all tasks are completed but status wasn't updated, force completion
-      const allTasksComplete = tasksList.length > 0 && tasksList.every((t) => t.status === "completed");
+      const allTasksComplete =
+        tasksList.length > 0 &&
+        tasksList.every((t) => t.status === "completed");
       if (allTasksComplete && downloads.status === "downloading") {
-        console.log("[Downloads] All tasks completed, forcing status to completed");
+        console.log(
+          "[Downloads] All tasks completed, forcing status to completed"
+        );
         downloads.status = "completed";
       }
 
@@ -868,11 +932,16 @@ export default {
         missing: Number.isFinite(r.missing) ? r.missing : null,
         root: r.root || null,
       }));
-      const ggufs = Array.isArray(data?.gguf_status) ? data.gguf_status : [];
-      const missingGgufs = ggufs.filter((g) => g && g.configured && !g.exists);
-      readiness.missingGguf = missingGgufs.length > 0;
-      readiness.ggufNames = missingGgufs.map((g) =>
-        (g.path || g.name || "").split("/").pop()
+      // Handle required_files from the plan response (single files like GGUF, FP8, etc.)
+      const requiredFiles = Array.isArray(data?.required_files)
+        ? data.required_files
+        : [];
+      const missingFiles = requiredFiles.filter(
+        (f) => f && (!f.exists || !f.ok)
+      );
+      readiness.missingGguf = missingFiles.length > 0;
+      readiness.ggufNames = missingFiles.map((f) =>
+        (f.name || f.path || "").split("/").pop()
       );
       readiness.authRequired = !!data?.auth_required;
       readiness.authRepos = Array.isArray(data?.auth_repos)
@@ -990,7 +1059,11 @@ export default {
         const { data, status } = await axios.post(
           `${API_BASE}/pipelines/plan`,
           { pipeline, deep_validate: true },
-          { signal: controller.signal, validateStatus: () => true, timeout: 10000 }
+          {
+            signal: controller.signal,
+            validateStatus: () => true,
+            timeout: 10000,
+          }
         );
         if (mySeq !== planReq.seq) return;
         if (status >= 200 && status < 300) {
@@ -1053,7 +1126,10 @@ export default {
           await probeCurrentMode();
           return;
         }
-        setError("video", res?.data?.error || `Prefetch failed (${res.status})`);
+        setError(
+          "video",
+          res?.data?.error || `Prefetch failed (${res.status})`
+        );
       } catch (e) {
         setError("video", e?.message || "Network error");
       }
@@ -1101,6 +1177,8 @@ export default {
 
     const pickedImageName = ref("");
     const uploadedImageBase64 = ref("");
+    const imageAspectRatio = ref("landscape"); // "landscape" or "portrait"
+
     const imagePreviewUrl = computed(() => {
       if (uploadedImageBase64.value)
         return "data:image/png;base64," + uploadedImageBase64.value;
@@ -1112,6 +1190,23 @@ export default {
       () => !!(uploadedImageBase64.value || props.existingImageBase64)
     );
 
+    // Detect aspect ratio from image dimensions
+    const detectImageAspectRatio = (base64) => {
+      return new Promise((resolve) => {
+        const img = new Image();
+        img.onload = () => {
+          const ratio = img.width >= img.height ? "landscape" : "portrait";
+          imageAspectRatio.value = ratio;
+          resolve(ratio);
+        };
+        img.onerror = () => {
+          imageAspectRatio.value = "landscape";
+          resolve("landscape");
+        };
+        img.src = "data:image/png;base64," + base64;
+      });
+    };
+
     const onImagePicked = async (e) => {
       const file = e.target.files?.[0];
       if (!file) return;
@@ -1121,6 +1216,8 @@ export default {
         /^data:image\/[a-zA-Z+]+;base64,/,
         ""
       );
+      // Detect aspect ratio after image is loaded
+      await detectImageAspectRatio(uploadedImageBase64.value);
     };
     const fileToBase64 = (file) =>
       new Promise((resolve, reject) => {
@@ -1136,74 +1233,30 @@ export default {
       // Allow demo generation even without access
       if (!isDemo && !hasAccess.value) return;
 
+      // LTX-2 I2V size mappings (divisible by 32)
       const sizeMaps = {
-        turbo: { sd: [480, 640], hd: [480, 832], fhd: [768, 1280] },
-        quality: { sd: [480, 640], hd: [480, 832], fhd: [1024, 1728] },
-        ltx2: { sd: [512, 768], hd: [576, 1024], fhd: [768, 1280] },
+        turbo: { sd: [512, 768], hd: [576, 1024], fhd: [768, 1280] },
       };
-      const pick = sizeMaps[mode.value] || sizeMaps.turbo;
+
+      // Get dimensions based on quality selection
+      const pick = sizeMaps.turbo;
       const [h, w] = pick[quality.value] || pick.sd;
-      let frames = mode.value === "turbo" ? 96 : mode.value === "ltx2" ? 97 : 41;
-      let payload;
-      if (mode.value === "quality") {
-        frames = normalizeFramesForWan(frames);
-        payload = {
-          prompt: actualPrompt,
-          height: h,
-          width: w,
-          frames: Math.min(frames, 81),
-          fps: 8,
-          steps: 10,
-          guidance_scale: 3,
-          auto_download: true,
-          image_base64:
-            uploadedImageBase64.value ||
-            (props.existingImageBase64 || "").trim(),
-        };
-      } else if (mode.value === "ltx2") {
-        // LTX-2: Fast distilled model with FP8 quantization
-        // Frames must be (n*8)+1 for LTX-2
-        frames = ((frames - 1) >> 3) * 8 + 1;
-        payload = {
-          prompt: actualPrompt,
-          height: h,
-          width: w,
-          frames: frames,
-          fps: 24,
-          steps: 8, // Distilled model uses 4-10 steps
-          guidance_scale: 1.0, // Distilled uses guidance 1.0
-          use_fp8: true, // Enable FP8 quantization (CUDA only)
-          enable_memory_offloading: true,
-          auto_download: true,
-          negative_prompt:
-            "worst quality, inconsistent motion, blurry, jittery, distorted, " +
-            "deformed, bad anatomy, extra limbs, low resolution, watermark",
-          image_base64:
-            uploadedImageBase64.value ||
-            (props.existingImageBase64 || "").trim(),
-        };
-      } else {
-        payload = {
-          prompt: actualPrompt,
-          height: h,
-          width: w,
-          frames: frames,
-          fps: 24,
-          steps: 100,
-          guidance_scale: 5.0,
-          max_sequence_length: 512,
-          seed: 42,
-          negative_prompt: `deformed face, ugly face, bad face, mutated face, disfigured face,
-    "deformed limbs, extra limbs, missing limbs, bad hands, extra fingers,
-    "fused fingers, bad anatomy, mutation, blurry, low quality, worst quality,
-    "poorly drawn, amateur, distorted body, wrong proportions`,
-          enable_memory_offloading: true,
-          auto_download: true,
-          image_base64:
-            uploadedImageBase64.value ||
-            (props.existingImageBase64 || "").trim(),
-        };
-      }
+
+      // LTX-2 I2V: Frames must be 8n+1
+      let frames = normalizeFramesForLTX2(49);
+      const payload = {
+        prompt: prompt,
+        height: h,
+        width: w,
+        frames: frames,
+        fps: 12,
+        steps: 12,
+        guidance_scale: 3,
+        auto_download: true,
+        image_base64:
+          uploadedImageBase64.value ||
+          (props.existingImageBase64 || "").trim(),
+      };
       const url = `${API_BASE}${endpointForMode()}`;
       ensureGenerationSocket();
       startGeneration("video"); // Initialize generation state
@@ -1211,9 +1264,10 @@ export default {
         // UPDATED: Check for video_url OR video_path
         if (response?.data?.video_path || response?.data?.video_url) {
           // Update shallowRef by replacing array
+          // Save only response.data (JSON body) - full axios response is not serializable
           const newInference = {
             question: `${mode.value}-i2v`,
-            answer: response,
+            answer: { data: response.data },
             id: uuid(),
           };
           inferences.value = [...inferences.value, newInference];
@@ -1257,7 +1311,7 @@ export default {
     };
 
     const downloadVideo = async (idx) => {
-      const data = inferences[idx]?.answer?.data;
+      const data = inferences.value[idx]?.answer?.data;
       if (!data) return;
       const path = data.video_path;
       if (!path) return;
@@ -1275,6 +1329,52 @@ export default {
       hasCopy.value = hasCopy.value.filter((_, i) => i !== idx);
       // Debounced persistence
       persistInferences([...inferences.value]);
+    };
+
+    const clearHistory = async () => {
+      inferences.value = [];
+      hasCopy.value = [];
+      try {
+        await window.electronAPI?.store?.set?.("videoInferences", []);
+      } catch (e) {
+        console.error("Failed to clear video inferences:", e);
+      }
+    };
+
+    const exportHistory = () => {
+      if (!inferences.value || inferences.value.length === 0) return;
+      const data = JSON.stringify(inferences.value, null, 2);
+      const blob = new Blob([data], { type: "application/json" });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `bonzai-video-history-${Date.now()}.json`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+    };
+
+    const importHistory = () => {
+      const input = document.createElement("input");
+      input.type = "file";
+      input.accept = ".json";
+      input.onchange = async (e) => {
+        const file = e.target.files[0];
+        if (!file) return;
+        try {
+          const text = await file.text();
+          const data = JSON.parse(text);
+          if (Array.isArray(data)) {
+            inferences.value = [...data, ...inferences.value];
+            hasCopy.value = new Array(inferences.value.length).fill(false);
+            await persistInferences([...inferences.value]);
+          }
+        } catch (err) {
+          console.error("Failed to import history:", err);
+        }
+      };
+      input.click();
     };
 
     // Set copy state for an index (works with shallowRef)
@@ -1327,6 +1427,14 @@ export default {
       await resumeActiveDownloadIfAny();
       await loadHistory();
       await probeCurrentMode();
+      // Setup scroll observer after DOM is rendered
+      setTimeout(setupScrollObserver, 100);
+      // Attach scroll listener for scroll-to-top button
+      const container = document.querySelector(".models__deployment-install");
+      if (container) {
+        scrollContainer.value = container;
+        container.addEventListener("scroll", handleScroll, { passive: true });
+      }
     });
 
     onBeforeUnmount(() => {
@@ -1338,6 +1446,15 @@ export default {
       if (httpPollTimer) {
         clearInterval(httpPollTimer);
         httpPollTimer = null;
+      }
+      // Cleanup scroll observer
+      if (scrollObserver) {
+        scrollObserver.disconnect();
+        scrollObserver = null;
+      }
+      // Cleanup scroll listener
+      if (scrollContainer.value) {
+        scrollContainer.value.removeEventListener("scroll", handleScroll);
       }
       // Note: generation socket is shared and managed by generationStore
     });
@@ -1357,12 +1474,14 @@ export default {
       isLoading,
       inferences,
       hasCopy,
-      // pagination
+      // lazy loading pagination
       paginatedInferences,
-      currentPage,
-      totalPages,
-      nextPage,
-      prevPage,
+      loadMoreSentinel,
+      hasMore,
+      isLoadingMore,
+      // scroll to top
+      showScrollTop,
+      scrollToTop,
       readiness,
       showUpdateCTA,
       generation,
@@ -1374,6 +1493,7 @@ export default {
       pickedImageName,
       hasAnyImage,
       imagePreviewUrl,
+      imageAspectRatio,
       // access control
       accessRef,
       hasAccess,
@@ -1387,6 +1507,9 @@ export default {
       setCopied,
       downloadVideo,
       removeInference,
+      clearHistory,
+      exportHistory,
+      importHistory,
       prefetchForMode,
       cancelCurrentPipeline,
       retryCurrentPipeline,
@@ -1443,6 +1566,7 @@ export default {
   margin: 0 !important;
 }
 .models__deployment-install {
+  position: relative;
   overflow-y: auto;
   padding: 6em;
   height: 100vh;
@@ -1535,7 +1659,7 @@ ol {
 }
 ol.chat {
   display: flex;
-  flex-direction: column-reverse;
+  flex-direction: column;
 }
 ol.chat li {
   position: relative;
@@ -1556,5 +1680,73 @@ ol.chat li {
   top: -3em;
   right: -1.25em;
   opacity: 0.5;
+}
+
+/* Fade-in animation for history items */
+.history-item {
+  animation: fadeInUp 0.4s ease-out forwards;
+  opacity: 0;
+}
+
+@keyframes fadeInUp {
+  from {
+    opacity: 0;
+    transform: translateY(20px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.load-more-sentinel {
+  min-height: 20px;
+}
+
+/* Scroll to top button */
+.scroll-to-top-btn {
+  position: absolute;
+  bottom: 2rem;
+  right: 2rem;
+  width: 48px;
+  height: 48px;
+  border-radius: 50%;
+  background: rgba(97, 55, 142, 0.9);
+  border: 2px solid rgba(255, 255, 255, 0.3);
+  color: #fff;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+  transition: all 0.2s ease;
+  z-index: 100;
+  animation: fadeInUp 0.3s ease-out;
+}
+
+.scroll-to-top-btn:hover {
+  background: rgba(97, 55, 142, 1);
+  transform: translateY(-2px);
+  box-shadow: 0 6px 16px rgba(0, 0, 0, 0.4);
+}
+
+.scroll-to-top-btn .material-symbols-outlined {
+  font-size: 24px;
+  border: none;
+}
+
+/* Background animation */
+@keyframes move {
+  0% {
+    transform: scale(1.1);
+    transform-origin: bottom left;
+  }
+  50% {
+    transform: scale(1.2);
+  }
+  100% {
+    transform: scale(1.1);
+    transform-origin: bottom left;
+  }
 }
 </style>

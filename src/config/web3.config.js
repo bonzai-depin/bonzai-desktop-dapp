@@ -43,14 +43,14 @@ export const CONFIG = {
   // ═══════════════════════════════════════════════════════════════════════════
   // LEVEL SYSTEM CONFIGURATION (6 Levels)
   // ═══════════════════════════════════════════════════════════════════════════
+  // Access via: BONZAI token holding OR 1 ETH one-time payment (unlocks ALL levels)
   levels: {
     LVL1: {
       id: 1,
       name: "Text Generation",
       description: "Local chat with 20+ models.",
       icon: "chat",
-      holdingRequired: 100, // BONZAI tokens required
-      nftTokenId: 1, // ERC1155 token ID for this level
+      holdingRequired: 20, // BONZAI tokens required (divided by 5)
       features: ["Unlimited Text Generation", "Unlimited Character Roleplay", "Unlimited Vibe Coding"],
     },
     LVL2: {
@@ -58,74 +58,68 @@ export const CONFIG = {
       name: "Audio Generation",
       description: "Text-to-Speech and more.",
       icon: "headphones",
-      holdingRequired: 500,
-      nftTokenId: 2,
-      features: ["Audio Generation", "Voice Cloning", "Music Creation"],
+      holdingRequired: 100, // (divided by 5)
+      features: ["Unlimited Audio Generation", "Voice Cloning", "Text-to-Speech"],
     },
     LVL3: {
       id: 3,
       name: "Image Generation",
       description: "Turn text into images",
       icon: "image",
-      holdingRequired: 2000,
-      nftTokenId: 3,
-      features: ["Uncensored Images", "Image Edition", "Style Transfer"],
+      holdingRequired: 400, // (divided by 5)
+      features: ["Unlimited Image Generation", "Uncensored Images", "Style Transfer"],
     },
     LVL4: {
       id: 4,
       name: "Video Generation",
       description: "Turn text and images into videos.",
       icon: "movie",
-      holdingRequired: 10000,
-      nftTokenId: 4,
-      features: ["LTX-Video model", "Wan 2.2 model", "Image-to-video"],
+      holdingRequired: 2000, // (divided by 5)
+      features: ["Unlimited Video Generation", "Image-to-Video", "Text-to-video"],
     },
     LVL5: {
       id: 5,
       name: "Game Generation",
       description: "Turn text into 3D assets.",
       icon: "3d_rotation",
-      holdingRequired: 50000,
-      nftTokenId: 5,
-      features: ["2D games (P5.js)", "3D games (Three.js)", "Interactive assets"],
+      holdingRequired: 10000, // (divided by 5)
+      features: ["Unlimited Game Generation", "3D assets", "Virtual Effects"],
     },
     LVL6: {
       id: 6,
       name: "Model Training",
       description: "Train models and robots.",
       icon: "exercise",
-      holdingRequired: 200000,
-      nftTokenId: 6,
+      holdingRequired: 40000, // (divided by 5)
       features: ["Robotics Neural Networks", "Consistent Characters", "Custom Large Language Models"],
     },
   },
 
   // ═══════════════════════════════════════════════════════════════════════════
-  // NFT CONTRACT (ERC1155 for Level Access)
+  // LEVEL UNLOCK CONTRACT (Single 1 ETH payment unlocks ALL levels)
   // ═══════════════════════════════════════════════════════════════════════════
-  nft: {
-    // BonzAI Access Pass - ERC1155 collection
-    address: "0x0000000000000000000000000000000000000000", // TODO: Deploy
-    chainId: 42161, // Deployed on Arbitrum
-    name: "BonzAI Access Pass",
-    symbol: "BONZAI-PASS",
-    // Staking contract for NFT staking requirements
-    stakingContract: "0x0000000000000000000000000000000000000000", // TODO: Deploy
+  levelUnlock: {
+    // BonzaiUnlock contract on Arbitrum
+    registryAddress: "0x0000000000000000000000000000000000000000", // TODO: Deploy BonzaiUnlock.sol
+    chainId: 42161, // Arbitrum One
+    // Fixed price: 1 ETH unlocks all 6 levels permanently
+    unlockPrice: "1.0", // ETH
+    // Proceeds split (configured in contract):
+    // - 50% to Foundation: 0x8Ff3b2e823b33BeE30e699bB1b6BBc8F622fEa89
+    // - 50% to Liquidity:  0x4135d59f0BfF96560b7aD5cfCe81154AB1810B93
   },
 
   // ═══════════════════════════════════════════════════════════════════════════
-  // TREASURY & FEES
+  // TREASURY & WALLETS
   // ═══════════════════════════════════════════════════════════════════════════
   treasury: {
-    address: "0x0000000000000000000000000000000000000000", // TODO: Set treasury wallet
-    // BonzAI captures 100% of sales proceeds for:
-    // - Prediction Market projects
-    // - Smart Agent workflows
+    // Foundation wallet (receives 50% of unlock proceeds)
+    foundationWallet: "0x8Ff3b2e823b33BeE30e699bB1b6BBc8F622fEa89",
+    // Liquidity management wallet (receives 50% of unlock proceeds)
+    liquidityWallet: "0x4135d59f0BfF96560b7aD5cfCe81154AB1810B93",
     // Fee percentages (basis points, 100 = 1%) for other operations:
     fees: {
       p2pInference: 250, // 2.5% on P2P inference trades
-      nftMint: 100, // 1% on NFT mints
-      // Note: Prediction markets and smart agents = 100% to treasury (full sale price)
       predictionMarketSale: 10000, // 100% - BonzAI captures entire sale
       smartAgentSale: 10000, // 100% - BonzAI captures entire sale
     },
@@ -163,12 +157,10 @@ export const CONFIG = {
     optionalChains: [42161], // Arbitrum optional (only if you want WC to support it)
   },
 
-  // LVL∞ lifetime unlock via on-chain registry
-  infinity: {
-    // Deployed BonzAIInfinityRegistry address (Ethereum mainnet)
-    registryAddress: '',
-    // Treasury receiving the ETH payments
-    treasury: '0x8Ff3b2e823b33BeE30e699bB1b6BBc8F622fEa89',
+  // Wallet addresses reference
+  wallets: {
+    foundation: "0x8Ff3b2e823b33BeE30e699bB1b6BBc8F622fEa89",
+    liquidity: "0x4135d59f0BfF96560b7aD5cfCe81154AB1810B93",
   },
 };
 
