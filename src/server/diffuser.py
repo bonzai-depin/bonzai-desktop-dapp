@@ -1153,16 +1153,18 @@ def ltx2_denoise(
     move_module_root_tensors(transformer, "cpu")
 
     latents = ltx2_unpack_latents(latents, f_lat, h_lat, w_lat, patch_size, patch_size_t)
-    latents = (
-        (latents * vae.latents_std.to(device) / vae.config.scaling_factor) +
-        vae.latents_mean.to(device)
-    )
+    # Reshape mean/std for broadcasting with 5D latent tensor [B, C, F, H, W]
+    latents_std = vae.latents_std.to(device).view(1, -1, 1, 1, 1)
+    latents_mean = vae.latents_mean.to(device).view(1, -1, 1, 1, 1)
+    latents = (latents * latents_std / vae.config.scaling_factor) + latents_mean
 
-    audio_latents = (
-        (audio_latents * audio_vae.latents_std.to(device)) +
-        audio_vae.latents_mean.to(device)
-    )
-    audio_latents = audio_latents.unflatten(2, (-1, latent_mel_bins)).transpose(1, 2)
+    # Audio latents: unflatten first from [B, L, C*M] to [B, L, C, M], then denormalize
+    audio_latents = audio_latents.unflatten(2, (-1, latent_mel_bins))  # [B, L, C, M]
+    # Reshape audio mean/std for broadcasting with [B, L, C, M]
+    audio_latents_std = audio_vae.latents_std.to(device).view(1, 1, -1, 1)
+    audio_latents_mean = audio_vae.latents_mean.to(device).view(1, 1, -1, 1)
+    audio_latents = (audio_latents * audio_latents_std) + audio_latents_mean
+    audio_latents = audio_latents.transpose(1, 2)  # [B, C, L, M]
 
     return latents, audio_latents
 

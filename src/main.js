@@ -8,6 +8,7 @@ import {
   shell,
   dialog,
   net,
+  session,
 } from "electron";
 import Store from "electron-store";
 import os from "os";
@@ -615,6 +616,30 @@ app.on("ready", async () => {
   const { width, height } = screen.getPrimaryDisplay().workAreaSize;
   const flaskURL = `http://127.0.0.1:${PY_SERVER_PORT}`;
   startPythonSubprocess();
+
+  // ─────────────────────────────────────────────────────────────────────────────
+  // WalletConnect WebSocket Origin Fix for Production Electron
+  // The WalletConnect relay server rejects connections with file:// or null origins
+  // This intercepts WebSocket handshakes and sets a valid Origin header
+  // IMPORTANT: https://bonzai.sh must be added as allowed origin in WalletConnect Cloud
+  // ─────────────────────────────────────────────────────────────────────────────
+  session.defaultSession.webRequest.onBeforeSendHeaders(
+    {
+      urls: [
+        "wss://*.walletconnect.com/*",
+        "wss://*.walletconnect.org/*",
+        "wss://relay.walletconnect.com/*",
+        "wss://relay.walletconnect.org/*",
+        "https://*.walletconnect.com/*",
+        "https://verify.walletconnect.com/*",
+      ],
+    },
+    (details, callback) => {
+      // Set Origin to a valid domain that's configured in WalletConnect Cloud
+      details.requestHeaders["Origin"] = "https://bonzai.sh";
+      callback({ requestHeaders: details.requestHeaders });
+    }
+  );
 
   try {
     await checkPythonServer(flaskURL);

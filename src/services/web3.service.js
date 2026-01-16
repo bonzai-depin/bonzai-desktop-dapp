@@ -124,6 +124,18 @@ export const ensureWalletProvider = async (opts = {}) => {
       ? CONFIG.walletconnect.chains
       : [1]; // Ethereum mainnet
 
+  // Detect Electron production mode (file:// or app:// protocol)
+  const isElectronProduction = typeof window !== "undefined" &&
+    (window.location.protocol === "file:" ||
+     window.location.protocol === "app:" ||
+     window.location.protocol.startsWith("file"));
+
+  // Use verified domain for production Electron (must be configured in WalletConnect Cloud)
+  // In development (localhost), use localhost URL
+  const metadataUrl = isElectronProduction
+    ? "https://bonzai.sh"  // Must be verified in WalletConnect Cloud dashboard
+    : `${window.location.protocol}//${window.location.host}`;
+
   // Create once
   if (!wcProvider) {
     wcProvider = await EthereumProvider.init({
@@ -134,9 +146,8 @@ export const ensureWalletProvider = async (opts = {}) => {
       metadata: {
         name: "BonzAI",
         description: "BonzAI Desktop DApp",
-        // Use localhost for Electron - must match WalletConnect Cloud allowed domains
-        url: "http://localhost",
-        icons: ["https://bonzai.ai/icon.png"],
+        url: metadataUrl,
+        icons: ["https://bonzai.sh/icon.png"],
       },
       methods: [
         "eth_requestAccounts",
@@ -152,6 +163,12 @@ export const ensureWalletProvider = async (opts = {}) => {
       events: ["accountsChanged", "chainChanged", "disconnect"],
       // Disable provider ping to reduce connection issues in Electron
       disableProviderPing: true,
+      // Required for Electron: skip origin verification at client level
+      // Note: WalletConnect Cloud project must have origins configured
+      qrModalOptions: {
+        // Use dark theme for better visibility in Electron
+        themeMode: "dark",
+      },
     });
   } else {
     // Update QR modal behavior if caller toggles auto/interactive
