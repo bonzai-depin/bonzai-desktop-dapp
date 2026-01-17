@@ -275,6 +275,9 @@ export const connectWallet = async () => {
  * Disconnect wallet
  */
 export const disconnectWallet = async () => {
+  // Remember if we set window.ethereum (WalletConnect case)
+  const weSetWindowEthereum = state.walletType === "walletconnect";
+
   try {
     // WalletConnect: explicitly disconnect session
     if (state.walletType === "walletconnect" && wcProvider?.disconnect) {
@@ -296,8 +299,11 @@ export const disconnectWallet = async () => {
     eip1193Provider = null;
     wcProvider = null;
 
-    // Do not hard-delete window.ethereum; only clear if it was ours
-    // (If in a browser with an injected provider, leave it intact)
+    // Clear window.ethereum if we set it (WalletConnect case)
+    // This ensures ensureWalletProvider creates a fresh provider on reconnect
+    if (weSetWindowEthereum && window.ethereum) {
+      delete window.ethereum;
+    }
   }
 };
 
@@ -325,7 +331,11 @@ const fetchBalanceOnChain = async (chain) => {
     const decimals = CONFIG.tokens.BONZAI.decimals;
     return parseFloat(ethers.formatUnits(balance, decimals));
   } catch (e) {
-    console.error(`[Web3] Balance fetch failed on ${chain}:`, e);
+    // Silently return 0 for CALL_EXCEPTION (contract doesn't exist on this chain)
+    // Only log unexpected errors
+    if (e?.code !== "CALL_EXCEPTION") {
+      console.warn(`[Web3] Balance fetch failed on ${chain}:`, e?.message || e);
+    }
     return 0;
   }
 };

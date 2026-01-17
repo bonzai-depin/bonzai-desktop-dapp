@@ -290,8 +290,10 @@
                   ></button>
                 </form>
 
+                <hr class="mt-5" />
+
                 <!-- GENERATION HISTORY HEADER -->
-                <div class="level mb-4 mt-5" v-if="inferences.length">
+                <div class="level pt-5 mt-5">
                   <div class="level-left">
                     <div class="level-item">
                       <h2 class="fira-sans-condensed-black-italic has-text-white is-size-2">
@@ -345,16 +347,14 @@
                             languageFlags[inference.language] ||
                             inference.language
                           }}
-                          {{ languages[inference.language] || "" }}
                         </span>
                         <span
                           v-if="inference.hasClone"
-                          class="tag is-info ml-2"
+                          class="tag is-dark ml-2"
                         >
                           <span class="material-symbols-outlined is-size-6">
                             genetics
                           </span>
-                          Cloned
                         </span>
                       </div>
                       <!-- Audio Player -->

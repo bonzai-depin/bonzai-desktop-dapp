@@ -30,6 +30,11 @@ const llama = await getLlama();
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
+// Unified model directory (same as diffuser.py uses for diffusion models)
+const MODEL_DIR = path.join(os.homedir(), "bonzai-models");
+// Ensure directory exists
+fs.mkdirSync(MODEL_DIR, { recursive: true });
+
 // Dev/prod detection - app.isPackaged is true when running from packaged app
 const isDev = !app.isPackaged;
 const VITE_DEV_SERVER_URL = isDev ? "http://localhost:5173" : null;
@@ -701,12 +706,11 @@ async function systemInformation() {
   };
 }
 
-// Ensure models dir exists on first run
+// Ensure models dir exists on first run (now uses unified MODEL_DIR)
 const modelDir = store.get("models");
-if (!modelDir) {
-  const defaultModelDir = app.getPath("userData");
-  fs.mkdirSync(defaultModelDir, { recursive: true });
-  store.set("models", defaultModelDir);
+if (!modelDir || !modelDir.includes("bonzai-models")) {
+  // Migrate to new unified model directory
+  store.set("models", MODEL_DIR);
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -717,7 +721,7 @@ async function downloadModel(_event, url, filename) {
   try {
     const dl = await download(win, url, {
       filename,
-      directory: path.join(app.getPath("userData"), "models"),
+      directory: MODEL_DIR,
       showBadge: false,
       onProgress: (p) => {
         const pct = p.percent;
@@ -735,7 +739,7 @@ async function downloadModel(_event, url, filename) {
 }
 
 function deleteModel(_event, modelname) {
-  const modelPath = path.join(app.getPath("userData"), "models", modelname);
+  const modelPath = path.join(MODEL_DIR, modelname);
   try {
     unlink(modelPath, (err) => {
       if (err) throw err;
@@ -823,11 +827,7 @@ function computeMaxContextForModel(currentModel, sysInfo) {
 }
 
 async function loadModel(_event, currentModel) {
-  const modelPath = path.join(
-    app.getPath("userData"),
-    "models",
-    currentModel.filename
-  );
+  const modelPath = path.join(MODEL_DIR, currentModel.filename);
   console.log("Model path:", modelPath);
 
   const model = await llama.loadModel({ modelPath });
@@ -845,7 +845,7 @@ async function loadModel(_event, currentModel) {
 }
 
 function checkModel(_event, modelname) {
-  const modelPath = path.join(app.getPath("userData"), "models", modelname);
+  const modelPath = path.join(MODEL_DIR, modelname);
   if (!fs.existsSync(modelPath)) {
     console.error("Model file not found:", modelPath);
     return false;

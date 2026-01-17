@@ -13,6 +13,9 @@
             <template v-if="!isConnected">
               Connect your Wallet to unlock this module.
             </template>
+            <template v-else-if="isConnecting || isCheckingLevels">
+              Checking access...
+            </template>
             <template v-else-if="allLevelsUnlocked">
               All levels unlocked!
             </template>
@@ -39,9 +42,14 @@
           {{ isConnecting ? "Connecting..." : "Connect Wallet" }}
         </button>
 
-        <!-- Buy BONZAI -->
+        <!-- Show loading spinner while checking levels -->
+        <span v-else-if="isCheckingLevels" class="button is-loading is-ghost">
+          Checking...
+        </span>
+
+        <!-- Buy BONZAI (only show after level check completes) -->
         <a
-          v-if="isConnected && !holdingMet && !allLevelsUnlocked"
+          v-else-if="!holdingMet && !allLevelsUnlocked"
           class="button is-success buy mr-5"
           :href="buyLink"
           target="_blank"
@@ -51,9 +59,9 @@
           Buy BONZAI
         </a>
 
-        <!-- Unlock All Levels with ETH -->
+        <!-- Unlock All Levels with ETH (only show after level check completes) -->
         <button
-          v-if="isConnected && !allLevelsUnlocked && canUnlock"
+          v-if="isConnected && !isCheckingLevels && !allLevelsUnlocked && canUnlock"
           class="button is-warning unlock mr-5"
           :disabled="isUnlocking"
           @click="unlockAllLevels"
@@ -131,6 +139,7 @@ const holdingMet = computed(() => levelStatus.value.holdingMet);
 
 // ETH unlock state
 const isUnlocking = ref(false);
+const isCheckingLevels = ref(false);
 const unlockPrice = computed(() => levelService.state.unlockPrice || 1.0);
 const allLevelsUnlocked = computed(() => levelService.state.allLevelsUnlocked);
 const canUnlock = computed(() => {
@@ -200,14 +209,24 @@ watch(
 // Check levels on mount
 onMounted(async () => {
   if (isConnected.value) {
-    await checkAllLevels();
+    isCheckingLevels.value = true;
+    try {
+      await checkAllLevels();
+    } finally {
+      isCheckingLevels.value = false;
+    }
   }
 });
 
 // Re-check levels when wallet connects
 watch(isConnected, async (connected) => {
   if (connected) {
-    await checkAllLevels();
+    isCheckingLevels.value = true;
+    try {
+      await checkAllLevels();
+    } finally {
+      isCheckingLevels.value = false;
+    }
   }
 });
 

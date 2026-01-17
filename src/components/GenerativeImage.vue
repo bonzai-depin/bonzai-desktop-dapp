@@ -116,7 +116,7 @@
                     type="radio"
                     name="mode"
                   />
-                  <label for="mode_quality" class="radio mr-1">
+                  <label for="mode_quality" class="radio mr-2">
                     <span
                       class="material-symbols-outlined"
                       style="font-size: 32px !important"
@@ -133,14 +133,14 @@
                     type="radio"
                     name="mode"
                   />
-                  <label for="mode_turbo_edit" class="radio mr-1">
+                  <label for="mode_turbo_edit" class="radio mr-2">
                     <span
                       class="material-symbols-outlined"
                       style="font-size: 32px !important"
                     >
                       brush
                     </span>
-                    Fast Edit
+                    Edit
                   </label>
 
                   <span class="control">
@@ -1512,7 +1512,7 @@ export default {
       const img = inference?.answer?.data?.image;
       if (!img) return;
       // Switch to edit mode
-      mode.value = "edit";
+      mode.value = "turbo_edit";
       // Set the image (already base64 without prefix)
       uploadedImageBase64.value = img;
       pickedImageName.value = "Generated image";

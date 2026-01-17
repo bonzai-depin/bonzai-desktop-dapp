@@ -13,7 +13,7 @@ export const CONFIG = {
       chainId: 1,
       chainIdHex: "0x1",
       name: "Ethereum Mainnet",
-      rpc: "https://cloudflare-eth.com",
+      rpc: "https://eth.llamarpc.com",
       explorer: "https://etherscan.io",
       currency: { name: "Ether", symbol: "ETH", decimals: 18 },
     },

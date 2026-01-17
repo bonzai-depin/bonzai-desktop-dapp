@@ -182,12 +182,16 @@ WAN22_GGUF_LOW_URL = "https://huggingface.co/QuantStack/Wan2.2-I2V-A14B-GGUF/res
 WAN_21_VAE_NAME = "wan_2.1_vae.safetensors"
 WAN_21_VAE_URL = "https://huggingface.co/Comfy-Org/Wan_2.1_ComfyUI_repackaged/resolve/main/split_files/vae/wan_2.1_vae.safetensors"
 
-# LTX-2 (19B DiT Model) - Uses optimum-quanto int8 quantization
-# Loads transformer from repo subfolder, quantizes on first run, caches for reuse
-# Quanto INT8 is preferred over FP8 for MPS compatibility and memory efficiency
-# VAEs loaded from repo subfolders (vae/, audio_vae/)
+# LTX-2 (19B DiT Model) - Two modes available:
+# 1. GGUF mode (/image/video): Uses from_single_file with Q4_0 GGUF (~10GB)
+# 2. Quanto mode (/image/video/turbo): Uses optimum-quanto int8 quantization with audio
 LTX2_REPO = "Lightricks/LTX-2"
 LTX2_QUANTO_CACHE_DIR = MODEL_DIR / "ltx2_quanto_cache"
+
+# LTX-2 GGUF (for /image/video endpoint) - Q4_0 quantization (~10GB)
+LTX2_GGUF_REPO = "unsloth/LTX-2-GGUF"
+LTX2_GGUF_NAME = "ltx-2-19b-dev-Q4_0.gguf"
+LTX2_GGUF_URL = "https://huggingface.co/unsloth/LTX-2-GGUF/resolve/main/ltx-2-19b-dev-Q4_0.gguf"
 
 CHATTERBOX_REPO = "ResembleAI/chatterbox"
 
@@ -215,6 +219,7 @@ EXPECTED_SIZES = {
     "Wan2.2-Q4-Low.gguf": 9_651_739_136,  # ~9.65GB Q4
     "wan_2.1_vae.safetensors": 253_815_318,  # ~242MB split VAE
     "umt5-xxl-encoder-Q3_K_M.gguf": 5_580_000_000,  # ~5.2GB GGUF text encoder
+    "ltx-2-19b-dev-Q4_0.gguf": 10_500_000_000,  # ~10GB Q4_0 (19B model)
 }
 
 # =============================================================================
@@ -405,42 +410,48 @@ class ChatterboxONNX:
         logger.info(f"[Chatterbox {model_type}] Detected {self._num_layers} transformer layers, dtype={self._kv_dtype}")
     
     @classmethod
-    def from_pretrained(cls, model_type="multilingual", device="cpu", dtype="fp32", cache_dir=None, local_files_only=True):
+    def from_pretrained(cls, model_type="multilingual", device="cpu", dtype="fp32", local_dir=None, local_files_only=True):
+        """
+        Load ChatterboxONNX from local directory (consistent with diffusion model pattern).
+
+        Args:
+            model_type: Must be "multilingual"
+            device: "cpu" or "cuda"
+            dtype: "fp32" or "q8"
+            local_dir: Path to repo_local_dir(CHATTERBOX_MULTILINGUAL_MODEL_ID)
+            local_files_only: If True, don't attempt network downloads
+        """
         import onnxruntime as ort
-        from huggingface_hub import hf_hub_download
         from transformers import AutoTokenizer
 
         if model_type != "multilingual":
             raise ValueError(f"model_type must be 'multilingual'")
 
-        model_id = CHATTERBOX_MULTILINGUAL_MODEL_ID
+        if local_dir is None:
+            local_dir = repo_local_dir(CHATTERBOX_MULTILINGUAL_MODEL_ID)
+        local_dir = Path(local_dir)
 
         # CoreML fails with external .onnx_data files - use CPU
         providers = ['CUDAExecutionProvider', 'CPUExecutionProvider'] if device == "cuda" and torch.cuda.is_available() else ['CPUExecutionProvider']
 
-        logger.info(f"[Chatterbox {model_type}] Loading ONNX models (local_files_only={local_files_only})...")
+        logger.info(f"[Chatterbox {model_type}] Loading ONNX models from {local_dir}...")
 
-        def download(name):
+        def get_onnx_path(name):
             suffix = "" if dtype == "fp32" else "_quantized" if dtype == "q8" else f"_{dtype}"
             filename = f"{name}{suffix}.onnx"
-            path = hf_hub_download(model_id, subfolder="onnx", filename=filename, cache_dir=cache_dir, local_files_only=local_files_only)
-            try:
-                hf_hub_download(model_id, subfolder="onnx", filename=f"{filename}_data", cache_dir=cache_dir, local_files_only=local_files_only)
-            except:
-                pass
-            return path
+            return str(local_dir / "onnx" / filename)
 
         opts = ort.SessionOptions()
         opts.graph_optimization_level = ort.GraphOptimizationLevel.ORT_ENABLE_ALL
 
         return cls(
             model_type=model_type,
-            speech_encoder=ort.InferenceSession(download("speech_encoder"), opts, providers=providers),
-            embed_tokens=ort.InferenceSession(download("embed_tokens"), opts, providers=providers),
-            language_model=ort.InferenceSession(download("language_model"), opts, providers=providers),
-            cond_decoder=ort.InferenceSession(download("conditional_decoder"), opts, providers=providers),
-            tokenizer=AutoTokenizer.from_pretrained(model_id, cache_dir=cache_dir, local_files_only=local_files_only),
-            cache_dir=cache_dir,
+            speech_encoder=ort.InferenceSession(get_onnx_path("speech_encoder"), opts, providers=providers),
+            embed_tokens=ort.InferenceSession(get_onnx_path("embed_tokens"), opts, providers=providers),
+            language_model=ort.InferenceSession(get_onnx_path("language_model"), opts, providers=providers),
+            cond_decoder=ort.InferenceSession(get_onnx_path("conditional_decoder"), opts, providers=providers),
+            tokenizer=AutoTokenizer.from_pretrained(str(local_dir), local_files_only=local_files_only),
+            cache_dir=str(local_dir),
         )
     
     def _normalize_text(self, text):
@@ -1158,13 +1169,13 @@ def ltx2_denoise(
     latents_mean = vae.latents_mean.to(device).view(1, -1, 1, 1, 1)
     latents = (latents * latents_std / vae.config.scaling_factor) + latents_mean
 
-    # Audio latents: unflatten first from [B, L, C*M] to [B, L, C, M], then denormalize
-    audio_latents = audio_latents.unflatten(2, (-1, latent_mel_bins))  # [B, L, C, M]
-    # Reshape audio mean/std for broadcasting with [B, L, C, M]
-    audio_latents_std = audio_vae.latents_std.to(device).view(1, 1, -1, 1)
-    audio_latents_mean = audio_vae.latents_mean.to(device).view(1, 1, -1, 1)
+    # Audio latents: denormalize in packed format [B, L, C*M], then unflatten
+    # latents_std/mean have shape [C*M] matching the packed dimension
+    audio_latents_std = audio_vae.latents_std.to(device).view(1, 1, -1)
+    audio_latents_mean = audio_vae.latents_mean.to(device).view(1, 1, -1)
     audio_latents = (audio_latents * audio_latents_std) + audio_latents_mean
-    audio_latents = audio_latents.transpose(1, 2)  # [B, C, L, M]
+    # Unflatten from [B, L, C*M] to [B, L, C, M], then transpose to [B, C, L, M]
+    audio_latents = audio_latents.unflatten(2, (-1, latent_mel_bins)).transpose(1, 2)
 
     return latents, audio_latents
 
@@ -1500,6 +1511,9 @@ def allow_patterns_for_repo(repo_id: str) -> Optional[List[str]]:
         return _wan_patterns()
     if repo_id == CHATTERBOX_REPO:
         return ["**/*"]
+    if repo_id == CHATTERBOX_MULTILINGUAL_MODEL_ID:
+        # ONNX files for multilingual TTS + tokenizer files + default voice
+        return ["onnx/**", "*.json", "*.txt", "*.wav", "tokenizer/**"]
     if repo_id == LTX2_REPO:
         # Only download subfolders needed for quanto quantization
         # Skip root safetensors files (43GB+)
@@ -1775,6 +1789,13 @@ def _plan_for(pipeline: str) -> Dict[str, Any]:
         return {
             "repos_to_fetch": [LTX2_REPO],
             "single_files": [],
+        }
+    if pipeline == "ltx2_video_gguf":
+        # LTX-2 (19B DiT) with Q4_0 GGUF quantization via from_single_file
+        # Uses the base repo for VAE/scheduler/tokenizer, GGUF for transformer
+        return {
+            "repos_to_fetch": [LTX2_REPO],
+            "single_files": [_sf(LTX2_GGUF_NAME, LTX2_GGUF_URL)],
         }
     if pipeline == "sdxl":
         return {"repos_to_fetch": [SDXL_BASE_REPO, SDXL_REFINER_REPO], "single_files": []}
@@ -3280,7 +3301,7 @@ def image_quality_flux_krea():
 def audio_multilingual():
     '''Multilingual TTS with 23 languages and emotion control (ONNX).'''
     data = request.get_json(silent=True) or {}
-    
+
     prompt = (data.get("prompt") or "").strip()
     language = (data.get("language") or "en").strip().lower()
     synthesis_b64 = (data.get("synthesis_base64") or "").strip()
@@ -3289,7 +3310,8 @@ def audio_multilingual():
     max_tokens = int(data.get("max_tokens", 1024))
     temperature = float(data.get("temperature", 1.0))
     repetition_penalty = float(data.get("repetition_penalty", 1.2))
-    
+    auto_dl = bool(data.get("auto_download", False))
+
     if not prompt:
         return jsonify({"error": "Missing 'prompt'"}), 400
     if language not in CHATTERBOX_LANGUAGES:
@@ -3297,9 +3319,15 @@ def audio_multilingual():
             "error": f"Unsupported language '{language}'",
             "supported": list(CHATTERBOX_LANGUAGES.keys())
         }), 400
-    
+
+    # Check if required files are present, otherwise trigger download UI
+    guard = _ensure_files_present_or_start("chatterbox", auto_download=auto_dl)
+    if guard:
+        return guard
+
     gen_id = genbus.new("chatterbox_multilingual", {"endpoint": "/audio", "language": language})
-    
+    local_dir = repo_local_dir(CHATTERBOX_MULTILINGUAL_MODEL_ID)
+
     try:
         gc.collect()
         genbus.progress(gen_id, "loading", 0, 3)
@@ -3307,7 +3335,7 @@ def audio_multilingual():
         # Use offline mode if pipeline is fully downloaded
         with offline_mode_if_complete("chatterbox") as is_offline:
             model = ChatterboxONNX.from_pretrained(
-                model_type="multilingual", device="cpu", cache_dir=str(MODEL_DIR / "hf"),
+                model_type="multilingual", device="cpu", local_dir=str(local_dir),
                 local_files_only=is_offline
             )
 
@@ -3327,13 +3355,8 @@ def audio_multilingual():
                 f.write(base64.b64decode(synthesis_b64))
             audio_path = temp_file
         else:
-            # Use default voice
-            from huggingface_hub import hf_hub_download
-            audio_path = hf_hub_download(
-                repo_id=CHATTERBOX_MULTILINGUAL_MODEL_ID,
-                filename="default_voice.wav",
-                cache_dir=str(MODEL_DIR / "hf")
-            )
+            # Use default voice from local repo
+            audio_path = str(local_dir / "default_voice.wav")
 
         genbus.progress(gen_id, "generating", 1, 3)
 
@@ -4095,6 +4118,223 @@ def wan_image_to_video():
         else:
             os.environ["TRANSFORMERS_OFFLINE"] = _wan_old_transformers_offline
         aggressive_cleanup()
+
+
+# =============================================================================
+# REST API: LTX-2 VIDEO (GGUF)
+# =============================================================================
+
+@app.route("/image/video", methods=["POST"])
+def ltx2_gguf_image_to_video():
+    """
+    LTX-2 (19B DiT) Image-to-Video using Q4_0 GGUF quantization.
+
+    Uses from_single_file to load the GGUF-quantized transformer directly.
+    Simpler than the turbo endpoint, no custom denoising loop.
+    """
+    data = request.get_json(force=True) or {}
+
+    prompt = (data.get("prompt") or "").strip()
+    negative_prompt = (data.get("negative_prompt") or "").strip() or "worst quality, inconsistent motion, blurry, jittery, distorted"
+    H = int(data.get("height", 512))
+    W = int(data.get("width", 768))
+    frames_count = int(data.get("frames", 97))  # LTX-2 frames must be 8n+1
+    frame_rate = float(data.get("frame_rate", 24.0))
+    steps = int(data.get("steps", 30))
+    guidance = float(data.get("guidance_scale", 3.5))
+    seed = data.get("seed")
+    auto_dl = bool(data.get("auto_download", False))
+    image_b64 = (data.get("image_base64") or "").strip()
+    image_url = (data.get("image_url") or "").strip()
+
+    _mps_clear_memory()
+
+    if not prompt:
+        return jsonify({"error": "Missing 'prompt'"}), 400
+    if not image_b64 and not image_url:
+        return jsonify({"error": "Provide 'image_base64' or 'image_url'"}), 400
+
+    guard = _ensure_files_present_or_start("ltx2_video_gguf", auto_download=auto_dl)
+    if guard:
+        return guard
+
+    gen_id = genbus.new("ltx2_gguf_i2v", {
+        "endpoint": "/image/video", "w": W, "h": H, "frames": frames_count,
+    })
+
+    # Check if we should run in offline mode
+    _ltx_offline = _is_pipeline_complete("ltx2_video_gguf")
+    _ltx_old_hf_offline = os.environ.get("HF_HUB_OFFLINE")
+    _ltx_old_transformers_offline = os.environ.get("TRANSFORMERS_OFFLINE")
+    if _ltx_offline:
+        os.environ["HF_HUB_OFFLINE"] = "1"
+        os.environ["TRANSFORMERS_OFFLINE"] = "1"
+        logger.info("[LTX-2 GGUF] Running in offline mode")
+
+    pipe = None
+
+    try:
+        device = DeviceManager.get_device()
+        gc.collect()
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+        if torch.backends.mps.is_available():
+            torch.mps.empty_cache()
+
+        if device.type == "mps":
+            os.environ["DIFFUSERS_ATTENTION_BACKEND"] = "eager"
+
+        # Select dtype based on device
+        if device.type == "cuda":
+            model_dtype = torch.bfloat16
+        elif device.type == "mps":
+            model_dtype = torch.float16
+        else:
+            model_dtype = torch.float32
+
+        genbus.progress(gen_id, "loading_image", 0, 5)
+
+        # Load source image
+        if image_url:
+            pil_image = load_image(image_url).convert("RGB")
+        else:
+            pil_image = Image.open(io.BytesIO(base64.b64decode(image_b64))).convert("RGB")
+
+        # Normalize dimensions (LTX-2 requires width/height divisible by 32, frames = 8n+1)
+        mod = 32
+        H = max(mod, (H // mod) * mod)
+        W = max(mod, (W // mod) * mod)
+        frames_count = ((frames_count - 1) // 8) * 8 + 1
+
+        # Resize image to target dimensions
+        pil_image = pil_image.resize((W, H), Image.LANCZOS)
+
+        logger.info(f"[LTX-2 GGUF] Generating {frames_count} frames @ {W}x{H}, {steps} steps")
+
+        genbus.progress(gen_id, "loading_transformer", 1, 5)
+
+        # Load transformer from GGUF with quantization config
+        gguf_path = MODEL_DIR / LTX2_GGUF_NAME
+        quantization_config = GGUFQuantizationConfig(compute_dtype=model_dtype)
+
+        transformer = LTX2VideoTransformer3DModel.from_single_file(
+            str(gguf_path),
+            config=LTX2_REPO,
+            subfolder="transformer",
+            quantization_config=quantization_config,
+            torch_dtype=model_dtype,
+        )
+
+        genbus.progress(gen_id, "loading_pipeline", 2, 5)
+
+        # MPS: Set default dtype to float32 before loading (MPS doesn't support float64)
+        # This ensures connectors' RoPE uses float32 for linspace operations
+        old_default_dtype = None
+        if device.type == "mps":
+            old_default_dtype = torch.get_default_dtype()
+            torch.set_default_dtype(torch.float32)
+
+        try:
+            # Load the full pipeline with our GGUF transformer
+            pipe = LTX2ImageToVideoPipeline.from_pretrained(
+                LTX2_REPO,
+                transformer=transformer,
+                torch_dtype=model_dtype,
+            )
+        finally:
+            # Restore default dtype
+            if old_default_dtype is not None:
+                torch.set_default_dtype(old_default_dtype)
+
+        # MPS: Patch RoPE modules to use float32 (MPS doesn't support float64)
+        if device.type == "mps" and hasattr(pipe, "connectors"):
+            for name, module in pipe.connectors.named_modules():
+                # Patch any RoPE-like modules that have freqs_dtype attribute
+                if hasattr(module, "freqs_dtype"):
+                    module.freqs_dtype = torch.float32
+                # Also check for rope submodules
+                if hasattr(module, "rope") and hasattr(module.rope, "freqs_dtype"):
+                    module.rope.freqs_dtype = torch.float32
+
+        # Enable memory optimizations
+        pipe.enable_model_cpu_offload()
+        pipe.vae.enable_tiling()
+
+        genbus.progress(gen_id, "generating", 3, 5)
+
+        # Set up generator for reproducibility
+        if seed is not None:
+            generator = torch.Generator(device="cpu").manual_seed(int(seed))
+        else:
+            generator = None
+
+        # Progress callback
+        def progress_callback(pipe, step, timestep, callback_kwargs):
+            pct = int((step / steps) * 100)
+            genbus.progress(gen_id, "denoising", step, steps, pct=pct)
+            return callback_kwargs
+
+        # Generate video
+        output = pipe(
+            prompt=prompt,
+            negative_prompt=negative_prompt,
+            image=pil_image,
+            height=H,
+            width=W,
+            num_frames=frames_count,
+            num_inference_steps=steps,
+            guidance_scale=guidance,
+            generator=generator,
+            callback_on_step_end=progress_callback,
+        )
+
+        genbus.progress(gen_id, "saving", 4, 5)
+
+        # Get frames from output
+        frames = output.frames[0]  # List of PIL images
+
+        # Convert to video
+        out_path = str(OUTPUT_DIR / f"ltx2_gguf_{gen_id}.mp4")
+        export_to_video(frames, out_path, fps=int(frame_rate))
+
+        genbus.progress(gen_id, "complete", 5, 5, pct=100)
+        genbus.complete(gen_id, out_path)
+
+        logger.info(f"[LTX-2 GGUF] Video saved to {out_path}")
+
+        return jsonify({
+            "generation_id": gen_id,
+            "video_path": out_path,
+            "frames": frames_count,
+            "fps": frame_rate,
+            "width": W,
+            "height": H,
+        })
+
+    except Exception as e:
+        logger.exception("[LTX-2 GGUF] Generation failed")
+        genbus.error(gen_id, str(e))
+        return jsonify({"error": str(e)}), 500
+
+    finally:
+        # Cleanup
+        if pipe is not None:
+            del pipe
+        gc.collect()
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+        if torch.backends.mps.is_available():
+            torch.mps.empty_cache()
+
+        # Restore offline mode
+        if _ltx_old_hf_offline is None:
+            os.environ.pop("HF_HUB_OFFLINE", None)
+        else:
+            os.environ["HF_HUB_OFFLINE"] = _ltx_old_hf_offline
+        if _ltx_old_transformers_offline is None:
+            os.environ.pop("TRANSFORMERS_OFFLINE", None)
+        else:
+            os.environ["TRANSFORMERS_OFFLINE"] = _ltx_old_transformers_offline
 
 
 # =============================================================================

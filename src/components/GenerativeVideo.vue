@@ -72,7 +72,7 @@
                     >
                       bolt
                     </span>
-                    Turbo (LTX-2)
+                    Turbo
                   </label>
 
                   <!-- QUALITY TOGGLES -->
@@ -313,11 +313,10 @@
                 </form>
               </div>
             </div>
-          </div>
+            <hr class="mt-5" />
 
-          <div class="models__activity--payouts mt-5"  v-if="inferences && inferences.length">
             <!-- GENERATION HISTORY HEADER -->
-            <div class="level mb-4">
+            <div class="level pt-5 mt-5">
               <div class="level-left">
                 <div class="level-item">
                   <h2
@@ -360,103 +359,110 @@
                 </div>
               </div>
             </div>
-            <div class="columns">
-              <!-- RESULTS -->
-              <ol class="chat" v-if="inferences && inferences.length">
-                <li
-                  v-for="(inference, displayIndex) in paginatedInferences"
-                  :key="inference.id || inference._originalIndex"
-                  class="history-item"
-                  :style="{
-                    animationDelay: `${Math.min(displayIndex * 50, 500)}ms`,
-                  }"
-                >
-                  <div class="question">
-                    <!-- Video Player - UPDATED: Use HTTP streaming URL -->
-                    <video
-                      v-if="getVideoUrl(inference)"
-                      :src="getVideoUrl(inference)"
-                      controls
-                      style="
-                        width: 100vh;
-                        object-fit: contain;
-                        border: 1px solid rgba(255, 255, 255, 1);
-                        border-radius: 4px;
-                      "
-                    ></video>
-                    <div class="pb-5 mb-5 mt-5">
-                      <button
-                        class="button is-medium is-success copy is-pulled-right ml-5 mr-0 p-0 pl-1 pr-4"
-                        @click="downloadVideo(inference._originalIndex)"
-                        title="Save video"
-                      >
-                        <span class="material-symbols-outlined is-size-2 mr-2">
-                          save
-                        </span>
-                        Download
-                      </button>
-                      <button
-                        class="button is-medium is-danger is-pulled-right ml-2 p-0 pl-1 pr-1"
-                        @click="removeInference(inference._originalIndex)"
-                        title="Remove this result"
-                      >
-                        <span class="material-symbols-outlined is-size-2">
-                          delete
-                        </span>
-                      </button>
-                      <button
-                        class="button is-medium is-success copy is-pulled-left p-0 pl-1 pr-1"
-                        @click="
-                          copy(inference?.answer?.data?.video_path || '');
-                          setCopied(inference._originalIndex);
+            <div class="mt-5">
+              <!-- GENERATION HISTORY HEADER -->
+              <div class="columns">
+                <!-- RESULTS -->
+                <ol class="chat" v-if="inferences && inferences.length">
+                  <li
+                    v-for="(inference, displayIndex) in paginatedInferences"
+                    :key="inference.id || inference._originalIndex"
+                    class="history-item"
+                    :style="{
+                      animationDelay: `${Math.min(displayIndex * 50, 500)}ms`,
+                    }"
+                  >
+                    <div class="question">
+                      <!-- Video Player - UPDATED: Use HTTP streaming URL -->
+                      <video
+                        v-if="getVideoUrl(inference)"
+                        :src="getVideoUrl(inference)"
+                        controls
+                        style="
+                          width: 100vh;
+                          object-fit: contain;
+                          border: 1px solid rgba(255, 255, 255, 1);
+                          border-radius: 4px;
                         "
-                      >
-                        <span
-                          class="material-symbols-outlined is-size-2"
-                          v-if="!hasCopy[inference._originalIndex]"
+                      ></video>
+                      <div class="pb-5 mb-5 mt-5">
+                        <button
+                          class="button is-medium is-success copy is-pulled-right ml-5 mr-0 p-0 pl-1 pr-4"
+                          @click="downloadVideo(inference._originalIndex)"
+                          title="Save video"
                         >
-                          content_copy
-                        </span>
-                        <span
-                          class="material-symbols-outlined is-size-2"
-                          v-else
+                          <span
+                            class="material-symbols-outlined is-size-2 mr-2"
+                          >
+                            save
+                          </span>
+                          Download
+                        </button>
+                        <button
+                          class="button is-medium is-danger is-pulled-right ml-2 p-0 pl-1 pr-1"
+                          @click="removeInference(inference._originalIndex)"
+                          title="Remove this result"
                         >
-                          check
-                        </span>
-                      </button>
-                      <button
-                        disabled
-                        class="button is-medium is-warning copy is-pulled-left ml-5 pl-2"
-                      >
-                        <span class="material-symbols-outlined is-size-2 mr-1">
-                          token
-                        </span>
-                        Mint
-                      </button>
+                          <span class="material-symbols-outlined is-size-2">
+                            delete
+                          </span>
+                        </button>
+                        <button
+                          class="button is-medium is-success copy is-pulled-left p-0 pl-1 pr-1"
+                          @click="
+                            copy(inference?.answer?.data?.video_path || '');
+                            setCopied(inference._originalIndex);
+                          "
+                        >
+                          <span
+                            class="material-symbols-outlined is-size-2"
+                            v-if="!hasCopy[inference._originalIndex]"
+                          >
+                            content_copy
+                          </span>
+                          <span
+                            class="material-symbols-outlined is-size-2"
+                            v-else
+                          >
+                            check
+                          </span>
+                        </button>
+                        <button
+                          disabled
+                          class="button is-medium is-warning copy is-pulled-left ml-5 pl-2"
+                        >
+                          <span
+                            class="material-symbols-outlined is-size-2 mr-1"
+                          >
+                            token
+                          </span>
+                          Mint
+                        </button>
+                      </div>
                     </div>
-                  </div>
-                </li>
-              </ol>
+                  </li>
+                </ol>
 
-              <!-- LAZY LOAD SENTINEL -->
-              <div
-                ref="loadMoreSentinel"
-                v-if="hasMore"
-                class="load-more-sentinel has-text-centered p-4"
-              >
-                <span v-if="isLoadingMore" class="has-text-grey">
-                  Loading more...
-                </span>
+                <!-- LAZY LOAD SENTINEL -->
+                <div
+                  ref="loadMoreSentinel"
+                  v-if="hasMore"
+                  class="load-more-sentinel has-text-centered p-4"
+                >
+                  <span v-if="isLoadingMore" class="has-text-grey">
+                    Loading more...
+                  </span>
+                </div>
+                <!-- SCROLL TO TOP BUTTON -->
+                <button
+                  v-if="showScrollTop"
+                  class="scroll-to-top-btn"
+                  @click="scrollToTop"
+                  title="Scroll to top"
+                >
+                  <span class="material-symbols-outlined">arrow_upward</span>
+                </button>
               </div>
-              <!-- SCROLL TO TOP BUTTON -->
-              <button
-                v-if="showScrollTop"
-                class="scroll-to-top-btn"
-                @click="scrollToTop"
-                title="Scroll to top"
-              >
-                <span class="material-symbols-outlined">arrow_upward</span>
-              </button>
             </div>
           </div>
         </div>
@@ -680,10 +686,10 @@ export default {
     );
 
     const endpointForMode = () => {
-      return "/image/video/turbo"; // LTX-2 I2V endpoint
+      return "/image/video"; // LTX-2 I2V endpoint
     };
     const pipelineForMode = () => {
-      return "ltx2_video"; // LTX-2 I2V pipeline
+      return "ltx2_video_gguf"; // LTX-2 I2V pipeline
     };
 
     const normalizeFramesForLTX2 = (frames) => {
@@ -1254,8 +1260,7 @@ export default {
         guidance_scale: 3,
         auto_download: true,
         image_base64:
-          uploadedImageBase64.value ||
-          (props.existingImageBase64 || "").trim(),
+          uploadedImageBase64.value || (props.existingImageBase64 || "").trim(),
       };
       const url = `${API_BASE}${endpointForMode()}`;
       ensureGenerationSocket();
