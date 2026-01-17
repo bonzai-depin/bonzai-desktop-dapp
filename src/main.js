@@ -25,7 +25,13 @@ import child_process from "child_process";
 // ─────────────────────────────────────────────────────────────────────────────
 // Globals / paths
 // ─────────────────────────────────────────────────────────────────────────────
-const llama = await getLlama();
+let llama = null;
+try {
+  llama = await getLlama();
+} catch (error) {
+  console.warn("node-llama-cpp initialization failed:", error.message);
+  // Continue without LLM support - app will still work for other features
+}
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -331,10 +337,17 @@ app.whenReady().then(() => {
 // ─────────────────────────────────────────────────────────────────────────────
 // Squirrel (Windows) early-exit
 // ─────────────────────────────────────────────────────────────────────────────
-try {
-  import.meta.resolve("electron-squirrel-startup/package.json");
-  app.quit();
-} catch {}
+// Handle Squirrel events for Windows installer (install/update/uninstall)
+if (process.platform === "win32") {
+  try {
+    const { default: squirrelStartup } = await import("electron-squirrel-startup");
+    if (squirrelStartup) {
+      app.quit();
+    }
+  } catch {
+    // Package not available or not in Squirrel context - continue normally
+  }
+}
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Store helpers
@@ -717,7 +730,11 @@ if (!modelDir || !modelDir.includes("bonzai-models")) {
 // Model management
 // ─────────────────────────────────────────────────────────────────────────────
 async function downloadModel(_event, url, filename) {
-  const win = BrowserWindow.getFocusedWindow();
+  const win = BrowserWindow.getFocusedWindow() || BrowserWindow.getAllWindows()[0];
+  if (!win) {
+    console.error("Download failed: No window available");
+    return { error: "No window available for download" };
+  }
   try {
     const dl = await download(win, url, {
       filename,
@@ -734,7 +751,7 @@ async function downloadModel(_event, url, filename) {
   } catch (error) {
     console.error("Download failed:", error);
     win?.setProgressBar(-1);
-    return false;
+    return { error: error.message || "Download failed" };
   }
 }
 
@@ -827,6 +844,9 @@ function computeMaxContextForModel(currentModel, sysInfo) {
 }
 
 async function loadModel(_event, currentModel) {
+  if (!llama) {
+    throw new Error("LLM engine not initialized. Please restart the application.");
+  }
   const modelPath = path.join(MODEL_DIR, currentModel.filename);
   console.log("Model path:", modelPath);
 

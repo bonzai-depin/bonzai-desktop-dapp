@@ -76,8 +76,146 @@
             </progress>
           </div>
 
+          <!-- Example Prompts -->
+          <div
+            class="examples-panel models__activity--payouts"
+            v-if="showExamples"
+          >
+            <div class="example-grid">
+              <div
+                v-for="(example, idx) in examplePrompts"
+                :key="idx"
+                class="example-card"
+                @click="useExample(example)"
+              >
+                <div class="example-icon">{{ example.icon }}</div>
+                <div class="example-title">{{ example.title }}</div>
+                <div class="example-desc">{{ example.description }}</div>
+              </div>
+            </div>
+          </div>
+
+          <!-- MODEL DOWNLOAD NOTIFICATION -->
+          <div v-if="!isModel" class="notification is-danger mb-5">
+            <div class="columns is-vcentered">
+              <div class="column">
+                <p class="fira-sans-condensed-black-italic is-size-5 mb-0">
+                  <span
+                    class="material-symbols-outlined mr-2"
+                    style="vertical-align: middle"
+                  >
+                    error
+                  </span>
+                  AI Model Required
+                </p>
+                <p class="is-size-6 mt-1">
+                  Download {{ currentModel.modelname }} to generate 3D objects
+                </p>
+              </div>
+              <div class="column is-narrow">
+                <button
+                  class="button is-success is-large fira-sans-condensed-black-italic"
+                  @click="
+                    downloadModel(currentModel.url, currentModel.filename)
+                  "
+                  :disabled="downloadProgress > 0"
+                >
+                  <span class="material-symbols-outlined mr-2">
+                    deployed_code_update
+                  </span>
+                  Download
+                  <span
+                    v-if="downloadProgress"
+                    class="filesize ml-2"
+                    style="font-size: 14px"
+                  >
+                    {{ downloadProgress }}%
+                  </span>
+                  <span v-else class="filesize ml-2" style="font-size: 14px">
+                    {{ currentModel.filesize }}
+                  </span>
+                </button>
+              </div>
+            </div>
+          </div>
+
+          <div class="models__activity--payouts">
+            <div class="columns">
+              <div class="column is-12">
+                <!-- ACCESS REQUIREMENTS -->
+                <AccessRequirements
+                  ref="accessRef"
+                  level="LVL5"
+                  :demo-prompt="DEMO_PROMPT"
+                  :is-generating="isLoading"
+                  @access-changed="onAccessChanged"
+                  @demo-generate="onDemoGenerate"
+                />
+
+                <!-- GENERATION MODE SELECTOR -->
+                <div
+                  class="environment-controls models__activity--payouts mb-4"
+                >
+                  <div class="columns">
+                    <div class="column is-12">
+                      <label
+                        class="control-label fira-sans-condensed-black-italic"
+                      >
+                        Generation Mode
+                      </label>
+                      <div class="mode-buttons">
+                        <button
+                          v-for="mode in generationModes"
+                          :key="mode.id"
+                          class="mode-btn"
+                          :class="{ active: generationMode === mode.id }"
+                          @click="generationMode = mode.id"
+                          :title="mode.description"
+                        >
+                          <span class="mode-icon">
+                            <span class="material-symbols-outlined is-size-3">
+                              {{ mode.icon }}
+                            </span>
+                          </span>
+                          <span class="mode-label">{{ mode.label }}</span>
+                        </button>
+                      </div>
+                      <p
+                        class="mode-description has-text-grey-light mt-2"
+                        style="font-size: 14px"
+                      >
+                        {{
+                          generationModes.find((m) => m.id === generationMode)
+                            ?.description
+                        }}
+                      </p>
+                    </div>
+                  </div>
+                </div>
+
+                <form ref="promptForm" @submit.prevent="onSubmit">
+                  <textarea
+                    id="prompt"
+                    class="input is-large is-fullwidth"
+                    placeholder="Describe a 3D object... (e.g., A mystical crystal orb with inner glow)"
+                    v-model="form.prompt"
+                    :disabled="isLoading || !hasAccess || !isModel"
+                    @keydown.enter.exact.prevent="
+                      canSubmitWithAccess && onSubmit()
+                    "
+                    style="min-height: 5em"
+                  ></textarea>
+                  <button
+                    class="button chat is-loading is-outlined is-info is-large is-fullwidth"
+                    v-if="isLoading"
+                  ></button>
+                </form>
+              </div>
+            </div>
+          </div>
+
           <!-- ENVIRONMENT CONTROLS -->
-          <div class="environment-controls models__activity--payouts mb-4">
+          <div class="environment-controls models__activity--payouts mt-5">
             <div class="columns is-multiline">
               <div class="column is-5">
                 <label class="control-label fira-sans-condensed-black-italic">
@@ -126,113 +264,6 @@
             </div>
           </div>
 
-          <!-- GENERATION MODE SELECTOR -->
-          <div class="environment-controls models__activity--payouts mb-4">
-            <div class="columns">
-              <div class="column is-12">
-                <label class="control-label fira-sans-condensed-black-italic">
-                  Generation Mode
-                </label>
-                <div class="mode-buttons">
-                  <button
-                    v-for="mode in generationModes"
-                    :key="mode.id"
-                    class="mode-btn"
-                    :class="{ active: generationMode === mode.id }"
-                    @click="generationMode = mode.id"
-                    :title="mode.description"
-                  >
-                    <span class="mode-icon">
-                      <span class="material-symbols-outlined is-size-3">
-                        {{ mode.icon }}
-                      </span>
-                    </span>
-                    <span class="mode-label">{{ mode.label }}</span>
-                  </button>
-                </div>
-                <p class="mode-description has-text-grey-light mt-2" style="font-size: 14px;">
-                  {{ generationModes.find(m => m.id === generationMode)?.description }}
-                </p>
-              </div>
-            </div>
-          </div>
-
-          <!-- Example Prompts -->
-          <div
-            class="examples-panel models__activity--payouts"
-            v-if="showExamples"
-          >
-            <div class="example-grid">
-              <div
-                v-for="(example, idx) in examplePrompts"
-                :key="idx"
-                class="example-card"
-                @click="useExample(example)"
-              >
-                <div class="example-icon">{{ example.icon }}</div>
-                <div class="example-title">{{ example.title }}</div>
-                <div class="example-desc">{{ example.description }}</div>
-              </div>
-            </div>
-          </div>
-
-          <!-- MODEL DOWNLOAD -->
-          <div
-            class="models__deployment-install--cta has-text-right p-0 mb-4"
-            v-if="!hasAccess"
-          >
-            <button
-              class="button is-success is-large fira-sans-condensed-black-italic mr-5"
-              @click="downloadModel(currentModel.url, currentModel.filename)"
-              v-if="!isModel"
-            >
-              <span class="material-symbols-outlined is-size-3 mr-2">deployed_code_update</span>
-              Download
-              <span
-                class="filesize"
-                style="font-size: 15px; top: -20px; right: -25px; text-shadow: none;"
-                v-if="downloadProgress"
-              >{{ downloadProgress }}%</span>
-              <span
-                v-else
-                class="filesize"
-                style="font-size: 15px; top: -20px; right: -25px; text-shadow: none;"
-              >{{ currentModel.filesize }}</span>
-            </button>
-          </div>
-
-          <div class="models__activity--payouts">
-            <div class="columns">
-              <div class="column is-12">
-                <!-- ACCESS REQUIREMENTS -->
-                <AccessRequirements
-                  ref="accessRef"
-                  level="LVL5"
-                  :demo-prompt="DEMO_PROMPT"
-                  :is-generating="isLoading"
-                  @access-changed="onAccessChanged"
-                  @demo-generate="onDemoGenerate"
-                />
-
-                <form ref="promptForm" @submit.prevent="onSubmit">
-                  <textarea
-                    id="prompt"
-                    class="input is-large is-fullwidth"
-                    placeholder="Describe a 3D object... (e.g., A mystical crystal orb with inner glow)"
-                    v-model="form.prompt"
-                    :disabled="isLoading || !hasAccess"
-                    @keydown.enter.exact.prevent="canSubmitWithAccess && onSubmit()"
-                    style="min-height: 5em"
-                  ></textarea>
-                  <button
-                    class="button chat is-loading is-outlined is-info is-large is-fullwidth"
-                    v-if="isLoading"
-                  ></button>
-                </form>
-              </div>
-            </div>
-          </div>
-
           <!-- VIEWER -->
           <div class="viewer-container">
             <div class="viewer-wrapper">
@@ -248,7 +279,9 @@
           <div class="level mb-4 mt-5" v-if="objectInferences.length > 0">
             <div class="level-left">
               <div class="level-item">
-                <h2 class="fira-sans-condensed-black-italic has-text-white is-size-2">
+                <h2
+                  class="fira-sans-condensed-black-italic has-text-white is-size-2"
+                >
                   <span class="material-symbols-outlined is-size-1 mr-2">
                     history
                   </span>
@@ -291,7 +324,9 @@
                 v-for="(item, displayIndex) in paginatedInferences"
                 :key="item.id"
                 class="history-item"
-                :style="{ animationDelay: `${Math.min(displayIndex * 50, 500)}ms` }"
+                :style="{
+                  animationDelay: `${Math.min(displayIndex * 50, 500)}ms`,
+                }"
               >
                 <div class="question">
                   <div class="history-header">
@@ -345,7 +380,9 @@
                     @click="applyInference(item)"
                     title="Load this scene"
                   >
-                    <span class="material-symbols-outlined mr-1">visibility</span>
+                    <span class="material-symbols-outlined mr-1">
+                      visibility
+                    </span>
                     Load
                   </button>
                   <button
@@ -354,7 +391,9 @@
                     :disabled="isLoading"
                     title="Regenerate with same prompt"
                   >
-                    <span class="material-symbols-outlined mr-1">autorenew</span>
+                    <span class="material-symbols-outlined mr-1">
+                      autorenew
+                    </span>
                     Retry
                   </button>
                   <button
@@ -405,7 +444,14 @@
 </template>
 
 <script>
-import { ref, reactive, computed, onMounted, onBeforeUnmount, nextTick } from "vue";
+import {
+  ref,
+  reactive,
+  computed,
+  onMounted,
+  onBeforeUnmount,
+  nextTick,
+} from "vue";
 import ThreeViewer from "./ThreeViewer.vue";
 import AccessRequirements from "./AccessRequirements.vue";
 import useClipboard from "vue-clipboard3";
@@ -637,7 +683,9 @@ function extractInnerCode(normalizedCode) {
   // Try multiple regex patterns to extract the inner code
 
   // Pattern 1: Match content between "try {" and "scene.add(root);"
-  let match = normalizedCode.match(/try\s*\{\s*([\s\S]*?)\n\s*scene\.add\(root\);/);
+  let match = normalizedCode.match(
+    /try\s*\{\s*([\s\S]*?)\n\s*scene\.add\(root\);/
+  );
 
   // Pattern 2: If that fails, try matching until "return root;"
   if (!match || !match[1] || match[1].trim().length < 20) {
@@ -646,32 +694,40 @@ function extractInnerCode(normalizedCode) {
 
   // Pattern 3: Try a more lenient match
   if (!match || !match[1] || match[1].trim().length < 20) {
-    match = normalizedCode.match(/try\s*\{([\s\S]+?)(?=\s*scene\.add\(root\)|return\s+root)/);
+    match = normalizedCode.match(
+      /try\s*\{([\s\S]+?)(?=\s*scene\.add\(root\)|return\s+root)/
+    );
   }
 
   if (match && match[1]) {
     // Remove leading indentation (4 spaces) from each line
     const extracted = match[1]
-      .split('\n')
-      .map(line => line.replace(/^    /, ''))
-      .join('\n')
+      .split("\n")
+      .map((line) => line.replace(/^    /, ""))
+      .join("\n")
       .trim();
 
     // Verify we got meaningful code (not just whitespace or tiny fragments)
     if (extracted.length > 20) {
-      console.log("[extractInnerCode] Extracted", extracted.length, "chars from normalized code");
+      console.log(
+        "[extractInnerCode] Extracted",
+        extracted.length,
+        "chars from normalized code"
+      );
       return extracted;
     }
   }
 
   // Fallback: If this looks like already raw code (no wrapper), return as-is
-  if (!normalizedCode.includes('export default async function generate')) {
+  if (!normalizedCode.includes("export default async function generate")) {
     console.log("[extractInnerCode] Code appears to be raw, returning as-is");
     return normalizedCode;
   }
 
   // Last resort: warn and return original
-  console.warn("[extractInnerCode] Could not extract inner code, falling back to original");
+  console.warn(
+    "[extractInnerCode] Could not extract inner code, falling back to original"
+  );
   return normalizedCode;
 }
 
@@ -878,11 +934,36 @@ export default {
     // ═══════════════════════════════════════════════════════════════════════
     const generationMode = ref("normal");
     const generationModes = ref([
-      { id: "normal", label: "Normal", icon: "bolt", description: "Single-pass generation (fastest)" },
-      { id: "specialized", label: "Specialized", icon: "layers", description: "Structure → Details → Polish (3 passes)" },
-      { id: "critique", label: "Critique", icon: "rate_review", description: "Generate → Review & Improve (2 passes)" },
-      { id: "additive", label: "Additive", icon: "add_circle", description: "Base → Accessories → Effects (3 passes)" },
-      { id: "extreme", label: "Extreme", icon: "diamond", description: "Reference-quality with 50+ meshes (slowest)" },
+      {
+        id: "normal",
+        label: "Normal",
+        icon: "bolt",
+        description: "Single-pass generation (fastest)",
+      },
+      {
+        id: "specialized",
+        label: "Specialized",
+        icon: "layers",
+        description: "Structure → Details → Polish (3 passes)",
+      },
+      {
+        id: "critique",
+        label: "Critique",
+        icon: "rate_review",
+        description: "Generate → Review & Improve (2 passes)",
+      },
+      {
+        id: "additive",
+        label: "Additive",
+        icon: "add_circle",
+        description: "Base → Accessories → Effects (3 passes)",
+      },
+      {
+        id: "extreme",
+        label: "Extreme",
+        icon: "diamond",
+        description: "Reference-quality with 50+ meshes (slowest)",
+      },
     ]);
 
     const MAX_RETRY_ATTEMPTS = 3;
@@ -899,10 +980,12 @@ export default {
 
     // Reversed inferences (most recent first) with original index
     const reversedInferences = computed(() => {
-      return objectInferences.value.map((item, idx) => ({
-        ...item,
-        _originalIndex: idx,
-      })).reverse();
+      return objectInferences.value
+        .map((item, idx) => ({
+          ...item,
+          _originalIndex: idx,
+        }))
+        .reverse();
     });
 
     // Displayed inferences (lazy loaded subset)
@@ -911,7 +994,9 @@ export default {
     });
 
     // Check if there are more items to load
-    const hasMore = computed(() => displayedCount.value < objectInferences.value.length);
+    const hasMore = computed(
+      () => displayedCount.value < objectInferences.value.length
+    );
 
     // Load more items
     const loadMore = () => {
@@ -933,23 +1018,27 @@ export default {
       if (!loadMoreSentinel.value) return;
 
       // Use the scroll container as root for proper intersection detection
-      const root = scrollContainer.value || document.querySelector('.models__deployment-install');
+      const root =
+        scrollContainer.value ||
+        document.querySelector(".models__deployment-install");
       scrollObserver = new IntersectionObserver(
         (entries) => {
           if (entries[0].isIntersecting && hasMore.value) {
             loadMore();
           }
         },
-        { root, rootMargin: '100px' }
+        { root, rootMargin: "100px" }
       );
       scrollObserver.observe(loadMoreSentinel.value);
     };
 
     // Scroll to top handler
     const scrollToTop = () => {
-      const container = scrollContainer.value || document.querySelector('.models__deployment-install');
+      const container =
+        scrollContainer.value ||
+        document.querySelector(".models__deployment-install");
       if (container) {
-        container.scrollTo({ top: 0, behavior: 'smooth' });
+        container.scrollTo({ top: 0, behavior: "smooth" });
       }
     };
 
@@ -981,7 +1070,12 @@ export default {
     };
 
     const canSubmitWithAccess = computed(() => {
-      return form.prompt.trim() && !isLoading.value && hasAccess.value;
+      return (
+        form.prompt.trim() &&
+        !isLoading.value &&
+        hasAccess.value &&
+        isModel.value
+      );
     });
 
     // ═══════════════════════════════════════════════════════════════════════
@@ -1376,7 +1470,9 @@ HELPERS: H.mesh(geometry, material), H.matte(color), H.metal(color), H.glass(col
 
 Generate the basic structure. Output raw JavaScript only:`,
 
-      pass2_details: (previousCode) => `You are an expert Three.js developer. ENHANCE this 3D object with details.
+      pass2_details: (
+        previousCode
+      ) => `You are an expert Three.js developer. ENHANCE this 3D object with details.
 
 ORIGINAL REQUEST: "${userText}"
 
@@ -1402,7 +1498,9 @@ RULES:
 
 Output the enhanced code:`,
 
-      pass3_polish: (previousCode) => `You are an expert Three.js developer. POLISH this 3D object with effects.
+      pass3_polish: (
+        previousCode
+      ) => `You are an expert Three.js developer. POLISH this 3D object with effects.
 
 ORIGINAL REQUEST: "${userText}"
 
@@ -1458,7 +1556,9 @@ Items: H.crystal, H.coin, H.heart, H.star, H.key, H.sword, H.shield, H.chest, H.
 Generate a complete 3D object with materials, particles, lights, and animation.
 Output raw JavaScript only:`,
 
-      pass2_critique: (previousCode) => `You are an expert Three.js code reviewer. CRITIQUE and IMPROVE this code.
+      pass2_critique: (
+        previousCode
+      ) => `You are an expert Three.js code reviewer. CRITIQUE and IMPROVE this code.
 
 ORIGINAL REQUEST: "${userText}"
 
@@ -1510,7 +1610,9 @@ Example for "magic sword": Just the blade and handle, nothing else.
 
 Generate the base object. Raw JavaScript only:`,
 
-      pass2_accessories: (previousCode) => `You are an expert Three.js developer. ADD ACCESSORIES to this object.
+      pass2_accessories: (
+        previousCode
+      ) => `You are an expert Three.js developer. ADD ACCESSORIES to this object.
 
 ORIGINAL REQUEST: "${userText}"
 
@@ -1537,7 +1639,9 @@ RULES:
 
 Output the COMPLETE code with accessories. Raw JavaScript only:`,
 
-      pass3_effects: (previousCode) => `You are an expert Three.js developer. ADD EFFECTS to complete this object.
+      pass3_effects: (
+        previousCode
+      ) => `You are an expert Three.js developer. ADD EFFECTS to complete this object.
 
 ORIGINAL REQUEST: "${userText}"
 
@@ -1774,10 +1878,14 @@ Output raw JavaScript code only. Match the reference complexity. No explanations
       for (let attempt = 1; attempt <= maxAttempts; attempt++) {
         try {
           if (attempt === 1) {
-            lastStatus.value = passLabel ? `${passLabel}: Generating...` : `Generating...`;
+            lastStatus.value = passLabel
+              ? `${passLabel}: Generating...`
+              : `Generating...`;
             rawCode = await callLLM(initialPrompt);
           } else {
-            lastStatus.value = passLabel ? `${passLabel}: Healing...` : `Healing...`;
+            lastStatus.value = passLabel
+              ? `${passLabel}: Healing...`
+              : `Healing...`;
             const fixPrompt = buildErrorFixPrompt(
               rawCode,
               lastError,
@@ -1792,7 +1900,9 @@ Output raw JavaScript code only. Match the reference complexity. No explanations
             normalizedCode.substring(0, 500)
           );
 
-          lastStatus.value = passLabel ? `${passLabel}: Validating...` : `Validating...`;
+          lastStatus.value = passLabel
+            ? `${passLabel}: Validating...`
+            : `Validating...`;
           const validationError = await validateCode(normalizedCode);
 
           if (!validationError) {
@@ -1885,7 +1995,10 @@ Output raw JavaScript code only. Match the reference complexity. No explanations
       // Set the prompt from the inference
       form.prompt = item.prompt;
       // Optionally set the same generation mode
-      if (item.mode && generationModes.value.some(m => m.value === item.mode)) {
+      if (
+        item.mode &&
+        generationModes.value.some((m) => m.value === item.mode)
+      ) {
         generationMode.value = item.mode;
       }
       // Trigger generation
@@ -1897,10 +2010,9 @@ Output raw JavaScript code only. Match the reference complexity. No explanations
     // ═══════════════════════════════════════════════════════════════════════
     const saveInferences = async () => {
       try {
-        await window.electronAPI?.store?.set?.(
-          "objectInferences",
-          [...objectInferences.value]
-        );
+        await window.electronAPI?.store?.set?.("objectInferences", [
+          ...objectInferences.value,
+        ]);
       } catch (e) {}
     };
 
@@ -2155,6 +2267,13 @@ Output raw JavaScript code only. Match the reference complexity. No explanations
       // Allow demo generation even without access
       if (!isDemo && !canSubmitWithAccess.value) return;
 
+      // Check if model is downloaded
+      if (!isModel.value) {
+        console.error("❌ Generation error: Model not downloaded");
+        lastStatus.value = "Please download the AI model first";
+        return;
+      }
+
       isLoading.value = true;
       lastStatus.value = "Preparing...";
 
@@ -2181,100 +2300,192 @@ Output raw JavaScript code only. Match the reference complexity. No explanations
           // ═══════════════════════════════════════════════════════════════
           lastStatus.value = "Generating...";
           const llmPrompt = buildObjectPrompt(form.prompt);
-          finalCode = await generateWithRetry(llmPrompt, form.prompt, MAX_RETRY_ATTEMPTS);
-
+          finalCode = await generateWithRetry(
+            llmPrompt,
+            form.prompt,
+            MAX_RETRY_ATTEMPTS
+          );
         } else if (mode === "specialized") {
           // ═══════════════════════════════════════════════════════════════
           // SPECIALIZED MODE: Structure → Details → Polish (3 passes)
           // ═══════════════════════════════════════════════════════════════
-          console.log("═══════════════════════════════════════════════════════");
+          console.log(
+            "═══════════════════════════════════════════════════════"
+          );
           console.log("SPECIALIZED MODE: Starting 3-pass generation");
-          console.log("═══════════════════════════════════════════════════════");
+          console.log(
+            "═══════════════════════════════════════════════════════"
+          );
           const prompts = buildSpecializedPrompts(form.prompt);
 
           // Pass 1: Structure
-          let code = await generateWithRetry(prompts.pass1_structure, form.prompt, MAX_RETRY_ATTEMPTS, "Pass 1/3 Structure");
+          let code = await generateWithRetry(
+            prompts.pass1_structure,
+            form.prompt,
+            MAX_RETRY_ATTEMPTS,
+            "Pass 1/3 Structure"
+          );
           if (!code) throw new Error("Failed at structure pass");
           console.log("[Specialized] Pass 1 DONE, code length:", code.length);
 
           // Pass 2: Details (extract inner code to avoid wrapper duplication)
           const innerCode1 = extractInnerCode(code);
-          console.log("[Specialized] Extracted inner code for Pass 2, length:", innerCode1.length);
-          code = await generateWithRetry(prompts.pass2_details(innerCode1), form.prompt, MAX_RETRY_ATTEMPTS, "Pass 2/3 Details");
+          console.log(
+            "[Specialized] Extracted inner code for Pass 2, length:",
+            innerCode1.length
+          );
+          code = await generateWithRetry(
+            prompts.pass2_details(innerCode1),
+            form.prompt,
+            MAX_RETRY_ATTEMPTS,
+            "Pass 2/3 Details"
+          );
           if (!code) throw new Error("Failed at details pass");
           console.log("[Specialized] Pass 2 DONE, code length:", code.length);
 
           // Pass 3: Polish
           const innerCode2 = extractInnerCode(code);
-          console.log("[Specialized] Extracted inner code for Pass 3, length:", innerCode2.length);
-          finalCode = await generateWithRetry(prompts.pass3_polish(innerCode2), form.prompt, MAX_RETRY_ATTEMPTS, "Pass 3/3 Polish");
-          console.log("═══════════════════════════════════════════════════════");
+          console.log(
+            "[Specialized] Extracted inner code for Pass 3, length:",
+            innerCode2.length
+          );
+          finalCode = await generateWithRetry(
+            prompts.pass3_polish(innerCode2),
+            form.prompt,
+            MAX_RETRY_ATTEMPTS,
+            "Pass 3/3 Polish"
+          );
+          console.log(
+            "═══════════════════════════════════════════════════════"
+          );
           console.log("SPECIALIZED MODE: ALL 3 PASSES COMPLETE");
-          console.log("═══════════════════════════════════════════════════════");
-
+          console.log(
+            "═══════════════════════════════════════════════════════"
+          );
         } else if (mode === "critique") {
           // ═══════════════════════════════════════════════════════════════
           // CRITIQUE MODE: Generate → Review & Improve (2 passes)
           // ═══════════════════════════════════════════════════════════════
-          console.log("═══════════════════════════════════════════════════════");
+          console.log(
+            "═══════════════════════════════════════════════════════"
+          );
           console.log("CRITIQUE MODE: Starting 2-pass generation");
-          console.log("═══════════════════════════════════════════════════════");
+          console.log(
+            "═══════════════════════════════════════════════════════"
+          );
           const prompts = buildCritiquePrompts(form.prompt);
 
           // Pass 1: Initial generation
-          let code = await generateWithRetry(prompts.pass1_generate, form.prompt, MAX_RETRY_ATTEMPTS, "Pass 1/2 Generate");
+          let code = await generateWithRetry(
+            prompts.pass1_generate,
+            form.prompt,
+            MAX_RETRY_ATTEMPTS,
+            "Pass 1/2 Generate"
+          );
           if (!code) throw new Error("Failed at initial generation");
           console.log("[Critique] Pass 1 DONE, code length:", code.length);
 
           // Pass 2: Critique and improve (extract inner code)
           const innerCode = extractInnerCode(code);
-          console.log("[Critique] Extracted inner code for Pass 2, length:", innerCode.length);
-          finalCode = await generateWithRetry(prompts.pass2_critique(innerCode), form.prompt, MAX_RETRY_ATTEMPTS, "Pass 2/2 Improve");
-          console.log("═══════════════════════════════════════════════════════");
+          console.log(
+            "[Critique] Extracted inner code for Pass 2, length:",
+            innerCode.length
+          );
+          finalCode = await generateWithRetry(
+            prompts.pass2_critique(innerCode),
+            form.prompt,
+            MAX_RETRY_ATTEMPTS,
+            "Pass 2/2 Improve"
+          );
+          console.log(
+            "═══════════════════════════════════════════════════════"
+          );
           console.log("CRITIQUE MODE: ALL PASSES COMPLETE");
-          console.log("═══════════════════════════════════════════════════════");
-
+          console.log(
+            "═══════════════════════════════════════════════════════"
+          );
         } else if (mode === "additive") {
           // ═══════════════════════════════════════════════════════════════
           // ADDITIVE MODE: Base → Accessories → Effects (3 passes)
           // ═══════════════════════════════════════════════════════════════
-          console.log("═══════════════════════════════════════════════════════");
+          console.log(
+            "═══════════════════════════════════════════════════════"
+          );
           console.log("ADDITIVE MODE: Starting 3-pass generation");
-          console.log("═══════════════════════════════════════════════════════");
+          console.log(
+            "═══════════════════════════════════════════════════════"
+          );
           const prompts = buildAdditivePrompts(form.prompt);
 
           // Pass 1: Base object
-          let code = await generateWithRetry(prompts.pass1_base, form.prompt, MAX_RETRY_ATTEMPTS, "Pass 1/3 Base");
+          let code = await generateWithRetry(
+            prompts.pass1_base,
+            form.prompt,
+            MAX_RETRY_ATTEMPTS,
+            "Pass 1/3 Base"
+          );
           if (!code) throw new Error("Failed at base creation");
           console.log("[Additive] Pass 1 DONE, code length:", code.length);
 
           // Pass 2: Accessories (extract inner code)
           const innerCode1 = extractInnerCode(code);
-          console.log("[Additive] Extracted inner code for Pass 2, length:", innerCode1.length);
-          code = await generateWithRetry(prompts.pass2_accessories(innerCode1), form.prompt, MAX_RETRY_ATTEMPTS, "Pass 2/3 Accessories");
+          console.log(
+            "[Additive] Extracted inner code for Pass 2, length:",
+            innerCode1.length
+          );
+          code = await generateWithRetry(
+            prompts.pass2_accessories(innerCode1),
+            form.prompt,
+            MAX_RETRY_ATTEMPTS,
+            "Pass 2/3 Accessories"
+          );
           if (!code) throw new Error("Failed at accessories pass");
           console.log("[Additive] Pass 2 DONE, code length:", code.length);
 
           // Pass 3: Effects
           const innerCode2 = extractInnerCode(code);
-          console.log("[Additive] Extracted inner code for Pass 3, length:", innerCode2.length);
-          finalCode = await generateWithRetry(prompts.pass3_effects(innerCode2), form.prompt, MAX_RETRY_ATTEMPTS, "Pass 3/3 Effects");
-          console.log("═══════════════════════════════════════════════════════");
+          console.log(
+            "[Additive] Extracted inner code for Pass 3, length:",
+            innerCode2.length
+          );
+          finalCode = await generateWithRetry(
+            prompts.pass3_effects(innerCode2),
+            form.prompt,
+            MAX_RETRY_ATTEMPTS,
+            "Pass 3/3 Effects"
+          );
+          console.log(
+            "═══════════════════════════════════════════════════════"
+          );
           console.log("ADDITIVE MODE: ALL 3 PASSES COMPLETE");
-          console.log("═══════════════════════════════════════════════════════");
-
+          console.log(
+            "═══════════════════════════════════════════════════════"
+          );
         } else if (mode === "extreme") {
           // ═══════════════════════════════════════════════════════════════
           // EXTREME MODE: Reference-quality with 50+ meshes
           // ═══════════════════════════════════════════════════════════════
-          console.log("═══════════════════════════════════════════════════════");
+          console.log(
+            "═══════════════════════════════════════════════════════"
+          );
           console.log("EXTREME MODE: Starting museum-quality generation");
-          console.log("═══════════════════════════════════════════════════════");
+          console.log(
+            "═══════════════════════════════════════════════════════"
+          );
           const llmPrompt = buildExtremePrompt(form.prompt);
-          finalCode = await generateWithRetry(llmPrompt, form.prompt, MAX_RETRY_ATTEMPTS, "Extreme Quality");
-          console.log("═══════════════════════════════════════════════════════");
+          finalCode = await generateWithRetry(
+            llmPrompt,
+            form.prompt,
+            MAX_RETRY_ATTEMPTS,
+            "Extreme Quality"
+          );
+          console.log(
+            "═══════════════════════════════════════════════════════"
+          );
           console.log("EXTREME MODE: GENERATION COMPLETE");
-          console.log("═══════════════════════════════════════════════════════");
+          console.log(
+            "═══════════════════════════════════════════════════════"
+          );
         }
 
         if (!finalCode) throw new Error("Failed to generate valid code");
@@ -2322,10 +2533,10 @@ Output raw JavaScript code only. Match the reference complexity. No explanations
       // Setup scroll observer after DOM is rendered
       setTimeout(setupScrollObserver, 100);
       // Attach scroll listener for scroll-to-top button
-      const container = document.querySelector('.models__deployment-install');
+      const container = document.querySelector(".models__deployment-install");
       if (container) {
         scrollContainer.value = container;
-        container.addEventListener('scroll', handleScroll, { passive: true });
+        container.addEventListener("scroll", handleScroll, { passive: true });
       }
     });
 
@@ -2337,7 +2548,7 @@ Output raw JavaScript code only. Match the reference complexity. No explanations
       }
       // Cleanup scroll listener
       if (scrollContainer.value) {
-        scrollContainer.value.removeEventListener('scroll', handleScroll);
+        scrollContainer.value.removeEventListener("scroll", handleScroll);
       }
     });
 
