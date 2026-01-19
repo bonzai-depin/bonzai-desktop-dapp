@@ -75,53 +75,118 @@
                     Turbo
                   </label>
 
-                  <!-- QUALITY TOGGLES -->
+                  <!-- DURATION TOGGLES -->
                   <span class="control">
                     <input
+                      v-model="duration"
+                      :value="3"
+                      id="video_duration_3s"
+                      type="radio"
+                      name="video_duration"
+                    />
+                    <label for="video_duration_3s" class="radio duration">
+                      3s
+                    </label>
+                    <input
+                      v-model="duration"
+                      :value="5"
+                      id="video_duration_5s"
+                      type="radio"
+                      name="video_duration"
+                      checked
+                    />
+                    <label for="video_duration_5s" class="radio duration">
+                      5s
+                    </label>
+                    <input
+                      v-model="duration"
+                      :value="10"
+                      id="video_duration_10s"
+                      type="radio"
+                      name="video_duration"
+                    />
+                    <label for="video_duration_10s" class="radio duration">
+                      10s
+                    </label>
+                  </span>
+
+                  <!-- FPS TOGGLES -->
+                  <span class="control">
+                    <input
+                      v-model="fps"
+                      :value="24"
+                      id="video_fps_24"
+                      type="radio"
+                      name="video_fps"
+                      checked
+                    />
+                    <label for="video_fps_24" class="radio fps">
+                      24fps
+                    </label>
+                    <input
+                      v-model="fps"
+                      :value="48"
+                      id="video_fps_48"
+                      type="radio"
+                      name="video_fps"
+                    />
+                    <label for="video_fps_48" class="radio fps">
+                      48fps
+                    </label>
+                  </span>
+
+                  <!-- RESOLUTION TOGGLES -->
+                  <span class="control resolution-toggles">
+                    <input
                       v-model="quality"
-                      :value="'sd'"
-                      id="video_quality_sd"
+                      :value="'480p'"
+                      id="video_quality_480p"
                       type="radio"
                       name="video_quality"
                       checked
                     />
-                    <label for="video_quality_sd" class="radio quality">
-                      <span
-                        class="material-symbols-outlined"
-                        style="font-size: 32px !important"
-                      >
-                        sd
-                      </span>
+                    <label for="video_quality_480p" class="radio quality">
+                      480p
                     </label>
                     <input
                       v-model="quality"
-                      :value="'hd'"
-                      id="video_quality_hd"
+                      :value="'540p'"
+                      id="video_quality_540p"
                       type="radio"
                       name="video_quality"
                     />
-                    <label for="video_quality_hd" class="radio quality">
-                      <span
-                        class="material-symbols-outlined"
-                        style="font-size: 32px !important"
-                      >
-                        hd
-                      </span>
+                    <label for="video_quality_540p" class="radio quality">
+                      540p
                     </label>
                     <input
                       v-model="quality"
-                      :value="'fhd'"
-                      id="video_quality_fhd"
+                      :value="'720p'"
+                      id="video_quality_720p"
                       type="radio"
                       name="video_quality"
                     />
-                    <label for="video_quality_fhd" class="radio quality">
-                      <span
-                        class="material-symbols-outlined"
-                        style="font-size: 32px !important"
-                      >
-                        full_hd
-                      </span>
+                    <label for="video_quality_720p" class="radio quality">
+                      720p
+                    </label>
+                    <input
+                      v-model="quality"
+                      :value="'1080p'"
+                      id="video_quality_1080p"
+                      type="radio"
+                      name="video_quality"
+                    />
+                    <label for="video_quality_1080p" class="radio quality">
+                      1080p
+                    </label>
+                    <input
+                      v-model="quality"
+                      :value="'4k'"
+                      id="video_quality_4k"
+                      type="radio"
+                      name="video_quality"
+                    />
+                    <label for="video_quality_4k" class="radio quality">
+                      4K
                     </label>
                   </span>
                 </div>
@@ -539,7 +604,9 @@ export default {
   props: { existingImageBase64: { type: String, default: "" } },
   setup(props) {
     const mode = ref("turbo"); // LTX-2 I2V
-    const quality = ref("sd");
+    const quality = ref("480p");
+    const duration = ref(5);  // seconds: 3, 5, or 10
+    const fps = ref(24);      // 24 or 48
     const isLoading = ref(false);
     const form = reactive({ prompt: "" });
     // Use shallowRef for inferences - video data is large
@@ -1239,23 +1306,36 @@ export default {
       // Allow demo generation even without access
       if (!isDemo && !hasAccess.value) return;
 
-      // LTX-2 I2V size mappings (divisible by 32)
+      // LTX-2 I2V size mappings - SAFE VALUES for tiled VAE decoder
+      // These dimensions produce latent sizes that divide evenly by the tile stride
+      // Values: [height, width] for landscape orientation
       const sizeMaps = {
-        turbo: { sd: [320, 512], hd: [512, 768], fhd: [576, 1024] },
+        "480p":  [448, 640],    // latent: 56x80
+        "540p":  [512, 960],    // latent: 64x120
+        "720p":  [704, 1280],   // latent: 88x160
+        "1080p": [1088, 1920],  // latent: 136x240
+        "4k":    [2112, 3840],  // latent: 264x480
       };
 
-      // Get dimensions based on quality selection
-      const pick = sizeMaps.turbo;
-      const [h, w] = pick[quality.value] || pick.sd;
+      // Get base dimensions based on quality selection
+      let [h, w] = sizeMaps[quality.value] || sizeMaps["480p"];
+
+      // Swap dimensions for portrait images
+      if (imageAspectRatio.value === "portrait") {
+        [h, w] = [w, h];
+      }
 
       // LTX-2 I2V: Frames must be 8n+1
-      let frames = normalizeFramesForLTX2(49);
+      // Compute from duration and fps: frames = fps * duration + 1
+      const frameRate = fps.value;
+      const frames = frameRate * duration.value + 1;
+
       const payload = {
         prompt: prompt,
         height: h,
         width: w,
         frames: frames,
-        fps: 12,
+        frame_rate: frameRate,
         steps: 8,  // Distilled model: 8-10 steps optimal
         guidance_scale: 1,  // Distilled model: CFG=1
         auto_download: true,
@@ -1475,6 +1555,8 @@ export default {
     return {
       mode,
       quality,
+      duration,
+      fps,
       form,
       isLoading,
       inferences,
@@ -1653,9 +1735,14 @@ input[type="radio"]:checked + label {
   background: rgba(97, 55, 142, 0.33) !important;
   backdrop-filter: blur(64px) !important;
 }
-label.radio.quality {
+label.radio.quality,
+label.radio.duration,
+label.radio.fps {
   margin: 0 3px;
-  padding: 3px 6px 0;
+  padding: 6px 12px;
+  font-family: "Fira Sans Condensed", sans-serif;
+  font-weight: 600;
+  font-size: 14px;
 }
 ul,
 ol {

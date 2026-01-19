@@ -262,7 +262,7 @@ EXPECTED_SIZES = {
     "wan2.2-q4-low.gguf": 9_651_739_136,  # ~9.65GB Q4
     "wan_2.1_vae.safetensors": 253_815_318,  # ~242MB split VAE
     "umt5-xxl-encoder-q3_k_m.gguf": 5_580_000_000,  # ~5.2GB GGUF text encoder
-    "ltx-2-19b-distilled-q3_k_s.gguf": 6_500_000_000,  # ~6.5GB Q3_K_S distilled
+    "ltx-2-19b-distilled-q3_k_s.gguf": 9_283_503_264,  # 9.28GB Q3_K_S distilled
 }
 
 # =============================================================================
@@ -2312,6 +2312,9 @@ def write_video(
 
     frames_pil = _as_pil_list(frames_or_output)
 
+    # Apply watermark to all frames
+    frames_pil = _apply_watermark_frames(frames_pil)
+
     # Trim head frames
     if trim_head_frames > 0:
         drop = min(trim_head_frames, max(0, len(frames_pil) - 1))
@@ -2459,89 +2462,6 @@ def write_video(
                     pass
 
     return method_used
-
-# =============================================================================
-# IMAGE PREPROCESSING
-# =============================================================================
-
-def center_crop_to_aspect(img: Image.Image, target_w: int, target_h: int) -> Image.Image:
-    w, h = img.size
-    if w <= 0 or h <= 0:
-        return img
-    target_ar = float(target_w) / float(target_h)
-    src_ar = float(w) / float(h)
-    if abs(src_ar - target_ar) < 1e-6:
-        return img
-    if src_ar > target_ar:
-        new_w = int(round(h * target_ar))
-        left = (w - new_w) // 2
-        box = (left, 0, left + new_w, h)
-    else:
-        new_h = int(round(w / target_ar))
-        top = (h - new_h) // 2
-        box = (0, top, w, top + new_h)
-    return img.crop(box)
-
-
-def _motionfix_preprocess(img: Image.Image, jpeg_q: int = 90, noise_std: float = 0.1) -> Image.Image:
-    """Light preprocessing to help video models generate motion."""
-    buf = io.BytesIO()
-    img.save(buf, format="JPEG", quality=max(10, min(95, int(jpeg_q))))
-    buf.seek(0)
-    comp = Image.open(buf).convert("RGB")
-    arr = np.asarray(comp).astype(np.float32)
-    if noise_std > 0:
-        arr += np.random.normal(scale=float(noise_std), size=arr.shape)
-    arr = np.clip(arr, 0, 255).astype(np.uint8)
-    return Image.fromarray(arr, "RGB")
-
-
-def _ffmpeg_h264_roundtrip(
-    img: Image.Image,
-    target_w: int,
-    target_h: int,
-    crf: int = 10,
-    downscale: float = 0.5,
-) -> Image.Image:
-    """H.264 encode/decode roundtrip to help video model motion."""
-    ffmpeg = get_ffmpeg_binary_path()
-    iw, ih = img.size
-    dw = max(2, int(iw * downscale) // 2 * 2)
-    dh = max(2, int(ih * downscale) // 2 * 2)
-    tw = max(2, int(target_w) // 2 * 2)
-    th = max(2, int(target_h) // 2 * 2)
-    
-    tmp_dir = Path(tempfile.mkdtemp())
-    in_png = tmp_dir / "in.png"
-    mid_mp4 = tmp_dir / "mid.mp4"
-    out_png = tmp_dir / "out.png"
-    
-    try:
-        img.convert("RGB").save(in_png, "PNG")
-        subprocess.run([
-            ffmpeg, "-y", "-i", str(in_png),
-            "-vf", f"scale={dw}:{dh}:flags=bicubic",
-            "-c:v", "libx264", "-crf", str(int(crf)),
-            "-preset", "veryfast", "-tune", "stillimage",
-            "-pix_fmt", "yuv420p", "-movflags", "+faststart",
-            str(mid_mp4)
-        ], check=True, capture_output=True)
-        subprocess.run([
-            ffmpeg, "-y", "-i", str(mid_mp4),
-            "-vf", f"scale={tw}:{th}:flags=bicubic",
-            "-frames:v", "1", str(out_png)
-        ], check=True, capture_output=True)
-        return Image.open(out_png).convert("RGB")
-    except Exception as e:
-        logger.warning(f"[ffmpeg_roundtrip] Falling back: {e}")
-        return img.resize((tw, th), Image.LANCZOS)
-    finally:
-        shutil.rmtree(tmp_dir, ignore_errors=True)
-
-
-def _round_hw_for_vae(h: int, w: int, ratio: int = 8) -> Tuple[int, int]:
-    return h - (h % ratio), w - (w % ratio)
-
 
 # =============================================================================
 # REST API: PIPELINES
@@ -3455,719 +3375,6 @@ def audio_info():
         },
         "note": "Uses ONNX for inference",
     }), 200
-# =============================================================================
-# REST API: WAN VIDEO
-# =============================================================================
-
-@app.route("/image/video/quality", methods=["POST"])
-def wan_image_to_video():
-    """
-    Wan 2.2 I2V-A14B with MoE switching.
-
-    Uses Q4 quantization (~9.65GB) for better quality than Q2_K,
-    automatically scales resolution to fit available memory.
-    """
-    data = request.get_json(force=True) or {}
-    
-    prompt = (data.get("prompt") or "").strip()
-    negative_prompt = (data.get("negative_prompt") or "").strip()
-    H = int(data.get("height", 480))
-    W = int(data.get("width", 832))
-    frames_count = int(data.get("frames", 81))
-    fps = int(data.get("fps", 16))
-    steps = int(data.get("steps", 40))
-    guidance = float(data.get("guidance_scale", 3.5))
-    seed = data.get("seed")
-    auto_dl = bool(data.get("auto_download", False))
-    image_b64 = (data.get("image_base64") or "").strip()
-    image_url = (data.get("image_url") or "").strip()
-    
-    # Options
-    quantization = data.get("quantization", "auto")  # "auto", "q3", "q5"
-    vae_decode_chunk_size = int(data.get("vae_decode_chunk_size", 1))
-    # sequential_cfg: True = 2 forward passes/step (less memory), False = batched (faster)
-    # Default: "auto" - choose based on available memory
-    sequential_cfg_param = data.get("sequential_cfg", "auto")
-    # skip_moe_switch: Skip switching between HighNoise/LowNoise models (faster but lower quality)
-    # Default: "auto" - skip on MPS for speed, use on CUDA for quality
-    skip_moe_switch_param = data.get("skip_moe_switch", "auto")
-    # fast_mode: Pre-dequantize GGUF weights for faster MPS inference
-    # Uses more memory (~14GB) but avoids repeated dequantization overhead
-    # Default: "auto" - enable on MPS with >20GB available RAM
-    fast_mode_param = data.get("fast_mode", "auto")
-    
-    _mps_clear_memory()
-    
-    if not prompt:
-        return jsonify({"error": "Missing 'prompt'"}), 400
-    if not image_b64 and not image_url:
-        return jsonify({"error": "Provide 'image_base64' or 'image_url'"}), 400
-    
-    guard = _ensure_files_present_or_start("wan_video", auto_download=auto_dl)
-    if guard:
-        return guard
-    
-    gen_id = genbus.new("wan22_i2v_a14b", {
-        "endpoint": "/image/video/quality", "w": W, "h": H, "frames": frames_count,
-    })
-    
-    # Wan VAE normalization constants (shared between Wan 2.1 and 2.2)
-    WAN_LATENTS_MEAN = torch.tensor([
-        -0.7571, -0.7089, -0.9113, 0.1075, -0.1745, 0.9653, -0.1517, 1.5508,
-        0.4134, -0.0715, 0.5517, -0.3632, -0.1922, -0.9497, 0.2503, -0.2921
-    ])
-    WAN_LATENTS_STD = torch.tensor([
-        2.8184, 1.4541, 2.3275, 2.6558, 1.2196, 1.7708, 2.6052, 2.0743,
-        3.2687, 2.1526, 2.8652, 1.5579, 1.6382, 1.1253, 2.8251, 1.9160
-    ])
-    
-    def get_system_memory_gb() -> float:
-        """Get total system memory in GB."""
-        try:
-            import psutil
-            return psutil.virtual_memory().total / (1024**3)
-        except:
-            return 16  # Conservative fallback
-    
-    def aggressive_cleanup():
-        gc.collect()
-        if torch.backends.mps.is_available():
-            torch.mps.empty_cache()
-            torch.mps.synchronize()
-        if torch.cuda.is_available():
-            torch.cuda.empty_cache()
-            torch.cuda.synchronize()
-    
-    # Check if we should run in offline mode (all files present)
-    _wan_offline = _is_pipeline_complete("wan_video")
-    _wan_old_hf_offline = os.environ.get("HF_HUB_OFFLINE")
-    _wan_old_transformers_offline = os.environ.get("TRANSFORMERS_OFFLINE")
-    if _wan_offline:
-        os.environ["HF_HUB_OFFLINE"] = "1"
-        os.environ["TRANSFORMERS_OFFLINE"] = "1"
-        logger.info("[wan_video] Running in offline mode (all files present)")
-
-    try:
-        device = DeviceManager.get_device()
-        aggressive_cleanup()
-
-        if device.type == "mps":
-            os.environ["DIFFUSERS_ATTENTION_BACKEND"] = "eager"
-            # MPS optimization: suggest memory limit to avoid fragmentation
-            try:
-                # Allow MPS to use most of unified memory
-                torch.mps.set_per_process_memory_fraction(0.9)
-            except Exception:
-                pass  # Older PyTorch versions don't have this
-
-        # Dtype configuration for Wan video on different devices:
-        # - CUDA: bfloat16 for everything (fast, accurate)
-        # - MPS: float16 for GGUF transformer (GGUF has issues with float32 dequant),
-        #        float32 for scheduler/latent operations (precision)
-        if device.type == "cuda":
-            compute_dtype = torch.bfloat16
-            gguf_compute_dtype = torch.bfloat16
-            storage_dtype = torch.float16
-        elif device.type == "mps":
-            # MPS: Use float16 for GGUF (works better than float32 for quantized weights)
-            # but float32 for scheduler operations to avoid precision loss
-            compute_dtype = torch.float32  # For scheduler, latents
-            gguf_compute_dtype = torch.float16  # For transformer forward passes
-            storage_dtype = torch.float32
-        else:
-            compute_dtype = torch.float32
-            gguf_compute_dtype = torch.float32
-            storage_dtype = torch.float32
-        
-        total_ram_gb = get_system_memory_gb()
-        logger.info(f"[Wan] Device: {device.type}, System RAM: {total_ram_gb:.0f}GB")
-        
-        # ============================================================
-        # MEMORY-BASED CONFIGURATION
-        # ============================================================
-        # Q4: ~9.65GB model, better quality than Q2_K
-        # ============================================================
-
-        # Use Q4 quantization (better quality than Q2_K, ~9.65GB each)
-        gguf_high_name = WAN22_GGUF_HIGH_NAME
-        gguf_low_name = WAN22_GGUF_LOW_NAME
-        model_overhead_gb = 12  # ~9.65GB model + overhead
-
-        gguf_high_path = MODEL_DIR / gguf_high_name
-        gguf_low_path = MODEL_DIR / gguf_low_name
-
-        logger.info(f"[Wan] Using Q4 quantization (~9.65GB per model)")
-
-        genbus.progress(gen_id, "loading", 0, 3)
-
-        # Load image
-        if image_url:
-            pil_image = load_image(image_url).convert("RGB")
-        else:
-            pil_image = Image.open(io.BytesIO(base64.b64decode(image_b64))).convert("RGB")
-        
-        # Normalize dimensions
-        mod = 32
-        H = max(mod, (H // mod) * mod)
-        W = max(mod, (W // mod) * mod)
-        frames_count = ((frames_count - 1) // 4) * 4 + 1
-        
-        # Calculate memory budget and scale if needed
-        if device.type == "mps":
-            # MPS unified memory is shared with OS, need larger overhead
-            # Components: transformer ~9.65GB, text encoder ~5.2GB (GGUF), VAE ~1GB, CLIP ~1GB
-            # Plus activations, gradients, and OS pressure
-            mps_overhead_gb = 16  # Conservative estimate for all components
-            available_gb = total_ram_gb - mps_overhead_gb - 6  # 6GB OS headroom
-            # Empirical: MPS needs ~1GB per 1000 tokens due to memory fragmentation
-            max_tokens = int(available_gb * 1000)
-            max_tokens = max(5000, min(max_tokens, 20000))  # Cap at 20k tokens for MPS
-        elif device.type == "cuda":
-            vram_gb = torch.cuda.get_device_properties(0).total_memory / (1024**3)
-            available_gb = vram_gb - model_overhead_gb
-            max_tokens = int(available_gb * 3000)  # CUDA more efficient
-            max_tokens = max(10000, min(max_tokens, 150000))
-        else:
-            max_tokens = 10000
-        
-        # Calculate current token count
-        latent_t = (frames_count - 1) // 4 + 1
-        latent_h = H // 8
-        latent_w = W // 8
-        token_count = latent_t * latent_h * latent_w
-        
-        logger.info(f"[Wan] Requested: {frames_count} frames @ {W}x{H} = {token_count} tokens")
-        logger.info(f"[Wan] Memory budget: {available_gb:.1f}GB available -> max {max_tokens} tokens")
-
-        # Determine sequential_cfg based on available memory
-        # Batched CFG (sequential_cfg=False) is ~2x faster but uses ~2x memory for activations
-        if sequential_cfg_param == "auto":
-            # Use batched CFG if we have enough headroom
-            # MPS: unified memory is more flexible, lower threshold
-            # CUDA: dedicated VRAM, need more headroom
-            if device.type == "cuda" and available_gb > 10:
-                sequential_cfg = False
-                logger.info("[Wan] Using batched CFG (faster, enough VRAM)")
-            elif device.type == "mps":
-                # MPS: Always use sequential CFG due to unified memory pressure
-                # Batched CFG doubles activation memory and causes OOM on most systems
-                sequential_cfg = True
-                logger.info("[Wan] Using sequential CFG (memory-safe for MPS)")
-            else:
-                sequential_cfg = True
-                logger.info("[Wan] Using sequential CFG (memory-efficient)")
-        else:
-            sequential_cfg = bool(sequential_cfg_param)
-        
-        # Scale down if needed - prioritize keeping frame count for duration
-        if token_count > max_tokens:
-            # Calculate required scale factor
-            scale_needed = max_tokens / token_count
-            
-            # Reduce spatial resolution to fit, keep temporal (frames)
-            spatial_scale = scale_needed ** 0.5
-            new_H = max(mod, int(H * spatial_scale) // mod * mod)
-            new_W = max(mod, int(W * spatial_scale) // mod * mod)
-            
-            # Ensure minimum resolution
-            new_H = max(256, new_H)
-            new_W = max(256, new_W)
-            
-            new_latent_h = new_H // 8
-            new_latent_w = new_W // 8
-            new_tokens = latent_t * new_latent_h * new_latent_w
-            
-            # If still too high, also reduce frames
-            if new_tokens > max_tokens:
-                frame_scale = max_tokens / new_tokens
-                new_frames = max(17, int(frames_count * frame_scale))
-                new_frames = ((new_frames - 1) // 4) * 4 + 1
-                new_latent_t = (new_frames - 1) // 4 + 1
-                new_tokens = new_latent_t * new_latent_h * new_latent_w
-                frames_count = new_frames
-            
-            H, W = new_H, new_W
-            latent_t = (frames_count - 1) // 4 + 1
-            latent_h = H // 8
-            latent_w = W // 8
-            token_count = latent_t * latent_h * latent_w
-            
-            logger.warning(f"[Wan] Scaled to {frames_count} frames @ {W}x{H} = {token_count} tokens")
-        
-        pil_image = pil_image.resize((W, H), Image.LANCZOS)
-        
-        if not negative_prompt:
-            negative_prompt = "blurry, low quality, distorted, deformed"
-        
-        base_path = repo_local_dir(WAN_REPO)
-        vae_path = MODEL_DIR / WAN_21_VAE_NAME
-        
-        video_duration = frames_count / fps
-        logger.info(f"[Wan] Target: {frames_count} frames @ {fps}fps = {video_duration:.1f}s")
-        
-        # ============================================================
-        # PHASE 1: TEXT ENCODING
-        # ============================================================
-        aggressive_cleanup()
-
-        logger.info("[Wan] Loading text encoder...")
-        tokenizer = AutoTokenizer.from_pretrained(base_path, subfolder="tokenizer", local_files_only=_wan_offline)
-
-        # On MPS, run text encoding on CPU to save GPU memory (~20GB text encoder)
-        # This is slower but allows video generation to fit in memory
-        text_encode_device = "cpu" if device.type == "mps" else device
-        text_encode_dtype = torch.float32 if device.type == "mps" else compute_dtype
-
-        if device.type == "mps":
-            logger.info("[Wan] Using CPU for text encoding to save MPS memory")
-
-        text_encoder = UMT5EncoderModel.from_pretrained(
-            base_path, subfolder="text_encoder", torch_dtype=text_encode_dtype,
-            local_files_only=_wan_offline, low_cpu_mem_usage=True,
-        ).to(text_encode_device)
-        text_encoder.eval()
-
-        max_seq_len = 512
-        with torch.no_grad():
-            pos_ids = tokenizer(prompt, padding="max_length", max_length=max_seq_len, truncation=True, return_tensors="pt").input_ids.to(text_encode_device)
-            prompt_embeds = text_encoder(pos_ids)[0].to("cpu", dtype=storage_dtype)
-            neg_ids = tokenizer(negative_prompt, padding="max_length", max_length=max_seq_len, truncation=True, return_tensors="pt").input_ids.to(text_encode_device)
-            negative_embeds = text_encoder(neg_ids)[0].to("cpu", dtype=storage_dtype)
-
-        del pos_ids, neg_ids, tokenizer, text_encoder
-        aggressive_cleanup()
-        
-        # ============================================================
-        # PHASE 2: CLIP ENCODING (if needed)
-        # ============================================================
-        
-        config_path = base_path / "transformer" / "config.json"
-        with open(config_path, 'r') as f:
-            transformer_config = json.load(f)
-        
-        image_embeds = None
-        if transformer_config.get('image_dim') is not None:
-            aggressive_cleanup()
-            clip_processor = CLIPImageProcessor.from_pretrained(base_path, subfolder="image_processor", local_files_only=_wan_offline)
-            clip_encoder = CLIPVisionModel.from_pretrained(
-                base_path, subfolder="image_encoder", torch_dtype=torch.float32,
-                local_files_only=_wan_offline, low_cpu_mem_usage=True,
-            ).to(device)
-            clip_encoder.eval()
-            
-            with torch.no_grad():
-                clip_inputs = clip_processor(images=pil_image, return_tensors="pt")
-                clip_inputs = {k: v.to(device) for k, v in clip_inputs.items()}
-                image_embeds = clip_encoder(**clip_inputs, output_hidden_states=True).hidden_states[-2]
-                image_embeds = image_embeds.to("cpu", dtype=storage_dtype)
-            
-            del clip_inputs, clip_processor
-            clip_encoder.to("cpu")
-            del clip_encoder
-            aggressive_cleanup()
-        
-        # ============================================================
-        # PHASE 3: VAE ENCODING
-        # ============================================================
-        aggressive_cleanup()
-        
-        logger.info("[Wan] Loading VAE...")
-        vae = AutoencoderKLWan.from_single_file(str(vae_path), torch_dtype=torch.float32)
-        vae.to(device)
-        vae.eval()
-        if hasattr(vae, "enable_tiling"):
-            vae.enable_tiling()
-        if hasattr(vae, "enable_slicing"):
-            vae.enable_slicing()
-        
-        # Prepare tensors
-        img_np = np.array(pil_image).astype(np.float32) / 255.0
-        img_np = (img_np - 0.5) / 0.5
-        img_tensor = torch.from_numpy(img_np).permute(2, 0, 1).unsqueeze(0).unsqueeze(2)
-        del pil_image, img_np
-        
-        # Encode first frame
-        logger.info("[Wan] Encoding conditioning frames...")
-        first_frame = img_tensor.to(device, dtype=torch.float32)
-        del img_tensor
-        
-        with torch.no_grad():
-            first_latent = vae.encode(first_frame).latent_dist.mode()
-        del first_frame
-        aggressive_cleanup()
-        
-        _, latent_c, _, latent_h, latent_w = first_latent.shape
-        
-        # Encode black frame (proper I2V conditioning)
-        black_frame = torch.full((1, 3, 1, H, W), -1.0, dtype=torch.float32, device=device)
-        with torch.no_grad():
-            black_latent = vae.encode(black_frame).latent_dist.mode()
-        del black_frame
-        aggressive_cleanup()
-        
-        # Build condition on CPU
-        first_cpu = first_latent.to("cpu", dtype=torch.float32)
-        black_cpu = black_latent.to("cpu", dtype=torch.float32)
-        del first_latent, black_latent
-        
-        latent_condition = torch.zeros(1, latent_c, latent_t, latent_h, latent_w, dtype=torch.float32)
-        latent_condition[:, :, 0:1, :, :] = first_cpu
-        for t in range(1, latent_t):
-            latent_condition[:, :, t:t+1, :, :] = black_cpu
-        del first_cpu, black_cpu
-        
-        # Normalize
-        latents_mean = WAN_LATENTS_MEAN.view(1, -1, 1, 1, 1)
-        latents_std = WAN_LATENTS_STD.view(1, -1, 1, 1, 1)
-        latent_condition = (latent_condition - latents_mean) / latents_std
-        
-        # Create mask and combine
-        mask = torch.zeros(1, 4, latent_t, latent_h, latent_w, dtype=torch.float32)
-        mask[:, :, 0, :, :] = 1.0
-        condition = torch.cat([mask, latent_condition], dim=1).to(dtype=storage_dtype)
-        del mask, latent_condition, latents_mean, latents_std
-        
-        # Unload VAE
-        vae.to("cpu")
-        del vae
-        aggressive_cleanup()
-        
-        logger.info(f"[Wan] Condition: {latent_t}x{latent_h}x{latent_w} = {token_count} tokens")
-        
-        # ============================================================
-        # PHASE 4: TRANSFORMER DENOISING
-        # ============================================================
-        genbus.progress(gen_id, "generating", 1, 3)
-        aggressive_cleanup()
-        
-        logger.info(f"[Wan] Loading transformer ({gguf_high_name})...")
-        
-        config_high_path = base_path / "transformer" / "config.json"
-        config_low_path = base_path / "transformer_2" / "config.json"
-        if not config_low_path.exists():
-            config_low_path = config_high_path
-        
-        scheduler = FlowMatchEulerDiscreteScheduler.from_pretrained(
-            base_path, subfolder="scheduler", local_files_only=_wan_offline, shift=8.0,
-        )
-        scheduler.set_timesteps(steps, device=device)
-        timesteps = scheduler.timesteps
-        
-        # Determine if we should skip MoE switching
-        # Skipping saves ~10-15 seconds of model loading/unloading but reduces quality slightly
-        if skip_moe_switch_param == "auto":
-            # Skip MoE on MPS for speed (loading 5GB model mid-generation is slow)
-            # Keep MoE on CUDA where loading is faster
-            skip_moe_switch = device.type == "mps"
-            if skip_moe_switch:
-                logger.info("[Wan] Skipping MoE switch for faster MPS inference")
-        else:
-            skip_moe_switch = bool(skip_moe_switch_param)
-
-        # Find MoE switch point (disabled if skip_moe_switch is True)
-        moe_switch_idx = len(timesteps)  # Default: never switch
-        if not skip_moe_switch:
-            for idx, t in enumerate(timesteps):
-                t_norm = t.item() / 1000.0 if t.item() > 1.0 else t.item()
-                if t_norm < 0.875:
-                    moe_switch_idx = idx
-                    break
-            logger.info(f"[Wan] MoE switch at step {moe_switch_idx}/{len(timesteps)}")
-        
-        # Initialize latents
-        generator = torch.Generator(device=device).manual_seed(seed) if isinstance(seed, int) else None
-        latents = torch.randn(
-            (1, 16, latent_t, latent_h, latent_w),
-            generator=generator, device=device, dtype=compute_dtype
-        ) * getattr(scheduler, 'init_noise_sigma', 1.0)
-        
-        do_cfg = guidance > 1.0
-        
-        def dequantize_gguf_model(model):
-            """
-            Pre-dequantize GGUF weights for faster inference.
-            Uses more memory (~14GB for transformer) but avoids repeated dequantization.
-            """
-            try:
-                from diffusers.quantizers.gguf.utils import GGUFLinear
-                dequantized_count = 0
-                for name, module in model.named_modules():
-                    if isinstance(module, GGUFLinear):
-                        # Get dequantized weights
-                        with torch.no_grad():
-                            weight = module.weight_packed * module.weight_scale
-                            if hasattr(module, 'bias') and module.bias is not None:
-                                bias = module.bias.clone()
-                            else:
-                                bias = None
-
-                        # Create regular Linear layer
-                        new_linear = torch.nn.Linear(
-                            weight.shape[1], weight.shape[0],
-                            bias=bias is not None,
-                            device=weight.device,
-                            dtype=weight.dtype
-                        )
-                        new_linear.weight.data = weight
-                        if bias is not None:
-                            new_linear.bias.data = bias
-
-                        # Replace the module
-                        parent_name = '.'.join(name.split('.')[:-1])
-                        child_name = name.split('.')[-1]
-                        if parent_name:
-                            parent = model.get_submodule(parent_name)
-                            setattr(parent, child_name, new_linear)
-                        else:
-                            setattr(model, child_name, new_linear)
-                        dequantized_count += 1
-
-                logger.info(f"[Wan] Pre-dequantized {dequantized_count} GGUF layers")
-                aggressive_cleanup()
-                return model, True  # Return success flag
-            except Exception as e:
-                logger.warning(f"[Wan] Pre-dequantization failed: {e}, using GGUF mode")
-                return model, False  # Return failure flag
-
-        def load_transformer(path, config, use_compile=False, pre_dequantize=False):
-            aggressive_cleanup()
-            # Use gguf_compute_dtype for transformer (float16 on MPS works better with GGUF)
-            t = WanTransformer3DModel.from_single_file(
-                str(path), config=str(config),
-                quantization_config=GGUFQuantizationConfig(compute_dtype=gguf_compute_dtype),
-                torch_dtype=gguf_compute_dtype,
-            )
-            t.to(device)
-            t.eval()
-
-            # Pre-dequantize GGUF weights for faster inference on MPS
-            # Uses more memory (~14GB) but avoids repeated dequantization overhead
-            if pre_dequantize and device.type == "mps":
-                t, success = dequantize_gguf_model(t)
-                if success:
-                    logger.info("[Wan] Transformer weights pre-dequantized for fast MPS inference")
-
-            # torch.compile for significant speedup on CUDA (20-50% faster)
-            # MPS doesn't benefit as much from compile
-            if use_compile and device.type == "cuda":
-                try:
-                    t = torch.compile(t, mode="reduce-overhead")
-                    logger.info("[Wan] Transformer compiled with torch.compile")
-                except Exception as e:
-                    logger.warning(f"[Wan] torch.compile failed, using eager mode: {e}")
-
-            return t
-
-        # Use compile for CUDA, skip for MPS (less benefit, potential issues)
-        use_compile = device.type == "cuda"
-
-        # Determine fast_mode (pre-dequantize GGUF for faster inference)
-        # DISABLED on MPS: GGUFLinear API changed, pre-dequantization fails
-        # Pre-dequantized model uses ~14GB vs ~9.65GB for Q4 GGUF
-        if fast_mode_param == "auto":
-            # Only enable on CUDA with enough VRAM (MPS: disabled due to API changes)
-            pre_dequantize = device.type == "cuda" and available_gb > 14
-            if pre_dequantize:
-                logger.info("[Wan] Fast mode enabled: pre-dequantizing GGUF for faster inference")
-        else:
-            pre_dequantize = bool(fast_mode_param) and device.type != "mps"
-
-        transformer = load_transformer(gguf_high_path, config_high_path,
-                                       use_compile=use_compile, pre_dequantize=pre_dequantize)
-
-        logger.info(f"[Wan] Denoising {steps} steps on {device.type}...")
-
-        for i, t in enumerate(timesteps):
-            # Progress update
-            genbus.progress(gen_id, "denoising", i, steps)
-
-            if i == moe_switch_idx and moe_switch_idx < len(timesteps):
-                logger.info(f"[Wan] Step {i}/{steps}: Switching to LowNoise model")
-                transformer.to("cpu")
-                del transformer
-                aggressive_cleanup()
-                transformer = load_transformer(gguf_low_path, config_low_path,
-                                               use_compile=use_compile, pre_dequantize=pre_dequantize)
-
-            # Convert to gguf_compute_dtype for transformer (float16 on MPS)
-            cond_gpu = condition.to(device, dtype=gguf_compute_dtype)
-            latents_for_transformer = latents.to(dtype=gguf_compute_dtype)
-            latent_input = torch.cat([latents_for_transformer, cond_gpu], dim=1)
-            del cond_gpu, latents_for_transformer
-
-            if do_cfg and sequential_cfg:
-                # Sequential CFG: 2 forward passes per step (memory-efficient)
-                ts = t.expand(1)
-
-                neg_gpu = negative_embeds.to(device, dtype=gguf_compute_dtype)
-                img_gpu = image_embeds.to(device, dtype=gguf_compute_dtype) if image_embeds is not None else None
-                with torch.no_grad():
-                    noise_uncond = transformer(hidden_states=latent_input, timestep=ts,
-                        encoder_hidden_states=neg_gpu, encoder_hidden_states_image=img_gpu, return_dict=False)[0]
-                del neg_gpu, img_gpu
-
-                pos_gpu = prompt_embeds.to(device, dtype=gguf_compute_dtype)
-                img_gpu = image_embeds.to(device, dtype=gguf_compute_dtype) if image_embeds is not None else None
-                with torch.no_grad():
-                    noise_cond = transformer(hidden_states=latent_input, timestep=ts,
-                        encoder_hidden_states=pos_gpu, encoder_hidden_states_image=img_gpu, return_dict=False)[0]
-                del pos_gpu, img_gpu
-
-                noise_pred = noise_uncond + guidance * (noise_cond - noise_uncond)
-                del noise_uncond, noise_cond
-            elif do_cfg:
-                # Batched CFG: 1 forward pass with batch=2 (faster, uses more memory)
-                ts = t.expand(2)
-                latent_input_batch = torch.cat([latent_input, latent_input], dim=0)
-                del latent_input
-
-                neg_gpu = negative_embeds.to(device, dtype=gguf_compute_dtype)
-                pos_gpu = prompt_embeds.to(device, dtype=gguf_compute_dtype)
-                embeds_batch = torch.cat([neg_gpu, pos_gpu], dim=0)
-                del neg_gpu, pos_gpu
-
-                img_gpu = None
-                if image_embeds is not None:
-                    img_gpu = image_embeds.to(device, dtype=gguf_compute_dtype)
-                    img_gpu = torch.cat([img_gpu, img_gpu], dim=0)
-
-                with torch.no_grad():
-                    noise_batch = transformer(hidden_states=latent_input_batch, timestep=ts,
-                        encoder_hidden_states=embeds_batch, encoder_hidden_states_image=img_gpu, return_dict=False)[0]
-                del latent_input_batch, embeds_batch, img_gpu
-
-                noise_uncond, noise_cond = noise_batch.chunk(2, dim=0)
-                del noise_batch
-                noise_pred = noise_uncond + guidance * (noise_cond - noise_uncond)
-                del noise_uncond, noise_cond
-                latent_input = None  # Already deleted above
-            else:
-                # No CFG: single forward pass
-                pos_gpu = prompt_embeds.to(device, dtype=gguf_compute_dtype)
-                img_gpu = image_embeds.to(device, dtype=gguf_compute_dtype) if image_embeds is not None else None
-                ts = t.expand(1)
-                with torch.no_grad():
-                    noise_pred = transformer(hidden_states=latent_input, timestep=ts,
-                        encoder_hidden_states=pos_gpu, encoder_hidden_states_image=img_gpu, return_dict=False)[0]
-                del pos_gpu, img_gpu
-
-            if latent_input is not None:
-                del latent_input
-            # Convert noise_pred back to compute_dtype for scheduler precision
-            noise_pred = noise_pred.to(dtype=compute_dtype)
-            latents = scheduler.step(noise_pred, t, latents, return_dict=False)[0]
-            del noise_pred
-        
-        final_latents = latents.to("cpu", dtype=storage_dtype)
-        del latents
-        transformer.to("cpu")
-        del transformer, prompt_embeds, negative_embeds, condition
-        if image_embeds is not None:
-            del image_embeds
-        aggressive_cleanup()
-        
-        # ============================================================
-        # PHASE 5: VAE DECODING
-        # ============================================================
-        aggressive_cleanup()
-        
-        logger.info("[Wan] Decoding video...")
-        vae = AutoencoderKLWan.from_single_file(str(vae_path), torch_dtype=torch.float32)
-        vae.to(device)
-        vae.eval()
-        # Disable tiling - it can cause hexagonal artifacts on MPS
-        # if hasattr(vae, "enable_tiling"):
-        #     vae.enable_tiling()
-        
-        latents = final_latents.to(device, dtype=torch.float32)
-        del final_latents
-        
-        latents_mean = WAN_LATENTS_MEAN.view(1, -1, 1, 1, 1).to(device, torch.float32)
-        latents_std = WAN_LATENTS_STD.view(1, -1, 1, 1, 1).to(device, torch.float32)
-        latents = latents * latents_std + latents_mean
-        del latents_mean, latents_std
-        
-        # Chunked decode
-        video_chunks = []
-        for i in range(0, latent_t, vae_decode_chunk_size):
-            end = min(i + vae_decode_chunk_size, latent_t)
-            chunk = latents[:, :, i:end, :, :]
-            with torch.no_grad():
-                decoded = vae.decode(chunk, return_dict=False)[0]
-            decoded = decoded.squeeze(0).permute(1, 2, 3, 0).cpu().float().numpy()
-            decoded = ((decoded + 1.0) / 2.0).clip(0, 1)
-            video_chunks.append((decoded * 255).astype(np.uint8))
-            del chunk, decoded
-            aggressive_cleanup()
-        
-        del latents
-        video = np.concatenate(video_chunks, axis=0)
-        del video_chunks
-        
-        frames = [Image.fromarray(f) for f in video]
-        del video
-        
-        vae.to("cpu")
-        del vae
-        aggressive_cleanup()
-        
-        logger.info(f"[Wan] Decoded {len(frames)} frames")
-        
-        # ============================================================
-        # PHASE 6: VIDEO ENCODING
-        # ============================================================
-        genbus.progress(gen_id, "finalizing", 2, 3)
-        
-        out_path = str(FILES_DIR / f"wan22_{int(time.time())}.mp4")
-        
-        write_video(
-            out_path, frames,
-            source_fps=fps,
-            target_fps=24,
-            target_size=(W, H),
-            crf=18,
-            preset="slow",
-            interpolate=True,
-            add_grain=0.1,
-            sharpen=0.2,
-            gen_id=gen_id,
-        )
-        
-        duration = len(frames) / fps
-        del frames
-        aggressive_cleanup()
-        
-        genbus.progress(gen_id, "complete", 3, 3)
-        genbus.finish(gen_id, {"video_path": out_path})
-
-        logger.info(f"[Wan] Complete: {out_path} ({duration:.1f}s @ {W}x{H})")
-        
-        return jsonify(_json_sanitize({
-            "status": "success",
-            "video_path": out_path,
-            "frames": len(frames) if 'frames' in dir() else int(duration * fps),
-            "duration_seconds": round(duration, 2),
-            "resolution": f"{W}x{H}",
-            "quantization": "Q4",
-            "generation_websocket_url": generation_url(),
-        }))
-    
-    except Exception as e:
-        logger.exception("Wan I2V failed")
-        genbus.error(gen_id, str(e))
-        return jsonify({"error": str(e)}), 500
-    finally:
-        # Restore offline mode environment variables
-        if _wan_old_hf_offline is None:
-            os.environ.pop("HF_HUB_OFFLINE", None)
-        else:
-            os.environ["HF_HUB_OFFLINE"] = _wan_old_hf_offline
-        if _wan_old_transformers_offline is None:
-            os.environ.pop("TRANSFORMERS_OFFLINE", None)
-        else:
-            os.environ["TRANSFORMERS_OFFLINE"] = _wan_old_transformers_offline
-        aggressive_cleanup()
-
 
 # =============================================================================
 # REST API: LTX-2 VIDEO (GGUF)
@@ -4207,7 +3414,7 @@ def ltx2_gguf_image_to_video():
     if guard:
         return guard
 
-    gen_id = genbus.new("ltx2_gguf_i2v", {
+    gen_id = genbus.new("ltx2_video", {
         "endpoint": "/image/video", "w": W, "h": H, "frames": frames_count,
     })
 
@@ -4242,7 +3449,7 @@ def ltx2_gguf_image_to_video():
         else:
             model_dtype = torch.float32
 
-        genbus.progress(gen_id, "loading_image", 0, 5)
+        genbus.progress(gen_id, "loading", 1, 4)
 
         # Load source image
         if image_url:
@@ -4250,14 +3457,34 @@ def ltx2_gguf_image_to_video():
         else:
             pil_image = Image.open(io.BytesIO(base64.b64decode(image_b64))).convert("RGB")
 
-        # Normalize dimensions (LTX-2 requires width/height divisible by 32, frames = 8n+1)
+        # Normalize dimensions (LTX-2 requires width/height divisible by 32)
+        # Minimum 256x256 to avoid VAE decode issues with very small latents
         mod = 32
-        H = max(mod, (H // mod) * mod)
-        W = max(mod, (W // mod) * mod)
-        frames_count = ((frames_count - 1) // 8) * 8 + 1
+        min_dim = 256
+        H = max(min_dim, (H // mod) * mod)
+        W = max(min_dim, (W // mod) * mod)
 
-        # Resize image to target dimensions
-        pil_image = pil_image.resize((W, H), Image.LANCZOS)
+        # Resize image preserving aspect ratio (cover and center crop)
+        src_w, src_h = pil_image.size
+        scale = max(W / src_w, H / src_h)  # Scale to cover target area
+        new_w = int(src_w * scale)
+        new_h = int(src_h * scale)
+        resized = pil_image.resize((new_w, new_h), Image.LANCZOS)
+        # Center crop to target dimensions
+        crop_x = (new_w - W) // 2
+        crop_y = (new_h - H) // 2
+        pil_image = resized.crop((crop_x, crop_y, crop_x + W, crop_y + H))
+
+        # Motion fix: light preprocessing to help video models generate motion
+        import numpy as _np
+        _buf = io.BytesIO()
+        pil_image.save(_buf, format="JPEG", quality=90)
+        _buf.seek(0)
+        pil_image = Image.open(_buf).convert("RGB")
+        _arr = _np.asarray(pil_image).astype(_np.float32)
+        _arr += _np.random.normal(scale=0.1, size=_arr.shape)
+        _arr = _np.clip(_arr, 0, 255).astype(_np.uint8)
+        pil_image = Image.fromarray(_arr, "RGB")
 
         logger.info(f"[LTX-2 GGUF] Generating {frames_count} frames @ {W}x{H}, {steps} steps")
 
@@ -4266,7 +3493,6 @@ def ltx2_gguf_image_to_video():
             from diffusers.pipelines.ltx2.connectors import LTX2RotaryPosEmbed1d
             from diffusers.models.transformers.transformer_ltx2 import LTX2AudioVideoRotaryPosEmbed
 
-            # Patch both RoPE classes to disable double_precision
             for cls in [LTX2RotaryPosEmbed1d, LTX2AudioVideoRotaryPosEmbed]:
                 if not hasattr(cls, '_mps_patched'):
                     original_forward = cls.forward
@@ -4280,15 +3506,10 @@ def ltx2_gguf_image_to_video():
                     cls.forward = make_patched_forward(original_forward)
                     cls._mps_patched = True
 
-            logger.info("[LTX-2 GGUF] Patched RoPE classes for MPS float32")
-
-        genbus.progress(gen_id, "loading_transformer", 1, 5)
+        genbus.progress(gen_id, "loading model", 2, 4)
 
         # Load transformer from GGUF with quantization config
         gguf_path = MODEL_DIR / LTX2_GGUF_NAME
-        logger.info(f"[LTX-2 GGUF DEBUG] Loading transformer from {gguf_path}")
-        logger.info(f"[LTX-2 GGUF DEBUG] Device: {device}, dtype: {model_dtype}")
-
         quantization_config = GGUFQuantizationConfig(compute_dtype=model_dtype)
 
         transformer = LTX2VideoTransformer3DModel.from_single_file(
@@ -4298,9 +3519,6 @@ def ltx2_gguf_image_to_video():
             quantization_config=quantization_config,
             torch_dtype=model_dtype,
         )
-        logger.info(f"[LTX-2 GGUF DEBUG] Transformer loaded, dtype: {transformer.dtype}")
-
-        genbus.progress(gen_id, "loading_pipeline", 2, 5)
 
         # Load the full pipeline with our GGUF transformer
         pipe = LTX2ImageToVideoPipeline.from_pretrained(
@@ -4308,16 +3526,21 @@ def ltx2_gguf_image_to_video():
             transformer=transformer,
             torch_dtype=model_dtype,
         )
-        logger.info(f"[LTX-2 GGUF DEBUG] Pipeline loaded")
-        logger.info(f"[LTX-2 GGUF DEBUG] VAE dtype: {pipe.vae.dtype}")
-        logger.info(f"[LTX-2 GGUF DEBUG] Text encoder dtype: {pipe.text_encoder.dtype if hasattr(pipe, 'text_encoder') and pipe.text_encoder else 'N/A'}")
 
         # Enable memory optimizations
         pipe.enable_model_cpu_offload()
-        pipe.vae.enable_tiling()
-        logger.info(f"[LTX-2 GGUF DEBUG] Memory optimizations enabled (cpu_offload + vae_tiling)")
+        
+        # Enable tiling for high resolutions (720p+ = ~900K pixels)
+        # Tiling causes padding errors when latent dimensions are too small
+        # Safe resolutions: 640x448, 1280x704, 1920x1088 (latents divide evenly)
+        total_pixels = H * W
+        if total_pixels >= 900_000:  # ~720p threshold
+            pipe.vae.enable_tiling()
+            logger.info(f"[LTX-2 GGUF] VAE tiling enabled for {W}x{H} ({total_pixels:,} px)")
+        else:
+            logger.info(f"[LTX-2 GGUF] VAE tiling disabled for {W}x{H} ({total_pixels:,} px)")
 
-        genbus.progress(gen_id, "generating", 3, 5)
+        genbus.progress(gen_id, "generating", 3, 4)
 
         # Set up generator for reproducibility
         if seed is not None:
@@ -4325,75 +3548,58 @@ def ltx2_gguf_image_to_video():
         else:
             generator = None
 
-        # Progress callback with latent inspection
-        def progress_callback(pipe, step, timestep, callback_kwargs):
-            genbus.progress(gen_id, "denoising", step, steps)
-            # Log latent stats at first and last step
-            if step == 1 or step == steps:
-                latents = callback_kwargs.get("latents")
-                if latents is not None:
-                    logger.info(f"[LTX-2 GGUF DEBUG] Step {step}/{steps} latents: "
-                               f"shape={latents.shape}, dtype={latents.dtype}, "
-                               f"min={latents.min().item():.4f}, max={latents.max().item():.4f}, "
-                               f"mean={latents.mean().item():.4f}, "
-                               f"nan_count={torch.isnan(latents).sum().item()}, "
-                               f"inf_count={torch.isinf(latents).sum().item()}")
-            return callback_kwargs
-
-        logger.info(f"[LTX-2 GGUF DEBUG] Starting generation: {frames_count} frames, {steps} steps, guidance={guidance}")
-
-        # Generate video
-        output = pipe(
+        # Generate video with audio
+        video, audio = pipe(
             prompt=prompt,
             negative_prompt=negative_prompt,
             image=pil_image,
             height=H,
             width=W,
             num_frames=frames_count,
+            frame_rate=frame_rate,
             num_inference_steps=steps,
             guidance_scale=guidance,
             generator=generator,
-            callback_on_step_end=progress_callback,
+            decode_timestep=0.05,  # Motion fix: lower decode_timestep improves motion
+            output_type="np",
+            return_dict=False,
         )
 
-        logger.info(f"[LTX-2 GGUF DEBUG] Generation complete, output type: {type(output)}")
-        logger.info(f"[LTX-2 GGUF DEBUG] Output attributes: {dir(output)}")
-
-        genbus.progress(gen_id, "saving", 4, 5)
-
-        # Get frames from output
-        frames = output.frames[0]  # List of PIL images
-        logger.info(f"[LTX-2 GGUF DEBUG] Frames type: {type(frames)}, length: {len(frames) if frames else 0}")
-
-        # Debug: log detailed frame info
+        # Convert video to uint8 and apply watermark to each frame
         import numpy as np
-        if frames:
-            first_frame = frames[0]
-            last_frame = frames[-1]
-            first_arr = np.array(first_frame)
-            last_arr = np.array(last_frame)
+        video = np.nan_to_num(video, nan=0.0, posinf=1.0, neginf=0.0)
+        video = np.clip(video, 0, 1)
+        video = (video * 255).round().astype("uint8")
 
-            logger.info(f"[LTX-2 GGUF DEBUG] First frame: size={first_frame.size}, mode={first_frame.mode}, "
-                       f"arr_shape={first_arr.shape}, dtype={first_arr.dtype}")
-            logger.info(f"[LTX-2 GGUF DEBUG] First frame pixels: min={first_arr.min()}, max={first_arr.max()}, "
-                       f"mean={first_arr.mean():.2f}, std={first_arr.std():.2f}")
-            logger.info(f"[LTX-2 GGUF DEBUG] First frame unique values (sample): {np.unique(first_arr.flatten()[:1000])[:20]}")
-            logger.info(f"[LTX-2 GGUF DEBUG] Last frame pixels: min={last_arr.min()}, max={last_arr.max()}, "
-                       f"mean={last_arr.mean():.2f}, std={last_arr.std():.2f}")
+        # Apply watermark to each frame (video shape: [batch, frames, H, W, C])
+        frames_with_wm = []
+        for frame_arr in video[0]:  # video[0] = first batch
+            frame_pil = Image.fromarray(frame_arr, "RGB")
+            frame_wm = _apply_watermark(frame_pil)
+            frames_with_wm.append(np.array(frame_wm))
+        video = np.stack(frames_with_wm, axis=0)[np.newaxis, ...]  # [1, frames, H, W, C]
+        video = torch.from_numpy(video)
 
-            # Check for all-black or all-same
-            if first_arr.max() == first_arr.min():
-                logger.warning(f"[LTX-2 GGUF DEBUG] WARNING: First frame is uniform color (value={first_arr.min()})")
-            if last_arr.max() == last_arr.min():
-                logger.warning(f"[LTX-2 GGUF DEBUG] WARNING: Last frame is uniform color (value={last_arr.min()})")
-
-        # Convert to video
+        # Save video with audio using encode_video
+        from diffusers.pipelines.ltx2.export_utils import encode_video
         files_dir = MODEL_DIR / "files"
         files_dir.mkdir(parents=True, exist_ok=True)
         out_path = str(files_dir / f"ltx2_gguf_{gen_id}.mp4")
-        export_to_video(frames, out_path, fps=int(frame_rate))
 
-        genbus.progress(gen_id, "complete", 5, 5)
+        # Get audio sample rate from vocoder if available
+        audio_sr = 24000
+        if hasattr(pipe, 'vocoder') and hasattr(pipe.vocoder, 'config'):
+            audio_sr = getattr(pipe.vocoder.config, 'output_sampling_rate', 24000)
+
+        encode_video(
+            video[0],
+            fps=frame_rate,
+            audio=audio[0].float().cpu() if audio is not None else None,
+            audio_sample_rate=audio_sr,
+            output_path=out_path,
+        )
+
+        genbus.progress(gen_id, "complete", 4, 4)
         genbus.finish(gen_id, {"video_path": out_path})
 
         logger.info(f"[LTX-2 GGUF] Video saved to {out_path}")
@@ -4431,386 +3637,6 @@ def ltx2_gguf_image_to_video():
             os.environ.pop("TRANSFORMERS_OFFLINE", None)
         else:
             os.environ["TRANSFORMERS_OFFLINE"] = _ltx_old_transformers_offline
-
-
-# =============================================================================
-# REST API: LTX-2 VIDEO (TURBO)
-# =============================================================================
-
-@app.route("/image/video/turbo", methods=["POST"])
-def ltx2_image_to_video():
-    """
-    LTX-2 (19B DiT) Image-to-Video using optimum-quanto int8 quantization.
-
-    Fast turbo mode for image-to-video generation with synchronized audio.
-    Uses optimum-quanto int8 quantization with group swap hooks for memory efficiency.
-    Caches quantized models for faster subsequent loads.
-    """
-    if not QUANTO_AVAILABLE:
-        return jsonify({"error": "optimum-quanto not installed. Run: pip install optimum-quanto"}), 500
-
-    data = request.get_json(force=True) or {}
-
-    prompt = (data.get("prompt") or "").strip()
-    negative_prompt = (data.get("negative_prompt") or "").strip() or "worst quality, inconsistent motion, blurry, jittery, distorted"
-    H = int(data.get("height", 512))
-    W = int(data.get("width", 768))
-    frames_count = int(data.get("frames", 121))  # LTX-2 frames must be 8n+1
-    frame_rate = float(data.get("frame_rate", 24.0))
-    steps = int(data.get("steps", 40))  # LTX-2 default is 40 steps
-    guidance = float(data.get("guidance_scale", 4.0))
-    seed = data.get("seed")
-    auto_dl = bool(data.get("auto_download", False))
-    image_b64 = (data.get("image_base64") or "").strip()
-    image_url = (data.get("image_url") or "").strip()
-    include_audio = bool(data.get("include_audio", True))  # LTX-2 can generate audio
-
-    _mps_clear_memory()
-
-    if not prompt:
-        return jsonify({"error": "Missing 'prompt'"}), 400
-    if not image_b64 and not image_url:
-        return jsonify({"error": "Provide 'image_base64' or 'image_url'"}), 400
-
-    guard = _ensure_files_present_or_start("ltx2_video", auto_download=auto_dl)
-    if guard:
-        return guard
-
-    gen_id = genbus.new("ltx2_i2v", {
-        "endpoint": "/image/video/turbo", "w": W, "h": H, "frames": frames_count,
-    })
-
-    # Check if we should run in offline mode (all files present)
-    _ltx_offline = _is_pipeline_complete("ltx2_video")
-    _ltx_old_hf_offline = os.environ.get("HF_HUB_OFFLINE")
-    _ltx_old_transformers_offline = os.environ.get("TRANSFORMERS_OFFLINE")
-    if _ltx_offline:
-        os.environ["HF_HUB_OFFLINE"] = "1"
-        os.environ["TRANSFORMERS_OFFLINE"] = "1"
-        logger.info("[LTX-2] Running in offline mode (all files present)")
-
-    # Track components for cleanup
-    text_encoder = None
-    tokenizer = None
-    transformer = None
-    video_vae = None
-    audio_vae = None
-    connectors = None
-    vocoder = None
-    scheduler = None
-    swap_state = None
-
-    try:
-        device = DeviceManager.get_device()
-        quanto_gc()
-
-        if device.type == "mps":
-            os.environ["DIFFUSERS_ATTENTION_BACKEND"] = "eager"
-
-        # Select dtype based on device
-        # CUDA: bfloat16 is optimal
-        # MPS: float16 for models, float32 for scheduler
-        # CPU: float32 for everything
-        if device.type == "cuda":
-            model_dtype = torch.bfloat16
-            scheduler_dtype = torch.bfloat16
-            group_size = 8
-        elif device.type == "mps":
-            model_dtype = torch.float16
-            scheduler_dtype = torch.float32
-            group_size = 4
-        else:
-            model_dtype = torch.float32
-            scheduler_dtype = torch.float32
-            group_size = 2
-
-        genbus.progress(gen_id, "loading_image", 0, 7)
-
-        # Load source image
-        if image_url:
-            pil_image = load_image(image_url).convert("RGB")
-        else:
-            pil_image = Image.open(io.BytesIO(base64.b64decode(image_b64))).convert("RGB")
-
-        # Normalize dimensions (LTX-2 requires width/height divisible by 32, frames = 8n+1)
-        mod = 32
-        H = max(mod, (H // mod) * mod)
-        W = max(mod, (W // mod) * mod)
-        frames_count = ((frames_count - 1) // 8) * 8 + 1
-
-        # Resize image to target dimensions
-        pil_image = pil_image.resize((W, H), Image.LANCZOS)
-
-        logger.info(f"[LTX-2] Generating {frames_count} frames @ {W}x{H}, {steps} steps")
-
-        # Use local repo path and offline mode once downloaded
-        ltx2_local = str(repo_local_dir(LTX2_REPO))
-
-        with offline_mode_if_complete("ltx2_video") as is_offline:
-            # -------------------------------------------------------------------------
-            # Step 1: Load and quantize text encoder (Gemma)
-            # -------------------------------------------------------------------------
-            genbus.progress(gen_id, "loading_text_encoder", 1, 7)
-
-            def build_text_encoder():
-                logger.info("[LTX-2] Loading Gemma text encoder...")
-                enc = Gemma3ForConditionalGeneration.from_pretrained(
-                    ltx2_local,
-                    subfolder="text_encoder",
-                    torch_dtype=model_dtype,
-                    local_files_only=is_offline,
-                )
-                return enc
-
-            text_encoder = load_or_build_quantized(
-                LTX2_QUANTO_CACHE_DIR / "text_encoder_int8.safetensors",
-                build_text_encoder,
-                "text_encoder",
-            )
-
-            # Load tokenizer
-            tokenizer = GemmaTokenizer.from_pretrained(ltx2_local, subfolder="tokenizer", local_files_only=is_offline)
-
-            # Move text encoder to device for encoding
-            # On MPS/CPU with limited memory, keep on CPU
-            text_device = device if device.type == "cuda" else torch.device("cpu")
-            text_encoder = text_encoder.to(text_device)
-
-            # Get prompt embeddings
-            genbus.progress(gen_id, "encoding_text", 2, 7)
-            logger.info("[LTX-2] Encoding prompts...")
-
-            prompt_embeds, prompt_mask = get_gemma_embeds(prompt, tokenizer, text_encoder, text_device, model_dtype)
-            neg_embeds, neg_mask = get_gemma_embeds(negative_prompt, tokenizer, text_encoder, text_device, model_dtype)
-
-            # Free text encoder memory (saves ~20GB)
-            del text_encoder, tokenizer
-            text_encoder = None
-            tokenizer = None
-            quanto_gc()
-
-            # -------------------------------------------------------------------------
-            # Step 2: Load and quantize transformer
-            # -------------------------------------------------------------------------
-            genbus.progress(gen_id, "loading_transformer", 3, 7)
-
-            def build_transformer():
-                logger.info("[LTX-2] Loading transformer...")
-                tfm = LTX2VideoTransformer3DModel.from_pretrained(
-                    ltx2_local,
-                    subfolder="transformer",
-                    torch_dtype=model_dtype,
-                    local_files_only=is_offline,
-                )
-                return tfm
-
-            transformer = load_or_build_quantized(
-                LTX2_QUANTO_CACHE_DIR / "transformer_int8.safetensors",
-                build_transformer,
-                "transformer",
-            )
-            transformer.eval()
-
-            # Attach group swap hooks for memory-efficient inference
-            logger.info(f"[LTX-2] Attaching group swap hooks (group_size={group_size})")
-            swap_state = attach_group_swap_hooks(transformer, group_size, device, keep_non_block_on_gpu=True)
-
-            # -------------------------------------------------------------------------
-            # Step 3: Load VAEs and other components
-            # -------------------------------------------------------------------------
-            genbus.progress(gen_id, "loading_vaes", 4, 7)
-
-            # Load video VAE from repo subfolder
-            video_vae = AutoencoderKLLTX2Video.from_pretrained(
-                ltx2_local,
-                subfolder="vae",
-                torch_dtype=model_dtype,
-                local_files_only=is_offline,
-            )
-            logger.info("[LTX-2] Loaded video VAE from repo")
-            video_vae.eval()
-            if hasattr(video_vae, "enable_tiling"):
-                video_vae.enable_tiling()
-
-            # Load audio VAE from repo subfolder
-            audio_vae = AutoencoderKLLTX2Audio.from_pretrained(
-                ltx2_local,
-                subfolder="audio_vae",
-                torch_dtype=model_dtype,
-                local_files_only=is_offline,
-            )
-            logger.info("[LTX-2] Loaded audio VAE from repo")
-            audio_vae.eval()
-
-            # Load connectors
-            connectors = LTX2TextConnectors.from_pretrained(
-                ltx2_local,
-                subfolder="connectors",
-                torch_dtype=model_dtype,
-                local_files_only=is_offline,
-            )
-            connectors.eval()
-            connectors = connectors.to(device)
-
-            # Load vocoder for audio decoding
-            vocoder = LTX2Vocoder.from_pretrained(
-                ltx2_local,
-                subfolder="vocoder",
-                torch_dtype=model_dtype,
-                local_files_only=is_offline,
-            )
-            vocoder.eval()
-            vocoder_sample_rate = vocoder.config.output_sampling_rate if hasattr(vocoder.config, 'output_sampling_rate') else 24000
-
-            # Load scheduler
-            scheduler = FlowMatchEulerDiscreteScheduler.from_pretrained(
-                ltx2_local,
-                subfolder="scheduler",
-                local_files_only=is_offline,
-            )
-
-            # Move VAEs to device
-            video_vae = video_vae.to(device)
-            audio_vae = audio_vae.to(device)
-            vocoder = vocoder.to(device)
-
-        # Set seed
-        generator = None
-        if seed is not None:
-            generator = torch.Generator(device="cpu").manual_seed(int(seed))
-
-        # -------------------------------------------------------------------------
-        # Step 4: Run custom denoising loop (image encoding happens inside)
-        # -------------------------------------------------------------------------
-        genbus.progress(gen_id, "denoising", 0, steps)
-
-        logger.info(f"[LTX-2] Denoising {steps} steps on {device.type}...")
-
-        video_latents, audio_latents = ltx2_denoise(
-            image=pil_image,
-            prompt_embeds=prompt_embeds,
-            prompt_mask=prompt_mask,
-            neg_embeds=neg_embeds,
-            neg_mask=neg_mask,
-            scheduler=scheduler,
-            vae=video_vae,
-            audio_vae=audio_vae,
-            connectors=connectors,
-            transformer=transformer,
-            num_frames=frames_count,
-            fps=frame_rate,
-            height=H,
-            width=W,
-            steps=steps,
-            guidance=guidance,
-            device=device,
-            dtype=model_dtype,
-            generator=generator,
-            swap_state=swap_state,
-            gen_id=gen_id,
-        )
-
-        # -------------------------------------------------------------------------
-        # Step 6: Decode latents to video and audio
-        # -------------------------------------------------------------------------
-        genbus.progress(gen_id, "decoding", 6, 7)
-
-        # Move transformer off GPU to free memory for VAE decoding
-        if swap_state:
-            for blk in swap_state.blocks:
-                blk.to("cpu")
-        transformer.to("cpu")
-        quanto_gc()
-
-        # Decode video latents
-        logger.info("[LTX-2] Decoding video latents...")
-        video_latents = video_latents / video_vae.config.scaling_factor
-        with torch.no_grad():
-            video_frames = video_vae.decode(video_latents).sample
-        video_frames = video_processor.postprocess_video(video_frames, output_type="np")[0]
-
-        # Decode audio latents if requested
-        audio_output = None
-        if include_audio and audio_latents is not None:
-            logger.info("[LTX-2] Decoding audio latents...")
-            audio_latents = audio_latents / audio_vae.config.scaling_factor
-            with torch.no_grad():
-                audio_decoded = audio_vae.decode(audio_latents).sample
-                audio_output = vocoder(audio_decoded)
-            # audio_output shape: (batch, samples) - take first batch
-            if audio_output is not None:
-                audio_output = audio_output[0].cpu().float().numpy()
-
-        # Cleanup
-        del video_latents, audio_latents, transformer, video_vae, audio_vae, vocoder, connectors
-        quanto_gc()
-
-        # -------------------------------------------------------------------------
-        # Step 7: Write output video with audio
-        # -------------------------------------------------------------------------
-        genbus.progress(gen_id, "encoding_video", 7, 7)
-
-        out_path = str(FILES_DIR / f"ltx2_video_{gen_id}.mp4")
-
-        # Convert video frames to PIL
-        frames_pil = [Image.fromarray((f * 255).astype(np.uint8) if f.max() <= 1.0 else f.astype(np.uint8)) for f in video_frames]
-
-        write_video(
-            out_path,
-            frames_pil,
-            source_fps=int(frame_rate),
-            target_fps=int(frame_rate),
-            crf=18,
-            preset="slow",
-            interpolate=False,
-            gen_id=gen_id,
-            audio=audio_output,
-            audio_sample_rate=vocoder_sample_rate,
-        )
-
-        duration = frames_count / frame_rate
-        quanto_gc()
-
-        genbus.progress(gen_id, "complete", 7, 7)
-        genbus.finish(gen_id, {"video_path": out_path})
-
-        logger.info(f"[LTX-2] Complete: {out_path} ({duration:.1f}s @ {W}x{H})")
-
-        return jsonify(_json_sanitize({
-            "status": "success",
-            "video_path": out_path,
-            "frames": frames_count,
-            "duration_seconds": round(duration, 2),
-            "resolution": f"{W}x{H}",
-            "quantization": "int8 (optimum-quanto)",
-            "model": "LTX-2 (19B)",
-            "has_audio": include_audio and audio_output is not None,
-            "generation_websocket_url": generation_url(),
-        }))
-
-    except Exception as e:
-        logger.exception("LTX-2 I2V failed")
-        genbus.error(gen_id, str(e))
-        return jsonify({"error": str(e)}), 500
-    finally:
-        # Restore offline mode environment variables
-        if _ltx_old_hf_offline is None:
-            os.environ.pop("HF_HUB_OFFLINE", None)
-        else:
-            os.environ["HF_HUB_OFFLINE"] = _ltx_old_hf_offline
-        if _ltx_old_transformers_offline is None:
-            os.environ.pop("TRANSFORMERS_OFFLINE", None)
-        else:
-            os.environ["TRANSFORMERS_OFFLINE"] = _ltx_old_transformers_offline
-        # Cleanup any remaining components
-        for obj in [text_encoder, tokenizer, transformer, video_vae, audio_vae, connectors, vocoder]:
-            if obj is not None:
-                try:
-                    del obj
-                except Exception:
-                    pass
-        quanto_gc()
-
 
 # =============================================================================
 # REST API: TRAINING - DATASET MANAGEMENT
