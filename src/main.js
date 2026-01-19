@@ -601,22 +601,43 @@ ipcMain.handle("model-chat", chat);
 // ─────────────────────────────────────────────────────────────────────────────
 // Window creation
 // ─────────────────────────────────────────────────────────────────────────────
-const createWindow = async (width, height) => {
-  const mainWindow = new BrowserWindow({
+const createWindow = async () => {
+  // Get screen dimensions for full-size window
+  const { width, height } = screen.getPrimaryDisplay().workAreaSize;
+
+  // Get app version for title
+  const appVersion = app.getVersion();
+  const appTitle = `BonzAI v${appVersion}`;
+
+  mainWindow = new BrowserWindow({
     width,
     height,
-    resizable: false,
-    maximizable: false,
-    minimizable: false,
-    webPreferences: { preload: path.join(__dirname, "preload.js") },
+    x: 0,
+    y: 0,
+    show: false, // Don't show until ready to prevent resize flicker
+    title: appTitle,
+    resizable: false, // Prevent corner drag resize
+    maximizable: true, // Allow maximize button / double-click title bar
+    minimizable: true, // Allow minimize to dock
+    fullscreenable: true, // Allow green button fullscreen on macOS
+    webPreferences: {
+      preload: path.join(__dirname, "preload.js"),
+      devTools: !app.isPackaged, // Disable DevTools in production
+    },
   });
+
+  // Set title explicitly (in case HTML overrides it)
+  mainWindow.setTitle(appTitle);
 
   mainWindow.webContents.setWindowOpenHandler(({ url }) => {
     if (url.startsWith("https:")) shell.openExternal(url);
     return { action: "deny" };
   });
 
-  mainWindow.maximize();
+  // Show window when ready (already at full size, no resize flicker)
+  mainWindow.once("ready-to-show", () => {
+    mainWindow.show();
+  });
 
   if (VITE_DEV_SERVER_URL) {
     await mainWindow.loadURL(VITE_DEV_SERVER_URL);
@@ -625,13 +646,14 @@ const createWindow = async (width, height) => {
       path.join(__dirname, "../renderer/main_window/index.html")
     );
   }
+
+  return mainWindow;
 };
 
 // ─────────────────────────────────────────────────────────────────────────────
 // App lifecycle
 // ─────────────────────────────────────────────────────────────────────────────
 app.on("ready", async () => {
-  const { width, height } = screen.getPrimaryDisplay().workAreaSize;
   const flaskURL = `http://127.0.0.1:${PY_SERVER_PORT}`;
   startPythonSubprocess();
 
@@ -662,7 +684,7 @@ app.on("ready", async () => {
   try {
     await checkPythonServer(flaskURL);
     console.log("Python server is running!");
-    await createWindow(width, height);
+    await createWindow();
   } catch (error) {
     console.error("Failed to start Python server:", error);
     app.quit();
@@ -683,7 +705,7 @@ app.on("window-all-closed", () => {
 
 app.on("activate", () => {
   if (subpy == null) startPythonSubprocess();
-  if (BrowserWindow.getAllWindows().length === 0) createWindow(1280, 800);
+  if (BrowserWindow.getAllWindows().length === 0) createWindow();
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -729,21 +751,68 @@ if (!modelDir || !modelDir.includes("bonzai-models")) {
 // ─────────────────────────────────────────────────────────────────────────────
 // Model management
 // ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Normalize model filename to lowercase for .gguf and .safetensors files
+ */
+function normalizeModelFilename(filename) {
+  if (!filename) return filename;
+  const ext = path.extname(filename).toLowerCase();
+  if (ext === ".gguf" || ext === ".safetensors") {
+    return filename.toLowerCase();
+  }
+  return filename;
+}
+
+/**
+ * Migrate existing model files to lowercase on startup
+ * Only affects .gguf and .safetensors files in MODEL_DIR root
+ */
+function migrateModelFilesToLowercase() {
+  try {
+    const files = fs.readdirSync(MODEL_DIR);
+    for (const file of files) {
+      const ext = path.extname(file).toLowerCase();
+      if (ext === ".gguf" || ext === ".safetensors") {
+        const lowercaseFile = file.toLowerCase();
+        if (file !== lowercaseFile) {
+          const oldPath = path.join(MODEL_DIR, file);
+          const newPath = path.join(MODEL_DIR, lowercaseFile);
+          // Check if target already exists (avoid overwriting)
+          if (!fs.existsSync(newPath)) {
+            fs.renameSync(oldPath, newPath);
+            console.log(`[Model Migration] Renamed: ${file} → ${lowercaseFile}`);
+          } else {
+            console.warn(`[Model Migration] Skipped ${file}: target ${lowercaseFile} already exists`);
+          }
+        }
+      }
+    }
+  } catch (err) {
+    console.error("[Model Migration] Error during migration:", err.message);
+  }
+}
+
+// Run migration on startup
+migrateModelFilesToLowercase();
+
 async function downloadModel(_event, url, filename) {
   const win = BrowserWindow.getFocusedWindow() || BrowserWindow.getAllWindows()[0];
   if (!win) {
     console.error("Download failed: No window available");
     return { error: "No window available for download" };
   }
+  // Normalize filename to lowercase
+  const normalizedFilename = normalizeModelFilename(filename);
   try {
     const dl = await download(win, url, {
-      filename,
+      filename: normalizedFilename,
       directory: MODEL_DIR,
       showBadge: false,
       onProgress: (p) => {
         const pct = p.percent;
         win.setProgressBar(pct);
-        win.webContents.send("download-progress", { filename, percent: pct });
+        win.webContents.send("download-progress", { filename: normalizedFilename, percent: pct });
       },
     });
     win.setProgressBar(-1);
@@ -756,7 +825,9 @@ async function downloadModel(_event, url, filename) {
 }
 
 function deleteModel(_event, modelname) {
-  const modelPath = path.join(MODEL_DIR, modelname);
+  // Normalize filename to lowercase
+  const normalizedName = normalizeModelFilename(modelname);
+  const modelPath = path.join(MODEL_DIR, normalizedName);
   try {
     unlink(modelPath, (err) => {
       if (err) throw err;
@@ -847,7 +918,9 @@ async function loadModel(_event, currentModel) {
   if (!llama) {
     throw new Error("LLM engine not initialized. Please restart the application.");
   }
-  const modelPath = path.join(MODEL_DIR, currentModel.filename);
+  // Normalize filename to lowercase
+  const normalizedFilename = normalizeModelFilename(currentModel.filename);
+  const modelPath = path.join(MODEL_DIR, normalizedFilename);
   console.log("Model path:", modelPath);
 
   const model = await llama.loadModel({ modelPath });
@@ -865,7 +938,9 @@ async function loadModel(_event, currentModel) {
 }
 
 function checkModel(_event, modelname) {
-  const modelPath = path.join(MODEL_DIR, modelname);
+  // Normalize filename to lowercase
+  const normalizedName = normalizeModelFilename(modelname);
+  const modelPath = path.join(MODEL_DIR, normalizedName);
   if (!fs.existsSync(modelPath)) {
     console.error("Model file not found:", modelPath);
     return false;

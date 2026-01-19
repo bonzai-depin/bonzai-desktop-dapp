@@ -457,7 +457,7 @@ export default {
         modeldesc:
           "22B-parameter Codestral model from Mistral AI with a 32,768-token context window. Specialized for code generation across 80+ programming languages with Fill-in-Middle support. Best for: dedicated coding copilot, multi-language development, and code completion tasks.",
         url: "https://huggingface.co/bartowski/Codestral-22B-v0.1-GGUF/resolve/main/Codestral-22B-v0.1-Q4_K_M.gguf",
-        filename: "Codestral-22B-v0.1-Q4_K_M.gguf",
+        filename: "codestral-22b-v0.1-q4_k_m.gguf",
         filesize: "13.3 GB",
         parameters: 22000000000,
         context: 32768,
@@ -523,7 +523,7 @@ export default {
         modeldesc:
           "14B-parameter Hermes 4 hybrid reasoning model from Nous Research based on Qwen 3 14B with a 32,768-token context window. Features explicit <think> reasoning mode for deliberation. Best for: advanced reasoning, code generation, structured JSON outputs, and creative tasks.",
         url: "https://huggingface.co/bartowski/NousResearch_Hermes-4-14B-GGUF/resolve/main/NousResearch_Hermes-4-14B-Q4_K_M.gguf",
-        filename: "NousResearch_Hermes-4-14B-Q4_K_M.gguf",
+        filename: "nousresearch_hermes-4-14b-q4_k_m.gguf",
         filesize: "8.99 GB",
         parameters: 14000000000,
         context: 32768,
@@ -622,7 +622,7 @@ export default {
         modeldesc:
           "32B-parameter Qwen 2.5 Coder - the current SOTA open-source code LLM with GPT-4o-level coding abilities. 128K context for large codebases. Best for: professional development, multi-file refactoring, code agents, and complex software reasoning.",
         url: "https://huggingface.co/bartowski/Qwen2.5-Coder-32B-Instruct-GGUF/resolve/main/Qwen2.5-Coder-32B-Instruct-Q4_K_M.gguf",
-        filename: "Qwen2.5-Coder-32B-Instruct-Q4_K_M.gguf",
+        filename: "qwen2.5-coder-32b-instruct-q4_k_m.gguf",
         filesize: "19.9 GB",
         parameters: 32000000000,
         context: 131072,
@@ -644,7 +644,7 @@ export default {
         modeldesc:
           "9B-parameter Yi-Coder Chat model from 01.AI with 128K context window. First sub-10B model to pass 20% on LiveCodeBench. Supports 52 programming languages. Best for: capable coding assistant on modest hardware, long-context code understanding.",
         url: "https://huggingface.co/bartowski/Yi-Coder-9B-Chat-GGUF/resolve/main/Yi-Coder-9B-Chat-Q5_K_M.gguf",
-        filename: "Yi-Coder-9B-Chat-Q5_K_M.gguf",
+        filename: "yi-coder-9b-chat-q5_k_m.gguf",
         filesize: "6.26 GB",
         parameters: 9000000000,
         context: 131072,

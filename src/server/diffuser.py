@@ -157,12 +157,55 @@ os.environ.setdefault("TOKENIZERS_PARALLELISM", "false")
 LOCAL_ONLY = bool(int(os.getenv("BONZAI_LOCAL_ONLY", "1")))
 MAX_REPO_BYTES = int(os.getenv("BONZAI_MAX_REPO_BYTES", str(60 * (1 << 30))))
 
+# =============================================================================
+# MODEL FILENAME NORMALIZATION
+# =============================================================================
+
+def normalize_model_filename(filename: str) -> str:
+    """Normalize model filename to lowercase for .gguf and .safetensors files."""
+    if not filename:
+        return filename
+    ext = Path(filename).suffix.lower()
+    if ext in (".gguf", ".safetensors"):
+        return filename.lower()
+    return filename
+
+
+def migrate_model_files_to_lowercase():
+    """Migrate existing model files to lowercase on startup.
+    Only affects .gguf and .safetensors files in MODEL_DIR root."""
+    try:
+        logger.info(f"[Model Migration] Scanning {MODEL_DIR}")
+        found_files = 0
+        renamed_files = 0
+        for file in MODEL_DIR.iterdir():
+            if file.is_file():
+                ext = file.suffix.lower()
+                if ext in (".gguf", ".safetensors"):
+                    found_files += 1
+                    lowercase_name = file.name.lower()
+                    if file.name != lowercase_name:
+                        new_path = MODEL_DIR / lowercase_name
+                        if not new_path.exists():
+                            file.rename(new_path)
+                            renamed_files += 1
+                            logger.info(f"[Model Migration] Renamed: {file.name} → {lowercase_name}")
+                        else:
+                            logger.warning(f"[Model Migration] Skipped {file.name}: target {lowercase_name} already exists")
+        logger.info(f"[Model Migration] Found {found_files} model files, renamed {renamed_files}")
+    except Exception as e:
+        logger.error(f"[Model Migration] Error during migration: {e}")
+
+
+# Run migration on startup
+migrate_model_files_to_lowercase()
+
 # Model repositories
 SDXL_BASE_REPO = "stabilityai/stable-diffusion-xl-base-1.0"
 SDXL_REFINER_REPO = "stabilityai/stable-diffusion-xl-refiner-1.0"
 
 FLUX_KREA_REPO = "black-forest-labs/FLUX.1-Krea-dev"
-FLUX_KREA_GGUF_NAME = os.getenv("FLUX_GGUF_FILENAME", "flux1-krea-dev-Q5_K_M.gguf").strip()
+FLUX_KREA_GGUF_NAME = normalize_model_filename(os.getenv("FLUX_GGUF_FILENAME", "flux1-krea-dev-q5_k_m.gguf").strip())
 FLUX_KREA_GGUF_URL = os.getenv("FLUX_KREA_GGUF_URL",
     "https://huggingface.co/QuantStack/FLUX.1-Krea-dev-GGUF/resolve/main/flux1-krea-dev-Q5_K_M.gguf").strip()
 
@@ -170,14 +213,14 @@ FLUX_KREA_GGUF_URL = os.getenv("FLUX_KREA_GGUF_URL",
 FLUX_KLEIN_REPO = "black-forest-labs/FLUX.2-klein-4B"
 
 Z_REPO = "Tongyi-MAI/Z-Image-Turbo"
-Z_GGUF_NAME = "z_image_turbo-Q5_K_M.gguf"
+Z_GGUF_NAME = "z_image_turbo-q5_k_m.gguf"
 Z_GGUF_URL = "https://huggingface.co/jayn7/Z-Image-Turbo-GGUF/resolve/main/z_image_turbo-Q5_K_M.gguf"
 
 # WAN 2.2 I2V Model Configuration (Q4 GGUF for better quality - ~9.65GB each)
 WAN_REPO = "Wan-AI/Wan2.2-I2V-A14B-Diffusers"
-WAN22_GGUF_HIGH_NAME = "Wan2.2-Q4-High.gguf"
+WAN22_GGUF_HIGH_NAME = "wan2.2-q4-high.gguf"
 WAN22_GGUF_HIGH_URL = "https://huggingface.co/QuantStack/Wan2.2-I2V-A14B-GGUF/resolve/main/HighNoise/Wan2.2-I2V-A14B-HighNoise-Q4_K_M.gguf"
-WAN22_GGUF_LOW_NAME = "Wan2.2-Q4-Low.gguf"
+WAN22_GGUF_LOW_NAME = "wan2.2-q4-low.gguf"
 WAN22_GGUF_LOW_URL = "https://huggingface.co/QuantStack/Wan2.2-I2V-A14B-GGUF/resolve/main/LowNoise/Wan2.2-I2V-A14B-LowNoise-Q4_K_M.gguf"
 WAN_21_VAE_NAME = "wan_2.1_vae.safetensors"
 WAN_21_VAE_URL = "https://huggingface.co/Comfy-Org/Wan_2.1_ComfyUI_repackaged/resolve/main/split_files/vae/wan_2.1_vae.safetensors"
@@ -188,10 +231,10 @@ WAN_21_VAE_URL = "https://huggingface.co/Comfy-Org/Wan_2.1_ComfyUI_repackaged/re
 LTX2_REPO = "Lightricks/LTX-2"
 LTX2_QUANTO_CACHE_DIR = MODEL_DIR / "ltx2_quanto_cache"
 
-# LTX-2 GGUF (for /image/video endpoint) - Q4_0 quantization (~10GB)
-LTX2_GGUF_REPO = "unsloth/LTX-2-GGUF"
-LTX2_GGUF_NAME = "ltx-2-19b-dev-Q4_0.gguf"
-LTX2_GGUF_URL = "https://huggingface.co/unsloth/LTX-2-GGUF/resolve/main/ltx-2-19b-dev-Q4_0.gguf"
+# LTX-2 GGUF (for /image/video endpoint) - Distilled Q3_K_S quantization
+LTX2_GGUF_REPO = "vantagewithai/LTX-2-GGUF"
+LTX2_GGUF_NAME = "ltx-2-19b-distilled-q3_k_s.gguf"
+LTX2_GGUF_URL = "https://huggingface.co/vantagewithai/LTX-2-GGUF/resolve/main/distilled/ltx-2-19b-distilled-Q3_K_S.gguf"
 
 CHATTERBOX_REPO = "ResembleAI/chatterbox"
 
@@ -213,13 +256,13 @@ CHATTERBOX_LANGUAGES = {
 
 
 EXPECTED_SIZES = {
-    "flux1-krea-dev-Q5_K_M.gguf": 8_419_501_344,
-    "z_image_turbo-Q5_K_M.gguf": 5_522_742_336,
-    "Wan2.2-Q4-High.gguf": 9_651_739_136,  # ~9.65GB Q4
-    "Wan2.2-Q4-Low.gguf": 9_651_739_136,  # ~9.65GB Q4
+    "flux1-krea-dev-q5_k_m.gguf": 8_419_501_344,
+    "z_image_turbo-q5_k_m.gguf": 5_522_742_336,
+    "wan2.2-q4-high.gguf": 9_651_739_136,  # ~9.65GB Q4
+    "wan2.2-q4-low.gguf": 9_651_739_136,  # ~9.65GB Q4
     "wan_2.1_vae.safetensors": 253_815_318,  # ~242MB split VAE
-    "umt5-xxl-encoder-Q3_K_M.gguf": 5_580_000_000,  # ~5.2GB GGUF text encoder
-    "ltx-2-19b-dev-Q4_0.gguf": 10_500_000_000,  # ~10GB Q4_0 (19B model)
+    "umt5-xxl-encoder-q3_k_m.gguf": 5_580_000_000,  # ~5.2GB GGUF text encoder
+    "ltx-2-19b-distilled-q3_k_s.gguf": 6_500_000_000,  # ~6.5GB Q3_K_S distilled
 }
 
 # =============================================================================
@@ -1747,6 +1790,8 @@ def _cached_plan_for(pipeline: str) -> Dict[str, Any]:
 
 
 def _expected_size(name: str, url: Optional[str] = None) -> int:
+    # Normalize name for consistent lookups
+    normalized_name = normalize_model_filename(name)
     if url:
         headers = {}
         if url.startswith("https://huggingface.co/") and _hf_token():
@@ -1755,15 +1800,16 @@ def _expected_size(name: str, url: Optional[str] = None) -> int:
             r = requests.head(url, allow_redirects=True, headers=headers, timeout=30)
             size = int(r.headers.get("content-length", "0") or "0")
             if size > 0:
-                EXPECTED_SIZES[name] = size
+                EXPECTED_SIZES[normalized_name] = size
                 return size
         except Exception:
             pass
-    return int(EXPECTED_SIZES.get(name, 0) or 0)
+    return int(EXPECTED_SIZES.get(normalized_name, 0) or 0)
 
 
 def _sf(name, url):
-    return {"name": name, "url": url, "size": _expected_size(name, url)}
+    normalized_name = normalize_model_filename(name)
+    return {"name": normalized_name, "url": url, "size": _expected_size(normalized_name, url)}
 
 
 def _plan_for(pipeline: str) -> Dict[str, Any]:
@@ -1812,7 +1858,8 @@ def _plan_for(pipeline: str) -> Dict[str, Any]:
 # =============================================================================
 
 def _single_file_status(entry: Dict[str, Any]) -> Dict[str, Any]:
-    name = (entry or {}).get("name") or ""
+    raw_name = (entry or {}).get("name") or ""
+    name = normalize_model_filename(raw_name)
     url = (entry or {}).get("url") or ""
     p = MODEL_DIR / name
     exists = p.exists() and p.stat().st_size > 0
@@ -2032,14 +2079,16 @@ def _download_repo_files(pl: PipelineDownload, tid: str, repo_id: str, manifest:
 
 
 def _download_single_file(pl: PipelineDownload, tid: str, name: str, url: str, size_hint: int = 0):
-    lock = _gguf_lock(name)
+    # Normalize filename to lowercase for .gguf and .safetensors files
+    normalized_name = normalize_model_filename(name)
+    lock = _gguf_lock(normalized_name)
     with lock:
         headers = {}
         if url.startswith("https://huggingface.co/") and _hf_token():
             headers["Authorization"] = f"Bearer {_hf_token()}"
-        dest = MODEL_DIR / name
+        dest = MODEL_DIR / normalized_name
         MODEL_DIR.mkdir(parents=True, exist_ok=True)
-        expected_size = _expected_size(name, url)
+        expected_size = _expected_size(normalized_name, url)
         if dest.exists() and dest.stat().st_size > 0:
             if expected_size <= 0 or dest.stat().st_size == expected_size:
                 download_manager.update_progress(pl, tid, expected_size or dest.stat().st_size, expected_size or dest.stat().st_size)
@@ -2058,7 +2107,7 @@ def _download_single_file(pl: PipelineDownload, tid: str, name: str, url: str, s
         _stream_download(url, dest, headers=headers, update=_tick, is_cancelled=lambda: pl.cancelled)
         if expected_size > 0 and dest.stat().st_size != expected_size:
             dest.unlink(missing_ok=True)
-            raise ValueError(f"Downloaded {name} has size {dest.stat().st_size}, expected {expected_size}")
+            raise ValueError(f"Downloaded {normalized_name} has size {dest.stat().st_size}, expected {expected_size}")
         download_manager.update_progress(pl, tid, expected_size or dest.stat().st_size, expected_size or dest.stat().st_size)
 
 
@@ -4127,10 +4176,10 @@ def wan_image_to_video():
 @app.route("/image/video", methods=["POST"])
 def ltx2_gguf_image_to_video():
     """
-    LTX-2 (19B DiT) Image-to-Video using Q4_0 GGUF quantization.
+    LTX-2 (19B DiT) Image-to-Video using distilled Q3_K_S GGUF quantization.
 
     Uses from_single_file to load the GGUF-quantized transformer directly.
-    Simpler than the turbo endpoint, no custom denoising loop.
+    Distilled model works best with 8-10 steps and CFG=1.
     """
     data = request.get_json(force=True) or {}
 
@@ -4140,8 +4189,8 @@ def ltx2_gguf_image_to_video():
     W = int(data.get("width", 768))
     frames_count = int(data.get("frames", 97))  # LTX-2 frames must be 8n+1
     frame_rate = float(data.get("frame_rate", 24.0))
-    steps = int(data.get("steps", 30))
-    guidance = float(data.get("guidance_scale", 3.5))
+    steps = int(data.get("steps", 8))  # Distilled model: 8-10 steps optimal
+    guidance = float(data.get("guidance_scale", 1.0))  # Distilled model: CFG=1
     seed = data.get("seed")
     auto_dl = bool(data.get("auto_download", False))
     image_b64 = (data.get("image_base64") or "").strip()
@@ -4185,10 +4234,11 @@ def ltx2_gguf_image_to_video():
             os.environ["DIFFUSERS_ATTENTION_BACKEND"] = "eager"
 
         # Select dtype based on device
+        # Note: MPS needs bfloat16 to avoid black screen (float16 causes NaN)
         if device.type == "cuda":
             model_dtype = torch.bfloat16
         elif device.type == "mps":
-            model_dtype = torch.float16
+            model_dtype = torch.bfloat16  # bfloat16 avoids black screen issue
         else:
             model_dtype = torch.float32
 
@@ -4211,10 +4261,34 @@ def ltx2_gguf_image_to_video():
 
         logger.info(f"[LTX-2 GGUF] Generating {frames_count} frames @ {W}x{H}, {steps} steps")
 
+        # MPS: Patch RoPE classes to use float32 BEFORE any model loading (MPS doesn't support float64)
+        if device.type == "mps":
+            from diffusers.pipelines.ltx2.connectors import LTX2RotaryPosEmbed1d
+            from diffusers.models.transformers.transformer_ltx2 import LTX2AudioVideoRotaryPosEmbed
+
+            # Patch both RoPE classes to disable double_precision
+            for cls in [LTX2RotaryPosEmbed1d, LTX2AudioVideoRotaryPosEmbed]:
+                if not hasattr(cls, '_mps_patched'):
+                    original_forward = cls.forward
+
+                    def make_patched_forward(orig):
+                        def patched_forward(self, *args, **kwargs):
+                            self.double_precision = False
+                            return orig(self, *args, **kwargs)
+                        return patched_forward
+
+                    cls.forward = make_patched_forward(original_forward)
+                    cls._mps_patched = True
+
+            logger.info("[LTX-2 GGUF] Patched RoPE classes for MPS float32")
+
         genbus.progress(gen_id, "loading_transformer", 1, 5)
 
         # Load transformer from GGUF with quantization config
         gguf_path = MODEL_DIR / LTX2_GGUF_NAME
+        logger.info(f"[LTX-2 GGUF DEBUG] Loading transformer from {gguf_path}")
+        logger.info(f"[LTX-2 GGUF DEBUG] Device: {device}, dtype: {model_dtype}")
+
         quantization_config = GGUFQuantizationConfig(compute_dtype=model_dtype)
 
         transformer = LTX2VideoTransformer3DModel.from_single_file(
@@ -4224,41 +4298,24 @@ def ltx2_gguf_image_to_video():
             quantization_config=quantization_config,
             torch_dtype=model_dtype,
         )
+        logger.info(f"[LTX-2 GGUF DEBUG] Transformer loaded, dtype: {transformer.dtype}")
 
         genbus.progress(gen_id, "loading_pipeline", 2, 5)
 
-        # MPS: Set default dtype to float32 before loading (MPS doesn't support float64)
-        # This ensures connectors' RoPE uses float32 for linspace operations
-        old_default_dtype = None
-        if device.type == "mps":
-            old_default_dtype = torch.get_default_dtype()
-            torch.set_default_dtype(torch.float32)
-
-        try:
-            # Load the full pipeline with our GGUF transformer
-            pipe = LTX2ImageToVideoPipeline.from_pretrained(
-                LTX2_REPO,
-                transformer=transformer,
-                torch_dtype=model_dtype,
-            )
-        finally:
-            # Restore default dtype
-            if old_default_dtype is not None:
-                torch.set_default_dtype(old_default_dtype)
-
-        # MPS: Patch RoPE modules to use float32 (MPS doesn't support float64)
-        if device.type == "mps" and hasattr(pipe, "connectors"):
-            for name, module in pipe.connectors.named_modules():
-                # Patch any RoPE-like modules that have freqs_dtype attribute
-                if hasattr(module, "freqs_dtype"):
-                    module.freqs_dtype = torch.float32
-                # Also check for rope submodules
-                if hasattr(module, "rope") and hasattr(module.rope, "freqs_dtype"):
-                    module.rope.freqs_dtype = torch.float32
+        # Load the full pipeline with our GGUF transformer
+        pipe = LTX2ImageToVideoPipeline.from_pretrained(
+            LTX2_REPO,
+            transformer=transformer,
+            torch_dtype=model_dtype,
+        )
+        logger.info(f"[LTX-2 GGUF DEBUG] Pipeline loaded")
+        logger.info(f"[LTX-2 GGUF DEBUG] VAE dtype: {pipe.vae.dtype}")
+        logger.info(f"[LTX-2 GGUF DEBUG] Text encoder dtype: {pipe.text_encoder.dtype if hasattr(pipe, 'text_encoder') and pipe.text_encoder else 'N/A'}")
 
         # Enable memory optimizations
         pipe.enable_model_cpu_offload()
         pipe.vae.enable_tiling()
+        logger.info(f"[LTX-2 GGUF DEBUG] Memory optimizations enabled (cpu_offload + vae_tiling)")
 
         genbus.progress(gen_id, "generating", 3, 5)
 
@@ -4268,11 +4325,22 @@ def ltx2_gguf_image_to_video():
         else:
             generator = None
 
-        # Progress callback
+        # Progress callback with latent inspection
         def progress_callback(pipe, step, timestep, callback_kwargs):
-            pct = int((step / steps) * 100)
-            genbus.progress(gen_id, "denoising", step, steps, pct=pct)
+            genbus.progress(gen_id, "denoising", step, steps)
+            # Log latent stats at first and last step
+            if step == 1 or step == steps:
+                latents = callback_kwargs.get("latents")
+                if latents is not None:
+                    logger.info(f"[LTX-2 GGUF DEBUG] Step {step}/{steps} latents: "
+                               f"shape={latents.shape}, dtype={latents.dtype}, "
+                               f"min={latents.min().item():.4f}, max={latents.max().item():.4f}, "
+                               f"mean={latents.mean().item():.4f}, "
+                               f"nan_count={torch.isnan(latents).sum().item()}, "
+                               f"inf_count={torch.isinf(latents).sum().item()}")
             return callback_kwargs
+
+        logger.info(f"[LTX-2 GGUF DEBUG] Starting generation: {frames_count} frames, {steps} steps, guidance={guidance}")
 
         # Generate video
         output = pipe(
@@ -4288,17 +4356,45 @@ def ltx2_gguf_image_to_video():
             callback_on_step_end=progress_callback,
         )
 
+        logger.info(f"[LTX-2 GGUF DEBUG] Generation complete, output type: {type(output)}")
+        logger.info(f"[LTX-2 GGUF DEBUG] Output attributes: {dir(output)}")
+
         genbus.progress(gen_id, "saving", 4, 5)
 
         # Get frames from output
         frames = output.frames[0]  # List of PIL images
+        logger.info(f"[LTX-2 GGUF DEBUG] Frames type: {type(frames)}, length: {len(frames) if frames else 0}")
+
+        # Debug: log detailed frame info
+        import numpy as np
+        if frames:
+            first_frame = frames[0]
+            last_frame = frames[-1]
+            first_arr = np.array(first_frame)
+            last_arr = np.array(last_frame)
+
+            logger.info(f"[LTX-2 GGUF DEBUG] First frame: size={first_frame.size}, mode={first_frame.mode}, "
+                       f"arr_shape={first_arr.shape}, dtype={first_arr.dtype}")
+            logger.info(f"[LTX-2 GGUF DEBUG] First frame pixels: min={first_arr.min()}, max={first_arr.max()}, "
+                       f"mean={first_arr.mean():.2f}, std={first_arr.std():.2f}")
+            logger.info(f"[LTX-2 GGUF DEBUG] First frame unique values (sample): {np.unique(first_arr.flatten()[:1000])[:20]}")
+            logger.info(f"[LTX-2 GGUF DEBUG] Last frame pixels: min={last_arr.min()}, max={last_arr.max()}, "
+                       f"mean={last_arr.mean():.2f}, std={last_arr.std():.2f}")
+
+            # Check for all-black or all-same
+            if first_arr.max() == first_arr.min():
+                logger.warning(f"[LTX-2 GGUF DEBUG] WARNING: First frame is uniform color (value={first_arr.min()})")
+            if last_arr.max() == last_arr.min():
+                logger.warning(f"[LTX-2 GGUF DEBUG] WARNING: Last frame is uniform color (value={last_arr.min()})")
 
         # Convert to video
-        out_path = str(OUTPUT_DIR / f"ltx2_gguf_{gen_id}.mp4")
+        files_dir = MODEL_DIR / "files"
+        files_dir.mkdir(parents=True, exist_ok=True)
+        out_path = str(files_dir / f"ltx2_gguf_{gen_id}.mp4")
         export_to_video(frames, out_path, fps=int(frame_rate))
 
-        genbus.progress(gen_id, "complete", 5, 5, pct=100)
-        genbus.complete(gen_id, out_path)
+        genbus.progress(gen_id, "complete", 5, 5)
+        genbus.finish(gen_id, {"video_path": out_path})
 
         logger.info(f"[LTX-2 GGUF] Video saved to {out_path}")
 

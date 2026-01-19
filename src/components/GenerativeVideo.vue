@@ -1241,7 +1241,7 @@ export default {
 
       // LTX-2 I2V size mappings (divisible by 32)
       const sizeMaps = {
-        turbo: { sd: [512, 768], hd: [576, 1024], fhd: [768, 1280] },
+        turbo: { sd: [320, 512], hd: [512, 768], fhd: [576, 1024] },
       };
 
       // Get dimensions based on quality selection
@@ -1256,8 +1256,8 @@ export default {
         width: w,
         frames: frames,
         fps: 12,
-        steps: 12,
-        guidance_scale: 3,
+        steps: 8,  // Distilled model: 8-10 steps optimal
+        guidance_scale: 1,  // Distilled model: CFG=1
         auto_download: true,
         image_base64:
           uploadedImageBase64.value || (props.existingImageBase64 || "").trim(),
