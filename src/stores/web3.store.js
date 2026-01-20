@@ -38,6 +38,11 @@ export const useWeb3Store = defineStore('web3', () => {
   const isOnArbitrum = computed(() => web3Service.isOnArbitrum.value);
   const networkName = computed(() => web3Service.currentNetworkName.value);
 
+  // Authentication state (JWT)
+  const isAuthenticated = computed(() => web3Service.state.isAuthenticated);
+  const authLevel = computed(() => web3Service.state.authLevel);
+  const authLevelValue = computed(() => web3Service.state.authLevelValue);
+
   // Balances
   const balances = computed(() => web3Service.state.balances);
   const totalBalance = computed(() => web3Service.state.balances.total);
@@ -325,6 +330,11 @@ export const useWeb3Store = defineStore('web3', () => {
     currentChainId,
     isOnArbitrum,
     networkName,
+
+    // Authentication getters
+    isAuthenticated,
+    authLevel,
+    authLevelValue,
 
     // Balance getters
     balances,

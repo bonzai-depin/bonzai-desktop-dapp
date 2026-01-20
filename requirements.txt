@@ -101,8 +101,8 @@ pycryptodomex==3.23.0
 pydantic==2.11.4
 pydantic_core==2.33.2
 Pygments==2.19.1
-pyinstaller==6.13.0
-pyinstaller-hooks-contrib==2025.4
+pyinstaller==6.17.0
+pyinstaller-hooks-contrib==2026.0
 pyparsing==3.2.3
 python-dateutil==2.9.0.post0
 python-engineio==4.12.2

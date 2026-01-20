@@ -27,13 +27,11 @@ jobs:
             torch torchvision torchaudio \
             --index-url https://download.pytorch.org/whl/nightly/cpu
 
-      - name: Install Python deps & PyInstaller
+      - name: Install Python deps
         run: |
           pip install git+https://github.com/huggingface/diffusers.git
-          pip install git+https://github.com/huggingface/transformers
           pip install -r requirements.txt
           pip install https://github.com/vBaiCai/python-pesq/archive/master.zip
-          pip install pyinstaller==6.17.0
 
       - name: Build Python binary (macOS ARM64)
         run: |

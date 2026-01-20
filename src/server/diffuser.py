@@ -42,6 +42,8 @@ from fnmatch import fnmatch
 import requests
 import torch
 import functools
+import hmac
+import secrets
 
 _original_torch_load = torch.load
 
@@ -159,35 +161,6 @@ def normalize_model_filename(filename: str) -> str:
         return filename.lower()
     return filename
 
-
-def migrate_model_files_to_lowercase():
-    """Migrate existing model files to lowercase on startup.
-    Only affects .gguf and .safetensors files in MODEL_DIR root."""
-    try:
-        logger.info(f"[Model Migration] Scanning {MODEL_DIR}")
-        found_files = 0
-        renamed_files = 0
-        for file in MODEL_DIR.iterdir():
-            if file.is_file():
-                ext = file.suffix.lower()
-                if ext in (".gguf", ".safetensors"):
-                    found_files += 1
-                    lowercase_name = file.name.lower()
-                    if file.name != lowercase_name:
-                        new_path = MODEL_DIR / lowercase_name
-                        if not new_path.exists():
-                            file.rename(new_path)
-                            renamed_files += 1
-                            logger.info(f"[Model Migration] Renamed: {file.name} → {lowercase_name}")
-                        else:
-                            logger.warning(f"[Model Migration] Skipped {file.name}: target {lowercase_name} already exists")
-        logger.info(f"[Model Migration] Found {found_files} model files, renamed {renamed_files}")
-    except Exception as e:
-        logger.error(f"[Model Migration] Error during migration: {e}")
-
-
-# Run migration on startup
-migrate_model_files_to_lowercase()
 
 # Model repositories
 SDXL_BASE_REPO = "stabilityai/stable-diffusion-xl-base-1.0"
@@ -610,6 +583,369 @@ socketio = SocketIO(
 )
 
 # =============================================================================
+# JWT AUTHENTICATION SYSTEM
+# =============================================================================
+
+# Configuration
+JWT_SECRET = os.environ.get("BONZAI_JWT_SECRET", secrets.token_hex(32))
+HMAC_SECRET = os.environ.get("BONZAI_HMAC_SECRET", secrets.token_hex(32))
+ACCESS_TOKEN_EXPIRY = 30 * 60  # 30 minutes
+REFRESH_TOKEN_EXPIRY = 7 * 24 * 60 * 60  # 7 days
+CHALLENGE_EXPIRY = 300  # 5 minutes
+
+# Level requirements for each feature
+LEVEL_REQUIREMENTS = {
+    "text": 1,
+    "audio": 2,
+    "image": 3,
+    "video": 4,
+    "3d": 5,
+    "training": 6,
+}
+
+# Demo mode configuration
+DEMO_PROMPTS = {
+    "text": "Explain what makes a bonsai tree special in exactly 3 sentences.",
+    "image": "A serene bonsai tree on a wooden table, soft natural lighting, minimalist",
+    "video": "A bonsai tree gently swaying in a soft breeze, peaceful atmosphere",
+    "audio": "peaceful japanese garden ambient sounds with gentle wind chimes",
+}
+
+# Rate limiting for demo mode
+DEMO_RATE_LIMITS: Dict[str, Dict[str, int]] = {}  # IP -> {date: count}
+
+
+def _create_jwt_token(payload: dict, expiry_seconds: int) -> str:
+    """Create a simple JWT-like token (base64 encoded JSON + HMAC signature)."""
+    payload = {**payload, "exp": int(time.time()) + expiry_seconds, "iat": int(time.time())}
+    payload_json = json.dumps(payload, separators=(",", ":"))
+    payload_b64 = base64.urlsafe_b64encode(payload_json.encode()).decode().rstrip("=")
+    signature = hmac.new(JWT_SECRET.encode(), payload_b64.encode(), hashlib.sha256).hexdigest()
+    return f"{payload_b64}.{signature}"
+
+
+def _verify_jwt_token(token: str) -> Optional[dict]:
+    """Verify and decode a JWT-like token."""
+    try:
+        parts = token.split(".")
+        if len(parts) != 2:
+            return None
+
+        payload_b64, signature = parts
+
+        # Verify signature
+        expected_sig = hmac.new(JWT_SECRET.encode(), payload_b64.encode(), hashlib.sha256).hexdigest()
+        if not hmac.compare_digest(signature, expected_sig):
+            return None
+
+        # Decode payload
+        padding = 4 - len(payload_b64) % 4
+        if padding != 4:
+            payload_b64 += "=" * padding
+        payload_json = base64.urlsafe_b64decode(payload_b64).decode()
+        payload = json.loads(payload_json)
+
+        # Check expiry
+        if payload.get("exp", 0) < time.time():
+            return None
+
+        return payload
+    except Exception as e:
+        logger.warning(f"[Auth] Token verification failed: {e}")
+        return None
+
+
+def _create_auth_challenge(address: str) -> dict:
+    """Create a tamper-proof challenge for wallet to sign."""
+    nonce = secrets.token_hex(16)
+    payload = {
+        "address": address.lower(),
+        "nonce": nonce,
+        "expires": int(time.time()) + CHALLENGE_EXPIRY,
+    }
+    payload_b64 = base64.urlsafe_b64encode(json.dumps(payload).encode()).decode()
+    mac = hmac.new(HMAC_SECRET.encode(), payload_b64.encode(), hashlib.sha256).hexdigest()
+
+    message = f"Sign in to BonzAI\n\nAddress: {address}\nNonce: {nonce}\nExpires: {payload['expires']}"
+
+    return {
+        "challenge": payload_b64,
+        "mac": mac,
+        "message": message,
+    }
+
+
+def _verify_auth_challenge(challenge: str, mac: str, address: str, signature: str) -> bool:
+    """Verify the challenge is valid and was issued by this server."""
+    # Verify HMAC
+    expected_mac = hmac.new(HMAC_SECRET.encode(), challenge.encode(), hashlib.sha256).hexdigest()
+    if not hmac.compare_digest(mac, expected_mac):
+        return False
+
+    # Decode and check
+    try:
+        payload = json.loads(base64.urlsafe_b64decode(challenge))
+    except Exception:
+        return False
+
+    if payload.get("expires", 0) < time.time():
+        return False
+
+    if payload.get("address") != address.lower():
+        return False
+
+    # Signature presence check (65 bytes = 130 hex chars + 0x prefix)
+    if not signature or len(signature) < 130:
+        return False
+
+    return True
+
+
+def _get_wallet_level(address: str) -> Tuple[str, int]:
+    """
+    Get wallet's level based on BONZAI holdings or ETH unlocks.
+    For now, return a default level. In production, this would check on-chain.
+    """
+    # TODO: Implement actual on-chain level checking
+    # For now, grant full access (LVL6) to all authenticated users
+    return ("LVL6", 6)
+
+
+def _check_demo_rate_limit(ip: str) -> bool:
+    """Allow 3 demos per IP per day."""
+    today = datetime.now().strftime("%Y-%m-%d")
+    key = f"{ip}:{today}"
+
+    if key not in DEMO_RATE_LIMITS:
+        DEMO_RATE_LIMITS[key] = 0
+
+    if DEMO_RATE_LIMITS[key] >= 3:
+        return False
+
+    DEMO_RATE_LIMITS[key] += 1
+    return True
+
+
+def require_auth(min_level: int = 0, allow_demo: bool = False):
+    """
+    Decorator to require valid JWT with minimum level.
+
+    Args:
+        min_level: Minimum level required (1-6)
+        allow_demo: Whether to allow demo mode for this endpoint
+    """
+    def decorator(f):
+        @functools.wraps(f)
+        def decorated(*args, **kwargs):
+            # Check for demo mode
+            if allow_demo and request.headers.get("X-Demo-Mode") == "true":
+                ip = request.remote_addr or "unknown"
+                if not _check_demo_rate_limit(ip):
+                    return jsonify({"error": "Demo rate limit exceeded (3 per day)"}), 429
+
+                # Set demo context
+                request.auth_user = {"sub": "demo", "level": "DEMO", "level_value": 0, "demo_only": True}
+                request.is_demo = True
+                return f(*args, **kwargs)
+
+            # Get authorization header
+            auth_header = request.headers.get("Authorization", "")
+
+            if not auth_header.startswith("Bearer "):
+                return jsonify({"error": "Missing or invalid authorization header"}), 401
+
+            token = auth_header[7:]
+            claims = _verify_jwt_token(token)
+
+            if not claims:
+                return jsonify({"error": "Invalid or expired token"}), 401
+
+            # Check token type
+            if claims.get("type") != "access":
+                return jsonify({"error": "Invalid token type"}), 401
+
+            # Check minimum level requirement
+            if claims.get("level_value", 0) < min_level:
+                return jsonify({
+                    "error": "Insufficient level",
+                    "required": min_level,
+                    "current": claims.get("level_value", 0),
+                }), 403
+
+            # Set auth context
+            request.auth_user = claims
+            request.is_demo = False
+            return f(*args, **kwargs)
+        return decorated
+    return decorator
+
+
+# =============================================================================
+# AUTH ENDPOINTS
+# =============================================================================
+
+@app.route("/auth/challenge", methods=["POST"])
+def auth_challenge():
+    """Get a challenge for wallet to sign."""
+    data = request.get_json(force=True) or {}
+    address = (data.get("address") or "").strip()
+
+    if not address or len(address) != 42 or not address.startswith("0x"):
+        return jsonify({"error": "Invalid Ethereum address"}), 400
+
+    challenge_data = _create_auth_challenge(address)
+    return jsonify(challenge_data)
+
+
+@app.route("/auth/verify", methods=["POST"])
+def auth_verify():
+    """Verify wallet signature and issue JWT tokens."""
+    data = request.get_json(force=True) or {}
+
+    address = (data.get("address") or "").strip().lower()
+    signature = (data.get("signature") or "").strip()
+    challenge = (data.get("challenge") or "").strip()
+    mac = (data.get("mac") or "").strip()
+
+    if not all([address, signature, challenge, mac]):
+        return jsonify({"error": "Missing required fields"}), 400
+
+    # Verify challenge
+    if not _verify_auth_challenge(challenge, mac, address, signature):
+        return jsonify({"error": "Invalid challenge or signature"}), 401
+
+    # Get wallet level
+    level, level_value = _get_wallet_level(address)
+
+    # Create access token
+    access_payload = {
+        "sub": address,
+        "level": level,
+        "level_value": level_value,
+        "type": "access",
+    }
+    access_token = _create_jwt_token(access_payload, ACCESS_TOKEN_EXPIRY)
+
+    # Create refresh token
+    refresh_payload = {
+        "sub": address,
+        "type": "refresh",
+    }
+    refresh_token = _create_jwt_token(refresh_payload, REFRESH_TOKEN_EXPIRY)
+
+    # Create response with refresh token as HttpOnly cookie
+    response = jsonify({
+        "access_token": access_token,
+        "expires_in": ACCESS_TOKEN_EXPIRY,
+        "level": level,
+        "level_value": level_value,
+    })
+
+    response.set_cookie(
+        "refresh_token",
+        refresh_token,
+        httponly=True,
+        secure=False,  # Set True in production with HTTPS
+        samesite="Lax",
+        max_age=REFRESH_TOKEN_EXPIRY,
+        path="/",
+    )
+
+    logger.info(f"[Auth] User authenticated: {address} ({level})")
+    return response
+
+
+@app.route("/auth/refresh", methods=["POST"])
+def auth_refresh():
+    """Refresh access token using refresh token cookie."""
+    refresh_token = request.cookies.get("refresh_token")
+
+    if not refresh_token:
+        return jsonify({"error": "No refresh token"}), 401
+
+    claims = _verify_jwt_token(refresh_token)
+    if not claims or claims.get("type") != "refresh":
+        return jsonify({"error": "Invalid refresh token"}), 401
+
+    address = claims["sub"]
+
+    # Re-check level (catches users who sold tokens)
+    level, level_value = _get_wallet_level(address)
+
+    # Create new access token
+    access_payload = {
+        "sub": address,
+        "level": level,
+        "level_value": level_value,
+        "type": "access",
+    }
+    access_token = _create_jwt_token(access_payload, ACCESS_TOKEN_EXPIRY)
+
+    logger.info(f"[Auth] Token refreshed for: {address}")
+    return jsonify({
+        "access_token": access_token,
+        "expires_in": ACCESS_TOKEN_EXPIRY,
+        "level": level,
+        "level_value": level_value,
+    })
+
+
+@app.route("/auth/logout", methods=["POST"])
+def auth_logout():
+    """Clear refresh token cookie."""
+    response = jsonify({"ok": True})
+    response.delete_cookie("refresh_token", path="/")
+    return response
+
+
+@app.route("/auth/demo-token", methods=["POST"])
+def auth_demo_token():
+    """Get a limited demo token for trying the service."""
+    ip = request.remote_addr or "unknown"
+
+    if not _check_demo_rate_limit(ip):
+        return jsonify({"error": "Demo rate limit exceeded (3 per day)"}), 429
+
+    # Create demo token (5 minute expiry)
+    demo_payload = {
+        "sub": "demo",
+        "level": "DEMO",
+        "level_value": 0,
+        "type": "demo",
+        "demo_only": True,
+    }
+    demo_token = _create_jwt_token(demo_payload, 300)
+
+    return jsonify({
+        "demo_token": demo_token,
+        "expires_in": 300,
+        "allowed_prompts": DEMO_PROMPTS,
+    })
+
+
+@app.route("/auth/status", methods=["GET"])
+def auth_status():
+    """Check authentication status."""
+    auth_header = request.headers.get("Authorization", "")
+
+    if not auth_header.startswith("Bearer "):
+        return jsonify({"authenticated": False})
+
+    token = auth_header[7:]
+    claims = _verify_jwt_token(token)
+
+    if not claims:
+        return jsonify({"authenticated": False})
+
+    return jsonify({
+        "authenticated": True,
+        "address": claims.get("sub"),
+        "level": claims.get("level"),
+        "level_value": claims.get("level_value"),
+    })
+
+
+# =============================================================================
 # UTILITY FUNCTIONS
 # =============================================================================
 
@@ -794,29 +1130,6 @@ def training_connect():
 @socketio.on("disconnect", namespace="/training")
 def training_disconnect():
     pass
-
-# =============================================================================
-# WATERMARK
-# =============================================================================
-
-BONZAI_WM_PATH = Path(__file__).parent / "bonzai.png"
-
-
-def _apply_watermark(image: Image.Image) -> Image.Image:
-    try:
-        wm = Image.open(BONZAI_WM_PATH).convert("RGBA").resize((64, 64))
-        base = image.convert("RGBA")
-        x, y = base.width - wm.width - 4, base.height - wm.height - 4
-        base.alpha_composite(wm, (x, y))
-        return base.convert("RGB")
-    except Exception as e:
-        logger.warning(f"Watermark failed: {e}")
-        return image
-
-
-def _apply_watermark_frames(frames: List[Image.Image]) -> List[Image.Image]:
-    return [_apply_watermark(f) for f in frames]
-
 
 # =============================================================================
 # DOWNLOAD MANAGER
@@ -1798,9 +2111,6 @@ def write_video(
 
     frames_pil = _as_pil_list(frames_or_output)
 
-    # Apply watermark to all frames
-    frames_pil = _apply_watermark_frames(frames_pil)
-
     # Trim head frames
     if trim_head_frames > 0:
         drop = min(trim_head_frames, max(0, len(frames_pil) - 1))
@@ -2178,6 +2488,7 @@ def _img_b64_to_pil(b64: str) -> Image.Image:
 
 
 @app.route("/image/standard", methods=["POST"])
+@require_auth(min_level=LEVEL_REQUIREMENTS["image"], allow_demo=True)
 def image_standard_sdxl():
     import logging as _logging
     _logging.getLogger("transformers.tokenization_utils_base").setLevel(_logging.ERROR)
@@ -2374,7 +2685,8 @@ def image_standard_sdxl():
             callback_steps=max(1, cb_steps),
         ).images[0]
 
-        buf = BytesIO(); _apply_watermark(image).save(buf, format="PNG")
+        buf = BytesIO()
+        image.save(buf, format="PNG")
         encoded = base64.b64encode(buf.getvalue()).decode("utf-8")
         genbus.finish(gen_id, {"ok": True})
         return jsonify(_json_sanitize({
@@ -2398,6 +2710,7 @@ def image_standard_sdxl():
 # =============================================================================
 
 @app.route("/image/advanced", methods=["POST"])
+@require_auth(min_level=LEVEL_REQUIREMENTS["image"], allow_demo=True)
 def z_image_advanced():
     """Generate image using Z-Image-Turbo (advanced mode)."""
     data = request.get_json(silent=True) or {}
@@ -2465,7 +2778,7 @@ def z_image_advanced():
         genbus.progress(gen_id, "finalizing", 2, 3)
 
         buf = BytesIO()
-        _apply_watermark(image).save(buf, format="PNG")
+        image.save(buf, format="PNG")
         encoded = base64.b64encode(buf.getvalue()).decode("utf-8")
 
         genbus.progress(gen_id, "complete", 3, 3)
@@ -2493,6 +2806,7 @@ def z_image_advanced():
 # =============================================================================
 
 @app.route("/image/turbo", methods=["POST"])
+@require_auth(min_level=LEVEL_REQUIREMENTS["image"], allow_demo=True)
 def image_turbo_flux_klein():
     """Generate image using FLUX Klein 4B (fast turbo mode)."""
     data = request.json or {}
@@ -2546,7 +2860,7 @@ def image_turbo_flux_klein():
         genbus.progress(gen_id, "finalizing", 2, 3)
 
         buf = BytesIO()
-        _apply_watermark(image).save(buf, format="PNG")
+        image.save(buf, format="PNG")
         b64 = base64.b64encode(buf.getvalue()).decode("utf-8")
 
         genbus.progress(gen_id, "complete", 3, 3)
@@ -2566,6 +2880,7 @@ def image_turbo_flux_klein():
 
 
 @app.route("/image/image/turbo", methods=["POST"])
+@require_auth(min_level=LEVEL_REQUIREMENTS["image"], allow_demo=True)
 def image_turbo_flux_klein_i2i():
     """Generate image-to-image using FLUX Klein 4B (fast turbo edit mode)."""
     data = request.get_json(silent=True) or {}
@@ -2640,7 +2955,7 @@ def image_turbo_flux_klein_i2i():
         genbus.progress(gen_id, "finalizing", 4, 5)
 
         buf = BytesIO()
-        _apply_watermark(image).save(buf, format="PNG")
+        image.save(buf, format="PNG")
         b64 = base64.b64encode(buf.getvalue()).decode("utf-8")
 
         genbus.progress(gen_id, "complete", 5, 5)
@@ -2664,6 +2979,7 @@ def image_turbo_flux_klein_i2i():
 # =============================================================================
 
 @app.route("/image/quality", methods=["POST"])
+@require_auth(min_level=LEVEL_REQUIREMENTS["image"], allow_demo=True)
 def image_quality_flux_krea():
     """Generate image using FLUX Krea."""
     data = request.json or {}
@@ -2729,7 +3045,7 @@ def image_quality_flux_krea():
         genbus.progress(gen_id, "finalizing", 2, 3)
 
         buf = BytesIO()
-        _apply_watermark(image).save(buf, format="PNG")
+        image.save(buf, format="PNG")
         b64 = base64.b64encode(buf.getvalue()).decode("utf-8")
 
         genbus.progress(gen_id, "complete", 3, 3)
@@ -2753,6 +3069,7 @@ def image_quality_flux_krea():
 # =============================================================================
 
 @app.route("/audio", methods=["POST"])
+@require_auth(min_level=LEVEL_REQUIREMENTS["audio"], allow_demo=True)
 def audio_multilingual():
     '''Multilingual TTS with 23 languages and emotion control (ONNX).'''
     data = request.get_json(silent=True) or {}
@@ -2867,6 +3184,7 @@ def audio_info():
 # =============================================================================
 
 @app.route("/video", methods=["POST"])
+@require_auth(min_level=LEVEL_REQUIREMENTS["video"], allow_demo=True)
 def ltx2_gguf_video():
     """
     LTX-2 (19B DiT) Video generation using distilled Q3_K_S GGUF quantization.
@@ -3087,19 +3405,13 @@ def ltx2_gguf_video():
                 return_dict=False,
             )
 
-        # Convert video to uint8 and apply watermark to each frame
+        # Convert video to uint8
         import numpy as np
         video = np.nan_to_num(video, nan=0.0, posinf=1.0, neginf=0.0)
         video = np.clip(video, 0, 1)
         video = (video * 255).round().astype("uint8")
 
-        # Apply watermark to each frame (video shape: [batch, frames, H, W, C])
-        frames_with_wm = []
-        for frame_arr in video[0]:  # video[0] = first batch
-            frame_pil = Image.fromarray(frame_arr, "RGB")
-            frame_wm = _apply_watermark(frame_pil)
-            frames_with_wm.append(np.array(frame_wm))
-        video = np.stack(frames_with_wm, axis=0)[np.newaxis, ...]  # [1, frames, H, W, C]
+        # Convert video to tensor for encoding
         video = torch.from_numpy(video)
 
         # Save video with audio using encode_video
@@ -3244,6 +3556,7 @@ def delete_training_dataset(dataset_id):
 # =============================================================================
 
 @app.route("/training/llm/start", methods=["POST"])
+@require_auth(min_level=LEVEL_REQUIREMENTS["training"], allow_demo=False)
 def start_llm_finetuning():
     """
     Start LLM finetuning using LoRA/QLoRA.
@@ -3572,6 +3885,7 @@ def start_llm_finetuning():
 # =============================================================================
 
 @app.route("/training/sdxl/start", methods=["POST"])
+@require_auth(min_level=LEVEL_REQUIREMENTS["training"], allow_demo=False)
 def start_sdxl_lora_training():
     """
     Start SDXL LoRA training from image dataset.

@@ -1,18 +1,19 @@
 /**
  * BonzAI Web3 Service
  *
- * Handles wallet connection and multi-chain BONZAI balance aggregation
- * across Ethereum and Arbitrum networks.
+ * Handles wallet connection, multi-chain BONZAI balance aggregation,
+ * and JWT authentication after WalletConnect.
  *
  * Patch highlights:
  * - Supports Electron by falling back to WalletConnect when window.ethereum is not injected
  * - Exposes ensureWalletProvider() + getEip1193Provider() for other modules (e.g., LVL∞ registry calls)
- * - Keeps the rest of your service API intact
+ * - Integrates with auth.service.js for JWT-based authentication
  */
 
 import { ethers } from "ethers";
 import { reactive, readonly, computed } from "vue";
 import { CONFIG } from "../config/web3.config.js";
+import { authService } from "./auth.service.js";
 
 // NOTE: install deps:
 //   npm i @walletconnect/ethereum-provider ethers
@@ -43,6 +44,11 @@ const state = reactive({
 
   // Wallet type
   walletType: null, // 'injected' | 'walletconnect' | null
+
+  // Authentication (JWT)
+  isAuthenticated: false,
+  authLevel: null,
+  authLevelValue: 0,
 
   // Balances (aggregated across chains)
   balances: {
@@ -218,7 +224,12 @@ const initBrowserProvider = async () => {
 // ═══════════════════════════════════════════════════════════════════════════
 
 /**
- * Connect wallet and aggregate BONZAI balance across chains
+ * Connect wallet, aggregate BONZAI balance, and authenticate with server.
+ *
+ * This is a combined flow (Option A):
+ * 1. WalletConnect modal (user selects wallet)
+ * 2. Sign authentication message (user approves signature)
+ * 3. Server issues JWT tokens
  */
 export const connectWallet = async () => {
   if (state.isConnecting)
@@ -255,12 +266,40 @@ export const connectWallet = async () => {
     // Set up event listeners
     setupEventListeners();
 
+    // Authenticate with server (triggers sign message prompt)
+    try {
+      const signer = await browserProvider.getSigner();
+      const authResult = await authService.authenticate(signer);
+
+      state.isAuthenticated = true;
+      state.authLevel = authResult.level;
+      state.authLevelValue = authResult.levelValue;
+
+      console.log(`[Web3] Authenticated with level ${authResult.level}`);
+    } catch (authError) {
+      // User rejected signature or auth failed
+      // Connection still valid, but not authenticated
+      console.warn("[Web3] Authentication failed:", authError.message);
+      state.isAuthenticated = false;
+      state.authLevel = null;
+      state.authLevelValue = 0;
+
+      // If user rejected the signature, disconnect
+      if (authError.message?.includes("rejected") || authError.message?.includes("denied")) {
+        await disconnectWallet();
+        return { success: false, error: "Authentication cancelled" };
+      }
+    }
+
     return {
       success: true,
       address: state.walletAddress,
       chainId: state.currentChainId,
       totalBalance: state.balances.total,
       walletType: state.walletType,
+      isAuthenticated: state.isAuthenticated,
+      authLevel: state.authLevel,
+      authLevelValue: state.authLevelValue,
     };
   } catch (e) {
     state.error = e.message;
@@ -272,7 +311,7 @@ export const connectWallet = async () => {
 };
 
 /**
- * Disconnect wallet
+ * Disconnect wallet and logout from auth service
  */
 export const disconnectWallet = async () => {
   // Remember if we set window.ethereum (WalletConnect case)
@@ -283,11 +322,17 @@ export const disconnectWallet = async () => {
     if (state.walletType === "walletconnect" && wcProvider?.disconnect) {
       await wcProvider.disconnect().catch(() => {});
     }
+
+    // Logout from auth service
+    authService.logout();
   } finally {
     state.isConnected = false;
     state.walletAddress = null;
     state.currentChainId = null;
     state.walletType = null;
+    state.isAuthenticated = false;
+    state.authLevel = null;
+    state.authLevelValue = 0;
     state.balances = { ethereum: 0, arbitrum: 0, total: 0 };
     state.lastBalanceCheck = null;
     state.error = null;
@@ -512,6 +557,25 @@ export const getProvider = (chain = "arbitrum") => {
 };
 
 // ═══════════════════════════════════════════════════════════════════════════
+// AUTHENTICATION COMPUTED
+// ═══════════════════════════════════════════════════════════════════════════
+
+/**
+ * Check if user is authenticated
+ */
+export const isAuthenticated = computed(() => state.isAuthenticated);
+
+/**
+ * Get authentication level
+ */
+export const authLevel = computed(() => state.authLevel);
+
+/**
+ * Get authentication level value
+ */
+export const authLevelValue = computed(() => state.authLevelValue);
+
+// ═══════════════════════════════════════════════════════════════════════════
 // EXPORT
 // ═══════════════════════════════════════════════════════════════════════════
 
@@ -535,11 +599,17 @@ export const web3Service = {
   truncatedAddress,
   isOnArbitrum,
   currentNetworkName,
+  isAuthenticated,
+  authLevel,
+  authLevelValue,
 
   // Providers
   getSigner,
   getBrowserProvider,
   getProvider,
+
+  // Auth service reference
+  authService,
 
   // Config reference
   CONFIG,

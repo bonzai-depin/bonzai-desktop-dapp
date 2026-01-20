@@ -765,38 +765,6 @@ function normalizeModelFilename(filename) {
 }
 
 /**
- * Migrate existing model files to lowercase on startup
- * Only affects .gguf and .safetensors files in MODEL_DIR root
- */
-function migrateModelFilesToLowercase() {
-  try {
-    const files = fs.readdirSync(MODEL_DIR);
-    for (const file of files) {
-      const ext = path.extname(file).toLowerCase();
-      if (ext === ".gguf" || ext === ".safetensors") {
-        const lowercaseFile = file.toLowerCase();
-        if (file !== lowercaseFile) {
-          const oldPath = path.join(MODEL_DIR, file);
-          const newPath = path.join(MODEL_DIR, lowercaseFile);
-          // Check if target already exists (avoid overwriting)
-          if (!fs.existsSync(newPath)) {
-            fs.renameSync(oldPath, newPath);
-            console.log(`[Model Migration] Renamed: ${file} → ${lowercaseFile}`);
-          } else {
-            console.warn(`[Model Migration] Skipped ${file}: target ${lowercaseFile} already exists`);
-          }
-        }
-      }
-    }
-  } catch (err) {
-    console.error("[Model Migration] Error during migration:", err.message);
-  }
-}
-
-// Run migration on startup
-migrateModelFilesToLowercase();
-
-/**
  * Parse multi-part GGUF filename pattern
  * Returns { isMultiPart, baseName, partNum, totalParts } or null
  * Pattern: model-name-00001-of-00003.gguf
