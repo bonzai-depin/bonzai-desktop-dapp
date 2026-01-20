@@ -55,24 +55,40 @@
           <div class="models__activity--payouts">
             <div class="columns">
               <div class="column is-12">
-                <!-- MODE SELECTOR (LTX-2 I2V) -->
+                <!-- MODE SELECTOR (Text-to-Video / Image-to-Video) -->
                 <div class="control mb-5 has-text-left">
                   <input
                     v-model="mode"
-                    :value="'turbo'"
-                    id="video_mode_turbo"
+                    :value="'t2v'"
+                    id="video_mode_t2v"
                     type="radio"
                     name="video_mode"
-                    checked
                   />
-                  <label for="video_mode_turbo" class="radio mr-2">
+                  <label for="video_mode_t2v" class="radio mr-2">
                     <span
                       class="material-symbols-outlined"
                       style="font-size: 32px !important"
                     >
-                      bolt
+                      text_fields
                     </span>
-                    Turbo
+                    From Prompt
+                  </label>
+                  <input
+                    v-model="mode"
+                    :value="'i2v'"
+                    id="video_mode_i2v"
+                    type="radio"
+                    name="video_mode"
+                    checked
+                  />
+                  <label for="video_mode_i2v" class="radio mr-2">
+                    <span
+                      class="material-symbols-outlined"
+                      style="font-size: 32px !important"
+                    >
+                      image
+                    </span>
+                    From Image
                   </label>
 
                   <!-- DURATION TOGGLES -->
@@ -185,7 +201,7 @@
                       type="radio"
                       name="video_quality"
                     />
-                    <label for="video_quality_4k" class="radio quality">
+                    <label for="video_quality_4k" class="radio quality mr-0">
                       4K
                     </label>
                   </span>
@@ -308,8 +324,8 @@
                   </div>
                 </div>
 
-                <!-- IMAGE PICKER + GENERATE -->
-                <div class="notification p4 preview">
+                <!-- IMAGE PICKER (only for I2V mode) -->
+                <div v-if="mode === 'i2v'" class="notification p4 preview">
                   <div class="file is-fullwidth is-medium">
                     <label class="file-label">
                       <input
@@ -353,10 +369,10 @@
                       <input
                         class="input is-large"
                         type="text"
-                        placeholder="Describe your animation..."
+                        :placeholder="mode === 't2v' ? 'Describe your video...' : 'Describe your animation...'"
                         v-model="form.prompt"
                         @keyup.enter="
-                          canGenerateWithAccess && sendMessage(form.prompt)
+                          canGenerate && sendMessage(form.prompt)
                         "
                         :disabled="isLoading || !hasAccess"
                       />
@@ -364,14 +380,14 @@
                     <div class="column is-4">
                       <button
                         class="button is-warning is-large pl-2 is-fullwidth"
-                        :disabled="isLoading || !hasAnyImage || !hasAccess"
+                        :disabled="!canGenerate"
                         @click="sendMessage(form.prompt)"
-                        title="Generate video from image"
+                        :title="mode === 't2v' ? 'Generate video from text' : 'Generate video from image'"
                       >
                         <span class="material-symbols-outlined is-size-2 mr-1">
-                          animation
+                          {{ mode === 't2v' ? 'movie' : 'animation' }}
                         </span>
-                        Animate
+                        {{ mode === 't2v' ? 'Generate' : 'Animate' }}
                       </button>
                     </div>
                   </div>
@@ -603,7 +619,7 @@ export default {
   components: { AccessRequirements },
   props: { existingImageBase64: { type: String, default: "" } },
   setup(props) {
-    const mode = ref("turbo"); // LTX-2 I2V
+    const mode = ref("i2v"); // "t2v" (text-to-video) or "i2v" (image-to-video)
     const quality = ref("480p");
     const duration = ref(5);  // seconds: 3, 5, or 10
     const fps = ref(24);      // 24 or 48
@@ -721,6 +737,13 @@ export default {
       () => hasAccess.value && !isLoading.value
     );
 
+    // Can generate: for t2v mode, just need access; for i2v mode, also need an image
+    const canGenerate = computed(() => {
+      if (!hasAccess.value || isLoading.value) return false;
+      if (mode.value === "t2v") return true;
+      return hasAnyImage.value; // i2v requires image
+    });
+
     const readiness = reactive({
       ok: true,
       missingRepos: [],
@@ -753,10 +776,10 @@ export default {
     );
 
     const endpointForMode = () => {
-      return "/image/video"; // LTX-2 I2V endpoint
+      return "/video"; // LTX-2 video endpoint (supports t2v and i2v)
     };
     const pipelineForMode = () => {
-      return "ltx2_video_gguf"; // LTX-2 I2V pipeline
+      return "ltx2_video_gguf"; // LTX-2 video pipeline
     };
 
     const normalizeFramesForLTX2 = (frames) => {
@@ -1302,11 +1325,12 @@ export default {
 
     const sendMessage = async (prompt, isDemo = false) => {
       if (!prompt) return;
-      if (!hasAnyImage.value) return;
+      // For i2v mode, require an image
+      if (mode.value === "i2v" && !hasAnyImage.value) return;
       // Allow demo generation even without access
       if (!isDemo && !hasAccess.value) return;
 
-      // LTX-2 I2V size mappings - SAFE VALUES for tiled VAE decoder
+      // LTX-2 size mappings - SAFE VALUES for tiled VAE decoder
       // These dimensions produce latent sizes that divide evenly by the tile stride
       // Values: [height, width] for landscape orientation
       const sizeMaps = {
@@ -1320,17 +1344,19 @@ export default {
       // Get base dimensions based on quality selection
       let [h, w] = sizeMaps[quality.value] || sizeMaps["480p"];
 
-      // Swap dimensions for portrait images
-      if (imageAspectRatio.value === "portrait") {
+      // For i2v mode, swap dimensions for portrait images
+      // For t2v mode, default to landscape
+      if (mode.value === "i2v" && imageAspectRatio.value === "portrait") {
         [h, w] = [w, h];
       }
 
-      // LTX-2 I2V: Frames must be 8n+1
+      // LTX-2: Frames must be 8n+1
       // Compute from duration and fps: frames = fps * duration + 1
       const frameRate = fps.value;
       const frames = frameRate * duration.value + 1;
 
       const payload = {
+        mode: mode.value,  // "t2v" or "i2v"
         prompt: prompt,
         height: h,
         width: w,
@@ -1339,9 +1365,13 @@ export default {
         steps: 8,  // Distilled model: 8-10 steps optimal
         guidance_scale: 1,  // Distilled model: CFG=1
         auto_download: true,
-        image_base64:
-          uploadedImageBase64.value || (props.existingImageBase64 || "").trim(),
       };
+
+      // Only include image for i2v mode
+      if (mode.value === "i2v") {
+        payload.image_base64 =
+          uploadedImageBase64.value || (props.existingImageBase64 || "").trim();
+      }
       const url = `${API_BASE}${endpointForMode()}`;
       ensureGenerationSocket();
       startGeneration("video"); // Initialize generation state
@@ -1585,6 +1615,7 @@ export default {
       accessRef,
       hasAccess,
       canGenerateWithAccess,
+      canGenerate,
       onAccessChanged,
       onDemoGenerate,
       DEMO_PROMPT,

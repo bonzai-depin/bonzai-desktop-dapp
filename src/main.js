@@ -796,13 +796,59 @@ function migrateModelFilesToLowercase() {
 // Run migration on startup
 migrateModelFilesToLowercase();
 
+/**
+ * Parse multi-part GGUF filename pattern
+ * Returns { isMultiPart, baseName, partNum, totalParts } or null
+ * Pattern: model-name-00001-of-00003.gguf
+ */
+function parseMultiPartGGUF(filename) {
+  const match = filename.match(/^(.+)-(\d{5})-of-(\d{5})\.gguf$/i);
+  if (!match) return null;
+  return {
+    isMultiPart: true,
+    baseName: match[1],
+    partNum: parseInt(match[2], 10),
+    totalParts: parseInt(match[3], 10),
+  };
+}
+
+/**
+ * Generate all part filenames for a multi-part GGUF
+ */
+function generateMultiPartFilenames(baseName, totalParts) {
+  const parts = [];
+  for (let i = 1; i <= totalParts; i++) {
+    const partStr = String(i).padStart(5, "0");
+    const totalStr = String(totalParts).padStart(5, "0");
+    parts.push(`${baseName}-${partStr}-of-${totalStr}.gguf`);
+  }
+  return parts;
+}
+
+/**
+ * Generate URL for a specific part given the base URL pattern
+ */
+function generatePartUrl(baseUrl, partNum, totalParts) {
+  // Replace the part number in the URL
+  // Pattern: .../model-00001-of-00003.gguf -> .../model-00002-of-00003.gguf
+  const partStr = String(partNum).padStart(5, "0");
+  return baseUrl.replace(/-\d{5}-of-\d{5}\.gguf/i, `-${partStr}-of-${String(totalParts).padStart(5, "0")}.gguf`);
+}
+
 async function downloadModel(_event, url, filename) {
   const win = BrowserWindow.getFocusedWindow() || BrowserWindow.getAllWindows()[0];
   if (!win) {
     console.error("Download failed: No window available");
     return { error: "No window available for download" };
   }
-  // Normalize filename to lowercase
+
+  // Check if this is a multi-part GGUF download
+  const multiPart = parseMultiPartGGUF(filename);
+  if (multiPart && multiPart.totalParts > 1) {
+    return downloadMultiPartModel(win, url, filename, multiPart);
+  }
+
+  // Single file download
   const normalizedFilename = normalizeModelFilename(filename);
   try {
     const dl = await download(win, url, {
@@ -824,9 +870,218 @@ async function downloadModel(_event, url, filename) {
   }
 }
 
+/**
+ * Merge multi-part GGUF files into a single file using stream-based concatenation
+ * @param {string[]} partPaths - Array of paths to part files in order
+ * @param {string} outputPath - Path for the merged output file
+ * @param {Function} onProgress - Progress callback (0-1)
+ */
+async function mergeGGUFParts(partPaths, outputPath, onProgress) {
+  const { createReadStream, createWriteStream, statSync } = require("fs");
+  const { pipeline } = require("stream/promises");
+
+  // Calculate total size for progress
+  let totalSize = 0;
+  for (const partPath of partPaths) {
+    totalSize += statSync(partPath).size;
+  }
+
+  let bytesWritten = 0;
+  const outputStream = createWriteStream(outputPath);
+
+  console.log(`[GGUF Merge] Merging ${partPaths.length} parts (${(totalSize / 1024 / 1024 / 1024).toFixed(2)} GB) -> ${path.basename(outputPath)}`);
+
+  for (let i = 0; i < partPaths.length; i++) {
+    const partPath = partPaths[i];
+    const partSize = statSync(partPath).size;
+
+    console.log(`[GGUF Merge] Processing part ${i + 1}/${partPaths.length}: ${path.basename(partPath)}`);
+
+    await new Promise((resolve, reject) => {
+      const readStream = createReadStream(partPath);
+
+      readStream.on("data", (chunk) => {
+        bytesWritten += chunk.length;
+        if (onProgress) {
+          onProgress(bytesWritten / totalSize);
+        }
+      });
+
+      readStream.on("end", resolve);
+      readStream.on("error", reject);
+
+      readStream.pipe(outputStream, { end: false });
+    });
+  }
+
+  outputStream.end();
+
+  // Wait for output stream to finish
+  await new Promise((resolve, reject) => {
+    outputStream.on("finish", resolve);
+    outputStream.on("error", reject);
+  });
+
+  console.log(`[GGUF Merge] Merge complete: ${path.basename(outputPath)}`);
+  return outputPath;
+}
+
+/**
+ * Download multi-part GGUF model files and merge into single file
+ */
+async function downloadMultiPartModel(win, baseUrl, filename, multiPart) {
+  const { baseName, totalParts } = multiPart;
+  const partFilenames = generateMultiPartFilenames(baseName, totalParts);
+  const downloadedPaths = [];
+
+  // Final merged filename (without part numbers)
+  const mergedFilename = normalizeModelFilename(`${baseName}.gguf`);
+  const mergedPath = path.join(MODEL_DIR, mergedFilename);
+
+  // Check if already merged
+  if (fs.existsSync(mergedPath)) {
+    console.log(`[Multi-Part Download] Merged file already exists: ${mergedFilename}`);
+    return { savedPath: mergedPath, isMultiPart: true, merged: true };
+  }
+
+  console.log(`[Multi-Part Download] Starting download of ${totalParts} parts for ${baseName}`);
+
+  try {
+    // Phase 1: Download all parts (80% of progress)
+    for (let i = 0; i < totalParts; i++) {
+      const partNum = i + 1;
+      const partFilename = normalizeModelFilename(partFilenames[i]);
+      const partUrl = generatePartUrl(baseUrl, partNum, totalParts);
+      const partPath = path.join(MODEL_DIR, partFilename);
+
+      // Skip if part already exists
+      if (fs.existsSync(partPath)) {
+        console.log(`[Multi-Part Download] Part ${partNum}/${totalParts} already exists, skipping`);
+        downloadedPaths.push(partPath);
+        win.webContents.send("download-progress", {
+          filename: mergedFilename,
+          percent: (partNum / totalParts) * 0.8,
+          part: partNum,
+          totalParts,
+          phase: "downloading",
+          status: "skipped",
+        });
+        continue;
+      }
+
+      console.log(`[Multi-Part Download] Downloading part ${partNum}/${totalParts}: ${partFilename}`);
+
+      const dl = await download(win, partUrl, {
+        filename: partFilename,
+        directory: MODEL_DIR,
+        showBadge: false,
+        onProgress: (p) => {
+          // Download phase is 0-80% of total progress
+          const overallPct = ((i + p.percent) / totalParts) * 0.8;
+          win.setProgressBar(overallPct);
+          win.webContents.send("download-progress", {
+            filename: mergedFilename,
+            percent: overallPct,
+            part: partNum,
+            totalParts,
+            partPercent: p.percent,
+            phase: "downloading",
+          });
+        },
+      });
+
+      downloadedPaths.push(dl.getSavePath());
+      console.log(`[Multi-Part Download] Completed part ${partNum}/${totalParts}`);
+    }
+
+    // Phase 2: Merge parts (80-100% of progress)
+    console.log(`[Multi-Part Download] All parts downloaded, starting merge...`);
+    win.webContents.send("download-progress", {
+      filename: mergedFilename,
+      percent: 0.8,
+      phase: "merging",
+      status: "starting",
+    });
+
+    await mergeGGUFParts(downloadedPaths, mergedPath, (mergePct) => {
+      // Merge phase is 80-100% of total progress
+      const overallPct = 0.8 + mergePct * 0.2;
+      win.setProgressBar(overallPct);
+      win.webContents.send("download-progress", {
+        filename: mergedFilename,
+        percent: overallPct,
+        phase: "merging",
+        mergePercent: mergePct,
+      });
+    });
+
+    // Phase 3: Clean up part files
+    console.log(`[Multi-Part Download] Cleaning up ${totalParts} part files...`);
+    for (const partPath of downloadedPaths) {
+      try {
+        fs.unlinkSync(partPath);
+        console.log(`[Multi-Part Download] Deleted part: ${path.basename(partPath)}`);
+      } catch (e) {
+        console.warn(`[Multi-Part Download] Failed to delete part: ${partPath}`, e.message);
+      }
+    }
+
+    win.setProgressBar(-1);
+    console.log(`[Multi-Part Download] Complete: ${mergedFilename}`);
+
+    return {
+      savedPath: mergedPath,
+      isMultiPart: true,
+      merged: true,
+      totalParts,
+    };
+  } catch (error) {
+    console.error("[Multi-Part Download] Failed:", error);
+    win?.setProgressBar(-1);
+    return { error: error.message || "Multi-part download failed" };
+  }
+}
+
 function deleteModel(_event, modelname) {
   // Normalize filename to lowercase
   const normalizedName = normalizeModelFilename(modelname);
+
+  // Check if this is a multi-part GGUF reference
+  const multiPart = parseMultiPartGGUF(normalizedName);
+  if (multiPart && multiPart.totalParts > 1) {
+    // For multi-part models, delete the merged file
+    const mergedFilename = normalizeModelFilename(`${multiPart.baseName}.gguf`);
+    const mergedPath = path.join(MODEL_DIR, mergedFilename);
+
+    // Also delete any remaining part files (in case merge was interrupted)
+    const partFilenames = generateMultiPartFilenames(multiPart.baseName, multiPart.totalParts);
+    for (const partFile of partFilenames) {
+      const partPath = path.join(MODEL_DIR, normalizeModelFilename(partFile));
+      try {
+        if (fs.existsSync(partPath)) {
+          fs.unlinkSync(partPath);
+          console.log("Model part deleted:", partPath);
+        }
+      } catch (e) {
+        console.warn("Delete part failed:", partPath, e.message);
+      }
+    }
+
+    // Delete the merged file
+    if (fs.existsSync(mergedPath)) {
+      try {
+        fs.unlinkSync(mergedPath);
+        console.log("Merged model deleted:", mergedPath);
+        return true;
+      } catch (e) {
+        console.error("Delete merged file failed:", e);
+        return false;
+      }
+    }
+    return true;
+  }
+
+  // Single file delete
   const modelPath = path.join(MODEL_DIR, normalizedName);
   try {
     unlink(modelPath, (err) => {
@@ -920,8 +1175,18 @@ async function loadModel(_event, currentModel) {
   }
   // Normalize filename to lowercase
   const normalizedFilename = normalizeModelFilename(currentModel.filename);
-  const modelPath = path.join(MODEL_DIR, normalizedFilename);
-  console.log("Model path:", modelPath);
+
+  // Check if this is a multi-part GGUF - use merged filename
+  let modelPath;
+  const multiPart = parseMultiPartGGUF(normalizedFilename);
+  if (multiPart && multiPart.totalParts > 1) {
+    const mergedFilename = normalizeModelFilename(`${multiPart.baseName}.gguf`);
+    modelPath = path.join(MODEL_DIR, mergedFilename);
+    console.log("Multi-part model, using merged file:", modelPath);
+  } else {
+    modelPath = path.join(MODEL_DIR, normalizedFilename);
+    console.log("Model path:", modelPath);
+  }
 
   const model = await llama.loadModel({ modelPath });
 
@@ -940,6 +1205,36 @@ async function loadModel(_event, currentModel) {
 function checkModel(_event, modelname) {
   // Normalize filename to lowercase
   const normalizedName = normalizeModelFilename(modelname);
+
+  // Check if this is a multi-part GGUF reference
+  const multiPart = parseMultiPartGGUF(normalizedName);
+  if (multiPart && multiPart.totalParts > 1) {
+    // For multi-part models, check for the merged file
+    const mergedFilename = normalizeModelFilename(`${multiPart.baseName}.gguf`);
+    const mergedPath = path.join(MODEL_DIR, mergedFilename);
+
+    if (fs.existsSync(mergedPath)) {
+      console.log(`[Multi-Part Check] Merged file exists: ${mergedFilename}`);
+      return true;
+    }
+
+    // Check if parts exist (download in progress or merge needed)
+    const partFilenames = generateMultiPartFilenames(multiPart.baseName, multiPart.totalParts);
+    const existingParts = partFilenames.filter((partFile) => {
+      const partPath = path.join(MODEL_DIR, normalizeModelFilename(partFile));
+      return fs.existsSync(partPath);
+    });
+
+    if (existingParts.length === multiPart.totalParts) {
+      console.log(`[Multi-Part Check] All parts exist but not merged yet`);
+      return false; // Needs merge
+    }
+
+    console.error(`[Multi-Part Check] Missing merged file and only ${existingParts.length}/${multiPart.totalParts} parts`);
+    return false;
+  }
+
+  // Single file check
   const modelPath = path.join(MODEL_DIR, normalizedName);
   if (!fs.existsSync(modelPath)) {
     console.error("Model file not found:", modelPath);

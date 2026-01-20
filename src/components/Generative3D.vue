@@ -99,10 +99,10 @@
           <div v-if="!isModel" class="notification is-danger mb-5">
             <div class="columns is-vcentered">
               <div class="column">
-                <p class="fira-sans-condensed-black-italic is-size-5 mb-0">
+                <p class="is-size-5 mb-0">
                   <span
                     class="material-symbols-outlined mr-2"
-                    style="vertical-align: middle"
+                    style="vertical-align: text-top"
                   >
                     error
                   </span>

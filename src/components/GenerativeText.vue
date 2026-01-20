@@ -34,6 +34,30 @@
           </div>
           <p class="desc">
             {{ currentModel.modeldesc }}
+                            <h3 class="fira-sans-condensed-black-italic mt-5">
+                  <span
+                    class="material-symbols-outlined is-size-1 mr-2"
+                  >
+                    computer
+                  </span>
+                  Hardware Requirements
+                </h3>
+            <span class="tags pt-3 fira-sans-condensed-black-italic">
+              <span class="tag is-info">
+                <span class="material-symbols-outlined">memory</span>
+                {{ computeMemoryRequirements(currentModel).vramGB }} GB VRAM
+              </span>
+              <span class="tag is-info">
+                <span class="material-symbols-outlined">memory</span>
+                {{ computeMemoryRequirements(currentModel).ramGB }} GB RAM
+              </span>
+              <span class="tag is-info">
+                {{
+                  computeMemoryRequirements(currentModel).breakdown.contextSize
+                }}
+                CTX
+              </span>
+            </span>
           </p>
           <div class="models__deployment-install--cta has-text-right p-0">
             <button
@@ -200,7 +224,9 @@
               v-for="(inference, displayIndex) in paginatedInferences"
               :key="inference._originalIndex"
               class="history-item"
-              :style="{ animationDelay: `${Math.min(displayIndex * 50, 500)}ms` }"
+              :style="{
+                animationDelay: `${Math.min(displayIndex * 50, 500)}ms`,
+              }"
             >
               <p class="question">{{ inference.question }}</p>
               <div class="answer" style="white-space: pre-line">
@@ -219,7 +245,10 @@
                 <button
                   class="button is-medium is-outlined copy is-pulled-right"
                   @click="copy(inference.answer.text)"
-                  v-if="hasCopy[inference._originalIndex] && hasCopy[inference._originalIndex] == true"
+                  v-if="
+                    hasCopy[inference._originalIndex] &&
+                    hasCopy[inference._originalIndex] == true
+                  "
                 >
                   <span class="material-symbols-outlined">check</span>
                 </button>
@@ -297,7 +326,7 @@
           <ul class="columns is-multiline has-text-left">
             <li class="column is-6" v-for="model in availableModels">
               <button
-                class="button is-outlined is-info is-large fira-sans-condensed-black-italic is-size-3 is-fullwidth"
+                class="button is-outlined is-info is-large fira-sans-condensed-black-italic is-size-4 is-fullwidth mb-5"
                 @click="
                   pickModel(model);
                   openModel = false;
@@ -308,7 +337,12 @@
                   neurology
                 </span>
                 {{ model.modelname }}
-                <span class="filesize">{{ model.filesize }}</span>
+                <span class="filesize">
+                  <span class="material-symbols-outlined is-size-5 mr-2">
+                    hard_drive
+                  </span>
+                  {{ model.filesize }}
+                </span>
               </button>
             </li>
           </ul>
@@ -372,7 +406,9 @@
               v-for="(inference, displayIndex) in paginatedInferences"
               :key="inference._originalIndex"
               class="history-item"
-              :style="{ animationDelay: `${Math.min(displayIndex * 50, 500)}ms` }"
+              :style="{
+                animationDelay: `${Math.min(displayIndex * 50, 500)}ms`,
+              }"
             >
               <p class="question">{{ inference.question }}</p>
               <div class="answer" style="white-space: pre-line">
@@ -391,7 +427,10 @@
                 <button
                   class="button is-medium is-outlined copy is-pulled-right"
                   @click="copy(inference.answer.text)"
-                  v-if="hasCopy[inference._originalIndex] && hasCopy[inference._originalIndex] == true"
+                  v-if="
+                    hasCopy[inference._originalIndex] &&
+                    hasCopy[inference._originalIndex] == true
+                  "
                 >
                   <span class="material-symbols-outlined">check</span>
                 </button>
@@ -420,10 +459,163 @@ const debounce = (fn, delay) => {
   };
 };
 
+/**
+ * Compute RAM and VRAM memory requirements for a model.
+ *
+ * For standard dense models:
+ *   - Model weights: parameters * bytesPerParam (based on quantization)
+ *   - KV cache: 2 * layers * headDim * kvHeads * context * dtype (fp16=2 bytes)
+ *   - Overhead: ~10% buffer for scratch space, activations
+ *
+ * For MoE (Mixture of Experts) models:
+ *   - VRAM: activeParameters determine inference compute
+ *   - RAM: Full model weights loaded, experts swapped as needed
+ *   - MoE models can run on smaller GPUs by keeping experts in RAM
+ *
+ * @param {Object} model - Model config from availableModels
+ * @param {Object} options - Optional overrides
+ * @param {string} options.quantization - Quantization type (e.g., 'Q4_K_M', 'Q5_K_M', 'TQ1_0')
+ * @param {number} options.contextSize - Override default context size
+ * @returns {Object} { vram, ram, diskSpace, canOffload, description }
+ */
+const computeMemoryRequirements = (model, options = {}) => {
+  const {
+    parameters,
+    activeParameters,
+    isMoE = false,
+    context: defaultContext,
+    filename = "",
+  } = model;
+
+  const contextSize = options.contextSize || defaultContext || 4096;
+
+  // Estimate bytes per parameter based on quantization from filename
+  const getQuantBytesPerParam = (fname) => {
+    const f = fname.toLowerCase();
+    if (f.includes("tq1_0") || f.includes("q1_0")) return 0.2; // ~1.6 bits
+    if (f.includes("q2_k")) return 0.3125; // ~2.5 bits
+    if (f.includes("q3_k")) return 0.4375; // ~3.5 bits
+    if (f.includes("q4_k") || f.includes("q4_0") || f.includes("q4_1"))
+      return 0.5625; // ~4.5 bits
+    if (f.includes("q5_k") || f.includes("q5_0") || f.includes("q5_1"))
+      return 0.6875; // ~5.5 bits
+    if (f.includes("q6_k")) return 0.8125; // ~6.5 bits
+    if (f.includes("q8_0")) return 1.0; // 8 bits
+    if (f.includes("f16") || f.includes("fp16")) return 2.0; // 16 bits
+    if (f.includes("f32") || f.includes("fp32")) return 4.0; // 32 bits
+    return 0.5625; // Default to Q4_K estimate
+  };
+
+  const bytesPerParam = getQuantBytesPerParam(options.quantization || filename);
+
+  // Estimate model dimensions from parameters (rough approximation)
+  // For transformer: params ≈ 12 * L * d^2 where L=layers, d=hidden_dim
+  // Simplify: assume layers ≈ sqrt(params / 2e9) * 8, capped
+  const estimateLayers = (params) => {
+    const p = params / 1e9;
+    if (p <= 1.5) return 12;
+    if (p <= 3) return 24;
+    if (p <= 8) return 32;
+    if (p <= 14) return 40;
+    if (p <= 20) return 48;
+    if (p <= 34) return 60;
+    if (p <= 70) return 80;
+    return 96;
+  };
+
+  const estimateHeadDim = (params) => {
+    const p = params / 1e9;
+    if (p <= 3) return 64;
+    if (p <= 8) return 128;
+    return 128;
+  };
+
+  const estimateKVHeads = (params) => {
+    const p = params / 1e9;
+    if (p <= 3) return 8;
+    if (p <= 8) return 8;
+    if (p <= 14) return 8;
+    return 8; // GQA typically uses fewer KV heads
+  };
+
+  const layers = estimateLayers(parameters);
+  const headDim = estimateHeadDim(parameters);
+  const kvHeads = estimateKVHeads(parameters);
+
+  // KV cache size: 2 (K+V) * layers * kvHeads * headDim * context * 2 (fp16)
+  const kvCacheBytes = 2 * layers * kvHeads * headDim * contextSize * 2;
+
+  // Model weights size
+  const modelWeightsBytes = parameters * bytesPerParam;
+
+  // Overhead for activations, scratch space (~10-15%)
+  const overheadFactor = 1.1;
+
+  let vramBytes, ramBytes, canOffload, description;
+
+  if (isMoE && activeParameters) {
+    // MoE model: only active parameters needed in VRAM for compute
+    // Full model loads to RAM, experts swap in/out as needed
+
+    // Active parameters for VRAM (what's actually computed per token)
+    const activeWeightsBytes = activeParameters * bytesPerParam;
+
+    // VRAM: active weights + KV cache + overhead
+    vramBytes = (activeWeightsBytes + kvCacheBytes) * overheadFactor;
+
+    // RAM: full model weights (experts stay in RAM until needed)
+    // In practice, node-llama-cpp loads full model to RAM, GPU pulls active layers
+    ramBytes = modelWeightsBytes * overheadFactor;
+
+    canOffload = true;
+
+    description =
+      `MoE model with ${(parameters / 1e9).toFixed(1)}B total / ${(activeParameters / 1e9).toFixed(1)}B active params. ` +
+      `VRAM needed: ${(vramBytes / 1e9).toFixed(1)}GB (active params + KV cache). ` +
+      `RAM needed: ${(ramBytes / 1e9).toFixed(1)}GB (full model). ` +
+      `Experts offload to RAM when not in use.`;
+  } else {
+    // Dense model: all weights needed in VRAM for inference
+    vramBytes = (modelWeightsBytes + kvCacheBytes) * overheadFactor;
+    ramBytes = modelWeightsBytes * 0.5; // System RAM as backup/swap
+
+    canOffload = false;
+
+    description =
+      `Dense model with ${(parameters / 1e9).toFixed(1)}B params. ` +
+      `VRAM needed: ${(vramBytes / 1e9).toFixed(1)}GB (weights + KV cache). ` +
+      `Can offload layers to RAM if VRAM is insufficient.`;
+  }
+
+  return {
+    vram: vramBytes,
+    vramGB: +(vramBytes / 1e9).toFixed(2),
+    ram: ramBytes,
+    ramGB: +(ramBytes / 1e9).toFixed(2),
+    diskSpace: modelWeightsBytes,
+    diskSpaceGB: +(modelWeightsBytes / 1e9).toFixed(2),
+    kvCacheGB: +(kvCacheBytes / 1e9).toFixed(2),
+    canOffload,
+    isMoE,
+    description,
+    // Breakdown for debugging
+    breakdown: {
+      parameters,
+      activeParameters: activeParameters || parameters,
+      bytesPerParam,
+      layers,
+      headDim,
+      kvHeads,
+      contextSize,
+    },
+  };
+};
+
 import GenerativeImage from "./GenerativeImage.vue";
 import AccessRequirements from "./AccessRequirements.vue";
 
-const DEMO_PROMPT = "Explain what makes a bonsai tree special in exactly 3 sentences.";
+const DEMO_PROMPT =
+  "Explain what makes a bonsai tree special in exactly 3 sentences.";
 
 export default {
   name: "GenerativeText",
@@ -631,11 +823,13 @@ export default {
       qwen_3_coder_30_B: {
         modelname: "Qwen3 Coder 30B A3B",
         modeldesc:
-          "30.5B-parameter Mixture-of-Experts Qwen3-Coder A3B model with a native 262,144-token context window. Specialized for code understanding and generation across very large repositories. Best for: serious local coding copilots, multi-file refactoring, and advanced software reasoning.",
+          "30.5B-parameter Mixture-of-Experts Qwen3-Coder model with only 3B active parameters and a native 262,144-token context window. MoE architecture enables efficient inference on consumer GPUs. Best for: serious local coding copilots, multi-file refactoring, and advanced software reasoning.",
         url: "https://huggingface.co/unsloth/Qwen3-Coder-30B-A3B-Instruct-GGUF/resolve/main/Qwen3-Coder-30B-A3B-Instruct-UD-Q5_K_XL.gguf",
         filename: "qwen3-coder-30b-a3b-instruct-ud-q5_k_xl.gguf",
         filesize: "21.7 GB",
         parameters: 30500000000,
+        activeParameters: 3000000000,
+        isMoE: true,
         context: 262144,
       },
 
@@ -648,6 +842,19 @@ export default {
         filesize: "6.26 GB",
         parameters: 9000000000,
         context: 131072,
+      },
+
+      glm_4_7_flash: {
+        modelname: "GLM 4.7 Flash",
+        modeldesc:
+          "40.7B-parameter Mixture-of-Experts model from THUDM with only 4B active parameters per forward pass and 32K context. Ultra-efficient MoE architecture runs on a single 16GB GPU while delivering near-GPT-4 performance. Best for: fast local inference, coding, math reasoning, and general-purpose AI on consumer hardware.",
+        url: "https://huggingface.co/unsloth/GLM-4.7-GGUF/resolve/main/GLM-4.7-UD-TQ1_0-00001-of-00003.gguf",
+        filename: "GLM-4.7-UD-TQ1_0.gguf",
+        filesize: "10.5 GB",
+        parameters: 40700000000,
+        activeParameters: 4000000000,
+        isMoE: true,
+        context: 32768,
       },
     });
 
@@ -739,10 +946,12 @@ export default {
 
     // Reversed inferences (most recent first) with original index
     const reversedInferences = computed(() => {
-      return inferences.value.map((item, idx) => ({
-        ...item,
-        _originalIndex: idx,
-      })).reverse();
+      return inferences.value
+        .map((item, idx) => ({
+          ...item,
+          _originalIndex: idx,
+        }))
+        .reverse();
     });
 
     // Displayed inferences (lazy loaded subset)
@@ -751,7 +960,9 @@ export default {
     });
 
     // Check if there are more items to load
-    const hasMore = computed(() => displayedCount.value < inferences.value.length);
+    const hasMore = computed(
+      () => displayedCount.value < inferences.value.length
+    );
 
     // Load more items
     const loadMore = () => {
@@ -778,14 +989,16 @@ export default {
       if (!loadMoreSentinel.value) return;
 
       // Use the scroll container as root for proper intersection detection
-      const root = scrollContainer.value || document.querySelector('.models__deployment-install');
+      const root =
+        scrollContainer.value ||
+        document.querySelector(".models__deployment-install");
       scrollObserver = new IntersectionObserver(
         (entries) => {
           if (entries[0].isIntersecting && hasMore.value) {
             loadMore();
           }
         },
-        { root, rootMargin: '100px' }
+        { root, rootMargin: "100px" }
       );
       scrollObserver.observe(loadMoreSentinel.value);
     };
@@ -799,9 +1012,11 @@ export default {
 
     // Scroll to top handler
     const scrollToTop = () => {
-      const container = scrollContainer.value || document.querySelector('.models__deployment-install');
+      const container =
+        scrollContainer.value ||
+        document.querySelector(".models__deployment-install");
       if (container) {
-        container.scrollTo({ top: 0, behavior: 'smooth' });
+        container.scrollTo({ top: 0, behavior: "smooth" });
       }
     };
 
@@ -817,16 +1032,16 @@ export default {
     };
 
     const setupScrollListener = () => {
-      const container = document.querySelector('.models__deployment-install');
+      const container = document.querySelector(".models__deployment-install");
       if (container) {
         scrollContainer.value = container;
-        container.addEventListener('scroll', handleScroll, { passive: true });
+        container.addEventListener("scroll", handleScroll, { passive: true });
       }
     };
 
     const cleanupScrollListener = () => {
       if (scrollContainer.value) {
-        scrollContainer.value.removeEventListener('scroll', handleScroll);
+        scrollContainer.value.removeEventListener("scroll", handleScroll);
       }
     };
 
@@ -990,6 +1205,8 @@ export default {
       onAccessChanged,
       onDemoGenerate,
       DEMO_PROMPT,
+      // memory requirements computation
+      computeMemoryRequirements,
     };
   },
   async mounted() {
@@ -1000,7 +1217,10 @@ export default {
 
     // Load persisted chat history
     try {
-      const saved = await window.electronAPI?.store?.get?.("textInferences", []);
+      const saved = await window.electronAPI?.store?.get?.(
+        "textInferences",
+        []
+      );
       if (Array.isArray(saved) && saved.length > 0) {
         // Replace array (shallowRef requires full replacement, not mutation)
         this.inferences = [...saved];

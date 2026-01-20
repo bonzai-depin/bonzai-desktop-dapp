@@ -477,7 +477,7 @@ import {
 } from "../stores/generationStore";
 import AccessRequirements from "./AccessRequirements.vue";
 
-const DEMO_PROMPT = "Hello, welcome to BonzAI, the decentralized AI assistant.";
+const DEMO_PROMPT = "Hello, welcome to sovereign AI.";
 
 const API_BASE =
   (typeof process !== "undefined" && process.env?.VITE_API_BASE) ||
