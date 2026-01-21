@@ -220,7 +220,7 @@ const startPythonSubprocess = () => {
   console.log(
     `Starting diffuser [${launch.mode}] → ${launch.cmd} ${launch.args.join(" ")}`
   );
-  notifyServerStatus("starting", { message: "Starting ML server..." });
+  notifyServerStatus("starting", { message: "Starting server..." });
 
   const env = { ...process.env, PYTHONUNBUFFERED: "1" };
 
@@ -293,7 +293,7 @@ const checkPythonServer = async (url, silent = false) => {
         // Server is ready - reset restart counter (stability achieved)
         serverRestartCount = 0;
         restartBackoffMs = 2000;
-        notifyServerStatus("ready", { message: "ML server is ready." });
+        notifyServerStatus("ready", { message: "Server is ready." });
         return true;
       }
     } catch {}
@@ -655,7 +655,6 @@ const createWindow = async () => {
 // ─────────────────────────────────────────────────────────────────────────────
 app.on("ready", async () => {
   const flaskURL = `http://127.0.0.1:${PY_SERVER_PORT}`;
-  startPythonSubprocess();
 
   // ─────────────────────────────────────────────────────────────────────────────
   // WalletConnect WebSocket Origin Fix for Production Electron
@@ -681,10 +680,16 @@ app.on("ready", async () => {
     }
   );
 
+  // Create window immediately to prevent crash when clicking dock icon
+  // The Vue app will show loading state while server starts
+  await createWindow();
+
+  // Start Python server in background (Vue app handles loading UI)
+  startPythonSubprocess();
+
   try {
     await checkPythonServer(flaskURL);
     console.log("Python server is running!");
-    await createWindow();
   } catch (error) {
     console.error("Failed to start Python server:", error);
     app.quit();
@@ -705,7 +710,12 @@ app.on("window-all-closed", () => {
 
 app.on("activate", () => {
   if (subpy == null) startPythonSubprocess();
-  if (BrowserWindow.getAllWindows().length === 0) createWindow();
+  // Show existing window or create new one if none exists
+  if (mainWindow) {
+    mainWindow.show();
+  } else if (BrowserWindow.getAllWindows().length === 0) {
+    createWindow();
+  }
 });
 
 // ─────────────────────────────────────────────────────────────────────────────

@@ -199,7 +199,7 @@
                   class="notification is-danger"
                   style="margin-bottom: 1rem"
                 >
-                  <strong>I wasn't able to generate your audio.</strong>
+                  <strong>Generation failed.</strong>
                   {{ generation.error }}
                 </div>
 
@@ -396,6 +396,7 @@
                         @click="
                           copy(inference.question);
                           hasCopy[inference._originalIndex] = true;
+                          scrollToTop();
                         "
                       >
                         <span
@@ -1295,7 +1296,7 @@ export default {
           return;
         }
 
-        setError("audio", res?.data?.error || `Request failed (${res.status})`);
+        setError("audio", res?.data?.error, res.status);
       } catch (err) {
         setError("audio", err?.message || "Network error");
       } finally {

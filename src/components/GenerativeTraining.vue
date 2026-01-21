@@ -85,8 +85,8 @@
                     >
                       chat
                     </span>
-                    Chat
-                    <span class="tag is-info is-light ml-1">Llama</span>
+                    Chat Model
+                    <span class="tag is-info is-light ml-1">LLaMa</span>
                   </label>
 
                   <input
@@ -103,14 +103,16 @@
                     >
                       image
                     </span>
-                    Image
-                    <span class="tag is-warning is-light ml-1">Images</span>
+                    Image Model
+                    <span class="tag is-warning is-light ml-1">SDXL</span>
                   </label>
                 </div>
 
                 <!-- DATASET MANAGEMENT -->
-                <div class="notification is-dark mb-5">
-                  <h3 class="fira-sans-condensed-black-italic is-size-4 mb-3 has-text-left">
+                <div class="models__activity--payouts mb-5">
+                  <h3
+                    class="fira-sans-condensed-black-italic is-size-4 mb-3 has-text-left"
+                  >
                     <span class="material-symbols-outlined mr-2">dataset</span>
                     Training Datasets
                   </h3>
@@ -170,25 +172,31 @@
                 <!-- LLM TRAINING CONFIGURATION -->
                 <div
                   v-if="trainingType === 'llm'"
-                  class="notification is-warning mb-5"
+                  class="models__activity--payouts mb-5"
                 >
-                  <h3 class="fira-sans-condensed-black-italic is-size-4 mb-3">
-                    <span class="material-symbols-outlined mr-2">tune</span>
-                    LLM LoRA Configuration
+                  <h3 class="fira-sans-condensed-black-italic is-size-3 mb-3">
+                    <span class="material-symbols-outlined mr-2 is-size-2">
+                      tune
+                    </span>
+                    LoRA Configuration
                   </h3>
 
                   <div class="field has-text-left mt-5">
-                    <label class="label">Base Model</label>
-                    <div class="select is-fullwidth is-medium mb-5">
+                    <label
+                      class="label fira-sans-condensed-black-italic is-size-5"
+                    >
+                      Base Model
+                    </label>
+                    <div class="select is-fullwidth is-medium mb-5 is-large">
                       <select v-model="llmConfig.base_model">
                         <option value="llama-3.2-1b">
-                          Llama 3.2 1B (Fastest)
+                          LLaMa 3.2 1B (Fastest)
                         </option>
                         <option value="llama-3.2-3b">
-                          Llama 3.2 3B (Balanced)
+                          LLaMa 3.2 3B (Balanced)
                         </option>
                         <option value="llama-3.1-8b">
-                          Llama 3.1 8B (Best Quality)
+                          LLaMa 3.1 8B (Best Quality)
                         </option>
                       </select>
                     </div>
@@ -197,11 +205,13 @@
                   <div class="columns has-text-left mb-5">
                     <div class="column">
                       <div class="field">
-                        <label class="label">
+                        <label
+                          class="label fira-sans-condensed-black-italic is-size-5"
+                        >
                           Epochs: {{ llmConfig.epochs }}
                         </label>
                         <input
-                          class="slider is-fullwidth"
+                          class="slider is-fullwidth p-4"
                           type="range"
                           v-model.number="llmConfig.epochs"
                           min="1"
@@ -212,8 +222,12 @@
                     </div>
                     <div class="column">
                       <div class="field">
-                        <label class="label">Batch Size</label>
-                        <div class="select is-fullwidth">
+                        <label
+                          class="label fira-sans-condensed-black-italic is-size-5"
+                        >
+                          Batch Size
+                        </label>
+                        <div class="select is-fullwidth is-large">
                           <select v-model.number="llmConfig.batch_size">
                             <option :value="1">1 (Low VRAM)</option>
                             <option :value="2">2</option>
@@ -228,11 +242,13 @@
                   <div class="columns has-text-left mb-5">
                     <div class="column">
                       <div class="field">
-                        <label class="label">
+                        <label
+                          class="label fira-sans-condensed-black-italic is-size-5"
+                        >
                           LoRA Rank: {{ llmConfig.lora_r }}
                         </label>
                         <input
-                          class="slider is-fullwidth"
+                          class="slider is-fullwidth p-4"
                           type="range"
                           v-model.number="llmConfig.lora_r"
                           min="4"
@@ -243,11 +259,13 @@
                     </div>
                     <div class="column">
                       <div class="field">
-                        <label class="label">
+                        <label
+                          class="label fira-sans-condensed-black-italic is-size-5"
+                        >
                           LoRA Alpha: {{ llmConfig.lora_alpha }}
                         </label>
                         <input
-                          class="slider is-fullwidth"
+                          class="slider is-fullwidth p-4"
                           type="range"
                           v-model.number="llmConfig.lora_alpha"
                           min="8"
@@ -259,19 +277,27 @@
                   </div>
 
                   <div class="field has-text-left">
-                    <label class="label">Learning Rate</label>
+                    <label
+                      class="label fira-sans-condensed-black-italic is-size-5"
+                    >
+                      Learning Rate
+                    </label>
                     <input
-                      class="input"
+                      class="input is-large"
                       type="number"
                       v-model.number="llmConfig.learning_rate"
                       step="0.00001"
                     />
                   </div>
 
-                  <div class="field">
-                    <label class="checkbox">
-                      <input type="checkbox" v-model="llmConfig.use_4bit" />
-                      Use 4-bit Quantization (QLoRA - saves VRAM)
+                  <div class="field mt-5">
+                    <label class="checkbox fira-sans-condensed-black-italic">
+                      <input
+                        class="mr-2"
+                        type="checkbox"
+                        v-model="llmConfig.use_4bit"
+                      />
+                      4-bit Quantization
                     </label>
                   </div>
                 </div>
@@ -279,50 +305,60 @@
                 <!-- SDXL TRAINING CONFIGURATION -->
                 <div
                   v-if="trainingType === 'sdxl'"
-                  class="notification is-warning mb-5"
+                  class="models__activity--payouts mb-5 has-text-left"
                 >
-                  <h3 class="fira-sans-condensed-black-italic is-size-4 mb-3">
-                    <span class="material-symbols-outlined mr-2">tune</span>
-                    SDXL LoRA Configuration
+                  <h3 class="fira-sans-condensed-black-italic is-size-3 mb-3">
+                    <span class="material-symbols-outlined is-size-2 mr-2">
+                      tune
+                    </span>
+                    LoRA Configuration
                   </h3>
 
-                  <div class="field">
-                    <label class="label">
+                  <div class="field mb-5 mt-5">
+                    <label
+                      class="label fira-sans-condensed-black-italic is-size-5"
+                    >
                       Instance Prompt
                       <span class="has-text-danger">*</span>
                     </label>
                     <input
-                      class="input"
+                      class="input is-large"
                       type="text"
                       v-model="sdxlConfig.instance_prompt"
-                      placeholder="a photo of sks person"
+                      placeholder="A photo of sks person"
                     />
                     <p class="help">
-                      Use a unique token like "sks" to identify your subject
+                      Use a unique token like "sks" to identify your subject.
                     </p>
                   </div>
 
-                  <div class="field">
-                    <label class="label">Class Prompt (Optional)</label>
+                  <div class="field mb-5">
+                    <label
+                      class="label fira-sans-condensed-black-italic is-size-5"
+                    >
+                      Class Prompt (Optional)
+                    </label>
                     <input
-                      class="input"
+                      class="input is-large"
                       type="text"
                       v-model="sdxlConfig.class_prompt"
-                      placeholder="a photo of a person"
+                      placeholder="A photo of a person"
                     />
                     <p class="help">
-                      General class description for prior preservation
+                      General class description for prior preservation.
                     </p>
                   </div>
 
                   <div class="columns">
                     <div class="column">
                       <div class="field">
-                        <label class="label">
+                        <label
+                          class="label fira-sans-condensed-black-italic is-size-5"
+                        >
                           Training Steps: {{ sdxlConfig.epochs }}
                         </label>
                         <input
-                          class="slider is-fullwidth"
+                          class="slider is-fullwidth p-4"
                           type="range"
                           v-model.number="sdxlConfig.epochs"
                           min="100"
@@ -332,9 +368,13 @@
                       </div>
                     </div>
                     <div class="column">
-                      <div class="field">
-                        <label class="label">Resolution</label>
-                        <div class="select is-fullwidth">
+                      <div class="field mb-5">
+                        <label
+                          class="label fira-sans-condensed-black-italic is-size-5"
+                        >
+                          Resolution
+                        </label>
+                        <div class="select is-fullwidth is-large">
                           <select v-model.number="sdxlConfig.resolution">
                             <option :value="512">512 (Fast)</option>
                             <option :value="768">768</option>
@@ -348,11 +388,13 @@
                   <div class="columns">
                     <div class="column">
                       <div class="field">
-                        <label class="label">
+                        <label
+                          class="label fira-sans-condensed-black-italic is-size-5"
+                        >
                           LoRA Rank: {{ sdxlConfig.lora_rank }}
                         </label>
                         <input
-                          class="slider is-fullwidth"
+                          class="slider is-fullwidth p-4"
                           type="range"
                           v-model.number="sdxlConfig.lora_rank"
                           min="4"
@@ -363,9 +405,13 @@
                     </div>
                     <div class="column">
                       <div class="field">
-                        <label class="label">Learning Rate</label>
+                        <label
+                          class="label fira-sans-condensed-black-italic is-size-5"
+                        >
+                          Learning Rate
+                        </label>
                         <input
-                          class="input"
+                          class="input is-large"
                           type="number"
                           v-model.number="sdxlConfig.learning_rate"
                           step="0.00001"
@@ -374,27 +420,28 @@
                     </div>
                   </div>
 
-                  <div class="field">
+                  <div class="field fira-sans-condensed-black-italic is-size-5">
                     <label class="checkbox">
                       <input
                         type="checkbox"
                         v-model="sdxlConfig.use_8bit_adam"
+                        class="mr-2"
                       />
-                      Use 8-bit Adam (saves VRAM)
+                      Use 8-bit Adam
                     </label>
                   </div>
                 </div>
 
                 <!-- START TRAINING BUTTON -->
                 <button
-                  class="button is-danger is-large is-fullwidth mb-5"
+                  class="button is-danger is-large"
                   @click="startTraining"
                   :disabled="!canStartTraining || training.active"
                 >
                   <span class="material-symbols-outlined mr-2 is-size-2">
-                    rocket_launch
+                    exercise
                   </span>
-                  Start {{ trainingType === "llm" ? "LLM" : "SDXL" }} Training
+                  Start Training Now
                 </button>
 
                 <!-- TRAINED MODELS -->
@@ -466,45 +513,81 @@
       </div>
     </div>
 
-    <!-- CREATE DATASET MODAL -->
-    <div class="modal" :class="{ 'is-active': showCreateDataset }">
-      <div class="modal-background" @click="showCreateDataset = false"></div>
-      <div class="modal-card">
-        <header class="modal-card-head">
-          <p class="modal-card-title">Create Training Dataset</p>
+    <!-- CREATE DATASET MODAL (LVL Style - Purple) -->
+    <div
+      v-if="showCreateDataset"
+      class="dataset-modal-overlay"
+      @click.self="showCreateDataset = false"
+    >
+      <div class="dataset-modal">
+        <div class="has-text-right">
           <button
-            class="delete"
-            aria-label="close"
+            class="button is-danger"
             @click="showCreateDataset = false"
-          ></button>
-        </header>
-        <section class="modal-card-body">
-          <div class="field">
-            <label class="label">Dataset Name</label>
-            <input
-              class="input"
-              type="text"
-              v-model="newDataset.name"
-              placeholder="My Training Dataset"
-            />
-          </div>
+            title="Close"
+          >
+            <span class="material-symbols-outlined">close</span>
+          </button>
+        </div>
 
-          <div class="field">
-            <label class="label">Type</label>
-            <div class="select is-fullwidth">
-              <select v-model="newDataset.type">
-                <option value="text">Text (for LLM training)</option>
-                <option value="image">Image (for SDXL LoRA)</option>
-              </select>
+        <div class="dataset-modal-header has-text-center">
+          <span class="material-symbols-outlined is-size-1">
+            dataset
+          </span>
+          <h2 class="fira-sans-condensed-black-italic is-size-3">
+            Create Training Dataset
+          </h2>
+        </div>
+
+        <div class="dataset-modal-body has-text-left">
+          <!-- Dataset Type Preview -->
+          <div class="dataset-type-preview">
+            <div class="dataset-modal-status mb-4">
+              <span class="dataset-status-pill fira-sans-condensed-black-italic is-size-5">
+                {{ newDataset.type === 'text' ? 'TEXT DATASET' : 'IMAGE DATASET' }}
+              </span>
+            </div>
+            <div class="dataset-type-tags">
+              <span class="dataset-tag fira-sans-condensed-black-italic">
+                {{ newDataset.type === 'text' ? 'LLaMa' : 'SDXL' }}
+              </span>
+              <span v-if="newDataset.files.length" class="dataset-tag is-count fira-sans-condensed-black-italic">
+                {{ newDataset.files.length }} files
+              </span>
             </div>
           </div>
 
-          <div class="field">
-            <label class="label">
-              Upload {{ newDataset.type === "text" ? "Text Files" : "Images" }}
-            </label>
-            <div class="file has-name is-fullwidth is-boxed">
-              <label class="file-label">
+          <!-- Form Section -->
+          <div class="dataset-form-section">
+            <div class="dataset-field mb-5">
+              <label class="dataset-label fira-sans-condensed-black-italic">
+                Dataset Name
+              </label>
+              <input
+                class="dataset-input"
+                type="text"
+                v-model="newDataset.name"
+                placeholder="My Training Dataset"
+              />
+            </div>
+
+            <div class="dataset-field mb-5">
+              <label class="dataset-label fira-sans-condensed-black-italic">
+                Dataset Type
+              </label>
+              <div class="dataset-select-wrapper">
+                <select v-model="newDataset.type" class="dataset-select">
+                  <option value="text">Text (for LLM training)</option>
+                  <option value="image">Image (for SDXL LoRA)</option>
+                </select>
+              </div>
+            </div>
+
+            <div class="dataset-field">
+              <label class="dataset-label fira-sans-condensed-black-italic">
+                Upload {{ newDataset.type === "text" ? "Text Files" : "Images" }}
+              </label>
+              <div class="dataset-upload-zone">
                 <input
                   class="file-input"
                   type="file"
@@ -515,62 +598,59 @@
                   "
                   multiple
                   @change="handleDatasetFiles"
+                  id="dataset-file-input"
                 />
-                <span class="file-cta">
-                  <span class="file-icon">
-                    <span class="material-symbols-outlined">upload_file</span>
+                <label for="dataset-file-input" class="dataset-upload-label">
+                  <span class="material-symbols-outlined is-size-2">upload_file</span>
+                  <span class="fira-sans-condensed-black-italic">
+                    Click to select {{ newDataset.type === "text" ? "text" : "image" }} files
                   </span>
-                  <span class="file-label">
-                    Choose
-                    {{ newDataset.type === "text" ? "text" : "image" }} files...
+                  <span class="dataset-upload-hint">
+                    {{ newDataset.type === 'text' ? 'Supports .txt, .md, .json, .jsonl' : 'Upload 10-50 images (same size preferred)' }}
                   </span>
-                </span>
-                <span class="file-name" v-if="newDataset.files.length">
-                  {{ newDataset.files.length }} file(s) selected
-                </span>
-              </label>
+                </label>
+              </div>
             </div>
-            <p class="help" v-if="newDataset.type === 'text'">
-              Supports .txt, .md, .json, .jsonl formats
-            </p>
-            <p class="help" v-else>
-              Upload 10-50 images of your subject (same size preferred)
-            </p>
-          </div>
 
-          <!-- Preview uploaded files -->
-          <div v-if="newDataset.files.length" class="mt-4">
-            <label class="label">Selected Files</label>
-            <div class="tags">
-              <span
-                v-for="(file, idx) in newDataset.files"
-                :key="idx"
-                class="tag is-dark"
-              >
-                {{ file.name }}
-                <button
-                  class="delete is-small"
-                  @click="removeDatasetFile(idx)"
-                ></button>
-              </span>
+            <!-- Selected Files Preview -->
+            <div v-if="newDataset.files.length" class="dataset-files-preview">
+              <label class="dataset-label fira-sans-condensed-black-italic">
+                Selected Files
+              </label>
+              <div class="dataset-file-tags">
+                <span
+                  v-for="(file, idx) in newDataset.files"
+                  :key="idx"
+                  class="dataset-file-tag"
+                >
+                  {{ file.name }}
+                  <button
+                    class="delete is-small"
+                    @click="removeDatasetFile(idx)"
+                  ></button>
+                </span>
+              </div>
             </div>
           </div>
-        </section>
-        <footer class="modal-card-foot">
+        </div>
+
+        <div class="dataset-modal-footer mb-5">
           <button
-            class="button is-success"
+            class="button dataset-primary-btn is-medium fira-sans-condensed-black-italic"
             @click="createDataset"
-            :disabled="
-              !newDataset.name || !newDataset.files.length || creatingDataset
-            "
+            :disabled="!newDataset.name || !newDataset.files.length || creatingDataset"
           >
             <span v-if="creatingDataset" class="loader mr-2"></span>
+            <span class="material-symbols-outlined mr-2">add_circle</span>
             Create Dataset
           </button>
-          <button class="button" @click="showCreateDataset = false">
+          <button
+            class="button is-danger is-medium"
+            @click="showCreateDataset = false"
+          >
             Cancel
           </button>
-        </footer>
+        </div>
       </div>
     </div>
   </div>
@@ -995,7 +1075,7 @@ export default {
 h1,
 h3 {
   color: #fff;
-  text-shadow: 2px 2px 4px rgba(0, 0, 0, 0.8);
+  text-align: left;
 }
 
 h1 {
@@ -1193,5 +1273,281 @@ input[type="radio"]:checked + label {
   100% {
     transform: rotate(360deg);
   }
+}
+
+/* Dataset Modal (LVL Style - Purple) */
+.dataset-modal-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.78);
+  backdrop-filter: blur(16px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 10000;
+}
+
+.dataset-modal {
+  width: 92%;
+  max-width: 520px;
+  background: #0a0a0f;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 16px;
+  padding: 24px;
+  position: relative;
+  color: #fff;
+}
+
+.dataset-modal-header {
+  text-align: center;
+  margin-bottom: 18px;
+}
+
+.dataset-modal-header .material-symbols-outlined {
+  color: #9333ea;
+  display: block;
+  margin-bottom: 8px;
+}
+
+.dataset-modal-badge {
+  display: inline-block;
+  padding: 6px 16px;
+  background: linear-gradient(135deg, #9333ea 0%, #7c3aed 100%);
+  border-radius: 20px;
+  font-weight: 900;
+  color: #fff;
+  margin-bottom: 10px;
+}
+
+.dataset-modal-header h2 {
+  margin: 0;
+  color: #fff;
+}
+
+.dataset-modal-body {
+  margin-bottom: 16px;
+}
+
+.dataset-type-preview {
+  background: rgba(255, 255, 255, 0.04);
+  border-radius: 10px;
+  padding: 1.5em;
+  border: 1px solid rgba(147, 51, 234, 0.25);
+  margin-bottom: 16px;
+  text-align: center;
+}
+
+.dataset-modal-status {
+  margin-bottom: 10px;
+}
+
+.dataset-status-pill {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 8px 14px;
+  border-radius: 999px;
+  border: 2px solid rgba(147, 51, 234, 0.6);
+  color: #a855f7;
+  font-size: 14px;
+  font-weight: 600;
+  background: rgba(147, 51, 234, 0.1);
+  text-transform: uppercase;
+}
+
+.dataset-type-tags {
+  display: flex;
+  gap: 8px;
+  justify-content: center;
+  flex-wrap: wrap;
+}
+
+.dataset-tag {
+  padding: 4px 10px;
+  border-radius: 6px;
+  background: rgba(255, 255, 255, 0.08);
+  color: rgba(255, 255, 255, 0.8);
+  font-size: 12px;
+}
+
+.dataset-tag.is-count {
+  background: rgba(16, 185, 129, 0.15);
+  color: #10b981;
+  font-weight: 600;
+}
+
+.dataset-form-section {
+  background: rgba(255, 255, 255, 0.04);
+  border-radius: 10px;
+  padding: 1.5em;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  margin-bottom: 16px;
+}
+
+.dataset-field {
+  margin-bottom: 16px;
+}
+
+.dataset-field:last-child {
+  margin-bottom: 0;
+}
+
+.dataset-label {
+  display: block;
+  color: rgba(255, 255, 255, 0.9);
+  margin-bottom: 8px;
+  font-size: 14px;
+}
+
+.dataset-input,
+.dataset-select {
+  width: 100%;
+  padding: 12px 14px;
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  border-radius: 8px;
+  color: #fff;
+  font-size: 16px;
+  transition: border-color 0.2s ease;
+}
+
+.dataset-input:focus,
+.dataset-select:focus {
+  outline: none;
+  border-color: #9333ea;
+}
+
+.dataset-input::placeholder {
+  color: rgba(255, 255, 255, 0.4);
+}
+
+.dataset-select-wrapper {
+  position: relative;
+}
+
+.dataset-select {
+  appearance: none;
+  cursor: pointer;
+}
+
+.dataset-select option {
+  background: #1a1a2e;
+  color: #fff;
+}
+
+.dataset-upload-zone {
+  position: relative;
+  border: 2px dashed rgba(147, 51, 234, 0.4);
+  border-radius: 10px;
+  padding: 2em;
+  text-align: center;
+  transition: all 0.2s ease;
+  cursor: pointer;
+}
+
+.dataset-upload-zone:hover {
+  border-color: #9333ea;
+  background: rgba(147, 51, 234, 0.05);
+}
+
+.dataset-upload-zone .file-input {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  opacity: 0;
+  cursor: pointer;
+}
+
+.dataset-upload-label {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  color: rgba(255, 255, 255, 0.7);
+  cursor: pointer;
+}
+
+.dataset-upload-label .material-symbols-outlined {
+  color: #9333ea;
+}
+
+.dataset-upload-hint {
+  font-size: 12px;
+  color: rgba(255, 255, 255, 0.5);
+}
+
+.dataset-files-preview {
+  margin-top: 16px;
+}
+
+.dataset-file-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  max-height: 120px;
+  overflow-y: auto;
+}
+
+.dataset-file-tag {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 10px;
+  background: rgba(147, 51, 234, 0.15);
+  border: 1px solid rgba(147, 51, 234, 0.3);
+  border-radius: 6px;
+  color: #a855f7;
+  font-size: 12px;
+}
+
+.dataset-preview-box {
+  background: rgba(147, 51, 234, 0.08);
+  border: 1px solid rgba(147, 51, 234, 0.25);
+  border-radius: 10px;
+  padding: 1em 1.25em;
+}
+
+.dataset-preview-box p:first-child {
+  color: #9333ea;
+  margin-bottom: 8px;
+  font-size: 13px;
+}
+
+.dataset-preview-text {
+  color: rgba(255, 255, 255, 0.85);
+  font-size: 14px;
+  line-height: 1.5;
+}
+
+.dataset-preview-text strong {
+  color: #a855f7;
+}
+
+.dataset-modal-footer {
+  display: flex;
+  gap: 12px;
+  padding-top: 16px;
+  border-top: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.dataset-modal-footer .button {
+  flex: 1;
+  cursor: pointer;
+}
+
+.dataset-primary-btn {
+  background: linear-gradient(135deg, #9333ea 0%, #7c3aed 100%);
+  border: none;
+  color: #fff;
+}
+
+.dataset-primary-btn:hover:not(:disabled) {
+  background: linear-gradient(135deg, #a855f7 0%, #9333ea 100%);
+}
+
+.dataset-primary-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
 }
 </style>

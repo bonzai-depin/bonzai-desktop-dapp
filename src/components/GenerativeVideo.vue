@@ -264,9 +264,8 @@
                   class="notification is-danger"
                   style="margin-bottom: 1rem"
                 >
-                  <strong>I wasn't able to generate your video.</strong>
-                  Please retry, with different, lower settings or upgrade your
-                  hardware.
+                  <strong>Generation failed.</strong>
+                  {{ generation.error }}
                 </div>
                 <!-- DOWNLOAD PROGRESS -->
                 <div
@@ -491,8 +490,9 @@
                         <button
                           class="button is-medium is-success copy is-pulled-left p-0 pl-1 pr-1"
                           @click="
-                            copy(inference?.answer?.data?.video_path || '');
+                            copy(inference.question);
                             setCopied(inference._originalIndex);
+                            scrollToTop();
                           "
                         >
                           <span
@@ -1263,7 +1263,7 @@ export default {
           await probeCurrentMode();
           return;
         }
-        setError("video", res?.data?.error || `Request failed (${res.status})`);
+        setError("video", res?.data?.error, res.status);
       } catch (err) {
         setError("video", err?.message || "Network error");
       } finally {

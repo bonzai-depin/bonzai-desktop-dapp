@@ -570,7 +570,7 @@ class ChatterboxONNX:
 
 app = Flask(__name__)
 app.config["SECRET_KEY"] = os.environ.get("SECRET_KEY", "bonzai-secret-key")
-CORS(app)
+CORS(app, supports_credentials=True)
 
 socketio = SocketIO(
     app,
@@ -589,7 +589,7 @@ socketio = SocketIO(
 # Configuration
 JWT_SECRET = os.environ.get("BONZAI_JWT_SECRET", secrets.token_hex(32))
 HMAC_SECRET = os.environ.get("BONZAI_HMAC_SECRET", secrets.token_hex(32))
-ACCESS_TOKEN_EXPIRY = 30 * 60  # 30 minutes
+ACCESS_TOKEN_EXPIRY = 6 * 60 * 60  # 6 hours
 REFRESH_TOKEN_EXPIRY = 7 * 24 * 60 * 60  # 7 days
 CHALLENGE_EXPIRY = 300  # 5 minutes
 

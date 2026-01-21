@@ -103,7 +103,7 @@
                     <label
                       :for="'project_' + proj.name"
                       class="radio p-3 is-size-5"
-                      style="width: 100%;"
+                      style="width: 100%"
                       @click.prevent="toggleProjectDescription(proj.name)"
                     >
                       <span
@@ -122,7 +122,7 @@
                         <span
                           class="tag is-success partner fira-sans-condensed-black-italic is-small"
                         >
-                          {{ proj.markets.length }} Markets
+                          {{ proj.markets.length }} Events
                         </span>
                         <span
                           v-if="
@@ -152,7 +152,7 @@
                           <span
                             class="tag is-warning partner fira-sans-condensed-black-italic is-medium"
                           >
-                            {{ proj.accessPrice }} BONZAI
+                            {{ proj.accessPrice }} {{ proj.token }}
                           </span>
                         </div>
                       </button>
@@ -190,7 +190,7 @@
                         <h4
                           class="fira-sans-condensed-black-italic is-size-5 mb-2"
                         >
-                          Prediction Markets
+                          Future Events
                         </h4>
                         <ul class="sla-list">
                           <li v-for="(market, idx) in proj.markets" :key="idx">
@@ -218,14 +218,7 @@
                     <span class="material-symbols-outlined is-size-3 mr-2">
                       storefront
                     </span>
-                    Launch Market
-                    <div class="tags has-addons">
-                      <span
-                        class="tag is-warning partner fira-sans-condensed-black-italic is-medium"
-                      >
-                        1 ETH
-                      </span>
-                    </div>
+                    Launch Yours
                   </button>
                 </div>
               </div>
@@ -255,7 +248,7 @@
                       <label
                         for="agent_copymaster"
                         class="radio p-4"
-                        style="width: 100%;"
+                        style="width: 100%"
                         @click.prevent="toggleAgentDescription('copymaster')"
                       >
                         Polymarket Copy-Trading
@@ -348,7 +341,7 @@
                       <label
                         for="agent_tcg"
                         class="radio p-4"
-                        style="width: 100%;"
+                        style="width: 100%"
                         @click.prevent="toggleAgentDescription('tcg')"
                       >
                         TCG Prediction Market
@@ -453,17 +446,11 @@
                 >
                   <div class="columns is-vcentered">
                     <div class="column">
-                      <p
-                        class="fira-sans-condensed-black-italic is-size-5 mb-0"
+                      <h3
+                        class="is-size-4 mb-0 fira-sans-condensed-black-italic has-text-left"
                       >
-                        <span
-                          class="material-symbols-outlined mr-2"
-                          style="vertical-align: middle"
-                        >
-                          error
-                        </span>
                         AI Model Required
-                      </p>
+                      </h3>
                     </div>
                     <div class="column is-narrow">
                       <button
@@ -492,6 +479,19 @@
                       </button>
                     </div>
                   </div>
+                </div>
+
+                <div class="desc">
+                  <span
+                    class="material-symbols-outlined is-size-1 has-text-white"
+                  >
+                    online_prediction
+                  </span>
+                  <p class="notification is-info">
+                    Generate, launch and fund your own Prediction Market project
+                    using the Decentralized Service Level Agreement protocol
+                    (DSLA).
+                  </p>
                 </div>
 
                 <!-- Use Case Selection -->
@@ -542,18 +542,6 @@
                         </label>
                       </template>
                     </div>
-                    <p
-                      v-if="!isModelAvailable"
-                      class="has-text-danger is-size-6 mt-2"
-                    >
-                      <span
-                        class="material-symbols-outlined mr-1"
-                        style="font-size: 16px; vertical-align: middle"
-                      >
-                        warning
-                      </span>
-                      Download the AI model above to enable use case selection.
-                    </p>
                   </div>
                 </div>
                 <hr />
@@ -567,7 +555,7 @@
                 <div class="columns">
                   <div class="field column is-6">
                     <label
-                      class="label has-text-white has-text-left fira-sans-condensed-black-italic"
+                      class="label has-text-white has-text-left fira-sans-condensed-black-italic is-size-5"
                     >
                       Project Name *
                     </label>
@@ -575,14 +563,13 @@
                       <input
                         class="input is-large"
                         v-model="projectForm.name"
-                        placeholder="AI-generated..."
-                        :disabled="!selectedUseCase"
+                        placeholder="Enter project name"
                       />
                     </div>
                   </div>
                   <div class="field column is-6">
                     <label
-                      class="label has-text-white has-text-left fira-sans-condensed-black-italic"
+                      class="label has-text-white has-text-left fira-sans-condensed-black-italic is-size-5"
                     >
                       Token Symbol *
                     </label>
@@ -590,15 +577,14 @@
                       <input
                         class="input is-large"
                         v-model="projectForm.tokenSymbol"
-                        placeholder="AI-generated..."
-                        :disabled="!selectedUseCase"
+                        placeholder="e.g. BTC, ETH, DSLA"
                       />
                     </div>
                   </div>
                 </div>
                 <div class="field">
                   <label
-                    class="label has-text-white has-text-left fira-sans-condensed-black-italic"
+                    class="label has-text-white has-text-left fira-sans-condensed-black-italic is-size-5"
                   >
                     Project Description *
                   </label>
@@ -606,8 +592,7 @@
                     <textarea
                       class="textarea is-large"
                       v-model="projectForm.description"
-                      placeholder="AI-generated..."
-                      :disabled="!selectedUseCase"
+                      placeholder="Describe your project and its goals"
                     ></textarea>
                   </div>
                 </div>
@@ -623,46 +608,53 @@
                 <div class="columns">
                   <div class="field column is-4">
                     <label
-                      class="label has-text-white has-text-left fira-sans-condensed-black-italic"
+                      class="label has-text-white has-text-left fira-sans-condensed-black-italic is-size-5"
                     >
                       Total Supply
+                      <span v-if="projectForm.tokenSymbol">
+                        ({{ projectForm.tokenSymbol }})
+                      </span>
                     </label>
                     <div class="control">
                       <input
                         class="input is-large"
                         v-model="projectForm.totalSupply"
-                        placeholder="AI-generated..."
-                        :disabled="!selectedUseCase"
+                        placeholder="e.g. 1000000000"
                       />
                     </div>
                   </div>
                   <div class="field column is-4">
                     <label
-                      class="label has-text-white has-text-left fira-sans-condensed-black-italic"
+                      class="label has-text-white has-text-left fira-sans-condensed-black-italic is-size-5"
                     >
-                      Initial Liquidity (ETH)
+                      Initial Liquidity (
+                      <span v-if="projectForm.tokenSymbol">
+                        {{ projectForm.tokenSymbol }}/
+                      </span>
+                      DSLA)
                     </label>
                     <div class="control">
                       <input
                         class="input is-large"
                         v-model="projectForm.initialLiquidity"
-                        placeholder="AI-generated..."
-                        :disabled="!selectedUseCase"
+                        placeholder="e.g. 100000"
                       />
                     </div>
                   </div>
                   <div class="field column is-4">
                     <label
-                      class="label has-text-white has-text-left fira-sans-condensed-black-italic"
+                      class="label has-text-white has-text-left fira-sans-condensed-black-italic is-size-5"
                     >
-                      Access Price (BONZAI)
+                      Access Price
+                      <span v-if="projectForm.tokenSymbol">
+                        ({{ projectForm.tokenSymbol }})
+                      </span>
                     </label>
                     <div class="control">
                       <input
                         class="input is-large"
                         v-model="projectForm.accessPrice"
-                        placeholder="AI-generated..."
-                        :disabled="!selectedUseCase"
+                        placeholder="e.g. 10000"
                       />
                     </div>
                   </div>
@@ -674,14 +666,13 @@
                 <h2
                   class="fira-sans-condensed-black-italic is-size-2 has-text-white has-text-left mb-4 mt-5"
                 >
-                  Service Level Agreement Markets
+                  Future Events
                 </h2>
-                <p class="has-text-grey-light is-size-6 mb-4">
-                  Each market is structured as: "Will [Asset/Service]'s [Metric]
-                  [Operator] [Target] by [Date]?"
-                </p>
 
-                <div v-if="slaMarkets.length > 0" class="sla-markets">
+                <div
+                  v-if="slaMarkets.length > 0"
+                  class="sla-markets has-text-left"
+                >
                   <div
                     v-for="(sla, idx) in slaMarkets"
                     :key="idx"
@@ -709,7 +700,7 @@
                           placeholder="e.g. BAYC, Ethereum, Uniswap"
                         />
                       </div>
-                      <div class="field column is-3">
+                      <div class="field column is-2">
                         <label class="label has-text-white is-size-7">
                           Metric
                         </label>
@@ -719,7 +710,7 @@
                           placeholder="e.g. floor price, uptime, APY"
                         />
                       </div>
-                      <div class="field column is-2">
+                      <div class="field column is-3">
                         <label class="label has-text-white is-size-7">
                           Operator
                         </label>
@@ -750,9 +741,25 @@
                         <input class="input" type="date" v-model="sla.date" />
                       </div>
                     </div>
-                    <div class="sla-preview mt-2">
+                    <div class="field mt-3">
+                      <label class="label has-text-white is-size-7">
+                        <span class="material-symbols-outlined mr-1" style="font-size: 14px; vertical-align: middle;">
+                          link
+                        </span>
+                        Data Source (Verification Endpoint) *
+                      </label>
+                      <input
+                        class="input"
+                        v-model="sla.dataSource"
+                        placeholder="e.g. https://api.coingecko.com/api/v3/simple/price?ids=ethereum"
+                      />
+                      <p class="help has-text-grey-light">
+                        API endpoint used to verify the event outcome
+                      </p>
+                    </div>
+                    <div class="sla-preview mt-2 p-1">
                       <span
-                        class="tag is-warning fira-sans-condensed-black-italic"
+                        class="tag is-warning fira-sans-condensed-black-italic is-size-5"
                       >
                         {{ formatSlaQuestion(sla) }}
                       </span>
@@ -760,17 +767,57 @@
                   </div>
                 </div>
 
-                <div v-else class="notification is-info has-text-centered">
-                  <p class="pt-1">
-                    <span class="material-symbols-outlined is-size-1">
-                      wb_incandescent
-                    </span>
-                    Select a Use Case above to imagine a Prediction Market.
+                <div v-else class="notification is-info">
+                  <p class="p-0 m-0">
+                    Select a Use Case above to populate Future Events.
                   </p>
                 </div>
 
                 <hr />
 
+                <div
+                  v-if="
+                    projectForm.name &&
+                    projectForm.tokenSymbol &&
+                    slaMarkets.length === 0
+                  "
+                >
+                  <h2
+                    class="fira-sans-condensed-black-italic is-size-2 has-text-white has-text-left mb-4 mt-5"
+                  >
+                    Ready ?
+                  </h2>
+                  <ul class="notification is-warning has-text-left">
+                    <li>
+                      <span class="material-symbols-outlined">
+                        check_circle
+                      </span>
+                      This will launch the {{ projectForm.name }} ({{
+                        projectForm.tokenSymbol
+                      }}) project on BonzAI;
+                    </li>
+                    <li>
+                      <span class="material-symbols-outlined">
+                        check_circle
+                      </span>
+                      This will fund the DSLA/ETH pair on Uniswap;
+                    </li>
+                    <li v-if="projectForm.tokenSymbol">
+                      <span class="material-symbols-outlined">
+                        check_circle
+                      </span>
+                      This will create the {{ projectForm.tokenSymbol }}/DSLA
+                      pair on Uniswap;
+                    </li>
+                    <li v-if="projectForm.tokenSymbol">
+                      <span class="material-symbols-outlined">
+                        check_circle
+                      </span>
+                      This will create the {{ projectForm.tokenSymbol }}/ETH
+                      pair on Uniswap;
+                    </li>
+                  </ul>
+                </div>
                 <!-- Launch Button -->
                 <div class="control mt-4 has-text-centered mt-5">
                   <button
@@ -810,17 +857,11 @@
                 >
                   <div class="columns is-vcentered">
                     <div class="column">
-                      <p
-                        class="fira-sans-condensed-black-italic is-size-5 mb-0"
+                      <h3
+                        class="is-size-4 mb-0 fira-sans-condensed-black-italic has-text-left"
                       >
-                        <span
-                          class="material-symbols-outlined mr-2"
-                          style="vertical-align: middle"
-                        >
-                          error
-                        </span>
                         AI Model Required
-                      </p>
+                      </h3>
                     </div>
                     <div class="column is-narrow">
                       <button
@@ -967,29 +1008,21 @@
                       :key="mIdx"
                       class="tcg-market-card models__activity--payouts mt-5"
                     >
-                      <div class="columns">
-                        <div class="column is-8 has-text-left">
-                          <div class="tcg-market-question pt-2">
-                            <strong>{{ market.question }}</strong>
-                          </div>
-                          <div class="trading-market-details mt-3">
-                            <span class="tag is-dark mr-2">{{
-                              market.asset
-                            }}</span>
-                            <span class="tag is-dark mr-2">{{
-                              market.metric
-                            }}</span>
-                            <span class="tag is-info mr-2">
-                              {{ market.operator }} {{ market.target }}
-                            </span>
-                            <span class="tag is-warning">
-                              {{ formatDate(market.date) }}
+                      <div class="columns is-multiline">
+                        <div class="column is-12">
+                          <div class="sla-preview p-1">
+                            <span
+                              class="tag is-warning fira-sans-condensed-black-italic is-size-5"
+                              style="width: 100%"
+                            >
+                              <strong>{{ market.question }}</strong>
                             </span>
                           </div>
+                          <hr />
                           <!-- Position Display -->
                           <div
                             v-if="getPosition(selectedRunProtocol, mIdx)"
-                            class="current-positions mt-3"
+                            class="current-positions"
                           >
                             <span
                               v-if="
@@ -1006,20 +1039,27 @@
                             </span>
                             <span
                               v-if="
-                                hasPosition(selectedRunProtocol, mIdx, 'against')
+                                hasPosition(
+                                  selectedRunProtocol,
+                                  mIdx,
+                                  'against'
+                                )
                               "
                               class="tag is-medium is-danger fira-sans-condensed-black-italic"
                             >
                               AGAINST:
                               {{
-                                getPosition(selectedRunProtocol, mIdx, "against")
-                                  .amount
+                                getPosition(
+                                  selectedRunProtocol,
+                                  mIdx,
+                                  "against"
+                                ).amount
                               }}
                               {{ getProtocolByName(selectedRunProtocol).token }}
                             </span>
                           </div>
                         </div>
-                        <div class="column is-2">
+                        <div class="column is-3 is-offset-3">
                           <button
                             class="button is-success fira-sans-condensed-black-italic is-fullwidth"
                             @click="
@@ -1037,7 +1077,7 @@
                             YES
                           </button>
                         </div>
-                        <div class="column is-2">
+                        <div class="column is-3">
                           <button
                             class="button is-danger fira-sans-condensed-black-italic is-fullwidth"
                             @click="
@@ -1063,7 +1103,10 @@
 
               <!-- Polymarket Agent Interface -->
               <div v-else-if="selectedRunAgent === 'copymaster'">
-                <div class="models__activity--payouts pt-5 pb-5" style="position: relative; bottom: -40px; z-index: 11;">
+                <div
+                  class="models__activity--payouts pt-5 pb-5"
+                  style="position: relative; bottom: -40px; z-index: 11"
+                >
                   <!-- Time Period Selector -->
                   <h2
                     class="fira-sans-condensed-black-italic is-size-5 has-text-white has-text-left mb-4"
@@ -1231,9 +1274,9 @@
                       class="has-text-left"
                     >
                       <h4
-                        class="fira-sans-condensed-black-italic is-size-2 has-text-success mt-3"
+                        class="fira-sans-condensed-black-italic is-size-2 has-text-success mt-5"
                       >
-                      <span class="material-symbols-outlined is-size-1 mr-2">
+                        <span class="material-symbols-outlined is-size-1 mr-1">
                           online_prediction
                         </span>
                         High Conviction Positions
@@ -1627,16 +1670,44 @@
                       :key="market.id"
                       class="tcg-market-card models__activity--payouts mt-5"
                     >
-                      <div class="columns">
-                        <div class="column is-8 has-text-left">
-                          <div class="tcg-market-question pt-2">
-                            <strong>{{ market.question }}</strong>
+                      <div class="columns is-multiline">
+                        <div class="column is-12">
+                          <div class="sla-preview p-1">
+                            <span
+                              class="tag is-warning fira-sans-condensed-black-italic is-size-5"
+                              style="width: 100%"
+                            >
+                              <strong>{{ market.question }}</strong>
+                            </span>
+                          </div>
+                          <hr />
+                          <!-- Position Display -->
+                          <div
+                            v-if="getPosition('tcg', market.id)"
+                            class="current-positions"
+                          >
+                            <span
+                              v-if="hasPosition('tcg', market.id, 'for')"
+                              class="tag is-medium is-success fira-sans-condensed-black-italic mr-2"
+                            >
+                              FOR:
+                              {{ getPosition('tcg', market.id, 'for').amount }}
+                              tokens
+                            </span>
+                            <span
+                              v-if="hasPosition('tcg', market.id, 'against')"
+                              class="tag is-medium is-danger fira-sans-condensed-black-italic"
+                            >
+                              AGAINST:
+                              {{ getPosition('tcg', market.id, 'against').amount }}
+                              tokens
+                            </span>
                           </div>
                         </div>
-                        <div class="column is-2">
+                        <div class="column is-3 is-offset-3">
                           <button
                             class="button is-success fira-sans-condensed-black-italic is-fullwidth"
-                            @click="joinTcgMarket(market.id, 'for', 10)"
+                            @click="openPositionModal('tcg', market.id, 'for', market)"
                           >
                             <span class="material-symbols-outlined mr-1">
                               thumb_up
@@ -1644,10 +1715,10 @@
                             YES
                           </button>
                         </div>
-                        <div class="column is-2">
+                        <div class="column is-3">
                           <button
                             class="button is-danger fira-sans-condensed-black-italic is-fullwidth"
-                            @click="joinTcgMarket(market.id, 'against', 10)"
+                            @click="openPositionModal('tcg', market.id, 'against', market)"
                           >
                             <span class="material-symbols-outlined mr-1">
                               thumb_down
@@ -1690,27 +1761,53 @@
       </div>
     </div>
 
-    <!-- Position Modal -->
-    <div v-if="positionModal.show" class="modal is-active">
-      <div class="modal-background" @click="closePositionModal"></div>
-      <div class="modal-card">
-        <header class="modal-card-head">
-          <p class="modal-card-title fira-sans-condensed-black-italic">
-            Open {{ positionModal.side.toUpperCase() }} Position
-          </p>
-          <button class="delete" @click="closePositionModal"></button>
-        </header>
-        <section class="modal-card-body">
-          <p class="mb-4">{{ positionModal.market?.question }}</p>
-          <div class="field">
-            <label class="label">
-              Amount ({{
-                getProtocolByName(positionModal.protocol)?.token || "tokens"
-              }})
-            </label>
-            <div class="control">
+    <!-- Position Modal (LVL Style) -->
+    <div
+      v-if="positionModal.show"
+      class="position-modal-overlay"
+      @click.self="closePositionModal"
+    >
+      <div class="position-modal" :class="positionModal.side === 'for' ? 'is-for' : 'is-against'">
+        <div class="has-text-right">
+          <button
+            class="button is-danger"
+            @click="closePositionModal"
+            title="Close"
+          >
+            <span class="material-symbols-outlined">close</span>
+          </button>
+        </div>
+
+        <div class="position-modal-header has-text-center">
+          <span class="material-symbols-outlined is-size-1">
+            {{ positionModal.side === 'for' ? 'thumb_up' : 'thumb_down' }}
+          </span>
+          <h2 class="fira-sans-condensed-black-italic is-size-3 has-text-centered">
+            Open {{ positionModal.side === 'for' ? 'FOR' : 'AGAINST' }} Position
+          </h2>
+        </div>
+
+        <div class="position-modal-body">
+          <!-- Market Question Preview -->
+          <div class="position-market-preview">
+            <div class="position-modal-status mb-4">
+              <span class="position-status-pill fira-sans-condensed-black-italic is-size-6">
+                {{ positionModal.side === 'for' ? 'STAKING YES' : 'STAKING NO' }}
+              </span>
+            </div>
+            <p class="position-question has-text-centered">
+              {{ positionModal.market?.question }}
+            </p>
+          </div>
+
+          <!-- Form Section -->
+          <div class="position-form-section">
+            <div class="position-field">
+              <label class="position-label fira-sans-condensed-black-italic is-size-5 has-text-left">
+                Amount ({{ getProtocolByName(positionModal.protocol)?.token || "BONZAI" }})
+              </label>
               <input
-                class="input is-large"
+                class="position-input"
                 type="number"
                 v-model="positionModal.amount"
                 min="1"
@@ -1718,32 +1815,35 @@
               />
             </div>
           </div>
-          <p class="has-text-grey is-size-7 mt-3">
-            You are betting that the SLA condition will
-            <strong
-              :class="
-                positionModal.side === 'for'
-                  ? 'has-text-success'
-                  : 'has-text-danger'
-              "
-            >
-              {{ positionModal.side === "for" ? "be met" : "NOT be met" }}
-            </strong>
-            by the target date.
-          </p>
-        </section>
-        <footer class="modal-card-foot">
+
+          <!-- Preview Box -->
+          <div class="position-preview-box">
+            <p class="position-preview-text p-0 m-0 has-text-centered">
+              You are staking
+              <strong>{{ positionModal.amount || 0 }} {{ getProtocolByName(positionModal.protocol)?.token || "tokens" }}</strong>
+              that the condition will
+              <strong>{{ positionModal.side === "for" ? "be met" : "NOT be met" }}</strong>
+              by the target date.
+            </p>
+          </div>
+        </div>
+
+        <div class="position-modal-footer mb-5">
           <button
-            class="button fira-sans-condensed-black-italic"
-            :class="positionModal.side === 'for' ? 'is-success' : 'is-danger'"
+            class="button position-primary-btn is-medium fira-sans-condensed-black-italic"
             @click="confirmPosition"
             :disabled="!positionModal.amount || positionModal.amount <= 0"
           >
             <span class="material-symbols-outlined mr-2">check</span>
             Confirm Position
           </button>
-          <button class="button" @click="closePositionModal">Cancel</button>
-        </footer>
+          <button
+            class="button is-danger is-medium"
+            @click="closePositionModal"
+          >
+            Cancel
+          </button>
+        </div>
       </div>
     </div>
 
@@ -2139,6 +2239,7 @@ export default {
         operator: ">",
         target: "",
         date: "",
+        dataSource: "",
       });
     };
 
@@ -2515,10 +2616,7 @@ Keep it actionable and data-driven.`;
         return;
       }
 
-      showNotification(
-        `Purchasing access to ${projectName} for ${project.accessPrice} BONZAI...`,
-        "info"
-      );
+      showNotification(`Purchasing access to ${projectName}...`, "info");
 
       // Add to purchased protocols
       purchasedProtocols.value.push({ ...project });
@@ -2605,7 +2703,7 @@ Respond ONLY with valid JSON, no explanations:
           }
         }
 
-        loadingMessage.value = "Populating Initial Markets";
+        loadingMessage.value = "Populating Future Events";
 
         // Generate SLA markets
         const slaPrompt = `Generate 3 specific Service Level Agreement prediction markets for: "${useCase.label}"
@@ -2615,13 +2713,13 @@ Each market must specify a real asset/service, a measurable metric, a comparison
 
 Respond ONLY with valid JSON array, no explanations:
 [
-  {"asset": "specific asset name", "metric": "measurable metric", "operator": ">", "target": "value with unit", "date": "YYYY-MM-DD"},
-  {"asset": "specific asset name", "metric": "measurable metric", "operator": "<", "target": "value with unit", "date": "YYYY-MM-DD"},
-  {"asset": "specific asset name", "metric": "measurable metric", "operator": ">=", "target": "value with unit", "date": "YYYY-MM-DD"}
+  {"asset": "specific asset name", "metric": "measurable metric", "operator": ">", "target": "value with unit", "date": "YYYY-MM-DD", "dataSource": "https://api.example.com/endpoint"},
+  {"asset": "specific asset name", "metric": "measurable metric", "operator": "<", "target": "value with unit", "date": "YYYY-MM-DD", "dataSource": "https://api.example.com/endpoint"},
+  {"asset": "specific asset name", "metric": "measurable metric", "operator": ">=", "target": "value with unit", "date": "YYYY-MM-DD", "dataSource": "https://api.example.com/endpoint"}
 ]
 
 Example for NFT floor prices:
-[{"asset": "BAYC", "metric": "floor price", "operator": ">", "target": "50 ETH", "date": "2026-06-30"}]`;
+[{"asset": "BAYC", "metric": "floor price", "operator": ">", "target": "50 ETH", "date": "2026-06-30", "dataSource": "https://api.opensea.io/api/v1/collection/boredapeyachtclub/stats"}]`;
 
         const slaResponse = await window.electronAPI.chat(slaPrompt);
         if (generationCancelled.value) return;
@@ -2638,6 +2736,7 @@ Example for NFT floor prices:
                 operator: m.operator || ">",
                 target: m.target || "",
                 date: m.date || "",
+                dataSource: m.dataSource || "",
               }));
             } catch (e) {
               console.error("Failed to parse SLA JSON:", e);
@@ -2669,14 +2768,27 @@ Example for NFT floor prices:
         return;
       }
 
+      // Check that all SLA markets have a data source
+      const missingDataSource = slaMarkets.value.some(
+        (sla) => sla.asset && sla.metric && sla.target && sla.date && !sla.dataSource
+      );
+      if (missingDataSource) {
+        showNotification(
+          "Please provide a data source (verification endpoint) for each event",
+          "warning"
+        );
+        return;
+      }
+
       const markets = slaMarkets.value
-        .filter((sla) => sla.asset && sla.metric && sla.target && sla.date)
+        .filter((sla) => sla.asset && sla.metric && sla.target && sla.date && sla.dataSource)
         .map((sla) => ({
           asset: sla.asset,
           metric: sla.metric,
           operator: sla.operator,
           target: sla.target,
           date: sla.date,
+          dataSource: sla.dataSource,
           question: formatSlaQuestion(sla),
         }));
 
@@ -2919,6 +3031,15 @@ p {
   text-align: justify;
 }
 
+div.desc p {
+  padding: 1em;
+  font-size: 28px;
+  border-radius: 4px;
+  min-height: 126px;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  backdrop-filter: blur(32px);
+}
+
 .input,
 textarea,
 .select select {
@@ -3107,14 +3228,7 @@ label.radio .tags {
 }
 
 .notification.is-danger {
-  background: rgba(241, 70, 104, 0.2);
-  border: 1px solid rgba(241, 70, 104, 0.6);
-}
-
-.notification.is-danger p {
-  color: #f14668;
-  font-size: 16px;
-  margin-bottom: 0;
+  opacity: 0.8;
 }
 
 .filesize {
@@ -3727,6 +3841,250 @@ ol.top-traders-tags {
   border-color: rgba(255, 255, 255, 0.3);
 }
 
+/* Position Modal (LVL Style - Dynamic Colors) */
+.position-modal-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.78);
+  backdrop-filter: blur(16px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 10000;
+}
+
+.position-modal {
+  width: 92%;
+  max-width: 520px;
+  background: #0a0a0f;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 16px;
+  padding: 24px;
+  position: relative;
+  color: #fff;
+}
+
+.position-modal-header {
+  text-align: center;
+  margin-bottom: 18px;
+}
+
+/* FOR (Green) Theme */
+.position-modal.is-for .position-modal-header .material-symbols-outlined {
+  color: #10b981;
+  display: block;
+  margin-bottom: 8px;
+}
+
+.position-modal.is-for .position-modal-badge {
+  display: inline-block;
+  padding: 6px 16px;
+  background: linear-gradient(135deg, #10b981 0%, #059669 100%);
+  border-radius: 20px;
+  font-weight: 900;
+  color: #fff;
+  margin-bottom: 10px;
+}
+
+.position-modal.is-for .position-status-pill {
+  border: 2px solid rgba(16, 185, 129, 0.6);
+  color: #10b981;
+  background: rgba(16, 185, 129, 0.1);
+}
+
+.position-modal.is-for .position-market-preview {
+  border: 1px solid rgba(16, 185, 129, 0.25);
+}
+
+.position-modal.is-for .position-input:focus {
+  border-color: #10b981;
+}
+
+.position-modal.is-for .position-preview-box {
+  background: rgba(16, 185, 129, 0.08);
+  border: 1px solid rgba(16, 185, 129, 0.25);
+}
+
+.position-modal.is-for .position-preview-box p:first-child {
+  color: #10b981;
+}
+
+.position-modal.is-for .position-preview-text strong {
+  color: #10b981;
+}
+
+.position-modal.is-for .position-primary-btn {
+  background: linear-gradient(135deg, #10b981 0%, #059669 100%);
+}
+
+.position-modal.is-for .position-primary-btn:hover:not(:disabled) {
+  background: linear-gradient(135deg, #34d399 0%, #10b981 100%);
+}
+
+/* AGAINST (Red) Theme */
+.position-modal.is-against .position-modal-header .material-symbols-outlined {
+  color: #ef4444;
+  display: block;
+  margin-bottom: 8px;
+}
+
+.position-modal.is-against .position-modal-badge {
+  display: inline-block;
+  padding: 6px 16px;
+  background: linear-gradient(135deg, #ef4444 0%, #dc2626 100%);
+  border-radius: 20px;
+  font-weight: 900;
+  color: #fff;
+  margin-bottom: 10px;
+}
+
+.position-modal.is-against .position-status-pill {
+  border: 2px solid rgba(239, 68, 68, 0.6);
+  color: #ef4444;
+  background: rgba(239, 68, 68, 0.1);
+}
+
+.position-modal.is-against .position-market-preview {
+  border: 1px solid rgba(239, 68, 68, 0.25);
+}
+
+.position-modal.is-against .position-input:focus {
+  border-color: #ef4444;
+}
+
+.position-modal.is-against .position-preview-box {
+  background: rgba(239, 68, 68, 0.08);
+  border: 1px solid rgba(239, 68, 68, 0.25);
+}
+
+.position-modal.is-against .position-preview-box p:first-child {
+  color: #ef4444;
+}
+
+.position-modal.is-against .position-preview-text strong {
+  color: #ef4444;
+}
+
+.position-modal.is-against .position-primary-btn {
+  background: linear-gradient(135deg, #ef4444 0%, #dc2626 100%);
+}
+
+.position-modal.is-against .position-primary-btn:hover:not(:disabled) {
+  background: linear-gradient(135deg, #f87171 0%, #ef4444 100%);
+}
+
+/* Shared Position Modal Styles */
+.position-modal-header h2 {
+  margin: 0;
+  color: #fff;
+}
+
+.position-modal-body {
+  margin-bottom: 16px;
+}
+
+.position-market-preview {
+  background: rgba(255, 255, 255, 0.04);
+  border-radius: 10px;
+  padding: 1.5em;
+  margin-bottom: 16px;
+  text-align: center;
+}
+
+.position-modal-status {
+  margin-bottom: 10px;
+}
+
+.position-status-pill {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 8px 14px;
+  border-radius: 999px;
+  font-size: 14px;
+  font-weight: 600;
+  text-transform: uppercase;
+}
+
+.position-question {
+  color: rgba(255, 255, 255, 0.9);
+  font-size: 16px;
+  line-height: 1.5;
+  margin: 0;
+}
+
+.position-form-section {
+  background: rgba(255, 255, 255, 0.04);
+  border-radius: 10px;
+  padding: 1.5em;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  margin-bottom: 16px;
+}
+
+.position-field {
+  margin-bottom: 0;
+}
+
+.position-label {
+  display: block;
+  color: rgba(255, 255, 255, 0.9);
+  margin-bottom: 8px;
+  font-size: 14px;
+}
+
+.position-input {
+  width: 100%;
+  padding: 12px 14px;
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  border-radius: 8px;
+  color: #fff;
+  font-size: 16px;
+  transition: border-color 0.2s ease;
+}
+
+.position-input::placeholder {
+  color: rgba(255, 255, 255, 0.4);
+}
+
+.position-preview-box {
+  border-radius: 10px;
+  padding: 1em 1.25em;
+}
+
+.position-preview-box p:first-child {
+  margin-bottom: 8px;
+  font-size: 13px;
+}
+
+.position-preview-text {
+  color: rgba(255, 255, 255, 0.85);
+  font-size: 14px;
+  line-height: 1.5;
+}
+
+.position-modal-footer {
+  display: flex;
+  gap: 12px;
+  padding-top: 16px;
+  border-top: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.position-modal-footer .button {
+  flex: 1;
+  cursor: pointer;
+}
+
+.position-primary-btn {
+  border: none;
+  color: #fff;
+}
+
+.position-primary-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
 /* TCG Interface Styles */
 .tcg-interface {
   background: rgba(0, 0, 0, 0.2);
@@ -3868,6 +4226,7 @@ ol.top-traders-tags {
 .tcg-market-question strong {
   color: #fff;
   font-size: 16px;
+  text-align: left;
 }
 
 .tcg-market-details .tag,

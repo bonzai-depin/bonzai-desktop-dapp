@@ -28,7 +28,62 @@
 
 import { createApp } from "vue";
 import { createPinia } from 'pinia';
+import axios from 'axios';
 import App from "./App.vue";
+import { authService } from './services/auth.service.js';
+
+// Add axios interceptor to include auth headers on all requests
+axios.interceptors.request.use(
+  (config) => {
+    const headers = authService.getAuthHeaders();
+    if (headers.Authorization) {
+      config.headers.Authorization = headers.Authorization;
+    }
+    return config;
+  },
+  (error) => Promise.reject(error)
+);
+
+// Add axios response interceptor to handle 401 errors with automatic re-authentication
+axios.interceptors.response.use(
+  (response) => response,
+  async (error) => {
+    const originalRequest = error.config;
+
+    // Only handle 401 errors, and only retry once
+    if (error.response?.status === 401 && !originalRequest._retry) {
+      originalRequest._retry = true;
+
+      try {
+        // First try to refresh the token
+        await authService.refreshToken();
+        console.log("[Axios] Token refreshed, retrying request...");
+
+        // Update the authorization header and retry
+        const headers = authService.getAuthHeaders();
+        originalRequest.headers.Authorization = headers.Authorization;
+        return axios(originalRequest);
+      } catch (refreshError) {
+        // Refresh failed, try automatic re-authentication
+        console.log("[Axios] Token refresh failed, attempting re-authentication...");
+
+        const reAuthSuccess = await authService.reAuthenticate();
+        if (reAuthSuccess) {
+          console.log("[Axios] Re-authentication successful, retrying request...");
+          const headers = authService.getAuthHeaders();
+          originalRequest.headers.Authorization = headers.Authorization;
+          return axios(originalRequest);
+        }
+
+        // Both refresh and re-auth failed
+        console.log("[Axios] Re-authentication failed, session expired");
+        window.dispatchEvent(new CustomEvent("auth:expired"));
+      }
+    }
+
+    return Promise.reject(error);
+  }
+);
 
 const app = createApp(App);
 const pinia = createPinia();

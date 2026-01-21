@@ -148,7 +148,7 @@ jobs:
 
       - name: Package Electron app
         run: |
-          npx electron-packager . bonzai \
+          npx electron-packager . BonzAI \
             --platform=darwin \
             --arch=arm64 \
             --out=out \
@@ -158,7 +158,7 @@ jobs:
 
       - name: Copy Python runtime to app
         run: |
-          APP_RESOURCES="out/bonzai-darwin-arm64/bonzai.app/Contents/Resources"
+          APP_RESOURCES="out/BonzAI-darwin-arm64/BonzAI.app/Contents/Resources"
           mkdir -p "$APP_RESOURCES/server/python-runtime/macos-arm64"
           # With --onefile, copy the single executable
           cp binaries/macos-arm64/diffuser "$APP_RESOURCES/server/python-runtime/macos-arm64/"
@@ -176,7 +176,7 @@ jobs:
           IDENTITY=$(security find-identity -v -p codesigning build.keychain | grep "Developer ID Application" | head -1 | sed 's/.*"\(.*\)".*/\1/')
           echo "Using identity: $IDENTITY"
 
-          APP_PATH="out/bonzai-darwin-arm64/bonzai.app"
+          APP_PATH="out/BonzAI-darwin-arm64/BonzAI.app"
 
           # Remove test directories that contain unsigned binaries we don't need
           echo "Removing unnecessary test assets..."
@@ -274,13 +274,14 @@ jobs:
         run: |
           mkdir -p out/make
           npx electron-installer-dmg \
-            "out/bonzai-darwin-arm64/bonzai.app" \
-            "bonzai-${{ github.event.release.tag_name }}-arm64" \
+            "out/BonzAI-darwin-arm64/BonzAI.app" \
+            "BonzAI-${{ github.event.release.tag_name }}-arm64" \
             --out=out/make \
-            --overwrite
+            --overwrite \
+            --background=src/assets/background.png
 
           # Verify DMG was created
-          DMG_PATH="out/make/bonzai-${{ github.event.release.tag_name }}-arm64.dmg"
+          DMG_PATH="out/make/BonzAI-${{ github.event.release.tag_name }}-arm64.dmg"
           if [ -f "$DMG_PATH" ]; then
             echo "DMG created successfully at: $DMG_PATH"
             ls -lh "$DMG_PATH"
@@ -297,7 +298,7 @@ jobs:
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
           APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
         run: |
-          DMG_PATH="out/make/bonzai-${{ github.event.release.tag_name }}-arm64.dmg"
+          DMG_PATH="out/make/BonzAI-${{ github.event.release.tag_name }}-arm64.dmg"
 
           # Submit and capture output
           SUBMIT_OUTPUT=$(xcrun notarytool submit "$DMG_PATH" \
@@ -327,6 +328,6 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          DMG_PATH="out/make/bonzai-${{ github.event.release.tag_name }}-arm64.dmg"
+          DMG_PATH="out/make/BonzAI-${{ github.event.release.tag_name }}-arm64.dmg"
           gh release upload "${{ github.event.release.tag_name }}" "$DMG_PATH" --clobber
           echo "Uploaded: $DMG_PATH"

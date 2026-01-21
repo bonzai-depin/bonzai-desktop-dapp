@@ -2,9 +2,10 @@
  * BonzAI Authentication Service
  *
  * JWT-based authentication after WalletConnect.
- * - Short-lived access tokens (30 min)
+ * - Long-lived access tokens (6 hours)
  * - Long-lived refresh tokens (7 days, HttpOnly cookie)
  * - Automatic token refresh before expiry
+ * - Automatic re-authentication on 401 errors
  */
 
 import { reactive, readonly } from "vue";
@@ -25,14 +26,43 @@ const state = reactive({
   level: null,
   levelValue: 0,
   isAuthenticating: false,
+  isAwaitingSignature: false,
   error: null,
 });
 
 let refreshTimer = null;
+let signerGetter = null; // Function to get signer for re-authentication
+let reAuthPromise = null; // Prevent concurrent re-auth attempts
 
 // ═══════════════════════════════════════════════════════════════════════════
 // AUTHENTICATION FLOW
 // ═══════════════════════════════════════════════════════════════════════════
+
+/**
+ * Get user-friendly error message based on HTTP status code
+ */
+const getHttpErrorMessage = (status, defaultMsg) => {
+  switch (status) {
+    case 400:
+      return "Invalid request. Please try again.";
+    case 401:
+      return "Session expired. Please reconnect your wallet.";
+    case 403:
+      return "Access denied. You may need to upgrade your level.";
+    case 404:
+      return "Service not found. Please check if the server is running.";
+    case 429:
+      return "Too many requests. Please wait a moment and try again.";
+    case 500:
+      return "Server error. Please try again later.";
+    case 502:
+    case 503:
+    case 504:
+      return "Server is temporarily unavailable. Please try again later.";
+    default:
+      return defaultMsg || `Request failed (${status})`;
+  }
+};
 
 /**
  * Full authentication flow:
@@ -46,6 +76,7 @@ let refreshTimer = null;
  */
 export const authenticate = async (signer) => {
   state.isAuthenticating = true;
+  state.isAwaitingSignature = false;
   state.error = null;
 
   try {
@@ -59,14 +90,20 @@ export const authenticate = async (signer) => {
     });
 
     if (!challengeRes.ok) {
-      const err = await challengeRes.json();
-      throw new Error(err.error || "Failed to get challenge");
+      const err = await challengeRes.json().catch(() => ({}));
+      throw new Error(getHttpErrorMessage(challengeRes.status, err.error));
     }
 
     const { challenge, mac, message } = await challengeRes.json();
 
     // 2. User signs the message (wallet popup appears here)
-    const signature = await signer.signMessage(message);
+    state.isAwaitingSignature = true;
+    let signature;
+    try {
+      signature = await signer.signMessage(message);
+    } finally {
+      state.isAwaitingSignature = false;
+    }
 
     // 3. Send to server for verification + JWT
     const verifyRes = await fetch(`${API_BASE}/auth/verify`, {
@@ -82,8 +119,8 @@ export const authenticate = async (signer) => {
     });
 
     if (!verifyRes.ok) {
-      const err = await verifyRes.json();
-      throw new Error(err.error || "Authentication failed");
+      const err = await verifyRes.json().catch(() => ({}));
+      throw new Error(getHttpErrorMessage(verifyRes.status, err.error));
     }
 
     // 4. Store tokens and state
@@ -108,6 +145,7 @@ export const authenticate = async (signer) => {
     throw e;
   } finally {
     state.isAuthenticating = false;
+    state.isAwaitingSignature = false;
   }
 };
 
@@ -239,6 +277,53 @@ export const logout = () => {
 };
 
 /**
+ * Register a function to get the signer for automatic re-authentication
+ * Called by web3.service after wallet connection
+ */
+export const setSignerGetter = (getter) => {
+  signerGetter = getter;
+  console.log("[Auth] Signer getter registered for auto re-authentication");
+};
+
+/**
+ * Attempt to re-authenticate automatically using the stored signer getter
+ * Returns true if successful, false otherwise
+ */
+export const reAuthenticate = async () => {
+  // Prevent concurrent re-auth attempts
+  if (reAuthPromise) {
+    return reAuthPromise;
+  }
+
+  if (!signerGetter) {
+    console.log("[Auth] No signer getter registered, cannot re-authenticate");
+    return false;
+  }
+
+  reAuthPromise = (async () => {
+    try {
+      console.log("[Auth] Attempting automatic re-authentication...");
+      const signer = await signerGetter();
+      if (!signer) {
+        console.log("[Auth] No signer available");
+        return false;
+      }
+
+      await authenticate(signer);
+      console.log("[Auth] Automatic re-authentication successful");
+      return true;
+    } catch (e) {
+      console.error("[Auth] Automatic re-authentication failed:", e);
+      return false;
+    } finally {
+      reAuthPromise = null;
+    }
+  })();
+
+  return reAuthPromise;
+};
+
+/**
  * Make authenticated API request
  * Automatically includes auth headers and handles 401 responses
  */
@@ -254,7 +339,7 @@ export const authFetch = async (url, options = {}) => {
     credentials: "include",
   });
 
-  // Handle 401 - try to refresh token
+  // Handle 401 - try to refresh token, then re-authenticate
   if (res.status === 401 && state.accessToken) {
     try {
       await refreshToken();
@@ -267,7 +352,22 @@ export const authFetch = async (url, options = {}) => {
         },
         credentials: "include",
       });
-    } catch (e) {
+    } catch (refreshError) {
+      // Refresh failed, try automatic re-authentication
+      console.log("[Auth] Token refresh failed, attempting re-authentication...");
+      const reAuthSuccess = await reAuthenticate();
+      if (reAuthSuccess) {
+        // Retry with new token after re-auth
+        return fetch(url, {
+          ...options,
+          headers: {
+            ...options.headers,
+            ...getAuthHeaders(),
+          },
+          credentials: "include",
+        });
+      }
+      // Re-auth also failed
       logout();
       window.dispatchEvent(new CustomEvent("auth:expired"));
       throw new Error("Session expired. Please reconnect your wallet.");
@@ -281,6 +381,8 @@ export const authFetch = async (url, options = {}) => {
 // EXPORT
 // ═══════════════════════════════════════════════════════════════════════════
 
+export { getHttpErrorMessage };
+
 export const authService = {
   state: readonly(state),
 
@@ -289,9 +391,12 @@ export const authService = {
   refreshToken,
   getDemoToken,
   logout,
+  reAuthenticate,
+  setSignerGetter,
 
   // Utilities
   getAuthHeaders,
+  getHttpErrorMessage,
   isAuthenticated,
   hasMinLevel,
   authFetch,

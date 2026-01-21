@@ -1,7 +1,30 @@
 <template>
+  <!-- Awaiting Signature Notification -->
+  <div
+    v-if="authState.isAwaitingSignature"
+    class="server-notification notification is-warning"
+  >
+    <p class="mb-2">
+      <span class="fira-sans-condensed-black-italic is-size-4">
+        <button
+          disabled
+          class="button is-loading is-warning is-small mr-2 p-4"
+        ></button>
+        Awaiting signature...
+      </span>
+    </p>
+    <p class="is-size-6" style="opacity: 0.8">
+      Please sign the message in your wallet to authenticate.
+    </p>
+    <progress
+      class="progress is-small is-warning"
+      max="100"
+    ></progress>
+  </div>
+
   <!-- Server Status Notification (using standard notification pattern) -->
   <div
-    v-if="serverStatus.show"
+    v-else-if="serverStatus.show"
     class="server-notification notification"
     :class="{
       'is-info': serverStatus.type === 'restarting' || serverStatus.type === 'starting',
@@ -202,6 +225,7 @@ import Generative3D from "./components/Generative3D.vue";
 import GenerativeTraining from "./components/GenerativeTraining.vue";
 import SmartAgent from "./components/SmartAgent.vue";
 import BonzaiBottomBar from "./components/BonzaiBottomBar.vue";
+import { authService } from "./services/auth.service.js";
 
 export default {
   name: "App",
@@ -220,6 +244,7 @@ export default {
     const modelMode = ref("chat");
     const systemValues = ref({});
     const videoImageBase64 = ref("");
+    const authState = authService.state;
 
     // Server status tracking for self-healing notifications
     const serverStatus = reactive({
@@ -314,6 +339,7 @@ export default {
       goAnimateToVideo,
       serverStatus,
       handleServerRestart,
+      authState,
     };
   },
 };
@@ -638,17 +664,12 @@ p.question {
 
 .server-notification {
   animation: slideIn 0.3s ease-out;
-  backdrop-filter: blur(10px);
-  border-radius: 8px;
-  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.4);
-  max-width: 400px;
-  min-width: 300px;
-  padding: 1.25rem 2.5rem 1.25rem 1.5rem;
   position: fixed;
-  right: 1em;
-  top: 1em;
   width: 33%;
-  z-index: 9999;
+  top: 1em;
+  right: 1em;
+  z-index: 1;
+  opacity: 0.9;
 }
 
 .server-notification .delete {
@@ -662,7 +683,7 @@ p.question {
 }
 
 .server-notification p {
-  font-size: 16px;
+  font-size: 12px;
   margin-bottom: 0.5rem !important;
   text-align: left;
 }

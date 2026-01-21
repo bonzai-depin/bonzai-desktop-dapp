@@ -295,9 +295,8 @@
                   class="notification is-danger"
                   style="margin-bottom: 1rem"
                 >
-                  <strong>I wasn't able to generate your image.</strong>
-                  Please retry, with different, lower settings or upgrade your
-                  hardware.
+                  <strong>Generation failed.</strong>
+                  {{ generation.error }}
                 </div>
 
                 <!-- DOWNLOAD PROGRESS -->
@@ -528,6 +527,7 @@
                         @click="
                           copy(inference.question);
                           setCopied(inference._originalIndex);
+                          scrollToTop();
                         "
                       >
                         <span
@@ -1140,10 +1140,14 @@ export default {
         missing: Number.isFinite(r.missing) ? r.missing : null,
         root: r.root || null,
       }));
+      // Check for missing GGUFs from gguf_status (legacy) or required_files (new)
       const ggufs = Array.isArray(data?.gguf_status) ? data.gguf_status : [];
+      const requiredFiles = Array.isArray(data?.required_files) ? data.required_files : [];
       const missG = ggufs.filter((g) => g && g.configured && !g.exists);
-      readiness.missingGguf = missG.length > 0;
-      readiness.ggufNames = missG.map((g) =>
+      const missReq = requiredFiles.filter((f) => f && !f.ok && !f.exists);
+      const allMissing = [...missG, ...missReq];
+      readiness.missingGguf = allMissing.length > 0;
+      readiness.ggufNames = allMissing.map((g) =>
         (g.path || g.name || "").split("/").pop()
       );
       readiness.authRequired = !!data?.auth_required;
@@ -1458,7 +1462,7 @@ export default {
           return;
         }
 
-        setError("image", res?.data?.error || `Request failed (${res.status})`);
+        setError("image", res?.data?.error, res.status);
       } catch (err) {
         setError("image", err?.message || "Network error");
       } finally {

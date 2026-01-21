@@ -99,17 +99,11 @@
           <div v-if="!isModel" class="notification is-danger mb-5">
             <div class="columns is-vcentered">
               <div class="column">
-                <p class="is-size-5 mb-0">
-                  <span
-                    class="material-symbols-outlined mr-2"
-                    style="vertical-align: text-top"
-                  >
-                    error
-                  </span>
+                <h3 class="is-size-4 mb-0 fira-sans-condensed-black-italic has-text-left">
                   AI Model Required
-                </p>
+                </h3>
                 <p class="is-size-6 mt-1">
-                  Download {{ currentModel.modelname }} to generate 3D objects
+                  Download {{ currentModel.modelname }} to generate 3D objects.
                 </p>
               </div>
               <div class="column is-narrow">
@@ -1965,9 +1959,7 @@ Output raw JavaScript code only. Match the reference complexity. No explanations
         await toClipboard(text);
         hasCopy[index] = true;
         setTimeout(() => (hasCopy[index] = false), 2000);
-        document
-          .querySelector("#prompt")
-          ?.scrollIntoView({ behavior: "smooth", block: "center" });
+        scrollToTop();
       } catch (e) {
         console.error("Copy failed:", e);
       }

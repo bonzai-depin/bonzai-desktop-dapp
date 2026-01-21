@@ -32,33 +32,34 @@
               </div>
             </div>
           </div>
-          <p class="desc">
-            {{ currentModel.modeldesc }}
-                            <h3 class="fira-sans-condensed-black-italic mt-5">
-                  <span
-                    class="material-symbols-outlined is-size-1 mr-2"
-                  >
-                    computer
-                  </span>
-                  Hardware Requirements
-                </h3>
-            <span class="tags pt-3 fira-sans-condensed-black-italic">
-              <span class="tag is-info">
-                <span class="material-symbols-outlined">memory</span>
-                {{ computeMemoryRequirements(currentModel).vramGB }} GB VRAM
+          <div class="desc">
+            <p>
+              {{ currentModel.modeldesc }}
+              <div class="fira-sans-condensed-black-italic mt-5">
+                <span class="material-symbols-outlined is-size-1 mr-2">
+                  computer
+                </span>
+                Hardware Requirements
+              </div>
+              <span class="tags pt-3 fira-sans-condensed-black-italic">
+                <span class="tag is-info">
+                  <span class="material-symbols-outlined">memory</span>
+                  {{ computeMemoryRequirements(currentModel).vramGB }} GB VRAM
+                </span>
+                <span class="tag is-info">
+                  <span class="material-symbols-outlined">memory</span>
+                  {{ computeMemoryRequirements(currentModel).ramGB }} GB RAM
+                </span>
+                <span class="tag is-info">
+                  {{
+                    computeMemoryRequirements(currentModel).breakdown
+                      .contextSize
+                  }}
+                  CTX
+                </span>
               </span>
-              <span class="tag is-info">
-                <span class="material-symbols-outlined">memory</span>
-                {{ computeMemoryRequirements(currentModel).ramGB }} GB RAM
-              </span>
-              <span class="tag is-info">
-                {{
-                  computeMemoryRequirements(currentModel).breakdown.contextSize
-                }}
-                CTX
-              </span>
-            </span>
-          </p>
+            </p>
+          </div>
           <div class="models__deployment-install--cta has-text-right p-0">
             <button
               class="button is-success is-large fira-sans-condensed-black-italic mr-5"
@@ -236,6 +237,7 @@
                   @click="
                     copy(inference.answer.text);
                     hasCopy[inference._originalIndex] = true;
+                    scrollToTop();
                   "
                   v-if="!hasCopy[inference._originalIndex]"
                 >
@@ -244,7 +246,10 @@
                 </button>
                 <button
                   class="button is-medium is-outlined copy is-pulled-right"
-                  @click="copy(inference.answer.text)"
+                  @click="
+                    copy(inference.answer.text);
+                    scrollToTop();
+                  "
                   v-if="
                     hasCopy[inference._originalIndex] &&
                     hasCopy[inference._originalIndex] == true
@@ -418,6 +423,7 @@
                   @click="
                     copy(inference.answer.text);
                     hasCopy[inference._originalIndex] = true;
+                    scrollToTop();
                   "
                   v-if="!hasCopy[inference._originalIndex]"
                 >
@@ -426,7 +432,10 @@
                 </button>
                 <button
                   class="button is-medium is-outlined copy is-pulled-right"
-                  @click="copy(inference.answer.text)"
+                  @click="
+                    copy(inference.answer.text);
+                    scrollToTop();
+                  "
                   v-if="
                     hasCopy[inference._originalIndex] &&
                     hasCopy[inference._originalIndex] == true
@@ -1432,7 +1441,7 @@ p {
   transform: translate3d(0, 0, 0);
 }
 
-p.desc {
+div.desc p {
   padding: 1em;
   font-size: 28px;
   border-radius: 4px;

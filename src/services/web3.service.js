@@ -266,30 +266,52 @@ export const connectWallet = async () => {
     // Set up event listeners
     setupEventListeners();
 
-    // Authenticate with server (triggers sign message prompt)
+    // Authenticate with server
+    // First try to refresh existing token (avoids signature prompt on reconnect)
     try {
-      const signer = await browserProvider.getSigner();
-      const authResult = await authService.authenticate(signer);
-
+      const refreshResult = await authService.refreshToken();
       state.isAuthenticated = true;
-      state.authLevel = authResult.level;
-      state.authLevelValue = authResult.levelValue;
+      state.authLevel = refreshResult.level;
+      state.authLevelValue = refreshResult.level_value;
+      console.log(`[Web3] Token refreshed, level ${refreshResult.level}`);
+    } catch (refreshError) {
+      // Refresh failed - need fresh authentication (triggers sign message prompt)
+      console.log("[Web3] Token refresh failed, requesting new signature...");
+      try {
+        const signer = await browserProvider.getSigner();
+        const authResult = await authService.authenticate(signer);
 
-      console.log(`[Web3] Authenticated with level ${authResult.level}`);
-    } catch (authError) {
-      // User rejected signature or auth failed
-      // Connection still valid, but not authenticated
-      console.warn("[Web3] Authentication failed:", authError.message);
-      state.isAuthenticated = false;
-      state.authLevel = null;
-      state.authLevelValue = 0;
+        state.isAuthenticated = true;
+        state.authLevel = authResult.level;
+        state.authLevelValue = authResult.levelValue;
 
-      // If user rejected the signature, disconnect
-      if (authError.message?.includes("rejected") || authError.message?.includes("denied")) {
-        await disconnectWallet();
-        return { success: false, error: "Authentication cancelled" };
+        console.log(`[Web3] Authenticated with level ${authResult.level}`);
+      } catch (authError) {
+        // User rejected signature or auth failed
+        // Connection still valid, but not authenticated
+        console.warn("[Web3] Authentication failed:", authError.message);
+        state.isAuthenticated = false;
+        state.authLevel = null;
+        state.authLevelValue = 0;
+
+        // If user rejected the signature, disconnect
+        if (authError.message?.includes("rejected") || authError.message?.includes("denied")) {
+          await disconnectWallet();
+          return { success: false, error: "Authentication cancelled" };
+        }
       }
     }
+
+    // Register signer getter for automatic re-authentication
+    authService.setSignerGetter(async () => {
+      if (!browserProvider) return null;
+      try {
+        return await browserProvider.getSigner();
+      } catch (e) {
+        console.error("[Web3] Failed to get signer for re-auth:", e);
+        return null;
+      }
+    });
 
     return {
       success: true,

@@ -6,6 +6,7 @@
 
 import { reactive, readonly } from 'vue';
 import { io } from 'socket.io-client';
+import { getHttpErrorMessage } from '../services/auth.service.js';
 
 const API_BASE =
   (typeof process !== 'undefined' && process.env?.VITE_API_BASE) ||
@@ -307,10 +308,25 @@ export const clearError = (modality) => {
 
 /**
  * Set error state for a modality (e.g., HTTP errors).
+ * Automatically formats HTTP errors with user-friendly messages.
  */
-export const setError = (modality, error) => {
+export const setError = (modality, error, statusCode = null) => {
   if (state[modality]) {
-    state[modality].error = error;
+    // Extract status code from error message if not provided
+    let finalError = error;
+    if (!statusCode && typeof error === 'string') {
+      const match = error.match(/\((\d{3})\)$/);
+      if (match) {
+        statusCode = parseInt(match[1], 10);
+      }
+    }
+
+    // Format with user-friendly message if we have a status code
+    if (statusCode) {
+      finalError = getHttpErrorMessage(statusCode, error);
+    }
+
+    state[modality].error = finalError;
     state[modality].stage = 'error';
     state[modality].active = false;
     releaseGlobalLock(modality);
