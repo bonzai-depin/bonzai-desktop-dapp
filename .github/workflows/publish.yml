@@ -273,12 +273,24 @@ jobs:
       - name: Create DMG
         run: |
           mkdir -p out/make
-          npx electron-installer-dmg \
-            "out/BonzAI-darwin-arm64/BonzAI.app" \
-            "BonzAI-${{ github.event.release.tag_name }}-arm64" \
-            --out=out/make \
-            --overwrite \
-            --background=src/assets/background.png
+
+          # Install create-dmg for better customization options
+          brew install create-dmg
+
+          # Create DMG with custom layout
+          # Icons centered with 420px distance, white text
+          create-dmg \
+            --volname "BonzAI" \
+            --background "src/assets/background.png" \
+            --window-pos 200 120 \
+            --window-size 660 400 \
+            --icon-size 80 \
+            --icon "BonzAI.app" 120 200 \
+            --app-drop-link 540 200 \
+            --text-size 14 \
+            --no-internet-enable \
+            "out/make/BonzAI-${{ github.event.release.tag_name }}-arm64.dmg" \
+            "out/BonzAI-darwin-arm64/BonzAI.app"
 
           # Verify DMG was created
           DMG_PATH="out/make/BonzAI-${{ github.event.release.tag_name }}-arm64.dmg"

@@ -37,6 +37,13 @@ contextBridge.exposeInMainWorld("electronAPI", {
     // Return unsubscribe function
     return () => ipcRenderer.removeListener("server-status", handler);
   },
+  // Server log events (forward Python server output to renderer console)
+  onServerLog: (callback) => {
+    const handler = (_event, data) => callback(data);
+    ipcRenderer.on("server-log", handler);
+    // Return unsubscribe function
+    return () => ipcRenderer.removeListener("server-log", handler);
+  },
 });
 
 // ─────────────────────────────────────────────────────────────────────────────

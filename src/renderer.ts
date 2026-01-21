@@ -85,6 +85,19 @@ axios.interceptors.response.use(
   }
 );
 
+// Forward server logs to browser console
+if (window.electronAPI?.onServerLog) {
+  window.electronAPI.onServerLog(({ type, text }) => {
+    const prefix = "%c[Server]";
+    const style = "color: #10b981; font-weight: bold;";
+    if (type === "error") {
+      console.error(prefix, style, text);
+    } else {
+      console.log(prefix, style, text);
+    }
+  });
+}
+
 const app = createApp(App);
 const pinia = createPinia();
 

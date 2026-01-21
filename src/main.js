@@ -220,21 +220,133 @@ const startPythonSubprocess = () => {
   console.log(
     `Starting diffuser [${launch.mode}] → ${launch.cmd} ${launch.args.join(" ")}`
   );
+  console.log(`[Spawn] cwd: ${launch.cwd}`);
+  console.log(`[Spawn] Binary exists: ${fs.existsSync(launch.cmd)}`);
+  if (app.isPackaged) {
+    console.log("[Production] PyInstaller binary may take 1-3 minutes to start on first launch...");
+  }
   notifyServerStatus("starting", { message: "Starting server..." });
 
-  const env = { ...process.env, PYTHONUNBUFFERED: "1" };
+  // Ensure proper environment for PyInstaller binaries
+  // PyInstaller onefile mode extracts to TMPDIR - ensure it's writable
+  const homeDir = process.env.HOME || os.homedir();
+  const tmpDir = process.env.TMPDIR || path.join(homeDir, ".bonzai-tmp");
+
+  // Create temp directory if it doesn't exist
+  if (!fs.existsSync(tmpDir)) {
+    try {
+      fs.mkdirSync(tmpDir, { recursive: true });
+    } catch (e) {
+      console.warn(`[Spawn] Could not create temp dir: ${e.message}`);
+    }
+  }
+
+  const env = {
+    ...process.env,
+    PYTHONUNBUFFERED: "1",
+    PYTHONDONTWRITEBYTECODE: "1",
+    // Ensure HOME is set (required for some libraries)
+    HOME: homeDir,
+    // Ensure TMPDIR is set (PyInstaller extracts here)
+    TMPDIR: tmpDir,
+    // Add the binary's directory to PATH (helps find co-located libs)
+    PATH: `${launch.cwd}:${process.env.PATH || ""}`,
+    // Ensure shell is available
+    SHELL: process.env.SHELL || "/bin/bash",
+    // Locale settings (prevents some encoding issues)
+    LANG: process.env.LANG || "en_US.UTF-8",
+    LC_ALL: process.env.LC_ALL || "en_US.UTF-8",
+  };
+
+  // Log detailed spawn info
+  console.log(`[Spawn] Command: ${launch.cmd}`);
+  console.log(`[Spawn] Args: ${JSON.stringify(launch.args)}`);
+  console.log(`[Spawn] CWD: ${launch.cwd}`);
+  console.log(`[Spawn] TMPDIR: ${tmpDir}`);
+  console.log(`[Spawn] Binary exists: ${fs.existsSync(launch.cmd)}`);
+
+  // Check if binary is executable
+  try {
+    fs.accessSync(launch.cmd, fs.constants.X_OK);
+    console.log(`[Spawn] Binary is executable: true`);
+  } catch {
+    console.warn(`[Spawn] Binary is executable: false - attempting chmod`);
+    try {
+      fs.chmodSync(launch.cmd, 0o755);
+      console.log(`[Spawn] chmod applied successfully`);
+    } catch (e) {
+      console.error(`[Spawn] chmod failed: ${e.message}`);
+    }
+  }
 
   subpy = child_process.spawn(launch.cmd, launch.args, {
     cwd: launch.cwd,
     env,
-    stdio: ["ignore", "pipe", "pipe"],
+    stdio: ["pipe", "pipe", "pipe"],
     shell: false,
+    detached: false,
   });
 
-  subpy.stdout.on("data", (d) => process.stdout.write(`Python stdout: ${d}`));
-  subpy.stderr.on("data", (d) => process.stderr.write(`Python stderr: ${d}`));
+  // Close stdin immediately - server doesn't need input
+  if (subpy.stdin) {
+    subpy.stdin.end();
+  }
+
+  console.log(`[Spawn] Process started with PID: ${subpy.pid}`);
+
+  // Monitor for silent hang - if no output after 30s, something is wrong
+  let outputReceived = false;
+  const hangTimeout = setTimeout(() => {
+    if (!outputReceived && subpy && subpy.pid) {
+      console.error(`[Spawn] WARNING: No output received after 30 seconds - binary may be hanging`);
+      console.error(`[Spawn] Check if ${launch.cmd} runs correctly when executed manually`);
+      console.error(`[Spawn] Try running: ${launch.cmd} ${launch.args.join(" ")}`);
+    }
+  }, 30000);
+
+  // Check if spawn failed immediately
+  if (!subpy.pid) {
+    console.error("[Spawn] ERROR: Process failed to start - no PID assigned");
+    notifyServerStatus("error", { message: "Failed to start server process" });
+    return;
+  }
+
+  // Track if we've seen any output from the server
+  let hasReceivedOutput = false;
+
+  // Forward server logs to renderer console
+  const forwardLog = (data, type = "log") => {
+    const text = data.toString().trim();
+    if (!text) return;
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.webContents.send("server-log", { type, text });
+    }
+  };
+
+  // Mark output as received and clear hang timeout
+  const markOutputReceived = () => {
+    if (!hasReceivedOutput) {
+      hasReceivedOutput = true;
+      outputReceived = true; // Clear the hang warning
+      clearTimeout(hangTimeout);
+      console.log("[Server] First output received - server process is alive");
+    }
+  };
+
+  subpy.stdout.on("data", (d) => {
+    markOutputReceived();
+    process.stdout.write(`[Server] ${d}`);
+    forwardLog(d, "log");
+  });
+
+  subpy.stderr.on("data", (d) => {
+    markOutputReceived();
+    process.stderr.write(`[Server] ${d}`);
+    forwardLog(d, "error");
+  });
 
   subpy.on("close", (code) => {
+    clearTimeout(hangTimeout); // Clear hang detection
     console.log(`Python subprocess exited with code ${code}`);
     const wasRunning = subpy !== null;
     subpy = null;
@@ -285,11 +397,19 @@ const killPythonSubprocess = () => {
 };
 
 const checkPythonServer = async (url, silent = false) => {
-  const deadlineMs = Date.now() + 30000; // 30s
+  // Production builds with PyInstaller need longer startup time
+  // (extracting bundled libraries, loading ML models, etc.)
+  const timeoutMs = app.isPackaged ? 180000 : 30000; // 3 min for prod, 30s for dev
+  const startTime = Date.now();
+  const deadlineMs = startTime + timeoutMs;
+  let lastLogTime = 0;
+
   while (Date.now() < deadlineMs) {
     try {
       const res = await fetch(url);
       if (res.ok) {
+        const elapsedSec = ((Date.now() - startTime) / 1000).toFixed(1);
+        console.log(`Python server ready after ${elapsedSec}s`);
         // Server is ready - reset restart counter (stability achieved)
         serverRestartCount = 0;
         restartBackoffMs = 2000;
@@ -297,10 +417,26 @@ const checkPythonServer = async (url, silent = false) => {
         return true;
       }
     } catch {}
-    if (!silent) console.log("Waiting for Python server…");
+
+    const elapsed = Date.now() - startTime;
+    const elapsedSec = Math.floor(elapsed / 1000);
+
+    // Log progress every 5 seconds
+    if (!silent && elapsed - lastLogTime >= 5000) {
+      const remaining = Math.ceil((deadlineMs - Date.now()) / 1000);
+      console.log(`Waiting for Python server… (${elapsedSec}s elapsed, ${remaining}s remaining)`);
+      notifyServerStatus("starting", {
+        message: `Starting server... (${elapsedSec}s)`,
+        elapsed: elapsedSec,
+      });
+      lastLogTime = elapsed;
+    }
+
     await new Promise((r) => setTimeout(r, 1000));
   }
-  throw new Error("Python server did not start within timeout.");
+
+  const totalWait = Math.floor((Date.now() - startTime) / 1000);
+  throw new Error(`Python server did not start within ${totalWait}s timeout.`);
 };
 
 // Manual restart handler (can be called from renderer when max restarts exceeded)
@@ -692,7 +828,11 @@ app.on("ready", async () => {
     console.log("Python server is running!");
   } catch (error) {
     console.error("Failed to start Python server:", error);
-    app.quit();
+    // Don't quit - notify user and allow retry
+    notifyServerStatus("error", {
+      message: `Server failed to start: ${error.message}`,
+      canRetry: true,
+    });
   }
 });
 
