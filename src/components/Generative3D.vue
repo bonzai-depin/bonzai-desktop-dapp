@@ -94,45 +94,6 @@
               </div>
             </div>
           </div>
-
-          <!-- MODEL DOWNLOAD NOTIFICATION -->
-          <div v-if="!isModel" class="notification is-danger mb-5">
-            <div class="columns is-vcentered">
-              <div class="column">
-                <h3 class="is-size-4 mb-0 fira-sans-condensed-black-italic has-text-left">
-                  AI Model Required
-                </h3>
-                <p class="is-size-6 mt-1">
-                  Download {{ currentModel.modelname }} to generate 3D objects.
-                </p>
-              </div>
-              <div class="column is-narrow">
-                <button
-                  class="button is-success is-large fira-sans-condensed-black-italic"
-                  @click="
-                    downloadModel(currentModel.url, currentModel.filename)
-                  "
-                  :disabled="downloadProgress > 0"
-                >
-                  <span class="material-symbols-outlined mr-2">
-                    deployed_code_update
-                  </span>
-                  Download
-                  <span
-                    v-if="downloadProgress"
-                    class="filesize ml-2"
-                    style="font-size: 14px"
-                  >
-                    {{ downloadProgress }}%
-                  </span>
-                  <span v-else class="filesize ml-2" style="font-size: 14px">
-                    {{ currentModel.filesize }}
-                  </span>
-                </button>
-              </div>
-            </div>
-          </div>
-
           <div class="models__activity--payouts">
             <div class="columns">
               <div class="column is-12">
@@ -146,22 +107,49 @@
                   @demo-generate="onDemoGenerate"
                 />
 
-                <!-- GENERATION MODE SELECTOR -->
+                <!-- MODE & STRATEGY SELECTORS (side by side) -->
                 <div
                   class="environment-controls models__activity--payouts mb-4"
                 >
-                  <div class="columns">
-                    <div class="column is-12">
+                  <div class="columns is-multiline">
+                    <!-- Mode (Standard/Quality) -->
+                    <div class="column is-6">
                       <label
                         class="control-label fira-sans-condensed-black-italic"
                       >
-                        Generation Mode
+                        Mode
                       </label>
-                      <div class="mode-buttons">
+                      <div class="mode-buttons compact">
+                        <button
+                          v-for="mode in modelModes"
+                          :key="mode.id"
+                          class="mode-btn"
+                          :class="{ active: modelMode === mode.id }"
+                          @click="modelMode = mode.id"
+                          :title="mode.description"
+                        >
+                          <span class="mode-icon">
+                            <span class="material-symbols-outlined is-size-4">
+                              {{ mode.icon }}
+                            </span>
+                          </span>
+                          <span class="mode-label">{{ mode.label }}</span>
+                        </button>
+                      </div>
+                    </div>
+
+                    <!-- Strategy (Generation approach) -->
+                    <div class="column is-6">
+                      <label
+                        class="control-label fira-sans-condensed-black-italic"
+                      >
+                        Strategy
+                      </label>
+                      <div class="mode-buttons compact">
                         <button
                           v-for="mode in generationModes"
                           :key="mode.id"
-                          class="mode-btn"
+                          class="mode-btn small"
                           :class="{ active: generationMode === mode.id }"
                           @click="generationMode = mode.id"
                           :title="mode.description"
@@ -174,16 +162,128 @@
                           <span class="mode-label">{{ mode.label }}</span>
                         </button>
                       </div>
-                      <p
-                        class="mode-description has-text-grey-light mt-2"
-                        style="font-size: 14px"
-                      >
-                        {{
-                          generationModes.find((m) => m.id === generationMode)
-                            ?.description
-                        }}
-                      </p>
                     </div>
+
+                    <!-- Vision Analysis Indicator (always active) -->
+                    <div class="column is-6 mt-2">
+                      <div class="vision-indicator" :class="{ ready: visionModelReady }">
+                        <span class="material-symbols-outlined vision-icon">
+                          {{ visionModelReady ? 'visibility' : 'visibility_off' }}
+                        </span>
+                        <span class="vision-label">
+                          Vision Analysis
+                          <span v-if="visionModelReady" class="ml-2 tag is-success active fira-sans-condensed-black-italic">Active</span>
+                          <span v-else class="ml-2 tag is-danger pending fira-sans-condensed-black-italic">Download Required</span>
+                        </span>
+                      </div>
+                    </div>
+                    <div class="column is-6 mt-2">
+                      <!-- STRATEGY INFO -->
+                      <div class="notification is-info mb-4 strategy-info">
+                        <span class="material-symbols-outlined info-icon">
+                          info
+                        </span>
+                        <span>
+                          {{
+                            generationModes.find((m) => m.id === generationMode)
+                              ?.description
+                          }}
+                        </span>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
+                <!-- DOWNLOAD REQUIRED PANEL (LLM + Vision bundled) -->
+                <div
+                  v-if="needsDownload && !downloads.active"
+                  class="notification is-danger mb-4 p-5"
+                >
+                  <p class="mb-3">
+                    <strong class="fira-sans-condensed-black-italic is-size-2">
+                      Download Required
+                    </strong>
+                  </p>
+                  <ul class="download-list has-text-left">
+                    <li v-if="!isModel">
+                      <span class="material-symbols-outlined mr-2">deployed_code</span>
+                      <span class="download-item-name">
+                        {{ currentModel.filename }}
+                      </span>
+                      <span class="download-item-size">
+                        {{ currentModel.filesize }}
+                      </span>
+                    </li>
+                    <li v-if="!visionModelReady">
+                      <span class="material-symbols-outlined mr-2">
+                        visibility
+                      </span>
+                      <span class="download-item-name">{{ VISION_MODEL.name }}</span>
+                      <span class="download-item-size">{{ VISION_MODEL.filesize }}</span>
+                    </li>
+                  </ul>
+                  <button
+                    class="button is-warning mt-3 is-large"
+                    @click="downloadAllModels"
+                  >
+                    <span class="material-symbols-outlined mr-2">download</span>
+                    Download All
+                  </button>
+                </div>
+
+                <!-- DOWNLOAD PROGRESS -->
+                <div
+                  v-if="downloads && downloads.active"
+                  class="notification is-info mb-4 p-5"
+                >
+                  <p class="mb-2">
+                    <span class="fira-sans-condensed-black-italic is-size-4">
+                      Downloading
+                      <button
+                        disabled
+                        class="button is-loading is-info is-small mr-2 p-4"
+                      ></button>
+                    </span>
+                    <span
+                      class="fira-sans-condensed-black-italic is-pulled-right is-size-1"
+                    >
+                      {{ Math.round(downloads.total_progress || 0) }}%
+                    </span>
+                  </p>
+                  <progress
+                    class="progress is-success is-large"
+                    :value="downloads.progress || 0"
+                    max="100"
+                  >
+                    {{ Math.round(downloads.progress || 0) }}%
+                  </progress>
+                  <div
+                    v-if="downloadTaskList.length"
+                    style="max-height: 180px; overflow: auto"
+                  >
+                    <ul>
+                      <li
+                        v-for="t in downloadTaskList"
+                        :key="t.task_id"
+                        class="is-size-7 columns"
+                        style="text-transform: lowercase"
+                      >
+                        <div class="column has-text-left">
+                          <span class="material-symbols-outlined is-size-6">
+                            deployed_code
+                          </span>
+                          {{ t.filename }} —
+                          <span class="fira-sans-condensed-black-italic">
+                            {{ t.status }}
+                          </span>
+                        </div>
+                        <div
+                          class="column is-2 fira-sans-condensed-black-italic has-text-right"
+                        >
+                          {{ Math.round(t.progress || 0) }}%
+                        </div>
+                      </li>
+                    </ul>
                   </div>
                 </div>
 
@@ -349,6 +449,33 @@
                   </div>
                   <hr />
                   <p class="history-prompt">{{ item.prompt }}</p>
+
+                  <!-- Multi-angle Screenshots Preview -->
+                  <div
+                    v-if="item.screenshots && item.screenshots.length > 0"
+                    class="screenshots-preview"
+                  >
+                    <div class="screenshots-grid">
+                      <div
+                        v-for="(shot, shotIdx) in item.screenshots"
+                        :key="shotIdx"
+                        class="screenshot-thumb"
+                        @click="openScreenshotModal(item, shotIdx)"
+                        :title="shot.label || shot.name"
+                      >
+                        <img :src="shot.dataUrl" :alt="shot.label || shot.name" />
+                        <span class="screenshot-label">{{ shot.label || shot.name }}</span>
+                      </div>
+                    </div>
+                    <div
+                      v-if="item.visionVerified"
+                      class="vision-verified-badge"
+                    >
+                      <span class="material-symbols-outlined">verified</span>
+                      Vision Verified
+                    </div>
+                  </div>
+
                   <div v-if="!item.success" class="error-note">
                     <span class="material-symbols-outlined mr-1">error</span>
                     {{ item.notes }}
@@ -435,6 +562,66 @@
       </div>
     </div>
   </div>
+
+  <!-- Screenshot Modal -->
+  <div
+    v-if="screenshotModal.visible"
+    class="screenshot-modal-overlay"
+    @click.self="closeScreenshotModal"
+  >
+    <div class="screenshot-modal">
+      <button class="screenshot-modal-close" @click="closeScreenshotModal">
+        <span class="material-symbols-outlined">close</span>
+      </button>
+      <div class="screenshot-modal-header">
+        <h3 class="fira-sans-condensed-black-italic">
+          {{ screenshotModal.currentShot?.label || 'Screenshot' }}
+        </h3>
+        <div class="screenshot-modal-nav">
+          <button
+            class="nav-btn"
+            :disabled="screenshotModal.currentIndex <= 0"
+            @click="navigateScreenshot(-1)"
+          >
+            <span class="material-symbols-outlined">chevron_left</span>
+          </button>
+          <span class="nav-indicator">
+            {{ screenshotModal.currentIndex + 1 }} / {{ screenshotModal.shots?.length || 0 }}
+          </span>
+          <button
+            class="nav-btn"
+            :disabled="screenshotModal.currentIndex >= (screenshotModal.shots?.length || 1) - 1"
+            @click="navigateScreenshot(1)"
+          >
+            <span class="material-symbols-outlined">chevron_right</span>
+          </button>
+        </div>
+      </div>
+      <div class="screenshot-modal-content">
+        <img
+          v-if="screenshotModal.currentShot"
+          :src="screenshotModal.currentShot.dataUrl"
+          :alt="screenshotModal.currentShot.label"
+        />
+      </div>
+      <div class="screenshot-modal-footer">
+        <button
+          class="button is-info"
+          @click="downloadScreenshot(screenshotModal.currentShot)"
+        >
+          <span class="material-symbols-outlined mr-1">download</span>
+          Download
+        </button>
+        <button
+          class="button is-success ml-2"
+          @click="downloadAllScreenshots"
+        >
+          <span class="material-symbols-outlined mr-1">folder_zip</span>
+          Download All
+        </button>
+      </div>
+    </div>
+  </div>
 </template>
 
 <script>
@@ -442,6 +629,7 @@ import {
   ref,
   reactive,
   computed,
+  watch,
   onMounted,
   onBeforeUnmount,
   nextTick,
@@ -449,6 +637,28 @@ import {
 import ThreeViewer from "./ThreeViewer.vue";
 import AccessRequirements from "./AccessRequirements.vue";
 import useClipboard from "vue-clipboard3";
+import axios from "axios";
+import { io } from "socket.io-client";
+import {
+  addObjectInference,
+  loadObjectInferences,
+  removeObjectInference,
+  clearObjectInferences,
+  inferenceStore,
+} from "../stores/inferenceStore";
+
+// Server URL for vision feedback
+const SERVER_URL =
+  (typeof process !== "undefined" && process.env?.VITE_API_BASE) ||
+  (window?.electronAPI?.env && window.electronAPI.env.API_BASE) ||
+  "http://127.0.0.1:65000";
+
+const WS_DL = `${SERVER_URL}/downloads`;
+
+// Get headers for demo mode requests (auth is handled by global axios interceptor)
+const getDemoHeaders = (isDemo = false) => {
+  return isDemo ? { "X-Demo-Mode": "true" } : {};
+};
 
 // Array of impressive demo prompts for variety
 const DEMO_PROMPTS = [
@@ -912,7 +1122,8 @@ export default {
     const threeViewer = ref(null);
     const lastStatus = ref("");
     const showExamples = ref(false);
-    const objectInferences = ref([]);
+    // Use shared inference store for 3D objects
+    const objectInferences = computed(() => inferenceStore.state.objectInferences);
     const hasCopy = reactive([]);
     const autoRotate = ref(true);
     const currentTime = ref("day");
@@ -932,35 +1143,804 @@ export default {
         id: "normal",
         label: "Normal",
         icon: "bolt",
-        description: "Single-pass generation (fastest)",
+        description: "Generate → Vision verify → Fix (1-2 passes)",
+        visionChecks: 1, // Vision check after generation
       },
       {
         id: "specialized",
         label: "Specialized",
         icon: "layers",
-        description: "Structure → Details → Polish (3 passes)",
+        description: "Structure → Vision → Details → Vision → Polish → Vision",
+        visionChecks: 3, // Vision check after each phase
       },
       {
         id: "critique",
         label: "Critique",
         icon: "rate_review",
-        description: "Generate → Review & Improve (2 passes)",
+        description: "Generate → LLM critique → Vision critique → Improve",
+        visionChecks: 2, // After initial and after improvement
       },
       {
         id: "additive",
         label: "Additive",
         icon: "add_circle",
-        description: "Base → Accessories → Effects (3 passes)",
+        description: "Base → Vision → Accessories → Vision → Effects → Vision",
+        visionChecks: 3, // Vision check after each addition
       },
       {
         id: "extreme",
         label: "Extreme",
         icon: "diamond",
-        description: "Reference-quality with 50+ meshes (slowest)",
+        description: "Multi-pass with continuous vision refinement.",
+        visionChecks: 5, // Multiple vision checks throughout
       },
     ]);
 
     const MAX_RETRY_ATTEMPTS = 3;
+
+    // ═══════════════════════════════════════════════════════════════════════
+    // VISION ANALYSIS (MANDATORY)
+    // ═══════════════════════════════════════════════════════════════════════
+
+    // Multi-angle camera configurations for comprehensive analysis
+    const VISION_ANGLES = [
+      { name: "front", azimuth: 0, elevation: 15, label: "Front" },
+      { name: "side", azimuth: 90, elevation: 15, label: "Side" },
+      { name: "back", azimuth: 180, elevation: 15, label: "Back" },
+      { name: "top", azimuth: 45, elevation: 60, label: "Top" },
+    ];
+
+    // Feedback history to prevent oscillation
+    const feedbackHistory = ref([]);
+    const visionModelReady = ref(false);
+    const visionModelDownloading = ref(false);
+    const downloadStatus = ref("");
+    const isDownloading = ref(false);
+
+    // ═══════════════════════════════════════════════════════════════════════
+    // DOWNLOADS TRACKING (matches GenerativeImage pattern)
+    // ═══════════════════════════════════════════════════════════════════════
+    const downloads = reactive({
+      active: false,
+      pipelineId: null,
+      progress: 0,
+      total_progress: 0,
+      status: "pending",
+      wsUrl: WS_DL,
+      pipeline: { tasks: {} },
+    });
+
+    const downloadsSocket = ref(null);
+    const lastDlEventAt = ref(0);
+    let httpPollTimer = null;
+
+    const socketOpts = {
+      transports: ["polling", "websocket"],
+      reconnection: true,
+      reconnectionDelay: 1000,
+      reconnectionAttempts: 5,
+      timeout: 10000,
+    };
+
+    // Merge task data
+    const mergeTask = (existing, incoming) => {
+      if (!existing) return { ...incoming };
+      return {
+        ...existing,
+        ...incoming,
+        progress:
+          incoming.progress !== undefined
+            ? incoming.progress
+            : existing.progress,
+        status: incoming.status || existing.status,
+      };
+    };
+
+    // Compute total progress from tasks
+    const computeTotalFromTasks = (tasks) => {
+      const arr = Object.values(tasks);
+      if (!arr.length) return 0;
+      const sum = arr.reduce((acc, t) => acc + (t.progress || 0), 0);
+      return sum / arr.length;
+    };
+
+    // Apply pipeline update from server
+    const applyPipelineUpdate = (p) => {
+      if (!p) return;
+      downloads.pipelineId = p.pipeline_id || downloads.pipelineId;
+      downloads.status = p.status || downloads.status || "downloading";
+
+      const existing = downloads.pipeline?.tasks || {};
+      const incoming = p.tasks || {};
+      const merged = { ...existing };
+      for (const [tid, t] of Object.entries(incoming)) {
+        merged[tid] = mergeTask(existing[tid], t);
+      }
+      downloads.pipeline = {
+        ...(downloads.pipeline || {}),
+        ...p,
+        tasks: merged,
+      };
+
+      const serverPct = Number(p.total_progress ?? 0);
+      const tasksPct = computeTotalFromTasks(merged);
+      let next =
+        Number.isFinite(serverPct) && serverPct > 0 ? serverPct : tasksPct;
+
+      // Don't show 100% until every task is finished
+      const allTasksComplete = Object.values(merged).every((t) =>
+        ["completed", "failed", "cancelled"].includes(t.status)
+      );
+      const anyTaskPending = Object.values(merged).some((t) =>
+        ["downloading", "pending"].includes(t.status)
+      );
+      if (!allTasksComplete && next >= 100) {
+        next = anyTaskPending ? 99 : 100;
+      }
+
+      downloads.progress = next;
+      downloads.total_progress = next;
+
+      if (allTasksComplete && downloads.status === "downloading") {
+        downloads.status = "completed";
+      }
+
+      downloads.active = !["completed", "failed", "cancelled"].includes(
+        downloads.status
+      );
+    };
+
+    // Ensure WebSocket connection
+    const ensureDownloadsSocket = (base = WS_DL) => {
+      if (downloadsSocket.value) {
+        try {
+          downloadsSocket.value.disconnect();
+        } catch {}
+      }
+      downloads.wsUrl = base;
+      downloadsSocket.value = io(base, socketOpts);
+
+      downloadsSocket.value.on("connect", () => {
+        if (downloads.pipelineId) {
+          downloadsSocket.value.emit("subscribe", {
+            pipeline_id: downloads.pipelineId,
+          });
+        }
+      });
+
+      downloadsSocket.value.on("download_progress", ({ pipeline }) => {
+        lastDlEventAt.value = Date.now();
+        if (!pipeline) return;
+        applyPipelineUpdate(pipeline);
+      });
+
+      downloadsSocket.value.on("disconnect", () => {
+        console.warn("[Generative3D] Downloads socket disconnected");
+      });
+    };
+
+    // HTTP polling fallback
+    const kickHttpPollIfStale = (pipelineId) => {
+      if (httpPollTimer) clearInterval(httpPollTimer);
+      httpPollTimer = setInterval(async () => {
+        if (Date.now() - lastDlEventAt.value < 3000) return;
+        try {
+          const { data } = await axios.get(
+            `${SERVER_URL}/downloads/status/${pipelineId}`
+          );
+          if (data) {
+            applyPipelineUpdate(data);
+            if (!downloads.active) {
+              clearInterval(httpPollTimer);
+              httpPollTimer = null;
+            }
+          }
+        } catch {
+          clearInterval(httpPollTimer);
+          httpPollTimer = null;
+        }
+      }, 1000);
+    };
+
+    // Connect and subscribe to pipeline
+    const connectAndSubscribe = (pipelineId, websocketUrl) => {
+      if (!pipelineId) return;
+      ensureDownloadsSocket(websocketUrl || WS_DL);
+      downloads.active = true;
+      downloads.pipelineId = pipelineId;
+      downloads.status = downloads.status || "downloading";
+      try {
+        downloadsSocket.value.emit("subscribe", { pipeline_id: pipelineId });
+      } catch {}
+      kickHttpPollIfStale(pipelineId);
+    };
+
+    // Start download tracking
+    const startDownloadTracking = (pipelineId, websocketUrl) => {
+      connectAndSubscribe(pipelineId, websocketUrl);
+      const t = setInterval(async () => {
+        if (!downloads.active && downloads.status !== "failed") {
+          clearInterval(t);
+          // Recheck model status
+          await checkVisionModel();
+          await isModelAvailable();
+        }
+        if (downloads.status === "failed") clearInterval(t);
+      }, 1000);
+    };
+
+    // Resume active download if any
+    const resumeActiveDownloadIfAny = async () => {
+      try {
+        const { data } = await axios.get(`${SERVER_URL}/downloads/list`);
+        const active = (data?.pipelines || []).filter((p) =>
+          ["pending", "downloading", "retrying", "waiting_retry"].includes(
+            p.status
+          )
+        );
+        if (active.length) {
+          const { pipeline_id, websocket_url } = active[0];
+          startDownloadTracking(pipeline_id, websocket_url || WS_DL);
+        }
+      } catch {}
+    };
+
+    // Computed: sorted task list for display
+    const downloadTaskList = computed(() => {
+      const tasks = downloads.pipeline?.tasks || {};
+      const arr = Object.values(tasks);
+      const order = {
+        downloading: 0,
+        pending: 1,
+        completed: 2,
+        failed: 3,
+        cancelled: 4,
+      };
+      return arr
+        .map((t) => ({ ...t }))
+        .sort((a, b) => (order[a.status] ?? 5) - (order[b.status] ?? 5));
+    });
+
+    // Computed: needs download if LLM or vision model missing
+    const needsDownload = computed(
+      () => !isModel.value || !visionModelReady.value
+    );
+
+    // Download all required models (LLM + Vision)
+    const downloadAllModels = async () => {
+      if (downloads.active) return;
+
+      // Reset downloads state
+      downloads.active = true;
+      downloads.status = "downloading";
+      downloads.progress = 0;
+      downloads.total_progress = 0;
+      downloads.pipeline = { tasks: {} };
+
+      const needsLlm = !isModel.value;
+      const needsVision = !visionModelReady.value;
+      const llmTaskId = "llm-gguf";
+      const visionTaskId = "vision-model";
+
+      try {
+        // Initialize tasks for what we need to download
+        if (needsLlm) {
+          downloads.pipeline.tasks[llmTaskId] = {
+            task_id: llmTaskId,
+            filename: currentModel.value.filename,
+            status: "pending",
+            progress: 0,
+          };
+        }
+        if (needsVision) {
+          downloads.pipeline.tasks[visionTaskId] = {
+            task_id: visionTaskId,
+            filename: VISION_MODEL.name,
+            status: "pending",
+            progress: 0,
+          };
+        }
+
+        // Start LLM download via Electron IPC
+        if (needsLlm) {
+          downloads.pipeline.tasks[llmTaskId].status = "downloading";
+
+          // Set up progress listener for LLM
+          const llmProgressHandler = (e, data) => {
+            if (data.filename === currentModel.value.filename) {
+              const pct = Math.round(data.percent * 100);
+              downloads.pipeline.tasks[llmTaskId].progress = pct;
+              updateTotalProgress();
+            }
+          };
+          window.electronAPI.onDownloadProgress(llmProgressHandler);
+
+          const success = await window.electronAPI.downloadModel(
+            currentModel.value.url,
+            currentModel.value.filename
+          );
+
+          if (success) {
+            downloads.pipeline.tasks[llmTaskId].status = "completed";
+            downloads.pipeline.tasks[llmTaskId].progress = 100;
+            isModel.value = true;
+          } else {
+            downloads.pipeline.tasks[llmTaskId].status = "failed";
+          }
+          updateTotalProgress();
+        }
+
+        // Start Vision model download via server-side prefetch (Qwen3-VL HuggingFace)
+        if (needsVision) {
+          console.log("[Generative3D] Starting Qwen3-VL vision model download (server-side)...");
+
+          downloads.pipeline.tasks[visionTaskId].status = "downloading";
+          updateTotalProgress();
+
+          try {
+            // Trigger server-side prefetch
+            const { data } = await axios.post(`${SERVER_URL}/pipelines/prefetch`, {
+              pipeline: VISION_MODEL.pipeline,
+            });
+
+            if (data.pipeline_id) {
+              // Poll for completion
+              let completed = false;
+              while (!completed) {
+                await new Promise((r) => setTimeout(r, 2000));
+
+                try {
+                  const { data: statusData } = await axios.get(
+                    `${SERVER_URL}/downloads/status/${data.pipeline_id}`
+                  );
+
+                  console.log("[Vision] Download status:", statusData.status, "progress:", statusData.total_progress);
+
+                  if (statusData.status === "completed") {
+                    downloads.pipeline.tasks[visionTaskId].status = "completed";
+                    downloads.pipeline.tasks[visionTaskId].progress = 100;
+                    visionModelReady.value = true;
+                    completed = true;
+                  } else if (statusData.status === "failed") {
+                    downloads.pipeline.tasks[visionTaskId].status = "failed";
+                    downloads.pipeline.tasks[visionTaskId].progress = 0;
+                    completed = true;
+                  } else {
+                    // Update progress - server returns total_progress
+                    const pct = Math.round(statusData.total_progress || 0);
+                    downloads.pipeline.tasks[visionTaskId].progress = pct;
+                    downloads.pipeline.tasks[visionTaskId].status = "downloading";
+                  }
+                  updateTotalProgress();
+                } catch (e) {
+                  console.error("[Vision] Download status check failed:", e);
+                }
+              }
+            }
+          } catch (e) {
+            console.error("[Vision] Failed to start download:", e);
+            downloads.pipeline.tasks[visionTaskId].status = "failed";
+          }
+
+          // Check final status
+          await checkVisionModel();
+        }
+
+        // Final status
+        if (isModel.value && visionModelReady.value) {
+          downloads.status = "completed";
+          downloads.progress = 100;
+          downloads.total_progress = 100;
+        }
+      } catch (e) {
+        console.error("Download error:", e);
+        downloads.status = "failed";
+      } finally {
+        // Mark as inactive after a short delay to show completion
+        if (downloads.status === "completed") {
+          await new Promise((r) => setTimeout(r, 1500));
+        }
+        downloads.active = false;
+      }
+    };
+
+    // Helper to update total progress from all tasks
+    const updateTotalProgress = () => {
+      const tasks = Object.values(downloads.pipeline?.tasks || {});
+      if (!tasks.length) return;
+      const sum = tasks.reduce((acc, t) => acc + (t.progress || 0), 0);
+      const pct = sum / tasks.length;
+      downloads.progress = pct;
+      downloads.total_progress = pct;
+    };
+
+    // Qwen3-VL vision model configuration (server-side via diffuser.py)
+    const VISION_MODEL = {
+      pipeline: "qwen3_vision",
+      name: "Qwen3-VL 2B",
+      repo: "Qwen/Qwen3-VL-2B-Instruct",
+      filesize: "~4 GB",
+    };
+
+    const visionModelDownloadProgress = ref(0);
+    const visionMmprojDownloadProgress = ref(0);
+    const visionModelLoaded = ref(false);
+
+    // Vision support status - using server-side Qwen3-VL via diffuser.py
+    const visionSupported = ref(true); // Server-side vision is supported
+
+    // Ensure vision model is ready (server-side handles loading)
+    // Note: This is now a simple check - actual model status is verified in getVisionFeedback
+    const ensureVisionModelLoaded = async () => {
+      if (!visionSupported.value) {
+        return false;
+      }
+      // Refresh status
+      await checkVisionModel();
+      return visionModelReady.value;
+    };
+
+    // Check if vision model is available (server-side Qwen3-VL)
+    const checkVisionModel = async () => {
+      try {
+        const { data } = await axios.post(`${SERVER_URL}/pipelines/plan`, {
+          pipeline: VISION_MODEL.pipeline,
+        });
+
+        // The /pipelines/plan endpoint returns { ok: true/false } to indicate readiness
+        console.log("[Generative3D] Vision model check - ok:", data.ok, "repos:", data.repos?.length, "files:", data.required_files?.length);
+        visionModelReady.value = data.ok === true;
+      } catch (e) {
+        // If endpoint returns 404 or other error, check downloads list
+        console.error("[Generative3D] Vision model plan check failed:", e.response?.data || e.message);
+        try {
+          const { data } = await axios.get(`${SERVER_URL}/downloads/list`);
+          // Check if qwen3_vision pipeline completed
+          const visionPipeline = data.pipelines?.find(p => p.pipeline_id?.includes("qwen3_vision"));
+          visionModelReady.value = visionPipeline?.status === "completed";
+        } catch (e2) {
+          console.error("[Generative3D] Vision model check error:", e2);
+          visionModelReady.value = false;
+        }
+      }
+    };
+
+    // Download vision model (server-side Qwen3-VL)
+    const downloadVisionModel = async () => {
+      if (visionModelDownloading.value) return;
+      visionModelDownloading.value = true;
+
+      try {
+        downloadStatus.value = "Starting vision model download...";
+
+        // Trigger server-side prefetch
+        const { data } = await axios.post(`${SERVER_URL}/pipelines/prefetch`, {
+          pipeline: VISION_MODEL.pipeline,
+        });
+
+        if (data.pipeline_id) {
+          downloadStatus.value = "Downloading vision model...";
+
+          // Poll for completion
+          const pollInterval = setInterval(async () => {
+            try {
+              const { data: statusData } = await axios.get(
+                `${SERVER_URL}/downloads/status/${data.pipeline_id}`
+              );
+
+              if (statusData.status === "completed") {
+                clearInterval(pollInterval);
+                await checkVisionModel();
+                downloadStatus.value = "Vision model ready!";
+                visionModelLoaded.value = true;
+                visionModelDownloading.value = false;
+              } else if (statusData.status === "failed") {
+                clearInterval(pollInterval);
+                downloadStatus.value = "Download failed";
+                visionModelDownloading.value = false;
+              } else {
+                // Update progress - server returns total_progress
+                visionModelDownloadProgress.value = Math.round(statusData.total_progress || 0);
+              }
+            } catch (e) {
+              console.error("[Vision] Download status check failed:", e);
+            }
+          }, 2000);
+        }
+      } catch (e) {
+        console.error("Failed to download vision model:", e);
+        downloadStatus.value = "Download failed: " + e.message;
+        visionModelDownloading.value = false;
+      }
+    };
+
+    // Capture multi-angle screenshots for vision analysis
+    const captureMultiAngleScreenshots = (forVision = true) => {
+      const viewer = threeViewer.value;
+      if (!viewer) throw new Error("Viewer not initialized");
+
+      return viewer.captureMultiAngleScreenshots(VISION_ANGLES, {
+        width: 512,
+        height: 512,
+        format: "png",
+        quality: 0.9,
+        disableHDR: forVision, // Disable HDR for vision analysis to get accurate colors
+      });
+    };
+
+    // Parse vision model response to extract structured feedback
+    const parseVisionResponse = (response) => {
+      const upperResponse = response.toUpperCase();
+
+      // Check for MATCHES
+      const matchesYes = upperResponse.includes("MATCHES: YES") ||
+                         upperResponse.includes("MATCHES:YES") ||
+                         (upperResponse.includes("YES") && !upperResponse.includes("NO") && upperResponse.indexOf("YES") < 100);
+      const matchesNo = upperResponse.includes("MATCHES: NO") ||
+                        upperResponse.includes("MATCHES:NO") ||
+                        (upperResponse.includes("MISSING:") && !matchesYes);
+
+      const matches = matchesYes && !matchesNo;
+
+      // Extract missing elements
+      let missingElements = [];
+      const missingMatch = response.match(/MISSING:\s*([^\n]+)/i);
+      if (missingMatch && missingMatch[1]) {
+        const missingStr = missingMatch[1].trim();
+        if (missingStr.toLowerCase() !== "none" && missingStr.toLowerCase() !== "n/a") {
+          missingElements = missingStr.split(",").map(s => s.trim()).filter(s => s && s.toLowerCase() !== "none");
+        }
+      }
+
+      // Extract feedback
+      let feedback = response;
+      const feedbackMatch = response.match(/FEEDBACK:\s*([^\n]+)/i);
+      if (feedbackMatch && feedbackMatch[1]) {
+        feedback = feedbackMatch[1].trim();
+      }
+
+      return { matches, missingElements, feedback };
+    };
+
+    // Get comprehensive vision feedback using multi-angle analysis (server-side Qwen3-VL)
+    const getVisionFeedback = async (prompt, phaseContext = null, isDemo = false) => {
+      const viewer = threeViewer.value;
+      if (!viewer) throw new Error("Viewer not initialized");
+
+      // Check if vision is supported
+      if (!visionSupported.value) {
+        console.log("[Vision] Vision verification skipped - not supported");
+        return {
+          matches: true,
+          feedback: "Vision verification skipped (not supported)",
+          missing_elements: [],
+          angle_results: [],
+          screenshots: [],
+          skipped: true,
+        };
+      }
+
+      // Refresh vision model status
+      await checkVisionModel();
+      if (!visionModelReady.value) {
+        console.log("[Vision] Vision verification skipped - model not downloaded");
+        // Return a "pass" result so generation continues without vision checks
+        return {
+          matches: true,
+          feedback: "Vision verification skipped (model not downloaded)",
+          missing_elements: [],
+          angle_results: [],
+          screenshots: [],
+          skipped: true,
+        };
+      }
+
+      // Unload code model to free memory for vision model
+      // The code model will be reloaded automatically when generateWithRetry is called
+      await unloadCodeModel();
+
+      // Capture screenshots from all angles
+      const screenshots = captureMultiAngleScreenshots();
+
+      // Analyze each angle using server-side vision model
+      const angleResults = [];
+      for (const shot of screenshots) {
+        try {
+          // Build analysis prompt
+          const analysisPrompt = `You are evaluating a 3D rendered object from the ${shot.label} view. The user requested:
+
+"${prompt}"
+
+CRITICAL: Be STRICT when evaluating. Check EVERY noun/object mentioned in the prompt.
+
+Step-by-step analysis:
+1. List each specific thing the user asked for
+2. For each item, ask: "Can I clearly see this in the image?"
+3. If ANY requested element is missing, unclear, or wrong, answer MATCHES: NO
+
+Respond in this EXACT format:
+MATCHES: [YES if ALL elements are clearly visible, NO if ANY element is missing or wrong]
+MISSING: [comma-separated list of missing/wrong elements, or "none" if perfect match]
+FEEDBACK: [What specifically needs to be added or fixed]`;
+
+          // Use server-side vision API
+          const { data } = await axios.post(
+            `${SERVER_URL}/vision/analyze`,
+            {
+              image_base64: shot.dataUrl,
+              prompt: analysisPrompt,
+              max_tokens: 512,
+            },
+            {
+              headers: getDemoHeaders(isDemo),
+            }
+          );
+
+          const response = data.response || "";
+          const parsed = parseVisionResponse(response);
+
+          angleResults.push({
+            angle: shot.name,
+            label: shot.label,
+            matches: parsed.matches,
+            feedback: parsed.feedback,
+            missing_elements: parsed.missingElements,
+            raw_response: response,
+          });
+
+          console.log(`[Vision:${phaseContext}:${shot.label}] Result:`, parsed);
+        } catch (e) {
+          // Check if it's a 412 error (model not downloaded)
+          if (e.response?.status === 412) {
+            console.warn(`[Vision] Model not downloaded - skipping vision verification`);
+            visionModelReady.value = false;
+            // Return early with skip result
+            return {
+              matches: true,
+              feedback: "Vision verification skipped (model not downloaded - use Download All to get the vision model)",
+              missing_elements: [],
+              angle_results: [],
+              screenshots: screenshots,
+              skipped: true,
+            };
+          }
+          console.error(`[Vision] Failed to analyze ${shot.name} angle:`, e);
+          angleResults.push({
+            angle: shot.name,
+            label: shot.label,
+            matches: false,
+            feedback: `Analysis failed: ${e.response?.data?.error || e.message}`,
+            missing_elements: [],
+          });
+        }
+      }
+
+      // Combine results - if ANY angle shows a match issue, we need to fix
+      const allMatch = angleResults.every((r) => r.matches);
+      const combinedMissing = [
+        ...new Set(angleResults.flatMap((r) => r.missing_elements || [])),
+      ];
+      const combinedFeedback = angleResults
+        .filter((r) => !r.matches)
+        .map((r) => `[${r.label}] ${r.feedback}`)
+        .join("\n");
+
+      // Add to feedback history for oscillation prevention
+      if (!allMatch && combinedFeedback) {
+        feedbackHistory.value.push({
+          timestamp: Date.now(),
+          phase: phaseContext,
+          feedback: combinedFeedback,
+          missing: combinedMissing,
+        });
+      }
+
+      return {
+        matches: allMatch,
+        feedback: combinedFeedback || "Object matches the prompt.",
+        missing_elements: combinedMissing,
+        angle_results: angleResults,
+        screenshots: screenshots, // Return for saving to history
+      };
+    };
+
+    // Build prompt with accumulated vision feedback (prevents oscillation)
+    const buildFeedbackPrompt = (
+      originalPrompt,
+      feedback,
+      missingElements,
+      existingCode = null
+    ) => {
+      const missingList =
+        missingElements.length > 0
+          ? `\n\nMISSING ELEMENTS that MUST be added:\n- ${missingElements.join("\n- ")}`
+          : "";
+
+      // Include previous feedback to prevent oscillation
+      const previousFeedback =
+        feedbackHistory.value.length > 1
+          ? `\n\n⚠️ PREVIOUS ISSUES (DO NOT REINTRODUCE):\n${feedbackHistory.value
+              .slice(0, -1)
+              .map((f) => `- ${f.feedback}`)
+              .join("\n")}`
+          : "";
+
+      return `You are an expert Three.js developer. Generate a 3D object for:
+
+"${originalPrompt}"
+
+⚠️ VISION ANALYSIS FOUND ISSUES (from multiple viewing angles):
+${feedback}${missingList}${previousFeedback}
+
+You MUST address ALL feedback. Make sure ALL requested elements are visually present from ALL angles.
+
+════════════════════════════════════════════════════════════════════
+🚨 CRITICAL RULES — VIOLATIONS WILL BREAK THE CODE
+════════════════════════════════════════════════════════════════════
+
+1. OUTPUT RAW JAVASCRIPT ONLY — No markdown, no \`\`\`, no JSON, no explanations
+2. NEVER OMIT CODE — No "// omitted", "// ...", "(omitted for brevity)", or similar. Write COMPLETE code.
+3. ALL objects must float slightly above ground: y >= 0.15 (base of object)
+4. ALL objects must be added to \`root\` (not scene)
+5. ALWAYS capture helper returns: const sword = H.sword({...});
+6. Helper parameters are COLORS (hex numbers), not materials
+7. SIZE CONSTRAINT: Objects must fit within 1x1 unit footprint (x: -0.5 to 0.5, z: -0.5 to 0.5)
+8. HEIGHT: Objects should be 0.3-1.5 units tall (compact, detailed)
+
+════════════════════════════════════════════════════════════════════
+AVAILABLE CONTEXT
+════════════════════════════════════════════════════════════════════
+
+THREE        — Full Three.js library (use for custom geometry/materials)
+root         — THREE.Group to add all objects to
+H / helpers  — Convenience helpers
+
+MATERIALS:
+  H.metal(color, {roughness, glow, clearcoat})
+  H.glass(color, {roughness, transmission, ior})
+  H.gem(color, {glow, ior})
+  H.liquid(color, {transmission, thickness, glow})
+  H.glow(color, {intensity, opacity})
+
+RPG ITEMS:
+  H.potionBottle({shape, liquidColor, glassColor, glow, lowPoly})  // shape: round/flask/vial
+  H.sword({bladeColor, handleColor, guardColor, bladeLength, lowPoly})
+  H.shield({shape, faceColor, trimColor, frameColor, studs, lowPoly})
+  H.chest({open, width, height, depth, woodColor, metalColor, lowPoly})
+  H.gemstone({color, size, shape, lowPoly})
+
+addUpdateCallback(fn) — Register animation: fn({deltaTime, time})
+
+Generate the COMPLETE code now, ensuring ALL elements from the prompt are present:`;
+    };
+
+    // Build patch prompt for targeted fixes (adds to existing code)
+    const buildPatchPrompt = (originalPrompt, missingElements, existingCode) => {
+      const missingList = missingElements.join(", ");
+
+      return `You are an expert Three.js developer. You need to ADD missing elements to an existing 3D scene.
+
+ORIGINAL REQUEST: "${originalPrompt}"
+
+MISSING ELEMENTS THAT MUST BE ADDED: ${missingList}
+
+EXISTING CODE (already rendered - DO NOT modify this, only ADD to it):
+\`\`\`javascript
+${existingCode}
+\`\`\`
+
+════════════════════════════════════════════════════════════════════
+🚨 YOUR TASK: Generate ONLY the code for the MISSING elements
+════════════════════════════════════════════════════════════════════
+
+1. OUTPUT RAW JAVASCRIPT ONLY — No markdown, no \`\`\`, no explanations
+2. Generate ONLY the new meshes/objects for the missing elements
+3. Position them appropriately relative to the existing objects
+4. All new objects must be added to \`root\`
+5. Do NOT recreate any objects from the existing code
+
+Generate ONLY the additional code for: ${missingList}`;
+    };
 
     // ═══════════════════════════════════════════════════════════════════════
     // LAZY LOADING PAGINATION
@@ -1048,6 +2028,53 @@ export default {
     };
 
     // ═══════════════════════════════════════════════════════════════════════
+    // SCREENSHOT MODAL
+    // ═══════════════════════════════════════════════════════════════════════
+    const screenshotModal = reactive({
+      visible: false,
+      shots: [],
+      currentIndex: 0,
+      currentShot: null,
+      inferenceId: null,
+    });
+
+    const openScreenshotModal = (item, index) => {
+      screenshotModal.shots = item.screenshots || [];
+      screenshotModal.currentIndex = index;
+      screenshotModal.currentShot = screenshotModal.shots[index] || null;
+      screenshotModal.inferenceId = item.id;
+      screenshotModal.visible = true;
+    };
+
+    const closeScreenshotModal = () => {
+      screenshotModal.visible = false;
+    };
+
+    const navigateScreenshot = (direction) => {
+      const newIndex = screenshotModal.currentIndex + direction;
+      if (newIndex >= 0 && newIndex < screenshotModal.shots.length) {
+        screenshotModal.currentIndex = newIndex;
+        screenshotModal.currentShot = screenshotModal.shots[newIndex];
+      }
+    };
+
+    const downloadScreenshot = (shot) => {
+      if (!shot?.dataUrl) return;
+      const link = document.createElement("a");
+      link.href = shot.dataUrl;
+      link.download = `3d-object-${shot.name || "screenshot"}.png`;
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+    };
+
+    const downloadAllScreenshots = () => {
+      screenshotModal.shots.forEach((shot, idx) => {
+        setTimeout(() => downloadScreenshot(shot), idx * 200);
+      });
+    };
+
+    // ═══════════════════════════════════════════════════════════════════════
     // ACCESS CONTROL
     // ═══════════════════════════════════════════════════════════════════════
     const accessRef = ref(null);
@@ -1093,15 +2120,54 @@ export default {
       { id: "foggy", label: "Fog", icon: "🌫️", class: "foggy" },
     ]);
 
-    const currentModel = ref({
-      modelname: "Qwen 2.5 Coder 14B",
-      modeldesc:
-        "14B-parameter Qwen 2.5 Coder instruction-tuned model with 128K context. State-of-the-art code generation and reasoning. Best for: serious development work, complex refactoring, and code agents requiring stronger understanding.",
-      url: "https://huggingface.co/Qwen/Qwen2.5-Coder-14B-Instruct-GGUF/resolve/main/qwen2.5-coder-14b-instruct-q4_k_m.gguf",
-      filename: "qwen2.5-coder-14b-instruct-q4_k_m.gguf",
-      filesize: "8.93 GB",
-      parameters: 14000000000,
-      context: 131072,
+    // Model mode: standard (Qwen) or quality (GLM)
+    const modelMode = ref("standard");
+    const modelModes = ref([
+      {
+        id: "standard",
+        label: "Standard",
+        icon: "bolt",
+        description: "Qwen 2.5 Coder 14B - Fast and efficient code generation",
+      },
+      {
+        id: "quality",
+        label: "Quality",
+        icon: "diamond",
+        description: "GLM 4.7 Flash - Higher quality with 200K context",
+      },
+    ]);
+
+    const models = {
+      standard: {
+        modelname: "Qwen 2.5 Coder 14B",
+        modeldesc:
+          "14B-parameter Qwen 2.5 Coder instruction-tuned model with 128K context. State-of-the-art code generation and reasoning. Best for: serious development work, complex refactoring, and code agents requiring stronger understanding.",
+        url: "https://huggingface.co/Qwen/Qwen2.5-Coder-14B-Instruct-GGUF/resolve/main/qwen2.5-coder-14b-instruct-q4_k_m.gguf",
+        filename: "qwen2.5-coder-14b-instruct-q4_k_m.gguf",
+        filesize: "8.93 GB",
+        parameters: 14000000000,
+        context: 131072,
+      },
+      quality: {
+        modelname: "GLM 4.7 Flash",
+        modeldesc:
+          "30B-parameter Mixture-of-Experts model from Zhipu AI with only 3.6B active parameters per forward pass and 200K context. Ultra-efficient MoE architecture delivers strong reasoning at a fraction of the compute.",
+        url: "https://huggingface.co/unsloth/GLM-4.7-Flash-GGUF/resolve/main/GLM-4.7-Flash-Q4_K_M.gguf",
+        filename: "glm-4.7-flash-q4_k_m.gguf",
+        filesize: "18.3 GB",
+        parameters: 30000000000,
+        activeParameters: 3600000000,
+        isMoE: true,
+        context: 202752,
+      },
+    };
+
+    const currentModel = computed(() => models[modelMode.value]);
+
+    // Watch for model mode changes to check availability and reset loaded state
+    watch(modelMode, async (newMode) => {
+      isModelLoaded.value = false; // Reset since different model needs loading
+      await isModelAvailable(models[newMode].filename);
     });
 
     const examplePrompts = ref([
@@ -1124,7 +2190,7 @@ export default {
         title: "Health Potion",
         description: "Red healing elixir",
         prompt:
-          "Round glass potion bottle with glowing red liquid inside, cork stopper, bubbles floating up.",
+          "Round glass potion bottle filled with glowing red liquid (use H.potionBottle with liquidColor: 0xff3333, glassColor: 0xffffff, glow: true). Add a cork stopper on top and animated bubbles rising inside the liquid.",
       },
       {
         icon: "💎",
@@ -1180,7 +2246,7 @@ export default {
         title: "Alchemy Flask",
         description: "Bubbling potion flask",
         prompt:
-          "Triangular flask with bubbling green liquid, cork top, rising steam particles.",
+          "Triangular flask shape potion bottle filled with bubbling green liquid (use H.potionBottle with shape: 'flask', liquidColor: 0x33ff66, glassColor: 0xffffff, glow: true). Add a cork stopper and animated steam particles rising from the top.",
       },
       {
         icon: "🐉",
@@ -1204,12 +2270,13 @@ export default {
 ════════════════════════════════════════════════════════════════════
 
 1. OUTPUT RAW JAVASCRIPT ONLY — No markdown, no \`\`\`, no JSON, no explanations
-2. ALL objects must float slightly above ground: y >= 0.15 (base of object)
-3. ALL objects must be added to \`root\` (not scene)
-4. ALWAYS capture helper returns: const sword = H.sword({...});
-5. Helper parameters are COLORS (hex numbers), not materials
-6. SIZE CONSTRAINT: Objects must fit within 1x1 unit footprint (x: -0.5 to 0.5, z: -0.5 to 0.5)
-7. HEIGHT: Objects should be 0.3-1.5 units tall (compact, detailed)
+2. NEVER OMIT CODE — No "// omitted", "// ...", "(omitted for brevity)", or similar. Write COMPLETE code.
+3. ALL objects must float slightly above ground: y >= 0.15 (base of object)
+4. ALL objects must be added to \`root\` (not scene)
+5. ALWAYS capture helper returns: const sword = H.sword({...});
+6. Helper parameters are COLORS (hex numbers), not materials
+7. SIZE CONSTRAINT: Objects must fit within 1x1 unit footprint (x: -0.5 to 0.5, z: -0.5 to 0.5)
+8. HEIGHT: Objects should be 0.3-1.5 units tall (compact, detailed)
 
 WRONG:  H.sword({...});  sword.position.set(0,1,0);  // Missing assignment!
 RIGHT:  const sword = H.sword({...}); sword.position.set(0,0.15,0); root.add(sword);
@@ -1433,7 +2500,8 @@ COMMON FIXES:
 - "X is not defined" after "const Y = H.something()" → Change X to Y everywhere
 - Syntax errors → Fix the syntax
 
-OUTPUT ONLY THE FIXED JAVASCRIPT CODE. No markdown, no explanation.`;
+OUTPUT ONLY THE FIXED JAVASCRIPT CODE. No markdown, no explanation.
+NEVER OMIT CODE — No "// omitted", "// ...", or placeholders. Write the COMPLETE fixed code.`;
     };
 
     // ═══════════════════════════════════════════════════════════════════════
@@ -1448,6 +2516,7 @@ OUTPUT ONLY THE FIXED JAVASCRIPT CODE. No markdown, no explanation.`;
 
 RULES:
 - OUTPUT RAW JAVASCRIPT ONLY — No markdown, no \`\`\`, no JSON
+- NEVER OMIT CODE — No "// omitted", "// ...", or placeholders. Write COMPLETE code.
 - ALL objects must have y > 0 (above ground plane)
 - ALL objects must be added to \`root\` (not scene)
 - ALWAYS capture helper returns: const x = H.something({...});
@@ -1487,6 +2556,7 @@ H.fire(), H.ice(), H.lava(), H.leather(color), H.velvet(color)
 RULES:
 - Keep ALL existing geometry and structure
 - ONLY add materials and detail meshes
+- NEVER OMIT CODE — No "// omitted", "// ...", or placeholders. Write COMPLETE code.
 - Output the COMPLETE enhanced code
 - Raw JavaScript only, no markdown
 
@@ -1521,6 +2591,7 @@ addUpdateCallback(({deltaTime, time}) => {
 RULES:
 - Keep ALL existing code
 - ADD particles, lights, and animations
+- NEVER OMIT CODE — No "// omitted", "// ...", or placeholders. Write COMPLETE code.
 - Output the COMPLETE polished code
 - Raw JavaScript only, no markdown
 
@@ -1535,6 +2606,7 @@ Output the final polished code:`,
 
 RULES:
 - OUTPUT RAW JAVASCRIPT ONLY — No markdown, no \`\`\`, no JSON
+- NEVER OMIT CODE — No "// omitted", "// ...", or placeholders. Write COMPLETE code.
 - ALL objects must have y > 0 (above ground plane)
 - ALL objects must be added to \`root\` (not scene)
 - ALWAYS capture helper returns: const x = H.something({...});
@@ -1577,6 +2649,7 @@ IMPROVEMENTS TO MAKE:
 - Improve material variety
 
 OUTPUT: The COMPLETE improved code (not a diff).
+NEVER OMIT CODE — No "// omitted", "// ...", or placeholders. Write COMPLETE code.
 Raw JavaScript only, no markdown, no explanations:`,
     });
 
@@ -1588,6 +2661,7 @@ Raw JavaScript only, no markdown, no explanations:`,
 
 RULES:
 - OUTPUT RAW JAVASCRIPT ONLY — No markdown, no \`\`\`
+- NEVER OMIT CODE — No "// omitted", "// ...", or placeholders. Write COMPLETE code.
 - ALL objects must have y > 0 (above ground plane)
 - ALL objects must be added to \`root\` (not scene)
 
@@ -1630,6 +2704,7 @@ RULES:
 - ADD 5-10 new accessory meshes
 - Position accessories relative to the base
 - Use complementary materials
+- NEVER OMIT CODE — No "// omitted", "// ...", or placeholders. Write COMPLETE code.
 
 Output the COMPLETE code with accessories. Raw JavaScript only:`,
 
@@ -1664,6 +2739,7 @@ addUpdateCallback(({deltaTime, time}) => {
 RULES:
 - Keep ALL existing code unchanged
 - ADD particles, lights, and animations
+- NEVER OMIT CODE — No "// omitted", "// ...", or placeholders. Write COMPLETE code.
 - Make it feel magical/alive
 - At least 2 particle systems
 - At least 1 animated element
@@ -1795,6 +2871,7 @@ Utility: H.mesh(geometry, material) — auto-enables shadows
 
 RULES:
 - OUTPUT RAW JAVASCRIPT ONLY — No markdown, no \`\`\`
+- NEVER OMIT CODE — No "// omitted", "// ...", "(omitted for brevity)", or placeholders. Write COMPLETE code.
 - ALL objects y > 0
 - Add to \`root\` not scene
 - ALWAYS capture returns: const x = H.something();
@@ -1803,7 +2880,7 @@ RULES:
 NOW GENERATE MUSEUM-QUALITY CODE FOR: "${userText}"
 ════════════════════════════════════════════════════════════════════
 
-Output raw JavaScript code only. Match the reference complexity. No explanations.`;
+Output raw JavaScript code only. Match the reference complexity. No explanations. WRITE COMPLETE CODE.`;
     };
 
     // ═══════════════════════════════════════════════════════════════════════
@@ -1866,6 +2943,9 @@ Output raw JavaScript code only. Match the reference complexity. No explanations
       let rawCode = null;
       let normalizedCode = null;
       let lastError = null;
+
+      // Ensure code generation model is loaded (may have switched to vision model)
+      await loadModelForGeneration();
 
       console.log(`${label}Starting generation...`);
 
@@ -1969,8 +3049,7 @@ Output raw JavaScript code only. Match the reference complexity. No explanations
     const handleError = (data) => console.error("Generation error:", data);
 
     const removeInference = async (originalIndex) => {
-      objectInferences.value.splice(originalIndex, 1);
-      await saveInferences();
+      await removeObjectInference(originalIndex);
     };
 
     const applyInference = async (item) => {
@@ -1998,24 +3077,11 @@ Output raw JavaScript code only. Match the reference complexity. No explanations
     };
 
     // ═══════════════════════════════════════════════════════════════════════
-    // PERSISTENCE
+    // HISTORY MANAGEMENT
     // ═══════════════════════════════════════════════════════════════════════
-    const saveInferences = async () => {
-      try {
-        await window.electronAPI?.store?.set?.("objectInferences", [
-          ...objectInferences.value,
-        ]);
-      } catch (e) {}
-    };
-
     const clearHistory = async () => {
-      objectInferences.value = [];
+      await clearObjectInferences();
       hasCopy.length = 0;
-      try {
-        await window.electronAPI?.store?.set?.("objectInferences", []);
-      } catch (e) {
-        console.error("Failed to clear 3D inferences:", e);
-      }
     };
 
     const exportHistory = () => {
@@ -2043,10 +3109,19 @@ Output raw JavaScript code only. Match the reference complexity. No explanations
           const text = await file.text();
           const data = JSON.parse(text);
           if (Array.isArray(data)) {
-            objectInferences.value = [...data, ...objectInferences.value];
+            // Add each imported item to the store
+            for (const item of data) {
+              await addObjectInference(item.prompt, item.code, {
+                mode: item.mode,
+                screenshots: item.screenshots,
+                visionVerified: item.visionVerified,
+                success: item.success,
+                title: item.title,
+                notes: item.notes,
+              });
+            }
             hasCopy.length = objectInferences.value.length;
             hasCopy.fill(false);
-            await saveInferences();
           }
         } catch (err) {
           console.error("Failed to import history:", err);
@@ -2069,8 +3144,10 @@ Output raw JavaScript code only. Match the reference complexity. No explanations
 
       downloadProgress.value = 0;
 
-      window.electronAPI.onDownloadProgress((data) => {
-        downloadProgress.value = Math.round(data.percent * 100);
+      window.electronAPI.onDownloadProgress((e, data) => {
+        if (data.filename === currentModel.value.filename) {
+          downloadProgress.value = Math.round(data.percent * 100);
+        }
       });
 
       const success = await window.electronAPI.downloadModel(url, filename);
@@ -2098,18 +3175,37 @@ Output raw JavaScript code only. Match the reference complexity. No explanations
     const loadModelForGeneration = async () => {
       if (isModelLoaded.value) return;
 
-      lastStatus.value = "Loading Model...";
+      lastStatus.value = "Loading Code Model...";
       try {
+        // Pass full model object including activeParameters and isMoE for proper context calculation
         await window.electronAPI.loadModel({
           filename: currentModel.value.filename,
           parameters: currentModel.value.parameters,
+          activeParameters: currentModel.value.activeParameters,
+          isMoE: currentModel.value.isMoE,
           context: currentModel.value.context,
         });
         isModelLoaded.value = true;
+        // Invalidate vision model state since we switched to code model
+        visionModelLoaded.value = false;
         lastStatus.value = "Let's go!";
         await new Promise((r) => setTimeout(r, 500));
       } catch (error) {
         throw new Error(`Model loading failed: ${error.message}`);
+      }
+    };
+
+    // Unload the coding model to free memory for vision model
+    const unloadCodeModel = async () => {
+      if (!isModelLoaded.value) return;
+
+      console.log("[Generative3D] Unloading code model to free memory for vision...");
+      try {
+        await window.electronAPI.unloadModel();
+        isModelLoaded.value = false;
+        console.log("[Generative3D] Code model unloaded successfully");
+      } catch (error) {
+        console.warn("[Generative3D] Failed to unload code model:", error);
       }
     };
 
@@ -2254,6 +3350,128 @@ Output raw JavaScript code only. Match the reference complexity. No explanations
     // ═══════════════════════════════════════════════════════════════════════
     // MAIN SUBMIT HANDLER
     // ═══════════════════════════════════════════════════════════════════════
+    // ═══════════════════════════════════════════════════════════════════════
+    // VISION-INTEGRATED GENERATION HELPERS
+    // ═══════════════════════════════════════════════════════════════════════
+
+    // Run vision check and apply targeted fix if needed
+    const runVisionCheckAndFix = async (
+      code,
+      prompt,
+      phaseLabel,
+      maxFixes = 2,
+      isDemo = false
+    ) => {
+      const viewer = threeViewer.value;
+      if (!viewer) return { code, verified: true, skipped: true };
+
+      // Check if vision is supported
+      if (!visionSupported.value) {
+        console.log(`[Vision:${phaseLabel}] Vision verification skipped - not yet supported`);
+        return { code, verified: true, skipped: true };
+      }
+
+      let currentCode = code;
+
+      for (let fix = 1; fix <= maxFixes; fix++) {
+        lastStatus.value = `${phaseLabel}: Vision check ${fix}/${maxFixes}...`;
+        await new Promise((r) => setTimeout(r, 500)); // Let render settle
+
+        try {
+          const feedback = await getVisionFeedback(prompt, phaseLabel, isDemo);
+          console.log(`[Vision:${phaseLabel}] Result:`, feedback);
+
+          // If vision was skipped, return success
+          if (feedback.skipped) {
+            console.log(`[Vision:${phaseLabel}] Vision skipped - returning success`);
+            return { code: currentCode, verified: true, skipped: true };
+          }
+
+          if (feedback.matches) {
+            console.log(`[Vision:${phaseLabel}] ✓ Verified!`);
+            return { code: currentCode, verified: true, screenshots: feedback.screenshots };
+          }
+
+          // Try targeted fix first if we have specific missing elements
+          if (feedback.missing_elements?.length > 0 && fix < maxFixes) {
+            console.log(`[Vision:${phaseLabel}] Attempting targeted fix...`);
+            lastStatus.value = `${phaseLabel}: Adding missing elements...`;
+
+            const patchPrompt = buildPatchPrompt(
+              prompt,
+              feedback.missing_elements,
+              currentCode
+            );
+
+            const patchCode = await generateWithRetry(
+              patchPrompt,
+              prompt,
+              2,
+              `${phaseLabel} Patch`
+            );
+
+            if (patchCode) {
+              // Merge patch with existing code - patch is wrapped in IIFE to avoid variable collisions
+              const innerPatch = extractInnerCode(patchCode);
+              const innerCurrent = extractInnerCode(currentCode);
+              // Wrap patch in IIFE to create separate scope and avoid "already declared" errors
+              const wrappedPatch = `\n\n// === Vision Patch: Added elements ===\n(() => {\n${innerPatch}\n})();`;
+              currentCode = wrapWithModule(innerCurrent + wrappedPatch);
+              await viewer.applyModuleCode(currentCode, "replace");
+              continue; // Check again
+            }
+          }
+
+          // Fall back to full regeneration
+          console.log(`[Vision:${phaseLabel}] Full regeneration with feedback...`);
+          lastStatus.value = `${phaseLabel}: Regenerating...`;
+
+          const feedbackPrompt = buildFeedbackPrompt(
+            prompt,
+            feedback.feedback,
+            feedback.missing_elements || [],
+            currentCode
+          );
+
+          const improvedCode = await generateWithRetry(
+            feedbackPrompt,
+            prompt,
+            MAX_RETRY_ATTEMPTS,
+            `${phaseLabel} Fix`
+          );
+
+          if (improvedCode) {
+            currentCode = improvedCode;
+            await viewer.applyModuleCode(currentCode, "replace");
+          } else {
+            console.log(`[Vision:${phaseLabel}] Fix failed, keeping current`);
+            return { code: currentCode, verified: false, screenshots: feedback.screenshots };
+          }
+        } catch (visionErr) {
+          console.error(`[Vision:${phaseLabel}] Error:`, visionErr);
+          return { code: currentCode, verified: false };
+        }
+      }
+
+      // Final check after all fixes
+      try {
+        const finalFeedback = await getVisionFeedback(prompt, phaseLabel, isDemo);
+        return {
+          code: currentCode,
+          verified: finalFeedback.matches,
+          screenshots: finalFeedback.screenshots,
+        };
+      } catch {
+        return { code: currentCode, verified: false };
+      }
+    };
+
+    // Wrap inner code with module structure
+    const wrapWithModule = (innerCode) => {
+      return `// Generated 3D Object
+${innerCode}`;
+    };
+
     const onSubmit = async (isDemo = false) => {
       if (!form.prompt.trim()) return;
       // Allow demo generation even without access
@@ -2266,8 +3484,18 @@ Output raw JavaScript code only. Match the reference complexity. No explanations
         return;
       }
 
+      // Check vision model - required for all generation
+      if (!visionModelReady.value) {
+        console.error("❌ Generation error: Vision model not downloaded");
+        lastStatus.value = "Please download the Vision model first";
+        return;
+      }
+
       isLoading.value = true;
       lastStatus.value = "Preparing...";
+
+      // Clear feedback history for new generation
+      feedbackHistory.value = [];
 
       const inference = {
         id: uuid(),
@@ -2278,228 +3506,217 @@ Output raw JavaScript code only. Match the reference complexity. No explanations
         notes: "",
         code: "",
         mode: generationMode.value,
+        screenshots: [], // Multi-angle screenshots
+        visionVerified: false,
       };
 
       try {
         await loadModelForGeneration();
+        const viewer = threeViewer.value;
+        if (!viewer) throw new Error("Viewer not initialized");
 
         let finalCode = null;
+        let finalScreenshots = [];
+        let verified = false;
         const mode = generationMode.value;
+        const modeConfig = generationModes.value.find((m) => m.id === mode);
+        const visionChecks = modeConfig?.visionChecks || 1;
 
         if (mode === "normal") {
           // ═══════════════════════════════════════════════════════════════
-          // NORMAL MODE: Single pass (original behavior)
+          // NORMAL MODE: Generate → Vision verify → Fix if needed
           // ═══════════════════════════════════════════════════════════════
+          console.log("═══════════════════════════════════════════════════════");
+          console.log("NORMAL MODE: Generate with vision verification");
+          console.log("═══════════════════════════════════════════════════════");
+
           lastStatus.value = "Generating...";
           const llmPrompt = buildObjectPrompt(form.prompt);
-          finalCode = await generateWithRetry(
-            llmPrompt,
-            form.prompt,
-            MAX_RETRY_ATTEMPTS
-          );
+          let code = await generateWithRetry(llmPrompt, form.prompt, MAX_RETRY_ATTEMPTS);
+          if (!code) throw new Error("Failed to generate code");
+
+          await viewer.applyModuleCode(code, "replace");
+          const result = await runVisionCheckAndFix(code, form.prompt, "Normal", 2, isDemo);
+          finalCode = result.code;
+          verified = result.verified;
+          finalScreenshots = result.screenshots || [];
+
         } else if (mode === "specialized") {
           // ═══════════════════════════════════════════════════════════════
-          // SPECIALIZED MODE: Structure → Details → Polish (3 passes)
+          // SPECIALIZED MODE: Structure → Vision → Details → Vision → Polish → Vision
           // ═══════════════════════════════════════════════════════════════
-          console.log(
-            "═══════════════════════════════════════════════════════"
-          );
-          console.log("SPECIALIZED MODE: Starting 3-pass generation");
-          console.log(
-            "═══════════════════════════════════════════════════════"
-          );
+          console.log("═══════════════════════════════════════════════════════");
+          console.log("SPECIALIZED MODE: 3-pass with vision after each phase");
+          console.log("═══════════════════════════════════════════════════════");
           const prompts = buildSpecializedPrompts(form.prompt);
 
-          // Pass 1: Structure
-          let code = await generateWithRetry(
-            prompts.pass1_structure,
-            form.prompt,
-            MAX_RETRY_ATTEMPTS,
-            "Pass 1/3 Structure"
-          );
+          // Pass 1: Structure + Vision
+          lastStatus.value = "Pass 1/3: Structure...";
+          let code = await generateWithRetry(prompts.pass1_structure, form.prompt, MAX_RETRY_ATTEMPTS, "Structure");
           if (!code) throw new Error("Failed at structure pass");
-          console.log("[Specialized] Pass 1 DONE, code length:", code.length);
+          await viewer.applyModuleCode(code, "replace");
+          let result = await runVisionCheckAndFix(code, form.prompt, "Structure", 1, isDemo);
+          code = result.code;
 
-          // Pass 2: Details (extract inner code to avoid wrapper duplication)
+          // Pass 2: Details + Vision
+          lastStatus.value = "Pass 2/3: Details...";
           const innerCode1 = extractInnerCode(code);
-          console.log(
-            "[Specialized] Extracted inner code for Pass 2, length:",
-            innerCode1.length
-          );
-          code = await generateWithRetry(
-            prompts.pass2_details(innerCode1),
-            form.prompt,
-            MAX_RETRY_ATTEMPTS,
-            "Pass 2/3 Details"
-          );
+          code = await generateWithRetry(prompts.pass2_details(innerCode1), form.prompt, MAX_RETRY_ATTEMPTS, "Details");
           if (!code) throw new Error("Failed at details pass");
-          console.log("[Specialized] Pass 2 DONE, code length:", code.length);
+          await viewer.applyModuleCode(code, "replace");
+          result = await runVisionCheckAndFix(code, form.prompt, "Details", 1, isDemo);
+          code = result.code;
 
-          // Pass 3: Polish
+          // Pass 3: Polish + Final Vision
+          lastStatus.value = "Pass 3/3: Polish...";
           const innerCode2 = extractInnerCode(code);
-          console.log(
-            "[Specialized] Extracted inner code for Pass 3, length:",
-            innerCode2.length
-          );
-          finalCode = await generateWithRetry(
-            prompts.pass3_polish(innerCode2),
-            form.prompt,
-            MAX_RETRY_ATTEMPTS,
-            "Pass 3/3 Polish"
-          );
-          console.log(
-            "═══════════════════════════════════════════════════════"
-          );
-          console.log("SPECIALIZED MODE: ALL 3 PASSES COMPLETE");
-          console.log(
-            "═══════════════════════════════════════════════════════"
-          );
+          code = await generateWithRetry(prompts.pass3_polish(innerCode2), form.prompt, MAX_RETRY_ATTEMPTS, "Polish");
+          if (!code) throw new Error("Failed at polish pass");
+          await viewer.applyModuleCode(code, "replace");
+          result = await runVisionCheckAndFix(code, form.prompt, "Final", 2, isDemo);
+          finalCode = result.code;
+          verified = result.verified;
+          finalScreenshots = result.screenshots || [];
+
         } else if (mode === "critique") {
           // ═══════════════════════════════════════════════════════════════
-          // CRITIQUE MODE: Generate → Review & Improve (2 passes)
+          // CRITIQUE MODE: Generate → LLM critique → Vision critique → Improve
           // ═══════════════════════════════════════════════════════════════
-          console.log(
-            "═══════════════════════════════════════════════════════"
-          );
-          console.log("CRITIQUE MODE: Starting 2-pass generation");
-          console.log(
-            "═══════════════════════════════════════════════════════"
-          );
+          console.log("═══════════════════════════════════════════════════════");
+          console.log("CRITIQUE MODE: Generate with LLM + Vision critique");
+          console.log("═══════════════════════════════════════════════════════");
           const prompts = buildCritiquePrompts(form.prompt);
 
-          // Pass 1: Initial generation
-          let code = await generateWithRetry(
-            prompts.pass1_generate,
-            form.prompt,
-            MAX_RETRY_ATTEMPTS,
-            "Pass 1/2 Generate"
-          );
+          // Pass 1: Initial generation + Vision check
+          lastStatus.value = "Pass 1/2: Generate...";
+          let code = await generateWithRetry(prompts.pass1_generate, form.prompt, MAX_RETRY_ATTEMPTS, "Generate");
           if (!code) throw new Error("Failed at initial generation");
-          console.log("[Critique] Pass 1 DONE, code length:", code.length);
+          await viewer.applyModuleCode(code, "replace");
+          let result = await runVisionCheckAndFix(code, form.prompt, "Initial", 1, isDemo);
+          code = result.code;
 
-          // Pass 2: Critique and improve (extract inner code)
+          // Pass 2: LLM critique + improve + Final Vision
+          lastStatus.value = "Pass 2/2: Critique & Improve...";
           const innerCode = extractInnerCode(code);
-          console.log(
-            "[Critique] Extracted inner code for Pass 2, length:",
-            innerCode.length
-          );
-          finalCode = await generateWithRetry(
-            prompts.pass2_critique(innerCode),
-            form.prompt,
-            MAX_RETRY_ATTEMPTS,
-            "Pass 2/2 Improve"
-          );
-          console.log(
-            "═══════════════════════════════════════════════════════"
-          );
-          console.log("CRITIQUE MODE: ALL PASSES COMPLETE");
-          console.log(
-            "═══════════════════════════════════════════════════════"
-          );
+          code = await generateWithRetry(prompts.pass2_critique(innerCode), form.prompt, MAX_RETRY_ATTEMPTS, "Improve");
+          if (!code) throw new Error("Failed at improvement pass");
+          await viewer.applyModuleCode(code, "replace");
+          result = await runVisionCheckAndFix(code, form.prompt, "Final", 2, isDemo);
+          finalCode = result.code;
+          verified = result.verified;
+          finalScreenshots = result.screenshots || [];
+
         } else if (mode === "additive") {
           // ═══════════════════════════════════════════════════════════════
-          // ADDITIVE MODE: Base → Accessories → Effects (3 passes)
+          // ADDITIVE MODE: Base → Vision → Accessories → Vision → Effects → Vision
           // ═══════════════════════════════════════════════════════════════
-          console.log(
-            "═══════════════════════════════════════════════════════"
-          );
-          console.log("ADDITIVE MODE: Starting 3-pass generation");
-          console.log(
-            "═══════════════════════════════════════════════════════"
-          );
+          console.log("═══════════════════════════════════════════════════════");
+          console.log("ADDITIVE MODE: 3-pass with vision verification");
+          console.log("═══════════════════════════════════════════════════════");
           const prompts = buildAdditivePrompts(form.prompt);
 
-          // Pass 1: Base object
-          let code = await generateWithRetry(
-            prompts.pass1_base,
-            form.prompt,
-            MAX_RETRY_ATTEMPTS,
-            "Pass 1/3 Base"
-          );
+          // Pass 1: Base + Vision
+          lastStatus.value = "Pass 1/3: Base object...";
+          let code = await generateWithRetry(prompts.pass1_base, form.prompt, MAX_RETRY_ATTEMPTS, "Base");
           if (!code) throw new Error("Failed at base creation");
-          console.log("[Additive] Pass 1 DONE, code length:", code.length);
+          await viewer.applyModuleCode(code, "replace");
+          let result = await runVisionCheckAndFix(code, form.prompt, "Base", 1, isDemo);
+          code = result.code;
 
-          // Pass 2: Accessories (extract inner code)
+          // Pass 2: Accessories + Vision
+          lastStatus.value = "Pass 2/3: Accessories...";
           const innerCode1 = extractInnerCode(code);
-          console.log(
-            "[Additive] Extracted inner code for Pass 2, length:",
-            innerCode1.length
-          );
-          code = await generateWithRetry(
-            prompts.pass2_accessories(innerCode1),
-            form.prompt,
-            MAX_RETRY_ATTEMPTS,
-            "Pass 2/3 Accessories"
-          );
+          code = await generateWithRetry(prompts.pass2_accessories(innerCode1), form.prompt, MAX_RETRY_ATTEMPTS, "Accessories");
           if (!code) throw new Error("Failed at accessories pass");
-          console.log("[Additive] Pass 2 DONE, code length:", code.length);
+          await viewer.applyModuleCode(code, "replace");
+          result = await runVisionCheckAndFix(code, form.prompt, "Accessories", 1, isDemo);
+          code = result.code;
 
-          // Pass 3: Effects
+          // Pass 3: Effects + Final Vision
+          lastStatus.value = "Pass 3/3: Effects...";
           const innerCode2 = extractInnerCode(code);
-          console.log(
-            "[Additive] Extracted inner code for Pass 3, length:",
-            innerCode2.length
-          );
-          finalCode = await generateWithRetry(
-            prompts.pass3_effects(innerCode2),
-            form.prompt,
-            MAX_RETRY_ATTEMPTS,
-            "Pass 3/3 Effects"
-          );
-          console.log(
-            "═══════════════════════════════════════════════════════"
-          );
-          console.log("ADDITIVE MODE: ALL 3 PASSES COMPLETE");
-          console.log(
-            "═══════════════════════════════════════════════════════"
-          );
+          code = await generateWithRetry(prompts.pass3_effects(innerCode2), form.prompt, MAX_RETRY_ATTEMPTS, "Effects");
+          if (!code) throw new Error("Failed at effects pass");
+          await viewer.applyModuleCode(code, "replace");
+          result = await runVisionCheckAndFix(code, form.prompt, "Final", 2, isDemo);
+          finalCode = result.code;
+          verified = result.verified;
+          finalScreenshots = result.screenshots || [];
+
         } else if (mode === "extreme") {
           // ═══════════════════════════════════════════════════════════════
-          // EXTREME MODE: Reference-quality with 50+ meshes
+          // EXTREME MODE: High-quality with continuous vision refinement
           // ═══════════════════════════════════════════════════════════════
-          console.log(
-            "═══════════════════════════════════════════════════════"
-          );
-          console.log("EXTREME MODE: Starting museum-quality generation");
-          console.log(
-            "═══════════════════════════════════════════════════════"
-          );
+          console.log("═══════════════════════════════════════════════════════");
+          console.log("EXTREME MODE: Museum-quality with extensive vision checking");
+          console.log("═══════════════════════════════════════════════════════");
+
+          lastStatus.value = "Generating extreme quality...";
           const llmPrompt = buildExtremePrompt(form.prompt);
-          finalCode = await generateWithRetry(
-            llmPrompt,
-            form.prompt,
-            MAX_RETRY_ATTEMPTS,
-            "Extreme Quality"
-          );
-          console.log(
-            "═══════════════════════════════════════════════════════"
-          );
-          console.log("EXTREME MODE: GENERATION COMPLETE");
-          console.log(
-            "═══════════════════════════════════════════════════════"
-          );
+          let code = await generateWithRetry(llmPrompt, form.prompt, MAX_RETRY_ATTEMPTS, "Extreme");
+          if (!code) throw new Error("Failed to generate code");
+          await viewer.applyModuleCode(code, "replace");
+
+          // Multiple vision refinement passes
+          const result = await runVisionCheckAndFix(code, form.prompt, "Extreme", 5, isDemo);
+          finalCode = result.code;
+          verified = result.verified;
+          finalScreenshots = result.screenshots || [];
         }
 
         if (!finalCode) throw new Error("Failed to generate valid code");
 
-        lastStatus.value = "Crafting Object...";
-        const viewer = threeViewer.value;
-        if (!viewer) throw new Error("Viewer not initialized");
+        // Capture final multi-angle screenshots if we don't have them
+        if (!finalScreenshots || finalScreenshots.length === 0) {
+          try {
+            finalScreenshots = captureMultiAngleScreenshots(false); // Keep HDR for final images
+          } catch (e) {
+            console.error("Failed to capture final screenshots:", e);
+          }
+        }
 
-        await viewer.applyModuleCode(finalCode, "replace");
-
-        lastStatus.value = "Crafted!";
-        inference.success = true;
-        inference.code = finalCode;
-        objectInferences.value.push(inference);
-        await saveInferences();
+        lastStatus.value = verified ? "✓ Vision Verified!" : "Crafted!";
+        // Add to shared inference store - ensure plain serializable data
+        // Use JSON.parse/stringify to strip any non-serializable properties (Vue proxies, functions, etc.)
+        const serializableScreenshots = (finalScreenshots || []).map(s => ({
+          name: String(s.name || ""),
+          label: String(s.label || ""),
+          azimuth: Number(s.azimuth || 0),
+          elevation: Number(s.elevation || 0),
+          dataUrl: String(s.dataUrl || ""),
+        }));
+        const inferenceData = JSON.parse(JSON.stringify({
+          mode: generationMode.value,
+          screenshots: serializableScreenshots,
+          visionVerified: verified,
+          success: true,
+        }));
+        await addObjectInference(form.prompt, finalCode, inferenceData);
         form.prompt = "";
       } catch (e) {
         console.error("❌ Generation error:", e);
         lastStatus.value = "❌ Failed: " + e.message;
-        inference.notes = e.message;
-        objectInferences.value.push(inference);
-        await saveInferences();
+        // Try to capture screenshots even on failure
+        let errorScreenshots = [];
+        try {
+          errorScreenshots = captureMultiAngleScreenshots(false); // Keep HDR for display
+        } catch {}
+        // Add failed attempt to store - ensure plain serializable data
+        const serializableErrorScreenshots = (errorScreenshots || []).map(s => ({
+          name: String(s.name || ""),
+          label: String(s.label || ""),
+          azimuth: Number(s.azimuth || 0),
+          elevation: Number(s.elevation || 0),
+          dataUrl: String(s.dataUrl || ""),
+        }));
+        const errorInferenceData = JSON.parse(JSON.stringify({
+          mode: generationMode.value,
+          screenshots: serializableErrorScreenshots,
+          visionVerified: false,
+          success: false,
+          notes: String(e.message || "Unknown error"),
+        }));
+        await addObjectInference(form.prompt, "", errorInferenceData);
       } finally {
         isLoading.value = false;
       }
@@ -2509,16 +3726,17 @@ Output raw JavaScript code only. Match the reference complexity. No explanations
     // LIFECYCLE
     // ═══════════════════════════════════════════════════════════════════════
     onMounted(async () => {
-      try {
-        const saved = await window.electronAPI?.store?.get?.(
-          "objectInferences",
-          []
-        );
-        if (Array.isArray(saved)) objectInferences.value = saved;
-      } catch (e) {}
+      // Load object inferences from shared store
+      await loadObjectInferences();
 
       // Check if the model is already downloaded
       await isModelAvailable(currentModel.value.filename);
+
+      // Check if vision model is available (await to get accurate initial state)
+      await checkVisionModel();
+
+      // Resume any active downloads
+      resumeActiveDownloadIfAny();
 
       await nextTick();
       setTimeout(() => loadDefaultObject(), 500);
@@ -2541,6 +3759,17 @@ Output raw JavaScript code only. Match the reference complexity. No explanations
       // Cleanup scroll listener
       if (scrollContainer.value) {
         scrollContainer.value.removeEventListener("scroll", handleScroll);
+      }
+      // Cleanup downloads socket
+      if (downloadsSocket.value) {
+        try {
+          downloadsSocket.value.disconnect();
+        } catch {}
+      }
+      // Cleanup HTTP poll timer
+      if (httpPollTimer) {
+        clearInterval(httpPollTimer);
+        httpPollTimer = null;
       }
     });
 
@@ -2568,9 +3797,34 @@ Output raw JavaScript code only. Match the reference complexity. No explanations
       lightIntensity,
       lightingPresets,
       weatherOptions,
+      // Model mode
+      modelMode,
+      modelModes,
       // Generation mode
       generationMode,
       generationModes,
+      // Vision (optional - not yet fully supported in node-llama-cpp)
+      VISION_MODEL,
+      visionSupported,
+      visionModelReady,
+      visionModelLoaded,
+      visionModelDownloading,
+      downloadVisionModel,
+      ensureVisionModelLoaded,
+      // Screenshot modal
+      screenshotModal,
+      openScreenshotModal,
+      closeScreenshotModal,
+      navigateScreenshot,
+      downloadScreenshot,
+      downloadAllScreenshots,
+      // Bundled downloads
+      needsDownload,
+      isDownloading,
+      downloadStatus,
+      downloadAllModels,
+      downloads,
+      downloadTaskList,
       form,
       examplePrompts,
       setTimeOfDay,
@@ -2795,7 +4049,7 @@ p {
 }
 .mode-btn.active {
   color: rgba(255, 255, 255, 1) !important;
-  border: 2px solid rgba(255, 255, 255, 1) !important;
+  border: 1px solid rgba(255, 255, 255, 1) !important;
   background: rgba(97, 55, 142, 0.5) !important;
   backdrop-filter: blur(64px) !important;
 }
@@ -2812,6 +4066,197 @@ p {
   font-family: "Fira Sans", sans-serif;
   text-align: left !important;
 }
+
+/* Compact mode buttons */
+.mode-buttons.compact {
+  gap: 0.5em;
+}
+.mode-btn.small {
+  min-width: auto;
+  padding: 8px 12px;
+}
+.mode-btn.small .mode-icon {
+  font-size: 1.2em;
+}
+.mode-btn.small .mode-label {
+  font-size: 0.7em;
+}
+
+/* Vision Toggle Row (iOS style) */
+.vision-toggle-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0.5em 0;
+}
+.vision-toggle-left {
+  display: flex;
+  align-items: center;
+  gap: 0.75em;
+}
+.vision-toggle-left .vision-icon {
+  font-size: 1.5em;
+  color: #61378e;
+}
+.vision-toggle-text {
+  display: flex;
+  flex-direction: column;
+}
+.vision-toggle-subtitle {
+  font-size: 0.75em;
+  color: rgba(255, 255, 255, 0.5);
+  margin-top: 2px;
+}
+
+/* iOS Toggle Switch */
+.ios-toggle {
+  position: relative;
+  display: inline-block;
+  width: 51px;
+  height: 31px;
+  cursor: pointer;
+}
+.ios-toggle.disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+.ios-toggle input {
+  opacity: 0;
+  width: 0;
+  height: 0;
+}
+.ios-toggle-slider {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background-color: rgba(255, 255, 255, 0.2);
+  border-radius: 31px;
+  transition: 0.3s;
+}
+.ios-toggle-slider:before {
+  position: absolute;
+  content: "";
+  height: 27px;
+  width: 27px;
+  left: 2px;
+  bottom: 2px;
+  background-color: white;
+  border-radius: 50%;
+  transition: 0.3s;
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.3);
+}
+.ios-toggle input:checked + .ios-toggle-slider {
+  background: linear-gradient(135deg, #61378e 0%, #8b5fbf 100%);
+}
+.ios-toggle input:checked + .ios-toggle-slider:before {
+  transform: translateX(20px);
+}
+.ios-toggle input:disabled + .ios-toggle-slider {
+  background-color: rgba(255, 255, 255, 0.1);
+}
+
+/* Vision download/iterations */
+.vision-download-prompt,
+.vision-download-progress {
+  display: flex;
+  align-items: center;
+}
+.vision-iterations {
+  display: flex;
+  align-items: center;
+}
+.iteration-pills {
+  display: flex;
+  gap: 0.5em;
+}
+.iteration-pill {
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  border: 1px solid rgba(255, 255, 255, 0.3);
+  background: transparent;
+  color: rgba(255, 255, 255, 0.6);
+  font-size: 0.9em;
+  cursor: pointer;
+  transition: all 0.2s;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.iteration-pill:hover {
+  border-color: rgba(255, 255, 255, 0.6);
+  color: white;
+}
+.iteration-pill.active {
+  background: linear-gradient(135deg, #61378e 0%, #8b5fbf 100%);
+  border-color: transparent;
+  color: white;
+}
+
+/* Strategy Info Notification */
+.strategy-info {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.75em;
+  padding: 1em 1.25em !important;
+  background: rgba(32, 156, 238, 0.15) !important;
+  border: 1px solid rgba(32, 156, 238, 0.3) !important;
+}
+
+.strategy-info .info-icon {
+  font-size: 16px;
+  color: #209cee;
+  flex-shrink: 0;
+}
+
+.strategy-info span:last-child {
+  font-size: 12px;
+  line-height: 1.4;
+}
+
+/* Download List */
+.download-list {
+  list-style: none;
+  margin: 0 0 0.5rem 0;
+  padding: 0;
+}
+.download-list li {
+  display: flex;
+  align-items: center;
+  padding: 0.5em 0;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+}
+.download-list li:last-child {
+  border-bottom: none;
+}
+.download-list .material-symbols-outlined {
+  color: rgba(255, 255, 255, 0.7);
+  font-size: 1.25em;
+}
+.download-item-name {
+  flex: 1;
+  font-weight: 500;
+}
+.download-item-size {
+  color: rgba(255, 255, 255, 0.5);
+  font-size: 0.9em;
+  margin-left: 1em;
+}
+
+.rotating {
+  animation: rotate 1s linear infinite;
+}
+@keyframes rotate {
+  from {
+    transform: rotate(0deg);
+  }
+  to {
+    transform: rotate(360deg);
+  }
+}
+
 .examples-panel {
   margin-bottom: 2em;
   padding: 1.5em;
@@ -3008,5 +4453,227 @@ ol.chat {
 .scroll-to-top-btn .material-symbols-outlined {
   font-size: 24px;
   border: none;
+}
+
+/* ═══════════════════════════════════════════════════════════════════════
+   VISION INDICATOR
+   ═══════════════════════════════════════════════════════════════════════ */
+.vision-indicator {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.75rem 1rem;
+  background: rgba(0, 0, 0, 0.3);
+  border-radius: 4px;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+.vision-indicator.ready {
+  border-color: rgba(57, 213, 130, 0.75);
+}
+
+.vision-icon {
+  color: rgba(255, 255, 255, 0.5);
+}
+
+.vision-indicator.ready .vision-icon {
+  color: rgba(57, 213, 130, 1);
+}
+
+.vision-label {
+  font-size: 12px;
+  color: rgba(255, 255, 255, 0.8);
+}
+
+/* ═══════════════════════════════════════════════════════════════════════
+   SCREENSHOTS PREVIEW (in history)
+   ═══════════════════════════════════════════════════════════════════════ */
+.screenshots-preview {
+  margin: 1rem 0;
+  padding: 0.75rem;
+  background: rgba(0, 0, 0, 0.2);
+  border-radius: 8px;
+}
+
+.screenshots-grid {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 0.5rem;
+}
+
+.screenshot-thumb {
+  position: relative;
+  aspect-ratio: 1;
+  border-radius: 6px;
+  overflow: hidden;
+  cursor: pointer;
+  border: 2px solid transparent;
+  transition: all 0.2s ease;
+}
+
+.screenshot-thumb:hover {
+  border-color: #61378e;
+  transform: scale(1.05);
+}
+
+.screenshot-thumb img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.screenshot-label {
+  position: absolute;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  padding: 2px 4px;
+  background: rgba(0, 0, 0, 0.7);
+  color: white;
+  font-size: 0.65rem;
+  text-align: center;
+  text-transform: uppercase;
+}
+
+.vision-verified-badge {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.25rem;
+  margin-top: 0.5rem;
+  padding: 0.25rem 0.5rem;
+  background: linear-gradient(135deg, rgba(46, 204, 113, 0.2), rgba(39, 174, 96, 0.2));
+  border: 1px solid rgba(46, 204, 113, 0.5);
+  border-radius: 4px;
+  color: #2ecc71;
+  font-size: 0.75rem;
+}
+
+.vision-verified-badge .material-symbols-outlined {
+  font-size: 14px;
+}
+
+/* ═══════════════════════════════════════════════════════════════════════
+   SCREENSHOT MODAL
+   ═══════════════════════════════════════════════════════════════════════ */
+.screenshot-modal-overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: rgba(0, 0, 0, 0.9);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 9999;
+  animation: fadeIn 0.2s ease;
+}
+
+@keyframes fadeIn {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+.screenshot-modal {
+  background: #1a1a2e;
+  border-radius: 12px;
+  max-width: 90vw;
+  max-height: 90vh;
+  display: flex;
+  flex-direction: column;
+  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.5);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+.screenshot-modal-close {
+  position: absolute;
+  top: -40px;
+  right: 0;
+  background: none;
+  border: none;
+  color: white;
+  cursor: pointer;
+  padding: 8px;
+  opacity: 0.7;
+  transition: opacity 0.2s;
+}
+
+.screenshot-modal-close:hover {
+  opacity: 1;
+}
+
+.screenshot-modal-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 1rem 1.5rem;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+.screenshot-modal-header h3 {
+  margin: 0;
+  color: white;
+  font-size: 1.1rem;
+}
+
+.screenshot-modal-nav {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.nav-btn {
+  background: rgba(255, 255, 255, 0.1);
+  border: none;
+  color: white;
+  padding: 6px;
+  border-radius: 4px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: background 0.2s;
+}
+
+.nav-btn:hover:not(:disabled) {
+  background: rgba(97, 55, 142, 0.5);
+}
+
+.nav-btn:disabled {
+  opacity: 0.3;
+  cursor: not-allowed;
+}
+
+.nav-indicator {
+  color: rgba(255, 255, 255, 0.7);
+  font-size: 0.85rem;
+  min-width: 50px;
+  text-align: center;
+}
+
+.screenshot-modal-content {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 1rem;
+  min-height: 400px;
+  overflow: auto;
+}
+
+.screenshot-modal-content img {
+  max-width: 100%;
+  max-height: 70vh;
+  border-radius: 8px;
+  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.3);
+}
+
+.screenshot-modal-footer {
+  display: flex;
+  justify-content: center;
+  gap: 0.5rem;
+  padding: 1rem 1.5rem;
+  border-top: 1px solid rgba(255, 255, 255, 0.1);
 }
 </style>

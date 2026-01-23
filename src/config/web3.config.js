@@ -99,8 +99,8 @@ export const CONFIG = {
   // LEVEL UNLOCK CONTRACT (Single 1 ETH payment unlocks ALL levels)
   // ═══════════════════════════════════════════════════════════════════════════
   levelUnlock: {
-    // BonzaiUnlock contract on Arbitrum
-    registryAddress: "0x0000000000000000000000000000000000000000", // TODO: Deploy BonzaiUnlock.sol
+    // BonzaiUnlock contract on Arbitrum (deployed)
+    registryAddress: "0xE49492A2604Cea2a50060E47215Cb19bffD1Edae",
     chainId: 42161, // Arbitrum One
     // Fixed price: 1 ETH unlocks all 6 levels permanently
     unlockPrice: "1.0", // ETH

@@ -3001,6 +3001,161 @@ export default {
         this.isGenerating = false;
       }
     },
+    /**
+     * Capture a screenshot of the current 3D scene.
+     * @param {Object} options - Screenshot options
+     * @param {number} options.width - Target width (default: 512)
+     * @param {number} options.height - Target height (default: 512)
+     * @param {string} options.format - Image format: 'png' or 'jpeg' (default: 'png')
+     * @param {number} options.quality - JPEG quality 0-1 (default: 0.9)
+     * @returns {string} Base64 encoded image data URL
+     */
+    captureScreenshot(options = {}) {
+      const { width = 512, height = 512, format = "png", quality = 0.9 } = options;
+
+      if (!this.renderer || !this.scene || !this.camera) {
+        throw new Error("ThreeViewer not initialized");
+      }
+
+      // Store original size
+      const originalWidth = this.renderer.domElement.width;
+      const originalHeight = this.renderer.domElement.height;
+      const originalAspect = this.camera.aspect;
+
+      try {
+        // Resize for screenshot
+        this.renderer.setSize(width, height, false);
+        this.camera.aspect = width / height;
+        this.camera.updateProjectionMatrix();
+
+        // Render frame
+        if (this.composer) {
+          this.composer.setSize(width, height);
+          this.composer.render();
+        } else {
+          this.renderer.render(this.scene, this.camera);
+        }
+
+        // Capture
+        const mimeType = format === "jpeg" ? "image/jpeg" : "image/png";
+        const dataUrl = this.renderer.domElement.toDataURL(mimeType, quality);
+
+        return dataUrl;
+      } finally {
+        // Restore original size
+        this.renderer.setSize(originalWidth, originalHeight, false);
+        this.camera.aspect = originalAspect;
+        this.camera.updateProjectionMatrix();
+        if (this.composer) {
+          this.composer.setSize(originalWidth, originalHeight);
+        }
+      }
+    },
+
+    /**
+     * Capture screenshots from multiple angles for comprehensive vision analysis
+     * @param {Array} angles - Array of {name, azimuth, elevation, label} objects
+     * @param {Object} options - Screenshot options (width, height, format, quality)
+     * @returns {Array} Array of {name, label, dataUrl} objects
+     */
+    captureMultiAngleScreenshots(angles, options = {}) {
+      const { width = 512, height = 512, format = "png", quality = 0.9, disableHDR = false } = options;
+
+      if (!this.renderer || !this.scene || !this.camera || !this.controls) {
+        throw new Error("ThreeViewer not initialized");
+      }
+
+      // Store original camera state
+      const originalPosition = this.camera.position.clone();
+      const originalTarget = this.controls.target.clone();
+      const originalWidth = this.renderer.domElement.width;
+      const originalHeight = this.renderer.domElement.height;
+      const originalAspect = this.camera.aspect;
+
+      // Store original HDR/tone mapping settings
+      const originalToneMapping = this.renderer.toneMapping;
+      const originalToneMappingExposure = this.renderer.toneMappingExposure;
+      const originalBackground = this.scene.background;
+
+      const screenshots = [];
+
+      try {
+        // Disable HDR for more accurate vision analysis
+        if (disableHDR) {
+          this.renderer.toneMapping = THREE.NoToneMapping;
+          this.renderer.toneMappingExposure = 1.0;
+          // Use neutral gray background for better object visibility
+          this.scene.background = new THREE.Color(0x808080);
+        }
+
+        // Resize renderer for screenshots
+        this.renderer.setSize(width, height, false);
+        this.camera.aspect = width / height;
+        this.camera.updateProjectionMatrix();
+        if (this.composer) {
+          this.composer.setSize(width, height);
+        }
+
+        // Calculate scene center and appropriate distance
+        const target = originalTarget.clone();
+        const distance = originalPosition.distanceTo(target);
+
+        for (const angle of angles) {
+          // Convert degrees to radians
+          const azimuthRad = (angle.azimuth * Math.PI) / 180;
+          const elevationRad = (angle.elevation * Math.PI) / 180;
+
+          // Calculate camera position using spherical coordinates
+          const x = target.x + distance * Math.cos(elevationRad) * Math.sin(azimuthRad);
+          const y = target.y + distance * Math.sin(elevationRad);
+          const z = target.z + distance * Math.cos(elevationRad) * Math.cos(azimuthRad);
+
+          this.camera.position.set(x, y, z);
+          this.camera.lookAt(target);
+          this.camera.updateProjectionMatrix();
+
+          // Render frame - use direct renderer when HDR disabled to bypass post-processing
+          if (disableHDR || !this.composer) {
+            this.renderer.render(this.scene, this.camera);
+          } else {
+            this.composer.render();
+          }
+
+          // Capture
+          const mimeType = format === "jpeg" ? "image/jpeg" : "image/png";
+          const dataUrl = this.renderer.domElement.toDataURL(mimeType, quality);
+
+          screenshots.push({
+            name: angle.name,
+            label: angle.label,
+            azimuth: angle.azimuth,
+            elevation: angle.elevation,
+            dataUrl: dataUrl,
+          });
+        }
+
+        return screenshots;
+      } finally {
+        // Restore original HDR settings
+        if (disableHDR) {
+          this.renderer.toneMapping = originalToneMapping;
+          this.renderer.toneMappingExposure = originalToneMappingExposure;
+          this.scene.background = originalBackground;
+        }
+
+        // Restore original camera state
+        this.camera.position.copy(originalPosition);
+        this.controls.target.copy(originalTarget);
+        this.camera.lookAt(originalTarget);
+        this.renderer.setSize(originalWidth, originalHeight, false);
+        this.camera.aspect = originalAspect;
+        this.camera.updateProjectionMatrix();
+        if (this.composer) {
+          this.composer.setSize(originalWidth, originalHeight);
+        }
+        this.controls.update();
+      }
+    },
     cleanup() {
       window.removeEventListener("resize", this.onWindowResize);
       if (this._animationId) cancelAnimationFrame(this._animationId);

@@ -1233,10 +1233,12 @@ export default {
 
     // Socket is managed by the shared generationStore
 
-    const requestWithDownloadTracking = async (url, payload, onSuccess) => {
+    const requestWithDownloadTracking = async (url, payload, onSuccess, isDemo = false) => {
       try {
         isLoading.value = true;
+        const headers = isDemo ? { "X-Demo-Mode": "true" } : {};
         const res = await axios.post(url, payload, {
+          headers,
           validateStatus: () => true,
         });
         if (res.status === 202) {
@@ -1393,7 +1395,7 @@ export default {
           resetToFirstPage();
         }
       };
-      await requestWithDownloadTracking(url, payload, onSuccess);
+      await requestWithDownloadTracking(url, payload, onSuccess, isDemo);
     };
 
     const { toClipboard } = useClipboard();

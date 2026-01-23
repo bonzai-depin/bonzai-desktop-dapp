@@ -12,6 +12,7 @@ const STORE_KEYS = {
   imageInferences: 'imageInferences',
   videoInferences: 'videoInferences',
   audioInferences: 'audioInferences',
+  objectInferences: 'objectInferences',
   gameInferences: 'gameInferences',
   roboticDatasets: 'roboticDatasets',
 };
@@ -21,9 +22,10 @@ const state = reactive({
   imageInferences: [],
   videoInferences: [],
   audioInferences: [],
+  objectInferences: [],
   gameInferences: [],
   roboticDatasets: [],
-  
+
   // Aggregated stats
   totalInferences: 0,
   lastSyncTime: null,
@@ -91,11 +93,12 @@ export const initializeStore = async () => {
     state[stateKey] = await load(storeKey);
   }
   
-  state.totalInferences = 
+  state.totalInferences =
     state.textInferences.length +
     state.imageInferences.length +
     state.videoInferences.length +
     state.audioInferences.length +
+    state.objectInferences.length +
     state.gameInferences.length +
     state.roboticDatasets.length;
     
@@ -194,6 +197,69 @@ export const addAudioInference = async (prompt, audioPath, metadata = {}) => {
 export const loadAudioInferences = async () => {
   state.audioInferences = await load(STORE_KEYS.audioInferences);
   return state.audioInferences;
+};
+
+// ==================== 3D Object Inferences ====================
+
+export const addObjectInference = async (prompt, code, metadata = {}) => {
+  // Create record with explicit fields to avoid non-serializable data
+  const record = createInferenceRecord('object', {
+    prompt: String(prompt || ''),
+    code: String(code || ''),
+    mode: String(metadata.mode || 'normal'),
+    screenshots: Array.isArray(metadata.screenshots) ? metadata.screenshots : [],
+    visionVerified: Boolean(metadata.visionVerified),
+    success: Boolean(metadata.success ?? true),
+    title: metadata.title ? String(metadata.title) : undefined,
+    notes: metadata.notes ? String(metadata.notes) : undefined,
+  });
+
+  // Deep clone to ensure serializability before storing
+  try {
+    const safeRecord = JSON.parse(JSON.stringify(record));
+    state.objectInferences.push(safeRecord);
+    state.totalInferences++;
+    await persist(STORE_KEYS.objectInferences);
+    return safeRecord;
+  } catch (e) {
+    console.error('[InferenceStore] Failed to serialize record:', e);
+    // Fallback: store minimal record
+    const minimalRecord = {
+      id: record.id,
+      type: 'object',
+      timestamp: record.timestamp,
+      createdAt: record.createdAt,
+      prompt: String(prompt || ''),
+      code: String(code || ''),
+      mode: String(metadata.mode || 'normal'),
+      success: Boolean(metadata.success ?? true),
+      screenshots: [],
+    };
+    state.objectInferences.push(minimalRecord);
+    state.totalInferences++;
+    await persist(STORE_KEYS.objectInferences);
+    return minimalRecord;
+  }
+};
+
+export const loadObjectInferences = async () => {
+  state.objectInferences = await load(STORE_KEYS.objectInferences);
+  return state.objectInferences;
+};
+
+export const removeObjectInference = async (index) => {
+  if (index < 0 || index >= state.objectInferences.length) return false;
+  state.objectInferences.splice(index, 1);
+  state.totalInferences--;
+  await persist(STORE_KEYS.objectInferences);
+  return true;
+};
+
+export const clearObjectInferences = async () => {
+  const count = state.objectInferences.length;
+  state.objectInferences = [];
+  state.totalInferences -= count;
+  await persist(STORE_KEYS.objectInferences);
 };
 
 // ==================== Game Inferences ====================
@@ -469,6 +535,12 @@ export const inferenceStore = {
   // Audio
   addAudioInference,
   loadAudioInferences,
+
+  // 3D Object
+  addObjectInference,
+  loadObjectInferences,
+  removeObjectInference,
+  clearObjectInferences,
 
   // Game
   addGameInference,

@@ -13,7 +13,16 @@ contextBridge.exposeInMainWorld("electronAPI", {
   onDownloadProgress: (cb) => ipcRenderer.on("download-progress", cb),
   deleteModel: (modelname) => ipcRenderer.invoke("model-delete", modelname),
   loadModel: (modelname) => ipcRenderer.invoke("model-load", modelname),
+  unloadModel: () => ipcRenderer.invoke("model-unload"),
   chat: (userMessage) => ipcRenderer.invoke("model-chat", userMessage),
+  // Vision chat for multimodal models (MiniCPM-V, etc.)
+  chatVision: (message, imageBase64) =>
+    ipcRenderer.invoke("model-chat-vision", { message, imageBase64 }),
+  // Mmproj (vision projector) management for multimodal models
+  checkMmproj: (mmprojFilename) =>
+    ipcRenderer.invoke("model-check-mmproj", mmprojFilename),
+  downloadMmproj: (url, filename) =>
+    ipcRenderer.invoke("model-download-mmproj", { url, filename }),
   store: {
     get: (key, defaultValue = null) =>
       ipcRenderer.invoke("store-get", key, defaultValue),

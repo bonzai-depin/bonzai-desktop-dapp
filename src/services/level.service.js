@@ -26,16 +26,24 @@ import { web3Service } from './web3.service.js';
 // ABI DEFINITIONS
 // ═══════════════════════════════════════════════════════════════════════════
 
-// BonzaiUnlock contract ABI (simple 1 ETH unlock for all levels)
+// BonzaiUnlock contract ABI (1 ETH one-time payment unlocks all levels)
+// Contract: 0xE49492A2604Cea2a50060E47215Cb19bffD1Edae on Arbitrum
 const BONZAI_UNLOCK_ABI = [
-  'function UNLOCK_PRICE() view returns (uint256)',
-  'function hasUnlocked(address user) view returns (bool)',
+  // View functions
+  'function unlockPrice() view returns (uint256)',
+  'function hasUnlocked(address) view returns (bool)',
   'function isUnlocked(address user) view returns (bool)',
   'function totalUnlocks() view returns (uint256)',
   'function totalCollected() view returns (uint256)',
-  'function getStats() view returns (uint256 _totalUnlocks, uint256 _totalCollected, uint256 _currentBalance)',
-  'function unlock() payable',
+  'function getStats() view returns (uint256 totalUnlocks, uint256 totalCollected, uint256 currentBalance)',
   'function paused() view returns (bool)',
+  'function owner() view returns (address)',
+  // State-changing functions
+  'function unlock() payable',
+  // Events
+  'event Unlocked(address indexed user, uint256 amount)',
+  'event PriceUpdated(uint256 oldPrice, uint256 newPrice)',
+  'event Withdrawn(address indexed to, uint256 amount)',
 ];
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -206,7 +214,7 @@ const fetchContractInfo = async () => {
 
     // Fetch all info in parallel
     const [unlockPrice, stats, isPaused] = await Promise.all([
-      contract.UNLOCK_PRICE(),
+      contract.unlockPrice(),
       contract.getStats(),
       contract.paused(),
     ]);
@@ -261,7 +269,7 @@ export const unlockAllWithEth = async () => {
     }
 
     // Get price from contract (should be 1 ETH)
-    const price = await contract.UNLOCK_PRICE();
+    const price = await contract.unlockPrice();
 
     // Call unlock function with exact payment
     const tx = await contract.unlock({ value: price });

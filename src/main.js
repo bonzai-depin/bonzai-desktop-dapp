@@ -194,13 +194,29 @@ const killPort = (port = PY_SERVER_PORT) => {
         { stdio: "ignore" }
       );
     } else {
-      child_process.execSync(`lsof -ti:${port} | xargs kill -9`, {
-        stdio: "ignore",
+      // Get PIDs first, then kill if any exist
+      const result = child_process.execSync(`lsof -ti:${port} 2>/dev/null || true`, {
+        encoding: "utf8",
       });
+      const pids = result.trim().split("\n").filter(Boolean);
+      if (pids.length > 0) {
+        console.log(`[killPort] Found ${pids.length} process(es) on port ${port}: ${pids.join(", ")}`);
+        for (const pid of pids) {
+          try {
+            process.kill(parseInt(pid, 10), "SIGKILL");
+            console.log(`[killPort] Killed PID ${pid}`);
+          } catch (e) {
+            console.warn(`[killPort] Failed to kill PID ${pid}: ${e.message}`);
+          }
+        }
+        // Wait briefly for port to be freed
+        child_process.execSync("sleep 0.5");
+      } else {
+        console.log(`[killPort] No process found on port ${port}`);
+      }
     }
-    console.log(`[killPort] Freed port ${port}`);
-  } catch {
-    // no-op
+  } catch (e) {
+    console.warn(`[killPort] Error: ${e.message}`);
   }
 };
 
@@ -436,7 +452,7 @@ const checkPythonServer = async (url, silent = false) => {
   }
 
   const totalWait = Math.floor((Date.now() - startTime) / 1000);
-  throw new Error(`Python server did not start within ${totalWait}s timeout.`);
+  throw new Error(`The server did not start within ${totalWait}s.`);
 };
 
 // Manual restart handler (can be called from renderer when max restarts exceeded)
@@ -727,12 +743,24 @@ ipcMain.handle("proxy:fetch", async (_event, { url, options = {} }) => {
 // ─────────────────────────────────────────────────────────────────────────────
 let modelContext = undefined;
 let modelSession = undefined;
+let currentLoadedModel = null; // Track currently loaded model for multimodal support
+
+// DEPRECATED: MiniCPM-V vision model is now handled server-side via diffuser.py
+// These constants are kept for backwards compatibility only
+const MINICPM_V_MODEL = {
+  filename: "minicpm-v-4_5-q4_k_m.gguf",
+  mmproj: "mmproj-model-f16.gguf",
+};
 
 ipcMain.handle("model-check", checkModel);
 ipcMain.handle("model-download", downloadModel);
 ipcMain.handle("model-delete", deleteModel);
 ipcMain.handle("model-load", loadModel);
+ipcMain.handle("model-unload", unloadModel);
 ipcMain.handle("model-chat", chat);
+ipcMain.handle("model-chat-vision", chatWithVision);
+ipcMain.handle("model-check-mmproj", checkMmproj);
+ipcMain.handle("model-download-mmproj", downloadMmproj);
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Window creation
@@ -1214,7 +1242,11 @@ function deleteModel(_event, modelname) {
 }
 
 function computeMaxContextForModel(currentModel, sysInfo) {
-  const params = currentModel.parameters || 0;
+  // For MoE models, use activeParameters for context sizing since that's
+  // what matters for compute/memory. Fall back to total parameters.
+  const isMoE = currentModel.isMoE || currentModel.activeParameters;
+  const params = currentModel.activeParameters || currentModel.parameters || 0;
+  const totalParams = currentModel.parameters || 0;
 
   const ramBytes = sysInfo.ramAvailable || sysInfo.ram || 0;
   const ramGB = ramBytes / 1024 ** 3;
@@ -1247,12 +1279,14 @@ function computeMaxContextForModel(currentModel, sysInfo) {
   let baseCtx;
 
   // Use memBudgetGB *and* params together
+  // For MoE models, params = activeParameters (e.g., 3.6B for GLM-4.7-Flash)
   if (params <= 4_000_000_000) {
-    // 1–4B class
+    // 1–4B class (or MoE with <=4B active params)
     if (memBudgetGB < 4) baseCtx = 4096;
     else if (memBudgetGB < 8) baseCtx = 8192;
     else if (memBudgetGB < 16) baseCtx = 16384;
-    else baseCtx = 32768;
+    else if (memBudgetGB < 24) baseCtx = 65536;
+    else baseCtx = 131072;
   } else if (params <= 8_000_000_000) {
     // 7–8B class (8B Q4 uses ~4-5GB, plenty of room for KV cache)
     if (memBudgetGB < 8) baseCtx = 4096;
@@ -1279,9 +1313,8 @@ function computeMaxContextForModel(currentModel, sysInfo) {
   const chosen = Math.min(modelMaxCtx, baseCtx);
 
   console.log(
-    `[CTX] RAM=${ramGB.toFixed(1)}GB, memBudget=${memBudgetGB.toFixed(
-      1
-    )}GB, VRAM=${vramGB.toFixed(1)}GB, params=${params}, baseCtx=${baseCtx}, modelMaxCtx=${modelMaxCtx}, chosen=${chosen}, unified=${isUnified}`
+    `[CTX] RAM=${ramGB.toFixed(1)}GB, memBudget=${memBudgetGB.toFixed(1)}GB, VRAM=${vramGB.toFixed(1)}GB, ` +
+    `params=${params}${isMoE ? ` (MoE, total=${totalParams})` : ""}, baseCtx=${baseCtx}, modelMaxCtx=${modelMaxCtx}, chosen=${chosen}, unified=${isUnified}`
   );
 
   return chosen;
@@ -1306,16 +1339,71 @@ async function loadModel(_event, currentModel) {
     console.log("Model path:", modelPath);
   }
 
-  const model = await llama.loadModel({ modelPath });
+  // Check if this is a multimodal model (has mmproj)
+  const isMultimodal = currentModel.isMultimodal || currentModel.mmproj;
+  let mmprojPath = null;
+
+  if (isMultimodal && currentModel.mmproj) {
+    const normalizedMmproj = normalizeModelFilename(currentModel.mmproj);
+    mmprojPath = path.join(MODEL_DIR, normalizedMmproj);
+    if (!fs.existsSync(mmprojPath)) {
+      console.warn(`Mmproj file not found: ${mmprojPath}. Multimodal features will be disabled.`);
+      mmprojPath = null;
+    } else {
+      console.log("Multimodal model detected, mmproj path:", mmprojPath);
+    }
+  }
+
+  // Load model with or without mmproj
+  const loadOptions = { modelPath };
+  if (mmprojPath) {
+    loadOptions.mmproj = mmprojPath;
+  }
+
+  const model = await llama.loadModel(loadOptions);
 
   const sysInfo = await systemInformation();
   const desiredCtx = computeMaxContextForModel(currentModel, sysInfo);
   console.log("Model context:", desiredCtx);
 
-  modelContext = await model.createContext({ contextSize: desiredCtx });
+  // Try progressively smaller context sizes if memory is insufficient
+  const contextSizesToTry = [desiredCtx];
+  let ctx = desiredCtx;
+  while (ctx > 2048) {
+    ctx = Math.floor(ctx / 2);
+    if (ctx >= 2048) contextSizesToTry.push(ctx);
+  }
+  if (!contextSizesToTry.includes(2048)) contextSizesToTry.push(2048);
+
+  let lastError = null;
+  for (const contextSize of contextSizesToTry) {
+    try {
+      console.log(`Trying context size: ${contextSize}`);
+      modelContext = await model.createContext({ contextSize });
+      console.log(`Successfully created context with size: ${contextSize}`);
+      break;
+    } catch (err) {
+      console.log(`Context size ${contextSize} failed: ${err.message}`);
+      lastError = err;
+      // Continue to try smaller size
+    }
+  }
+
+  if (!modelContext) {
+    throw lastError || new Error("Failed to create model context");
+  }
+
   modelSession = new LlamaChatSession({
     contextSequence: modelContext.getSequence(),
   });
+
+  // Store current model info for multimodal checks
+  currentLoadedModel = {
+    ...currentModel,
+    isMultimodal: !!mmprojPath,
+  };
+
+  console.log(`Model loaded: ${currentModel.filename}, multimodal: ${!!mmprojPath}`);
 
   return true;
 }
@@ -1367,4 +1455,54 @@ async function chat(_event, userMessage) {
   }
   const assistantMessage = await modelSession.prompt(userMessage);
   return assistantMessage;
+}
+
+async function unloadModel() {
+  if (modelSession) {
+    console.log("[LLM] Unloading model session...");
+    modelSession = undefined;
+  }
+  if (modelContext) {
+    console.log("[LLM] Disposing model context...");
+    await modelContext.dispose();
+    modelContext = undefined;
+  }
+  currentLoadedModel = null;
+
+  // Force garbage collection if available
+  if (global.gc) {
+    global.gc();
+  }
+
+  console.log("[LLM] Model unloaded successfully");
+  return true;
+}
+
+// DEPRECATED: Vision is now handled server-side via diffuser.py /vision/analyze endpoint
+// This function is kept for backwards compatibility but will always return an error
+async function chatWithVision(_event, { message, imageBase64 }) {
+  throw new Error(
+    "Vision has been moved to server-side. " +
+    "Use the /vision/analyze endpoint on the diffuser server instead. " +
+    "This provides better performance and model support via the full HuggingFace transformers library."
+  );
+}
+
+// DEPRECATED: Vision model is now downloaded via server-side pipeline
+// Check if mmproj file exists (kept for backwards compatibility)
+function checkMmproj(_event, mmprojFilename) {
+  const normalizedName = normalizeModelFilename(mmprojFilename || MINICPM_V_MODEL.mmproj);
+  const mmprojPath = path.join(MODEL_DIR, normalizedName);
+  return fs.existsSync(mmprojPath);
+}
+
+// DEPRECATED: Vision model is now downloaded via server-side pipeline
+// This function is kept for backwards compatibility
+async function downloadMmproj(event, { url, filename }) {
+  console.warn("[Mmproj Download] DEPRECATED: Use server-side pipeline prefetch instead");
+  const targetFilename = filename || MINICPM_V_MODEL.mmproj;
+  if (!url) {
+    throw new Error("URL is required for mmproj download");
+  }
+  return downloadModel(event, url, targetFilename);
 }

@@ -35,12 +35,12 @@
           <div class="desc">
             <p>
               {{ currentModel.modeldesc }}
-              <div class="fira-sans-condensed-black-italic mt-5">
+              <h3 class="fira-sans-condensed-black-italic mt-5 has-text-left">
                 <span class="material-symbols-outlined is-size-1 mr-2">
                   computer
                 </span>
                 Hardware Requirements
-              </div>
+              </h3>
               <span class="tags pt-3 fira-sans-condensed-black-italic">
                 <span class="tag is-info">
                   <span class="material-symbols-outlined">memory</span>
@@ -115,9 +115,36 @@
                 {{ currentModel.filesize }}
               </span>
             </button>
+            <!-- Mmproj download for multimodal models -->
+            <button
+              class="button is-warning is-large fira-sans-condensed-black-italic ml-5 mr-5"
+              :class="{ 'is-loading': isLoading }"
+              :disabled="isLoading"
+              @click="downloadMmproj(currentModel)"
+              v-if="isModel && currentModel.isMultimodal && !isMmprojAvailable"
+            >
+              <span class="material-symbols-outlined is-size-3 mr-2">
+                visibility
+              </span>
+              Download Vision
+              <span
+                class="filesize"
+                style="font-size: 15px; top: -20px; right: -25px; text-shadow: none;"
+                v-if="mmprojDownloadProgress"
+              >
+                {{ mmprojDownloadProgress }}%
+              </span>
+              <span
+                v-else
+                class="filesize"
+                style="font-size: 15px; top: -20px; right: -25px; text-shadow: none;"
+              >
+                {{ currentModel.mmprojFilesize }}
+              </span>
+            </button>
             <button
               class="button is-success is-large fira-sans-condensed-black-italic ml-5 mr-5"
-              v-if="!isLoading && isModel"
+              v-if="!isLoading && isModel && (!currentModel.isMultimodal || isMmprojAvailable)"
               @click="
                 openChat = true;
                 loadModel(currentModel);
@@ -173,9 +200,7 @@
             <span class="fira-sans-condensed-black-italic">
               {{ currentModel.modelname }}
             </span>
-            to Peers to earn
-            <span class="fira-sans-condensed-black-italic">$USDC</span>
-            .
+            to Peers to earn rewards.
           </p>
         </div>
         <div class="models__activity--payouts mt-5">
@@ -393,14 +418,46 @@
           />
 
           <form ref="promptForm" @submit.prevent>
-            <input
-              class="input is-large is-fullwidth"
-              type="text"
-              placeholder="Ask me something and press enter..."
-              v-model="form.prompt"
-              @keyup.enter.native="hasAccess && sendMessage(form.prompt)"
-              :disabled="isLoading || !hasAccess"
-            />
+            <!-- Image attachment preview for multimodal models -->
+            <div v-if="isMultimodalModel && attachedImage" class="attached-image-preview">
+              <img :src="attachedImage.dataUrl" alt="Attached image" />
+              <button
+                type="button"
+                class="delete-btn"
+                @click="removeAttachedImage"
+                title="Remove image"
+              >
+                <span class="material-symbols-outlined">close</span>
+              </button>
+              <span class="image-name">{{ attachedImage.name }}</span>
+            </div>
+
+            <div class="chat-input-row">
+              <!-- Image attachment button for multimodal models -->
+              <label
+                v-if="isMultimodalModel && isMmprojAvailable"
+                class="button attach-image-btn"
+                :class="{ 'has-image': attachedImage }"
+                title="Attach an image for analysis"
+              >
+                <span class="material-symbols-outlined">add_photo_alternate</span>
+                <input
+                  type="file"
+                  accept="image/*"
+                  @change="attachImage"
+                  style="display: none"
+                />
+              </label>
+
+              <input
+                class="input is-large is-fullwidth"
+                type="text"
+                :placeholder="isMultimodalModel ? 'Ask about an image or just chat...' : 'Ask me something and press enter...'"
+                v-model="form.prompt"
+                @keyup.enter.native="hasAccess && sendMessage(form.prompt)"
+                :disabled="isLoading || !hasAccess"
+              />
+            </div>
             <button
               class="button chat is-loading is-outlined is-info is-large is-fullwidth"
               v-if="isLoading"
@@ -856,15 +913,23 @@ export default {
       glm_4_7_flash: {
         modelname: "GLM 4.7 Flash",
         modeldesc:
-          "40.7B-parameter Mixture-of-Experts model from THUDM with only 4B active parameters per forward pass and 32K context. Ultra-efficient MoE architecture runs on a single 16GB GPU while delivering near-GPT-4 performance. Best for: fast local inference, coding, math reasoning, and general-purpose AI on consumer hardware.",
-        url: "https://huggingface.co/unsloth/GLM-4.7-GGUF/resolve/main/GLM-4.7-UD-TQ1_0-00001-of-00003.gguf",
-        filename: "GLM-4.7-UD-TQ1_0.gguf",
-        filesize: "10.5 GB",
-        parameters: 40700000000,
-        activeParameters: 4000000000,
+          "30B-parameter Mixture-of-Experts model from Zhipu AI with only 3.6B active parameters per forward pass and 200K context. Ultra-efficient MoE architecture delivers strong reasoning at a fraction of the compute. Best for: fast local inference, coding assistance, math reasoning, and general-purpose AI on consumer hardware.",
+        url: "https://huggingface.co/unsloth/GLM-4.7-Flash-GGUF/resolve/main/GLM-4.7-Flash-Q4_K_M.gguf",
+        filename: "glm-4.7-flash-q4_k_m.gguf",
+        filesize: "18.3 GB",
+        parameters: 30000000000,
+        activeParameters: 3600000000,
         isMoE: true,
-        context: 32768,
+        context: 202752,
       },
+
+      // MiniCPM-V 4.5 is disabled for GenerativeText - vision is handled server-side via diffuser.py
+      // This model is used in Generative3D for vision analysis
+      // minicpm_v_4_5: {
+      //   modelname: "MiniCPM-V 4.5 (Vision)",
+      //   modeldesc: "8B-parameter multimodal vision-language model from OpenBMB...",
+      //   disabled: true,
+      // },
     });
 
     const currentModel = ref({
@@ -881,6 +946,7 @@ export default {
     const pickModel = async (model) => {
       currentModel.value = { ...model };
       await isModelAvailable(model.filename);
+      await checkMmprojAvailability(model);
     };
 
     const isModelAvailable = async (filename) => {
@@ -934,11 +1000,73 @@ export default {
         filename: model.filename,
         parameters: model.parameters,
         context: model.context,
+        isMultimodal: model.isMultimodal || false,
+        mmproj: model.mmproj || null,
       };
 
       console.log("Sending to electronAPI.loadModel:", payload);
 
       await window.electronAPI.loadModel(payload);
+
+      // Update mmproj availability for multimodal models
+      if (model.isMultimodal && model.mmproj) {
+        isMmprojAvailable.value = await window.electronAPI.checkMmproj(model.mmproj);
+      } else {
+        isMmprojAvailable.value = false;
+      }
+    };
+
+    // Image attachment handlers
+    const attachImage = (event) => {
+      const file = event.target.files?.[0];
+      if (!file) return;
+
+      const reader = new FileReader();
+      reader.onload = (e) => {
+        attachedImage.value = {
+          dataUrl: e.target.result,
+          name: file.name,
+        };
+      };
+      reader.readAsDataURL(file);
+    };
+
+    const removeAttachedImage = () => {
+      attachedImage.value = null;
+    };
+
+    // Download mmproj for multimodal models
+    const downloadMmproj = async (model) => {
+      if (!model.isMultimodal || !model.mmprojUrl) return;
+
+      isLoading.value = true;
+      mmprojDownloadProgress.value = 0;
+
+      window.electronAPI.onDownloadProgress((e, data) => {
+        if (data.filename === model.mmproj) {
+          mmprojDownloadProgress.value = Math.round(data.percent * 100);
+        }
+      });
+
+      try {
+        await window.electronAPI.downloadMmproj(model.mmprojUrl, model.mmproj);
+        isMmprojAvailable.value = true;
+        console.log("Mmproj download success!");
+      } catch (err) {
+        console.error("Mmproj download failed:", err);
+      }
+
+      isLoading.value = false;
+      mmprojDownloadProgress.value = 0;
+    };
+
+    // Check mmproj availability when model changes
+    const checkMmprojAvailability = async (model) => {
+      if (model?.isMultimodal && model?.mmproj) {
+        isMmprojAvailable.value = await window.electronAPI.checkMmproj(model.mmproj);
+      } else {
+        isMmprojAvailable.value = false;
+      }
     };
 
     // Use shallowRef for better performance with large chat histories
@@ -1067,8 +1195,19 @@ export default {
 
     const form = reactive({ ...initialState });
 
+    // Image attachment for multimodal models
+    const attachedImage = ref(null); // { dataUrl, name }
+    const isMmprojAvailable = ref(false);
+    const mmprojDownloadProgress = ref(0);
+
+    // Check if current model supports vision
+    const isMultimodalModel = computed(() => {
+      return currentModel.value?.isMultimodal === true;
+    });
+
     function resetForm() {
       Object.assign(form, initialState);
+      attachedImage.value = null;
     }
 
     async function resetChat() {
@@ -1140,8 +1279,19 @@ export default {
       isLoading.value = true;
 
       try {
-        // Inference
-        const assistantResult = await window.electronAPI.chat(prompt);
+        let assistantResult;
+
+        // Check if we have an attached image and current model is multimodal
+        if (attachedImage.value && isMultimodalModel.value) {
+          console.log("Sending vision message with image...");
+          assistantResult = await window.electronAPI.chatVision(
+            prompt,
+            attachedImage.value.dataUrl
+          );
+        } else {
+          // Standard text-only inference
+          assistantResult = await window.electronAPI.chat(prompt);
+        }
 
         const assistantMessage = {
           id: uuid(),
@@ -1150,7 +1300,11 @@ export default {
 
         console.log("prompt", assistantMessage);
         // Update shallowRef by replacing array
-        const newInference = { question: prompt, answer: assistantMessage };
+        const newInference = {
+          question: prompt,
+          answer: assistantMessage,
+          image: attachedImage.value?.dataUrl || null, // Store attached image
+        };
         inferences.value = [...inferences.value, newInference];
         hasCopy.value = [...hasCopy.value, false];
 
@@ -1160,6 +1314,7 @@ export default {
         resetForm();
         isLoading.value = false;
       } catch (e) {
+        console.error("Chat error:", e);
         isLoading.value = false;
       }
     };
@@ -1216,6 +1371,14 @@ export default {
       DEMO_PROMPT,
       // memory requirements computation
       computeMemoryRequirements,
+      // multimodal/vision support
+      isMultimodalModel,
+      attachedImage,
+      attachImage,
+      removeAttachedImage,
+      isMmprojAvailable,
+      mmprojDownloadProgress,
+      downloadMmproj,
     };
   },
   async mounted() {
@@ -1493,6 +1656,89 @@ span.answer__id {
 
 form {
   position: relative;
+}
+
+/* Image attachment for multimodal models */
+.chat-input-row {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+.chat-input-row .input {
+  flex: 1;
+}
+
+.attach-image-btn {
+  height: 52px;
+  width: 52px;
+  padding: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(255, 255, 255, 0.1);
+  border: 2px solid rgba(255, 255, 255, 0.2);
+  color: #fff;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.attach-image-btn:hover {
+  background: rgba(255, 255, 255, 0.2);
+  border-color: rgba(255, 255, 255, 0.4);
+}
+
+.attach-image-btn.has-image {
+  background: rgba(72, 199, 116, 0.3);
+  border-color: #48c774;
+}
+
+.attached-image-preview {
+  position: relative;
+  margin-bottom: 12px;
+  padding: 8px;
+  background: rgba(0, 0, 0, 0.3);
+  border-radius: 8px;
+  display: inline-flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.attached-image-preview img {
+  max-width: 120px;
+  max-height: 80px;
+  border-radius: 4px;
+  object-fit: cover;
+}
+
+.attached-image-preview .delete-btn {
+  position: absolute;
+  top: -8px;
+  right: -8px;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  background: #ff3860;
+  border: none;
+  border-radius: 50%;
+  color: #fff;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.attached-image-preview .delete-btn .material-symbols-outlined {
+  font-size: 16px;
+}
+
+.attached-image-preview .image-name {
+  font-size: 12px;
+  color: rgba(255, 255, 255, 0.7);
+  max-width: 150px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .input {

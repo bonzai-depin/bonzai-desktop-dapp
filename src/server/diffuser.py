@@ -203,6 +203,9 @@ CHATTERBOX_REPO = "ResembleAI/chatterbox"
 
 CHATTERBOX_MULTILINGUAL_MODEL_ID = "onnx-community/chatterbox-multilingual-ONNX"
 
+# Qwen3-VL 2B - Vision-language model with good cross-platform support
+QWEN3_VL_REPO = "Qwen/Qwen3-VL-2B-Instruct"
+
 LLAMA_REPOS = {
     "llama-3.2-1b": "meta-llama/Llama-3.2-1B",
     "llama-3.2-3b": "meta-llama/Llama-3.2-3B",
@@ -598,6 +601,7 @@ LEVEL_REQUIREMENTS = {
     "text": 1,
     "audio": 2,
     "image": 3,
+    "vision": 3,  # Vision analysis uses same level as image
     "video": 4,
     "3d": 5,
     "training": 6,
@@ -1369,6 +1373,18 @@ def allow_patterns_for_repo(repo_id: str) -> Optional[List[str]]:
             "vae/**",
             "audio_vae/**",
         ]
+    if repo_id == QWEN3_VL_REPO:
+        # Qwen3-VL is a transformers vision-language model
+        return [
+            "*.json",
+            "*.txt",
+            "*.safetensors",
+            "*.bin",
+            "*.model",
+            "tokenizer.model",
+            "merges.txt",
+            "vocab.json",
+        ]
     return None
 
 
@@ -1420,6 +1436,14 @@ REPO_SPECS = {
         "must_tokenizers": ["tokenizer"],
         "must_weight_dirs": ["transformer", "vae", "audio_vae"],
         "extra_dirs": ["scheduler", "connectors", "vocoder"],
+    },
+    # Qwen3-VL 2B: Transformers vision-language model
+    "Qwen/Qwen3-VL-2B-Instruct": {
+        "must_files": ["config.json"],
+        "must_tokenizers": [],
+        "must_weight_dirs": [],
+        "extra_dirs": [],
+        "fallback_any_weights": True,
     },
 }
 
@@ -1502,6 +1526,11 @@ def _repo_completeness(repo_id: str) -> Dict[str, Any]:
         onnx_path = root / "onnx" / onnx_file
         if not _nonzero(onnx_path):
             report["missing"].append(f"onnx/{onnx_file}")
+    # Fallback: if no must_weight_dirs specified, check for any weights in root
+    if spec.get("fallback_any_weights") and not spec.get("must_weight_dirs"):
+        has_weights = _has_any_weights(root)
+        if not has_weights:
+            report["missing"].append("*.safetensors or *.bin (model weights)")
     report["ok"] = len(report["missing"]) == 0
     return report
 
@@ -1649,6 +1678,9 @@ def _plan_for(pipeline: str) -> Dict[str, Any]:
     if pipeline == "chatterbox":
         # Use the ONNX repo for inference (multilingual only)
         return {"repos_to_fetch": [CHATTERBOX_MULTILINGUAL_MODEL_ID], "single_files": []}
+    if pipeline == "qwen3_vision":
+        # Qwen3-VL 2B for vision analysis (server-side)
+        return {"repos_to_fetch": [QWEN3_VL_REPO], "single_files": []}
     raise ValueError(f"Unknown pipeline: {pipeline}")
 
 
@@ -4330,6 +4362,218 @@ def training_info():
 # =============================================================================
 # REST API: HEALTH & ROOT
 # =============================================================================
+
+# =============================================================================
+# VISION ANALYSIS (Qwen3-VL 2B)
+# =============================================================================
+
+# Global cache for vision model
+_qwen3_vl_model = None
+_qwen3_vl_processor = None
+_qwen3_vl_lock = threading.Lock()
+
+
+def _load_qwen3_vision():
+    """Load Qwen3-VL 2B model for vision analysis."""
+    global _qwen3_vl_model, _qwen3_vl_processor
+
+    with _qwen3_vl_lock:
+        if _qwen3_vl_model is not None:
+            return _qwen3_vl_model, _qwen3_vl_processor
+
+        from transformers import Qwen3VLForConditionalGeneration, AutoProcessor
+
+        # Get local repo path
+        local_dir = repo_local_dir(QWEN3_VL_REPO)
+        model_path = str(local_dir) if local_dir.exists() else QWEN3_VL_REPO
+
+        logger.info(f"[Vision] Loading Qwen3-VL 2B from {model_path}")
+
+        # Load model exactly as in reference: dtype="auto", device_map="auto"
+        model = Qwen3VLForConditionalGeneration.from_pretrained(
+            model_path,
+            torch_dtype="auto",
+            device_map="auto",
+            local_files_only=LOCAL_ONLY,
+        )
+
+        # Qwen3-VL uses 32px patch size - set min/max pixels to avoid split_sizes errors
+        # min_pixels: minimum image size (256 tokens worth = 256 * 32 * 32)
+        # max_pixels: maximum to balance speed/memory (1280 tokens worth)
+        min_pixels = 256 * 32 * 32   # ~262k pixels
+        max_pixels = 1280 * 32 * 32  # ~1.3M pixels
+
+        processor = AutoProcessor.from_pretrained(
+            model_path,
+            local_files_only=LOCAL_ONLY,
+            min_pixels=min_pixels,
+            max_pixels=max_pixels,
+        )
+
+        _qwen3_vl_model = model
+        _qwen3_vl_processor = processor
+
+        logger.info("[Vision] Qwen3-VL 2B loaded successfully")
+        return model, processor
+
+
+def _unload_qwen3_vision():
+    """Unload Qwen3-VL model to free memory."""
+    global _qwen3_vl_model, _qwen3_vl_processor
+
+    with _qwen3_vl_lock:
+        if _qwen3_vl_model is not None:
+            del _qwen3_vl_model
+            _qwen3_vl_model = None
+        if _qwen3_vl_processor is not None:
+            del _qwen3_vl_processor
+            _qwen3_vl_processor = None
+        gc.collect()
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+        logger.info("[Vision] Qwen3-VL model unloaded")
+
+
+@app.route("/vision/analyze", methods=["POST"])
+@require_auth(min_level=LEVEL_REQUIREMENTS["vision"], allow_demo=True)
+def vision_analyze():
+    """
+    Analyze an image using Qwen3-VL 2B vision-language model.
+
+    Request body:
+    {
+        "image_base64": "...",  # Base64 encoded image (required)
+        "prompt": "...",        # Analysis prompt (optional, defaults to describe)
+        "max_tokens": 512,      # Max response tokens (optional)
+        "auto_download": false  # Start download if model missing (optional)
+    }
+
+    Returns:
+    {
+        "success": true,
+        "response": "...",      # Model's text response
+        "generation_id": "..."
+    }
+    """
+    data = request.get_json(silent=True) or {}
+
+    image_b64 = data.get("image_base64") or data.get("image")
+    if not image_b64:
+        return jsonify({"error": "image_base64 is required"}), 400
+
+    prompt = (data.get("prompt") or "Describe this image in detail.").strip()
+    max_tokens = int(data.get("max_tokens", 512))
+    auto_dl = bool(data.get("auto_download", False))
+
+    # Check if model is available
+    guard = _ensure_files_present_or_start("qwen3_vision", auto_download=auto_dl)
+    if guard:
+        return guard
+
+    gen_id = genbus.new("qwen3_vision", {"endpoint": "/vision/analyze", "prompt": prompt[:100]})
+
+    try:
+        genbus.progress(gen_id, "Loading vision model", 1, 10)
+
+        # Load model (cached after first load)
+        model, processor = _load_qwen3_vision()
+
+        genbus.progress(gen_id, "Processing image", 3, 10)
+
+        # Extract raw base64 data and validate image
+        if image_b64.startswith("data:"):
+            # Parse data URL: data:image/jpeg;base64,<data>
+            header, b64_data = image_b64.split(",", 1)
+        else:
+            b64_data = image_b64
+
+        # Decode and ensure RGB format
+        image_bytes = base64.b64decode(b64_data)
+        image = Image.open(io.BytesIO(image_bytes))
+
+        # Convert to RGB if needed (removes alpha channel, handles palette images)
+        if image.mode != "RGB":
+            image = image.convert("RGB")
+
+        logger.info(f"[Vision] Input image size: {image.size}")
+
+        genbus.progress(gen_id, "Analyzing image", 5, 10)
+
+        # Use qwen_vl_utils for proper image processing (avoids split_sizes errors)
+        from qwen_vl_utils import process_vision_info
+
+        # Build message for Qwen3-VL format
+        messages = [
+            {
+                "role": "user",
+                "content": [
+                    {
+                        "type": "image",
+                        "image": image,  # PIL Image
+                    },
+                    {"type": "text", "text": prompt},
+                ],
+            }
+        ]
+
+        # Apply chat template to get the text
+        text = processor.apply_chat_template(
+            messages,
+            tokenize=False,
+            add_generation_prompt=True,
+        )
+
+        # Use process_vision_info to properly extract and process image
+        image_inputs, video_inputs = process_vision_info(messages)
+
+        # Process inputs with the processor
+        inputs = processor(
+            text=[text],
+            images=image_inputs,
+            videos=video_inputs,
+            padding=True,
+            return_tensors="pt",
+        )
+        inputs = inputs.to(model.device)
+
+        # Generate response with anti-repetition settings
+        with torch.no_grad():
+            generated_ids = model.generate(
+                **inputs,
+                max_new_tokens=max_tokens,
+                repetition_penalty=1.2,      # Penalize repeated tokens
+                no_repeat_ngram_size=4,       # Prevent 4-gram repetition
+                do_sample=False,              # Greedy decoding for consistency
+            )
+            # Trim input tokens from output
+            generated_ids_trimmed = [
+                out_ids[len(in_ids):] for in_ids, out_ids in zip(inputs.input_ids, generated_ids)
+            ]
+            response = processor.batch_decode(
+                generated_ids_trimmed, skip_special_tokens=True, clean_up_tokenization_spaces=False
+            )[0]
+
+        genbus.progress(gen_id, "Complete", 10, 10)
+        genbus.finish(gen_id)
+
+        return jsonify(_json_sanitize({
+            "success": True,
+            "response": response,
+            "generation_id": gen_id,
+        }))
+
+    except Exception as e:
+        logger.exception(f"[Vision] Analysis failed: {e}")
+        genbus.error(gen_id, str(e))
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/vision/unload", methods=["POST"])
+def vision_unload():
+    """Unload the vision model to free memory."""
+    _unload_qwen3_vision()
+    return jsonify({"success": True, "message": "Vision model unloaded"})
+
 
 @app.route("/")
 def root():

@@ -1423,14 +1423,16 @@ export default {
         }
       };
 
-      await requestWithDownloadTracking(url, payload, onSuccess);
+      await requestWithDownloadTracking(url, payload, onSuccess, isDemo);
     };
 
     // ------------ request wrapper ---------
-    const requestWithDownloadTracking = async (url, payload, onSuccess) => {
+    const requestWithDownloadTracking = async (url, payload, onSuccess, isDemo = false) => {
       try {
         isLoading.value = true;
+        const headers = isDemo ? { "X-Demo-Mode": "true" } : {};
         const res = await axios.post(url, payload, {
+          headers,
           validateStatus: () => true,
         });
 
