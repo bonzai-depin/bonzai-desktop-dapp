@@ -704,7 +704,7 @@ export default {
 
     // ------------ pipeline/endpoint maps --
     const endpointForMode = () => "/audio";
-    const pipelineForMode = () => "chatterbox";
+    const pipelineForMode = () => "audio";
     const currentPipeline = computed(() => pipelineForMode());
 
     // ------------ downloads state/socket --

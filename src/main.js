@@ -15,7 +15,7 @@ import os from "os";
 import fs from "fs";
 import si from "systeminformation";
 import psTree from "ps-tree";
-import { getLlama, LlamaChatSession } from "node-llama-cpp";
+import { getLlama, LlamaChatSession, TemplateChatWrapper } from "node-llama-cpp";
 import path from "path";
 import { fileURLToPath, pathToFileURL } from "url";
 import { download } from "electron-dl";
@@ -743,6 +743,7 @@ ipcMain.handle("proxy:fetch", async (_event, { url, options = {} }) => {
 // ─────────────────────────────────────────────────────────────────────────────
 let modelContext = undefined;
 let modelSession = undefined;
+let loadedModel = undefined; // The actual llama model object (holds GPU memory)
 let currentLoadedModel = null; // Track currently loaded model for multimodal support
 
 // DEPRECATED: MiniCPM-V vision model is now handled server-side via diffuser.py
@@ -1324,6 +1325,14 @@ async function loadModel(_event, currentModel) {
   if (!llama) {
     throw new Error("LLM engine not initialized. Please restart the application.");
   }
+
+  // Cleanup any existing model before loading a new one
+  // This is critical to free GPU memory, especially for large models like GLM
+  if (loadedModel || modelContext || modelSession) {
+    console.log("[LLM] Cleaning up existing model before loading new one...");
+    await unloadModel();
+  }
+
   // Normalize filename to lowercase
   const normalizedFilename = normalizeModelFilename(currentModel.filename);
 
@@ -1361,6 +1370,7 @@ async function loadModel(_event, currentModel) {
   }
 
   const model = await llama.loadModel(loadOptions);
+  loadedModel = model; // Store reference for proper disposal
 
   const sysInfo = await systemInformation();
   const desiredCtx = computeMaxContextForModel(currentModel, sysInfo);
@@ -1393,9 +1403,31 @@ async function loadModel(_event, currentModel) {
     throw lastError || new Error("Failed to create model context");
   }
 
-  modelSession = new LlamaChatSession({
+  // Detect model type and use appropriate chat wrapper
+  // MythoMax uses Alpaca format which needs explicit template
+  const lowerFilename = normalizedFilename.toLowerCase();
+  const isMythoMax = lowerFilename.includes('mythomax');
+  const isAlpacaModel = isMythoMax || lowerFilename.includes('alpaca');
+
+  let sessionOptions = {
     contextSequence: modelContext.getSequence(),
-  });
+  };
+
+  if (isAlpacaModel) {
+    console.log("[LLM] Using Alpaca chat template for model:", normalizedFilename);
+    // Alpaca-style template for MythoMax and similar models
+    sessionOptions.chatWrapper = new TemplateChatWrapper({
+      template: "{{systemPrompt}}\n\n{{history}}### Instruction:\n{{completion}}\n\n### Response:\n",
+      historyTemplate: {
+        system: "{{message}}\n\n",
+        user: "### Instruction:\n{{message}}\n\n### Response:\n",
+        model: "{{message}}\n\n"
+      },
+      joinAdjacentMessagesOfTheSameType: false,
+    });
+  }
+
+  modelSession = new LlamaChatSession(sessionOptions);
 
   // Store current model info for multimodal checks
   currentLoadedModel = {
@@ -1467,12 +1499,26 @@ async function unloadModel() {
     await modelContext.dispose();
     modelContext = undefined;
   }
+  // CRITICAL: Dispose the actual model object to release GPU memory
+  // This is especially important for large models like GLM before running vision
+  if (loadedModel) {
+    console.log("[LLM] Disposing model to free GPU memory...");
+    try {
+      await loadedModel.dispose();
+    } catch (e) {
+      console.warn("[LLM] Model dispose warning:", e.message);
+    }
+    loadedModel = undefined;
+  }
   currentLoadedModel = null;
 
   // Force garbage collection if available
   if (global.gc) {
     global.gc();
   }
+
+  // Give GPU time to release memory before vision model loads
+  await new Promise(resolve => setTimeout(resolve, 500));
 
   console.log("[LLM] Model unloaded successfully");
   return true;

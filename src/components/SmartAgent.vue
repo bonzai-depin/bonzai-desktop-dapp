@@ -2,22 +2,26 @@
   <div class="background"></div>
 
   <!-- Status Notification Toast -->
-  <div
-    v-if="statusNotification.show"
-    class="status-notification"
-    :class="'is-' + statusNotification.type"
-  >
-    <span class="material-symbols-outlined mr-2">
-      {{
-        statusNotification.type === "success"
-          ? "check_circle"
-          : statusNotification.type === "danger"
-            ? "error"
-            : "info"
-      }}
-    </span>
-    {{ statusNotification.message }}
-  </div>
+  <Transition name="notification-slide">
+    <div
+      v-if="statusNotification.show"
+      class="status-notification fira-sans-condensed-black-italic"
+      :class="'is-' + statusNotification.type"
+    >
+      <span class="material-symbols-outlined mr-2">
+        {{
+          statusNotification.type === "success"
+            ? "check_circle"
+            : statusNotification.type === "danger"
+              ? "error"
+              : statusNotification.type === "warning"
+                ? "warning"
+                : "info"
+        }}
+      </span>
+      {{ statusNotification.message }}
+    </div>
+  </Transition>
 
   <div class="models__deployment column is-8 is-paddingless">
     <div class="models__deployment-install">
@@ -31,825 +35,207 @@
                   class="material-symbols-outlined mr-2"
                   style="font-size: 64px"
                 >
-                  finance_mode
+                  hub
                 </span>
-                Prediction Capital Markets
+                Skills Marketplace
               </h1>
+            </div>
+            <div class="level-right">
+              <button
+                class="button is-info is-large is-outlined fira-sans-condensed-black-italic"
+                @click="refreshSkills"
+              >
+                <span class="material-symbols-outlined mr-2">refresh</span>
+                Refresh
+              </button>
             </div>
           </div>
 
           <!-- Tabs -->
           <div class="tabs is-large is-fullwidth mb-5">
             <ul>
-              <li :class="{ 'is-active': activeTab === 'buy' }">
+              <li :class="{ 'is-active': activeTab === 'browse' }">
                 <a
-                  @click.prevent="activeTab = 'buy'"
+                  @click.prevent="activeTab = 'browse'"
                   class="fira-sans-condensed-black-italic is-size-1"
                 >
                   <span class="material-symbols-outlined mr-2 is-size-1">
                     shopping_cart
                   </span>
-                  Buy
+                  Browse
                 </a>
               </li>
-              <li :class="{ 'is-active': activeTab === 'sell' }">
+              <li :class="{ 'is-active': activeTab === 'my-skills' }">
                 <a
-                  @click.prevent="activeTab = 'sell'"
+                  @click.prevent="activeTab = 'my-skills'"
                   class="fira-sans-condensed-black-italic is-size-1"
                 >
                   <span class="material-symbols-outlined mr-2 is-size-1">
-                    storefront
+                    inventory_2
                   </span>
-                  Sell
+                  My Skills
                 </a>
               </li>
-              <li :class="{ 'is-active': activeTab === 'run' }">
+              <li :class="{ 'is-active': activeTab === 'create' }">
                 <a
-                  @click.prevent="activeTab = 'run'"
+                  @click.prevent="activeTab = 'create'"
                   class="fira-sans-condensed-black-italic is-size-1"
                 >
                   <span class="material-symbols-outlined mr-2 is-size-1">
-                    auto_read_play
+                    add_circle
                   </span>
-                  Run
+                  Create
                 </a>
               </li>
             </ul>
           </div>
 
-          <!-- BUY TAB -->
-          <div v-if="activeTab === 'buy'">
-            <div class="models__activity--payouts mb-5">
-              <h2
-                class="fira-sans-condensed-black-italic is-size-2 has-text-white has-text-left mb-5"
-              >
-                Smart Markets
-              </h2>
-              <hr />
-              <div v-if="marketProjects.length > 0">
-                <div
-                  v-for="proj in marketProjects"
-                  :key="'dsla_' + proj.name"
-                  class="columns is-8 is-multiline control mt-5 mb-5 has-text-left"
+          <!-- BROWSE TAB -->
+          <div v-if="activeTab === 'browse'">
+            <!-- Category Filter -->
+            <div class="category-filter mb-5">
+              <div class="control category-selector">
+                <button
+                  class="button category-btn"
+                  :class="{ 'is-active': !selectedCategory }"
+                  @click="setCategory(null)"
                 >
-                  <div class="bonzai__agent column is-6">
-                    <input
-                      v-model="selectedProject"
-                      :value="proj.name"
-                      :id="'project_' + proj.name"
-                      type="radio"
-                      name="project"
-                    />
-                    <label
-                      :for="'project_' + proj.name"
-                      class="radio p-3 is-size-5"
-                      style="width: 100%"
-                      @click.prevent="toggleProjectDescription(proj.name)"
-                    >
-                      <span
-                        class="material-symbols-outlined"
-                        style="font-size: 24px !important"
-                      >
-                        finance_mode
-                      </span>
-                      {{ proj.name }}
-                      <div class="tags has-addons">
-                        <span
-                          class="tag partner fira-sans-condensed-black-italic is-small"
-                        >
-                          {{ proj.token }}
-                        </span>
-                        <span
-                          class="tag is-success partner fira-sans-condensed-black-italic is-small"
-                        >
-                          {{ proj.markets.length }} Events
-                        </span>
-                        <span
-                          v-if="
-                            purchasedProtocols.some((p) => p.name === proj.name)
-                          "
-                          class="tag is-info partner fira-sans-condensed-black-italic is-small"
-                        >
-                          Owned
-                        </span>
-                      </div>
-                    </label>
-                  </div>
-                  <div class="bonzai__agent column is-6">
-                    <div class="control has-text-right">
-                      <button
-                        v-if="
-                          !purchasedProtocols.some((p) => p.name === proj.name)
-                        "
-                        class="button chat is-success is-large"
-                        @click="buyProjectAccess(proj.name)"
-                      >
-                        <span class="material-symbols-outlined is-size-3 mr-2">
-                          shopping_cart
-                        </span>
-                        Buy Access
-                        <div class="tags has-addons">
-                          <span
-                            class="tag is-warning partner fira-sans-condensed-black-italic is-medium"
-                          >
-                            {{ proj.accessPrice }} {{ proj.token }}
-                          </span>
-                        </div>
-                      </button>
-                      <button
-                        v-else
-                        class="button chat is-info is-large"
-                        @click="
-                          selectedRunProtocol = proj.name;
-                          selectedRunAgent = null;
-                          activeTab = 'run';
-                        "
-                      >
-                        <span class="material-symbols-outlined is-size-3 mr-2">
-                          auto_read_play
-                        </span>
-                        Run Protocol
-                      </button>
-                    </div>
-                  </div>
-                  <div
-                    v-show="expandedProjectDescription === proj.name"
-                    class="bonzai__agent-description column is-12 description-animate"
-                  >
-                    <div class="notification is-success description mt-5">
-                      <h3
-                        class="fira-sans-condensed-black-italic is-size-4 mt-5 mb-3"
-                      >
-                        <span class="material-symbols-outlined mr-2 is-size-3">
-                          storefront
-                        </span>
-                        {{ proj.useCase }}
-                      </h3>
-                      <p>{{ proj.description }}</p>
-                      <div class="mt-4">
-                        <h4
-                          class="fira-sans-condensed-black-italic is-size-5 mb-2"
-                        >
-                          Future Events
-                        </h4>
-                        <ul class="sla-list">
-                          <li v-for="(market, idx) in proj.markets" :key="idx">
-                            {{ market.question }}
-                          </li>
-                        </ul>
-                      </div>
-                    </div>
-                  </div>
-                </div>
+                  <span class="material-symbols-outlined mr-1">apps</span>
+                  All
+                </button>
+                <button
+                  v-for="cat in categories"
+                  :key="cat.key"
+                  class="button category-btn"
+                  :class="{ 'is-active': selectedCategory === cat.key }"
+                  @click="setCategory(cat.key)"
+                >
+                  <span class="material-symbols-outlined mr-1">{{ cat.icon }}</span>
+                  {{ cat.label }}
+                </button>
               </div>
+            </div>
+
+            <!-- Search -->
+            <div class="field has-addons mb-5">
+              <div class="control is-expanded">
+                <input
+                  class="input is-large no-shadow"
+                  type="text"
+                  v-model="searchQuery"
+                  placeholder="Search skills by name, description, or tags..."
+                />
+              </div>
+              <div class="control">
+                <button class="button is-info is-large no-shadow">
+                  <span class="material-symbols-outlined">search</span>
+                </button>
+              </div>
+            </div>
+
+            <!-- Skills Grid -->
+            <div v-if="filteredSkills.length > 0" class="skills-grid">
               <div
-                v-else
-                class="notification is-info p-6"
-                style="margin-top: 1.25rem"
+                v-for="skill in filteredSkills"
+                :key="skill.id"
+                class="skill-card models__activity--payouts"
+                :class="{ 'is-owned': canRunSkill(skill.id).canRun }"
               >
-                <span class="fira-sans-condensed-black-italic is-size-4">
-                  No Prediction Market available.
-                </span>
-                <div class="control has-text-center mt-5">
-                  <button
-                    class="button chat is-success is-large"
-                    @click.prevent="activeTab = 'sell'"
-                  >
-                    <span class="material-symbols-outlined is-size-3 mr-2">
-                      storefront
+                <div class="skill-header">
+                  <h3 class="skill-name fira-sans-condensed-black-italic">
+                    {{ skill.name }}
+                  </h3>
+                  <div class="tags">
+                    <span class="tag is-info fira-sans-condensed-black-italic">
+                      {{ getCategoryLabel(skill.category) }}
                     </span>
-                    Launch Yours
-                  </button>
-                </div>
-              </div>
-            </div>
-
-            <!-- Smart Agents Section -->
-            <div class="models__activity--payouts">
-              <h2
-                class="fira-sans-condensed-black-italic is-size-2 has-text-white has-text-left mb-5"
-              >
-                Smart Agents
-              </h2>
-              <hr />
-              <div class="columns mt-5">
-                <div class="column is-12">
-                  <div
-                    class="columns is-8 is-multiline control mb-5 has-text-left"
-                  >
-                    <div class="bonzai__agent column is-6 is-size-5">
-                      <input
-                        v-model="selectedAgent"
-                        value="copymaster"
-                        id="agent_copymaster"
-                        type="radio"
-                        name="agent"
-                      />
-                      <label
-                        for="agent_copymaster"
-                        class="radio p-4"
-                        style="width: 100%"
-                        @click.prevent="toggleAgentDescription('copymaster')"
-                      >
-                        Polymarket Copy-Trading
-                        <div class="tags has-addons">
-                          <span
-                            class="tag is-info partner fira-sans-condensed-black-italic is-small"
-                          >
-                            Finance
-                          </span>
-                          <span
-                            v-if="purchasedAgents.includes('copymaster')"
-                            class="tag is-success partner fira-sans-condensed-black-italic is-small"
-                          >
-                            Owned
-                          </span>
-                        </div>
-                      </label>
-                    </div>
-                    <div class="bonzai__agent column is-6">
-                      <div class="control has-text-right">
-                        <button
-                          v-if="!purchasedAgents.includes('copymaster')"
-                          class="button chat is-success is-large"
-                          @click="buyAgent('copymaster')"
-                        >
-                          <span
-                            class="material-symbols-outlined is-size-3 mr-2"
-                          >
-                            shopping_cart
-                          </span>
-                          Buy Agent
-                          <div class="tags has-addons">
-                            <span
-                              class="tag is-warning partner fira-sans-condensed-black-italic is-medium"
-                            >
-                              0.1 ETH
-                            </span>
-                          </div>
-                        </button>
-                        <button
-                          v-else
-                          class="button chat is-info is-large"
-                          @click="activeTab = 'run'"
-                        >
-                          <span
-                            class="material-symbols-outlined is-size-3 mr-2"
-                          >
-                            auto_read_play
-                          </span>
-                          Run Agent
-                        </button>
-                      </div>
-                    </div>
-                    <div
-                      v-show="expandedAgentDescription === 'copymaster'"
-                      class="bonzai__agent-description column is-12 description-animate"
+                    <span class="tag fira-sans-condensed-black-italic" :class="canRunSkill(skill.id).canRun ? 'is-success' : 'is-warning'">
+                      {{ getRequiredLevel(skill) }}
+                    </span>
+                    <span
+                      v-if="skill.author?.verified"
+                      class="tag is-warning fira-sans-condensed-black-italic"
                     >
-                      <div class="notification is-success description mt-5">
-                        <h3
-                          class="fira-sans-condensed-black-italic is-size-4 mt-5 mb-3"
-                        >
-                          <span
-                            class="material-symbols-outlined mr-2 is-size-3"
-                          >
-                            neurology
-                          </span>
-                          Strategy
-                        </h3>
-                        <p>
-                          Identifies the hottest markets and top traders on
-                          Polymarket, and suggests copy trades. You make the
-                          final call and execute trades manually.
-                        </p>
-                      </div>
-                    </div>
-                  </div>
-
-                  <!-- TCG Prediction Market Agent -->
-                  <div
-                    class="columns is-8 is-multiline control mb-5 has-text-left"
-                  >
-                    <div class="bonzai__agent column is-6 is-size-5">
-                      <input
-                        v-model="selectedAgent"
-                        value="tcg"
-                        id="agent_tcg"
-                        type="radio"
-                        name="agent"
-                      />
-                      <label
-                        for="agent_tcg"
-                        class="radio p-4"
-                        style="width: 100%"
-                        @click.prevent="toggleAgentDescription('tcg')"
-                      >
-                        TCG Prediction Market
-                        <div class="tags has-addons">
-                          <span
-                            class="tag is-warning partner fira-sans-condensed-black-italic is-small"
-                          >
-                            Trading Cards
-                          </span>
-                          <span
-                            v-if="purchasedAgents.includes('tcg')"
-                            class="tag is-success partner fira-sans-condensed-black-italic is-small"
-                          >
-                            Owned
-                          </span>
-                        </div>
-                      </label>
-                    </div>
-                    <div class="bonzai__agent column is-6">
-                      <div class="control has-text-right">
-                        <button
-                          v-if="!purchasedAgents.includes('tcg')"
-                          class="button chat is-success is-large"
-                          @click="buyAgent('tcg')"
-                        >
-                          <span
-                            class="material-symbols-outlined is-size-3 mr-2"
-                          >
-                            shopping_cart
-                          </span>
-                          Buy Agent
-                          <div class="tags has-addons">
-                            <span
-                              class="tag is-warning partner fira-sans-condensed-black-italic is-medium"
-                            >
-                              0.05 ETH
-                            </span>
-                          </div>
-                        </button>
-                        <button
-                          v-else
-                          class="button chat is-info is-large"
-                          @click="
-                            selectedRunAgent = 'tcg';
-                            selectedRunProtocol = null;
-                            activeTab = 'run';
-                          "
-                        >
-                          <span
-                            class="material-symbols-outlined is-size-3 mr-2"
-                          >
-                            auto_read_play
-                          </span>
-                          Run Agent
-                        </button>
-                      </div>
-                    </div>
-                    <div
-                      v-show="expandedAgentDescription === 'tcg'"
-                      class="bonzai__agent-description column is-12 description-animate"
-                    >
-                      <div class="notification is-success description mt-5">
-                        <h3
-                          class="fira-sans-condensed-black-italic is-size-4 mt-5 mb-3"
-                        >
-                          <span
-                            class="material-symbols-outlined mr-2 is-size-3"
-                          >
-                            style
-                          </span>
-                          Features
-                        </h3>
-                        <p>
-                          Build your TCG portfolio using real-time pricing from
-                          JustTCG.com. Issue or join prediction markets on card
-                          prices across Pokemon, Magic: The Gathering,
-                          Yu-Gi-Oh!, One Piece, and Lorcana.
-                        </p>
-                        <div class="tcg-icons mt-3">
-                          <span class="tag is-dark mr-2">Pokemon</span>
-                          <span class="tag is-dark mr-2">MTG</span>
-                          <span class="tag is-dark mr-2">Yu-Gi-Oh!</span>
-                          <span class="tag is-dark mr-2">One Piece</span>
-                          <span class="tag is-dark">Lorcana</span>
-                        </div>
-                      </div>
-                    </div>
-                  </div>
-                </div>
-              </div>
-            </div>
-          </div>
-
-          <!-- SELL TAB -->
-          <div v-if="activeTab === 'sell'">
-            <div class="models__activity--payouts">
-              <div class="bonzai__agent">
-                <!-- Model Download Section -->
-                <div
-                  v-if="!isModelAvailable"
-                  class="notification is-danger mb-5"
-                >
-                  <div class="columns is-vcentered">
-                    <div class="column">
-                      <h3
-                        class="is-size-4 mb-0 fira-sans-condensed-black-italic has-text-left"
-                      >
-                        AI Model Required
-                      </h3>
-                    </div>
-                    <div class="column is-narrow">
-                      <button
-                        class="button is-success is-large fira-sans-condensed-black-italic"
-                        @click="downloadModel"
-                        :disabled="isDownloading"
-                      >
-                        <span class="material-symbols-outlined mr-2">
-                          deployed_code_update
-                        </span>
-                        Download
-                        <span
-                          v-if="downloadProgress"
-                          class="filesize ml-2"
-                          style="font-size: 14px"
-                        >
-                          {{ downloadProgress }}%
-                        </span>
-                        <span
-                          v-else
-                          class="filesize ml-2"
-                          style="font-size: 14px"
-                        >
-                          4.08 GB
-                        </span>
-                      </button>
-                    </div>
+                      Verified
+                    </span>
                   </div>
                 </div>
 
-                <div class="desc">
+                <p class="skill-description">{{ skill.description }}</p>
+
+                <div class="skill-tags mt-3">
                   <span
-                    class="material-symbols-outlined is-size-1 has-text-white"
+                    v-for="tag in (skill.tags || []).slice(0, 4)"
+                    :key="tag"
+                    class="tag is-dark is-small mr-1"
                   >
-                    online_prediction
+                    {{ tag }}
                   </span>
-                  <p class="notification is-info">
-                    Generate, launch and fund your own Prediction Market project
-                    using the Decentralized Service Level Agreement protocol
-                    (DSLA).
-                  </p>
-                </div>
-
-                <!-- Use Case Selection -->
-                <h2
-                  class="fira-sans-condensed-black-italic is-size-2 has-text-white has-text-left mb-4"
-                >
-                  Use Case
-                </h2>
-                <div class="columns">
-                  <div class="column is-12">
-                    <div class="control usecase-selector">
-                      <template
-                        v-for="useCase in dslaUseCases"
-                        :key="useCase.key"
-                      >
-                        <input
-                          type="radio"
-                          name="usecase_selector"
-                          :id="'usecase_' + useCase.key"
-                          :value="useCase.key"
-                          :checked="
-                            selectedUseCase &&
-                            selectedUseCase.key === useCase.key
-                          "
-                          :disabled="!isModelAvailable || isGenerating"
-                          @change="selectUseCaseAndGenerate(useCase)"
-                        />
-                        <label
-                          :for="'usecase_' + useCase.key"
-                          class="radio"
-                          :class="{
-                            'is-loading':
-                              isGenerating &&
-                              selectedUseCase?.key === useCase.key,
-                          }"
-                        >
-                          <span
-                            v-if="
-                              isGenerating &&
-                              selectedUseCase?.key === useCase.key
-                            "
-                            class="material-symbols-outlined rotating mr-1"
-                            style="font-size: 18px !important"
-                          >
-                            progress_activity
-                          </span>
-                          {{ useCase.label }}
-                        </label>
-                      </template>
-                    </div>
-                  </div>
-                </div>
-                <hr />
-
-                <!-- Project Identity -->
-                <h2
-                  class="fira-sans-condensed-black-italic is-size-2 has-text-white has-text-left mb-4 mt-5"
-                >
-                  Project Identity
-                </h2>
-                <div class="columns">
-                  <div class="field column is-6">
-                    <label
-                      class="label has-text-white has-text-left fira-sans-condensed-black-italic is-size-5"
-                    >
-                      Project Name *
-                    </label>
-                    <div class="control">
-                      <input
-                        class="input is-large"
-                        v-model="projectForm.name"
-                        placeholder="Enter project name"
-                      />
-                    </div>
-                  </div>
-                  <div class="field column is-6">
-                    <label
-                      class="label has-text-white has-text-left fira-sans-condensed-black-italic is-size-5"
-                    >
-                      Token Symbol *
-                    </label>
-                    <div class="control">
-                      <input
-                        class="input is-large"
-                        v-model="projectForm.tokenSymbol"
-                        placeholder="e.g. BTC, ETH, DSLA"
-                      />
-                    </div>
-                  </div>
-                </div>
-                <div class="field">
-                  <label
-                    class="label has-text-white has-text-left fira-sans-condensed-black-italic is-size-5"
-                  >
-                    Project Description *
-                  </label>
-                  <div class="control">
-                    <textarea
-                      class="textarea is-large"
-                      v-model="projectForm.description"
-                      placeholder="Describe your project and its goals"
-                    ></textarea>
-                  </div>
                 </div>
 
                 <hr />
 
-                <!-- Token Economics -->
-                <h2
-                  class="fira-sans-condensed-black-italic is-size-2 has-text-white has-text-left mb-4 mt-5"
-                >
-                  Token Economics
-                </h2>
-                <div class="columns">
-                  <div class="field column is-4">
-                    <label
-                      class="label has-text-white has-text-left fira-sans-condensed-black-italic is-size-5"
-                    >
-                      Total Supply
-                      <span v-if="projectForm.tokenSymbol">
-                        ({{ projectForm.tokenSymbol }})
-                      </span>
-                    </label>
-                    <div class="control">
-                      <input
-                        class="input is-large"
-                        v-model="projectForm.totalSupply"
-                        placeholder="e.g. 1000000000"
-                      />
-                    </div>
-                  </div>
-                  <div class="field column is-4">
-                    <label
-                      class="label has-text-white has-text-left fira-sans-condensed-black-italic is-size-5"
-                    >
-                      Initial Liquidity (
-                      <span v-if="projectForm.tokenSymbol">
-                        {{ projectForm.tokenSymbol }}/
-                      </span>
-                      DSLA)
-                    </label>
-                    <div class="control">
-                      <input
-                        class="input is-large"
-                        v-model="projectForm.initialLiquidity"
-                        placeholder="e.g. 100000"
-                      />
-                    </div>
-                  </div>
-                  <div class="field column is-4">
-                    <label
-                      class="label has-text-white has-text-left fira-sans-condensed-black-italic is-size-5"
-                    >
-                      Access Price
-                      <span v-if="projectForm.tokenSymbol">
-                        ({{ projectForm.tokenSymbol }})
-                      </span>
-                    </label>
-                    <div class="control">
-                      <input
-                        class="input is-large"
-                        v-model="projectForm.accessPrice"
-                        placeholder="e.g. 10000"
-                      />
-                    </div>
-                  </div>
-                </div>
-
-                <hr />
-
-                <!-- SLA-Based Markets -->
-                <h2
-                  class="fira-sans-condensed-black-italic is-size-2 has-text-white has-text-left mb-4 mt-5"
-                >
-                  Future Events
-                </h2>
-
-                <div
-                  v-if="slaMarkets.length > 0"
-                  class="sla-markets has-text-left"
-                >
-                  <div
-                    v-for="(sla, idx) in slaMarkets"
-                    :key="idx"
-                    class="sla-market-card mb-4"
-                  >
-                    <div class="sla-market-header">
-                      <span
-                        class="tag is-info fira-sans-condensed-black-italic mr-2"
-                      >
-                        SLA #{{ idx + 1 }}
-                      </span>
-                      <button
-                        class="delete is-small"
-                        @click="removeSlaMarket(idx)"
-                      ></button>
-                    </div>
-                    <div class="columns mt-3">
-                      <div class="field column is-3">
-                        <label class="label has-text-white is-size-7">
-                          Asset/Service
-                        </label>
-                        <input
-                          class="input"
-                          v-model="sla.asset"
-                          placeholder="e.g. BAYC, Ethereum, Uniswap"
-                        />
-                      </div>
-                      <div class="field column is-2">
-                        <label class="label has-text-white is-size-7">
-                          Metric
-                        </label>
-                        <input
-                          class="input"
-                          v-model="sla.metric"
-                          placeholder="e.g. floor price, uptime, APY"
-                        />
-                      </div>
-                      <div class="field column is-3">
-                        <label class="label has-text-white is-size-7">
-                          Operator
-                        </label>
-                        <div class="select is-fullwidth">
-                          <select v-model="sla.operator">
-                            <option value=">">&gt; (greater than)</option>
-                            <option value="<">&lt; (less than)</option>
-                            <option value=">=">&gt;= (at least)</option>
-                            <option value="<=">&lt;= (at most)</option>
-                            <option value="=">= (exactly)</option>
-                          </select>
-                        </div>
-                      </div>
-                      <div class="field column is-2">
-                        <label class="label has-text-white is-size-7">
-                          Target Value
-                        </label>
-                        <input
-                          class="input"
-                          v-model="sla.target"
-                          placeholder="e.g. 50 ETH, 99.9%"
-                        />
-                      </div>
-                      <div class="field column is-2">
-                        <label class="label has-text-white is-size-7">
-                          Target Date
-                        </label>
-                        <input class="input" type="date" v-model="sla.date" />
-                      </div>
-                    </div>
-                    <div class="field mt-3">
-                      <label class="label has-text-white is-size-7">
-                        <span class="material-symbols-outlined mr-1" style="font-size: 14px; vertical-align: middle;">
-                          link
-                        </span>
-                        Data Source (Verification Endpoint) *
-                      </label>
-                      <input
-                        class="input"
-                        v-model="sla.dataSource"
-                        placeholder="e.g. https://api.coingecko.com/api/v3/simple/price?ids=ethereum"
-                      />
-                      <p class="help has-text-grey-light">
-                        API endpoint used to verify the event outcome
-                      </p>
-                    </div>
-                    <div class="sla-preview mt-2 p-1">
-                      <span
-                        class="tag is-warning fira-sans-condensed-black-italic is-size-5"
-                      >
-                        {{ formatSlaQuestion(sla) }}
-                      </span>
-                    </div>
-                  </div>
-                </div>
-
-                <div v-else class="notification is-info">
-                  <p class="p-0 m-0">
-                    Select a Use Case above to populate Future Events.
-                  </p>
-                </div>
-
-                <hr />
-
-                <div
-                  v-if="
-                    projectForm.name &&
-                    projectForm.tokenSymbol &&
-                    slaMarkets.length === 0
-                  "
-                >
-                  <h2
-                    class="fira-sans-condensed-black-italic is-size-2 has-text-white has-text-left mb-4 mt-5"
-                  >
-                    Ready ?
-                  </h2>
-                  <ul class="notification is-warning has-text-left">
-                    <li>
-                      <span class="material-symbols-outlined">
-                        check_circle
-                      </span>
-                      This will launch the {{ projectForm.name }} ({{
-                        projectForm.tokenSymbol
-                      }}) project on BonzAI;
-                    </li>
-                    <li>
-                      <span class="material-symbols-outlined">
-                        check_circle
-                      </span>
-                      This will fund the DSLA/ETH pair on Uniswap;
-                    </li>
-                    <li v-if="projectForm.tokenSymbol">
-                      <span class="material-symbols-outlined">
-                        check_circle
-                      </span>
-                      This will create the {{ projectForm.tokenSymbol }}/DSLA
-                      pair on Uniswap;
-                    </li>
-                    <li v-if="projectForm.tokenSymbol">
-                      <span class="material-symbols-outlined">
-                        check_circle
-                      </span>
-                      This will create the {{ projectForm.tokenSymbol }}/ETH
-                      pair on Uniswap;
-                    </li>
-                  </ul>
-                </div>
-                <!-- Launch Button -->
-                <div class="control mt-4 has-text-centered mt-5">
-                  <button
-                    class="button is-success is-large mt-5"
-                    @click="launchProject()"
-                    :disabled="
-                      !projectForm.name ||
-                      !projectForm.tokenSymbol ||
-                      slaMarkets.length === 0
-                    "
-                  >
-                    <span class="material-symbols-outlined mr-2 is-size-3">
-                      storefront
-                    </span>
-                    List Prediction Market
+                <div class="skill-footer">
+                  <div class="skill-pricing">
                     <div class="tags has-addons">
-                      <span
-                        class="tag is-warning partner fira-sans-condensed-black-italic"
-                      >
-                        1 ETH
+                      <span class="tag is-dark fira-sans-condensed-black-italic">
+                        {{ skill.pricing?.purchasePrice || '0.1' }}
+                        {{ skill.pricing?.purchaseToken || 'ETH' }}
+                      </span>
+                      <span class="tag is-info fira-sans-condensed-black-italic">
+                        {{ skill.pricing?.runningFee || 99 }} BONZAI/run
                       </span>
                     </div>
-                  </button>
+                  </div>
+                  <div class="skill-actions">
+                    <template v-if="canRunSkill(skill.id).canRun">
+                      <button
+                        class="button is-info is-medium"
+                        @click="runSkill(skill)"
+                      >
+                        <span class="material-symbols-outlined mr-1">
+                          play_arrow
+                        </span>
+                        Run
+                      </button>
+                    </template>
+                    <template v-else>
+                      <span class="tag is-warning is-medium">
+                        <span class="material-symbols-outlined mr-1" style="font-size: 16px;">lock</span>
+                        {{ getRequiredLevel(skill) }} Required
+                      </span>
+                    </template>
+                  </div>
                 </div>
               </div>
             </div>
+
+            <div v-else class="notification is-info">
+              <span class="fira-sans-condensed-black-italic is-size-4">
+                No skills found matching your criteria.
+              </span>
+            </div>
           </div>
 
-          <!-- RUN TAB -->
-          <div v-if="activeTab === 'run'">
-            <div>
-              <!-- Protocol/Agent Selector -->
+          <!-- MY SKILLS TAB -->
+          <div v-if="activeTab === 'my-skills'">
+            <div v-if="accessibleSkills.length === 0" class="notification is-info">
+              <span class="fira-sans-condensed-black-italic is-size-4">
+                No skills available at your current level. Upgrade your level to unlock more skills!
+              </span>
+              <div class="control has-text-center mt-5">
+                <button
+                  class="button is-success is-large"
+                  @click="activeTab = 'browse'"
+                >
+                  <span class="material-symbols-outlined mr-2">shopping_cart</span>
+                  Browse Skills
+                </button>
+              </div>
+            </div>
+
+            <div v-else>
+              <!-- Skill Selector -->
               <div class="models__activity--payouts mb-5">
                 <div
                   v-if="!isModelAvailable"
@@ -894,222 +280,149 @@
                 <h3
                   class="fira-sans-condensed-black-italic has-text-white has-text-left is-size-2 mb-3"
                 >
-                  Smart Agent Portfolio
+                  Available Skills
                 </h3>
                 <div class="control agent-selector">
-                  <!-- Purchased DSLA Protocols -->
-                  <template
-                    v-for="protocol in purchasedProtocols"
-                    :key="'run_' + protocol.name"
-                  >
+                  <template v-for="skill in availableSkills" :key="skill.id">
                     <input
                       type="radio"
-                      name="agent_selector"
-                      :id="'agent_' + protocol.name"
-                      :value="protocol.name"
-                      :checked="selectedRunProtocol === protocol.name"
-                      @change="
-                        selectedRunProtocol = protocol.name;
-                        selectedRunAgent = null;
-                      "
+                      name="skill_selector"
+                      :id="'skill_' + skill.id"
+                      :value="skill.id"
+                      :checked="selectedSkillId === skill.id"
+                      @change="selectSkillById(skill.id)"
                     />
-                    <label :for="'agent_' + protocol.name" class="radio">
-                      {{ protocol.name }}
+                    <label :for="'skill_' + skill.id" class="radio">
+                      {{ skill.name }}
+                      <span
+                        class="tag is-small ml-2"
+                        :class="canRunSkill(skill.id).canRun ? 'is-success' : 'is-warning'"
+                        :title="getRequiredLevel(skill)"
+                      >
+                        {{ getRequiredLevel(skill) }}
+                      </span>
+                      <span
+                        v-if="hasIssuedToken(skill.id)"
+                        class="tag is-success is-small ml-2"
+                        title="Token Issued"
+                      >
+                        <span class="material-symbols-outlined" style="font-size: 12px;">
+                          token
+                        </span>
+                      </span>
                     </label>
                   </template>
-                  <!-- Polymarket Agent (if purchased) -->
-                  <template v-if="purchasedAgents.includes('copymaster')">
-                    <input
-                      type="radio"
-                      name="agent_selector"
-                      id="agent_polymarket"
-                      value="copymaster"
-                      :checked="selectedRunAgent === 'copymaster'"
-                      @change="
-                        selectedRunAgent = 'copymaster';
-                        selectedRunProtocol = null;
-                      "
-                    />
-                    <label for="agent_polymarket" class="radio">
-                      Polymarket Copy-Trading
-                    </label>
-                  </template>
-                  <!-- TCG Agent (if purchased) -->
-                  <template v-if="purchasedAgents.includes('tcg')">
-                    <input
-                      type="radio"
-                      name="agent_selector"
-                      id="agent_tcg_run"
-                      value="tcg"
-                      :checked="selectedRunAgent === 'tcg'"
-                      @change="
-                        selectedRunAgent = 'tcg';
-                        selectedRunProtocol = null;
-                        loadTcgTopCards();
-                      "
-                    />
-                    <label for="agent_tcg_run" class="radio">
-                      TCG Prediction Markets
-                    </label>
-                  </template>
+                </div>
+
+                <!-- Token Issuance Section -->
+                <div v-if="selectedSkill" class="token-issuance-section mt-4">
+                  <div v-if="hasIssuedToken(selectedSkillId)" class="notification is-success is-light">
+                    <div class="columns is-vcentered">
+                      <div class="column">
+                        <p class="fira-sans-condensed-black-italic">
+                          <span class="material-symbols-outlined mr-2" style="vertical-align: middle;">
+                            token
+                          </span>
+                          Token Issued: <strong>{{ getSkillTokenData(selectedSkillId)?.symbol }}</strong>
+                        </p>
+                        <p class="is-size-7 has-text-grey">
+                          Address: {{ getSkillTokenData(selectedSkillId)?.address?.slice(0, 10) }}...{{ getSkillTokenData(selectedSkillId)?.address?.slice(-8) }}
+                        </p>
+                      </div>
+                      <div class="column is-narrow">
+                        <a
+                          :href="`https://arbiscan.io/token/${getSkillTokenData(selectedSkillId)?.address}`"
+                          target="_blank"
+                          class="button is-small is-info"
+                        >
+                          <span class="material-symbols-outlined mr-1" style="font-size: 14px;">
+                            open_in_new
+                          </span>
+                          View on Arbiscan
+                        </a>
+                      </div>
+                    </div>
+                  </div>
+                  <div v-else class="has-text-right">
+                    <button
+                      class="button is-warning is-medium fira-sans-condensed-black-italic"
+                      @click="openTokenIssuanceModal(selectedSkill)"
+                    >
+                      <span class="material-symbols-outlined mr-2">
+                        generating_tokens
+                      </span>
+                      Issue Token
+                    </button>
+                  </div>
                 </div>
               </div>
 
               <hr />
 
-              <!-- DSLA Protocol Trading Interface -->
-              <div
-                v-if="
-                  selectedRunProtocol && getProtocolByName(selectedRunProtocol)
-                "
-                class="protocol-trading"
-              >
-                <div class="protocol-header mb-4">
-                  <h2
-                    class="fira-sans-condensed-black-italic has-text-white is-size-3"
-                  >
-                    {{ getProtocolByName(selectedRunProtocol).name }}
-                  </h2>
-                  <p class="has-text-grey-light">
-                    {{ getProtocolByName(selectedRunProtocol).description }}
-                  </p>
-                  <div class="protocol-tags mt-2">
-                    <span
-                      class="tag is-warning fira-sans-condensed-black-italic is-medium"
-                    >
-                      {{ getProtocolByName(selectedRunProtocol).token }}
-                    </span>
-                    <span
-                      class="tag is-info fira-sans-condensed-black-italic is-medium ml-2"
-                    >
-                      {{
-                        getProtocolByName(selectedRunProtocol).markets.length
-                      }}
-                      Markets
-                    </span>
-                  </div>
-                </div>
-
-                <!-- SLA Markets for Trading (TCG Style) -->
-                <div class="tcg-markets-section mt-5">
-                  <h4
-                    class="fira-sans-condensed-black-italic has-text-white is-size-4 mb-3 has-text-left"
-                  >
-                    <span class="material-symbols-outlined mr-2 is-size-1">
-                      online_prediction
-                    </span>
-                    Active Prediction Markets
-                  </h4>
-                  <div class="tcg-markets-list">
-                    <div
-                      v-for="(market, mIdx) in getProtocolByName(
-                        selectedRunProtocol
-                      ).markets"
-                      :key="mIdx"
-                      class="tcg-market-card models__activity--payouts mt-5"
-                    >
-                      <div class="columns is-multiline">
-                        <div class="column is-12">
-                          <div class="sla-preview p-1">
-                            <span
-                              class="tag is-warning fira-sans-condensed-black-italic is-size-5"
-                              style="width: 100%"
-                            >
-                              <strong>{{ market.question }}</strong>
-                            </span>
-                          </div>
-                          <hr />
-                          <!-- Position Display -->
-                          <div
-                            v-if="getPosition(selectedRunProtocol, mIdx)"
-                            class="current-positions"
-                          >
-                            <span
-                              v-if="
-                                hasPosition(selectedRunProtocol, mIdx, 'for')
-                              "
-                              class="tag is-medium is-success fira-sans-condensed-black-italic mr-2"
-                            >
-                              FOR:
-                              {{
-                                getPosition(selectedRunProtocol, mIdx, "for")
-                                  .amount
-                              }}
-                              {{ getProtocolByName(selectedRunProtocol).token }}
-                            </span>
-                            <span
-                              v-if="
-                                hasPosition(
-                                  selectedRunProtocol,
-                                  mIdx,
-                                  'against'
-                                )
-                              "
-                              class="tag is-medium is-danger fira-sans-condensed-black-italic"
-                            >
-                              AGAINST:
-                              {{
-                                getPosition(
-                                  selectedRunProtocol,
-                                  mIdx,
-                                  "against"
-                                ).amount
-                              }}
-                              {{ getProtocolByName(selectedRunProtocol).token }}
-                            </span>
-                          </div>
-                        </div>
-                        <div class="column is-3 is-offset-3">
-                          <button
-                            class="button is-success fira-sans-condensed-black-italic is-fullwidth"
-                            @click="
-                              openPositionModal(
-                                selectedRunProtocol,
-                                mIdx,
-                                'for',
-                                market
-                              )
-                            "
-                          >
-                            <span class="material-symbols-outlined mr-1">
-                              thumb_up
-                            </span>
-                            YES
-                          </button>
-                        </div>
-                        <div class="column is-3">
-                          <button
-                            class="button is-danger fira-sans-condensed-black-italic is-fullwidth"
-                            @click="
-                              openPositionModal(
-                                selectedRunProtocol,
-                                mIdx,
-                                'against',
-                                market
-                              )
-                            "
-                          >
-                            <span class="material-symbols-outlined mr-1">
-                              thumb_down
-                            </span>
-                            NO
-                          </button>
-                        </div>
-                      </div>
-                    </div>
-                  </div>
-                </div>
-              </div>
-
-              <!-- Polymarket Agent Interface -->
-              <div v-else-if="selectedRunAgent === 'copymaster'">
+              <!-- POLYMARKET INTERFACE -->
+              <div v-if="selectedSkillId === 'polymarket-top-performers-v1.0.0'">
                 <div
                   class="models__activity--payouts pt-5 pb-5"
                   style="position: relative; bottom: -40px; z-index: 11"
                 >
-                  <!-- Time Period Selector -->
+                  <!-- Category Selector -->
                   <h2
                     class="fira-sans-condensed-black-italic is-size-5 has-text-white has-text-left mb-4"
+                  >
+                    Category
+                  </h2>
+                  <div class="columns">
+                    <div class="column is-12">
+                      <div class="control category-selector polymarket-category">
+                        <template
+                          v-for="cat in polymarketCategories"
+                          :key="cat.key"
+                        >
+                          <input
+                            type="radio"
+                            name="polymarket_category_selector"
+                            :id="'pmcat_' + cat.key"
+                            :value="cat.key"
+                            :checked="selectedPolymarketCategory === cat.key"
+                            :disabled="isAnalyzing"
+                            @change="selectCategoryAndAnalyze(cat.key)"
+                          />
+                          <label
+                            :for="'pmcat_' + cat.key"
+                            class="radio"
+                            :class="{
+                              'is-loading':
+                                isAnalyzing &&
+                                selectedPolymarketCategory === cat.key,
+                            }"
+                          >
+                            <span
+                              v-if="
+                                isAnalyzing &&
+                                selectedPolymarketCategory === cat.key
+                              "
+                              class="material-symbols-outlined rotating mr-1"
+                              style="font-size: 18px !important"
+                            >
+                              progress_activity
+                            </span>
+                            <span
+                              v-else
+                              class="material-symbols-outlined mr-1"
+                              style="font-size: 18px !important"
+                            >
+                              {{ cat.icon }}
+                            </span>
+                            {{ cat.label }}
+                          </label>
+                        </template>
+                      </div>
+                    </div>
+                  </div>
+
+                  <!-- Time Period Selector -->
+                  <h2
+                    class="fira-sans-condensed-black-italic is-size-5 has-text-white has-text-left mb-4 mt-5"
                   >
                     Timeframe
                   </h2>
@@ -1442,8 +755,8 @@
                 </div>
               </div>
 
-              <!-- TCG Agent Interface -->
-              <div v-else-if="selectedRunAgent === 'tcg'" class="tcg-interface">
+              <!-- TCG INTERFACE -->
+              <div v-else-if="selectedSkillId === 'tcg-prediction-market-v1.0.0'" class="tcg-interface">
                 <!-- Collection Selector -->
                 <div class="tcg-header mb-4">
                   <div class="control collection-selector">
@@ -1731,6 +1044,909 @@
                   </div>
                 </div>
               </div>
+
+              <!-- DSLA SKILL FACTORY -->
+              <div v-else-if="selectedSkillId === 'dsla-smart-market-v1.0.0'">
+                <div class="models__activity--payouts">
+                  <div class="bonzai__agent">
+                    <div class="desc">
+                      <span
+                        class="material-symbols-outlined is-size-1 has-text-white"
+                      >
+                        build_circle
+                      </span>
+                      <p class="notification is-info">
+                        Create a new Prediction Market Skill using the Decentralized
+                        Service Level Agreement (DSLA) framework. Select a use case,
+                        define your skill's identity and token economics.
+                      </p>
+                    </div>
+
+                    <!-- Use Case Selection -->
+                    <h2
+                      class="fira-sans-condensed-black-italic is-size-2 has-text-white has-text-left mb-4"
+                    >
+                      Use Case
+                    </h2>
+                    <div class="columns">
+                      <div class="column is-12">
+                        <div class="control usecase-selector">
+                          <template
+                            v-for="useCase in dslaUseCases"
+                            :key="useCase.key"
+                          >
+                            <input
+                              type="radio"
+                              name="usecase_selector"
+                              :id="'usecase_' + useCase.key"
+                              :value="useCase.key"
+                              :checked="
+                                selectedUseCase &&
+                                selectedUseCase.key === useCase.key
+                              "
+                              @change="selectUseCaseAndGenerate(useCase)"
+                            />
+                            <label
+                              :for="'usecase_' + useCase.key"
+                              class="radio"
+                            >
+                              {{ useCase.label }}
+                            </label>
+                          </template>
+                        </div>
+                        <p v-if="selectedUseCase" class="has-text-grey-light mt-2 is-size-7">
+                          {{ selectedUseCase.context }}
+                        </p>
+                      </div>
+                    </div>
+                    <hr />
+
+                    <!-- Project Identity -->
+                    <h2
+                      class="fira-sans-condensed-black-italic is-size-2 has-text-white has-text-left mb-4 mt-5"
+                    >
+                      Project Identity
+                    </h2>
+                    <div class="columns">
+                      <div class="field column is-6">
+                        <label
+                          class="label has-text-white has-text-left fira-sans-condensed-black-italic is-size-5"
+                        >
+                          Project Name *
+                        </label>
+                        <div class="control">
+                          <input
+                            class="input is-large"
+                            v-model="projectForm.name"
+                            placeholder="Enter project name"
+                          />
+                        </div>
+                      </div>
+                      <div class="field column is-6">
+                        <label
+                          class="label has-text-white has-text-left fira-sans-condensed-black-italic is-size-5"
+                        >
+                          Token Symbol *
+                        </label>
+                        <div class="control">
+                          <input
+                            class="input is-large"
+                            v-model="projectForm.tokenSymbol"
+                            placeholder="e.g. BTC, ETH, DSLA"
+                          />
+                        </div>
+                      </div>
+                    </div>
+                    <div class="field">
+                      <label
+                        class="label has-text-white has-text-left fira-sans-condensed-black-italic is-size-5"
+                      >
+                        Project Description *
+                      </label>
+                      <div class="control">
+                        <textarea
+                          class="textarea is-large"
+                          v-model="projectForm.description"
+                          placeholder="Describe your project and its goals"
+                        ></textarea>
+                      </div>
+                    </div>
+
+                    <hr />
+
+                    <!-- Token Economics -->
+                    <h2
+                      class="fira-sans-condensed-black-italic is-size-2 has-text-white has-text-left mb-4 mt-5"
+                    >
+                      Token Economics
+                    </h2>
+                    <div class="columns">
+                      <div class="field column is-6">
+                        <label
+                          class="label has-text-white has-text-left fira-sans-condensed-black-italic is-size-5"
+                        >
+                          Total Supply
+                          <span v-if="projectForm.tokenSymbol">
+                            ({{ projectForm.tokenSymbol }})
+                          </span>
+                        </label>
+                        <div class="control">
+                          <input
+                            class="input is-large"
+                            v-model="projectForm.totalSupply"
+                            placeholder="e.g. 1000000000"
+                          />
+                        </div>
+                      </div>
+                      <div class="field column is-6">
+                        <label
+                          class="label has-text-white has-text-left fira-sans-condensed-black-italic is-size-5"
+                        >
+                          Price (ETH)
+                        </label>
+                        <div class="control">
+                          <input
+                            class="input is-large"
+                            type="number"
+                            step="0.01"
+                            v-model.number="projectForm.price"
+                            placeholder="0.1"
+                          />
+                        </div>
+                      </div>
+                    </div>
+
+                    <!-- Create Skill Button -->
+                    <div class="control mt-4 has-text-centered mt-5">
+                      <button
+                        class="button is-success is-large mt-5"
+                        @click="createPredictionMarketSkill()"
+                        :disabled="
+                          !projectForm.name ||
+                          !projectForm.tokenSymbol ||
+                          !selectedUseCase
+                        "
+                      >
+                        <span class="material-symbols-outlined mr-2 is-size-3">
+                          build_circle
+                        </span>
+                        Create Prediction Market Skill
+                        <div class="tags has-addons ml-3">
+                          <span
+                            class="tag is-warning partner fira-sans-condensed-black-italic"
+                          >
+                            {{ projectForm.price || 0.1 }} ETH
+                          </span>
+                        </div>
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              <!-- Roleplay Companion - Special Chat Interface -->
+              <div v-else-if="selectedSkillId === 'roleplay-companion-v1.0.0'" class="roleplay-interface">
+                <div class="models__activity--payouts mb-4">
+                  <!-- Skill Header -->
+                  <div class="skill-header-banner">
+                    <div class="columns is-vcentered">
+                      <div class="column">
+                        <div class="is-flex is-align-items-center">
+                          <span class="material-symbols-outlined mr-3" style="font-size: 48px; color: var(--bulma-primary);">
+                            {{ getCategoryIcon(selectedSkill.category) }}
+                          </span>
+                          <div>
+                            <h3 class="fira-sans-condensed-black-italic is-size-2 has-text-white mb-1">
+                              {{ selectedSkill.name }}
+                            </h3>
+                            <p class="has-text-grey-light">{{ selectedSkill.description }}</p>
+                          </div>
+                        </div>
+                      </div>
+                      <div class="column is-narrow">
+                        <div class="tags">
+                          <span class="tag is-medium" :class="getCategoryColor(selectedSkill.category)">
+                            {{ getCategoryLabel(selectedSkill.category) }}
+                          </span>
+                          <span class="tag is-info is-medium">{{ getRequiredLevel(selectedSkill) }}</span>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
+                <!-- Model Requirements (matching GenerativeImage style) -->
+                <div v-if="skillModelRequirements.length > 0 && hasMissingModels" class="notification is-danger mb-6 mt-4 p-6 has-text-left">
+                  <p class="mb-2">
+                    <strong class="fira-sans-condensed-black-italic is-size-2">
+                      Download Required
+                    </strong>
+                    <!-- Show missing repos -->
+                    <template v-for="model in missingModels" :key="model.key">
+                      <ul v-if="modelReadinessDetails[model.key]?.repos?.length" style="margin-top: 0.5rem; text-transform: lowercase">
+                        <li v-for="repo in modelReadinessDetails[model.key].repos" :key="repo">
+                          <span class="material-symbols-outlined is-size-4 mr-1">
+                            deployed_code
+                          </span>
+                          {{ repo }}
+                        </li>
+                      </ul>
+                      <!-- Show missing files -->
+                      <ul v-if="modelReadinessDetails[model.key]?.files?.length" style="margin-top: 0.5rem; text-transform: lowercase">
+                        <li v-for="file in modelReadinessDetails[model.key].files" :key="file">
+                          <span class="material-symbols-outlined is-size-4 mr-1">
+                            deployed_code
+                          </span>
+                          {{ file }}
+                        </li>
+                      </ul>
+                      <!-- Fallback if no details available (show filename for LLM, repo for others) -->
+                      <ul v-if="!modelReadinessDetails[model.key]?.repos?.length && !modelReadinessDetails[model.key]?.files?.length" style="margin-top: 0.5rem; text-transform: lowercase">
+                        <li>
+                          <span class="material-symbols-outlined is-size-4 mr-1">
+                            deployed_code
+                          </span>
+                          {{ model.filename || model.repo || model.name }}
+                        </li>
+                      </ul>
+                    </template>
+                  </p>
+                  <hr />
+                  <div class="buttons">
+                    <button
+                      class="button is-warning mr-5 is-large"
+                      @click="downloadAllMissingModels"
+                      :disabled="downloadingModelKey !== null"
+                    >
+                      <span v-if="downloadingModelKey" class="material-symbols-outlined mr-1 rotating">
+                        progress_activity
+                      </span>
+                      <span v-else class="material-symbols-outlined mr-1">
+                        download
+                      </span>
+                      {{ downloadingModelKey ? `Downloading... ${downloadProgress}%` : 'Download Now' }}
+                    </button>
+                  </div>
+                </div>
+
+                <!-- Roleplay Chat Component -->
+                <RoleplayChat
+                  :skill="selectedSkill"
+                  @charge-fee="handleRoleplayFee"
+                />
+              </div>
+
+              <!-- Generic Skill Interface (for other flagship skills) -->
+              <div v-else-if="selectedSkill" class="generic-skill-interface">
+                <div class="models__activity--payouts">
+                  <!-- Skill Header -->
+                  <div class="skill-header-banner mb-5">
+                    <div class="columns is-vcentered">
+                      <div class="column">
+                        <div class="is-flex is-align-items-center">
+                          <span class="material-symbols-outlined mr-3" style="font-size: 48px; color: var(--bulma-primary);">
+                            {{ getCategoryIcon(selectedSkill.category) }}
+                          </span>
+                          <div>
+                            <h3 class="fira-sans-condensed-black-italic is-size-2 has-text-white mb-1">
+                              {{ selectedSkill.name }}
+                            </h3>
+                            <p class="has-text-grey-light">{{ selectedSkill.description }}</p>
+                          </div>
+                        </div>
+                      </div>
+                      <div class="column is-narrow">
+                        <div class="tags">
+                          <span class="tag is-medium" :class="getCategoryColor(selectedSkill.category)">
+                            {{ getCategoryLabel(selectedSkill.category) }}
+                          </span>
+                          <span class="tag is-info is-medium">{{ getRequiredLevel(selectedSkill) }}</span>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+
+                  <!-- Model Requirements Section -->
+                  <div v-if="skillModelRequirements.length > 0" class="model-requirements-section mb-5">
+                    <h4 class="fira-sans-condensed-black-italic has-text-white has-text-left is-size-5 mb-3">
+                      <span class="material-symbols-outlined mr-2" style="vertical-align: middle;">deployed_code</span>
+                      Required Models
+                    </h4>
+
+                    <!-- Loading state while checking -->
+                    <div v-if="!modelAvailabilityChecked" class="notification is-info mb-4">
+                      <span class="material-symbols-outlined rotating mr-2" style="vertical-align: middle;">progress_activity</span>
+                      Checking model availability...
+                    </div>
+
+                    <!-- Missing Models Warning -->
+                    <div v-else-if="hasMissingModels" class="notification is-danger mb-4 p-6">
+                      <p class="mb-3">
+                        <strong class="fira-sans-condensed-black-italic is-size-2">
+                          Download Required
+                        </strong>
+                      </p>
+                      <!-- Show missing repos and files for each model -->
+                      <template v-for="model in missingModels" :key="model.key">
+                        <ul v-if="modelReadinessDetails[model.key]?.repos?.length" style="margin-top: 0.5rem; text-transform: lowercase">
+                          <li v-for="repo in modelReadinessDetails[model.key].repos" :key="repo">
+                            <span class="material-symbols-outlined is-size-3 mr-1">
+                              deployed_code
+                            </span>
+                            {{ repo }}
+                          </li>
+                        </ul>
+                        <ul v-if="modelReadinessDetails[model.key]?.files?.length" style="margin-top: 0.5rem; text-transform: lowercase">
+                          <li v-for="file in modelReadinessDetails[model.key].files" :key="file">
+                            <span class="material-symbols-outlined is-size-3 mr-1">
+                              deployed_code
+                            </span>
+                            {{ file }}
+                          </li>
+                        </ul>
+                        <!-- Fallback if no details available (show filename for LLM, repo for others) -->
+                        <ul v-if="!modelReadinessDetails[model.key]?.repos?.length && !modelReadinessDetails[model.key]?.files?.length" style="margin-top: 0.5rem; text-transform: lowercase">
+                          <li>
+                            <span class="material-symbols-outlined is-size-3 mr-1">
+                              deployed_code
+                            </span>
+                            {{ model.filename || model.repo || model.name }}
+                          </li>
+                        </ul>
+                      </template>
+                      <hr />
+                      <div class="buttons">
+                        <button
+                          class="button is-warning mr-5 is-large"
+                          @click="downloadAllMissingModels"
+                          :disabled="downloadingModelKey !== null"
+                        >
+                          <span v-if="downloadingModelKey" class="material-symbols-outlined mr-1 rotating">
+                            progress_activity
+                          </span>
+                          <span v-else class="material-symbols-outlined mr-1">
+                            download
+                          </span>
+                          {{ downloadingModelKey ? `Downloading... ${downloadProgress}%` : 'Download Now' }}
+                        </button>
+                      </div>
+                    </div>
+
+                    <!-- All models ready - show as tags -->
+                    <div v-else class="available-models-tags">
+                      <span
+                        v-for="model in skillModelRequirements"
+                        :key="model.key"
+                        class="tag is-medium is-success mr-2 mb-2"
+                      >
+                        <span class="material-symbols-outlined mr-1" style="font-size: 14px;">check_circle</span>
+                        {{ model.name }}
+                        <span class="ml-1 has-text-grey-light" style="font-size: 10px;">({{ model.vram }})</span>
+                      </span>
+                    </div>
+                  </div>
+
+                  <!-- LLM Auto-Fill Section -->
+                  <div class="autofill-section models__activity--payouts mb-5 p-4" style="background: rgba(0,0,0,0.3); border-radius: 8px;">
+                    <div class="columns is-vcentered">
+                      <div class="column">
+                        <h4 class="fira-sans-condensed-black-italic has-text-white has-text-left is-size-5">
+                          <span class="material-symbols-outlined mr-2" style="vertical-align: middle;">auto_awesome</span>
+                          AI Auto-Fill
+                        </h4>
+                        <p class="has-text-grey-light is-size-7 has-text-left">
+                          Describe what you want and let AI fill in the details
+                        </p>
+                      </div>
+                      <div class="column is-narrow">
+                        <button
+                          class="button is-info"
+                          :disabled="!autoFillPrompt || isAutoFilling"
+                          @click="autoFillSkillInputs"
+                        >
+                          <span v-if="isAutoFilling" class="material-symbols-outlined rotating mr-1">progress_activity</span>
+                          <span v-else class="material-symbols-outlined mr-1">magic_button</span>
+                          {{ isAutoFilling ? 'Generating...' : 'Generate' }}
+                        </button>
+                      </div>
+                    </div>
+                    <div class="field mt-3">
+                      <div class="control">
+                        <textarea
+                          v-model="autoFillPrompt"
+                          class="textarea"
+                          placeholder="Describe what you want to create (e.g., 'A cozy coffee shop scene with warm lighting and jazz music')..."
+                          rows="2"
+                          :disabled="isAutoFilling"
+                        ></textarea>
+                      </div>
+                    </div>
+                  </div>
+
+                  <!-- Skill Inputs - Visual Selectors -->
+                  <div class="skill-inputs-visual">
+                    <template v-for="(field, key) in selectedSkill.inputs" :key="key">
+                      <!-- Select type: Visual card selector -->
+                      <div v-if="field.type === 'select'" class="input-section mb-5">
+                        <h4 class="fira-sans-condensed-black-italic is-size-5 has-text-white mb-3">
+                          {{ field.label || key }}
+                        </h4>
+                        <div class="control visual-selector">
+                          <template v-for="opt in field.options" :key="opt">
+                            <input
+                              type="radio"
+                              :name="'skill_input_' + key"
+                              :id="'input_' + key + '_' + opt"
+                              :value="opt"
+                              :checked="skillInputs[key] === opt"
+                              @change="skillInputs[key] = opt"
+                            />
+                            <label :for="'input_' + key + '_' + opt" class="radio">
+                              {{ formatOptionLabel(opt) }}
+                            </label>
+                          </template>
+                        </div>
+                        <p v-if="field.description" class="help has-text-grey-light mt-2">
+                          {{ field.description }}
+                        </p>
+                      </div>
+
+                      <!-- Boolean type: Toggle switch -->
+                      <div v-else-if="field.type === 'boolean'" class="input-section mb-5">
+                        <div class="is-flex is-align-items-center is-justify-content-space-between">
+                          <div>
+                            <h4 class="fira-sans-condensed-black-italic is-size-5 has-text-white mb-1">
+                              {{ field.label || key }}
+                            </h4>
+                            <p v-if="field.description" class="help has-text-grey-light">
+                              {{ field.description }}
+                            </p>
+                          </div>
+                          <label class="switch">
+                            <input type="checkbox" v-model="skillInputs[key]" />
+                            <span class="slider"></span>
+                          </label>
+                        </div>
+                      </div>
+
+                      <!-- Number type: Styled input with +/- buttons -->
+                      <div v-else-if="field.type === 'number'" class="input-section mb-5">
+                        <h4 class="fira-sans-condensed-black-italic is-size-5 has-text-white mb-3">
+                          {{ field.label || key }}
+                        </h4>
+                        <div class="field has-addons number-input-group">
+                          <div class="control">
+                            <button
+                              class="button is-dark"
+                              @click="skillInputs[key] = Math.max(field.min || 0, (skillInputs[key] || 0) - 1)"
+                            >
+                              <span class="material-symbols-outlined">remove</span>
+                            </button>
+                          </div>
+                          <div class="control is-expanded">
+                            <input
+                              class="input has-text-centered"
+                              type="number"
+                              v-model.number="skillInputs[key]"
+                              :min="field.min"
+                              :max="field.max"
+                            />
+                          </div>
+                          <div class="control">
+                            <button
+                              class="button is-dark"
+                              @click="skillInputs[key] = Math.min(field.max || 999, (skillInputs[key] || 0) + 1)"
+                            >
+                              <span class="material-symbols-outlined">add</span>
+                            </button>
+                          </div>
+                        </div>
+                        <p v-if="field.description" class="help has-text-grey-light mt-2">
+                          {{ field.description }}
+                        </p>
+                      </div>
+
+                      <!-- Image type: File upload with preview -->
+                      <div v-else-if="field.type === 'image'" class="input-section mb-5">
+                        <h4 class="fira-sans-condensed-black-italic is-size-5 has-text-white mb-3">
+                          {{ field.label || key }}
+                        </h4>
+                        <div class="image-upload-area">
+                          <div v-if="skillInputs[key]" class="image-preview mb-3">
+                            <img :src="'data:image/png;base64,' + skillInputs[key]" alt="Preview" class="preview-image" />
+                            <button class="button is-small is-danger is-light mt-2" @click="skillInputs[key] = ''">
+                              <span class="material-symbols-outlined mr-1">delete</span>
+                              Remove
+                            </button>
+                          </div>
+                          <div v-else class="file is-boxed is-fullwidth">
+                            <label class="file-label">
+                              <input
+                                class="file-input"
+                                type="file"
+                                accept="image/*"
+                                @change="handleImageUpload($event, key)"
+                              />
+                              <span class="file-cta">
+                                <span class="file-icon">
+                                  <span class="material-symbols-outlined">upload</span>
+                                </span>
+                                <span class="file-label fira-sans-condensed-black-italic">
+                                  Upload Image
+                                </span>
+                              </span>
+                            </label>
+                          </div>
+                        </div>
+                        <p v-if="field.description" class="help has-text-grey-light mt-2">
+                          {{ field.description }}
+                        </p>
+                      </div>
+
+                      <!-- String type: Styled textarea for longer inputs -->
+                      <div v-else class="input-section mb-5">
+                        <h4 class="fira-sans-condensed-black-italic is-size-5 has-text-white mb-3">
+                          {{ field.label || key }}
+                        </h4>
+                        <div class="control">
+                          <textarea
+                            v-if="(field.description || '').includes('Describe') || key.includes('description') || key.includes('idea') || key.includes('summary')"
+                            class="textarea"
+                            v-model="skillInputs[key]"
+                            :placeholder="field.description || String(field.default || '')"
+                            rows="3"
+                          ></textarea>
+                          <input
+                            v-else
+                            class="input is-medium"
+                            type="text"
+                            v-model="skillInputs[key]"
+                            :placeholder="field.description || String(field.default || '')"
+                          />
+                        </div>
+                      </div>
+                    </template>
+                  </div>
+
+                  <!-- Execute Button -->
+                  <div class="control mt-5">
+                    <button
+                      class="button is-success is-large is-fullwidth"
+                      @click="executeSelectedSkill"
+                      :disabled="isExecuting || hasMissingModels"
+                    >
+                      <span
+                        v-if="isExecuting"
+                        class="material-symbols-outlined mr-2 rotating"
+                      >
+                        progress_activity
+                      </span>
+                      <span v-else class="material-symbols-outlined mr-2">
+                        auto_awesome
+                      </span>
+                      <span class="fira-sans-condensed-black-italic is-size-4">
+                        {{ isExecuting ? executionStatus : 'Generate' }}
+                      </span>
+                      <span class="tag is-warning ml-3 fira-sans-condensed-black-italic">
+                        {{ selectedSkill.pricing?.runningFee || 99 }} BONZAI
+                      </span>
+                    </button>
+                    <p v-if="selectedSkill" class="help has-text-info has-text-centered mt-2">
+                      <span class="material-symbols-outlined mr-1" style="font-size: 14px; vertical-align: middle;">verified</span>
+                      {{ getRequiredLevel(selectedSkill) }} - {{ selectedSkill.requirements?.requiredApis?.join(', ') || 'text' }}
+                    </p>
+                  </div>
+
+                  <!-- Execution Results - Rich Display -->
+                  <div
+                    v-if="executionResults[selectedSkillId]"
+                    class="execution-results mt-5"
+                  >
+                    <h4 class="fira-sans-condensed-black-italic is-size-4 has-text-white mb-4">
+                      <span class="material-symbols-outlined mr-2" style="vertical-align: middle;">auto_awesome</span>
+                      Generated Content
+                    </h4>
+
+                    <!-- Render results based on skill output type -->
+                    <div class="results-container">
+                      <!-- Story/Narrative Results -->
+                      <template v-if="executionResults[selectedSkillId].story">
+                        <div class="result-section story-result">
+                          <div v-if="executionResults[selectedSkillId].story.coverImage" class="cover-image mb-4">
+                            <img :src="'data:image/png;base64,' + executionResults[selectedSkillId].story.coverImage" alt="Cover" class="generated-image" />
+                          </div>
+                          <h3 class="is-size-3 has-text-white mb-2">{{ executionResults[selectedSkillId].story.title }}</h3>
+                          <p class="has-text-grey-light mb-4">{{ executionResults[selectedSkillId].story.synopsis }}</p>
+                          <div v-for="(scene, idx) in executionResults[selectedSkillId].story.scenes" :key="idx" class="scene-card mb-4">
+                            <div class="columns">
+                              <div class="column is-4" v-if="scene.image">
+                                <img :src="'data:image/png;base64,' + scene.image" alt="Scene" class="generated-image" />
+                              </div>
+                              <div class="column">
+                                <h4 class="is-size-5 has-text-white">{{ scene.title }}</h4>
+                                <p class="has-text-grey-light">{{ scene.narrative }}</p>
+                              </div>
+                            </div>
+                          </div>
+                        </div>
+                      </template>
+
+                      <!-- Image Gallery Results -->
+                      <template v-else-if="hasImageResults(executionResults[selectedSkillId])">
+                        <div class="image-gallery">
+                          <div class="columns is-multiline">
+                            <template v-for="(img, idx) in extractImages(executionResults[selectedSkillId])" :key="idx">
+                              <div class="column is-4">
+                                <div class="generated-image-card">
+                                  <img :src="'data:image/png;base64,' + img.data" :alt="img.label" class="generated-image" />
+                                  <p class="has-text-centered has-text-grey-light mt-2">{{ img.label }}</p>
+                                </div>
+                              </div>
+                            </template>
+                          </div>
+                        </div>
+                      </template>
+
+                      <!-- Recipe Results -->
+                      <template v-else-if="executionResults[selectedSkillId].recipe">
+                        <div class="recipe-result">
+                          <div class="columns">
+                            <div class="column is-5" v-if="executionResults[selectedSkillId].recipe.dishImage">
+                              <img :src="'data:image/png;base64,' + executionResults[selectedSkillId].recipe.dishImage" alt="Dish" class="generated-image" />
+                            </div>
+                            <div class="column">
+                              <h3 class="is-size-3 has-text-white">{{ executionResults[selectedSkillId].recipe.name }}</h3>
+                              <p class="has-text-grey-light mb-3">{{ executionResults[selectedSkillId].recipe.description }}</p>
+                              <div class="tags">
+                                <span class="tag is-info">{{ executionResults[selectedSkillId].recipe.prepTime }} min prep</span>
+                                <span class="tag is-warning">{{ executionResults[selectedSkillId].recipe.cookTime }} min cook</span>
+                              </div>
+                              <h4 class="is-size-5 has-text-white mt-4 mb-2">Ingredients</h4>
+                              <ul>
+                                <li v-for="(ing, idx) in executionResults[selectedSkillId].recipe.ingredients" :key="idx" class="has-text-grey-light">
+                                  {{ ing.amount }} {{ ing.unit }} {{ ing.item }}
+                                </li>
+                              </ul>
+                            </div>
+                          </div>
+                        </div>
+                      </template>
+
+                      <!-- Generic JSON Results (fallback) -->
+                      <template v-else>
+                        <div class="notification is-dark">
+                          <pre class="has-text-success" style="white-space: pre-wrap;">{{ JSON.stringify(executionResults[selectedSkillId], null, 2) }}</pre>
+                        </div>
+                      </template>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- CREATE TAB (Agentic Workflow Builder) -->
+          <div v-if="activeTab === 'create'">
+            <div class="models__activity--payouts">
+              <div class="bonzai__agent">
+                <!-- Model Download Section -->
+                <div v-if="!isModelAvailable" class="notification is-danger mb-5">
+                  <div class="columns is-vcentered">
+                    <div class="column">
+                      <h3 class="is-size-4 mb-0 fira-sans-condensed-black-italic has-text-left">
+                        AI Model Required for Skill Generation
+                      </h3>
+                    </div>
+                    <div class="column is-narrow">
+                      <button
+                        class="button is-success is-large fira-sans-condensed-black-italic"
+                        @click="downloadModel"
+                        :disabled="isDownloading"
+                      >
+                        <span class="material-symbols-outlined mr-2">
+                          deployed_code_update
+                        </span>
+                        Download
+                        <span
+                          v-if="downloadProgress"
+                          class="filesize ml-2"
+                          style="font-size: 14px"
+                        >
+                          {{ downloadProgress }}%
+                        </span>
+                        <span v-else class="filesize ml-2" style="font-size: 14px">
+                          4.08 GB
+                        </span>
+                      </button>
+                    </div>
+                  </div>
+                </div>
+
+                <!-- Skill Identity -->
+                <h2 class="fira-sans-condensed-black-italic is-size-2 has-text-white has-text-left mb-4">
+                  Skill Identity
+                </h2>
+                <div class="columns">
+                  <div class="field column is-6">
+                    <label class="label has-text-white has-text-left fira-sans-condensed-black-italic is-size-5">
+                      Skill Name *
+                    </label>
+                    <div class="control">
+                      <input
+                        class="input is-large"
+                        v-model="skillForm.name"
+                        placeholder="Enter skill name"
+                      />
+                    </div>
+                  </div>
+                  <div class="field column is-3">
+                    <label class="label has-text-white has-text-left fira-sans-condensed-black-italic is-size-5">
+                      Category
+                    </label>
+                    <div class="control">
+                      <div class="select is-large is-fullwidth">
+                        <select v-model="skillForm.category">
+                          <option
+                            v-for="cat in categories"
+                            :key="cat.key"
+                            :value="cat.key"
+                          >
+                            {{ cat.label }}
+                          </option>
+                        </select>
+                      </div>
+                    </div>
+                  </div>
+                  <div class="field column is-3">
+                    <label class="label has-text-white has-text-left fira-sans-condensed-black-italic is-size-5">
+                      Price (ETH)
+                    </label>
+                    <div class="control">
+                      <input
+                        class="input is-large"
+                        type="number"
+                        step="0.01"
+                        v-model.number="skillForm.price"
+                        placeholder="0.1"
+                      />
+                    </div>
+                  </div>
+                </div>
+                <div class="field">
+                  <label class="label has-text-white has-text-left fira-sans-condensed-black-italic is-size-5">
+                    Description *
+                  </label>
+                  <div class="control">
+                    <textarea
+                      class="textarea is-large"
+                      v-model="skillForm.description"
+                      placeholder="Describe what your skill does"
+                    ></textarea>
+                  </div>
+                </div>
+
+                <hr class="mt-5 mb-5" />
+
+                <!-- Agentic Workflow -->
+                <h2 class="fira-sans-condensed-black-italic is-size-2 has-text-white has-text-left mb-4">
+                  Agentic Workflow
+                </h2>
+                <p class="has-text-white has-text-left mb-4">
+                  Define the steps your skill will execute. Each step can use different AI capabilities.
+                </p>
+
+                <div class="workflow-steps">
+                  <div
+                    v-for="(step, idx) in skillForm.steps"
+                    :key="idx"
+                    class="workflow-step box mb-4"
+                  >
+                    <div class="step-header">
+                      <span class="tag is-info is-large fira-sans-condensed-black-italic">
+                        Step {{ idx + 1 }}
+                      </span>
+                      <button
+                        class="delete is-medium"
+                        @click="removeStep(idx)"
+                      ></button>
+                    </div>
+
+                    <div class="columns mt-3">
+                      <div class="field column is-4">
+                        <label class="label has-text-white fira-sans-condensed-black-italic">
+                          Task Type
+                        </label>
+                        <div class="control">
+                          <div class="select is-fullwidth">
+                            <select v-model="step.type">
+                              <option value="script">Script (Text)</option>
+                              <option value="picture">Picture (Image)</option>
+                              <option value="motion">Motion (Video)</option>
+                              <option value="speech">Speech (TTS)</option>
+                              <option value="soundtrack">Soundtrack (Audio)</option>
+                              <option value="asset">Asset (3D)</option>
+                            </select>
+                          </div>
+                        </div>
+                      </div>
+                      <div class="field column is-4">
+                        <label class="label has-text-white fira-sans-condensed-black-italic">
+                          Mode
+                        </label>
+                        <div class="control">
+                          <div class="select is-fullwidth">
+                            <select v-model="step.mode">
+                              <option value="one-pass">One-Pass</option>
+                              <option value="multi-pass">Multi-Pass</option>
+                            </select>
+                          </div>
+                        </div>
+                      </div>
+                      <div class="field column is-4">
+                        <label class="label has-text-white fira-sans-condensed-black-italic">
+                          Reasoning
+                        </label>
+                        <div class="control">
+                          <div class="select is-fullwidth">
+                            <select v-model="step.reasoning">
+                              <option value="offline">Offline (Local)</option>
+                              <option value="online">Online (API)</option>
+                            </select>
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+
+                    <div class="field mt-3">
+                      <label class="label has-text-white fira-sans-condensed-black-italic">
+                        Prompt Template
+                      </label>
+                      <div class="control">
+                        <textarea
+                          class="textarea"
+                          v-model="step.prompt"
+                          placeholder="Enter the prompt for this step. Use {{input}} for dynamic values."
+                          rows="3"
+                        ></textarea>
+                      </div>
+                      <p class="help has-text-grey-light">
+                        Use <code v-pre>{{previousStep}}</code> to reference the output of the previous step.
+                      </p>
+                    </div>
+                  </div>
+                </div>
+
+                <div class="control has-text-left mt-4">
+                  <button
+                    class="button is-info is-large"
+                    @click="addStep"
+                  >
+                    <span class="material-symbols-outlined mr-2">add</span>
+                    Add Step
+                  </button>
+                </div>
+
+                <hr class="mt-5 mb-5" />
+
+                <!-- Publish -->
+                <div class="control mt-4 has-text-centered">
+                  <button
+                    class="button is-success is-large mt-5"
+                    @click="publishSkill"
+                    :disabled="!skillForm.name || !skillForm.description || skillForm.steps.length === 0"
+                  >
+                    <span class="material-symbols-outlined mr-2 is-size-3">
+                      rocket_launch
+                    </span>
+                    Publish Skill
+                    <div class="tags has-addons ml-3">
+                      <span class="tag is-warning partner fira-sans-condensed-black-italic">
+                        1 ETH
+                      </span>
+                    </div>
+                  </button>
+                </div>
+              </div>
             </div>
           </div>
         </div>
@@ -1750,18 +1966,10 @@
           {{ loadingMessage }}
         </p>
         <progress class="progress is-success mt-3" max="100"></progress>
-        <button
-          v-if="isGenerating"
-          class="button is-danger mt-4 fira-sans-condensed-black-italic"
-          @click="cancelGeneration"
-        >
-          <span class="material-symbols-outlined mr-2">close</span>
-          Cancel Generation
-        </button>
       </div>
     </div>
 
-    <!-- Position Modal (LVL Style) -->
+    <!-- Position Modal -->
     <div
       v-if="positionModal.show"
       class="position-modal-overlay"
@@ -1788,7 +1996,6 @@
         </div>
 
         <div class="position-modal-body">
-          <!-- Market Question Preview -->
           <div class="position-market-preview">
             <div class="position-modal-status mb-4">
               <span class="position-status-pill fira-sans-condensed-black-italic is-size-6">
@@ -1800,11 +2007,10 @@
             </p>
           </div>
 
-          <!-- Form Section -->
           <div class="position-form-section">
             <div class="position-field">
               <label class="position-label fira-sans-condensed-black-italic is-size-5 has-text-left">
-                Amount ({{ getProtocolByName(positionModal.protocol)?.token || "BONZAI" }})
+                Amount (BONZAI)
               </label>
               <input
                 class="position-input"
@@ -1816,11 +2022,10 @@
             </div>
           </div>
 
-          <!-- Preview Box -->
           <div class="position-preview-box">
             <p class="position-preview-text p-0 m-0 has-text-centered">
               You are staking
-              <strong>{{ positionModal.amount || 0 }} {{ getProtocolByName(positionModal.protocol)?.token || "tokens" }}</strong>
+              <strong>{{ positionModal.amount || 0 }} tokens</strong>
               that the condition will
               <strong>{{ positionModal.side === "for" ? "be met" : "NOT be met" }}</strong>
               by the target date.
@@ -1847,7 +2052,7 @@
       </div>
     </div>
 
-    <!-- TCG Market Creation Modal (LVL Style) -->
+    <!-- TCG Market Creation Modal -->
     <div
       v-if="tcgMarketModal.show"
       class="tcg-modal-overlay"
@@ -1876,7 +2081,6 @@
         </div>
 
         <div class="tcg-modal-body">
-          <!-- Card Info Section -->
           <div v-if="tcgMarketModal.card" class="tcg-card-preview">
             <div class="tcg-modal-status mb-4">
               <span
@@ -1895,7 +2099,6 @@
             </div>
           </div>
 
-          <!-- Form Fields -->
           <div class="tcg-form-section has-text-left">
             <div class="tcg-field">
               <label class="tcg-label fira-sans-condensed-black-italic">
@@ -1936,9 +2139,70 @@
                 v-model="tcgMarketModal.targetDate"
               />
             </div>
+
+            <!-- Data Sources Section -->
+            <div class="tcg-field mt-5">
+              <label class="tcg-label fira-sans-condensed-black-italic">
+                <span class="material-symbols-outlined mr-1" style="font-size: 18px; vertical-align: middle;">
+                  database
+                </span>
+                Data Sources
+              </label>
+              <p class="has-text-grey-light is-size-7 mb-3">
+                API endpoints used to verify the market outcome
+              </p>
+
+              <div
+                v-for="(source, idx) in tcgMarketModal.dataSources"
+                :key="idx"
+                class="data-source-item mb-3"
+              >
+                <div class="columns is-mobile is-vcentered mb-0">
+                  <div class="column is-4">
+                    <input
+                      class="tcg-input is-small"
+                      v-model="source.name"
+                      placeholder="Source name"
+                    />
+                  </div>
+                  <div class="column">
+                    <input
+                      class="tcg-input is-small"
+                      v-model="source.endpoint"
+                      placeholder="https://api.example.com/..."
+                    />
+                  </div>
+                  <div class="column is-narrow">
+                    <button
+                      class="button is-small is-danger"
+                      @click="removeDataSource(idx)"
+                      :disabled="tcgMarketModal.dataSources.length <= 1"
+                    >
+                      <span class="material-symbols-outlined" style="font-size: 14px;">
+                        delete
+                      </span>
+                    </button>
+                  </div>
+                </div>
+                <input
+                  class="tcg-input is-small"
+                  v-model="source.description"
+                  placeholder="Description (optional)"
+                />
+              </div>
+
+              <button
+                class="button is-small is-info"
+                @click="addDataSource"
+              >
+                <span class="material-symbols-outlined mr-1" style="font-size: 14px;">
+                  add
+                </span>
+                Add Data Source
+              </button>
+            </div>
           </div>
 
-          <!-- Preview Section -->
           <div class="tcg-preview-box">
             <p class="tcg-preview-text p-0 m-0 has-text-centered">
               Will
@@ -1968,13 +2232,15 @@
             class="button tcg-primary-btn is-medium fira-sans-condensed-black-italic"
             @click="createTcgMarket"
             :disabled="
-              !tcgMarketModal.targetPrice || !tcgMarketModal.targetDate
+              !tcgMarketModal.targetPrice ||
+              !tcgMarketModal.targetDate ||
+              !tcgMarketModal.dataSources.some(s => s.name && s.endpoint)
             "
           >
             <span class="material-symbols-outlined mr-2">
               online_prediction
             </span>
-            Ask Now !
+            Issue Market
           </button>
           <button
             class="button is-danger is-medium"
@@ -1985,40 +2251,683 @@
         </div>
       </div>
     </div>
+
+    <!-- Token Issuance Modal -->
+    <div
+      v-if="tokenIssuanceModal.show"
+      class="tcg-modal-overlay"
+      @click.self="closeTokenIssuanceModal"
+    >
+      <div class="tcg-modal token-modal">
+        <div class="has-text-right">
+          <button
+            class="button is-danger"
+            @click="closeTokenIssuanceModal"
+            title="Close"
+            :disabled="tokenIssuanceModal.isIssuing"
+          >
+            <span class="material-symbols-outlined">close</span>
+          </button>
+        </div>
+
+        <div class="tcg-modal-header has-text-center">
+          <span class="material-symbols-outlined is-size-1">
+            generating_tokens
+          </span>
+          <h2
+            class="fira-sans-condensed-black-italic is-size-3 has-text-centered"
+          >
+            Issue Skill Token
+          </h2>
+          <p class="has-text-grey-light mt-2">
+            {{ tokenIssuanceModal.skill?.name }}
+          </p>
+        </div>
+
+        <div class="tcg-modal-body">
+          <!-- Token Identity -->
+          <div class="tcg-form-section has-text-left">
+            <h4 class="fira-sans-condensed-black-italic has-text-white mb-3">
+              Token Identity
+            </h4>
+            <div class="columns">
+              <div class="column is-8">
+                <div class="tcg-field">
+                  <label class="tcg-label fira-sans-condensed-black-italic">
+                    Token Name
+                  </label>
+                  <input
+                    class="tcg-input"
+                    v-model="tokenIssuanceModal.tokenName"
+                    placeholder="My Skill Token"
+                    :disabled="tokenIssuanceModal.isIssuing"
+                  />
+                </div>
+              </div>
+              <div class="column is-4">
+                <div class="tcg-field">
+                  <label class="tcg-label fira-sans-condensed-black-italic">
+                    Symbol
+                  </label>
+                  <input
+                    class="tcg-input"
+                    v-model="tokenIssuanceModal.tokenSymbol"
+                    placeholder="SKILL"
+                    maxlength="8"
+                    :disabled="tokenIssuanceModal.isIssuing"
+                  />
+                </div>
+              </div>
+            </div>
+
+            <div class="tcg-field mt-4">
+              <label class="tcg-label fira-sans-condensed-black-italic">
+                Total Supply
+              </label>
+              <input
+                class="tcg-input"
+                v-model="tokenIssuanceModal.totalSupply"
+                type="number"
+                min="1"
+                placeholder="1000000000"
+                :disabled="tokenIssuanceModal.isIssuing"
+              />
+            </div>
+          </div>
+
+          <hr class="modal-divider" />
+
+          <!-- Liquidity Settings -->
+          <div class="tcg-form-section has-text-left">
+            <h4 class="fira-sans-condensed-black-italic has-text-white mb-3">
+              <span class="material-symbols-outlined mr-1" style="vertical-align: middle; font-size: 20px;">
+                water_drop
+              </span>
+              Initial Liquidity (Uniswap V3)
+            </h4>
+
+            <div class="columns">
+              <div class="column is-6">
+                <div class="tcg-field">
+                  <label class="tcg-label fira-sans-condensed-black-italic">
+                    Tokens for Liquidity
+                  </label>
+                  <input
+                    class="tcg-input"
+                    v-model="tokenIssuanceModal.initialLiquidityTokens"
+                    type="number"
+                    min="1"
+                    :disabled="tokenIssuanceModal.isIssuing"
+                  />
+                  <p class="help has-text-grey-light">
+                    {{ Math.round((tokenIssuanceModal.initialLiquidityTokens / tokenIssuanceModal.totalSupply) * 100) || 0 }}% of supply
+                  </p>
+                </div>
+              </div>
+              <div class="column is-6">
+                <div class="tcg-field">
+                  <label class="tcg-label fira-sans-condensed-black-italic">
+                    ETH for Liquidity
+                  </label>
+                  <input
+                    class="tcg-input"
+                    v-model="tokenIssuanceModal.initialLiquidityEth"
+                    type="number"
+                    step="0.01"
+                    min="0"
+                    @input="calculateDslaFromEth"
+                    :disabled="tokenIssuanceModal.isIssuing"
+                  />
+                </div>
+              </div>
+            </div>
+
+            <div class="tcg-field mt-4">
+              <label class="tcg-label fira-sans-condensed-black-italic">
+                Starting Price (ETH per token)
+              </label>
+              <input
+                class="tcg-input"
+                v-model="tokenIssuanceModal.startingPriceEth"
+                type="number"
+                step="0.0000001"
+                min="0"
+                :disabled="tokenIssuanceModal.isIssuing"
+              />
+            </div>
+
+            <!-- DSLA Pool (for prediction market skills) -->
+            <div v-if="isDslaSkill(tokenIssuanceModal.skill)" class="dsla-pool-section mt-5">
+              <h5 class="fira-sans-condensed-black-italic has-text-info mb-3">
+                <span class="material-symbols-outlined mr-1" style="vertical-align: middle; font-size: 18px;">
+                  currency_exchange
+                </span>
+                DSLA Pool (Prediction Market)
+              </h5>
+
+              <div class="notification is-info is-light mb-3">
+                <p class="is-size-7">
+                  As a DSLA prediction market skill, an additional SKILL/DSLA liquidity pool will be created.
+                </p>
+              </div>
+
+              <div class="columns is-vcentered">
+                <div class="column is-6">
+                  <div class="tcg-field">
+                    <label class="tcg-label fira-sans-condensed-black-italic">
+                      DSLA for Liquidity
+                    </label>
+                    <input
+                      class="tcg-input"
+                      v-model="tokenIssuanceModal.initialLiquidityDsla"
+                      type="number"
+                      min="0"
+                      :disabled="tokenIssuanceModal.isIssuing"
+                    />
+                  </div>
+                </div>
+                <div class="column is-6">
+                  <div class="dsla-price-info">
+                    <p class="is-size-7 has-text-grey-light">
+                      Current DSLA/ETH:
+                      <span v-if="isFetchingDslaPrice" class="has-text-warning">
+                        Loading...
+                      </span>
+                      <span v-else-if="dslaEthPrice" class="has-text-success">
+                        {{ dslaEthPrice.toFixed(10) }} ETH
+                      </span>
+                      <span v-else class="has-text-danger">
+                        Unavailable
+                      </span>
+                    </p>
+                    <p v-if="dslaEthPrice && tokenIssuanceModal.startingPriceEth" class="is-size-7 has-text-grey-light mt-1">
+                      Starting Price in DSLA:
+                      <strong class="has-text-info">
+                        {{ (parseFloat(tokenIssuanceModal.startingPriceEth) / dslaEthPrice).toFixed(2) }} DSLA
+                      </strong>
+                    </p>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- Progress -->
+          <div v-if="tokenIssuanceModal.isIssuing" class="issuance-progress mt-4">
+            <div class="notification is-warning">
+              <div class="columns is-vcentered">
+                <div class="column is-narrow">
+                  <span class="material-symbols-outlined rotating" style="font-size: 32px;">
+                    progress_activity
+                  </span>
+                </div>
+                <div class="column">
+                  <p class="fira-sans-condensed-black-italic">
+                    {{ tokenIssuanceModal.progress.message || 'Processing...' }}
+                  </p>
+                  <p class="is-size-7 has-text-grey">
+                    Step {{ tokenIssuanceModal.progress.step }} of {{ tokenIssuanceModal.progress.total }}
+                  </p>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- Summary -->
+          <div v-if="!tokenIssuanceModal.isIssuing" class="tcg-preview-box mt-4">
+            <p class="tcg-preview-text has-text-centered">
+              <strong>{{ tokenIssuanceModal.tokenSymbol }}</strong> token will be created with
+              <strong>{{ Number(tokenIssuanceModal.totalSupply).toLocaleString() }}</strong> total supply.
+              <br />
+              <span class="is-size-7">
+                SKILL/ETH pool with {{ tokenIssuanceModal.initialLiquidityEth }} ETH liquidity
+                <span v-if="isDslaSkill(tokenIssuanceModal.skill) && tokenIssuanceModal.initialLiquidityDsla">
+                  + SKILL/DSLA pool with {{ Number(tokenIssuanceModal.initialLiquidityDsla).toLocaleString() }} DSLA
+                </span>
+              </span>
+            </p>
+          </div>
+        </div>
+
+        <div class="tcg-modal-footer mb-5">
+          <button
+            class="button tcg-primary-btn is-medium fira-sans-condensed-black-italic"
+            @click="issueToken"
+            :disabled="
+              tokenIssuanceModal.isIssuing ||
+              !tokenIssuanceModal.tokenName ||
+              !tokenIssuanceModal.tokenSymbol ||
+              !tokenIssuanceModal.totalSupply ||
+              !tokenIssuanceModal.initialLiquidityEth
+            "
+          >
+            <span v-if="tokenIssuanceModal.isIssuing" class="material-symbols-outlined rotating mr-2">
+              progress_activity
+            </span>
+            <span v-else class="material-symbols-outlined mr-2">
+              rocket_launch
+            </span>
+            {{ tokenIssuanceModal.isIssuing ? 'Issuing...' : 'Issue Token & Create Pool' }}
+          </button>
+          <button
+            class="button is-danger is-medium"
+            @click="closeTokenIssuanceModal"
+            :disabled="tokenIssuanceModal.isIssuing"
+          >
+            Cancel
+          </button>
+        </div>
+      </div>
+    </div>
   </div>
 </template>
 
 <script>
-import { ref, reactive, onMounted, watch } from "vue";
+import { ref, reactive, computed, onMounted, watch } from "vue";
 import VueMarkdown from "vue-markdown-render";
+import { useSkillStore } from "../stores/skillStore.js";
+import { SKILL_CATEGORY_META } from "../skills/types.js";
 import polymarketAgent from "./polymarketAgent.js";
-import tcgAgent from "./tcgAgent.js";
+import { tokenService } from "../services/token.service.js";
+import SkillRunner from "./skills/SkillRunner.vue";
+import RoleplayChat from "./skills/RoleplayChat.vue";
+import { getSkillModelRequirements, MODEL_REQUIREMENTS } from "../skills/flagship.js";
 
 export default {
   name: "SmartAgent",
-  components: { VueMarkdown },
+  components: { VueMarkdown, SkillRunner, RoleplayChat },
   setup() {
-    const activeTab = ref("buy");
-    const selectedProject = ref("");
-    const selectedAgent = ref("copymaster");
-    const expandedAgentDescription = ref(null); // Track which agent description is expanded
-    const expandedProjectDescription = ref(null); // Track which project description is expanded
-    const statusNotification = ref({ show: false, message: "", type: "info" }); // For non-blocking notifications
-    const isAnalyzing = ref(false);
-    const isGenerating = ref(false);
-    const isDownloading = ref(false);
-    const polymarketTimePeriod = ref("WEEK");
-    const polymarketMinConviction = ref(2);
-    const downloadProgress = ref(0);
+    // Store
+    const skillStore = useSkillStore();
+
+    // Tab state
+    const activeTab = ref("browse");
+
+    // Notifications
+    const statusNotification = ref({ show: false, message: "", type: "info" });
+
+    // Model state
     const isModelAvailable = ref(false);
     const isModelLoaded = ref(false);
+    const isDownloading = ref(false);
+    const downloadProgress = ref(0);
+    const isAnalyzing = ref(false);
+    const isGenerating = ref(false);
     const loadingMessage = ref("");
+
+    // Skill execution state
+    const selectedSkillId = ref(null);
+    const selectedSkill = computed(() => skillStore.getSkillById(selectedSkillId.value));
+    const skillInputs = reactive({});
+    const isExecuting = ref(false);
+    const executionStatus = ref("");
+    const executionResults = reactive({});
+
+    // Model requirements state
+    const modelAvailability = reactive({});
+    const modelReadinessDetails = reactive({}); // Stores { repos: [], files: [] } per model key
+    const modelAvailabilityChecked = ref(false);
+    const downloadingModelKey = ref(null);
+    const autoFillPrompt = ref('');
+    const isAutoFilling = ref(false);
+
+    // Computed: Model requirements for selected skill
+    const skillModelRequirements = computed(() => {
+      if (!selectedSkillId.value) return [];
+      return getSkillModelRequirements(selectedSkillId.value);
+    });
+
+    const missingModels = computed(() => {
+      return skillModelRequirements.value.filter(model => !isModelReady(model));
+    });
+
+    const hasMissingModels = computed(() => {
+      return missingModels.value.length > 0;
+    });
+
+    // Check if a model is ready/available
+    const isModelReady = (model) => {
+      // For LLM models, check file availability - default to NOT available until checked
+      if (model.type === 'llm') {
+        if (!modelAvailabilityChecked.value) return false;
+        return modelAvailability[model.filename] === true;
+      }
+      // For Flask models (diffusion/audio/video/3d), check if Flask reported them as ready
+      if (model.type === 'diffusion' || model.type === 'audio' || model.type === 'video' || model.type === '3d') {
+        if (!modelAvailabilityChecked.value) return false;
+        // If we checked and it's marked available, it's ready
+        // If we checked and it's not in the map, assume it needs download
+        return modelAvailability[model.key] === true;
+      }
+      return true;
+    };
+
+    // Check model availability on mount and when skill changes
+    const checkModelAvailability = async () => {
+      console.log('[SmartAgent] Checking model availability...');
+
+      // Check LLM models via electron API (check each model individually)
+      if (window.electronAPI?.checkModel) {
+        // Check all LLM models defined in MODEL_REQUIREMENTS
+        const llmModelKeys = ['llm_default', 'llm_hermes', 'llm_mythomax'];
+
+        for (const key of llmModelKeys) {
+          const model = MODEL_REQUIREMENTS[key];
+          if (model?.filename) {
+            try {
+              const exists = await window.electronAPI.checkModel(model.filename);
+              modelAvailability[model.filename] = exists;
+              console.log(`[SmartAgent] LLM model ${model.filename}: ${exists ? 'available' : 'not found'}`);
+            } catch (e) {
+              console.warn(`[SmartAgent] Failed to check model ${model.filename}:`, e);
+              modelAvailability[model.filename] = false;
+            }
+          }
+        }
+      }
+
+      // Check Flask server readiness for diffusion/audio/video models via /pipelines/plan
+      const port = window.BONZAI_SERVER_PORT || 65000;
+
+      // Pipeline mappings: model key -> pipeline name (keys match MODEL_REQUIREMENTS)
+      const pipelineMap = {
+        'image_standard': 'image_standard',
+        'image_turbo': 'image_turbo',
+        'image_quality': 'image_quality',
+        'image_advanced': 'image_advanced',
+        'audio': 'audio',
+        'video_quality': 'video_quality',
+        'video_fast': 'video_fast',
+        'vision': 'qwen3_vision',
+        // 'trellis_3d': '3d', // Not defined in Flask yet
+      };
+
+      // Check each pipeline in parallel
+      const pipelineChecks = Object.entries(pipelineMap).map(async ([modelKey, pipeline]) => {
+        try {
+          const response = await fetch(`http://localhost:${port}/pipelines/plan`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ pipeline }),
+          });
+          if (response.ok) {
+            const data = await response.json();
+            console.log(`[SmartAgent] Pipeline ${pipeline} plan:`, data);
+
+            // Use the top-level ok field from the server response
+            if (data.ok === true) {
+              modelAvailability[modelKey] = true;
+              modelReadinessDetails[modelKey] = { repos: [], files: [] };
+              console.log(`[SmartAgent] Model ${modelKey} is ready`);
+            } else {
+              modelAvailability[modelKey] = false;
+              // Store missing repos and files for display
+              const missingRepos = (data.repos || [])
+                .filter(r => r.ok === false || (Number.isFinite(r.missing) && r.missing > 0))
+                .map(r => r.repo);
+              const missingFiles = (data.required_files || [])
+                .filter(f => !f.ok || !f.exists)
+                .map(f => (f.path || f.name || '').split('/').pop());
+              modelReadinessDetails[modelKey] = { repos: missingRepos, files: missingFiles };
+              console.log(`[SmartAgent] Model ${modelKey} needs download:`, modelReadinessDetails[modelKey]);
+            }
+          }
+        } catch (e) {
+          console.warn(`[SmartAgent] Failed to check pipeline ${pipeline}:`, e.message);
+          // If Flask isn't running, don't mark as available
+          modelAvailability[modelKey] = false;
+          modelReadinessDetails[modelKey] = { repos: [], files: [], error: e.message };
+        }
+      });
+
+      await Promise.all(pipelineChecks);
+
+      modelAvailabilityChecked.value = true;
+    };
+
+    const getModelTypeIcon = (type) => {
+      const icons = {
+        llm: 'psychology',
+        diffusion: 'image',
+        audio: 'headphones',
+        video: 'movie',
+        '3d': '3d_rotation',
+      };
+      return icons[type] || 'deployed_code';
+    };
+
+    // Download a skill model
+    const downloadSkillModel = async (model) => {
+      if (downloadingModelKey.value) return;
+
+      downloadingModelKey.value = model.key;
+      downloadProgress.value = 0;
+
+      try {
+        if (model.type === 'llm' && model.url) {
+          // Download LLM model via electron API
+          if (window.electronAPI?.downloadModel) {
+            showNotification(`Downloading ${model.name}...`, 'info', 0);
+
+            // Set up progress listener
+            const progressHandler = (e, data) => {
+              if (data.filename === model.filename) {
+                downloadProgress.value = Math.round(data.percent * 100);
+              }
+            };
+            window.electronAPI.onDownloadProgress(progressHandler);
+
+            // Download without callback (IPC can't clone functions)
+            const success = await window.electronAPI.downloadModel(model.url, model.filename);
+
+            if (success) {
+              // Mark as available immediately
+              modelAvailability[model.filename] = true;
+              console.log(`[SmartAgent] Model downloaded, marking ${model.filename} as available`);
+
+              // Also re-check all models to ensure consistency
+              await checkModelAvailability();
+
+              showNotification(`${model.name} downloaded successfully!`, 'success');
+            } else {
+              showNotification(`Failed to download ${model.name}`, 'danger');
+            }
+          } else {
+            showNotification('Download API not available', 'warning');
+          }
+        } else if (model.type === 'diffusion' || model.type === 'audio' || model.type === 'video' || model.type === '3d') {
+          // For Flask models, trigger prefetch via /pipelines/prefetch endpoint
+          const port = window.BONZAI_SERVER_PORT || 65000;
+          // Model keys now match pipeline names (e.g., image_standard, audio, video_quality)
+          const pipeline = model.pipeline || model.key;
+          if (pipeline) {
+            showNotification(`Downloading ${model.name}...`, 'info');
+            try {
+              const response = await fetch(`http://localhost:${port}/pipelines/prefetch`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ pipeline }),
+              });
+              if (response.ok || response.status === 202) {
+                modelAvailability[model.key] = true;
+                showNotification(`${model.name} downloaded successfully!`, 'success');
+              } else {
+                showNotification(`${model.name} will download on first use`, 'info');
+                modelAvailability[model.key] = true;
+              }
+            } catch (e) {
+              // Flask not running, mark as ready anyway (will download on use)
+              modelAvailability[model.key] = true;
+              showNotification(`${model.name} will download on first use`, 'info');
+            }
+          } else {
+            modelAvailability[model.key] = true;
+          }
+        } else {
+          modelAvailability[model.key] = true;
+          showNotification(`${model.name} ready`, 'success');
+        }
+      } catch (e) {
+        showNotification(`Failed to download ${model.name}: ${e.message}`, 'danger');
+      } finally {
+        downloadingModelKey.value = null;
+        downloadProgress.value = 0;
+      }
+    };
+
+    // Download all missing models
+    const downloadAllMissingModels = async () => {
+      const missing = missingModels.value;
+      if (missing.length === 0) return;
+
+      for (const model of missing) {
+        await downloadSkillModel(model);
+      }
+
+      // Re-check availability after downloads
+      await checkModelAvailability();
+    };
+
+    // Auto-fill skill inputs using LLM
+    const autoFillSkillInputs = async () => {
+      if (!autoFillPrompt.value || isAutoFilling.value || !selectedSkill.value) return;
+
+      isAutoFilling.value = true;
+
+      try {
+        // Build schema for LLM
+        const inputSchema = Object.entries(selectedSkill.value.inputs)
+          .filter(([key, field]) => !['image', 'object'].includes(field.type))
+          .map(([key, field]) => {
+            let schema = `- "${key}": ${field.label || key}`;
+            if (field.type === 'select') {
+              schema += ` (options: ${field.options.join(', ')})`;
+            } else if (field.type === 'number') {
+              schema += ` (number${field.min !== undefined ? `, min: ${field.min}` : ''}${field.max !== undefined ? `, max: ${field.max}` : ''})`;
+            }
+            if (field.description) {
+              schema += ` - ${field.description}`;
+            }
+            return schema;
+          }).join('\n');
+
+        const prompt = `Based on this user request: "${autoFillPrompt.value}"
+
+Fill in the following fields for the "${selectedSkill.value.name}" skill:
+${inputSchema}
+
+Output ONLY valid JSON with the field names as keys. Example:
+{"fieldName": "value", "anotherField": "value"}
+
+Return ONLY the JSON, no explanation.`;
+
+        if (window.electronAPI?.chat) {
+          const response = await window.electronAPI.chat(prompt);
+
+          // Extract JSON from response
+          let json;
+          try {
+            const jsonMatch = response.match(/```(?:json)?\s*([\s\S]*?)```/) ||
+                             response.match(/\{[\s\S]*\}/);
+            if (jsonMatch) {
+              json = JSON.parse(jsonMatch[1] || jsonMatch[0]);
+            } else {
+              json = JSON.parse(response);
+            }
+
+            // Apply generated values
+            Object.entries(json).forEach(([key, value]) => {
+              if (skillInputs.hasOwnProperty(key) || selectedSkill.value.inputs[key]) {
+                skillInputs[key] = value;
+              }
+            });
+
+            showNotification('Inputs auto-filled successfully!', 'success');
+          } catch (e) {
+            console.warn('[SmartAgent] Failed to parse auto-fill response:', e);
+            showNotification('Could not parse AI response', 'warning');
+          }
+        }
+      } catch (e) {
+        console.error('[SmartAgent] Auto-fill error:', e);
+        showNotification(`Auto-fill failed: ${e.message}`, 'danger');
+      } finally {
+        isAutoFilling.value = false;
+      }
+    };
+
+    // Handle roleplay fee charges
+    const handleRoleplayFee = (fee) => {
+      console.log(`[SmartAgent] Roleplay fee charged: ${fee} BONZAI`);
+      // TODO: Implement actual fee deduction
+    };
+
+    // Polymarket state
+    const polymarketTimePeriod = ref("WEEK");
+    const polymarketMinConviction = ref(2);
     const analysisHistory = ref([]);
-    const investmentTheses = ref({}); // key: "analysisIdx-recIdx", value: { loading, thesis, error }
-    const purchasedAgents = ref([]);
-    const purchasedProtocols = ref([]);
-    const selectedRunProtocol = ref(null);
-    const selectedRunAgent = ref(null);
+    const investmentTheses = ref({});
+
+    // TCG state
+    const tcgCollections = ref([
+      { id: 'pokemon', name: 'Pokemon', icon: 'amp_stories' },
+      { id: 'mtg', name: 'Magic: The Gathering', icon: 'amp_stories' },
+      { id: 'yugioh', name: 'Yu-Gi-Oh!', icon: 'amp_stories' },
+      { id: 'onepiece', name: 'One Piece', icon: 'amp_stories' },
+      { id: 'lorcana', name: 'Lorcana', icon: 'amp_stories' },
+    ]);
+    const selectedTcgCollection = ref("pokemon");
+    const tcgTopCards = ref([]);
+    const tcgSearchQuery = ref("");
+    const tcgSearchResults = ref([]);
+    const userTcgPortfolio = ref([]);
+    const tcgMarkets = ref([]);
+    const isTcgLoading = ref(false);
+    const tcgMarketModal = reactive({
+      show: false,
+      card: null,
+      operator: ">",
+      targetPrice: null,
+      targetDate: "",
+      dataSources: [],
+    });
+
+    // DSLA state
+    const dslaUseCases = [
+      { key: "vol_returns", label: "Volatility of Returns", context: "DeFi yields, staking rewards, lending rates" },
+      { key: "vol_availability", label: "Volatility of Availability", context: "blockchain uptime, API availability, node reliability" },
+      { key: "vol_asset_floors", label: "Volatility of Asset Floors", context: "NFT floor prices, token minimums, collateral ratios" },
+      { key: "vol_currency_pegs", label: "Volatility of Currency Pegs", context: "stablecoin pegs, wrapped token ratios, synthetic assets" },
+      { key: "vol_response_time", label: "Volatility of Response Time", context: "block times, transaction confirmations, oracle updates" },
+      { key: "vol_delivery_time", label: "Volatility of Delivery Time", context: "NFT mints, token distributions, airdrop claims" },
+    ];
+    const selectedUseCase = ref(null);
+    const projectForm = reactive({
+      name: "",
+      tokenSymbol: "",
+      description: "",
+      totalSupply: "",
+      price: 0.1, // ETH
+    });
+
+    // Token issuance modal state
+    const tokenIssuanceModal = reactive({
+      show: false,
+      skill: null,
+      tokenName: "",
+      tokenSymbol: "",
+      totalSupply: "1000000000",
+      initialLiquidityTokens: "100000000", // 10% of supply
+      initialLiquidityEth: "0.5",
+      startingPriceEth: "0.0000001",
+      initialLiquidityDsla: "",
+      isIssuing: false,
+      progress: { step: 0, total: 0, message: "" },
+    });
+    const dslaEthPrice = computed(() => tokenService.state.dslaEthPrice);
+    const isFetchingDslaPrice = computed(() => tokenService.state.isFetchingPrice);
+
+    // Positions
     const positions = ref({});
     const positionModal = reactive({
       show: false,
@@ -2028,84 +2937,22 @@ export default {
       market: null,
       amount: null,
     });
-    const generationCancelled = ref(false);
 
-    // TCG Agent State
-    const tcgCollections = ref(tcgAgent.collections);
-    const selectedTcgCollection = ref("pokemon");
-    const tcgTopCards = ref([]);
-    const tcgSearchQuery = ref("");
-    const tcgSearchResults = ref([]);
-    const userTcgPortfolio = ref([]);
-    const tcgMarkets = ref([]);
-    const isTcgLoading = ref(false);
-    const tcgLoadingMessage = ref("");
-    const tcgMarketModal = reactive({
-      show: false,
-      card: null,
-      operator: ">",
-      targetPrice: null,
-      targetDate: "",
+    // Skill creation form
+    const skillForm = reactive({
+      name: "",
+      description: "",
+      category: "prediction-market",
+      price: 0.1,
+      steps: [],
     });
 
-    // Model config - using the same model as GenerativeText
+    // Model config
     const modelConfig = {
       modelname: "LLaMA 3.1 8B",
-      modeldesc:
-        "8B-parameter LLaMA 3.1 instruct model from Meta with a 131,072-token context window. Modern, strong general-purpose assistant with good multilingual and coding performance. Best for: main local chat and coding assistant on a single recent GPU.",
       url: "https://huggingface.co/lmstudio-community/Meta-Llama-3.1-8B-Instruct-GGUF/resolve/main/Meta-Llama-3.1-8B-Instruct-Q4_K_M.gguf",
       filename: "meta-llama-3.1-8b-instruct-q4_k_m.gguf",
-      filesize: "4.92 GB",
-      parameters: 8000000000,
-      context: 131072,
     };
-
-    const projectForm = reactive({
-      name: "",
-      tokenSymbol: "",
-      description: "",
-      totalSupply: "",
-      initialLiquidity: "",
-      accessPrice: "",
-    });
-
-    // Structured SLA markets
-    const slaMarkets = ref([]);
-
-    const dslaUseCases = [
-      {
-        key: "vol_returns",
-        label: "Volatility of Returns",
-        context: "DeFi yields, staking rewards, lending rates",
-      },
-      {
-        key: "vol_availability",
-        label: "Volatility of Availability",
-        context: "blockchain uptime, API availability, node reliability",
-      },
-      {
-        key: "vol_asset_floors",
-        label: "Volatility of Asset Floors",
-        context: "NFT floor prices, token minimums, collateral ratios",
-      },
-      {
-        key: "vol_currency_pegs",
-        label: "Volatility of Currency Pegs",
-        context: "stablecoin pegs, wrapped token ratios, synthetic assets",
-      },
-      {
-        key: "vol_response_time",
-        label: "Volatility of Response Time",
-        context: "block times, transaction confirmations, oracle updates",
-      },
-      {
-        key: "vol_delivery_time",
-        label: "Volatility of Delivery Time",
-        context: "NFT mints, token distributions, airdrop claims",
-      },
-    ];
-    const selectedUseCase = ref(null);
-    const marketProjects = ref([]);
 
     const polymarketPeriods = [
       { key: "DAY", label: "Daily" },
@@ -2127,92 +2974,408 @@ export default {
       { key: 10, label: "10" },
     ];
 
-    const checkModelAvailability = async () => {
-      if (window.electronAPI?.checkModel) {
-        isModelAvailable.value = await window.electronAPI.checkModel(
-          modelConfig.filename
-        );
+    // Polymarket categories (from polymarketAgent)
+    const polymarketCategories = polymarketAgent.categories;
+    const selectedPolymarketCategory = ref("OVERALL");
+
+    // Computed from store
+    const categories = computed(() => skillStore.categories);
+    const selectedCategory = computed(() => skillStore.selectedCategory);
+    const searchQuery = computed({
+      get: () => skillStore.searchQuery,
+      set: (val) => skillStore.setSearchQuery(val),
+    });
+    const filteredSkills = computed(() => skillStore.filteredSkills);
+    const accessibleSkills = computed(() => skillStore.accessibleSkills);
+
+    // Level-based access
+    const canRunSkill = (skillId) => skillStore.canRunSkill(skillId);
+    const getRequiredLevel = (skill) => skillStore.getRequiredLevel(skill);
+
+    // Available skills - show accessible skills (user has required level)
+    const availableSkills = computed(() => {
+      return accessibleSkills.value;
+    });
+
+    // Methods
+    const setCategory = (category) => {
+      skillStore.setCategory(category);
+    };
+
+    const getCategoryLabel = (categoryKey) => {
+      return SKILL_CATEGORY_META[categoryKey]?.label || categoryKey;
+    };
+
+    const getCategoryIcon = (categoryKey) => {
+      return SKILL_CATEGORY_META[categoryKey]?.icon || 'extension';
+    };
+
+    const getCategoryColor = (categoryKey) => {
+      const colorMap = {
+        'entertainment': 'is-danger',
+        'healthcare': 'is-success',
+        'housing': 'is-info',
+        'fashion': 'is-warning',
+        'food': 'is-primary',
+        'education': 'is-link',
+        'reading': 'is-dark',
+        'personal-care': 'is-light',
+        'prediction-market': 'is-info',
+        'analysis': 'is-success',
+        'trading': 'is-warning',
+      };
+      return colorMap[categoryKey] || 'is-dark';
+    };
+
+    const formatOptionLabel = (opt) => {
+      // Convert kebab-case or snake_case to Title Case
+      return String(opt)
+        .replace(/[-_]/g, ' ')
+        .replace(/\b\w/g, c => c.toUpperCase());
+    };
+
+    const hasImageResults = (results) => {
+      if (!results) return false;
+      const str = JSON.stringify(results);
+      return str.includes('image') || str.includes('Image') || str.includes('base64');
+    };
+
+    const extractImages = (results, path = '', images = []) => {
+      if (!results) return images;
+
+      for (const [key, value] of Object.entries(results)) {
+        const currentPath = path ? `${path}.${key}` : key;
+
+        if (typeof value === 'string' && value.length > 100 &&
+            (key.toLowerCase().includes('image') || key.toLowerCase().includes('portrait') ||
+             key.toLowerCase().includes('cover') || key.toLowerCase().includes('photo'))) {
+          images.push({ label: formatOptionLabel(key), data: value });
+        } else if (Array.isArray(value)) {
+          value.forEach((item, idx) => {
+            if (typeof item === 'object') {
+              extractImages(item, `${currentPath}[${idx}]`, images);
+            }
+          });
+        } else if (typeof value === 'object' && value !== null) {
+          extractImages(value, currentPath, images);
+        }
+      }
+
+      return images;
+    };
+
+    // Handle image file upload for skill inputs
+    const handleImageUpload = (event, inputKey) => {
+      const file = event.target.files[0];
+      if (!file) return;
+
+      const reader = new FileReader();
+      reader.onload = (e) => {
+        // Extract base64 without the data:image prefix
+        const base64 = e.target.result.split(',')[1];
+        skillInputs[inputKey] = base64;
+      };
+      reader.readAsDataURL(file);
+    };
+
+    const showNotification = (message, type = "info", duration = 3000) => {
+      statusNotification.value = { show: true, message, type };
+      if (duration > 0) {
+        setTimeout(() => {
+          statusNotification.value.show = false;
+        }, duration);
       }
     };
 
-    const downloadModel = async () => {
-      if (!window.electronAPI?.downloadModel) return;
+    const refreshSkills = async () => {
+      await skillStore.initialize();
+      showNotification("Skills refreshed!", "success");
+    };
 
-      isDownloading.value = true;
-      downloadProgress.value = 0;
+    const runSkill = (skill) => {
+      // Check level access before running
+      const access = canRunSkill(skill.id);
+      if (!access.canRun) {
+        showNotification(`${access.requiredLevel} required: ${access.reason}`, "warning");
+        return;
+      }
+      selectSkillById(skill.id);
+      activeTab.value = "my-skills";
+    };
 
-      const removeListener = window.electronAPI.onDownloadProgress(
-        (_event, progress) => {
-          downloadProgress.value = Math.round(progress.percent * 100);
+    const selectSkillById = (skillId) => {
+      selectedSkillId.value = skillId;
+      const skill = skillStore.getSkillById(skillId);
+      if (skill) {
+        Object.entries(skill.inputs || {}).forEach(([key, field]) => {
+          skillInputs[key] = field.default;
+        });
+
+        // Auto-load data for specific skills
+        if (skillId === 'tcg-prediction-market-v1.0.0') {
+          loadTcgTopCards();
         }
-      );
+      }
+    };
+
+    const executeSelectedSkill = async () => {
+      if (!selectedSkill.value) return;
+
+      isExecuting.value = true;
+      executionStatus.value = "Starting...";
 
       try {
-        const success = await window.electronAPI.downloadModel(
-          modelConfig.url,
-          modelConfig.filename
+        const result = await skillStore.executeSkill(
+          selectedSkill.value.id,
+          { ...skillInputs }
         );
-        if (success) {
-          isModelAvailable.value = true;
+
+        if (result.success) {
+          executionResults[selectedSkill.value.id] = result.result;
+          showNotification("Skill executed successfully!", "success");
+        } else {
+          showNotification(`Execution failed: ${result.error}`, "danger");
         }
-      } catch (err) {
-        console.error("Model download failed:", err);
+      } catch (e) {
+        showNotification(`Error: ${e.message}`, "danger");
       } finally {
-        isDownloading.value = false;
-        downloadProgress.value = 0;
-        if (removeListener) removeListener();
+        isExecuting.value = false;
+        executionStatus.value = "";
       }
     };
 
-    const loadModel = async () => {
-      if (isModelLoaded.value) return;
-
-      const payload = {
-        modelname: modelConfig.modelname,
-        filename: modelConfig.filename,
-      };
-
-      console.log("Loading model for SmartAgent:", payload);
-      await window.electronAPI.loadModel(payload);
-      isModelLoaded.value = true;
+    // Polymarket methods
+    const selectTimePeriodAndAnalyze = async (period) => {
+      polymarketTimePeriod.value = period;
+      await analyzePolymarket();
     };
 
-    const loadPurchasedAgents = async () => {
-      if (window.electronAPI?.store?.get) {
-        const stored = await window.electronAPI.store.get(
-          "purchasedAgents",
-          []
+    const selectConvictionAndAnalyze = async (level) => {
+      polymarketMinConviction.value = level;
+      await analyzePolymarket();
+    };
+
+    const selectCategoryAndAnalyze = async (category) => {
+      selectedPolymarketCategory.value = category;
+      await analyzePolymarket();
+    };
+
+    const analyzePolymarket = async () => {
+      isAnalyzing.value = true;
+      // Clear previous theses when running new analysis
+      investmentTheses.value = {};
+      const categoryLabel = polymarketCategories.find(c => c.key === selectedPolymarketCategory.value)?.label || 'All Markets';
+      loadingMessage.value = `Fetching ${categoryLabel} leaderboard from Polymarket...`;
+
+      try {
+        // Use the polymarketAgent to fetch real data
+        const results = await polymarketAgent.execute(
+          {
+            numTraders: 15, // Fetch more traders to find more positions
+            timePeriod: polymarketTimePeriod.value,
+            category: selectedPolymarketCategory.value,
+            minConviction: polymarketMinConviction.value,
+            copyFraction: 0.1,
+          },
+          {
+            updateStatus: (status) => {
+              loadingMessage.value = status;
+            },
+          }
         );
-        purchasedAgents.value = stored || [];
+
+        // Store the analysis results (top 10 recommendations)
+        analysisHistory.value = [{
+          topTraders: results.topTraders || [],
+          recommendations: (results.recommendations || []).slice(0, 10), // Top 10 high conviction positions
+          meta: results.meta || {
+            timePeriod: polymarketTimePeriod.value,
+            category: selectedPolymarketCategory.value,
+            minConviction: polymarketMinConviction.value,
+            analyzedAt: new Date().toISOString(),
+          },
+        }];
+
+        console.log('[SmartAgent] Polymarket analysis complete:', results);
+
+        if (results.recommendations?.length === 0) {
+          showNotification(`No high conviction positions found for ${categoryLabel}. Try lowering consensus threshold.`, "info");
+        }
+      } catch (e) {
+        console.error('[SmartAgent] Polymarket analysis error:', e);
+        analysisHistory.value = [{ error: e.message }];
+        showNotification(`Analysis failed: ${e.message}`, "danger");
+      } finally {
+        isAnalyzing.value = false;
       }
     };
 
-    const savePurchasedAgents = async () => {
-      if (window.electronAPI?.store?.set) {
-        // Convert reactive array to plain array for IPC serialization
-        const plainArray = [...purchasedAgents.value];
-        await window.electronAPI.store.set("purchasedAgents", plainArray);
+    const generateInvestmentThesis = async (analysisIdx, recIdx, rec) => {
+      const key = `${analysisIdx}-${recIdx}`;
+      investmentTheses.value[key] = { loading: true, thesis: null, error: null };
+
+      try {
+        await loadModel();
+
+        const prompt = `Generate an investment thesis for the following prediction market:
+
+Question: ${rec.question}
+Current market probability: ${(rec.market.currentPrice * 100).toFixed(0)}%
+Position: ${rec.outcome}
+Conviction: ${rec.conviction.traderCount} top traders agree, total size $${formatNumber(rec.conviction.totalSize)}
+
+Provide a concise analysis covering:
+1. Why this position might be correct
+2. Key risks to consider
+3. Suggested position sizing`;
+
+        const response = await window.electronAPI?.chat?.(prompt);
+
+        if (!response) {
+          throw new Error("No response from model. Please ensure the model is loaded.");
+        }
+
+        investmentTheses.value[key] = {
+          loading: false,
+          thesis: response,
+          error: null,
+        };
+      } catch (e) {
+        investmentTheses.value[key] = {
+          loading: false,
+          thesis: null,
+          error: e.message,
+        };
       }
     };
 
-    const formatNumber = (num) => {
-      if (!num) return "0";
-      const n = Number(num);
-      if (n >= 1000000) return (n / 1000000).toFixed(1) + "M";
-      if (n >= 1000) return (n / 1000).toFixed(1) + "K";
-      return n.toFixed(2);
+    const getThesis = (analysisIdx, recIdx) => {
+      return investmentTheses.value[`${analysisIdx}-${recIdx}`];
     };
 
-    const formatSlaQuestion = (sla) => {
-      if (
-        !sla.asset ||
-        !sla.metric ||
-        !sla.operator ||
-        !sla.target ||
-        !sla.date
-      ) {
-        return "Complete all fields to see the prediction question";
+    const openPolymarket = (slug) => {
+      if (window.electronAPI?.openExternal) {
+        window.electronAPI.openExternal(`https://polymarket.com/event/${slug}`);
       }
+    };
+
+    // TCG methods
+    const loadTcgTopCards = async () => {
+      isTcgLoading.value = true;
+      tcgSearchResults.value = [];
+
+      try {
+        // Mock data for development
+        const mockCards = {
+          pokemon: [
+            { id: 'p1', name: 'Charizard VMAX', set: "Champion's Path", rarity: 'Ultra Rare', price: 350, priceChange: 15 },
+            { id: 'p2', name: 'Pikachu VMAX', set: 'Vivid Voltage', rarity: 'Ultra Rare', price: 180, priceChange: 8 },
+            { id: 'p3', name: 'Umbreon VMAX', set: 'Evolving Skies', rarity: 'Alternate Art', price: 420, priceChange: -5 },
+          ],
+          mtg: [
+            { id: 'm1', name: 'Black Lotus', set: 'Alpha', rarity: 'Rare', price: 150000, priceChange: 5 },
+            { id: 'm2', name: 'Mox Sapphire', set: 'Beta', rarity: 'Rare', price: 8500, priceChange: -3 },
+          ],
+          yugioh: [
+            { id: 'y1', name: 'Blue-Eyes White Dragon', set: 'LOB', rarity: '1st Edition', price: 2500, priceChange: 10 },
+            { id: 'y2', name: 'Dark Magician', set: 'LOB', rarity: '1st Edition', price: 1200, priceChange: 5 },
+          ],
+          onepiece: [
+            { id: 'o1', name: 'Monkey D. Luffy', set: 'OP01', rarity: 'Leader', price: 45, priceChange: 20 },
+            { id: 'o2', name: 'Roronoa Zoro', set: 'OP01', rarity: 'Super Rare', price: 85, priceChange: 12 },
+          ],
+          lorcana: [
+            { id: 'l1', name: 'Elsa, Snow Queen', set: 'The First Chapter', rarity: 'Enchanted', price: 450, priceChange: -10 },
+            { id: 'l2', name: 'Mickey Mouse, True Friend', set: 'The First Chapter', rarity: 'Enchanted', price: 280, priceChange: 5 },
+          ],
+        };
+
+        tcgTopCards.value = mockCards[selectedTcgCollection.value] || [];
+      } catch (e) {
+        console.error('[SmartAgent] TCG load error:', e);
+      } finally {
+        isTcgLoading.value = false;
+      }
+    };
+
+    const searchTcgCards = async () => {
+      if (!tcgSearchQuery.value) {
+        tcgSearchResults.value = [];
+        return;
+      }
+
+      isTcgLoading.value = true;
+
+      try {
+        // Mock search
+        const query = tcgSearchQuery.value.toLowerCase();
+        tcgSearchResults.value = tcgTopCards.value.filter(
+          c => c.name.toLowerCase().includes(query)
+        );
+      } catch (e) {
+        console.error('[SmartAgent] TCG search error:', e);
+      } finally {
+        isTcgLoading.value = false;
+      }
+    };
+
+    const addToPortfolio = (card) => {
+      if (!userTcgPortfolio.value.some(c => c.id === card.id)) {
+        userTcgPortfolio.value.push({
+          ...card,
+          collection: selectedTcgCollection.value,
+        });
+      }
+    };
+
+    const removeFromPortfolio = (cardId) => {
+      userTcgPortfolio.value = userTcgPortfolio.value.filter(c => c.id !== cardId);
+    };
+
+    const openTcgMarketModal = (card) => {
+      tcgMarketModal.show = true;
+      tcgMarketModal.card = card;
+      tcgMarketModal.operator = ">";
+      tcgMarketModal.targetPrice = Math.round(card.price * 1.2);
+      tcgMarketModal.targetDate = "";
+      // Initialize with default data source for TCG pricing
+      tcgMarketModal.dataSources = [
+        {
+          name: "TCGPlayer",
+          endpoint: `https://api.tcgplayer.com/pricing/product/${card.id}`,
+          description: "Primary market price data",
+        },
+      ];
+    };
+
+    const closeTcgMarketModal = () => {
+      tcgMarketModal.show = false;
+      tcgMarketModal.card = null;
+      tcgMarketModal.dataSources = [];
+    };
+
+    const addDataSource = () => {
+      tcgMarketModal.dataSources.push({
+        name: "",
+        endpoint: "",
+        description: "",
+      });
+    };
+
+    const removeDataSource = (idx) => {
+      tcgMarketModal.dataSources.splice(idx, 1);
+    };
+
+    const createTcgMarket = () => {
+      if (!tcgMarketModal.targetPrice || !tcgMarketModal.targetDate) return;
+
+      // Validate at least one data source
+      const validSources = tcgMarketModal.dataSources.filter(s => s.name && s.endpoint);
+      if (validSources.length === 0) {
+        showNotification("Please add at least one data source with name and endpoint", "warning");
+        return;
+      }
+
       const operatorText = {
         ">": "exceed",
         "<": "fall below",
@@ -2220,42 +3383,80 @@ export default {
         "<=": "stay at or below",
         "=": "equal exactly",
       };
-      const dateFormatted = new Date(sla.date).toLocaleDateString("en-US", {
-        month: "long",
-        day: "numeric",
-        year: "numeric",
+
+      const market = {
+        id: `tcg-${Date.now()}`,
+        cardId: tcgMarketModal.card.id,
+        cardName: tcgMarketModal.card.name,
+        question: `Will ${tcgMarketModal.card.name}'s market price ${operatorText[tcgMarketModal.operator]} $${tcgMarketModal.targetPrice} by ${tcgMarketModal.targetDate}?`,
+        operator: tcgMarketModal.operator,
+        targetPrice: tcgMarketModal.targetPrice,
+        targetDate: tcgMarketModal.targetDate,
+        dataSources: validSources.map(s => ({ ...s })),
+        createdAt: new Date().toISOString(),
+      };
+
+      tcgMarkets.value.push(market);
+      closeTcgMarketModal();
+      showNotification("Market created successfully!", "success");
+    };
+
+    // DSLA methods
+    const selectUseCaseAndGenerate = (useCase) => {
+      selectedUseCase.value = useCase;
+      showNotification(`Selected: ${useCase.label}`, "info");
+    };
+
+    const createPredictionMarketSkill = async () => {
+      if (!projectForm.name || !projectForm.tokenSymbol || !selectedUseCase.value) {
+        showNotification("Please fill in all required fields and select a use case", "warning");
+        return;
+      }
+
+      showNotification("Creating prediction market skill...", "info", 0);
+
+      const result = await skillStore.publishSkill({
+        name: projectForm.name,
+        description: projectForm.description || `${selectedUseCase.value.label} prediction market for ${projectForm.tokenSymbol}`,
+        category: "prediction-market",
+        price: projectForm.price || 0.1,
+        useCase: selectedUseCase.value.key,
+        tokenSymbol: projectForm.tokenSymbol,
+        totalSupply: projectForm.totalSupply,
+        steps: [
+          {
+            type: "data-fetch",
+            mode: "scheduled",
+            prompt: `Fetch ${selectedUseCase.value.context} data for ${projectForm.tokenSymbol}`,
+          },
+          {
+            type: "analysis",
+            mode: "on-demand",
+            prompt: `Analyze ${selectedUseCase.value.label} metrics and generate market predictions`,
+          },
+        ],
       });
-      return `Will ${sla.asset}'s ${sla.metric} ${operatorText[sla.operator]} ${sla.target} by ${dateFormatted}?`;
+
+      if (result.success) {
+        showNotification(`Skill "${projectForm.name}" created successfully!`, "success");
+
+        // Reset form
+        projectForm.name = "";
+        projectForm.tokenSymbol = "";
+        projectForm.description = "";
+        projectForm.totalSupply = "";
+        projectForm.price = 0.1;
+        selectedUseCase.value = null;
+
+        // Switch to browse tab
+        activeTab.value = "browse";
+        await skillStore.initialize();
+      } else {
+        showNotification(`Failed to create skill: ${result.error}`, "danger");
+      }
     };
 
-    const removeSlaMarket = (idx) => {
-      slaMarkets.value.splice(idx, 1);
-    };
-
-    const addSlaMarket = () => {
-      slaMarkets.value.push({
-        asset: "",
-        metric: "",
-        operator: ">",
-        target: "",
-        date: "",
-        dataSource: "",
-      });
-    };
-
-    const formatDate = (dateStr) => {
-      if (!dateStr) return "";
-      return new Date(dateStr).toLocaleDateString("en-US", {
-        month: "short",
-        day: "numeric",
-        year: "numeric",
-      });
-    };
-
-    const getProtocolByName = (name) => {
-      return purchasedProtocols.value.find((p) => p.name === name);
-    };
-
+    // Position methods
     const getPosition = (protocolName, marketIdx, side = null) => {
       const key = `${protocolName}_${marketIdx}`;
       const pos = positions.value[key];
@@ -2291,603 +3492,325 @@ export default {
       if (!positionModal.amount || positionModal.amount <= 0) return;
 
       const key = `${positionModal.protocol}_${positionModal.marketIdx}`;
-      const protocol = getProtocolByName(positionModal.protocol);
       const side = positionModal.side;
 
-      // Initialize position object if it doesn't exist
       if (!positions.value[key]) {
         positions.value[key] = { for: null, against: null };
       }
 
-      // Store position for this side (allows both FOR and AGAINST)
       positions.value[key][side] = {
-        amount: Number(positionModal.amount),
-        market: positionModal.market?.question,
+        amount: positionModal.amount,
+        side,
         timestamp: new Date().toISOString(),
       };
 
-      showNotification(
-        `Position opened: ${side.toUpperCase()} ${positionModal.amount} ${protocol?.token || "tokens"}`,
-        "success"
-      );
-
+      showNotification(`Position opened: ${positionModal.amount} tokens ${side === 'for' ? 'FOR' : 'AGAINST'}`, "success");
       closePositionModal();
     };
 
-    const cancelGeneration = () => {
-      generationCancelled.value = true;
-      isGenerating.value = false;
-      loadingMessage.value = "";
-      selectedUseCase.value = null;
+    // Skill creation methods
+    const addStep = () => {
+      skillForm.steps.push({
+        type: "script",
+        mode: "one-pass",
+        reasoning: "offline",
+        prompt: "",
+      });
     };
 
-    // Toggle agent description visibility
-    const toggleAgentDescription = (agentId) => {
-      selectedAgent.value = agentId;
-      expandedAgentDescription.value =
-        expandedAgentDescription.value === agentId ? null : agentId;
+    const removeStep = (idx) => {
+      skillForm.steps.splice(idx, 1);
     };
 
-    // Toggle project description visibility
-    const toggleProjectDescription = (projectName) => {
-      selectedProject.value = projectName;
-      expandedProjectDescription.value =
-        expandedProjectDescription.value === projectName ? null : projectName;
-    };
-
-    // Show status notification (replaces alert)
-    const showNotification = (message, type = "info", duration = 3000) => {
-      statusNotification.value = { show: true, message, type };
-      if (duration > 0) {
-        setTimeout(() => {
-          statusNotification.value.show = false;
-        }, duration);
-      }
-    };
-
-    // TCG Agent Functions
-    const loadTcgTopCards = async () => {
-      isTcgLoading.value = true;
-      tcgLoadingMessage.value = "Loading top cards...";
-      try {
-        const result = await tcgAgent.execute(
-          { collection: selectedTcgCollection.value, topCount: 10 },
-          {}
-        );
-        tcgTopCards.value = result.topCards;
-      } catch (err) {
-        console.error("Failed to load TCG cards:", err);
-      } finally {
-        isTcgLoading.value = false;
-      }
-    };
-
-    const searchTcgCards = async () => {
-      if (!tcgSearchQuery.value || tcgSearchQuery.value.length < 2) {
-        tcgSearchResults.value = [];
-        return;
-      }
-      isTcgLoading.value = true;
-      tcgLoadingMessage.value = "Searching cards...";
-      try {
-        tcgSearchResults.value = await tcgAgent.searchCards(
-          selectedTcgCollection.value,
-          tcgSearchQuery.value
-        );
-      } catch (err) {
-        console.error("Failed to search TCG cards:", err);
-        tcgSearchResults.value = [];
-      } finally {
-        isTcgLoading.value = false;
-      }
-    };
-
-    const addToPortfolio = (card) => {
-      if (!userTcgPortfolio.value.find((c) => c.id === card.id)) {
-        userTcgPortfolio.value.push({
-          ...card,
-          addedAt: new Date().toISOString(),
-        });
-      }
-    };
-
-    const removeFromPortfolio = (cardId) => {
-      userTcgPortfolio.value = userTcgPortfolio.value.filter(
-        (c) => c.id !== cardId
-      );
-    };
-
-    const openTcgMarketModal = (card) => {
-      tcgMarketModal.show = true;
-      tcgMarketModal.card = card;
-      tcgMarketModal.operator = ">";
-      tcgMarketModal.targetPrice = Math.round(card.price * 1.1); // Default 10% above current
-      const futureDate = new Date();
-      futureDate.setMonth(futureDate.getMonth() + 3);
-      tcgMarketModal.targetDate = futureDate.toISOString().split("T")[0];
-    };
-
-    const closeTcgMarketModal = () => {
-      tcgMarketModal.show = false;
-      tcgMarketModal.card = null;
-      tcgMarketModal.targetPrice = null;
-      tcgMarketModal.targetDate = "";
-    };
-
-    const createTcgMarket = () => {
-      if (
-        !tcgMarketModal.card ||
-        !tcgMarketModal.targetPrice ||
-        !tcgMarketModal.targetDate
-      ) {
-        showNotification("Please fill in all fields", "warning");
+    const publishSkill = async () => {
+      if (!skillForm.name || !skillForm.description || skillForm.steps.length === 0) {
+        showNotification("Please fill in all required fields", "warning");
         return;
       }
 
-      const market = tcgAgent.createPredictionMarket(
-        tcgMarketModal.card,
-        tcgMarketModal.operator,
-        tcgMarketModal.targetPrice,
-        tcgMarketModal.targetDate
-      );
+      showNotification("Publishing skill...", "info", 0);
 
-      tcgMarkets.value.push(market);
-      showNotification(`Market created: ${market.card.name}`, "success");
-      closeTcgMarketModal();
-    };
-
-    const joinTcgMarket = (marketId, side, amount) => {
-      const market = tcgMarkets.value.find((m) => m.id === marketId);
-      if (!market) return;
-
-      market.positions[side] += amount;
-      showNotification(
-        `Joined market ${side.toUpperCase()} with ${amount} tokens`,
-        "success"
-      );
-    };
-
-    const getCardMarkets = (cardId) => {
-      return tcgMarkets.value.filter((m) => m.card.id === cardId);
-    };
-
-    const openPolymarket = (slug) => {
-      let url = "https://polymarket.com";
-      if (slug) {
-        url = `https://polymarket.com/event/${slug}`;
-      }
-      if (window.electronAPI?.openExternal) {
-        window.electronAPI.openExternal(url);
-      } else {
-        window.open(url, "_blank");
-      }
-    };
-
-    const selectTimePeriodAndAnalyze = (periodKey) => {
-      polymarketTimePeriod.value = periodKey;
-      runAnalysis();
-    };
-
-    const selectConvictionAndAnalyze = (convictionKey) => {
-      polymarketMinConviction.value = convictionKey;
-      runAnalysis();
-    };
-
-    const runAnalysis = async () => {
-      isAnalyzing.value = true;
-      loadingMessage.value = "Fetching top performers from leaderboard...";
-
-      try {
-        loadingMessage.value = "Analyzing top trader positions...";
-
-        const result = await polymarketAgent.execute(
-          {
-            numTraders: 10,
-            timePeriod: polymarketTimePeriod.value,
-            minConviction: polymarketMinConviction.value,
-            copyFraction: 0.1,
-          },
-          {}
-        );
-
-        loadingMessage.value = "Processing conviction signals...";
-
-        if (result && Array.isArray(result.recommendations)) {
-          const analysisEntry = {
-            timestamp: new Date().toLocaleString(),
-            topTraders: result.topTraders || [],
-            recommendations: result.recommendations.map((rec) => ({
-              question: rec.question,
-              slug: rec.slug || "",
-              outcome: rec.outcome,
-              conviction: rec.conviction,
-              traders: rec.traders || [],
-              market: rec.market,
-              suggestedSize: rec.suggestedSize,
-            })),
-            meta: result.meta,
-          };
-
-          // Replace analysis (no history)
-          analysisHistory.value = [analysisEntry];
-          // Clear any previous theses
-          investmentTheses.value = {};
-        }
-      } catch (err) {
-        console.error("Analysis error:", err);
-        analysisHistory.value = [
-          {
-            timestamp: new Date().toLocaleString(),
-            error: err.message || "Failed to analyze top performers",
-            recommendations: [],
-            topTraders: [],
-          },
-        ];
-      } finally {
-        isAnalyzing.value = false;
-      }
-    };
-
-    const generateInvestmentThesis = async (analysisIdx, recIdx, rec) => {
-      const key = `${analysisIdx}-${recIdx}`;
-
-      // Check if model is available
-      if (!isModelAvailable.value) {
-        showNotification(
-          "Please download the AI model first to generate investment theses.",
-          "warning"
-        );
-        return;
-      }
-
-      // Set loading state
-      investmentTheses.value[key] = {
-        loading: true,
-        thesis: null,
-        error: null,
-      };
-
-      try {
-        // Load model if not loaded
-        if (!isModelLoaded.value) {
-          await loadModel();
-        }
-
-        const traderInfo = rec.traders
-          .map(
-            (t) =>
-              `- ${t.proxyWallet?.slice(0, 10) || "Unknown"}: $${t.size.toLocaleString()} position, ${t.pnl > 0 ? "+" : ""}$${t.pnl.toLocaleString()} PnL`
-          )
-          .join("\n");
-
-        const prompt = `You are a prediction market analyst. Analyze this high-conviction position and provide a brief investment thesis.
-
-MARKET: ${rec.question}
-POSITION: ${rec.outcome}
-CONVICTION: ${rec.conviction.traderCount} top-performing traders hold this position
-TOTAL SIZE: $${rec.conviction.totalSize.toLocaleString()}
-CURRENT PRICE: ${rec.market?.currentPrice ? (rec.market.currentPrice * 100).toFixed(0) + "%" : "N/A"}
-END DATE: ${rec.market?.endDate || "N/A"}
-
-TOP TRADERS HOLDING THIS POSITION:
-${traderInfo}
-
-Provide a concise investment thesis (3-4 sentences) explaining:
-1. Why this might be a good bet based on the conviction signals
-2. Key risks to consider
-3. A brief recommendation
-
-Keep it actionable and data-driven.`;
-
-        const response = await window.electronAPI.chat(prompt);
-
-        investmentTheses.value[key] = {
-          loading: false,
-          thesis: response,
-          error: null,
-        };
-      } catch (err) {
-        console.error("Thesis generation error:", err);
-        investmentTheses.value[key] = {
-          loading: false,
-          thesis: null,
-          error: err.message || "Failed to generate thesis",
-        };
-      }
-    };
-
-    const getThesis = (analysisIdx, recIdx) => {
-      const key = `${analysisIdx}-${recIdx}`;
-      return investmentTheses.value[key] || null;
-    };
-
-    const buyProjectAccess = (projectName) => {
-      const project = marketProjects.value.find((p) => p.name === projectName);
-      if (!project) {
-        showNotification("Protocol not found", "danger");
-        return;
-      }
-
-      // Check if already purchased
-      if (purchasedProtocols.value.some((p) => p.name === projectName)) {
-        showNotification(`You already own access to ${projectName}`, "info");
-        selectedRunProtocol.value = projectName;
-        activeTab.value = "run";
-        return;
-      }
-
-      showNotification(`Purchasing access to ${projectName}...`, "info");
-
-      // Add to purchased protocols
-      purchasedProtocols.value.push({ ...project });
-
-      // Redirect to Run tab and select this protocol
-      selectedRunProtocol.value = projectName;
-      selectedRunAgent.value = null;
-      activeTab.value = "run";
-    };
-
-    const buyAgent = async (agentId) => {
-      const agentNames = {
-        copymaster: "Polymarket Copy-Trading",
-        tcg: "TCG Prediction Market",
-      };
-      showNotification(
-        `Deploying ${agentNames[agentId] || agentId} agent...`,
-        "success"
-      );
-
-      if (!purchasedAgents.value.includes(agentId)) {
-        purchasedAgents.value.push(agentId);
-        await savePurchasedAgents();
-      }
-
-      // Select this agent in Run tab
-      selectedRunAgent.value = agentId;
-      selectedRunProtocol.value = null;
-      activeTab.value = "run";
-    };
-
-    const selectUseCaseAndGenerate = async (useCase) => {
-      if (!isModelAvailable.value) {
-        showNotification("Please download a model first.", "warning");
-        return;
-      }
-
-      selectedUseCase.value = useCase;
-      isGenerating.value = true;
-      generationCancelled.value = false;
-      loadingMessage.value = "Loading Artificial Intelligence";
-
-      try {
-        // Load model first
-        await loadModel();
-        if (generationCancelled.value) return;
-
-        loadingMessage.value = "Generating Prediction Capital Market";
-
-        // Generate project identity
-        const identityPrompt = `You are a prediction market designer specializing in DSLA (Decentralized Service Level Agreements).
-
-Generate a creative prediction market project for the use case: "${useCase.label}"
-Context: This involves ${useCase.context}.
-
-Respond ONLY with valid JSON, no explanations:
-{
-  "name": "single creative word name",
-  "tokenSymbol": "3-4 letter symbol",
-  "description": "2-3 sentence description of the market focus",
-  "totalSupply": "number like 1000000000",
-  "initialLiquidity": "number like 20",
-  "accessPrice": "number like 5000"
-}`;
-
-        const identityResponse = await window.electronAPI.chat(identityPrompt);
-        if (generationCancelled.value) return;
-        console.log("Identity response:", identityResponse);
-
-        if (identityResponse) {
-          const jsonMatch = identityResponse.match(/\{[\s\S]*?\}/);
-          if (jsonMatch) {
-            try {
-              const data = JSON.parse(jsonMatch[0]);
-              projectForm.name = data.name || "";
-              projectForm.tokenSymbol = data.tokenSymbol || "";
-              projectForm.description = data.description || "";
-              projectForm.totalSupply = data.totalSupply || "";
-              projectForm.initialLiquidity = data.initialLiquidity || "";
-              projectForm.accessPrice = data.accessPrice || "";
-            } catch (e) {
-              console.error("Failed to parse identity JSON:", e);
-            }
-          }
-        }
-
-        loadingMessage.value = "Populating Future Events";
-
-        // Generate SLA markets
-        const slaPrompt = `Generate 3 specific Service Level Agreement prediction markets for: "${useCase.label}"
-Context: ${useCase.context}
-
-Each market must specify a real asset/service, a measurable metric, a comparison operator, a target value, and a future date (within the next 6-12 months from January 2026).
-
-Respond ONLY with valid JSON array, no explanations:
-[
-  {"asset": "specific asset name", "metric": "measurable metric", "operator": ">", "target": "value with unit", "date": "YYYY-MM-DD", "dataSource": "https://api.example.com/endpoint"},
-  {"asset": "specific asset name", "metric": "measurable metric", "operator": "<", "target": "value with unit", "date": "YYYY-MM-DD", "dataSource": "https://api.example.com/endpoint"},
-  {"asset": "specific asset name", "metric": "measurable metric", "operator": ">=", "target": "value with unit", "date": "YYYY-MM-DD", "dataSource": "https://api.example.com/endpoint"}
-]
-
-Example for NFT floor prices:
-[{"asset": "BAYC", "metric": "floor price", "operator": ">", "target": "50 ETH", "date": "2026-06-30", "dataSource": "https://api.opensea.io/api/v1/collection/boredapeyachtclub/stats"}]`;
-
-        const slaResponse = await window.electronAPI.chat(slaPrompt);
-        if (generationCancelled.value) return;
-        console.log("SLA response:", slaResponse);
-
-        if (slaResponse) {
-          const arrayMatch = slaResponse.match(/\[[\s\S]*?\]/);
-          if (arrayMatch) {
-            try {
-              const markets = JSON.parse(arrayMatch[0]);
-              slaMarkets.value = markets.map((m) => ({
-                asset: m.asset || "",
-                metric: m.metric || "",
-                operator: m.operator || ">",
-                target: m.target || "",
-                date: m.date || "",
-                dataSource: m.dataSource || "",
-              }));
-            } catch (e) {
-              console.error("Failed to parse SLA JSON:", e);
-            }
-          }
-        }
-      } catch (err) {
-        console.error("Generation Failed:", err);
-        showNotification(
-          "Failed to generate your Prediction Capital Market. Please try again.",
-          "danger"
-        );
-      } finally {
-        isGenerating.value = false;
-      }
-    };
-
-    const launchProject = () => {
-      if (!projectForm.name || !projectForm.tokenSymbol) {
-        showNotification(
-          "Please fill in required fields: Project Name and Token Symbol",
-          "warning"
-        );
-        return;
-      }
-
-      if (slaMarkets.value.length === 0) {
-        showNotification("Please add at least one SLA market", "warning");
-        return;
-      }
-
-      // Check that all SLA markets have a data source
-      const missingDataSource = slaMarkets.value.some(
-        (sla) => sla.asset && sla.metric && sla.target && sla.date && !sla.dataSource
-      );
-      if (missingDataSource) {
-        showNotification(
-          "Please provide a data source (verification endpoint) for each event",
-          "warning"
-        );
-        return;
-      }
-
-      const markets = slaMarkets.value
-        .filter((sla) => sla.asset && sla.metric && sla.target && sla.date && sla.dataSource)
-        .map((sla) => ({
-          asset: sla.asset,
-          metric: sla.metric,
-          operator: sla.operator,
-          target: sla.target,
-          date: sla.date,
-          dataSource: sla.dataSource,
-          question: formatSlaQuestion(sla),
-        }));
-
-      marketProjects.value.push({
-        name: projectForm.name,
-        token: `$${projectForm.tokenSymbol.toUpperCase()}`,
-        markets: markets,
-        description: projectForm.description,
-        useCase: selectedUseCase.value ? selectedUseCase.value.label : "Custom",
-        accessPrice: projectForm.accessPrice || "10000",
+      const result = await skillStore.publishSkill({
+        name: skillForm.name,
+        description: skillForm.description,
+        category: skillForm.category,
+        price: skillForm.price,
+        steps: skillForm.steps,
       });
 
-      showNotification(
-        `${projectForm.name} launched successfully with ${markets.length} SLA markets!`,
-        "success"
-      );
+      if (result.success) {
+        showNotification(`Skill "${skillForm.name}" published successfully!`, "success");
 
-      // Reset form
-      projectForm.name = "";
-      projectForm.tokenSymbol = "";
-      projectForm.description = "";
-      projectForm.totalSupply = "";
-      projectForm.initialLiquidity = "";
-      projectForm.accessPrice = "";
-      slaMarkets.value = [];
-      selectedUseCase.value = null;
+        // Reset form
+        skillForm.name = "";
+        skillForm.description = "";
+        skillForm.category = "prediction-market";
+        skillForm.price = 0.1;
+        skillForm.steps = [];
 
-      activeTab.value = "buy";
+        // Switch to browse tab
+        activeTab.value = "browse";
+      } else {
+        showNotification(`Failed to publish: ${result.error}`, "danger");
+      }
     };
 
+    // Token issuance methods
+    const openTokenIssuanceModal = async (skill) => {
+      tokenIssuanceModal.show = true;
+      tokenIssuanceModal.skill = skill;
+      tokenIssuanceModal.tokenName = skill.tokenSymbol ? `${skill.name} Token` : skill.name;
+      tokenIssuanceModal.tokenSymbol = skill.tokenSymbol || skill.name.substring(0, 4).toUpperCase();
+      tokenIssuanceModal.totalSupply = skill.totalSupply || "1000000000";
+      tokenIssuanceModal.initialLiquidityTokens = String(Math.floor(Number(tokenIssuanceModal.totalSupply) * 0.1));
+      tokenIssuanceModal.initialLiquidityEth = "0.5";
+      tokenIssuanceModal.startingPriceEth = "0.0000001";
+      tokenIssuanceModal.initialLiquidityDsla = "";
+      tokenIssuanceModal.isIssuing = false;
+      tokenIssuanceModal.progress = { step: 0, total: 0, message: "" };
+
+      // Fetch DSLA price if this is a DSLA skill
+      if (isDslaSkill(skill)) {
+        await tokenService.fetchDslaEthPrice();
+        // Calculate suggested DSLA liquidity based on ETH liquidity
+        if (dslaEthPrice.value) {
+          const ethAmount = parseFloat(tokenIssuanceModal.initialLiquidityEth) || 0;
+          const dslaAmount = tokenService.ethToDsla(ethAmount);
+          tokenIssuanceModal.initialLiquidityDsla = String(Math.floor(dslaAmount));
+        }
+      }
+    };
+
+    const closeTokenIssuanceModal = () => {
+      tokenIssuanceModal.show = false;
+      tokenIssuanceModal.skill = null;
+    };
+
+    const isDslaSkill = (skill) => {
+      return skill?.category === 'prediction-market' || skill?.useCase;
+    };
+
+    const hasIssuedToken = (skillId) => {
+      return tokenService.hasIssuedToken(skillId);
+    };
+
+    const getSkillTokenData = (skillId) => {
+      return tokenService.getTokenData(skillId);
+    };
+
+    const calculateDslaFromEth = () => {
+      if (dslaEthPrice.value) {
+        const ethAmount = parseFloat(tokenIssuanceModal.initialLiquidityEth) || 0;
+        const dslaAmount = tokenService.ethToDsla(ethAmount);
+        tokenIssuanceModal.initialLiquidityDsla = String(Math.floor(dslaAmount));
+      }
+    };
+
+    const issueToken = async () => {
+      const skill = tokenIssuanceModal.skill;
+      if (!skill) return;
+
+      tokenIssuanceModal.isIssuing = true;
+
+      try {
+        const isDsla = isDslaSkill(skill);
+        const result = await tokenService.issueSkillToken({
+          skillId: skill.id,
+          name: tokenIssuanceModal.tokenName,
+          symbol: tokenIssuanceModal.tokenSymbol,
+          totalSupply: tokenIssuanceModal.totalSupply,
+          initialLiquidityTokens: tokenIssuanceModal.initialLiquidityTokens,
+          initialLiquidityEth: tokenIssuanceModal.initialLiquidityEth,
+          startingPriceEth: parseFloat(tokenIssuanceModal.startingPriceEth),
+          isDslaSkill: isDsla,
+          initialLiquidityDsla: isDsla ? tokenIssuanceModal.initialLiquidityDsla : null,
+          onProgress: (progress) => {
+            tokenIssuanceModal.progress = progress;
+          },
+        });
+
+        if (result.success) {
+          showNotification(
+            `Token ${tokenIssuanceModal.tokenSymbol} issued successfully! Pool created on Uniswap.`,
+            "success"
+          );
+          closeTokenIssuanceModal();
+        } else {
+          showNotification(`Token issuance failed: ${result.error}`, "danger");
+        }
+      } catch (e) {
+        showNotification(`Token issuance failed: ${e.message}`, "danger");
+      } finally {
+        tokenIssuanceModal.isIssuing = false;
+      }
+    };
+
+    // Model methods (legacy - for Polymarket default model)
+    const checkPolymarketModelAvailability = async () => {
+      if (window.electronAPI?.checkModel) {
+        isModelAvailable.value = await window.electronAPI.checkModel(
+          modelConfig.filename
+        );
+      }
+    };
+
+    const downloadModel = async () => {
+      if (!window.electronAPI?.downloadModel) return;
+
+      isDownloading.value = true;
+      downloadProgress.value = 0;
+
+      const removeListener = window.electronAPI.onDownloadProgress?.(
+        (_event, progress) => {
+          downloadProgress.value = Math.round(progress.percent * 100);
+        }
+      );
+
+      try {
+        const success = await window.electronAPI.downloadModel(
+          modelConfig.url,
+          modelConfig.filename
+        );
+        if (success) {
+          isModelAvailable.value = true;
+          showNotification("Model downloaded successfully!", "success");
+        }
+      } catch (err) {
+        showNotification(`Download failed: ${err.message}`, "danger");
+      } finally {
+        isDownloading.value = false;
+        downloadProgress.value = 0;
+        if (removeListener) removeListener();
+      }
+    };
+
+    const loadModel = async () => {
+      if (isModelLoaded.value) return;
+
+      const payload = {
+        modelname: modelConfig.modelname,
+        filename: modelConfig.filename,
+      };
+
+      await window.electronAPI?.loadModel?.(payload);
+      isModelLoaded.value = true;
+    };
+
+    const formatNumber = (num) => {
+      if (!num) return "0";
+      const n = Number(num);
+      if (n >= 1000000) return (n / 1000000).toFixed(1) + "M";
+      if (n >= 1000) return (n / 1000).toFixed(1) + "K";
+      return n.toFixed(2);
+    };
+
+    // Lifecycle
     onMounted(async () => {
+      await skillStore.initialize();
       await checkModelAvailability();
-      await loadPurchasedAgents();
+      await checkPolymarketModelAvailability(); // Legacy check for Polymarket default model
+      tokenService.initialize();
     });
 
-    // Auto-run weekly analysis when copymaster agent is selected
-    watch(selectedRunAgent, (newAgent) => {
-      if (newAgent === "copymaster" && analysisHistory.value.length === 0) {
-        // Run weekly analysis on first load
-        runAnalysis();
+    // Watch for store status updates
+    watch(
+      () => skillStore.runningStatus,
+      (status) => {
+        if (status) {
+          executionStatus.value = status;
+        }
+      }
+    );
+
+    // Watch for skill changes to refresh model availability
+    watch(selectedSkillId, async (newSkillId) => {
+      if (newSkillId) {
+        console.log('[SmartAgent] Skill changed to:', newSkillId);
+        // Re-check model availability when skill changes
+        await checkModelAvailability();
       }
     });
 
     return {
+      // Tab
       activeTab,
-      selectedProject,
-      selectedAgent,
-      expandedAgentDescription,
-      expandedProjectDescription,
+
+      // Notifications
       statusNotification,
-      toggleAgentDescription,
-      toggleProjectDescription,
       showNotification,
-      isAnalyzing,
-      isGenerating,
-      isDownloading,
-      downloadProgress,
-      isModelAvailable,
-      loadingMessage,
-      analysisHistory,
-      polymarketTimePeriod,
+
+      // Categories & Filtering
+      categories,
+      selectedCategory,
+      setCategory,
+      searchQuery,
+      filteredSkills,
+      getCategoryLabel,
+      getCategoryIcon,
+      getCategoryColor,
+      formatOptionLabel,
+      hasImageResults,
+      extractImages,
+      handleImageUpload,
+
+      // Skills
+      accessibleSkills,
+      canRunSkill,
+      getRequiredLevel,
+      refreshSkills,
+      runSkill,
+      availableSkills,
+
+      // Skill execution
+      selectedSkillId,
+      selectedSkill,
+      selectSkillById,
+      skillInputs,
+      isExecuting,
+      executionStatus,
+      executionResults,
+      executeSelectedSkill,
+
+      // Model requirements
+      skillModelRequirements,
+      missingModels,
+      hasMissingModels,
+      modelAvailability,
+      modelReadinessDetails,
+      modelAvailabilityChecked,
+      downloadingModelKey,
+      isModelReady,
+      getModelTypeIcon,
+      downloadSkillModel,
+      checkModelAvailability,
+      downloadAllMissingModels,
+
+      // Auto-fill
+      autoFillPrompt,
+      isAutoFilling,
+      autoFillSkillInputs,
+
+      // Roleplay
+      handleRoleplayFee,
+
+      // Polymarket
       polymarketPeriods,
-      selectTimePeriodAndAnalyze,
-      polymarketMinConviction,
       polymarketConvictionLevels,
+      polymarketCategories,
+      polymarketTimePeriod,
+      polymarketMinConviction,
+      selectedPolymarketCategory,
+      selectTimePeriodAndAnalyze,
       selectConvictionAndAnalyze,
-      purchasedAgents,
-      purchasedProtocols,
-      selectedRunProtocol,
-      selectedRunAgent,
-      positions,
-      positionModal,
-      projectForm,
-      slaMarkets,
-      dslaUseCases,
-      selectedUseCase,
-      marketProjects,
-      formatNumber,
-      formatDate,
-      formatSlaQuestion,
-      removeSlaMarket,
-      getProtocolByName,
-      getPosition,
-      hasPosition,
-      openPositionModal,
-      closePositionModal,
-      confirmPosition,
-      cancelGeneration,
-      openPolymarket,
-      runAnalysis,
+      selectCategoryAndAnalyze,
+      analysisHistory,
+      investmentTheses,
       generateInvestmentThesis,
       getThesis,
-      investmentTheses,
-      buyProjectAccess,
-      buyAgent,
-      selectUseCaseAndGenerate,
-      downloadModel,
-      launchProject,
-      // TCG Agent
+      openPolymarket,
+      formatNumber,
+
+      // TCG
       tcgCollections,
       selectedTcgCollection,
       tcgTopCards,
@@ -2896,7 +3819,6 @@ Example for NFT floor prices:
       userTcgPortfolio,
       tcgMarkets,
       isTcgLoading,
-      tcgLoadingMessage,
       tcgMarketModal,
       loadTcgTopCards,
       searchTcgCards,
@@ -2905,1220 +3827,601 @@ Example for NFT floor prices:
       openTcgMarketModal,
       closeTcgMarketModal,
       createTcgMarket,
-      joinTcgMarket,
-      getCardMarkets,
+      addDataSource,
+      removeDataSource,
+
+      // DSLA Skill Factory
+      dslaUseCases,
+      selectedUseCase,
+      projectForm,
+      selectUseCaseAndGenerate,
+      createPredictionMarketSkill,
+
+      // Positions
+      positions,
+      positionModal,
+      getPosition,
+      hasPosition,
+      openPositionModal,
+      closePositionModal,
+      confirmPosition,
+
+      // Model
+      isModelAvailable,
+      isDownloading,
+      downloadProgress,
+      downloadModel,
+      isAnalyzing,
+      isGenerating,
+      loadingMessage,
+
+      // Skill creation
+      skillForm,
+      addStep,
+      removeStep,
+      publishSkill,
+
+      // Token issuance
+      tokenIssuanceModal,
+      dslaEthPrice,
+      isFetchingDslaPrice,
+      openTokenIssuanceModal,
+      closeTokenIssuanceModal,
+      isDslaSkill,
+      hasIssuedToken,
+      getSkillTokenData,
+      calculateDslaFromEth,
+      issueToken,
     };
   },
 };
 </script>
 
 <style scoped>
+@import url("https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:opsz,wght,FILL,GRAD@20..48,100..700,0..1,-50..200");
+
 .material-symbols-outlined {
+  font-variation-settings: "FILL" 0, "wght" 100, "GRAD" -25, "opsz" 48;
   border-radius: 100%;
-  font-variation-settings:
-    "FILL" 0,
-    "wght" 100,
-    "GRAD" -25,
-    "opsz" 48;
+}
+
+.rotating {
+  animation: spin 1s linear infinite;
+}
+
+@keyframes spin {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
 }
 
 .columns {
   position: relative !important;
 }
 
+.container {
+  max-width: 100% important;
+}
+
 .background {
-  animation: move 40s ease infinite;
-  background: url("../assets/bonzai_agent.jpg") no-repeat;
+  position: absolute;
+  z-index: -1;
+  height: 100%;
+  width: 100%;
+  background: url("https://www.bonzai.sh/bonzai_agent.jpg") no-repeat;
   background-size: cover;
   filter: blur(6px);
-  height: 100%;
+  animation: move 40s ease infinite;
   overflow: hidden;
-  position: absolute;
-  width: 100%;
-  z-index: -1;
-}
-
-@keyframes move {
-  0% {
-    transform: scale(1.1);
-    transform-origin: bottom left;
-  }
-  50% {
-    transform: scale(1.2);
-  }
-  100% {
-    transform: scale(1.1);
-    transform-origin: bottom left;
-  }
-}
-
-.rotating {
-  animation: rotate 1s linear infinite;
-}
-
-@keyframes rotate {
-  from {
-    transform: rotate(0deg);
-  }
-  to {
-    transform: rotate(360deg);
-  }
 }
 
 .models__deployment {
-  background: transparent;
-  margin: 0 !important;
-  padding: 0 !important;
   position: relative;
+  background: transparent;
+  padding: 0 !important;
+  margin: 0 !important;
 }
 
 .models__deployment-install {
-  background: rgba(0, 0, 0, 0.5);
-  height: 100vh;
   overflow-y: auto;
-  padding: 4em;
+  padding: 6em;
+  height: 100vh;
+  background: rgba(0, 0, 0, 0.5);
 }
 
 .models__activity--payouts {
-  backdrop-filter: blur(32px);
+  padding: 2em;
   border: 1px solid rgba(255, 255, 255, 0.1);
+  backdrop-filter: blur(32px);
   border-radius: 4px !important;
-  padding: 4em;
 }
 
-.tabs li {
-  border-bottom: 1px solid rgba(255, 255, 255, 0.1) !important;
+.tabs a {
   color: rgba(255, 255, 255, 0.3);
+  border-color: rgba(255, 255, 255, 0.1);
 }
 
-.tabs li a {
-  color: rgba(255, 255, 255, 0.3);
-}
 .tabs a:hover {
-  border-color: rgba(255, 255, 255, 1) !important;
-  color: rgba(255, 255, 255, 1) !important;
+  color: rgba(255, 255, 255, 1);
+  border-color: rgba(255, 255, 255, 1);
 }
+
 .tabs li.is-active a {
-  border-color: #ffe08a;
   color: #ffe08a;
+  border-color: #ffe08a;
 }
 
 hr {
-  background-color: rgba(255, 255, 255, 0.015);
   margin: 12px 0;
   width: 100%;
+  background-color: rgba(255, 255, 255, 0.1);
 }
 
 h1 {
-  color: #fff;
-  font-size: 64px;
   margin-top: 0 !important;
-  text-align: right;
-}
-h2 {
+  font-size: 64px;
   color: #fff;
-  font-size: 48px;
-  text-align: right;
+  text-align: left;
 }
 
 p {
+  font-size: 16px;
   color: #fff;
   font-family: "Fira Sans", sans-serif;
-  font-size: 24px;
-  font-style: normal;
   font-weight: 100;
-  margin-bottom: 1em;
-  text-align: justify;
 }
 
-div.desc p {
-  padding: 1em;
-  font-size: 28px;
-  border-radius: 4px;
-  min-height: 126px;
-  border: 1px solid rgba(255, 255, 255, 0.1);
-  backdrop-filter: blur(32px);
-}
-
-.input,
-textarea,
-.select select {
-  background: rgba(255, 255, 255, 0.1);
-  border: 1px solid rgba(255, 255, 255, 0.2);
-  box-shadow: 4px 4px 0 rgba(97, 55, 142, 0.4);
-  color: #fff;
-  resize: none;
-}
-
-.input:disabled,
-textarea:disabled {
-  background: rgba(255, 255, 255, 0.05);
-  cursor: not-allowed;
-  opacity: 0.5;
-}
-
-::placeholder {
-  color: rgba(255, 255, 255, 0.3) !important;
-}
-
-input[type="radio"] {
-  display: none;
-}
-input[type="radio"] + label {
-  border: 1px solid rgba(255, 255, 255, 0.3);
-  border-radius: 4px;
-  color: rgba(255, 255, 255, 0.3) !important;
-  cursor: pointer;
-  display: inline-flex;
-  align-items: center;
-  padding: 3px 12px 9px;
-}
-input[type="radio"]:checked + label {
-  backdrop-filter: blur(64px) !important;
-  background: rgba(97, 55, 142, 0.33) !important;
-  border: 1px solid rgba(255, 255, 255, 1) !important;
-  color: rgba(255, 255, 255, 1) !important;
-}
-input[type="radio"]:disabled + label.locked {
-  cursor: pointer;
-  opacity: 0.5;
-}
-input[type="radio"]:disabled + label.locked:hover {
-  border-color: rgba(255, 255, 255, 0.5);
-}
-
-.agent-selector,
-.collection-selector,
-.usecase-selector,
-.timeperiod-selector,
-.conviction-selector {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
-}
-.agent-selector input[type="radio"] + label,
-.collection-selector input[type="radio"] + label,
-.usecase-selector input[type="radio"] + label,
-.timeperiod-selector input[type="radio"] + label {
-  flex: 0 0 calc(25% - 6px);
-  justify-content: center;
-  text-align: center;
-  min-height: 44px;
-  padding: 8px 12px;
-}
-.conviction-selector input[type="radio"] + label {
-  flex: 0 0 calc(10% - 7.2px);
-  justify-content: center;
-  text-align: center;
-  min-height: 44px;
-  padding: 8px 12px;
-}
-input[type="radio"]:disabled + label {
-  cursor: not-allowed;
-  opacity: 0.4;
-}
-
-.tags {
-  position: relative;
-  text-shadow: none;
-}
-
-/* Agent selection label badge tags - positioned absolutely */
-label.radio .tags {
-  position: absolute;
-  right: -16px;
-  top: -16px;
-}
-
-/* Button badge tags */
-.button .tags {
-  position: absolute;
-  right: -16px;
-  top: -16px;
-}
-
-.button.is-selected {
-  background: rgba(97, 55, 142, 0.33) !important;
-  border-color: rgba(255, 255, 255, 1) !important;
-  color: #ffffff !important;
-}
-
-/* Description toggle animation */
-.description-animate {
-  animation: fadeInUp 0.4s ease-out forwards;
-}
-
-@keyframes fadeInUp {
-  from {
-    opacity: 0;
-    transform: translateY(20px);
-  }
-  to {
-    opacity: 1;
-    transform: translateY(0);
-  }
-}
-
-/* Status Notification Toast */
 .status-notification {
   position: fixed;
   top: 20px;
   right: 20px;
+  z-index: 9999;
   padding: 1em 1.5em;
   border-radius: 8px;
   display: flex;
   align-items: center;
-  z-index: 10001;
-  animation: slideInRight 0.3s ease-out;
-  font-family: "Fira Sans Condensed", sans-serif;
-  font-weight: 600;
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+  color: #fff;
+  backdrop-filter: blur(10px);
+  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.3);
 }
 
 .status-notification.is-success {
-  background: rgba(72, 199, 142, 0.95);
-  color: #fff;
+  background: rgba(57, 213, 130, 0.95);
+}
+
+.status-notification.is-danger {
+  background: rgba(255, 56, 96, 0.95);
 }
 
 .status-notification.is-info {
   background: rgba(62, 142, 208, 0.95);
-  color: #fff;
-}
-
-.status-notification.is-danger {
-  background: rgba(241, 70, 104, 0.95);
-  color: #fff;
 }
 
 .status-notification.is-warning {
-  background: rgba(255, 224, 138, 0.95);
-  color: #1a1a2e;
+  background: rgba(255, 193, 7, 0.95);
+  color: #000;
 }
 
-@keyframes slideInRight {
-  from {
+/* Notification slide animation */
+.notification-slide-enter-active {
+  animation: notification-fade-slide-in 0.4s ease-out;
+}
+
+.notification-slide-leave-active {
+  animation: notification-fade-slide-out 0.4s ease-in;
+}
+
+@keyframes notification-fade-slide-in {
+  0% {
     opacity: 0;
     transform: translateX(100px);
   }
-  to {
+  100% {
     opacity: 1;
     transform: translateX(0);
   }
 }
 
-.bonzai__agent-description .notification.is-success {
-  background-color: rgba(72, 199, 142, 0.25) !important;
-  border: 1px solid rgba(72, 199, 142, 0.9);
+@keyframes notification-fade-slide-out {
+  0% {
+    opacity: 1;
+    transform: translateX(0);
+  }
+  100% {
+    opacity: 0;
+    transform: translateX(100px);
+  }
+}
+
+/* Category filter */
+.category-filter {
+  overflow-x: auto;
+  white-space: nowrap;
+}
+
+.category-selector {
+  display: flex;
+  gap: 0.5em;
+}
+
+.category-btn {
+  background: rgba(255, 255, 255, 0.1);
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  color: rgba(255, 255, 255, 0.7);
+  transition: all 0.2s ease;
+}
+
+.category-btn:hover {
+  background: rgba(255, 255, 255, 0.2);
   color: #fff;
 }
 
-.bonzai__agent-description .notification p {
-  font-weight: 300;
+.category-btn.is-active {
+  background: rgba(62, 142, 208, 0.5);
+  border-color: #3e8ed0;
+  color: #fff;
 }
 
-.sla-list {
-  list-style: disc;
-  margin-left: 1.5em;
+/* Skills grid */
+.skills-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(400px, 1fr));
+  gap: 1.5em;
 }
 
-.sla-list li {
-  color: rgba(255, 255, 255, 0.9);
-  font-size: 16px;
+.skill-card {
+  transition: all 0.2s ease;
+}
+
+.skill-card:hover {
+  border-color: rgba(255, 255, 255, 0.3);
+  transform: translateY(-2px);
+}
+
+.skill-card.is-owned {
+  border-color: rgba(57, 213, 130, 0.5);
+}
+
+.skill-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
   margin-bottom: 0.5em;
 }
 
-.notification.is-danger {
-  opacity: 0.8;
+.skill-name {
+  font-size: 1.5rem;
+  color: #fff;
+  margin: 0;
 }
 
-.filesize {
-  background: rgba(0, 0, 0, 0.3);
-  border-radius: 4px;
-  padding: 2px 8px;
+.skill-description {
+  color: rgba(255, 255, 255, 0.8);
+  margin-bottom: 0.5em;
 }
 
-/* SLA Market Cards */
-.sla-market-card {
-  background: rgba(255, 255, 255, 0.05);
-  border: 1px solid rgba(255, 255, 255, 0.1);
-  border-left: 4px solid #3e8ed0;
-  border-radius: 6px;
-  padding: 1em;
-}
-
-.sla-market-header {
-  align-items: center;
+.skill-footer {
   display: flex;
   justify-content: space-between;
-}
-
-.sla-preview {
-  background: rgba(0, 0, 0, 0.2);
-  border-radius: 4px;
-  padding: 0.5em 1em;
-}
-
-.sla-preview .tag {
-  font-size: 14px;
-  height: auto;
-  width: 100%;
-  padding: 0.5em 1em;
-  white-space: normal;
-}
-
-/* Analysis History */
-.analysis-history {
-  max-height: 60vh;
-  overflow-y: auto;
-}
-
-.analysis-entry {
-  backdrop-filter: blur(16px);
-  background: rgba(0, 0, 0, 0.3);
-  border: 1px solid rgba(255, 255, 255, 0.1);
-  border-radius: 8px;
-  padding: 1.5em;
-}
-
-.analysis-header {
   align-items: center;
-  border-bottom: 1px solid rgba(255, 255, 255, 0.1);
-  color: rgba(255, 255, 255, 0.6);
-  display: flex;
-  font-size: 14px;
-  margin-bottom: 1em;
-  padding-bottom: 0.5em;
 }
 
+.skill-inputs .field {
+  margin-bottom: 1em;
+}
+
+.skill-inputs .label {
+  font-size: 0.9rem;
+}
+
+.execution-results {
+  max-height: none;
+  overflow-y: visible;
+}
+
+.execution-results pre {
+  font-size: 0.8rem;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+/* Visual Skill Input Selectors */
+.visual-selector {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5em;
+}
+
+.visual-selector input[type="radio"] {
+  display: none;
+}
+
+.visual-selector .radio {
+  padding: 0.75em 1.25em;
+  background: rgba(255, 255, 255, 0.1);
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  border-radius: 8px;
+  color: rgba(255, 255, 255, 0.7);
+  cursor: pointer;
+  transition: all 0.2s ease;
+  font-family: "Fira Sans Condensed", sans-serif;
+  font-weight: 600;
+  text-transform: capitalize;
+}
+
+.visual-selector .radio:hover {
+  background: rgba(255, 255, 255, 0.2);
+  color: #fff;
+  transform: translateY(-1px);
+}
+
+.visual-selector input[type="radio"]:checked + .radio {
+  background: linear-gradient(135deg, rgba(62, 142, 208, 0.6), rgba(102, 126, 234, 0.6));
+  border-color: #3e8ed0;
+  color: #fff;
+  box-shadow: 0 2px 8px rgba(62, 142, 208, 0.3);
+}
+
+/* Toggle Switch */
+.switch {
+  position: relative;
+  display: inline-block;
+  width: 60px;
+  height: 34px;
+}
+
+.switch input {
+  opacity: 0;
+  width: 0;
+  height: 0;
+}
+
+.slider {
+  position: absolute;
+  cursor: pointer;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background-color: rgba(255, 255, 255, 0.2);
+  transition: 0.3s;
+  border-radius: 34px;
+}
+
+.slider:before {
+  position: absolute;
+  content: "";
+  height: 26px;
+  width: 26px;
+  left: 4px;
+  bottom: 4px;
+  background-color: white;
+  transition: 0.3s;
+  border-radius: 50%;
+}
+
+input:checked + .slider {
+  background: linear-gradient(135deg, #48c78e, #3e8ed0);
+}
+
+input:checked + .slider:before {
+  transform: translateX(26px);
+}
+
+/* Number Input Group */
+.number-input-group .button {
+  background: rgba(255, 255, 255, 0.1);
+  border-color: rgba(255, 255, 255, 0.2);
+  color: #fff;
+}
+
+.number-input-group .button:hover {
+  background: rgba(255, 255, 255, 0.2);
+}
+
+.number-input-group .input {
+  background: rgba(255, 255, 255, 0.1);
+  border-color: rgba(255, 255, 255, 0.2);
+  color: #fff;
+  font-size: 1.25rem;
+  font-weight: bold;
+}
+
+/* Generated Image Display */
+.generated-image {
+  width: 100%;
+  border-radius: 8px;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+}
+
+.generated-image-card {
+  background: rgba(255, 255, 255, 0.05);
+  border-radius: 12px;
+  padding: 0.75rem;
+  transition: transform 0.2s ease;
+}
+
+.generated-image-card:hover {
+  transform: scale(1.02);
+}
+
+/* Scene Cards */
+.scene-card {
+  background: rgba(255, 255, 255, 0.05);
+  border-radius: 12px;
+  padding: 1.5rem;
+  border-left: 4px solid #3e8ed0;
+}
+
+/* Recipe Results */
+.recipe-result .tags {
+  margin-bottom: 1rem;
+}
+
+/* Skill Header Banner */
+.skill-header-banner {
+  padding: 1.5rem;
+  background: linear-gradient(135deg, rgba(255, 255, 255, 0.05), rgba(255, 255, 255, 0.02));
+  border-radius: 12px;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+/* Input Sections */
+.input-section {
+  padding: 1rem 0;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+.input-section:last-child {
+  border-bottom: none;
+}
+
+/* Results Container */
+.results-container {
+  background: rgba(255, 255, 255, 0.03);
+  border-radius: 12px;
+  padding: 1.5rem;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+/* Image Gallery */
+.image-gallery .column {
+  padding: 0.5rem;
+}
+
+/* Image Upload Area */
+.image-upload-area .preview-image {
+  max-width: 200px;
+  max-height: 200px;
+  border-radius: 8px;
+  object-fit: cover;
+}
+
+.image-upload-area .file-cta {
+  background: rgba(255, 255, 255, 0.1);
+  border: 2px dashed rgba(255, 255, 255, 0.3);
+  color: rgba(255, 255, 255, 0.7);
+  padding: 2rem;
+  transition: all 0.2s ease;
+}
+
+.image-upload-area .file-cta:hover {
+  background: rgba(255, 255, 255, 0.15);
+  border-color: rgba(255, 255, 255, 0.5);
+  color: #fff;
+}
+
+.image-upload-area .file-icon {
+  margin-right: 0.5rem;
+}
+
+.image-upload-area .file-icon .material-symbols-outlined {
+  font-size: 24px;
+}
+
+/* Agent selector */
+.agent-selector {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5em;
+}
+
+.agent-selector input[type="radio"] {
+  display: none;
+}
+
+.agent-selector .radio {
+  padding: 0.75em 1.5em;
+  background: rgba(255, 255, 255, 0.1);
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  border-radius: 4px;
+  color: rgba(255, 255, 255, 0.7);
+  cursor: pointer;
+  transition: all 0.2s ease;
+  font-family: "Fira Sans Condensed", sans-serif;
+  font-weight: 700;
+}
+
+.agent-selector .radio:hover {
+  background: rgba(255, 255, 255, 0.2);
+  color: #fff;
+}
+
+.agent-selector input[type="radio"]:checked + .radio {
+  background: rgba(62, 142, 208, 0.5);
+  border-color: #3e8ed0;
+  color: #fff;
+}
+
+/* Time period and conviction selectors */
+.timeperiod-selector,
+.conviction-selector,
+.usecase-selector,
+.collection-selector,
+.polymarket-category {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5em;
+}
+
+.timeperiod-selector input[type="radio"],
+.conviction-selector input[type="radio"],
+.usecase-selector input[type="radio"],
+.collection-selector input[type="radio"],
+.polymarket-category input[type="radio"] {
+  display: none;
+}
+
+.timeperiod-selector .radio,
+.conviction-selector .radio,
+.usecase-selector .radio,
+.collection-selector .radio,
+.polymarket-category .radio {
+  padding: 0.5em 1em;
+  background: rgba(255, 255, 255, 0.1);
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  border-radius: 4px;
+  color: rgba(255, 255, 255, 0.7);
+  cursor: pointer;
+  transition: all 0.2s ease;
+  font-family: "Fira Sans Condensed", sans-serif;
+  font-weight: 700;
+}
+
+.timeperiod-selector .radio:hover,
+.conviction-selector .radio:hover,
+.usecase-selector .radio:hover,
+.collection-selector .radio:hover,
+.polymarket-category .radio:hover {
+  background: rgba(255, 255, 255, 0.2);
+  color: #fff;
+}
+
+.timeperiod-selector input[type="radio"]:checked + .radio,
+.conviction-selector input[type="radio"]:checked + .radio,
+.usecase-selector input[type="radio"]:checked + .radio,
+.collection-selector input[type="radio"]:checked + .radio,
+.polymarket-category input[type="radio"]:checked + .radio {
+  background: rgba(62, 142, 208, 0.5);
+  border-color: #3e8ed0;
+  color: #fff;
+}
+
+/* Market card */
 .market-card {
-  margin: 2em 0 3em 0 !important;
-  padding: 2em;
-  backdrop-filter: blur(8px);
   background: rgba(255, 255, 255, 0.05);
   border: 1px solid rgba(255, 255, 255, 0.1);
-  border-bottom: 3px solid #10b981;
   border-radius: 8px;
   padding: 1.5em;
 }
 
 .market-question {
+  display: flex;
   align-items: flex-start;
-  color: #fff;
-  display: flex;
-  font-size: 24px;
-  font-weight: 400;
-  line-height: 1.4;
 }
 
-.market-question strong {
-  flex: 1;
-}
-.market-volume {
-  margin-top: 0.5em;
-}
-
-.market-description {
-  background: rgba(255, 255, 255, 0.03);
-  border-radius: 4px;
-  color: rgba(255, 255, 255, 0.8);
-  font-size: 14px;
-  line-height: 1.6;
-  padding: 1em;
-}
-
-.market-description :deep(p) {
-  font-size: 14px;
-  margin-bottom: 0.5em;
-  text-align: left;
-}
-
-/* Investment Thesis */
-.investment-thesis {
-  background: linear-gradient(
-    135deg,
-    rgba(59, 130, 246, 0.15),
-    rgba(147, 51, 234, 0.15)
-  );
-  background: linear-gradient(
-    135deg,
-    rgba(155, 109, 200, 0.15),
-    rgba(255, 153, 51, 0.33)
-  );
-  border: 1px solid rgba(255, 153, 51, 0.15);
-  border-radius: 8px;
-  padding: 1em;
-}
-
-.thesis-header {
-  align-items: center;
-  color: #fff;
-  display: flex;
-  margin-bottom: 0.75em;
-}
-
-.thesis-content * {
-  color: rgba(255, 255, 255, 0.9);
-  font-size: 14px;
-  line-height: 2;
-}
-
-.thesis-content :deep(p) {
-  margin-bottom: 0.5em;
-  text-align: left;
-}
-
-.thesis-content :deep(ol),
-.thesis-content :deep(ul) {
-  margin-left: 1.5em;
-  text-align: left;
-}
-
-/* Top Traders Tags */
-ol.top-traders-tags {
-  list-style-type: decimal !important;
-  list-style: decimal;
-}
-
-.recommendations h4 {
-  align-items: center;
-  display: flex;
-  font-size: 16px;
-}
-
-.recommendation-card {
-  align-items: center;
-  background: rgba(16, 185, 129, 0.1);
-  border: 1px solid rgba(16, 185, 129, 0.3);
-  border-radius: 6px;
-  display: flex;
-  justify-content: space-between;
-  margin-bottom: 0.75em;
-  padding: 1em;
-}
-
-.rec-info {
-  flex: 1;
-}
-.rec-trader {
-  align-items: center;
-  color: #fff;
-  display: flex;
-  font-size: 14px;
-  font-weight: 600;
-  margin-bottom: 0.5em;
-}
-.trader-name {
-  font-family: monospace;
-  max-width: 200px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-.rec-position {
-  align-items: center;
-  display: flex;
-  flex-wrap: wrap;
-  gap: 0.5em;
-}
-
-.no-recommendations {
-  align-items: center;
-  display: flex;
-}
-
-/* Top Traders Panel */
-.top-traders-panel {
-  background: rgba(59, 130, 246, 0.1);
-  border: 1px solid rgba(59, 130, 246, 0.3);
-  border-radius: 8px;
-  padding: 1em;
-}
-
-.top-traders-panel h4 {
-  align-items: center;
-  display: flex;
-  font-size: 14px;
-}
-
-.top-traders-panel .tags {
-  flex-wrap: wrap;
-  gap: 0.5em;
-}
-
-/* Conviction Info */
-.conviction-info {
-  align-items: center;
-  display: flex;
-  flex-wrap: wrap;
-}
-
-/* Traders Holding Position */
-.traders-holding {
-  background: rgba(0, 0, 0, 0.2);
-  border-radius: 4px;
-  padding: 0.75em;
-}
-
-.traders-holding .tags {
-  flex-wrap: wrap;
-  gap: 0.5em;
-}
-
-.empty-state .notification {
-  backdrop-filter: blur(16px);
-  background: rgba(0, 0, 0, 0.4);
-  border: 1px solid rgba(255, 255, 255, 0.1);
-}
-
-.empty-state .notification.is-warning {
-  background: rgba(255, 224, 138, 0.15);
-  border: 1px solid rgba(255, 224, 138, 0.3);
-}
-
-.loading-overlay {
-  align-items: center;
-  backdrop-filter: blur(8px);
-  background: rgba(0, 0, 0, 0.7);
-  bottom: 0;
-  display: flex;
-  justify-content: center;
-  left: 0;
-  position: fixed;
-  right: 0;
-  top: 0;
-  z-index: 1000;
-}
-
-.loading-content {
-  text-align: center;
-}
-.loading-content .progress {
-  width: 100%;
-}
-
-/* Run Tab Styles */
-.run-selector {
-  background: rgba(255, 255, 255, 0.05);
-  border: 1px solid rgba(255, 255, 255, 0.1);
-  border-radius: 8px;
-  padding: 1.5em;
-}
-
-.run-selector h3 {
-  font-size: 18px;
-  text-align: left;
-}
-
-.run-selector .buttons {
-  flex-wrap: wrap;
-  gap: 0.75em;
-}
-
-.run-selector .button {
-  margin: 0;
-}
-
-.run-selector .button .tag {
-  position: static;
-}
-
-.protocol-header h2 {
-  font-size: 32px;
-  text-align: left;
-}
-
-.protocol-header p {
-  font-size: 16px;
-  text-align: left;
-}
-
-.protocol-tags {
-  display: flex;
-}
-
-.protocol-tags .tag {
-  position: static;
-}
-
-/* Trading Market Cards */
-.trading-market-card {
-  backdrop-filter: blur(8px);
-  background: rgba(255, 255, 255, 0.05);
-  border: 1px solid rgba(255, 255, 255, 0.1);
-  border-left: 4px solid #3e8ed0;
-  border-radius: 8px;
-  padding: 1.5em;
-}
-
-.trading-market-question {
-  align-items: flex-start;
-  color: #fff;
-  display: flex;
-  font-size: 18px;
-  line-height: 1.4;
-}
-
-.trading-market-question strong {
-  flex: 1;
-}
-
-.trading-market-details .tag {
-  position: static;
-}
-
-.current-position .tag {
-  position: static;
-}
-
-.trading-actions .button {
-  font-size: 16px;
-  padding: 1em 1.5em;
-}
-
-/* Modal Styles */
-.modal-card {
-  background: #1a1a2e;
-  border: 1px solid rgba(255, 255, 255, 0.1);
-  border-radius: 8px;
-  max-width: 500px;
-}
-
-.modal-card-head {
-  background: rgba(0, 0, 0, 0.3);
-  border-bottom: 1px solid rgba(255, 255, 255, 0.1);
-}
-
-.modal-card-title {
-  color: #fff;
-}
-
-.modal-card-body {
-  background: #1a1a2e;
-}
-
-.modal-card-body p {
-  color: rgba(255, 255, 255, 0.9);
-  font-size: 16px;
-  text-align: left;
-}
-
-.modal-card-body .label {
-  color: rgba(255, 255, 255, 0.8);
-}
-
-.modal-card-body .input {
-  background: rgba(255, 255, 255, 0.1);
-  border: 1px solid rgba(255, 255, 255, 0.2);
-  color: #fff;
-}
-
-.modal-card-foot {
-  background: rgba(0, 0, 0, 0.3);
-  border-top: 1px solid rgba(255, 255, 255, 0.1);
-}
-
-.modal-background {
-  background: rgba(0, 0, 0, 0.8);
-}
-
-/* TCG Market Modal (LVL Style) */
-.tcg-modal-overlay {
-  position: fixed;
-  inset: 0;
-  background: rgba(0, 0, 0, 0.78);
-  backdrop-filter: blur(16px);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  z-index: 10000;
-}
-
-.tcg-modal {
-  width: 92%;
-  max-width: 520px;
-  background: #0a0a0f;
-  border: 1px solid rgba(255, 255, 255, 0.1);
-  border-radius: 16px;
-  padding: 24px;
-  position: relative;
-  color: #fff;
-}
-
-.tcg-modal-header {
-  text-align: center;
-  margin-bottom: 18px;
-}
-
-.tcg-modal-header .material-symbols-outlined {
-  color: #f59e0b;
-  display: block;
-  margin-bottom: 8px;
-}
-
-.tcg-modal-badge {
-  display: inline-block;
-  padding: 6px 16px;
-  background: linear-gradient(135deg, #f59e0b 0%, #d97706 100%);
-  border-radius: 20px;
-  font-weight: 900;
-  color: #fff;
-  margin-bottom: 10px;
-}
-
-.tcg-modal-header h2 {
-  margin: 0;
-  color: #fff;
-}
-
-.tcg-modal-body {
-  margin-bottom: 16px;
-}
-
-.tcg-card-preview {
-  background: rgba(255, 255, 255, 0.04);
-  border-radius: 10px;
-  padding: 1.5em;
-  border: 1px solid rgba(245, 158, 11, 0.25);
-  margin-bottom: 16px;
-  text-align: center;
-}
-
-.tcg-modal-status {
-  margin-bottom: 10px;
-}
-
-.tcg-status-pill {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  padding: 8px 14px;
-  border-radius: 999px;
-  border: 2px solid rgba(245, 158, 11, 0.6);
-  color: #f59e0b;
-  font-size: 14px;
-  font-weight: 600;
-  background: rgba(245, 158, 11, 0.1);
-  text-transform: uppercase;
-}
-
-.tcg-card-tags {
-  display: flex;
-  gap: 8px;
-  justify-content: center;
-  flex-wrap: wrap;
-}
-
-.tcg-tag {
-  padding: 4px 10px;
-  border-radius: 6px;
-  background: rgba(255, 255, 255, 0.08);
-  color: rgba(255, 255, 255, 0.8);
-  font-size: 12px;
-}
-
-.tcg-tag.is-price {
-  background: rgba(16, 185, 129, 0.15);
-  color: #10b981;
-  font-weight: 600;
-}
-
-.tcg-form-section {
-  background: rgba(255, 255, 255, 0.04);
-  border-radius: 10px;
-  padding: 1.5em;
-  border: 1px solid rgba(255, 255, 255, 0.1);
-  margin-bottom: 16px;
-}
-
-.tcg-field {
-  margin-bottom: 16px;
-}
-
-.tcg-field:last-child {
-  margin-bottom: 0;
-}
-
-.tcg-label {
-  display: block;
-  color: rgba(255, 255, 255, 0.9);
-  margin-bottom: 8px;
-  font-size: 14px;
-}
-
-.tcg-input,
-.tcg-select {
-  width: 100%;
-  padding: 12px 14px;
-  background: rgba(255, 255, 255, 0.06);
-  border: 1px solid rgba(255, 255, 255, 0.15);
-  border-radius: 8px;
-  color: #fff;
-  font-size: 16px;
-  transition: border-color 0.2s ease;
-}
-
-.tcg-input:focus,
-.tcg-select:focus {
-  outline: none;
-  border-color: #f59e0b;
-}
-
-.tcg-input::placeholder {
-  color: rgba(255, 255, 255, 0.4);
-}
-
-.tcg-select-wrapper {
-  position: relative;
-}
-
-.tcg-select {
-  appearance: none;
-  cursor: pointer;
-}
-
-.tcg-select option {
-  background: #1a1a2e;
-  color: #fff;
-}
-
-.tcg-preview-box {
-  background: rgba(245, 158, 11, 0.08);
-  border: 1px solid rgba(245, 158, 11, 0.25);
-  border-radius: 10px;
-  padding: 1em 1.25em;
-}
-
-.tcg-preview-box p:first-child {
-  color: #f59e0b;
-  margin-bottom: 8px;
-  font-size: 13px;
-}
-
-.tcg-preview-text {
-  color: rgba(255, 255, 255, 0.85);
-  font-size: 14px;
-  line-height: 1.5;
-}
-
-.tcg-preview-text strong {
-  color: #f59e0b;
-}
-
-.tcg-modal-footer {
-  display: flex;
-  gap: 12px;
-  padding-top: 16px;
-  border-top: 1px solid rgba(255, 255, 255, 0.08);
-}
-
-.tcg-modal-footer .button {
-  flex: 1;
-  cursor: pointer;
-}
-
-.tcg-primary-btn {
-  background: linear-gradient(135deg, #f59e0b 0%, #d97706 100%);
-  border: none;
-  color: #fff;
-}
-
-.tcg-primary-btn:hover:not(:disabled) {
-  background: linear-gradient(135deg, #fbbf24 0%, #f59e0b 100%);
-}
-
-.tcg-primary-btn:disabled {
-  opacity: 0.5;
-  cursor: not-allowed;
-}
-
-.tcg-secondary-btn {
-  background: transparent;
-  border: 1px solid rgba(255, 255, 255, 0.18);
-  color: #fff;
-}
-
-.tcg-secondary-btn:hover {
-  background: rgba(255, 255, 255, 0.05);
-  border-color: rgba(255, 255, 255, 0.3);
-}
-
-/* Position Modal (LVL Style - Dynamic Colors) */
-.position-modal-overlay {
-  position: fixed;
-  inset: 0;
-  background: rgba(0, 0, 0, 0.78);
-  backdrop-filter: blur(16px);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  z-index: 10000;
-}
-
-.position-modal {
-  width: 92%;
-  max-width: 520px;
-  background: #0a0a0f;
-  border: 1px solid rgba(255, 255, 255, 0.1);
-  border-radius: 16px;
-  padding: 24px;
-  position: relative;
-  color: #fff;
-}
-
-.position-modal-header {
-  text-align: center;
-  margin-bottom: 18px;
-}
-
-/* FOR (Green) Theme */
-.position-modal.is-for .position-modal-header .material-symbols-outlined {
-  color: #10b981;
-  display: block;
-  margin-bottom: 8px;
-}
-
-.position-modal.is-for .position-modal-badge {
-  display: inline-block;
-  padding: 6px 16px;
-  background: linear-gradient(135deg, #10b981 0%, #059669 100%);
-  border-radius: 20px;
-  font-weight: 900;
-  color: #fff;
-  margin-bottom: 10px;
-}
-
-.position-modal.is-for .position-status-pill {
-  border: 2px solid rgba(16, 185, 129, 0.6);
-  color: #10b981;
-  background: rgba(16, 185, 129, 0.1);
-}
-
-.position-modal.is-for .position-market-preview {
-  border: 1px solid rgba(16, 185, 129, 0.25);
-}
-
-.position-modal.is-for .position-input:focus {
-  border-color: #10b981;
-}
-
-.position-modal.is-for .position-preview-box {
-  background: rgba(16, 185, 129, 0.08);
-  border: 1px solid rgba(16, 185, 129, 0.25);
-}
-
-.position-modal.is-for .position-preview-box p:first-child {
-  color: #10b981;
-}
-
-.position-modal.is-for .position-preview-text strong {
-  color: #10b981;
-}
-
-.position-modal.is-for .position-primary-btn {
-  background: linear-gradient(135deg, #10b981 0%, #059669 100%);
-}
-
-.position-modal.is-for .position-primary-btn:hover:not(:disabled) {
-  background: linear-gradient(135deg, #34d399 0%, #10b981 100%);
-}
-
-/* AGAINST (Red) Theme */
-.position-modal.is-against .position-modal-header .material-symbols-outlined {
-  color: #ef4444;
-  display: block;
-  margin-bottom: 8px;
-}
-
-.position-modal.is-against .position-modal-badge {
-  display: inline-block;
-  padding: 6px 16px;
-  background: linear-gradient(135deg, #ef4444 0%, #dc2626 100%);
-  border-radius: 20px;
-  font-weight: 900;
-  color: #fff;
-  margin-bottom: 10px;
-}
-
-.position-modal.is-against .position-status-pill {
-  border: 2px solid rgba(239, 68, 68, 0.6);
-  color: #ef4444;
-  background: rgba(239, 68, 68, 0.1);
-}
-
-.position-modal.is-against .position-market-preview {
-  border: 1px solid rgba(239, 68, 68, 0.25);
-}
-
-.position-modal.is-against .position-input:focus {
-  border-color: #ef4444;
-}
-
-.position-modal.is-against .position-preview-box {
-  background: rgba(239, 68, 68, 0.08);
-  border: 1px solid rgba(239, 68, 68, 0.25);
-}
-
-.position-modal.is-against .position-preview-box p:first-child {
-  color: #ef4444;
-}
-
-.position-modal.is-against .position-preview-text strong {
-  color: #ef4444;
-}
-
-.position-modal.is-against .position-primary-btn {
-  background: linear-gradient(135deg, #ef4444 0%, #dc2626 100%);
-}
-
-.position-modal.is-against .position-primary-btn:hover:not(:disabled) {
-  background: linear-gradient(135deg, #f87171 0%, #ef4444 100%);
-}
-
-/* Shared Position Modal Styles */
-.position-modal-header h2 {
-  margin: 0;
-  color: #fff;
-}
-
-.position-modal-body {
-  margin-bottom: 16px;
-}
-
-.position-market-preview {
-  background: rgba(255, 255, 255, 0.04);
-  border-radius: 10px;
-  padding: 1.5em;
-  margin-bottom: 16px;
-  text-align: center;
-}
-
-.position-modal-status {
-  margin-bottom: 10px;
-}
-
-.position-status-pill {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  padding: 8px 14px;
-  border-radius: 999px;
-  font-size: 14px;
-  font-weight: 600;
-  text-transform: uppercase;
-}
-
-.position-question {
-  color: rgba(255, 255, 255, 0.9);
-  font-size: 16px;
-  line-height: 1.5;
-  margin: 0;
-}
-
-.position-form-section {
-  background: rgba(255, 255, 255, 0.04);
-  border-radius: 10px;
-  padding: 1.5em;
-  border: 1px solid rgba(255, 255, 255, 0.1);
-  margin-bottom: 16px;
-}
-
-.position-field {
-  margin-bottom: 0;
-}
-
-.position-label {
-  display: block;
-  color: rgba(255, 255, 255, 0.9);
-  margin-bottom: 8px;
-  font-size: 14px;
-}
-
-.position-input {
-  width: 100%;
-  padding: 12px 14px;
-  background: rgba(255, 255, 255, 0.06);
-  border: 1px solid rgba(255, 255, 255, 0.15);
-  border-radius: 8px;
-  color: #fff;
-  font-size: 16px;
-  transition: border-color 0.2s ease;
-}
-
-.position-input::placeholder {
-  color: rgba(255, 255, 255, 0.4);
-}
-
-.position-preview-box {
-  border-radius: 10px;
-  padding: 1em 1.25em;
-}
-
-.position-preview-box p:first-child {
-  margin-bottom: 8px;
-  font-size: 13px;
-}
-
-.position-preview-text {
-  color: rgba(255, 255, 255, 0.85);
-  font-size: 14px;
-  line-height: 1.5;
-}
-
-.position-modal-footer {
-  display: flex;
-  gap: 12px;
-  padding-top: 16px;
-  border-top: 1px solid rgba(255, 255, 255, 0.08);
-}
-
-.position-modal-footer .button {
-  flex: 1;
-  cursor: pointer;
-}
-
-.position-primary-btn {
-  border: none;
-  color: #fff;
-}
-
-.position-primary-btn:disabled {
-  opacity: 0.5;
-  cursor: not-allowed;
-}
-
-/* TCG Interface Styles */
-.tcg-interface {
-  background: rgba(0, 0, 0, 0.2);
-  border-radius: 8px;
-  padding: 1.5em;
-}
-
-.tcg-header .buttons {
-  flex-wrap: wrap;
-  gap: 0.5em;
-}
-
-.tcg-header .button {
-  margin: 0;
-}
-
+/* TCG styles */
 .tcg-section {
-  background: rgba(255, 255, 255, 0.05);
-  border: 1px solid rgba(255, 255, 255, 0.1);
-  border-radius: 8px;
-  padding: 1.5em;
-}
-
-.no-shadow {
-  box-shadow: none !important;
-}
-
-.tcg-section h4 {
-  text-align: left;
-}
-
-.portfolio-section {
-  max-height: 500px;
-  overflow-y: auto;
+  min-height: 300px;
 }
 
 .tcg-cards {
@@ -4127,122 +4430,289 @@ ol.top-traders-tags {
 }
 
 .tcg-card-item {
-  align-items: center;
-  background: rgba(255, 255, 255, 0.03);
-  border: 1px solid rgba(255, 255, 255, 0.1);
-  border-radius: 6px;
   display: flex;
-  gap: 1em;
   justify-content: space-between;
+  align-items: center;
+  padding: 0.75em;
+  background: rgba(255, 255, 255, 0.05);
+  border-radius: 4px;
   margin-bottom: 0.5em;
-  padding: 0.75em 1em;
-}
-
-.tcg-card-info {
-  flex: 1;
 }
 
 .tcg-card-info strong {
   color: #fff;
-  text-transform: uppercase;
-  font-size: 0.75em;
-}
-
-.tcg-card-price .tag {
-  position: static;
-}
-
-.tcg-card-actions .button {
-  padding: 0.25em 0.5em;
-}
-
-.tcg-portfolio-cards {
-  max-height: 400px;
-  overflow-y: auto;
 }
 
 .tcg-portfolio-card {
-  background: rgba(255, 224, 138, 0.1);
-  border: 1px solid rgba(255, 224, 138, 0.3);
-  border-radius: 6px;
-  margin-bottom: 0.75em;
+  background: rgba(255, 255, 255, 0.05);
+  border-radius: 4px;
   padding: 1em;
-}
-
-.portfolio-card-header {
-  align-items: center;
-  display: flex;
-  justify-content: space-between;
-  text-transform: uppercase;
-  font-size: 0.75em;
+  margin-bottom: 0.5em;
 }
 
 .portfolio-card-header strong {
   color: #fff;
 }
 
-.portfolio-card-details .tag {
-  position: static;
+/* SLA market card */
+.sla-market-card {
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 8px;
+  padding: 1em;
 }
 
-.card-markets {
-  background: rgba(0, 0, 0, 0.2);
+.sla-market-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.sla-preview {
+  background: rgba(0, 0, 0, 0.3);
   border-radius: 4px;
+}
+
+/* Workflow builder */
+.workflow-step {
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+.step-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+/* Loading overlay */
+.loading-overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: rgba(0, 0, 0, 0.8);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 9998;
+}
+
+.loading-content {
+  text-align: center;
+  color: #fff;
+}
+
+/* Modal styles */
+.position-modal-overlay,
+.tcg-modal-overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: rgba(0, 0, 0, 0.8);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 9999;
+}
+
+.position-modal,
+.tcg-modal {
+  background: rgba(30, 30, 30, 0.95);
+  border-radius: 12px;
+  padding: 2em;
+  max-width: 500px;
+  width: 90%;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+.token-modal {
+  max-width: 600px;
+}
+
+.modal-divider {
+  border-color: rgba(255, 255, 255, 0.1);
+  margin: 1.5em 0;
+}
+
+.token-issuance-section {
+  padding: 1em;
+  background: rgba(255, 255, 255, 0.03);
+  border-radius: 8px;
+}
+
+.dsla-pool-section {
+  background: rgba(62, 142, 208, 0.1);
+  border-radius: 8px;
+  padding: 1em;
+  border: 1px solid rgba(62, 142, 208, 0.3);
+}
+
+.dsla-price-info {
   padding: 0.5em;
 }
 
-.card-market-item {
-  border-bottom: 1px solid rgba(255, 255, 255, 0.1);
-  padding: 0.5em 0;
-}
-
-.card-market-item:last-child {
-  border-bottom: none;
-}
-
-.card-market-item p {
-  color: rgba(255, 255, 255, 0.8);
-  font-size: 12px;
+.issuance-progress .notification {
   margin-bottom: 0;
-  text-align: left;
 }
 
-.tcg-markets-section {
+.position-modal.is-for {
+  border-color: rgba(57, 213, 130, 0.5);
+}
+
+.position-modal.is-against {
+  border-color: rgba(255, 56, 96, 0.5);
+}
+
+.position-modal-header,
+.tcg-modal-header {
+  margin-bottom: 1.5em;
+}
+
+.position-modal-header .material-symbols-outlined,
+.tcg-modal-header .material-symbols-outlined {
+  font-size: 48px;
+  color: #fff;
+}
+
+.position-market-preview,
+.tcg-card-preview {
+  background: rgba(0, 0, 0, 0.3);
+  border-radius: 8px;
+  padding: 1em;
+  margin-bottom: 1em;
+}
+
+.position-status-pill,
+.tcg-status-pill {
+  background: rgba(62, 142, 208, 0.3);
+  padding: 0.5em 1em;
+  border-radius: 20px;
+  color: #fff;
+}
+
+.position-question {
+  color: #fff;
+  font-size: 1.1em;
+}
+
+.position-field,
+.tcg-field {
+  margin-bottom: 1em;
+}
+
+.position-label,
+.tcg-label {
+  color: #fff;
+  display: block;
+  margin-bottom: 0.5em;
+}
+
+.position-input,
+.tcg-input,
+.tcg-select {
+  width: 100%;
+  padding: 0.75em;
+  background: rgba(255, 255, 255, 0.1);
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  border-radius: 4px;
+  color: #fff;
+  font-size: 1em;
+}
+
+.tcg-input.is-small {
+  padding: 0.5em;
+  font-size: 0.9em;
+}
+
+.data-source-item {
   background: rgba(255, 255, 255, 0.05);
   border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 6px;
+  padding: 0.75em;
+}
+
+.data-source-item .columns {
+  margin-bottom: 0.5em;
+}
+
+.position-preview-box,
+.tcg-preview-box {
+  background: rgba(0, 0, 0, 0.3);
+  border-radius: 8px;
+  padding: 1em;
+  margin: 1em 0;
+}
+
+.position-preview-text,
+.tcg-preview-text {
+  color: rgba(255, 255, 255, 0.8);
+}
+
+.position-modal-footer,
+.tcg-modal-footer {
+  display: flex;
+  gap: 1em;
+  justify-content: center;
+  margin-top: 1.5em;
+}
+
+.position-primary-btn,
+.tcg-primary-btn {
+  background: linear-gradient(135deg, #39d582 0%, #2ecc71 100%);
+  border: none;
+  color: #fff;
+}
+
+/* Inputs */
+.input,
+.textarea,
+.select select {
+  color: #fff;
+  background: rgba(255, 255, 255, 0.1);
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  transition: 200ms ease-in;
+}
+
+.input:focus,
+.textarea:focus,
+.select select:focus {
+  border-color: #3e8ed0;
+  box-shadow: 0 0 0 2px rgba(62, 142, 208, 0.25);
+}
+
+.no-shadow {
+  box-shadow: none !important;
+}
+
+::placeholder {
+  color: rgba(255, 255, 255, 0.3) !important;
+}
+
+.filesize {
+  padding: 5px 10px;
+  font-size: 14px;
+  color: rgba(255, 255, 255, 1);
+  background: rgba(255, 255, 255, 0.25);
+  border-radius: 4px;
+}
+
+/* Investment thesis */
+.investment-thesis {
+  background: rgba(0, 0, 0, 0.3);
   border-radius: 8px;
   padding: 1.5em;
 }
 
-.tcg-market-card {
-  background: rgba(62, 142, 208, 0.1);
-  border: 1px solid rgba(62, 142, 208, 0.2);
-  border-bottom: 3px solid #3e8ed0;
-  border-radius: 6px;
+.thesis-header {
+  color: #3e8ed0;
   margin-bottom: 1em;
-  padding: 1.5em;
 }
 
-.tcg-market-question strong {
-  color: #fff;
-  font-size: 16px;
-  text-align: left;
-}
-
-.tcg-market-details .tag,
-.tcg-market-positions .tag {
-  position: static;
-}
-
-.tcg-market-actions .button {
-  font-size: 14px;
-}
-
-.tcg-icons .tag {
-  position: static;
-}
-
-.current-positions .tag {
-  position: static;
+.thesis-content {
+  line-height: 1.6;
 }
 </style>

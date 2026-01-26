@@ -779,7 +779,7 @@ export default {
       return "/video"; // LTX-2 video endpoint (supports t2v and i2v)
     };
     const pipelineForMode = () => {
-      return "ltx2_video_gguf"; // LTX-2 video pipeline
+      return "video_fast"; // LTX-2 video pipeline
     };
 
     const normalizeFramesForLTX2 = (frames) => {

@@ -76,7 +76,29 @@ inferenceStore.queueTextToImage(generatedText);
 inferenceStore.queueImageToVideo(imageBase64);
 ```
 
-### 6. **Fixed Video Playback**
+### 6. **Flagship Multi-Modal Skills**
+Pre-packaged AI skills that combine LLM reasoning with image, video, and audio generation:
+
+| Skill | Category | Description |
+|-------|----------|-------------|
+| **Story Studio** | Entertainment | Generates illustrated stories with narrated audio and animated scenes |
+| **Meditation Forge** | Healthcare | Creates personalized guided meditations with ambient soundscapes and calming visuals |
+| **Virtual Staging Pro** | Housing | Transforms empty rooms into beautifully staged interiors with multiple design styles |
+| **Personal Lookbook** | Fashion | Creates complete outfit visualizations with styling recommendations |
+| **Chef's Table** | Food | Generates recipes with step-by-step visuals and cooking technique videos |
+| **Lesson Animator** | Education | Turns educational topics into animated explainer videos |
+| **Music Video Forge** | Entertainment | Creates music videos with AI-generated visuals synced to audio |
+| **Game Asset Foundry** | Entertainment | Generates game assets (characters, environments, items) with turnaround views |
+| **Book Trailer Studio** | Reading | Creates cinematic book trailers with narration and atmospheric music |
+| **Hairstyle Studio** | Personal Care | Visualizes hairstyles and colors on your photo before your salon visit |
+
+**Architecture**: Each skill uses a two-phase execution pattern:
+1. **Phase 1 (LLM)**: Load language model, generate creative content/analysis
+2. **Phase 2 (Media)**: Unload LLM to free memory, generate images/video/audio
+
+**Implementation**: `src/skills/flagship.js`
+
+### 7. **Fixed Video Playback**
 Videos now play correctly in the Electron app:
 - Custom `app://` protocol for secure local file access
 - Proper security checks preventing directory traversal
@@ -84,7 +106,7 @@ Videos now play correctly in the Electron app:
 
 **Implementation**: Enhanced `main.js` with secure protocol handler
 
-### 7. **Zero-Knowledge Privacy Layer**
+### 8. **Zero-Knowledge Privacy Layer**
 End-to-end encryption for all inferences:
 - ECDH key exchange for secure communication
 - AES-256-GCM encryption
@@ -108,7 +130,7 @@ const proof = zkPrivacy.generateProof(inferenceData);
 const isValid = zkPrivacy.verifyProof(proof, inferenceData);
 ```
 
-### 8. **P2P Inference Network (Path-Style)**
+### 9. **P2P Inference Network (Path-Style)**
 Distributed AI inference with your friends:
 - **Maximum 50 friends** (intimate network design inspired by Path)
 - WebRTC-based peer-to-peer connections
@@ -138,6 +160,12 @@ Distributed AI inference with your friends:
 │  └──────┬───────┘  └──────┬───────┘  └──────┬────────┘     │
 │         │                  │                   │              │
 │         └──────────────────┴───────────────────┘             │
+│                           │                                   │
+│  ┌────────────────────────▼────────────────────────────┐    │
+│  │  Flagship Skills (Multi-Modal Agentic Workflows)     │    │
+│  │  Story Studio | Meditation Forge | Virtual Staging   │    │
+│  │  Chef's Table | Lesson Animator | Hairstyle Studio   │    │
+│  └────────────────────────┬────────────────────────────┘    │
 │                           │                                   │
 │               ┌───────────▼──────────┐                       │
 │               │  Inference Store      │                       │
@@ -258,6 +286,23 @@ npm run dev
 5. Video Tab → Video is created from image
 6. Download or mint as NFT
 ```
+
+### Using Flagship Skills
+```
+1. Navigate to Smart Agent tab
+2. Browse skills by category or search
+3. Select a skill (e.g., "Story Studio")
+4. Configure inputs using visual selectors
+5. Click "Run Skill" to start execution
+6. Watch as the skill:
+   - Loads the LLM and generates creative content
+   - Unloads LLM to free memory
+   - Generates images, audio, and video
+7. View rich results with image galleries, audio players
+8. Mint any output as an NFT
+```
+
+**Note**: Skills automatically manage memory by loading/unloading models between phases. Demo mode allows 10 free runs before purchase.
 
 ### Training a Robot Model
 1. Navigate to **Robot** tab

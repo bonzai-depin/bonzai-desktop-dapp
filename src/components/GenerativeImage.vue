@@ -863,12 +863,12 @@ export default {
       return `/image/${m}`;
     };
     const pipelineForMode = (m) => {
-      if (m === "turbo_edit") return "flux_klein";
-      if (m === "quality") return "flux_krea";
-      if (m === "advanced") return "z_image_turbo";
-      if (m === "standard") return "sdxl";
-      if (m === "turbo") return "flux_klein";
-      return "flux_klein"; // default
+      if (m === "turbo_edit") return "image_turbo";
+      if (m === "quality") return "image_quality";
+      if (m === "advanced") return "image_advanced";
+      if (m === "standard") return "image_standard";
+      if (m === "turbo") return "image_turbo";
+      return "image_turbo"; // default
     };
     const currentPipeline = computed(() => pipelineForMode(mode.value));
 

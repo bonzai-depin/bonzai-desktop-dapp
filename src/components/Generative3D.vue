@@ -1143,36 +1143,15 @@ export default {
         id: "normal",
         label: "Normal",
         icon: "bolt",
-        description: "Generate → Vision verify → Fix (1-2 passes)",
-        visionChecks: 1, // Vision check after generation
+        description: "Quick generation with vision verification (up to 3 fixes)",
+        visionChecks: 3,
       },
       {
-        id: "specialized",
-        label: "Specialized",
-        icon: "layers",
-        description: "Structure → Vision → Details → Vision → Polish → Vision",
-        visionChecks: 3, // Vision check after each phase
-      },
-      {
-        id: "critique",
-        label: "Critique",
-        icon: "rate_review",
-        description: "Generate → LLM critique → Vision critique → Improve",
-        visionChecks: 2, // After initial and after improvement
-      },
-      {
-        id: "additive",
-        label: "Additive",
-        icon: "add_circle",
-        description: "Base → Vision → Accessories → Vision → Effects → Vision",
-        visionChecks: 3, // Vision check after each addition
-      },
-      {
-        id: "extreme",
-        label: "Extreme",
+        id: "craftsman",
+        label: "Craftsman",
         icon: "diamond",
-        description: "Multi-pass with continuous vision refinement.",
-        visionChecks: 5, // Multiple vision checks throughout
+        description: "High-quality like H.chest helper (up to 5 vision fixes)",
+        visionChecks: 5,
       },
     ]);
 
@@ -1668,26 +1647,68 @@ export default {
       });
     };
 
+    // Create a 2x2 grid image from 4 screenshots for single vision API call
+    const createScreenshotGrid = (screenshots) => {
+      return new Promise((resolve) => {
+        const canvas = document.createElement("canvas");
+        const ctx = canvas.getContext("2d");
+        const cellSize = 512;
+        canvas.width = cellSize * 2;  // 1024px wide
+        canvas.height = cellSize * 2; // 1024px tall
+
+        // Load all 4 images
+        const images = [];
+        let loaded = 0;
+
+        screenshots.forEach((shot, index) => {
+          const img = new Image();
+          img.onload = () => {
+            images[index] = img;
+            loaded++;
+            if (loaded === 4) {
+              // Draw images in 2x2 grid: [Front, Side] / [Back, Top]
+              // Top-left (0,0): Front
+              ctx.drawImage(images[0], 0, 0, cellSize, cellSize);
+              // Top-right (1,0): Side
+              ctx.drawImage(images[1], cellSize, 0, cellSize, cellSize);
+              // Bottom-left (0,1): Back
+              ctx.drawImage(images[2], 0, cellSize, cellSize, cellSize);
+              // Bottom-right (1,1): Top
+              ctx.drawImage(images[3], cellSize, cellSize, cellSize, cellSize);
+
+              // Add labels to each quadrant
+              ctx.fillStyle = "white";
+              ctx.strokeStyle = "black";
+              ctx.lineWidth = 3;
+              ctx.font = "bold 24px Arial";
+              const labels = ["FRONT", "SIDE", "BACK", "TOP"];
+              const positions = [
+                [10, 30], [cellSize + 10, 30],
+                [10, cellSize + 30], [cellSize + 10, cellSize + 30]
+              ];
+              labels.forEach((label, i) => {
+                ctx.strokeText(label, positions[i][0], positions[i][1]);
+                ctx.fillText(label, positions[i][0], positions[i][1]);
+              });
+
+              resolve(canvas.toDataURL("image/png", 0.9));
+            }
+          };
+          img.src = shot.dataUrl;
+        });
+      });
+    };
+
     // Parse vision model response to extract structured feedback
     const parseVisionResponse = (response) => {
       const upperResponse = response.toUpperCase();
 
-      // Check for MATCHES
-      const matchesYes = upperResponse.includes("MATCHES: YES") ||
-                         upperResponse.includes("MATCHES:YES") ||
-                         (upperResponse.includes("YES") && !upperResponse.includes("NO") && upperResponse.indexOf("YES") < 100);
-      const matchesNo = upperResponse.includes("MATCHES: NO") ||
-                        upperResponse.includes("MATCHES:NO") ||
-                        (upperResponse.includes("MISSING:") && !matchesYes);
-
-      const matches = matchesYes && !matchesNo;
-
-      // Extract missing elements
+      // Extract missing elements FIRST - this influences match decision
       let missingElements = [];
       const missingMatch = response.match(/MISSING:\s*([^\n]+)/i);
       if (missingMatch && missingMatch[1]) {
         const missingStr = missingMatch[1].trim();
-        if (missingStr.toLowerCase() !== "none" && missingStr.toLowerCase() !== "n/a") {
+        if (missingStr.toLowerCase() !== "none" && missingStr.toLowerCase() !== "n/a" && missingStr.toLowerCase() !== "none.") {
           missingElements = missingStr.split(",").map(s => s.trim()).filter(s => s && s.toLowerCase() !== "none");
         }
       }
@@ -1699,10 +1720,35 @@ export default {
         feedback = feedbackMatch[1].trim();
       }
 
+      // Check for explicit MATCHES (be STRICT - only accept explicit YES, not implied)
+      const matchesYes = upperResponse.includes("MATCHES: YES") || upperResponse.includes("MATCHES:YES");
+      const matchesNo = upperResponse.includes("MATCHES: NO") || upperResponse.includes("MATCHES:NO");
+
+      // CONSERVATIVE LOGIC: Default to NO unless explicitly YES and no quality issues
+      let matches = false;
+      if (matchesYes && !matchesNo) {
+        // Even if vision says YES, check if it listed quality issues
+        if (missingElements.length === 0) {
+          // Also check feedback for quality concern keywords
+          const feedbackLower = feedback.toLowerCase();
+          const hasQualityConcerns = feedbackLower.includes("could be improved") ||
+                                     feedbackLower.includes("needs work") ||
+                                     feedbackLower.includes("poorly rendered") ||
+                                     feedbackLower.includes("not properly") ||
+                                     feedbackLower.includes("basic shape") ||
+                                     feedbackLower.includes("placeholder") ||
+                                     feedbackLower.includes("unclear") ||
+                                     feedbackLower.includes("missing detail") ||
+                                     feedbackLower.includes("not visible") ||
+                                     feedbackLower.includes("hard to identify");
+          matches = !hasQualityConcerns;
+        }
+      }
+
       return { matches, missingElements, feedback };
     };
 
-    // Get comprehensive vision feedback using multi-angle analysis (server-side Qwen3-VL)
+    // Get comprehensive vision feedback using 2x2 grid image (single API call)
     const getVisionFeedback = async (prompt, phaseContext = null, isDemo = false) => {
       const viewer = threeViewer.value;
       if (!viewer) throw new Error("Viewer not initialized");
@@ -1724,7 +1770,6 @@ export default {
       await checkVisionModel();
       if (!visionModelReady.value) {
         console.log("[Vision] Vision verification skipped - model not downloaded");
-        // Return a "pass" result so generation continues without vision checks
         return {
           matches: true,
           feedback: "Vision verification skipped (model not downloaded)",
@@ -1736,112 +1781,119 @@ export default {
       }
 
       // Unload code model to free memory for vision model
-      // The code model will be reloaded automatically when generateWithRetry is called
       await unloadCodeModel();
 
       // Capture screenshots from all angles
       const screenshots = captureMultiAngleScreenshots();
 
-      // Analyze each angle using server-side vision model
-      const angleResults = [];
-      for (const shot of screenshots) {
-        try {
-          // Build analysis prompt
-          const analysisPrompt = `You are evaluating a 3D rendered object from the ${shot.label} view. The user requested:
+      // Create 2x2 grid image for single API call
+      const gridDataUrl = await createScreenshotGrid(screenshots);
 
-"${prompt}"
+      try {
+        // Build analysis prompt for grid image
+        const analysisPrompt = `You are a STRICT quality evaluator for 3D rendered objects. Think like a game art director reviewing assets for a AAA game.
 
-CRITICAL: Be STRICT when evaluating. Check EVERY noun/object mentioned in the prompt.
+The user requested: "${prompt}"
+
+IMAGE LAYOUT (2x2 grid):
+- Top-left: FRONT view | Top-right: SIDE view
+- Bottom-left: BACK view | Bottom-right: TOP view
+
+YOUR STANDARD: HIGH PRODUCTION VALUE. This should look like a polished game asset, not a programmer art placeholder.
+
+EVALUATION CRITERIA:
+1. PRESENCE: Is each requested element actually visible and identifiable?
+2. MATERIALS: Do surfaces have appropriate materials? (metallic, glossy, matte, glowing, transparent as needed)
+   - Plain gray/white = FAIL. Objects need proper colors and material properties.
+3. DETAIL: Are there meaningful details? Bevels, patterns, sub-elements, visual interest?
+   - A "sword" that's just a rectangle = FAIL. It needs a blade, guard, handle.
+   - A "treasure chest" needs wood grain texture, metal bands, proper lid shape.
+4. LIGHTING/GLOW: If something should glow or emit light, does it actually glow?
+5. COHESION: Do parts form a unified, intentional design? Or random disconnected shapes?
+6. POSITIONING: Properly grounded (not floating, not clipping through floor)?
+7. SCALE: Are proportions correct? Does it look right?
+
+REJECT (MATCHES: NO) if:
+- Objects are basic untextured geometry (plain boxes, spheres, cylinders)
+- Colors/materials are obviously wrong or missing (gray metal instead of gold, no glow on magic items)
+- Requested details are absent (coins with no embossing, gems with no facets, swords with no guard)
+- It looks like a quick prototype rather than a finished asset
+- You would be embarrassed to show this to an artist
+
+ACCEPT (MATCHES: YES) only if:
+- All requested elements are present AND well-executed
+- Materials are appropriate and visually interesting
+- The object has polish and attention to detail
+- You would be PROUD to use this in a game
 
 Step-by-step analysis:
-1. List each specific thing the user asked for
-2. For each item, ask: "Can I clearly see this in the image?"
-3. If ANY requested element is missing, unclear, or wrong, answer MATCHES: NO
+1. List what the user asked for
+2. For EACH element: Is it present? Is it HIGH QUALITY or just placeholder geometry?
+3. Overall: Is this production-ready or needs more work?
 
 Respond in this EXACT format:
-MATCHES: [YES if ALL elements are clearly visible, NO if ANY element is missing or wrong]
-MISSING: [comma-separated list of missing/wrong elements, or "none" if perfect match]
-FEEDBACK: [What specifically needs to be added or fixed]`;
+MATCHES: [YES only if genuinely high quality, NO if anything needs improvement]
+MISSING: [comma-separated list of missing OR poorly-rendered elements, or "none" if genuinely excellent]
+FEEDBACK: [SPECIFIC instructions on what to fix or improve. Be detailed about colors, shapes, positions, textures that need work]`;
 
-          // Use server-side vision API
-          const { data } = await axios.post(
-            `${SERVER_URL}/vision/analyze`,
-            {
-              image_base64: shot.dataUrl,
-              prompt: analysisPrompt,
-              max_tokens: 512,
-            },
-            {
-              headers: getDemoHeaders(isDemo),
-            }
-          );
-
-          const response = data.response || "";
-          const parsed = parseVisionResponse(response);
-
-          angleResults.push({
-            angle: shot.name,
-            label: shot.label,
-            matches: parsed.matches,
-            feedback: parsed.feedback,
-            missing_elements: parsed.missingElements,
-            raw_response: response,
-          });
-
-          console.log(`[Vision:${phaseContext}:${shot.label}] Result:`, parsed);
-        } catch (e) {
-          // Check if it's a 412 error (model not downloaded)
-          if (e.response?.status === 412) {
-            console.warn(`[Vision] Model not downloaded - skipping vision verification`);
-            visionModelReady.value = false;
-            // Return early with skip result
-            return {
-              matches: true,
-              feedback: "Vision verification skipped (model not downloaded - use Download All to get the vision model)",
-              missing_elements: [],
-              angle_results: [],
-              screenshots: screenshots,
-              skipped: true,
-            };
+        // Single API call with grid image
+        const { data } = await axios.post(
+          `${SERVER_URL}/vision/analyze`,
+          {
+            image_base64: gridDataUrl,
+            prompt: analysisPrompt,
+            max_tokens: 768, // Allow more detailed quality feedback
+          },
+          {
+            headers: getDemoHeaders(isDemo),
           }
-          console.error(`[Vision] Failed to analyze ${shot.name} angle:`, e);
-          angleResults.push({
-            angle: shot.name,
-            label: shot.label,
-            matches: false,
-            feedback: `Analysis failed: ${e.response?.data?.error || e.message}`,
-            missing_elements: [],
+        );
+
+        const response = data.response || "";
+        const parsed = parseVisionResponse(response);
+
+        console.log(`[Vision:${phaseContext}:grid] Result:`, parsed);
+
+        // Add to feedback history for oscillation prevention
+        if (!parsed.matches && parsed.feedback) {
+          feedbackHistory.value.push({
+            timestamp: Date.now(),
+            phase: phaseContext,
+            feedback: parsed.feedback,
+            missing: parsed.missingElements,
           });
         }
+
+        return {
+          matches: parsed.matches,
+          feedback: parsed.feedback || "Object matches the prompt.",
+          missing_elements: parsed.missingElements,
+          angle_results: [{ angle: "grid", label: "All Angles", ...parsed, raw_response: response }],
+          screenshots: screenshots, // Return individual screenshots for saving to history
+        };
+      } catch (e) {
+        // Check if it's a 412 error (model not downloaded)
+        if (e.response?.status === 412) {
+          console.warn(`[Vision] Model not downloaded - skipping vision verification`);
+          visionModelReady.value = false;
+          return {
+            matches: true,
+            feedback: "Vision verification skipped (model not downloaded - use Download All to get the vision model)",
+            missing_elements: [],
+            angle_results: [],
+            screenshots: screenshots,
+            skipped: true,
+          };
+        }
+        console.error(`[Vision] Failed to analyze grid image:`, e);
+        return {
+          matches: false,
+          feedback: `Analysis failed: ${e.response?.data?.error || e.message}`,
+          missing_elements: [],
+          angle_results: [],
+          screenshots: screenshots,
+        };
       }
-
-      // Combine results - if ANY angle shows a match issue, we need to fix
-      const allMatch = angleResults.every((r) => r.matches);
-      const combinedMissing = [
-        ...new Set(angleResults.flatMap((r) => r.missing_elements || [])),
-      ];
-      const combinedFeedback = angleResults
-        .filter((r) => !r.matches)
-        .map((r) => `[${r.label}] ${r.feedback}`)
-        .join("\n");
-
-      // Add to feedback history for oscillation prevention
-      if (!allMatch && combinedFeedback) {
-        feedbackHistory.value.push({
-          timestamp: Date.now(),
-          phase: phaseContext,
-          feedback: combinedFeedback,
-          missing: combinedMissing,
-        });
-      }
-
-      return {
-        matches: allMatch,
-        feedback: combinedFeedback || "Object matches the prompt.",
-        missing_elements: combinedMissing,
-        angle_results: angleResults,
-        screenshots: screenshots, // Return for saving to history
-      };
     };
 
     // Build prompt with accumulated vision feedback (prevents oscillation)
@@ -1865,14 +1917,24 @@ FEEDBACK: [What specifically needs to be added or fixed]`;
               .join("\n")}`
           : "";
 
-      return `You are an expert Three.js developer. Generate a 3D object for:
+      return `You are an expert Three.js developer creating GAME-QUALITY 3D assets. Generate a 3D object for:
 
 "${originalPrompt}"
 
-⚠️ VISION ANALYSIS FOUND ISSUES (from multiple viewing angles):
+⚠️ VISION ANALYSIS FOUND QUALITY ISSUES (from multiple viewing angles):
 ${feedback}${missingList}${previousFeedback}
 
-You MUST address ALL feedback. Make sure ALL requested elements are visually present from ALL angles.
+You MUST address ALL feedback. The vision model will REJECT basic/placeholder geometry.
+
+════════════════════════════════════════════════════════════════════
+🎨 QUALITY REQUIREMENTS — Address the vision feedback with HIGH QUALITY fixes
+════════════════════════════════════════════════════════════════════
+
+- Use rich materials: MeshPhysicalMaterial with metalness, roughness, emissive, clearcoat
+- Add DETAIL: sub-components, bevels, patterns - not just basic shapes
+- Add lighting (H.light) and particles (H.sparks, H.dust) for polish
+- Colors must be appropriate and rich (gold = 0xffd700, ruby = 0xcc0033)
+- If vision said "poorly rendered" or "basic shape", add MORE DETAIL
 
 ════════════════════════════════════════════════════════════════════
 🚨 CRITICAL RULES — VIOLATIONS WILL BREAK THE CODE
@@ -1880,7 +1942,9 @@ You MUST address ALL feedback. Make sure ALL requested elements are visually pre
 
 1. OUTPUT RAW JAVASCRIPT ONLY — No markdown, no \`\`\`, no JSON, no explanations
 2. NEVER OMIT CODE — No "// omitted", "// ...", "(omitted for brevity)", or similar. Write COMPLETE code.
-3. ALL objects must float slightly above ground: y >= 0.15 (base of object)
+3. GROUND POSITIONING: ALL objects MUST sit ON or ABOVE the ground plane (y=0)
+   - Object base should be at y >= 0.05 (never negative!)
+   - NEVER set position.y to negative values
 4. ALL objects must be added to \`root\` (not scene)
 5. ALWAYS capture helper returns: const sword = H.sword({...});
 6. Helper parameters are COLORS (hex numbers), not materials
@@ -2261,9 +2325,24 @@ Generate ONLY the additional code for: ${missingList}`;
     // PROMPT BUILDERS
     // ═══════════════════════════════════════════════════════════════════════
     const buildObjectPrompt = (userText) => {
-      return `You are an expert Three.js developer. Generate a 3D object for:
+      return `You are an expert Three.js developer creating GAME-QUALITY 3D assets. Generate a 3D object for:
 
 "${userText}"
+
+════════════════════════════════════════════════════════════════════
+🎨 PRODUCTION QUALITY REQUIREMENTS — Your output will be JUDGED by a vision model
+════════════════════════════════════════════════════════════════════
+
+Your 3D object MUST look like a polished game asset, NOT programmer art:
+- NEVER use plain/default materials (gray, white, flat MeshBasicMaterial)
+- ALWAYS use MeshPhysicalMaterial with metalness, roughness, clearcoat, emissive as needed
+- Objects need DETAIL: sub-components, bevels, patterns, visual interest
+- A "sword" needs blade + guard + handle + pommel (not just a box)
+- A "gem" needs facets and glow (not just a colored sphere)
+- A "chest" needs wood texture, metal bands, hinges, lock
+- Add lighting (H.light, H.spot) to enhance the scene
+- Add particles/effects (H.sparks, H.dust, H.bubbles) for magic, fire, sparkle
+- Colors should be RICH and APPROPRIATE (gold = 0xffd700, not yellow 0xffff00)
 
 ════════════════════════════════════════════════════════════════════
 🚨 CRITICAL RULES — VIOLATIONS WILL BREAK THE CODE
@@ -2271,15 +2350,20 @@ Generate ONLY the additional code for: ${missingList}`;
 
 1. OUTPUT RAW JAVASCRIPT ONLY — No markdown, no \`\`\`, no JSON, no explanations
 2. NEVER OMIT CODE — No "// omitted", "// ...", "(omitted for brevity)", or similar. Write COMPLETE code.
-3. ALL objects must float slightly above ground: y >= 0.15 (base of object)
+3. GROUND POSITIONING: ALL objects MUST sit ON or ABOVE the ground plane (y=0)
+   - Object base should be at y >= 0.05 (never negative!)
+   - Use position.y = objectHeight/2 + 0.05 for centered objects
+   - NEVER set position.y to negative values
 4. ALL objects must be added to \`root\` (not scene)
 5. ALWAYS capture helper returns: const sword = H.sword({...});
 6. Helper parameters are COLORS (hex numbers), not materials
 7. SIZE CONSTRAINT: Objects must fit within 1x1 unit footprint (x: -0.5 to 0.5, z: -0.5 to 0.5)
 8. HEIGHT: Objects should be 0.3-1.5 units tall (compact, detailed)
 
-WRONG:  H.sword({...});  sword.position.set(0,1,0);  // Missing assignment!
-RIGHT:  const sword = H.sword({...}); sword.position.set(0,0.15,0); root.add(sword);
+WRONG:  H.sword({...});  sword.position.set(0,-0.5,0);  // BELOW GROUND!
+WRONG:  mesh.position.y = -height/2;  // SINKS INTO GROUND!
+RIGHT:  const sword = H.sword({...}); sword.position.set(0, 0.1, 0); root.add(sword);
+RIGHT:  mesh.position.y = height/2 + 0.05;  // Sits ON ground
 
 
 ════════════════════════════════════════════════════════════════════
@@ -2295,7 +2379,10 @@ addUpdateCallback(fn) — Register animation: fn({deltaTime, time})
 APPROACH 1: USE HELPERS (Recommended for RPG/game items)
 ════════════════════════════════════════════════════════════════════
 
-MATERIALS — Pass to H.mesh() or use directly
+MATERIALS — ⚠️ These return MATERIALS, NOT meshes! Use with H.mesh(geometry, material)
+  ❌ WRONG: const glow = H.glow(0xff0000); glow.position.set(0,1,0);  // ERROR! Materials have no position
+  ✅ RIGHT: const mesh = H.mesh(new THREE.SphereGeometry(0.1), H.glow(0xff0000)); mesh.position.set(0,1,0);
+
   H.metal(color, {roughness, glow, clearcoat})
   H.glass(color, {roughness, transmission, ior})
   H.gem(color, {glow, ior})
@@ -2307,7 +2394,8 @@ MATERIALS — Pass to H.mesh() or use directly
   H.lava({color, intensity})
   H.leather(color)
   H.velvet(color)
-  H.lowPoly(color)  // Flat shading, stylized
+  H.lowPoly(color)  // Flat shading, matte stylized (MeshLambertMaterial)
+  H.lowPolyShiny(color, {shininess, specular})  // Flat shading with shine (MeshPhongMaterial) - Yakudoo/Aviator style
   H.toon(color)
   H.cartoon(color)
 
@@ -2322,7 +2410,10 @@ PARTICLES (auto-animated)
   H.smoke(count, {color, spread})
   H.dust(count, {color, spread, size, opacity})
 
-RPG ITEMS — All return THREE.Group or Mesh
+RPG ITEMS — ✅ These return THREE.Group/Mesh - you CAN set .position, .scale, .rotation
+  ✅ const chest = H.chest({open: true}); chest.position.set(0, 0.1, 0); root.add(chest);
+  ✅ const gem = H.gemstone({color: 0xff0000}); gem.position.set(0.2, 0.3, 0); root.add(gem);
+
   H.crystal({color, height, radius, glow, lowPoly})
   H.gemstone({color, size, shape, lowPoly})  // shape: "round" or "octahedron"
   H.coin({color, radius, thickness, lowPoly})
@@ -2357,6 +2448,15 @@ UTILITY
 ════════════════════════════════════════════════════════════════════
 APPROACH 2: RAW THREE.JS (For custom/complex objects)
 ════════════════════════════════════════════════════════════════════
+
+PRODUCTION QUALITY REQUIREMENTS (applies to ALL approaches):
+- NEVER use plain/default materials (gray, white, flat color)
+- ALWAYS use MeshPhysicalMaterial with proper properties (metalness, roughness, clearcoat, emissive)
+- Objects need DETAIL: bevels, sub-components, visual interest
+- Add appropriate lighting (PointLight, SpotLight) to enhance the scene
+- Consider adding particles/effects for magic, fire, sparkle, etc.
+- A "sword" needs blade + guard + handle + pommel, not just a rectangle
+- A "gem" needs facets and glow, not just a colored sphere
 
 You can use any Three.js class directly:
 
@@ -2397,10 +2497,52 @@ addUpdateCallback(({deltaTime, time}) => {
 });
 
 ════════════════════════════════════════════════════════════════════
-COMPLETE EXAMPLES (all fit within 1x1 footprint, y >= 0.15)
+════════════════════════════════════════════════════════════════════
+CRAFTSMANSHIP REFERENCE — How to build beautiful objects (like H.chest)
 ════════════════════════════════════════════════════════════════════
 
-EXAMPLE A — Magic Sword (using helpers)
+The best 3D objects follow this pattern (10-15 meshes, not 50+):
+
+1. GROUP CONTAINER: const g = new THREE.Group();
+2. DEFINE MATERIALS with proper MeshPhysicalMaterial settings:
+   - Wood: roughness: 0.75, metalness: 0
+   - Metal: metalness: 0.9, roughness: 0.3
+   - Gems: Use H.gem(color) material (has built-in glow + bloom)
+3. MAIN BODY: Primary shape(s)
+4. SUB-COMPONENTS: Parts that make it recognizable
+   - A chest: base + curved lid + bands + lock + studs
+   - A sword: blade + guard + handle + pommel
+5. DECORATIVE DETAILS: Small touches (studs, trim, gems)
+6. SHADOWS: castShadow = true on all meshes
+7. ADD TO ROOT: root.add(g);
+
+ENHANCED RENDERING TIPS (from top CodePen Three.js examples):
+
+LOW-POLY STYLIZED (Yakudoo/Aviator style):
+- Use H.lowPoly(color) for matte look or H.lowPolyShiny(color) for slight shine
+- Build characters from primitives: BoxGeometry, CylinderGeometry, SphereGeometry
+- Vibrant, saturated colors: 0xff6b6b (coral), 0x4ecdc4 (teal), 0xffe66d (yellow)
+
+GLOWING/MAGIC EFFECTS:
+- H.glow(color) material for emissive surfaces that bloom
+- H.light(color, 1.5, 2) near glowing parts enhances bloom effect
+- For gems: H.gem(color, {glow: 0.6}) for sparkly gem with glow
+
+PROFESSIONAL GEOMETRY:
+- CURVED shapes: CylinderGeometry, TorusGeometry, SphereGeometry, LatheGeometry
+- TAPERED forms: ConeGeometry, different top/bottom radii on cylinders
+- MERGED primitives: Build complex shapes from multiple simple ones
+
+POLISH:
+- Subtle animation: addUpdateCallback for rotation, floating, pulsing
+- Particles: H.sparks, H.dust for atmosphere
+- Proper proportions: thicker bases, variation in sizes
+
+════════════════════════════════════════════════════════════════════
+COMPLETE EXAMPLES (all fit within 1x1 footprint, positioned ABOVE ground y >= 0)
+════════════════════════════════════════════════════════════════════
+
+EXAMPLE A — Magic Sword with Glow (using helpers)
 ─────────────────────────────────────────
 const sword = H.sword({
   bladeColor: 0xccccff,
@@ -2409,15 +2551,16 @@ const sword = H.sword({
   bladeLength: 0.6,
   lowPoly: false
 });
-sword.position.set(0, 0.2, 0);
-sword.rotation.z = -0.3;
+sword.rotation.z = -0.3;  // Slight tilt
 sword.scale.set(0.7, 0.7, 0.7);
-root.add(sword);
+root.add(sword);  // Already positioned above ground
 
+// Add glow light near blade for bloom effect
 const glow = H.light(0x6688ff, 1.5, 2);
-glow.position.set(0, 0.5, 0);
+glow.position.set(0, 0.6, 0);
 root.add(glow);
 
+// Magic particles
 const fx = H.sparks(20, { color: 0x88ccff, spread: 0.2, baseY: 0.2, maxY: 0.8 });
 root.add(fx);
 
@@ -2447,11 +2590,52 @@ for (let i = 0; i < 5; i++) {
 root.add(H.dust(30, { color: 0xccbbff, spread: 0.5 }));
 root.add(H.light(0x9966ff, 1.2, 2));
 
-EXAMPLE C — Animated Treasure (raw Three.js + animation, compact)
+EXAMPLE C — Crafted Object from Scratch (raw Three.js, chest-quality)
+─────────────────────────────────────────
+// This shows the PATTERN that makes H.chest look great:
+const g = new THREE.Group();
+
+// 1. Define materials FIRST
+const woodMat = new THREE.MeshPhysicalMaterial({ color: 0x6b4423, roughness: 0.75 });
+const metalMat = new THREE.MeshPhysicalMaterial({ color: 0xffd700, metalness: 0.9, roughness: 0.3 });
+
+// 2. Main body
+const w = 0.5, h = 0.3, d = 0.35;
+const base = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), woodMat);
+base.position.y = h/2;
+base.castShadow = true;
+g.add(base);
+
+// 3. Sub-component (curved lid)
+const lidGeo = new THREE.CylinderGeometry(d/2, d/2, w, 16, 1, false, 0, Math.PI);
+lidGeo.rotateZ(Math.PI/2);
+const lid = new THREE.Mesh(lidGeo, woodMat);
+lid.position.y = h;
+lid.castShadow = true;
+g.add(lid);
+
+// 4. Details (metal bands)
+const band = new THREE.Mesh(new THREE.BoxGeometry(w+0.02, 0.04, d+0.02), metalMat);
+band.position.y = h/3;
+band.castShadow = true;
+g.add(band);
+
+// 5. Decorative studs
+[[w/2, d/2], [-w/2, d/2], [w/2, -d/2], [-w/2, -d/2]].forEach(([x, z]) => {
+  const stud = new THREE.Mesh(new THREE.SphereGeometry(0.025), metalMat);
+  stud.position.set(x*0.95, 0.03, z*0.95);
+  stud.castShadow = true;
+  g.add(stud);
+});
+
+g.position.y = 0.1;
+root.add(g);
+
+EXAMPLE D — Using H.chest with Treasure (easiest approach)
 ─────────────────────────────────────────
 const chest = H.chest({ open: true, woodColor: 0x6b4423, metalColor: 0xffd700 });
-chest.position.y = 0.2;
-chest.scale.set(0.5, 0.5, 0.5);
+chest.position.y = 0.1;
+chest.scale.set(0.6, 0.6, 0.6);
 root.add(chest);
 
 // Floating coins using raw Three.js
@@ -2463,9 +2647,18 @@ for (let i = 0; i < 8; i++) {
   const coin = new THREE.Mesh(coinGeo, coinMat);
   coin.rotation.x = Math.PI / 2;
   coin.userData.phase = i * 0.8;
-  coin.userData.baseY = 0.6 + Math.random() * 0.3;
+  coin.userData.baseY = 0.5 + Math.random() * 0.3;
   coins.push(coin);
   root.add(coin);
+}
+
+// Colorful gems - use H.gemstone (returns Group) or H.mesh with H.gem material
+const gemColors = [0xff0000, 0x00ff00, 0x0000ff, 0xff00ff, 0x00ffff];
+for (let i = 0; i < 5; i++) {
+  // Option 1: Use H.gemstone helper (recommended - returns positionable Group)
+  const gem = H.gemstone({ color: gemColors[i], size: 0.08 });
+  gem.position.set((Math.random() - 0.5) * 0.3, 0.4 + Math.random() * 0.2, (Math.random() - 0.5) * 0.2);
+  root.add(gem);
 }
 
 addUpdateCallback(({time}) => {
@@ -2498,6 +2691,11 @@ ${brokenCode}
 
 COMMON FIXES:
 - "X is not defined" after "const Y = H.something()" → Change X to Y everywhere
+- "Cannot read properties of undefined (reading 'set')" → Something returned undefined. Check:
+  1. Material helpers (H.glow, H.gem, H.metal, etc.) return MATERIALS, not meshes!
+     ❌ WRONG: const glow = H.glow(0xff0000); glow.position.set(0,1,0);
+     ✅ RIGHT: const mesh = H.mesh(new THREE.SphereGeometry(0.1), H.glow(0xff0000)); mesh.position.set(0,1,0);
+  2. Use H.gemstone({color}) for positioned gems, not H.gem(color) which is just a material
 - Syntax errors → Fix the syntax
 
 OUTPUT ONLY THE FIXED JAVASCRIPT CODE. No markdown, no explanation.
@@ -2747,140 +2945,141 @@ RULES:
 Output the COMPLETE final code. Raw JavaScript only:`,
     });
 
-    // EXTREME MODE: Reference-quality generation with explicit complexity requirements
+    // EXTREME MODE: Craftsman-quality generation (like H.chest helper)
     const buildExtremePrompt = (userText) => {
-      // Condensed reference code showing the QUALITY level expected
-      const referenceCode = `// QUALITY REFERENCE - Match this complexity level:
-// This treasure chest has 300+ meshes, procedural textures, nested groups, and custom animations
+      // Reference code showing the H.chest helper style - QUALITY over QUANTITY
+      const referenceCode = `// QUALITY REFERENCE - The H.chest helper (our best object):
+// Only ~10 meshes, but each is WELL-CRAFTED with proper materials and positioning
 
-// Procedural wood texture via canvas
-const woodCanvas = document.createElement("canvas"); woodCanvas.width = 512; woodCanvas.height = 512;
-const wctx = woodCanvas.getContext("2d");
-wctx.fillStyle = "#3a2415"; wctx.fillRect(0, 0, 512, 512);
-for (let i = 0; i < 160; i++) {
-  const y = Math.random() * 512;
-  wctx.strokeStyle = "rgba(80,60,40," + (0.08 + Math.random() * 0.08) + ")";
-  wctx.lineWidth = 1 + Math.random() * 3;
-  wctx.beginPath(); wctx.moveTo(0, y); wctx.lineTo(512, y + (Math.random() * 40 - 20)); wctx.stroke();
-}
-const woodTex = new THREE.CanvasTexture(woodCanvas);
-const woodMat = new THREE.MeshPhysicalMaterial({ map: woodTex, roughness: 0.55, metalness: 0.05, clearcoat: 0.3, color: 0x6e4429 });
+const g = new THREE.Group();
 
-// Multiple material variations
-const goldTrimMat = H.metal(0xe8c35f, { roughness: 0.25, glow: 0.1 });
-const goldMatBright = H.metal(0xffe38a, { roughness: 0.15, glow: 0.35 });
-const gemColors = [0xff2e4d, 0x33ffb6, 0x3385ff, 0xdd55ff, 0xffffff, 0xffaa00];
+// Define materials FIRST with proper MeshPhysicalMaterial settings
+const woodMat = new THREE.MeshPhysicalMaterial({
+  color: 0x6b4423,  // Rich brown
+  roughness: 0.75,  // Wood is rough
+  metalness: 0.0,   // Wood is not metallic
+});
+const metalMat = new THREE.MeshPhysicalMaterial({
+  color: 0xffd700,  // Gold
+  metalness: 0.9,   // Very metallic
+  roughness: 0.3,   // Slightly polished
+});
 
-// Mass object generation with loops (coins: 50+ per layer × 6 layers = 300+ meshes)
-const coinGeo = new THREE.CylinderGeometry(0.11, 0.11, 0.028, 24);
-for (let layer = 0; layer < 6; layer++) {
-  for (let i = 0; i < 50 + layer * 15; i++) {
-    const c = H.mesh(coinGeo, goldMatBright);
-    c.position.set(innerMinX + Math.random() * (innerMaxX - innerMinX), baseY + layer * 0.15, innerMinZ + Math.random() * (innerMaxZ - innerMinZ));
-    root.add(c);
-  }
-}
+const w = 0.5, h = 0.3, d = 0.35;
 
-// 80+ gems with random colors
-const allGems = [];
-for (let i = 0; i < 80; i++) {
-  const gem = H.mesh(new THREE.OctahedronGeometry(0.12), H.gem(gemColors[i % gemColors.length]));
-  gem.position.set(Math.random() * 2 - 1, 0.5 + Math.random() * 0.8, Math.random() * 2 - 1);
-  root.add(gem); allGems.push(gem);
-}
+// MAIN BODY - Base box
+const base = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), woodMat);
+base.position.y = h / 2;
+base.castShadow = true;
+g.add(base);
 
-// Nested groups for complex objects (crown with 6 points + gems)
-const crown = new THREE.Group();
-const crownBase = H.mesh(new THREE.TorusGeometry(0.22, 0.055, 12, 36), goldMatBright);
-crown.add(crownBase);
-for (let i = 0; i < 6; i++) {
-  const angle = (i / 6) * Math.PI * 2;
-  const tip = H.mesh(new THREE.ConeGeometry(0.06, 0.17, 6), goldMatBright);
-  tip.position.set(Math.cos(angle) * 0.22, 0.10, Math.sin(angle) * 0.22);
-  crown.add(tip);
-  const tipGem = H.mesh(new THREE.SphereGeometry(0.035), H.gem(gemColors[i]));
-  tipGem.position.set(Math.cos(angle) * 0.22, 0.17, Math.sin(angle) * 0.22);
-  crown.add(tipGem);
-}
-root.add(crown);
+// LID - Curved cylinder (half)
+const lidGeo = new THREE.CylinderGeometry(d/2, d/2, w, 16, 1, false, 0, Math.PI);
+lidGeo.rotateZ(Math.PI / 2);
+const lid = new THREE.Mesh(lidGeo, woodMat);
+lid.position.y = h;
+lid.castShadow = true;
+g.add(lid);
 
-// 70 particles with per-particle animation data
-const sparkles = H.particles(70, { color: 0xffffcc, size: 0.055, spread: 1.2, baseY: 0.25, heightRange: 1.1 });
-root.add(sparkles);
-const sparkleSpeed = []; for (let i = 0; i < 70; i++) sparkleSpeed.push(0.25 + Math.random() * 0.45);
+// METAL BANDS - Horizontal straps
+const band1 = new THREE.Mesh(new THREE.BoxGeometry(w + 0.02, 0.04, d + 0.02), metalMat);
+band1.position.y = h / 3;
+band1.castShadow = true;
+g.add(band1);
+const band2 = band1.clone();
+band2.position.y = (2 * h) / 3;
+g.add(band2);
 
-// Complex animation with multiple animated elements
-let t = 0;
-addUpdateCallback(function(ctx) {
-  const dt = ctx.deltaTime; if (!dt) return; t += dt;
-  // Animate particles
-  const p = sparkles.geometry.attributes.position;
-  for (let i = 0; i < 70; i++) {
-    let y = p.getY(i); y += sparkleSpeed[i] * dt * 0.25;
-    if (y > 1.5) y = 0.25;
-    p.setY(i, y);
-  }
-  p.needsUpdate = true;
-  // Animate gems
-  for (let g of allGems) { g.rotation.y += dt * 0.35; }
-  // Animate material
-  goldMatBright.emissiveIntensity = 0.25 + Math.sin(t * 5) * 0.08;
-});`;
+// LOCK - Front clasp
+const lock = new THREE.Mesh(new THREE.BoxGeometry(0.06, 0.08, 0.03), metalMat);
+lock.position.set(0, h, d/2 + 0.02);
+lock.castShadow = true;
+g.add(lock);
 
-      return `You are an expert Three.js developer creating MUSEUM-QUALITY 3D objects.
+// CORNER STUDS - Decorative details
+const corners = [[w/2, 0, d/2], [-w/2, 0, d/2], [w/2, 0, -d/2], [-w/2, 0, -d/2]];
+corners.forEach(([x, y, z]) => {
+  const stud = new THREE.Mesh(new THREE.SphereGeometry(0.025, 6, 4), metalMat);
+  stud.position.set(x * 0.95, y + 0.03, z * 0.95);
+  stud.castShadow = true;
+  g.add(stud);
+});
 
-Generate a highly detailed 3D object for: "${userText}"
+root.add(g);`;
+
+      return `You are a CRAFTSMAN creating hand-crafted 3D objects like a skilled artisan.
+
+Generate a beautifully-crafted 3D object for: "${userText}"
 
 ════════════════════════════════════════════════════════════════════
-QUALITY REFERENCE - YOUR OUTPUT MUST MATCH THIS COMPLEXITY:
+QUALITY REFERENCE - Study this chest code carefully:
 ════════════════════════════════════════════════════════════════════
 
 ${referenceCode}
 
 ════════════════════════════════════════════════════════════════════
-MANDATORY COMPLEXITY REQUIREMENTS:
+CRAFTSMANSHIP PRINCIPLES (what makes the chest beautiful):
 ════════════════════════════════════════════════════════════════════
 
-1. MESH COUNT: Minimum 50 meshes (use loops to generate many similar objects)
-2. MATERIAL VARIETY: At least 4 different materials
-3. PROCEDURAL TEXTURES: Create at least one canvas-based texture
-4. NESTED GROUPS: Use THREE.Group for complex multi-part objects
-5. PARTICLES: 50+ particles with custom animation
-6. ANIMATION: Multiple animated elements (rotation, pulsing, floating)
-7. DETAIL OBJECTS: Small decorative meshes (gems, studs, trim pieces)
-8. ARRAYS FOR ANIMATION: Store references for batch animation
+1. LOGICAL SUB-COMPONENTS: Break the object into meaningful parts
+   - A chest has: base, lid, bands, lock, corner studs
+   - A sword has: blade, guard, handle, pommel, possibly gems
+   - A potion has: bottle, liquid, cork, label, glow effect
+
+2. PROPER MATERIALS: Use MeshPhysicalMaterial with correct settings
+   - Wood: roughness: 0.7-0.8, metalness: 0
+   - Metal: metalness: 0.8-1.0, roughness: 0.2-0.4
+   - Gems: Use H.gem(color) with glow
+   - Glass: transmission: 0.9, roughness: 0.1
+
+3. RICH COLORS: Not generic, but specific
+   - Gold: 0xffd700 (not yellow 0xffff00)
+   - Wood: 0x6b4423 or 0x8b4513 (not generic brown)
+   - Ruby: 0xcc0033, Emerald: 0x00cc66, Sapphire: 0x0066cc
+
+4. DECORATIVE DETAILS: Small touches that add polish
+   - Corner studs, rivets, trim pieces
+   - Beveled edges (use bevel in ExtrudeGeometry)
+   - Patterns created with loops
+
+5. PROPER SHADOWS: castShadow = true on all meshes
+
+6. GROUP STRUCTURE: Use THREE.Group to organize parts
 
 ════════════════════════════════════════════════════════════════════
-TECHNIQUES TO USE:
+MESH COUNT GUIDELINE: 8-20 meshes (quality over quantity!)
 ════════════════════════════════════════════════════════════════════
 
-- Canvas textures: document.createElement("canvas"), getContext("2d"), THREE.CanvasTexture
-- Mass generation: for loops creating 50+ similar objects with random variation
-- Nested groups: const group = new THREE.Group(); for complex parts
-- Array tracking: const allGems = []; ... allGems.push(gem); for animation
-- Per-object data: Store random values in arrays for unique animation per object
-- Material glow: emissiveIntensity animation for magical effects
+DO NOT try to create 50+ meshes. Focus on making 10-15 PERFECT meshes.
 
 ════════════════════════════════════════════════════════════════════
-CONTEXT: THREE, root, H/helpers, addUpdateCallback({deltaTime, time})
+AVAILABLE HELPERS
+════════════════════════════════════════════════════════════════════
 
-HELPERS:
-Materials: H.metal(color, {roughness, glow}), H.glass(color), H.gem(color, {glow}), H.matte(color), H.glow(color), H.liquid(color)
-Particles: H.particles(count, {color, size, spread, baseY, heightRange}), H.sparks, H.dust
-Utility: H.mesh(geometry, material) — auto-enables shadows
+Materials (return Material, use with H.mesh or THREE.Mesh):
+  H.metal(color, {roughness, glow, clearcoat})
+  H.glass(color, {roughness, transmission, ior})
+  H.gem(color, {glow, ior})
+  H.matte(color, {roughness})
+  H.glow(color, {intensity})
+
+Utility:
+  H.mesh(geometry, material) — Creates mesh with shadows enabled
+  H.light(color, intensity, distance) — PointLight
+  H.sparks(count, {color, spread}) — Particle effects
 
 RULES:
 - OUTPUT RAW JAVASCRIPT ONLY — No markdown, no \`\`\`
-- NEVER OMIT CODE — No "// omitted", "// ...", "(omitted for brevity)", or placeholders. Write COMPLETE code.
-- ALL objects y > 0
+- NEVER OMIT CODE — Write COMPLETE code
+- ALL objects y > 0 (above ground)
 - Add to \`root\` not scene
-- ALWAYS capture returns: const x = H.something();
+- ALWAYS capture returns: const x = H.mesh(...);
 
 ════════════════════════════════════════════════════════════════════
-NOW GENERATE MUSEUM-QUALITY CODE FOR: "${userText}"
+NOW CRAFT A BEAUTIFUL OBJECT FOR: "${userText}"
 ════════════════════════════════════════════════════════════════════
 
-Output raw JavaScript code only. Match the reference complexity. No explanations. WRITE COMPLETE CODE.`;
+Think like an artisan. Quality over quantity. Write complete code.`;
     };
 
     // ═══════════════════════════════════════════════════════════════════════
@@ -3524,7 +3723,7 @@ ${innerCode}`;
 
         if (mode === "normal") {
           // ═══════════════════════════════════════════════════════════════
-          // NORMAL MODE: Generate → Vision verify → Fix if needed
+          // NORMAL MODE: Generate → Vision verify → Fix if needed (up to 3 fixes)
           // ═══════════════════════════════════════════════════════════════
           console.log("═══════════════════════════════════════════════════════");
           console.log("NORMAL MODE: Generate with vision verification");
@@ -3536,129 +3735,39 @@ ${innerCode}`;
           if (!code) throw new Error("Failed to generate code");
 
           await viewer.applyModuleCode(code, "replace");
-          const result = await runVisionCheckAndFix(code, form.prompt, "Normal", 2, isDemo);
+          const result = await runVisionCheckAndFix(code, form.prompt, "Normal", 3, isDemo);
           finalCode = result.code;
           verified = result.verified;
           finalScreenshots = result.screenshots || [];
 
-        } else if (mode === "specialized") {
+        } else if (mode === "craftsman") {
           // ═══════════════════════════════════════════════════════════════
-          // SPECIALIZED MODE: Structure → Vision → Details → Vision → Polish → Vision
-          // ═══════════════════════════════════════════════════════════════
-          console.log("═══════════════════════════════════════════════════════");
-          console.log("SPECIALIZED MODE: 3-pass with vision after each phase");
-          console.log("═══════════════════════════════════════════════════════");
-          const prompts = buildSpecializedPrompts(form.prompt);
-
-          // Pass 1: Structure + Vision
-          lastStatus.value = "Pass 1/3: Structure...";
-          let code = await generateWithRetry(prompts.pass1_structure, form.prompt, MAX_RETRY_ATTEMPTS, "Structure");
-          if (!code) throw new Error("Failed at structure pass");
-          await viewer.applyModuleCode(code, "replace");
-          let result = await runVisionCheckAndFix(code, form.prompt, "Structure", 1, isDemo);
-          code = result.code;
-
-          // Pass 2: Details + Vision
-          lastStatus.value = "Pass 2/3: Details...";
-          const innerCode1 = extractInnerCode(code);
-          code = await generateWithRetry(prompts.pass2_details(innerCode1), form.prompt, MAX_RETRY_ATTEMPTS, "Details");
-          if (!code) throw new Error("Failed at details pass");
-          await viewer.applyModuleCode(code, "replace");
-          result = await runVisionCheckAndFix(code, form.prompt, "Details", 1, isDemo);
-          code = result.code;
-
-          // Pass 3: Polish + Final Vision
-          lastStatus.value = "Pass 3/3: Polish...";
-          const innerCode2 = extractInnerCode(code);
-          code = await generateWithRetry(prompts.pass3_polish(innerCode2), form.prompt, MAX_RETRY_ATTEMPTS, "Polish");
-          if (!code) throw new Error("Failed at polish pass");
-          await viewer.applyModuleCode(code, "replace");
-          result = await runVisionCheckAndFix(code, form.prompt, "Final", 2, isDemo);
-          finalCode = result.code;
-          verified = result.verified;
-          finalScreenshots = result.screenshots || [];
-
-        } else if (mode === "critique") {
-          // ═══════════════════════════════════════════════════════════════
-          // CRITIQUE MODE: Generate → LLM critique → Vision critique → Improve
+          // CRAFTSMAN MODE: High-quality prompt + more vision iterations (up to 5)
           // ═══════════════════════════════════════════════════════════════
           console.log("═══════════════════════════════════════════════════════");
-          console.log("CRITIQUE MODE: Generate with LLM + Vision critique");
-          console.log("═══════════════════════════════════════════════════════");
-          const prompts = buildCritiquePrompts(form.prompt);
-
-          // Pass 1: Initial generation + Vision check
-          lastStatus.value = "Pass 1/2: Generate...";
-          let code = await generateWithRetry(prompts.pass1_generate, form.prompt, MAX_RETRY_ATTEMPTS, "Generate");
-          if (!code) throw new Error("Failed at initial generation");
-          await viewer.applyModuleCode(code, "replace");
-          let result = await runVisionCheckAndFix(code, form.prompt, "Initial", 1, isDemo);
-          code = result.code;
-
-          // Pass 2: LLM critique + improve + Final Vision
-          lastStatus.value = "Pass 2/2: Critique & Improve...";
-          const innerCode = extractInnerCode(code);
-          code = await generateWithRetry(prompts.pass2_critique(innerCode), form.prompt, MAX_RETRY_ATTEMPTS, "Improve");
-          if (!code) throw new Error("Failed at improvement pass");
-          await viewer.applyModuleCode(code, "replace");
-          result = await runVisionCheckAndFix(code, form.prompt, "Final", 2, isDemo);
-          finalCode = result.code;
-          verified = result.verified;
-          finalScreenshots = result.screenshots || [];
-
-        } else if (mode === "additive") {
-          // ═══════════════════════════════════════════════════════════════
-          // ADDITIVE MODE: Base → Vision → Accessories → Vision → Effects → Vision
-          // ═══════════════════════════════════════════════════════════════
-          console.log("═══════════════════════════════════════════════════════");
-          console.log("ADDITIVE MODE: 3-pass with vision verification");
-          console.log("═══════════════════════════════════════════════════════");
-          const prompts = buildAdditivePrompts(form.prompt);
-
-          // Pass 1: Base + Vision
-          lastStatus.value = "Pass 1/3: Base object...";
-          let code = await generateWithRetry(prompts.pass1_base, form.prompt, MAX_RETRY_ATTEMPTS, "Base");
-          if (!code) throw new Error("Failed at base creation");
-          await viewer.applyModuleCode(code, "replace");
-          let result = await runVisionCheckAndFix(code, form.prompt, "Base", 1, isDemo);
-          code = result.code;
-
-          // Pass 2: Accessories + Vision
-          lastStatus.value = "Pass 2/3: Accessories...";
-          const innerCode1 = extractInnerCode(code);
-          code = await generateWithRetry(prompts.pass2_accessories(innerCode1), form.prompt, MAX_RETRY_ATTEMPTS, "Accessories");
-          if (!code) throw new Error("Failed at accessories pass");
-          await viewer.applyModuleCode(code, "replace");
-          result = await runVisionCheckAndFix(code, form.prompt, "Accessories", 1, isDemo);
-          code = result.code;
-
-          // Pass 3: Effects + Final Vision
-          lastStatus.value = "Pass 3/3: Effects...";
-          const innerCode2 = extractInnerCode(code);
-          code = await generateWithRetry(prompts.pass3_effects(innerCode2), form.prompt, MAX_RETRY_ATTEMPTS, "Effects");
-          if (!code) throw new Error("Failed at effects pass");
-          await viewer.applyModuleCode(code, "replace");
-          result = await runVisionCheckAndFix(code, form.prompt, "Final", 2, isDemo);
-          finalCode = result.code;
-          verified = result.verified;
-          finalScreenshots = result.screenshots || [];
-
-        } else if (mode === "extreme") {
-          // ═══════════════════════════════════════════════════════════════
-          // EXTREME MODE: High-quality with continuous vision refinement
-          // ═══════════════════════════════════════════════════════════════
-          console.log("═══════════════════════════════════════════════════════");
-          console.log("EXTREME MODE: Museum-quality with extensive vision checking");
+          console.log("CRAFTSMAN MODE: High-quality generation like H.chest");
           console.log("═══════════════════════════════════════════════════════");
 
-          lastStatus.value = "Generating extreme quality...";
+          lastStatus.value = "Crafting...";
           const llmPrompt = buildExtremePrompt(form.prompt);
-          let code = await generateWithRetry(llmPrompt, form.prompt, MAX_RETRY_ATTEMPTS, "Extreme");
+          let code = await generateWithRetry(llmPrompt, form.prompt, MAX_RETRY_ATTEMPTS, "Craftsman");
+          if (!code) throw new Error("Failed to generate code");
+
+          await viewer.applyModuleCode(code, "replace");
+          const result = await runVisionCheckAndFix(code, form.prompt, "Craftsman", 5, isDemo);
+          finalCode = result.code;
+          verified = result.verified;
+          finalScreenshots = result.screenshots || [];
+
+        } else {
+          // Fallback to normal mode for any unknown mode
+          console.log("Unknown mode, falling back to normal");
+          lastStatus.value = "Generating...";
+          const llmPrompt = buildObjectPrompt(form.prompt);
+          let code = await generateWithRetry(llmPrompt, form.prompt, MAX_RETRY_ATTEMPTS);
           if (!code) throw new Error("Failed to generate code");
           await viewer.applyModuleCode(code, "replace");
-
-          // Multiple vision refinement passes
-          const result = await runVisionCheckAndFix(code, form.prompt, "Extreme", 5, isDemo);
+          const result = await runVisionCheckAndFix(code, form.prompt, "Normal", 3, isDemo);
           finalCode = result.code;
           verified = result.verified;
           finalScreenshots = result.screenshots || [];

@@ -820,6 +820,17 @@ export default {
         context: 32768,
       },
 
+      mythomax_l2_13_B: {
+        modelname: "MythoMax L2 13B",
+        modeldesc:
+          "13B-parameter MythoMax L2 model combining MythoLogic-L2 and Huginn with a 4,096-token context window. Exceptional creative writing and roleplay capabilities with nuanced character portrayal. Best for: interactive fiction, roleplay companions, and creative storytelling.",
+        url: "https://huggingface.co/TheBloke/MythoMax-L2-13B-GGUF/resolve/main/mythomax-l2-13b.Q4_K_M.gguf",
+        filename: "mythomax-l2-13b.q4_k_m.gguf",
+        filesize: "7.87 GB",
+        parameters: 13000000000,
+        context: 4096,
+      },
+
       phi_3_3_8_B: {
         modelname: "Phi-3 Mini 3.8B",
         modeldesc:

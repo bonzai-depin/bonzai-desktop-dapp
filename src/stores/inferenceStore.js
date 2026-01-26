@@ -42,9 +42,12 @@ const getStore = () => window.electronAPI?.store;
 const persist = async (key) => {
   const store = getStore();
   if (!store?.set) return false;
-  
+
   try {
-    await store.set(key, [...state[key]]);
+    // Deep clone via JSON to strip Vue reactivity proxies and ensure serializability
+    // This is required because Electron IPC uses structured clone which can't handle proxies
+    const safeData = JSON.parse(JSON.stringify(state[key]));
+    await store.set(key, safeData);
     state.lastSyncTime = Date.now();
     return true;
   } catch (e) {

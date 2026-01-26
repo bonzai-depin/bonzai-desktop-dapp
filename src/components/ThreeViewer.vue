@@ -573,20 +573,23 @@ export default {
             transparent: true,
             ...o,
           }),
-        gem: (color = 0xff0000, o = {}) =>
-          new THREE.MeshPhysicalMaterial({
+        gem: (color = 0xff0000, o = {}) => {
+          const { glow, ...rest } = o; // Extract custom props
+          return new THREE.MeshPhysicalMaterial({
             color,
             metalness: 0,
             roughness: 0.03,
-            transmission: 0.92,
+            transmission: 0.85,
             thickness: 1.5,
-            ior: o.ior ?? 1.8,
+            ior: o.ior ?? 2.4, // Higher IOR for more sparkle
             clearcoat: 1,
             emissive: color,
-            emissiveIntensity: o.glow ?? 0.25,
+            emissiveIntensity: glow ?? 0.4, // Increased default glow
             transparent: true,
-            ...o,
-          }),
+            toneMapped: false, // Important: Allows values > 1 for bloom
+            ...rest,
+          });
+        },
         metal: (color = 0xffd700, o = {}) =>
           new THREE.MeshPhysicalMaterial({
             color,
@@ -605,19 +608,23 @@ export default {
             clearcoat: o.clearcoat ?? 0.2,
             ...o,
           }),
-        glow: (color = 0x00ffff, o = {}) =>
-          new THREE.MeshPhysicalMaterial({
+        glow: (color = 0x00ffff, o = {}) => {
+          const { intensity, ...rest } = o; // Extract custom props
+          return new THREE.MeshPhysicalMaterial({
             color,
             emissive: color,
-            emissiveIntensity: o.intensity ?? 0.8,
+            emissiveIntensity: intensity ?? 1.2, // Increased for better bloom
             metalness: 0,
-            roughness: 0.3,
+            roughness: 0.2,
             transparent: true,
             opacity: o.opacity ?? 1,
-            ...o,
-          }),
-        liquid: (color = 0xff0000, o = {}) =>
-          new THREE.MeshPhysicalMaterial({
+            toneMapped: false, // Important: Allows values > 1 for bloom
+            ...rest,
+          });
+        },
+        liquid: (color = 0xff0000, o = {}) => {
+          const { glow, glowIntensity, ...rest } = o; // Extract custom props
+          return new THREE.MeshPhysicalMaterial({
             color,
             metalness: 0.1,
             roughness: o.roughness ?? 0.1,
@@ -625,23 +632,26 @@ export default {
             thickness: o.thickness ?? 2,
             ior: o.ior ?? 1.33,
             clearcoat: 0.8,
-            emissive: o.glow ? color : 0x000000,
-            emissiveIntensity: o.glowIntensity ?? 0.3,
+            emissive: glow ? color : 0x000000,
+            emissiveIntensity: glowIntensity ?? 0.3,
             transparent: true,
-            ...o,
-          }),
-        fire: (o = {}) =>
-          new THREE.MeshPhysicalMaterial({
-            color: o.color ?? 0xff6600,
-            emissive: o.color ?? 0xff4400,
-            emissiveIntensity: o.intensity ?? 1.2,
+            ...rest,
+          });
+        },
+        fire: (o = {}) => {
+          const { intensity, color, ...rest } = o; // Extract custom props
+          return new THREE.MeshPhysicalMaterial({
+            color: color ?? 0xff6600,
+            emissive: color ?? 0xff4400,
+            emissiveIntensity: intensity ?? 1.2,
             metalness: 0,
             roughness: 0.5,
             transparent: true,
             opacity: o.opacity ?? 0.9,
             side: THREE.DoubleSide,
-            ...o,
-          }),
+            ...rest,
+          });
+        },
         ice: (color = 0xaaddff, o = {}) =>
           new THREE.MeshPhysicalMaterial({
             color,
@@ -683,11 +693,23 @@ export default {
             ...o,
           }),
 
-        // LOW-POLY / STYLIZED materials (flat shading, no reflections)
+        // LOW-POLY / STYLIZED materials (flat shading, CodePen-style)
+        // Yakudoo/Aviator style - MeshLambertMaterial with flatShading
         lowPoly: (color = 0x888888, o = {}) => {
           const m = new THREE.MeshLambertMaterial({
             color,
             flatShading: true,
+            ...o,
+          });
+          return m;
+        },
+        // Yakudoo shiny style - MeshPhongMaterial with flatShading (slightly reflective)
+        lowPolyShiny: (color = 0x888888, o = {}) => {
+          const m = new THREE.MeshPhongMaterial({
+            color,
+            flatShading: true,
+            shininess: o.shininess ?? 30,
+            specular: o.specular ?? 0x444444,
             ...o,
           });
           return m;
@@ -1252,7 +1274,7 @@ export default {
           return g;
         },
 
-        // Sword
+        // Sword (positioned so bottom of pommel is at y=0)
         sword: (o = {}) => {
           const g = new THREE.Group();
           const bladeMat = o.lowPoly
@@ -1286,13 +1308,16 @@ export default {
                 roughness: 0.3,
               });
 
+          // Base Y offset so pommel bottom sits at y=0
+          const baseY = 0.16; // pommel center (0.12) + pommel radius (0.04)
+
           // Blade
           const bladeLen = o.bladeLength ?? 0.8;
           const blade = new THREE.Mesh(
             new THREE.BoxGeometry(0.08, bladeLen, 0.02),
             bladeMat
           );
-          blade.position.y = bladeLen / 2 + 0.15;
+          blade.position.y = baseY + bladeLen / 2 + 0.15;
           blade.castShadow = true;
           g.add(blade);
           // Blade tip
@@ -1300,7 +1325,7 @@ export default {
             new THREE.ConeGeometry(0.04, 0.15, 4),
             bladeMat
           );
-          tip.position.y = bladeLen + 0.22;
+          tip.position.y = baseY + bladeLen + 0.22;
           tip.rotation.z = Math.PI;
           tip.castShadow = true;
           g.add(tip);
@@ -1309,7 +1334,7 @@ export default {
             new THREE.BoxGeometry(0.25, 0.04, 0.06),
             guardMat
           );
-          guard.position.y = 0.12;
+          guard.position.y = baseY + 0.12;
           guard.castShadow = true;
           g.add(guard);
           // Handle
@@ -1317,7 +1342,7 @@ export default {
             new THREE.CylinderGeometry(0.03, 0.035, 0.18, o.lowPoly ? 6 : 12),
             handleMat
           );
-          handle.position.y = 0;
+          handle.position.y = baseY;
           handle.castShadow = true;
           g.add(handle);
           // Pommel
@@ -1329,7 +1354,7 @@ export default {
             ),
             guardMat
           );
-          pommel.position.y = -0.12;
+          pommel.position.y = baseY - 0.12; // = 0.04, bottom at y=0
           pommel.castShadow = true;
           g.add(pommel);
 
@@ -1725,7 +1750,7 @@ export default {
           return g;
         },
 
-        // Crown
+        // Crown (positioned so bottom sits at y=0)
         crown: (o = {}) => {
           const g = new THREE.Group();
           const goldMat = o.lowPoly
@@ -1751,6 +1776,9 @@ export default {
                 roughness: 0.1,
               });
 
+          // Base Y offset so bottom of torus sits at y=0
+          const baseY = 0.04; // tube radius
+
           // Base ring
           const base = new THREE.Mesh(
             new THREE.TorusGeometry(
@@ -1762,6 +1790,7 @@ export default {
             goldMat
           );
           base.rotation.x = Math.PI / 2;
+          base.position.y = baseY;
           base.castShadow = true;
           g.add(base);
 
@@ -1775,7 +1804,7 @@ export default {
             );
             point.position.set(
               Math.cos(angle) * 0.2,
-              0.1,
+              baseY + 0.1,
               Math.sin(angle) * 0.2
             );
             point.castShadow = true;
@@ -1787,7 +1816,7 @@ export default {
             );
             gem.position.set(
               Math.cos(angle) * 0.2,
-              0.18,
+              baseY + 0.18,
               Math.sin(angle) * 0.2
             );
             gem.castShadow = true;
@@ -2576,9 +2605,9 @@ export default {
       composer.addPass(new RenderPass(this.scene, this.camera));
       const bloom = new UnrealBloomPass(
         new THREE.Vector2(rw, rh),
-        0.2,
-        0.5,
-        0.7
+        0.4,  // strength - increased for more visible glow
+        0.6,  // radius - how far bloom spreads
+        0.5   // threshold - lowered so emissive materials bloom more
       );
       this._bloomPass = bloom;
       composer.addPass(bloom);

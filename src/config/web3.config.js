@@ -113,6 +113,8 @@ export const CONFIG = {
   // TREASURY & WALLETS
   // ═══════════════════════════════════════════════════════════════════════════
   treasury: {
+    // Main treasury address (for skill purchases, agent fees, etc.)
+    address: "0x8Ff3b2e823b33BeE30e699bB1b6BBc8F622fEa89",
     // Foundation wallet (receives 50% of unlock proceeds)
     foundationWallet: "0x8Ff3b2e823b33BeE30e699bB1b6BBc8F622fEa89",
     // Liquidity management wallet (receives 50% of unlock proceeds)
@@ -123,6 +125,50 @@ export const CONFIG = {
       predictionMarketSale: 10000, // 100% - BonzAI captures entire sale
       smartAgentSale: 10000, // 100% - BonzAI captures entire sale
     },
+  },
+
+  // ═══════════════════════════════════════════════════════════════════════════
+  // SKILL REGISTRY (Decentralized Claude Skills)
+  // ═══════════════════════════════════════════════════════════════════════════
+  skillRegistry: {
+    // BonzaiSkillRegistry contract on Arbitrum (to be deployed)
+    contractAddress: null, // Will be set after deployment
+    chainId: 42161, // Arbitrum One
+
+    // Revenue split (configured in contract)
+    authorShareBps: 9000, // 90% to skill author
+    platformShareBps: 1000, // 10% to platform
+
+    // Default pricing for new skills
+    defaultPricing: {
+      purchasePrice: "0.1", // ETH (one-time)
+      runningFee: 99, // BONZAI tokens (per execution)
+    },
+
+    // Skill categories
+    categories: [
+      "analysis",
+      "trading",
+      "prediction",
+      "training",
+      "automation",
+      "utility",
+    ],
+
+    // Built-in skills (bundled with app, available for purchase)
+    builtinSkills: [
+      "polymarket-top-performers-v1.0.0",
+      "tcg-prediction-market-v1.0.0",
+      "dsla-smart-market-v1.0.0",
+    ],
+
+    // IPFS/Arweave gateways for skill definition fetching
+    gateways: [
+      "https://gateway.irys.xyz/",
+      "https://arweave.net/",
+      "https://ipfs.io/ipfs/",
+      "https://cloudflare-ipfs.com/ipfs/",
+    ],
   },
 
   // ═══════════════════════════════════════════════════════════════════════════

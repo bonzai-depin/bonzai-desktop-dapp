@@ -31,6 +31,21 @@ export default {
   category: 'analysis',
 
   /**
+   * Available Polymarket categories for filtering
+   */
+  categories: [
+    { key: 'OVERALL', label: 'All Markets', icon: 'apps' },
+    { key: 'POLITICS', label: 'Politics', icon: 'how_to_vote' },
+    { key: 'SPORTS', label: 'Sports', icon: 'sports_soccer' },
+    { key: 'CRYPTO', label: 'Crypto', icon: 'currency_bitcoin' },
+    { key: 'CULTURE', label: 'Culture', icon: 'theater_comedy' },
+    { key: 'ECONOMICS', label: 'Economics', icon: 'trending_up' },
+    { key: 'TECH', label: 'Tech', icon: 'memory' },
+    { key: 'FINANCE', label: 'Finance', icon: 'account_balance' },
+    { key: 'WEATHER', label: 'Weather', icon: 'cloud' },
+  ],
+
+  /**
    * Input fields for user customization.
    */
   inputs: {
@@ -43,6 +58,11 @@ export default {
       type: 'string',
       default: 'WEEK',
       label: 'Performance period (DAY, WEEK, MONTH)'
+    },
+    category: {
+      type: 'string',
+      default: 'OVERALL',
+      label: 'Market category'
     },
     minConviction: {
       type: 'number',
@@ -69,6 +89,8 @@ export default {
     const timePeriod = ['DAY', 'WEEK', 'MONTH', 'ALL'].includes(inputs.timePeriod)
       ? inputs.timePeriod
       : 'WEEK';
+    const validCategories = ['OVERALL', 'POLITICS', 'SPORTS', 'CRYPTO', 'CULTURE', 'ECONOMICS', 'TECH', 'FINANCE', 'WEATHER', 'MENTIONS'];
+    const category = validCategories.includes(inputs.category) ? inputs.category : 'OVERALL';
     const minConviction = Math.max(1, Math.min(10, Math.floor(inputs.minConviction || 2)));
     let copyFraction = parseFloat(inputs.copyFraction);
     if (Number.isNaN(copyFraction) || copyFraction <= 0 || copyFraction > 1) {
@@ -115,10 +137,10 @@ export default {
     // =========================================================================
     // STEP 1: Fetch top performers from leaderboard
     // =========================================================================
-    console.log(`[Polymarket Agent] Fetching top ${numTraders} traders (${timePeriod} PnL)...`);
+    console.log(`[Polymarket Agent] Fetching top ${numTraders} traders (${timePeriod} PnL, category: ${category})...`);
 
     const leaderboardData = await fetchViaProxy('leaderboard', {
-      category: 'OVERALL',
+      category: category,
       timePeriod: timePeriod,
       orderBy: 'PNL',
       limit: numTraders
@@ -296,6 +318,7 @@ export default {
       meta: {
         analyzedAt: new Date().toISOString(),
         timePeriod,
+        category,
         tradersAnalyzed: topTraders.length,
         positionsScanned: traderPositions.reduce((sum, tp) => sum + tp.positions.length, 0),
         minConviction

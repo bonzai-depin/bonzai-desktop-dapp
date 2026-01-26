@@ -15,6 +15,7 @@ import { ethers } from 'ethers';
 import { web3Service } from '../services/web3.service.js';
 import { levelService } from '../services/level.service.js';
 import { agentService } from '../services/agent.service.js';
+import * as authService from '../services/auth.service.js';
 import { CONFIG } from '../config/web3.config.js';
 
 export const useWeb3Store = defineStore('web3', () => {
@@ -142,10 +143,31 @@ export const useWeb3Store = defineStore('web3', () => {
   };
 
   /**
-   * Refresh balances
+   * Refresh balances and ensure authentication is valid
+   * If token is expired, attempts to refresh it or prompt for re-authentication
    */
   const refreshBalances = async () => {
+    // First refresh the token balances
     await web3Service.fetchAllBalances();
+
+    // Then ensure authentication is still valid
+    // This will prompt for signature if token is expired and refresh fails
+    if (isConnected.value && !authService.isAuthenticated()) {
+      console.log("[Web3Store] Token expired during balance refresh, attempting re-auth...");
+      try {
+        // Try refresh token first (uses HttpOnly cookie, no signature needed)
+        await authService.refreshToken();
+        console.log("[Web3Store] Token refreshed successfully");
+      } catch (e) {
+        console.log("[Web3Store] Token refresh failed, attempting re-authentication...");
+        // If refresh fails, try full re-authentication (will prompt for signature)
+        try {
+          await authService.reAuthenticate();
+        } catch (authErr) {
+          console.warn("[Web3Store] Re-authentication failed:", authErr.message);
+        }
+      }
+    }
   };
 
   /**

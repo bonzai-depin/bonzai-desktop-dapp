@@ -203,8 +203,50 @@ CHATTERBOX_REPO = "ResembleAI/chatterbox"
 
 CHATTERBOX_MULTILINGUAL_MODEL_ID = "onnx-community/chatterbox-multilingual-ONNX"
 
+# Kokoro TTS - Fast, lightweight TTS with multiple voices (ONNX)
+# Supports male and female voices with style control
+KOKORO_REPO = "hexgrad/Kokoro-82M"
+KOKORO_VOICES = {
+    # Female voices
+    "af_heart": {"gender": "female", "style": "warm, emotional"},
+    "af_alloy": {"gender": "female", "style": "neutral, professional"},
+    "af_aoede": {"gender": "female", "style": "poetic, melodic"},
+    "af_bella": {"gender": "female", "style": "friendly, expressive"},
+    "af_jessica": {"gender": "female", "style": "clear, articulate"},
+    "af_kore": {"gender": "female", "style": "youthful, energetic"},
+    "af_nicole": {"gender": "female", "style": "soft, soothing"},
+    "af_nova": {"gender": "female", "style": "modern, dynamic"},
+    "af_river": {"gender": "female", "style": "calm, flowing"},
+    "af_sarah": {"gender": "female", "style": "casual, conversational"},
+    "af_sky": {"gender": "female", "style": "bright, uplifting"},
+    # Male voices
+    "am_adam": {"gender": "male", "style": "warm, mature"},
+    "am_echo": {"gender": "male", "style": "resonant, deep"},
+    "am_eric": {"gender": "male", "style": "casual, friendly"},
+    "am_fenrir": {"gender": "male", "style": "strong, commanding"},
+    "am_liam": {"gender": "male", "style": "youthful, energetic"},
+    "am_michael": {"gender": "male", "style": "professional, clear"},
+    "am_onyx": {"gender": "male", "style": "deep, smooth"},
+    "am_puck": {"gender": "male", "style": "playful, mischievous"},
+    # British voices
+    "bf_emma": {"gender": "female", "style": "British, elegant"},
+    "bf_isabella": {"gender": "female", "style": "British, refined"},
+    "bm_george": {"gender": "male", "style": "British, distinguished"},
+    "bm_lewis": {"gender": "male", "style": "British, casual"},
+}
+# Default voices by gender
+KOKORO_DEFAULT_VOICE = {
+    "female": "af_heart",
+    "male": "am_adam",
+    "neutral": "af_nova",
+}
+
 # Qwen3-VL 2B - Vision-language model with good cross-platform support
 QWEN3_VL_REPO = "Qwen/Qwen3-VL-2B-Instruct"
+
+# Qwen3-TTS - High-quality TTS with voice cloning and voice design
+QWEN3_TTS_BASE_REPO = "Qwen/Qwen3-TTS-12Hz-1.7B-Base"  # For voice cloning
+QWEN3_TTS_DESIGN_REPO = "Qwen/Qwen3-TTS-12Hz-1.7B-VoiceDesign"  # For voice design from description
 
 LLAMA_REPOS = {
     "llama-3.2-1b": "meta-llama/Llama-3.2-1B",
@@ -1641,14 +1683,44 @@ def _sf(name, url):
 
 
 def _plan_for(pipeline: str) -> Dict[str, Any]:
+    """
+    Pipeline naming convention:
+    - image_standard: SDXL base + refiner
+    - image_turbo: FLUX Klein (fast generation, i2i)
+    - image_quality: FLUX Krea (high quality)
+    - image_advanced: Z turbo (advanced features)
+    - audio: Chatterbox TTS
+    - video_quality: Wan 2.2 (high quality video)
+    - video_fast: LTX2 GGUF (fast video)
+    - vision: Qwen3 VL (image analysis)
+    """
     pipeline = pipeline.strip().lower()
-    if pipeline == "flux_krea":
-        return {"repos_to_fetch": [FLUX_KREA_REPO], "single_files": [_sf(FLUX_KREA_GGUF_NAME, FLUX_KREA_GGUF_URL)]}
-    if pipeline == "flux_klein":
+
+    # Image pipelines
+    if pipeline in ("image_standard", "sdxl"):
+        return {"repos_to_fetch": [SDXL_BASE_REPO, SDXL_REFINER_REPO], "single_files": []}
+    if pipeline in ("image_turbo", "flux_klein"):
         return {"repos_to_fetch": [FLUX_KLEIN_REPO], "single_files": []}
-    if pipeline == "wan_video":
+    if pipeline in ("image_quality", "flux_krea"):
+        return {"repos_to_fetch": [FLUX_KREA_REPO], "single_files": [_sf(FLUX_KREA_GGUF_NAME, FLUX_KREA_GGUF_URL)]}
+    if pipeline in ("image_advanced", "z_image_turbo"):
+        return {"repos_to_fetch": [Z_REPO], "single_files": [_sf(Z_GGUF_NAME, Z_GGUF_URL)]}
+
+    # Audio pipelines
+    if pipeline in ("audio", "chatterbox"):
+        return {"repos_to_fetch": [CHATTERBOX_MULTILINGUAL_MODEL_ID], "single_files": []}
+    # Note: Kokoro (/audio/turbo) uses KPipeline which auto-downloads from HuggingFace
+    if pipeline in ("audio_quality_clone", "qwen3_tts_clone"):
+        return {"repos_to_fetch": [QWEN3_TTS_BASE_REPO], "single_files": []}
+    if pipeline in ("audio_quality_design", "qwen3_tts_design"):
+        return {"repos_to_fetch": [QWEN3_TTS_DESIGN_REPO], "single_files": []}
+    if pipeline in ("audio_quality_persona", "qwen3_tts_persona"):
+        # Persona needs both models
+        return {"repos_to_fetch": [QWEN3_TTS_BASE_REPO, QWEN3_TTS_DESIGN_REPO], "single_files": []}
+
+    # Video pipelines
+    if pipeline in ("video_quality", "wan_video"):
         # WAN 2.2 with Q4 GGUF for memory efficiency (~9.65GB each)
-        # Includes GGUF text encoder for additional memory savings on MPS
         return {
             "repos_to_fetch": [WAN_REPO],
             "single_files": [
@@ -1657,30 +1729,23 @@ def _plan_for(pipeline: str) -> Dict[str, Any]:
                 _sf(WAN_21_VAE_NAME, WAN_21_VAE_URL),
             ],
         }
-    if pipeline == "ltx2_video":
-        # LTX-2 (19B DiT) with quanto int8 quantization (cached after first run)
-        # All components from repo subfolders, skip root safetensors files
-        return {
-            "repos_to_fetch": [LTX2_REPO],
-            "single_files": [],
-        }
-    if pipeline == "ltx2_video_gguf":
-        # LTX-2 (19B DiT) with Q4_0 GGUF quantization via from_single_file
-        # Uses the base repo for VAE/scheduler/tokenizer, GGUF for transformer
+    if pipeline in ("video_fast", "ltx2_video_gguf"):
+        # LTX-2 (19B DiT) with Q4_0 GGUF quantization
         return {
             "repos_to_fetch": [LTX2_REPO],
             "single_files": [_sf(LTX2_GGUF_NAME, LTX2_GGUF_URL)],
         }
-    if pipeline == "sdxl":
-        return {"repos_to_fetch": [SDXL_BASE_REPO, SDXL_REFINER_REPO], "single_files": []}
-    if pipeline == "z_image_turbo":
-        return {"repos_to_fetch": [Z_REPO], "single_files": [_sf(Z_GGUF_NAME, Z_GGUF_URL)]}
-    if pipeline == "chatterbox":
-        # Use the ONNX repo for inference (multilingual only)
-        return {"repos_to_fetch": [CHATTERBOX_MULTILINGUAL_MODEL_ID], "single_files": []}
-    if pipeline == "qwen3_vision":
-        # Qwen3-VL 2B for vision analysis (server-side)
+    if pipeline == "ltx2_video":
+        # LTX-2 (19B DiT) with quanto int8 quantization (legacy)
+        return {
+            "repos_to_fetch": [LTX2_REPO],
+            "single_files": [],
+        }
+
+    # Vision pipeline
+    if pipeline in ("vision", "qwen3_vision"):
         return {"repos_to_fetch": [QWEN3_VL_REPO], "single_files": []}
+
     raise ValueError(f"Unknown pipeline: {pipeline}")
 
 
@@ -3195,6 +3260,612 @@ def audio_multilingual():
     finally:
         DeviceManager.free_memory()
 
+
+# Kokoro TTS pipeline cache
+_kokoro_pipeline = None
+_kokoro_pipeline_lock = threading.Lock()
+
+
+def _load_kokoro_pipeline():
+    """Load or get cached Kokoro TTS pipeline."""
+    global _kokoro_pipeline
+
+    with _kokoro_pipeline_lock:
+        if _kokoro_pipeline is not None:
+            return _kokoro_pipeline
+
+        try:
+            from kokoro import KPipeline
+
+            logger.info("[Kokoro] Loading KPipeline...")
+
+            # KPipeline auto-downloads from HuggingFace on first use
+            # lang_code='a' for American English
+            _kokoro_pipeline = KPipeline(lang_code='a')
+
+            logger.info("[Kokoro] Pipeline loaded successfully")
+            return _kokoro_pipeline
+
+        except ImportError:
+            logger.error("[Kokoro] kokoro package not installed. Install with: pip install kokoro>=0.9.2")
+            raise ImportError("kokoro package not installed. Install with: pip install kokoro>=0.9.2")
+        except Exception as e:
+            logger.exception(f"[Kokoro] Failed to load pipeline: {e}")
+            raise
+
+
+@app.route("/audio/turbo", methods=["POST"])
+@require_auth(min_level=LEVEL_REQUIREMENTS["audio"], allow_demo=True)
+def audio_turbo_kokoro():
+    """
+    Kokoro TTS - Fast, high-quality text-to-speech.
+
+    Supports multiple voices with gender selection.
+    Uses KPipeline for inference at 24kHz.
+
+    Request body:
+    {
+        "prompt": "Text to synthesize",
+        "voice": "af_heart" (optional, defaults based on gender),
+        "gender": "female" | "male" | "neutral" (optional, for auto voice selection),
+        "speed": 1.0 (optional, 0.5-2.0),
+        "auto_download": false
+    }
+    """
+    data = request.get_json(silent=True) or {}
+
+    prompt = (data.get("prompt") or "").strip()
+    voice = (data.get("voice") or "").strip()
+    gender = (data.get("gender") or "").strip().lower()
+    speed = float(data.get("speed", 1.0))
+
+    if not prompt:
+        return jsonify({"error": "Missing 'prompt'"}), 400
+
+    # Validate speed
+    speed = max(0.5, min(2.0, speed))
+
+    # Select voice based on gender if not specified
+    if not voice:
+        if gender in KOKORO_DEFAULT_VOICE:
+            voice = KOKORO_DEFAULT_VOICE[gender]
+        else:
+            voice = KOKORO_DEFAULT_VOICE["female"]  # Default to female
+
+    # Validate voice
+    if voice not in KOKORO_VOICES:
+        return jsonify({
+            "error": f"Invalid voice '{voice}'",
+            "available_voices": list(KOKORO_VOICES.keys()),
+        }), 400
+
+    gen_id = genbus.new("kokoro_tts", {"endpoint": "/audio/turbo", "voice": voice})
+
+    try:
+        gc.collect()
+        genbus.progress(gen_id, "loading", 0, 3)
+
+        # Load pipeline (auto-downloads model on first use)
+        pipeline = _load_kokoro_pipeline()
+
+        genbus.progress(gen_id, "generating", 1, 3)
+
+        # Generate audio using KPipeline
+        # Returns generator of (graphemes, phonemes, audio) tuples
+        audio_segments = []
+        for i, (gs, ps, audio) in enumerate(pipeline(prompt, voice=voice, speed=speed)):
+            audio_segments.append(audio)
+
+        # Concatenate all audio segments
+        if audio_segments:
+            full_audio = np.concatenate(audio_segments)
+        else:
+            raise ValueError("No audio generated")
+
+        genbus.progress(gen_id, "saving", 2, 3)
+
+        # Save to file (24kHz sample rate)
+        out_name = f"kokoro_{int(time.time())}_{gen_id[:8]}.wav"
+        out_path = str(FILES_DIR / out_name)
+
+        # Convert to int16 WAV
+        audio_int16 = (full_audio * 32767).astype(np.int16)
+
+        with wave.open(out_path, 'wb') as wav_file:
+            wav_file.setnchannels(1)
+            wav_file.setsampwidth(2)
+            wav_file.setframerate(24000)  # Kokoro outputs at 24kHz
+            wav_file.writeframes(audio_int16.tobytes())
+
+        genbus.finish(gen_id, {"audio_path": out_path})
+        logger.info(f"[Kokoro] Generated audio: {out_path}")
+
+        return jsonify({
+            "ok": True,
+            "audio_path": out_path,
+            "model": "kokoro",
+            "voice": voice,
+            "gender": KOKORO_VOICES[voice]["gender"],
+            "generation_id": gen_id,
+            "generation_websocket_url": generation_url(),
+        }), 201
+
+    except Exception as e:
+        logger.exception("Kokoro TTS failed")
+        genbus.error(gen_id, str(e))
+        return jsonify({"error": str(e)}), 500
+    finally:
+        DeviceManager.free_memory()
+
+
+# =============================================================================
+# REST API: QWEN3-TTS - High-Quality Voice Design & Cloning
+# =============================================================================
+
+# Model caches
+_qwen3_tts_base = None
+_qwen3_tts_design = None
+_qwen3_tts_lock = threading.Lock()
+
+# Voice prompt cache for reusing designed voices
+_voice_prompt_cache = {}
+
+
+def _load_qwen3_tts_base():
+    """Load Qwen3-TTS Base model for voice cloning."""
+    global _qwen3_tts_base
+
+    with _qwen3_tts_lock:
+        if _qwen3_tts_base is not None:
+            return _qwen3_tts_base
+
+        from qwen_tts import Qwen3TTSModel
+
+        device = DeviceManager.get_device()
+        dtype = torch.bfloat16 if device.type in ("cuda", "mps") else torch.float32
+
+        logger.info(f"[Qwen3-TTS] Loading Base model on {device}...")
+
+        # Check for flash attention support
+        attn_impl = "flash_attention_2" if device.type == "cuda" else "eager"
+
+        with offline_mode_if_complete("audio_quality_clone") as is_offline:
+            _qwen3_tts_base = Qwen3TTSModel.from_pretrained(
+                QWEN3_TTS_BASE_REPO,
+                device_map=str(device),
+                torch_dtype=dtype,
+                attn_implementation=attn_impl,
+                local_files_only=is_offline,
+            )
+
+        logger.info("[Qwen3-TTS] Base model loaded successfully")
+        return _qwen3_tts_base
+
+
+def _load_qwen3_tts_design():
+    """Load Qwen3-TTS VoiceDesign model for creating voices from descriptions."""
+    global _qwen3_tts_design
+
+    with _qwen3_tts_lock:
+        if _qwen3_tts_design is not None:
+            return _qwen3_tts_design
+
+        from qwen_tts import Qwen3TTSModel
+
+        device = DeviceManager.get_device()
+        dtype = torch.bfloat16 if device.type in ("cuda", "mps") else torch.float32
+
+        logger.info(f"[Qwen3-TTS] Loading VoiceDesign model on {device}...")
+
+        attn_impl = "flash_attention_2" if device.type == "cuda" else "eager"
+
+        with offline_mode_if_complete("audio_quality_design") as is_offline:
+            _qwen3_tts_design = Qwen3TTSModel.from_pretrained(
+                QWEN3_TTS_DESIGN_REPO,
+                device_map=str(device),
+                torch_dtype=dtype,
+                attn_implementation=attn_impl,
+                local_files_only=is_offline,
+            )
+
+        logger.info("[Qwen3-TTS] VoiceDesign model loaded successfully")
+        return _qwen3_tts_design
+
+
+@app.route("/audio/quality/design", methods=["POST"])
+@require_auth(min_level=LEVEL_REQUIREMENTS["audio"], allow_demo=True)
+def audio_quality_design():
+    """
+    Design a voice from a text description using Qwen3-TTS VoiceDesign.
+
+    Creates a reference audio that can be used for voice cloning.
+
+    Request body:
+    {
+        "text": "Sample text for the voice to speak",
+        "instruct": "Voice description (age, gender, style, emotion)",
+        "language": "English" (default),
+        "voice_id": "unique_id" (optional, for caching the voice prompt),
+        "auto_download": false
+    }
+
+    Returns:
+    {
+        "audio_path": "/path/to/designed_voice.wav",
+        "voice_id": "unique_id",
+        "voice_prompt_cached": true/false
+    }
+    """
+    data = request.get_json(silent=True) or {}
+
+    text = (data.get("text") or "").strip()
+    instruct = (data.get("instruct") or "").strip()
+    language = (data.get("language") or "English").strip()
+    voice_id = (data.get("voice_id") or "").strip()
+    auto_dl = bool(data.get("auto_download", False))
+
+    if not text:
+        return jsonify({"error": "Missing 'text' - sample text for the voice"}), 400
+    if not instruct:
+        return jsonify({"error": "Missing 'instruct' - voice description"}), 400
+
+    # Generate voice_id if not provided
+    if not voice_id:
+        voice_id = hashlib.md5(f"{instruct}:{text}".encode()).hexdigest()[:12]
+
+    # Check if required files are present
+    guard = _ensure_files_present_or_start("audio_quality_design", auto_download=auto_dl)
+    if guard:
+        return guard
+
+    gen_id = genbus.new("qwen3_tts_design", {"endpoint": "/audio/quality/design", "voice_id": voice_id})
+
+    try:
+        gc.collect()
+        genbus.progress(gen_id, "loading", 0, 4)
+
+        model = _load_qwen3_tts_design()
+
+        genbus.progress(gen_id, "designing voice", 1, 4)
+
+        # Generate voice design
+        wavs, sr = model.generate_voice_design(
+            text=text,
+            language=language,
+            instruct=instruct,
+        )
+
+        genbus.progress(gen_id, "creating voice prompt", 2, 4)
+
+        # Save the designed voice
+        out_name = f"voice_design_{voice_id}_{int(time.time())}.wav"
+        out_path = str(FILES_DIR / out_name)
+
+        import soundfile as sf
+        sf.write(out_path, wavs[0], sr)
+
+        # Create and cache voice clone prompt for reuse
+        base_model = _load_qwen3_tts_base()
+        voice_prompt = base_model.create_voice_clone_prompt(
+            ref_audio=(wavs[0], sr),
+            ref_text=text,
+        )
+        _voice_prompt_cache[voice_id] = {
+            "prompt": voice_prompt,
+            "ref_audio_path": out_path,
+            "ref_text": text,
+            "instruct": instruct,
+            "created_at": time.time(),
+        }
+
+        genbus.progress(gen_id, "complete", 3, 4)
+        genbus.finish(gen_id, {"audio_path": out_path, "voice_id": voice_id})
+
+        logger.info(f"[Qwen3-TTS] Voice designed: {out_path} (voice_id: {voice_id})")
+
+        return jsonify({
+            "ok": True,
+            "audio_path": out_path,
+            "voice_id": voice_id,
+            "voice_prompt_cached": True,
+            "model": "qwen3-tts-voicedesign",
+            "generation_id": gen_id,
+            "generation_websocket_url": generation_url(),
+        }), 201
+
+    except Exception as e:
+        logger.exception("Qwen3-TTS VoiceDesign failed")
+        genbus.error(gen_id, str(e))
+        return jsonify({"error": str(e)}), 500
+    finally:
+        DeviceManager.free_memory()
+
+
+@app.route("/audio/quality/clone", methods=["POST"])
+@require_auth(min_level=LEVEL_REQUIREMENTS["audio"], allow_demo=True)
+def audio_quality_clone():
+    """
+    Generate speech using voice cloning with Qwen3-TTS Base.
+
+    Uses a previously designed voice or a reference audio.
+
+    Request body:
+    {
+        "text": "Text to synthesize",
+        "voice_id": "unique_id" (use cached voice prompt),
+        OR
+        "ref_audio_base64": "base64_audio" (reference audio),
+        "ref_text": "What the reference audio says",
+        "language": "English" (default),
+        "auto_download": false
+    }
+    """
+    data = request.get_json(silent=True) or {}
+
+    text = (data.get("text") or "").strip()
+    voice_id = (data.get("voice_id") or "").strip()
+    ref_audio_b64 = (data.get("ref_audio_base64") or "").strip()
+    ref_audio_path = (data.get("ref_audio_path") or "").strip()
+    ref_text = (data.get("ref_text") or "").strip()
+    language = (data.get("language") or "English").strip()
+    auto_dl = bool(data.get("auto_download", False))
+
+    if not text:
+        return jsonify({"error": "Missing 'text' to synthesize"}), 400
+
+    # Need either voice_id or ref_audio
+    if not voice_id and not ref_audio_b64 and not ref_audio_path:
+        return jsonify({"error": "Missing voice reference. Provide 'voice_id' or 'ref_audio_base64'/'ref_audio_path'"}), 400
+
+    # Check if required files are present
+    guard = _ensure_files_present_or_start("audio_quality_clone", auto_download=auto_dl)
+    if guard:
+        return guard
+
+    gen_id = genbus.new("qwen3_tts_clone", {"endpoint": "/audio/quality/clone", "voice_id": voice_id or "custom"})
+
+    try:
+        gc.collect()
+        genbus.progress(gen_id, "loading", 0, 4)
+
+        model = _load_qwen3_tts_base()
+
+        genbus.progress(gen_id, "preparing voice", 1, 4)
+
+        voice_prompt = None
+
+        # Try to get cached voice prompt
+        if voice_id and voice_id in _voice_prompt_cache:
+            voice_prompt = _voice_prompt_cache[voice_id]["prompt"]
+            logger.info(f"[Qwen3-TTS] Using cached voice prompt: {voice_id}")
+        elif ref_audio_b64 or ref_audio_path:
+            # Create voice prompt from reference audio
+            if ref_audio_b64:
+                # Decode base64 audio
+                temp_ref = str(FILES_DIR / f"_ref_{int(time.time())}.wav")
+                audio_data = base64.b64decode(ref_audio_b64)
+                with open(temp_ref, "wb") as f:
+                    f.write(audio_data)
+                ref_audio_path = temp_ref
+
+            if not ref_text:
+                return jsonify({"error": "Missing 'ref_text' - what the reference audio says"}), 400
+
+            import soundfile as sf
+            ref_audio, sr = sf.read(ref_audio_path)
+            voice_prompt = model.create_voice_clone_prompt(
+                ref_audio=(ref_audio, sr),
+                ref_text=ref_text,
+            )
+
+            # Cache if voice_id provided
+            if voice_id:
+                _voice_prompt_cache[voice_id] = {
+                    "prompt": voice_prompt,
+                    "ref_audio_path": ref_audio_path,
+                    "ref_text": ref_text,
+                    "created_at": time.time(),
+                }
+        else:
+            return jsonify({"error": f"Voice '{voice_id}' not found in cache. Design it first or provide ref_audio."}), 404
+
+        genbus.progress(gen_id, "generating speech", 2, 4)
+
+        # Generate cloned speech
+        wavs, sr = model.generate_voice_clone(
+            text=text,
+            language=language,
+            voice_clone_prompt=voice_prompt,
+        )
+
+        genbus.progress(gen_id, "saving", 3, 4)
+
+        # Save output
+        out_name = f"clone_{voice_id or 'custom'}_{int(time.time())}_{gen_id[:8]}.wav"
+        out_path = str(FILES_DIR / out_name)
+
+        import soundfile as sf
+        sf.write(out_path, wavs[0], sr)
+
+        genbus.finish(gen_id, {"audio_path": out_path})
+        logger.info(f"[Qwen3-TTS] Voice cloned: {out_path}")
+
+        return jsonify({
+            "ok": True,
+            "audio_path": out_path,
+            "voice_id": voice_id or None,
+            "model": "qwen3-tts-base",
+            "generation_id": gen_id,
+            "generation_websocket_url": generation_url(),
+        }), 201
+
+    except Exception as e:
+        logger.exception("Qwen3-TTS Clone failed")
+        genbus.error(gen_id, str(e))
+        return jsonify({"error": str(e)}), 500
+    finally:
+        DeviceManager.free_memory()
+
+
+@app.route("/audio/quality/persona", methods=["POST"])
+@require_auth(min_level=LEVEL_REQUIREMENTS["audio"], allow_demo=True)
+def audio_quality_persona():
+    """
+    Create a persona voice and generate speech in one call.
+
+    Combines VoiceDesign + Clone: designs a voice from description,
+    then uses it to generate the requested speech.
+
+    Request body:
+    {
+        "text": "Text to synthesize",
+        "persona": {
+            "voice_id": "unique_persona_id",
+            "instruct": "Voice description (age, gender, style)",
+            "sample_text": "Sample text for voice design" (optional)
+        },
+        "language": "English" (default),
+        "force_redesign": false (recreate voice even if cached),
+        "auto_download": false
+    }
+    """
+    data = request.get_json(silent=True) or {}
+
+    text = (data.get("text") or "").strip()
+    persona = data.get("persona") or {}
+    language = (data.get("language") or "English").strip()
+    force_redesign = bool(data.get("force_redesign", False))
+    auto_dl = bool(data.get("auto_download", False))
+
+    if not text:
+        return jsonify({"error": "Missing 'text' to synthesize"}), 400
+
+    voice_id = (persona.get("voice_id") or "").strip()
+    instruct = (persona.get("instruct") or "").strip()
+    sample_text = (persona.get("sample_text") or "").strip()
+
+    if not voice_id:
+        return jsonify({"error": "Missing 'persona.voice_id'"}), 400
+    if not instruct and voice_id not in _voice_prompt_cache:
+        return jsonify({"error": "Missing 'persona.instruct' for new persona"}), 400
+
+    # Check if required files are present (both models)
+    guard = _ensure_files_present_or_start("audio_quality_persona", auto_download=auto_dl)
+    if guard:
+        return guard
+
+    gen_id = genbus.new("qwen3_tts_persona", {"endpoint": "/audio/quality/persona", "voice_id": voice_id})
+
+    try:
+        gc.collect()
+        genbus.progress(gen_id, "loading", 0, 5)
+
+        # Check if voice is already cached
+        need_design = force_redesign or voice_id not in _voice_prompt_cache
+
+        if need_design:
+            if not instruct:
+                return jsonify({"error": f"Persona '{voice_id}' not cached. Provide 'persona.instruct' to design it."}), 400
+
+            genbus.progress(gen_id, "designing voice", 1, 5)
+
+            # Use sample_text or generate a reasonable sample
+            if not sample_text:
+                sample_text = "Hello, this is my voice. I hope you like it."
+
+            # Design the voice
+            design_model = _load_qwen3_tts_design()
+            wavs, sr = design_model.generate_voice_design(
+                text=sample_text,
+                language=language,
+                instruct=instruct,
+            )
+
+            # Save reference audio
+            ref_path = str(FILES_DIR / f"persona_{voice_id}_ref.wav")
+            import soundfile as sf
+            sf.write(ref_path, wavs[0], sr)
+
+            genbus.progress(gen_id, "creating voice prompt", 2, 5)
+
+            # Create clone prompt
+            clone_model = _load_qwen3_tts_base()
+            voice_prompt = clone_model.create_voice_clone_prompt(
+                ref_audio=(wavs[0], sr),
+                ref_text=sample_text,
+            )
+
+            # Cache the prompt
+            _voice_prompt_cache[voice_id] = {
+                "prompt": voice_prompt,
+                "ref_audio_path": ref_path,
+                "ref_text": sample_text,
+                "instruct": instruct,
+                "created_at": time.time(),
+            }
+
+            logger.info(f"[Qwen3-TTS] Persona voice designed: {voice_id}")
+        else:
+            genbus.progress(gen_id, "using cached voice", 1, 5)
+            logger.info(f"[Qwen3-TTS] Using cached persona: {voice_id}")
+
+        genbus.progress(gen_id, "generating speech", 3, 5)
+
+        # Generate speech with the persona voice
+        clone_model = _load_qwen3_tts_base()
+        voice_prompt = _voice_prompt_cache[voice_id]["prompt"]
+
+        wavs, sr = clone_model.generate_voice_clone(
+            text=text,
+            language=language,
+            voice_clone_prompt=voice_prompt,
+        )
+
+        genbus.progress(gen_id, "saving", 4, 5)
+
+        # Save output
+        out_name = f"persona_{voice_id}_{int(time.time())}_{gen_id[:8]}.wav"
+        out_path = str(FILES_DIR / out_name)
+
+        import soundfile as sf
+        sf.write(out_path, wavs[0], sr)
+
+        genbus.finish(gen_id, {"audio_path": out_path})
+        logger.info(f"[Qwen3-TTS] Persona speech: {out_path}")
+
+        return jsonify({
+            "ok": True,
+            "audio_path": out_path,
+            "voice_id": voice_id,
+            "voice_designed": need_design,
+            "model": "qwen3-tts-persona",
+            "generation_id": gen_id,
+            "generation_websocket_url": generation_url(),
+        }), 201
+
+    except Exception as e:
+        logger.exception("Qwen3-TTS Persona failed")
+        genbus.error(gen_id, str(e))
+        return jsonify({"error": str(e)}), 500
+    finally:
+        DeviceManager.free_memory()
+
+
+@app.route("/audio/quality/voices", methods=["GET"])
+def audio_quality_voices():
+    """List cached voice prompts."""
+    voices = {}
+    for vid, data in _voice_prompt_cache.items():
+        voices[vid] = {
+            "voice_id": vid,
+            "instruct": data.get("instruct"),
+            "ref_text": data.get("ref_text"),
+            "ref_audio_path": data.get("ref_audio_path"),
+            "created_at": data.get("created_at"),
+        }
+    return jsonify({"voices": voices, "count": len(voices)}), 200
+
+
 @app.route("/audio/info", methods=["GET"])
 def audio_info():
     '''Audio model capabilities.'''
@@ -3205,10 +3876,40 @@ def audio_info():
                 "endpoint": "/audio",
                 "languages": CHATTERBOX_LANGUAGES,
                 "features": ["emotion_exaggeration", "voice_cloning", "23_languages"],
-                "requires_voice_reference": False,  # Has default voice
+                "requires_voice_reference": False,
+            },
+            "turbo": {
+                "name": "Kokoro TTS",
+                "endpoint": "/audio/turbo",
+                "voices": KOKORO_VOICES,
+                "default_voices": KOKORO_DEFAULT_VOICE,
+                "features": ["fast_inference", "multiple_voices", "gender_selection", "speed_control"],
+                "requires_voice_reference": False,
+            },
+            "quality_design": {
+                "name": "Qwen3-TTS VoiceDesign",
+                "endpoint": "/audio/quality/design",
+                "features": ["voice_design_from_description", "high_quality", "expressive"],
+                "requires_voice_reference": False,
+                "description": "Create a voice from text description (age, gender, style)",
+            },
+            "quality_clone": {
+                "name": "Qwen3-TTS Clone",
+                "endpoint": "/audio/quality/clone",
+                "features": ["voice_cloning", "high_quality", "reusable_voice_prompts"],
+                "requires_voice_reference": True,
+                "description": "Clone speech from a reference audio or cached voice",
+            },
+            "quality_persona": {
+                "name": "Qwen3-TTS Persona",
+                "endpoint": "/audio/quality/persona",
+                "features": ["voice_design", "voice_cloning", "persona_caching", "high_quality"],
+                "requires_voice_reference": False,
+                "description": "Design a persona voice and generate speech (combines design + clone)",
             },
         },
-        "note": "Uses ONNX for inference",
+        "cached_voices": list(_voice_prompt_cache.keys()),
+        "note": "Turbo uses Kokoro for fast inference, Quality uses Qwen3-TTS for high-quality output",
     }), 200
 
 # =============================================================================

@@ -114,35 +114,64 @@ export const hasPurchasedAgent = (agentId) => {
 };
 
 /**
- * Purchase an agent by paying ETH
- * @param {string} agentId - Unique agent identifier
- * @returns {Promise<{success: boolean, txHash?: string, error?: string}>}
+ * Purchase an agent/skill
+ * Currently mocked until BonzaiSkillRegistry contract is deployed and battle-tested
+ *
+ * @param {string} agentId - Unique agent/skill identifier
+ * @returns {Promise<{success: boolean, txHash?: string, error?: string, mock?: boolean}>}
  */
 export const purchaseAgent = async (agentId) => {
   state.isPurchasing = true;
   state.error = null;
-  
+
   try {
+    // TODO: Enable real purchases after BonzaiSkillRegistry is deployed
+    // For now, always use mock purchase for testing
+    const ENABLE_REAL_PURCHASES = false;
+
+    if (!ENABLE_REAL_PURCHASES) {
+      // Mock purchase for development/testing
+      console.log('[Agent] Mock purchase for:', agentId);
+      const mockTxHash = `mock-${Date.now()}-${Math.random().toString(36).substring(7)}`;
+
+      // Save mock purchase locally
+      savePurchase(agentId, mockTxHash);
+
+      // Log mock transaction
+      state.transactions.push({
+        type: 'agent-purchase',
+        agentId,
+        amount: state.purchasePrice,
+        token: 'ETH',
+        txHash: mockTxHash,
+        timestamp: Date.now(),
+        mock: true,
+      });
+
+      return { success: true, txHash: mockTxHash, mock: true };
+    }
+
+    // Real purchase flow (disabled until contract deployed)
     const signer = await web3Service.getSigner();
     const treasury = CONFIG.treasury?.address || CONFIG.agents?.feeRecipient;
-    
+
     if (!treasury || treasury === ethers.ZeroAddress) {
       throw new Error('Treasury address not configured');
     }
-    
+
     const price = ethers.parseEther(state.purchasePrice);
-    
+
     // Send ETH to treasury
     const tx = await signer.sendTransaction({
       to: treasury,
       value: price,
     });
-    
+
     const receipt = await tx.wait();
-    
+
     // Save purchase locally
     savePurchase(agentId, receipt.hash);
-    
+
     // Log transaction
     state.transactions.push({
       type: 'agent-purchase',
@@ -152,7 +181,7 @@ export const purchaseAgent = async (agentId) => {
       txHash: receipt.hash,
       timestamp: Date.now(),
     });
-    
+
     return { success: true, txHash: receipt.hash };
   } catch (e) {
     const error = e.shortMessage || e.message || String(e);
@@ -193,37 +222,62 @@ const getBonzaiContract = async (withSigner = false) => {
 
 /**
  * Pay running fee (transfer 99 BONZAI to treasury)
+ * Currently mocked until BonzaiSkillRegistry contract is deployed and battle-tested
  * This must be called before each agent execution
- * 
+ *
  * @param {string} agentId - For logging purposes
- * @returns {Promise<{success: boolean, txHash?: string, error?: string}>}
+ * @returns {Promise<{success: boolean, txHash?: string, error?: string, mock?: boolean}>}
  */
 export const payRunningFee = async (agentId) => {
   state.isPayingFee = true;
   state.error = null;
-  
+
   try {
+    // TODO: Enable real fee payments after BonzaiSkillRegistry is deployed
+    // For now, always use mock payment for testing
+    const ENABLE_REAL_FEES = false;
+
+    if (!ENABLE_REAL_FEES) {
+      // Mock fee payment for development/testing
+      console.log('[Agent] Mock fee payment for:', agentId);
+      const mockTxHash = `mock-fee-${Date.now()}-${Math.random().toString(36).substring(7)}`;
+
+      // Log mock transaction
+      state.transactions.push({
+        type: 'agent-run-fee',
+        agentId,
+        amount: state.runningFee,
+        token: 'BONZAI',
+        txHash: mockTxHash,
+        timestamp: Date.now(),
+        mock: true,
+      });
+
+      return { success: true, txHash: mockTxHash, mock: true };
+    }
+
+    // Real fee payment flow (disabled until contract deployed)
     // Check balance first
     if (!hasEnoughForRunningFee()) {
       throw new Error(`Insufficient BONZAI balance. Need ${state.runningFee} BONZAI to run this agent.`);
     }
-    
+
     const treasury = CONFIG.treasury?.address || CONFIG.agents?.feeRecipient;
     if (!treasury || treasury === ethers.ZeroAddress) {
       throw new Error('Treasury address not configured');
     }
-    
+
     const bonzaiContract = await getBonzaiContract(true);
     const decimals = await bonzaiContract.decimals();
     const feeAmount = ethers.parseUnits(state.runningFee.toString(), decimals);
-    
+
     // Transfer BONZAI to treasury
     const tx = await bonzaiContract.transfer(treasury, feeAmount);
     const receipt = await tx.wait();
-    
+
     // Refresh balances
     await web3Service.fetchAllBalances();
-    
+
     // Log transaction
     state.transactions.push({
       type: 'agent-run-fee',
@@ -233,7 +287,7 @@ export const payRunningFee = async (agentId) => {
       txHash: receipt.hash,
       timestamp: Date.now(),
     });
-    
+
     return { success: true, txHash: receipt.hash };
   } catch (e) {
     const error = e.shortMessage || e.message || String(e);
