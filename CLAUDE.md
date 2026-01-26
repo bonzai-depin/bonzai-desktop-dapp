@@ -37,7 +37,7 @@ npm run publish
 │ Vue 3 Renderer (src/components/*.vue)                   │
 │ - GenerativeText (local llama-cpp)                      │
 │ - GenerativeImage (FLUX/SDXL via Flask)                 │
-│ - GenerativeVideo (Wan 2.2 via Flask)                   │
+│ - GenerativeVideo (LTX-2 via Flask)                     │
 │ - GenerativeMusic (ChatterBox via Flask)                  │
 │ - Generative3D, GenerativeRobot, SmartAgent             │
 │ State: Pinia (inferenceStore.js, web3.store.js)         │
@@ -54,7 +54,7 @@ npm run publish
 ┌─────────────────────▼───────────────────────────────────┐
 │ Python Flask Server (src/server/diffuser.py)            │
 │ Endpoints: /image, /video, /audio/music, /3d, /robot/*  │
-│ Models: FLUX, SDXL, Wan 2.2, MusicGen, LeRobot          │
+│ Models: FLUX, SDXL, LTX-2, MusicGen, LeRobot            │
 │ Socket.IO for real-time progress                        │
 └─────────────────────────────────────────────────────────┘
 ```
@@ -127,14 +127,13 @@ BONZAI_SERVER_PORT    # Flask server port (default: 65000)
 
 | Endpoint | Model | Description |
 |----------|-------|-------------|
-| `/image/video/quality` | Wan 2.2 I2V | High-quality I2V with Q2_K GGUF quantization |
+| `/video` | LTX-2 | Fast video generation with GGUF quantization (~10GB) |
 
-### Wan 2.2 I2V Configuration
+### LTX-2 Video Configuration
 
-The `/image/video/quality` endpoint uses Wan 2.2 Image-to-Video with Q4 GGUF quantization (~9.65GB per model file):
-- **HighNoise model**: For initial frame generation
-- **LowNoise model**: For refinement passes
-- **MoE switching**: Automatic model selection based on noise level
+The `/video` endpoint uses LTX-2 (19B DiT) with Q3_K_S GGUF quantization:
+- **Text-to-Video (t2v)**: Generate video from text prompt only
+- **Image-to-Video (i2v)**: Generate video from image + text prompt
 - **Cross-platform**: Works on CUDA, MPS (Apple Silicon), and CPU
 
 Request example:
@@ -142,11 +141,11 @@ Request example:
 {
   "prompt": "A cat walking in the garden",
   "height": 480,
-  "width": 640,
-  "frames": 41,
-  "fps": 8,
-  "steps": 10,
-  "guidance_scale": 3,
+  "width": 768,
+  "num_frames": 81,
+  "fps": 24,
+  "num_inference_steps": 30,
+  "guidance_scale": 3.5,
   "image_base64": "..."
 }
 ```

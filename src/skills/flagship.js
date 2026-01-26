@@ -122,17 +122,6 @@ export const MODEL_REQUIREMENTS = {
   },
 
   // Video Models
-  video_quality: {
-    name: 'Wan 2.2 I2V',
-    type: 'video',
-    pipeline: 'video_quality',
-    endpoint: '/video/quality',
-    repo: 'Wan-AI/Wan2.2-I2V-14B-480P-Diffusers',
-    gguf: ['wan_2.2_i2v_480p_q2_k_highnoise.gguf', 'wan_2.2_i2v_480p_q2_k_lownoise.gguf'],
-    size: '~19.3 GB',
-    vram: '12 GB',
-    description: 'High-quality video generation',
-  },
   video_fast: {
     name: 'LTX-2 Video',
     type: 'video',
@@ -179,9 +168,9 @@ export const SKILL_MODEL_REQUIREMENTS = {
   'virtual-try-on-v1.0.0': ['llm_default', 'image_turbo'],
   'chefs-table-v1.0.0': ['llm_default', 'image_quality'],
   'eli5-v1.0.0': ['llm_default', 'image_turbo', 'audio'],
-  'music-video-forge-v1.0.0': ['llm_default', 'image_turbo', 'video_quality'],
+  'music-video-forge-v1.0.0': ['llm_default', 'image_turbo', 'video_fast'],
   'game-maker-v1.0.0': ['llm_default', 'image_turbo'],
-  'manga-to-anime-v1.0.0': ['llm_default', 'image_turbo', 'video_quality'],
+  'manga-to-anime-v1.0.0': ['llm_default', 'image_turbo', 'video_fast'],
   'hairstyle-studio-v1.0.0': ['llm_default', 'image_turbo'],
   'roleplay-companion-v1.0.0': ['llm_mythomax', 'image_turbo', 'image_quality', 'image_standard', 'audio_quality', 'video_fast', 'vision'],
 };

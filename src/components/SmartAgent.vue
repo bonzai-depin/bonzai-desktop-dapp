@@ -2636,7 +2636,6 @@ export default {
         'image_quality': 'image_quality',
         'image_advanced': 'image_advanced',
         'audio': 'audio',
-        'video_quality': 'video_quality',
         'video_fast': 'video_fast',
         'vision': 'qwen3_vision',
         // 'trellis_3d': '3d', // Not defined in Flask yet
@@ -2738,7 +2737,7 @@ export default {
         } else if (model.type === 'diffusion' || model.type === 'audio' || model.type === 'video' || model.type === '3d') {
           // For Flask models, trigger prefetch via /pipelines/prefetch endpoint
           const port = window.BONZAI_SERVER_PORT || 65000;
-          // Model keys now match pipeline names (e.g., image_standard, audio, video_quality)
+          // Model keys now match pipeline names (e.g., image_standard, audio, video_fast)
           const pipeline = model.pipeline || model.key;
           if (pipeline) {
             showNotification(`Downloading ${model.name}...`, 'info');

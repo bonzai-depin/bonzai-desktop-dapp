@@ -7,7 +7,7 @@ Clean, consolidated version with:
 - Unified video encoding (no duplicate functions)
 - Proper progress reporting for all pipelines
 - Blend interpolation (no ghosting artifacts)
-- WAN 2.2 I2V with Q4 GGUF quantization
+- LTX-2 video generation with GGUF quantization
 """
 from __future__ import annotations
 
@@ -88,9 +88,6 @@ from diffusers import (
     Flux2KleinPipeline,
     FlowMatchEulerDiscreteScheduler,
     AutoencoderKL,
-    AutoencoderKLWan,
-    WanImageToVideoPipeline,
-    WanTransformer3DModel,
     ZImagePipeline,
     ZImageTransformer2DModel,
     LTX2Pipeline,
@@ -178,15 +175,6 @@ Z_REPO = "Tongyi-MAI/Z-Image-Turbo"
 Z_GGUF_NAME = "z_image_turbo-q5_k_m.gguf"
 Z_GGUF_URL = "https://huggingface.co/jayn7/Z-Image-Turbo-GGUF/resolve/main/z_image_turbo-Q5_K_M.gguf"
 
-# WAN 2.2 I2V Model Configuration (Q4 GGUF for better quality - ~9.65GB each)
-WAN_REPO = "Wan-AI/Wan2.2-I2V-A14B-Diffusers"
-WAN22_GGUF_HIGH_NAME = "wan2.2-q4-high.gguf"
-WAN22_GGUF_HIGH_URL = "https://huggingface.co/QuantStack/Wan2.2-I2V-A14B-GGUF/resolve/main/HighNoise/Wan2.2-I2V-A14B-HighNoise-Q4_K_M.gguf"
-WAN22_GGUF_LOW_NAME = "wan2.2-q4-low.gguf"
-WAN22_GGUF_LOW_URL = "https://huggingface.co/QuantStack/Wan2.2-I2V-A14B-GGUF/resolve/main/LowNoise/Wan2.2-I2V-A14B-LowNoise-Q4_K_M.gguf"
-WAN_21_VAE_NAME = "wan_2.1_vae.safetensors"
-WAN_21_VAE_URL = "https://huggingface.co/Comfy-Org/Wan_2.1_ComfyUI_repackaged/resolve/main/split_files/vae/wan_2.1_vae.safetensors"
-
 # LTX-2 (19B DiT Model) - /video endpoint supports:
 # - Text-to-Video (t2v): Generate video from text prompt only
 # - Image-to-Video (i2v): Generate video from image + text prompt
@@ -266,9 +254,6 @@ CHATTERBOX_LANGUAGES = {
 EXPECTED_SIZES = {
     "flux1-krea-dev-q5_k_m.gguf": 8_419_501_344,
     "z_image_turbo-q5_k_m.gguf": 5_522_742_336,
-    "wan2.2-q4-high.gguf": 9_651_739_136,  # ~9.65GB Q4
-    "wan2.2-q4-low.gguf": 9_651_739_136,  # ~9.65GB Q4
-    "wan_2.1_vae.safetensors": 253_815_318,  # ~242MB split VAE
     "umt5-xxl-encoder-q3_k_m.gguf": 5_580_000_000,  # ~5.2GB GGUF text encoder
     "ltx-2-19b-distilled-q3_k_s.gguf": 9_283_503_264,  # 9.28GB Q3_K_S distilled
 }
@@ -1379,14 +1364,6 @@ def _flux_patterns() -> List[str]:
     ]
 
 
-def _wan_patterns() -> List[str]:
-    return [
-        "model_index.json", "scheduler/**", "tokenizer/**", "text_encoder/**",
-        "transformer/**", "transformer_2/**", "vae/**",
-        "**/*.json", "**/*.safetensors", "**/*.bin",
-    ]
-
-
 def allow_patterns_for_repo(repo_id: str) -> Optional[List[str]]:
     if repo_id in ("black-forest-labs/FLUX.1-dev", "black-forest-labs/FLUX.1-Krea-dev"):
         return _flux_patterns()
@@ -1395,8 +1372,6 @@ def allow_patterns_for_repo(repo_id: str) -> Optional[List[str]]:
     if repo_id == Z_REPO:
         return ["model_index.json", "scheduler/**", "tokenizer/**", "text_encoder/**",
                 "transformer/**", "vae/**", "**/*.safetensors", "**/*.json", "**/*.bin"]
-    if repo_id == WAN_REPO:
-        return _wan_patterns()
     if repo_id == CHATTERBOX_REPO:
         return ["**/*"]
     if repo_id == CHATTERBOX_MULTILINGUAL_MODEL_ID:
@@ -1447,12 +1422,6 @@ REPO_SPECS = {
         "must_files": ["model_index.json"],
         "must_weight_dirs": ["unet", "vae"],
         "extra_dirs": ["scheduler"],
-    },
-    "Wan-AI/Wan2.2-I2V-A14B-Diffusers": {
-        "must_files": ["model_index.json"],
-        "must_tokenizers": ["tokenizer"],
-        "must_weight_dirs": ["text_encoder", "vae"],
-        "extra_dirs": ["scheduler", "transformer", "transformer_2"],
     },
     "Tongyi-MAI/Z-Image-Turbo": {
         "must_files": ["model_index.json"],
@@ -1613,7 +1582,7 @@ def offline_mode_if_complete(pipeline: str):
     Context manager that enables offline mode if the pipeline is fully downloaded.
 
     Usage:
-        with offline_mode_if_complete("wan_video"):
+        with offline_mode_if_complete("video_fast"):
             pipe = Pipeline.from_pretrained(...)
 
     - If complete: blocks ALL HTTP requests (HF_HUB_OFFLINE=1, TRANSFORMERS_OFFLINE=1)
@@ -1690,7 +1659,6 @@ def _plan_for(pipeline: str) -> Dict[str, Any]:
     - image_quality: FLUX Krea (high quality)
     - image_advanced: Z turbo (advanced features)
     - audio: Chatterbox TTS
-    - video_quality: Wan 2.2 (high quality video)
     - video_fast: LTX2 GGUF (fast video)
     - vision: Qwen3 VL (image analysis)
     """
@@ -1719,16 +1687,6 @@ def _plan_for(pipeline: str) -> Dict[str, Any]:
         return {"repos_to_fetch": [QWEN3_TTS_BASE_REPO, QWEN3_TTS_DESIGN_REPO], "single_files": []}
 
     # Video pipelines
-    if pipeline in ("video_quality", "wan_video"):
-        # WAN 2.2 with Q4 GGUF for memory efficiency (~9.65GB each)
-        return {
-            "repos_to_fetch": [WAN_REPO],
-            "single_files": [
-                _sf(WAN22_GGUF_HIGH_NAME, WAN22_GGUF_HIGH_URL),
-                _sf(WAN22_GGUF_LOW_NAME, WAN22_GGUF_LOW_URL),
-                _sf(WAN_21_VAE_NAME, WAN_21_VAE_URL),
-            ],
-        }
     if pipeline in ("video_fast", "ltx2_video_gguf"):
         # LTX-2 (19B DiT) with Q4_0 GGUF quantization
         return {
@@ -2130,7 +2088,7 @@ def _as_pil_list(frames_or_output) -> List[Image.Image]:
         if arr.ndim == 3 and arr.shape[0] in (1, 3, 4) and arr.shape[-1] not in (1, 3, 4):
             arr = np.transpose(arr, (1, 2, 0))
         if arr.dtype.kind == "f":
-            # Check if values are in [-1, 1] range (Wan VAE output) or [0, 1] range
+            # Check if values are in [-1, 1] range (VAE output) or [0, 1] range
             if arr.min() < -0.5:  # Likely [-1, 1] range
                 arr = ((arr + 1.0) / 2.0).clip(0.0, 1.0) * 255.0
             else:  # [0, 1] range
@@ -3426,8 +3384,13 @@ def _load_qwen3_tts_base():
 
         logger.info(f"[Qwen3-TTS] Loading Base model on {device}...")
 
-        # Check for flash attention support
-        attn_impl = "flash_attention_2" if device.type == "cuda" else "eager"
+        # Attention implementation: flash_attention_2 for CUDA, sdpa for MPS, eager for CPU
+        if device.type == "cuda":
+            attn_impl = "flash_attention_2"
+        elif device.type == "mps":
+            attn_impl = "sdpa"
+        else:
+            attn_impl = "eager"
 
         with offline_mode_if_complete("audio_quality_clone") as is_offline:
             _qwen3_tts_base = Qwen3TTSModel.from_pretrained(
@@ -3457,7 +3420,13 @@ def _load_qwen3_tts_design():
 
         logger.info(f"[Qwen3-TTS] Loading VoiceDesign model on {device}...")
 
-        attn_impl = "flash_attention_2" if device.type == "cuda" else "eager"
+        # Attention implementation: flash_attention_2 for CUDA, sdpa for MPS, eager for CPU
+        if device.type == "cuda":
+            attn_impl = "flash_attention_2"
+        elif device.type == "mps":
+            attn_impl = "sdpa"
+        else:
+            attn_impl = "eager"
 
         with offline_mode_if_complete("audio_quality_design") as is_offline:
             _qwen3_tts_design = Qwen3TTSModel.from_pretrained(

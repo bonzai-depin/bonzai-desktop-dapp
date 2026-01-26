@@ -31,6 +31,8 @@ jobs:
         run: |
           pip install git+https://github.com/huggingface/diffusers.git
           pip install -r requirements.txt
+          pip install -U qwen-tts --no-deps
+          pip install -U qwen-vl-utils --no-deps
           pip install https://github.com/vBaiCai/python-pesq/archive/master.zip
 
       - name: Build Python binary (macOS ARM64)
@@ -50,6 +52,8 @@ jobs:
             --collect-submodules=safetensors \
             --collect-submodules=peft \
             --collect-submodules=datasets \
+            --collect-submodules=qwen_tts \
+            --collect-submodules=qwen_vl_utils \
             --hidden-import=pytorch_lightning \
             --hidden-import=torchaudio \
             --hidden-import=torchaudio.functional \
