@@ -102,8 +102,8 @@ pycparser==2.22
 pycryptodomex==3.23.0
 pydantic==2.11.4
 pydantic_core==2.33.2
-qwen-tts>=0.1.0
-qwen-vl-utils>=0.0.8
+qwen-tts==0.0.5
+qwen-vl-utils==0.0.14
 Pygments==2.19.1
 pyinstaller==6.17.0
 pyinstaller-hooks-contrib==2026.0
