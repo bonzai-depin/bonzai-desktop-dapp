@@ -62,6 +62,56 @@ torch.load = _patched_torch_load
 
 import numpy as np
 
+# ============================================================================
+# SOX MONKEY-PATCH: Replace sox binary dependency with pure Python
+# ============================================================================
+# The qwen_tts package uses sox.Transformer for audio normalization to -6dB.
+# Instead of requiring the sox binary, we patch it with numpy-based normalization.
+
+
+class _MockSoxTransformer:
+    """Pure Python replacement for sox.Transformer used by qwen_tts."""
+
+    def __init__(self):
+        self._target_db = -6.0  # Default normalization level
+
+    def norm(self, db_level=-6.0):
+        """Set target normalization level in dB."""
+        self._target_db = db_level
+        return self
+
+    def build_array(self, input_array, sample_rate_in=16000):
+        """Normalize audio array to target dB level (replaces sox norm)."""
+        audio = np.asarray(input_array, dtype=np.float32)
+
+        # Calculate target amplitude from dB
+        target_amplitude = 10 ** (self._target_db / 20.0)
+
+        # Find current peak
+        peak = np.max(np.abs(audio))
+
+        if peak > 1e-8:  # Avoid division by zero
+            # Scale to target amplitude
+            normalized = audio * (target_amplitude / peak)
+        else:
+            normalized = audio
+
+        return normalized.astype(np.float32)
+
+
+class _MockSoxModule:
+    """Mock sox module that provides Transformer class."""
+
+    Transformer = _MockSoxTransformer
+
+
+# Install the mock before qwen_tts imports sox
+import sys
+
+sys.modules["sox"] = _MockSoxModule()
+
+# ============================================================================
+
 import torchaudio as ta
 
 from PIL import Image
@@ -1454,6 +1504,21 @@ REPO_SPECS = {
         "must_tokenizers": [],
         "must_weight_dirs": [],
         "extra_dirs": [],
+        "fallback_any_weights": True,
+    },
+    # Qwen3-TTS: Text-to-speech models (no model_index.json, uses config.json)
+    "Qwen/Qwen3-TTS-12Hz-1.7B-Base": {
+        "must_files": ["config.json"],
+        "must_tokenizers": [],
+        "must_weight_dirs": [],
+        "extra_dirs": ["speech_tokenizer"],
+        "fallback_any_weights": True,
+    },
+    "Qwen/Qwen3-TTS-12Hz-1.7B-VoiceDesign": {
+        "must_files": ["config.json"],
+        "must_tokenizers": [],
+        "must_weight_dirs": [],
+        "extra_dirs": ["speech_tokenizer"],
         "fallback_any_weights": True,
     },
 }
@@ -3392,9 +3457,13 @@ def _load_qwen3_tts_base():
         else:
             attn_impl = "eager"
 
+        # Use local path if available, otherwise fall back to repo name
+        local_dir = repo_local_dir(QWEN3_TTS_BASE_REPO)
+        model_path = str(local_dir) if local_dir.exists() else QWEN3_TTS_BASE_REPO
+
         with offline_mode_if_complete("audio_quality_clone") as is_offline:
             _qwen3_tts_base = Qwen3TTSModel.from_pretrained(
-                QWEN3_TTS_BASE_REPO,
+                model_path,
                 device_map=str(device),
                 torch_dtype=dtype,
                 attn_implementation=attn_impl,
@@ -3428,9 +3497,13 @@ def _load_qwen3_tts_design():
         else:
             attn_impl = "eager"
 
+        # Use local path if available, otherwise fall back to repo name
+        local_dir = repo_local_dir(QWEN3_TTS_DESIGN_REPO)
+        model_path = str(local_dir) if local_dir.exists() else QWEN3_TTS_DESIGN_REPO
+
         with offline_mode_if_complete("audio_quality_design") as is_offline:
             _qwen3_tts_design = Qwen3TTSModel.from_pretrained(
-                QWEN3_TTS_DESIGN_REPO,
+                model_path,
                 device_map=str(device),
                 torch_dtype=dtype,
                 attn_implementation=attn_impl,
@@ -5262,6 +5335,22 @@ def health():
         "local_only": LOCAL_ONLY,
         "model_dir": str(MODEL_DIR),
     }))
+
+
+@app.route("/memory/clear", methods=["POST"])
+def memory_clear():
+    """
+    Clear GPU/CPU memory after generation to free resources.
+    Called by frontend between generation tasks.
+    """
+    try:
+        gc.collect()
+        DeviceManager.free_memory()
+        logger.info("[Memory] Cleared RAM/VRAM on request")
+        return jsonify({"success": True, "message": "Memory cleared"})
+    except Exception as e:
+        logger.warning(f"[Memory] Clear failed: {e}")
+        return jsonify({"success": False, "error": str(e)}), 500
 
 
 # =============================================================================

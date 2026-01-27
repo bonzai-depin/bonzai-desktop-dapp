@@ -13,15 +13,6 @@
  */
 
 /**
- * @typedef {Object} SkillPricing
- * @property {string} purchasePrice - Price in purchaseToken (e.g., "0.1")
- * @property {string} purchaseToken - Token symbol ("ETH" or "BONZAI")
- * @property {number} runningFee - Fee per execution in runningFeeToken
- * @property {string} runningFeeToken - Token for running fee ("BONZAI")
- * @property {string} [feeRecipient] - Override recipient address (defaults to author)
- */
-
-/**
  * @typedef {Object} SkillInputField
  * @property {string} type - Input type: "number", "string", "select", "boolean"
  * @property {*} default - Default value
@@ -87,12 +78,8 @@
  * @typedef {Object} OnChainData
  * @property {string} id - Skill ID (bytes32)
  * @property {string} author - Author address
- * @property {string} purchasePrice - ETH price
- * @property {number} runningFee - BONZAI fee
  * @property {boolean} isVerified - Verification status
- * @property {number} totalPurchases - Total purchases
  * @property {number} totalExecutions - Total executions
- * @property {boolean} purchased - Whether current user purchased
  */
 
 /**
@@ -103,9 +90,7 @@
  * @property {string} description - Skill description
  * @property {string} version - Skill version
  * @property {SkillAuthor} author - Author information
- * @property {string} category - Category: "analysis", "trading", "training", etc.
- * @property {string[]} [tags] - Searchable tags
- * @property {SkillPricing} pricing - Pricing configuration
+ * @property {string} category - Category: "finance", "entertainment", etc.
  * @property {SkillRequirements} [requirements] - Access requirements
  * @property {Object.<string, SkillInputField>} inputs - Input field definitions
  * @property {SkillPrompt} prompt - Prompt configuration
@@ -119,127 +104,38 @@
 export const SKILL_SCHEMA_VERSION = '1.0.0';
 
 // Default values
-export const DEFAULT_PRICING = {
-  purchasePrice: '0.1',
-  purchaseToken: 'ETH',
-  runningFee: 99,
-  runningFeeToken: 'BONZAI',
-};
-
 export const DEFAULT_REQUIREMENTS = {
   minLevel: 1,
   requiredApis: [],
   requiredPermissions: ['network:read'],
 };
 
-// Categories
+// Categories (alphabetically sorted)
 export const SKILL_CATEGORIES = [
-  // Core/Platform categories
-  'prediction-market',  // Polymarket, TCG, DSLA prediction markets
-  'analysis',           // Data analysis and insights
-  'trading',            // Trading strategies and copy-trading
-  'training',           // Model training and fine-tuning
-  'automation',         // Automated workflows
-  // Consumer lifestyle categories
-  'housing',            // Real estate, interior design, renovation
-  'transportation',     // Vehicles, travel, commute
-  'food',               // Recipes, meal planning, restaurant
-  'insurance',          // Policy analysis, claims, coverage
-  'healthcare',         // Wellness, fitness, mental health
-  'entertainment',      // Stories, music, games, media
-  'education',          // Learning, tutoring, courses
-  'fashion',            // Style, wardrobe, accessories
-  'personal-care',      // Skincare, grooming, self-care
-  'reading',            // Books, articles, audiobooks
-  // General
-  'utility',            // General utilities
+  'education',
+  'entertainment',
+  'fashion',
+  'finance',
+  'food',
+  'healthcare',
+  'housing',
+  'personal-care',
+  'reading',
+  'transportation',
 ];
 
-// Category metadata for UI
+// Category metadata for UI (alphabetically sorted)
 export const SKILL_CATEGORY_META = {
-  // Core/Platform
-  'prediction-market': {
-    label: 'Prediction Markets',
-    icon: 'finance_mode',
-    description: 'Issue and trade on prediction market outcomes',
-  },
-  'analysis': {
-    label: 'Analysis',
-    icon: 'analytics',
-    description: 'Data analysis and market insights',
-  },
-  'trading': {
-    label: 'Trading',
-    icon: 'candlestick_chart',
-    description: 'Copy-trading and trading strategies',
-  },
-  'training': {
-    label: 'Training',
-    icon: 'model_training',
-    description: 'AI model training and fine-tuning',
-  },
-  'automation': {
-    label: 'Automation',
-    icon: 'auto_mode',
-    description: 'Automated workflows and pipelines',
-  },
-  // Consumer lifestyle
-  'housing': {
-    label: 'Housing',
-    icon: 'home',
-    description: 'Interior design, staging, renovation visualization',
-  },
-  'transportation': {
-    label: 'Transportation',
-    icon: 'directions_car',
-    description: 'Vehicle customization, travel planning',
-  },
-  'food': {
-    label: 'Food',
-    icon: 'restaurant',
-    description: 'Recipes, meal planning, culinary content',
-  },
-  'insurance': {
-    label: 'Insurance',
-    icon: 'shield',
-    description: 'Policy analysis, claims, coverage optimization',
-  },
-  'healthcare': {
-    label: 'Healthcare',
-    icon: 'health_and_safety',
-    description: 'Wellness, fitness, meditation, mental health',
-  },
-  'entertainment': {
-    label: 'Entertainment',
-    icon: 'movie',
-    description: 'Stories, music, games, creative content',
-  },
-  'education': {
-    label: 'Education',
-    icon: 'school',
-    description: 'Learning, tutoring, animated lessons',
-  },
-  'fashion': {
-    label: 'Fashion',
-    icon: 'checkroom',
-    description: 'Style, lookbooks, wardrobe planning',
-  },
-  'personal-care': {
-    label: 'Personal Care',
-    icon: 'spa',
-    description: 'Skincare, grooming, self-care routines',
-  },
-  'reading': {
-    label: 'Reading',
-    icon: 'menu_book',
-    description: 'Books, audiobooks, literary content',
-  },
-  // General
-  'utility': {
-    label: 'Utility',
-    icon: 'handyman',
-    description: 'General purpose tools',
-  },
+  'education': { label: 'Education', icon: 'school' },
+  'entertainment': { label: 'Entertainment', icon: 'chair' },
+  'fashion': { label: 'Fashion', icon: 'checkroom' },
+  'finance': { label: 'Finance', icon: 'finance_mode' },
+  'food': { label: 'Food', icon: 'restaurant' },
+  'healthcare': { label: 'Healthcare', icon: 'health_and_safety' },
+  'housing': { label: 'Housing', icon: 'home' },
+  'personal-care': { label: 'Personal Care', icon: 'spa' },
+  'reading': { label: 'Reading', icon: 'menu_book' },
+  'transportation': { label: 'Transportation', icon: 'directions_car' },
 };
 
 /**
@@ -279,9 +175,6 @@ export function validateSkillDefinition(skill) {
   if (!skill.author?.address) {
     errors.push('Missing author address');
   }
-  if (!skill.pricing) {
-    errors.push('Missing pricing');
-  }
   if (!skill.inputs || Object.keys(skill.inputs).length === 0) {
     errors.push('At least one input is required');
   }
@@ -306,7 +199,13 @@ export function validateSkillDefinition(skill) {
 export function createSkillDefinition(partial) {
   const now = new Date().toISOString();
 
+  // Extract known nested objects to merge properly
+  const { author, requirements, prompt, tools, execution, metadata, ...rest } = partial;
+
   return {
+    // Spread any additional custom properties first (like featured, tags, chatBased, etc.)
+    ...rest,
+    // Then set the standard properties with defaults
     schema_version: SKILL_SCHEMA_VERSION,
     id: partial.id || generateSkillId(partial.name || 'unnamed', partial.version || '1.0.0'),
     name: partial.name || 'Unnamed Skill',
@@ -316,44 +215,38 @@ export function createSkillDefinition(partial) {
       address: '0x0000000000000000000000000000000000000000',
       name: 'Unknown',
       verified: false,
-      ...partial.author,
+      ...author,
     },
-    category: partial.category || 'utility',
-    tags: partial.tags || [],
-    pricing: {
-      ...DEFAULT_PRICING,
-      ...partial.pricing,
-    },
+    category: partial.category || 'finance',
     requirements: {
       ...DEFAULT_REQUIREMENTS,
-      ...partial.requirements,
+      ...requirements,
     },
     inputs: partial.inputs || {},
     prompt: {
       system: '',
       task: '',
-      ...partial.prompt,
+      ...prompt,
     },
     tools: {
       bonzai: [],
       mcp: [],
-      ...partial.tools,
+      ...tools,
     },
     execution: {
       type: 'javascript',
-      ...partial.execution,
+      ...execution,
     },
     metadata: {
       createdAt: now,
       updatedAt: now,
-      ...partial.metadata,
+      ...metadata,
     },
   };
 }
 
 export default {
   SKILL_SCHEMA_VERSION,
-  DEFAULT_PRICING,
   DEFAULT_REQUIREMENTS,
   SKILL_CATEGORIES,
   SKILL_CATEGORY_META,

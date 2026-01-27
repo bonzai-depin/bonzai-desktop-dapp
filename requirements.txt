@@ -128,7 +128,6 @@ simple-websocket==1.1.0
 six==1.17.0
 smart-open==7.1.0
 soundfile==0.13.1
-sox>=1.4.0
 spacy==3.8.6
 spacy-curated-transformers==0.3.0
 spacy-legacy==3.0.12

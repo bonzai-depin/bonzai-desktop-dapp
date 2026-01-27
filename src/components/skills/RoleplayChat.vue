@@ -4,7 +4,9 @@
     <div v-if="phase === 'setup'" class="setup-phase">
       <!-- Companion Selection -->
       <div class="models__activity--payouts mb-5">
-        <h3 class="fira-sans-condensed-black-italic has-text-white has-text-left is-size-3 mb-4">
+        <h3
+          class="fira-sans-condensed-black-italic has-text-white has-text-left is-size-3 mb-4"
+        >
           <span class="material-symbols-outlined mr-2 is-size-1">person</span>
           Choose Companion
         </h3>
@@ -17,21 +19,32 @@
             class="companion-card"
             :class="{
               'is-selected': selectedCompanion?.id === companion.id,
-              'has-session': getSessionInfo(companion)
+              'has-session': getSessionInfo(companion),
             }"
             @click="selectCompanion(companion)"
           >
             <div class="companion-avatar">
               <span class="material-symbols-outlined">
-                {{ getAvatarIcon(companion.avatar) }}
+                {{ getAvatarIcon(companion.avatar, companion.gender) }}
               </span>
               <!-- Session indicator badge -->
-              <span v-if="getSessionInfo(companion)" class="session-badge" :title="getSessionInfo(companion).sessionCount + ' session(s), ' + getSessionInfo(companion).messageCount + ' total msgs'">
+              <span
+                v-if="getSessionInfo(companion)"
+                class="session-badge"
+                :title="
+                  getSessionInfo(companion).sessionCount +
+                  ' session(s), ' +
+                  getSessionInfo(companion).messageCount +
+                  ' total msgs'
+                "
+              >
                 {{ getSessionInfo(companion).sessionCount }}
               </span>
             </div>
             <div class="companion-info">
-              <h4 class="companion-name fira-sans-condensed-black-italic">{{ companion.name }}</h4>
+              <h4 class="companion-name fira-sans-condensed-black-italic">
+                {{ companion.name }}
+              </h4>
               <p class="companion-desc">{{ companion.description }}</p>
             </div>
           </div>
@@ -46,7 +59,9 @@
               <span class="material-symbols-outlined">add</span>
             </div>
             <div class="companion-info">
-              <h4 class="companion-name fira-sans-condensed-black-italic">Create Custom</h4>
+              <h4 class="companion-name fira-sans-condensed-black-italic">
+                Create Custom
+              </h4>
               <p class="companion-desc">Design your own companion</p>
             </div>
           </div>
@@ -88,22 +103,45 @@
               @click="generateCustomCompanion"
               :disabled="!customCompanionPrompt || isGenerating"
             >
-              <span v-if="isGenerating" class="material-symbols-outlined rotating mr-1">progress_activity</span>
-              <span v-else class="material-symbols-outlined mr-1">magic_button</span>
-              {{ isGenerating ? 'Generating...' : 'Generate' }}
+              <span
+                v-if="isGenerating"
+                class="material-symbols-outlined rotating mr-1"
+              >
+                progress_activity
+              </span>
+              <span v-else class="material-symbols-outlined mr-1">
+                magic_button
+              </span>
+              {{ isGenerating ? "Generating..." : "Generate" }}
             </button>
-            <button class="button" @click="showCustomCompanion = false">Cancel</button>
+            <button class="button" @click="showCustomCompanion = false">
+              Cancel
+            </button>
           </div>
 
           <!-- Generated Custom Companion Preview -->
           <div v-if="customCompanion" class="custom-companion-preview mt-4 p-3">
-            <h5 class="fira-sans-condensed-black-italic has-text-success">{{ customCompanion.name }}</h5>
-            <p class="is-size-7 has-text-grey-light">{{ customCompanion.description }}</p>
+            <h5 class="fira-sans-condensed-black-italic has-text-success">
+              {{ customCompanion.name }}
+            </h5>
+            <p class="is-size-7 has-text-grey-light">
+              {{ customCompanion.description }}
+            </p>
             <div class="tags mt-2">
-              <span class="tag is-dark is-small">{{ customCompanion.personality }}</span>
+              <span class="tag is-dark is-small">
+                {{ customCompanion.personality }}
+              </span>
             </div>
-            <button class="button is-success is-small mt-2" @click="useCustomCompanion">
-              <span class="material-symbols-outlined mr-1" style="font-size: 14px;">check</span>
+            <button
+              class="button is-success is-small mt-2"
+              @click="useCustomCompanion"
+            >
+              <span
+                class="material-symbols-outlined mr-1"
+                style="font-size: 14px"
+              >
+                check
+              </span>
               Use This Companion
             </button>
           </div>
@@ -112,8 +150,12 @@
 
       <!-- Scenario Selection -->
       <div class="models__activity--payouts mb-5">
-        <h3 class="fira-sans-condensed-black-italic has-text-white has-text-left is-size-3 mb-4">
-          <span class="material-symbols-outlined mr-2 is-size-1">landscape</span>
+        <h3
+          class="fira-sans-condensed-black-italic has-text-white has-text-left is-size-3 mb-4"
+        >
+          <span class="material-symbols-outlined mr-2 is-size-1">
+            landscape
+          </span>
           Choose Scenario
         </h3>
 
@@ -125,7 +167,9 @@
             :class="{ 'is-selected': selectedScenario?.id === scenario.id }"
             @click="selectScenario(scenario)"
           >
-            <h4 class="scenario-name fira-sans-condensed-black-italic">{{ scenario.name }}</h4>
+            <h4 class="scenario-name fira-sans-condensed-black-italic">
+              {{ scenario.name }}
+            </h4>
             <p class="scenario-desc">{{ scenario.description }}</p>
             <span class="tag is-dark is-small">{{ scenario.mood }}</span>
           </div>
@@ -166,18 +210,39 @@
               @click="generateCustomScenario"
               :disabled="!customScenarioPrompt || isGenerating"
             >
-              <span v-if="isGenerating" class="material-symbols-outlined rotating mr-1">progress_activity</span>
-              <span v-else class="material-symbols-outlined mr-1">magic_button</span>
+              <span
+                v-if="isGenerating"
+                class="material-symbols-outlined rotating mr-1"
+              >
+                progress_activity
+              </span>
+              <span v-else class="material-symbols-outlined mr-1">
+                magic_button
+              </span>
               Generate
             </button>
-            <button class="button" @click="showCustomScenario = false">Cancel</button>
+            <button class="button" @click="showCustomScenario = false">
+              Cancel
+            </button>
           </div>
 
           <div v-if="customScenario" class="custom-scenario-preview mt-4 p-3">
-            <h5 class="fira-sans-condensed-black-italic has-text-success">{{ customScenario.name }}</h5>
-            <p class="is-size-7 has-text-grey-light">{{ customScenario.setting }}</p>
-            <button class="button is-success is-small mt-2" @click="useCustomScenario">
-              <span class="material-symbols-outlined mr-1" style="font-size: 14px;">check</span>
+            <h5 class="fira-sans-condensed-black-italic has-text-success">
+              {{ customScenario.name }}
+            </h5>
+            <p class="is-size-7 has-text-grey-light">
+              {{ customScenario.setting }}
+            </p>
+            <button
+              class="button is-success is-small mt-2"
+              @click="useCustomScenario"
+            >
+              <span
+                class="material-symbols-outlined mr-1"
+                style="font-size: 14px"
+              >
+                check
+              </span>
               Use This Scenario
             </button>
           </div>
@@ -186,7 +251,9 @@
 
       <!-- Settings -->
       <div class="models__activity--payouts mb-5">
-        <h3 class="fira-sans-condensed-black-italic has-text-white has-text-left is-size-3 mb-4">
+        <h3
+          class="fira-sans-condensed-black-italic has-text-white has-text-left is-size-3 mb-4"
+        >
           <span class="material-symbols-outlined mr-2 is-size-1">settings</span>
           Settings
         </h3>
@@ -194,7 +261,11 @@
         <div class="columns">
           <div class="column is-6">
             <div class="field">
-              <label class="label has-text-white fira-sans-condensed-black-italic">Content Level</label>
+              <label
+                class="label has-text-white fira-sans-condensed-black-italic"
+              >
+                Content Level
+              </label>
               <div class="control content-level-selector">
                 <div
                   v-for="(config, level) in contentLevels"
@@ -212,51 +283,105 @@
 
           <div class="column is-6">
             <div class="field">
-              <label class="label has-text-white fira-sans-condensed-black-italic">Media Options</label>
+              <label
+                class="label has-text-white fira-sans-condensed-black-italic"
+              >
+                Media Options
+              </label>
               <div class="media-checkboxes">
-                <label class="checkbox media-option" :class="{ 'is-unavailable': !isModelAvailable('image_turbo') }">
-                  <input type="checkbox" v-model="settings.enableImage" :disabled="!isModelAvailable('image_turbo')">
+                <label
+                  class="checkbox media-option"
+                  :class="{
+                    'is-unavailable': !isModelAvailable('image_turbo'),
+                  }"
+                >
+                  <input
+                    type="checkbox"
+                    v-model="settings.enableImage"
+                    :disabled="!isModelAvailable('image_turbo')"
+                  />
                   <span class="material-symbols-outlined">image</span>
                   <span>Image</span>
-                  <span v-if="!isModelAvailable('image_turbo')" class="tag is-small is-warning ml-1">Download</span>
+                  <span
+                    v-if="!isModelAvailable('image_turbo')"
+                    class="tag is-small is-warning ml-1"
+                  >
+                    Download
+                  </span>
                 </label>
-                <label class="checkbox media-option" :class="{ 'is-unavailable': !isModelAvailable('audio') }">
-                  <input type="checkbox" v-model="settings.enableAudio" :disabled="!isModelAvailable('audio')">
+                <label
+                  class="checkbox media-option"
+                  :class="{
+                    'is-unavailable': !isModelAvailable('audio_quality'),
+                  }"
+                >
+                  <input
+                    type="checkbox"
+                    v-model="settings.enableAudio"
+                    :disabled="!isModelAvailable('audio_quality')"
+                  />
                   <span class="material-symbols-outlined">volume_up</span>
                   <span>Voice</span>
-                  <span v-if="!isModelAvailable('audio')" class="tag is-small is-warning ml-1">Download</span>
+                  <span
+                    v-if="!isModelAvailable('audio_quality')"
+                    class="tag is-small is-warning ml-1"
+                  >
+                    Download
+                  </span>
                 </label>
-                <label class="checkbox media-option" :class="{ 'is-unavailable': !isModelAvailable('video_fast') }">
-                  <input type="checkbox" v-model="settings.enableVideo" :disabled="!isModelAvailable('video_fast')">
+                <label
+                  class="checkbox media-option"
+                  :class="{ 'is-unavailable': !isModelAvailable('video_fast') }"
+                >
+                  <input
+                    type="checkbox"
+                    v-model="settings.enableVideo"
+                    :disabled="!isModelAvailable('video_fast')"
+                  />
                   <span class="material-symbols-outlined">movie</span>
                   <span>Video</span>
-                  <span v-if="!isModelAvailable('video_fast')" class="tag is-small is-warning ml-1">Download</span>
+                  <span
+                    v-if="!isModelAvailable('video_fast')"
+                    class="tag is-small is-warning ml-1"
+                  >
+                    Download
+                  </span>
                 </label>
-                <label class="checkbox media-option" :class="{ 'is-unavailable': !isModelAvailable('vision') }">
-                  <input type="checkbox" v-model="settings.enableVision" :disabled="!isModelAvailable('vision')">
+                <label
+                  class="checkbox media-option"
+                  :class="{ 'is-unavailable': !isModelAvailable('vision') }"
+                >
+                  <input
+                    type="checkbox"
+                    v-model="settings.enableVision"
+                    :disabled="!isModelAvailable('vision')"
+                  />
                   <span class="material-symbols-outlined">visibility</span>
                   <span>Vision</span>
-                  <span v-if="!isModelAvailable('vision')" class="tag is-small is-warning ml-1">Download</span>
+                  <span
+                    v-if="!isModelAvailable('vision')"
+                    class="tag is-small is-warning ml-1"
+                  >
+                    Download
+                  </span>
                 </label>
               </div>
-              <p class="help has-text-grey-light mt-2">Video generates on peak emotions. Vision allows image uploads.</p>
+              <p class="help has-text-grey-light mt-2">
+                Video generates on peak emotions. Vision allows image uploads.
+              </p>
             </div>
           </div>
-        </div>
-
-        <!-- Model Requirements Warning -->
-        <div v-if="!canStartChat" class="notification is-warning is-light mt-4">
-          <p class="has-text-weight-bold">
-            <span class="material-symbols-outlined mr-1" style="vertical-align: middle;">warning</span>
-            Missing Required Models
-          </p>
-          <p class="is-size-7 mt-2">The LLM model ({{ requiredLLMName }}) must be downloaded before starting a chat.</p>
         </div>
       </div>
 
       <!-- Saved Sessions for Selected Companion -->
-      <div v-if="selectedCompanion && companionSessions.length > 0" class="models__activity--payouts mb-5">
-        <h3 class="fira-sans-condensed-black-italic has-text-white has-text-left is-size-3 mb-4">
+      <div
+        v-if="selectedCompanion && companionSessions.length > 0"
+        class="models__activity--payouts mb-5"
+      >
+        <h3
+          class="fira-sans-condensed-black-italic has-text-white has-text-left is-size-3 mb-4"
+        >
           <span class="material-symbols-outlined mr-2 is-size-1">history</span>
           Saved Sessions with {{ selectedCompanion.name }}
         </h3>
@@ -268,24 +393,83 @@
           >
             <div class="session-info">
               <div class="session-header">
-                <span class="scenario-name fira-sans-condensed-black-italic">{{ session.scenario?.name || 'Unknown Scenario' }}</span>
-                <span class="tag is-small is-info ml-2">{{ session.messageCount }} msgs</span>
+                <span class="scenario-name fira-sans-condensed-black-italic">
+                  {{ session.scenario?.name || "Unknown Scenario" }}
+                </span>
+                <span class="tag is-small is-info ml-2">
+                  {{ session.messageCount }} msgs
+                </span>
               </div>
               <p class="session-meta is-size-7 has-text-grey-light">
-                {{ contentLevels[session.settings?.contentLevel]?.label || session.settings?.contentLevel }}
+                {{
+                  contentLevels[session.settings?.contentLevel]?.label ||
+                  session.settings?.contentLevel
+                }}
                 • {{ formatResponseMode(session.settings?.responseMode) }}
-                <span v-if="session.updatedAt">• {{ formatSessionDate(session.updatedAt) }}</span>
+                <span v-if="session.updatedAt">
+                  • {{ formatSessionDate(session.updatedAt) }}
+                </span>
               </p>
             </div>
             <div class="session-actions">
-              <button class="button is-info is-small" @click="resumeSession(session.key)">
-                <span class="material-symbols-outlined mr-1" style="font-size: 14px;">play_arrow</span>
+              <button
+                class="button is-info is-small"
+                @click="resumeSession(session.key)"
+              >
+                <span
+                  class="material-symbols-outlined mr-1"
+                  style="font-size: 14px"
+                >
+                  play_arrow
+                </span>
                 Resume
               </button>
-              <button class="button is-danger is-small is-outlined" @click="deleteSession(session.key)">
-                <span class="material-symbols-outlined" style="font-size: 14px;">delete</span>
+              <button
+                class="button is-danger is-small is-outlined"
+                @click="deleteSession(session.key)"
+              >
+                <span class="material-symbols-outlined" style="font-size: 14px">
+                  delete
+                </span>
               </button>
             </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Dynamic Download Requirements -->
+      <div class="model-requirements mt-4">
+        <!-- Missing Models (Red) -->
+        <div
+          v-if="missingModels.length > 0"
+          class="notification is-danger is-light mb-3"
+        >
+          <p class="has-text-weight-bold mb-2">
+            <span
+              class="material-symbols-outlined mr-1"
+              style="vertical-align: middle"
+            >
+              download
+            </span>
+            Download Required
+          </p>
+          <div class="requirements-list">
+            <ul
+              v-for="modelKey in missingModels"
+              :key="modelKey"
+              class="requirement-item is-missing"
+            >
+              <span class="material-symbols-outlined" style="font-size: 16px">
+                cancel
+              </span>
+              <span class="model-name">{{ getModelInfo(modelKey).name }}</span>
+              <span class="tag is-small is-dark ml-2">
+                {{ getModelInfo(modelKey).size }}
+              </span>
+              <span class="tag is-small is-danger ml-1">
+                {{ getModelInfo(modelKey).type }}
+              </span>
+            </ul>
           </div>
         </div>
       </div>
@@ -298,11 +482,19 @@
           @click="startNewChat"
         >
           <span class="material-symbols-outlined mr-2">play_arrow</span>
-          {{ matchingSession ? 'Start New / Resume' : 'Start Roleplay' }}
+          {{ matchingSession ? "Start New / Resume" : "Start Roleplay" }}
         </button>
-        <p v-if="!canStartChat && modelAvailabilityChecked" class="help has-text-danger mt-2">
-          <span class="material-symbols-outlined" style="font-size: 14px; vertical-align: middle;">error</span>
-          Download the required LLM model first
+        <p
+          v-if="!canStartChat && modelAvailabilityChecked"
+          class="help has-text-danger mt-2"
+        >
+          <span
+            class="material-symbols-outlined"
+            style="font-size: 14px; vertical-align: middle"
+          >
+            error
+          </span>
+          Download the required models above first
         </p>
       </div>
 
@@ -314,23 +506,39 @@
               <span class="material-symbols-outlined mr-2">folder_open</span>
               Existing Session Found
             </h3>
-            <button class="delete is-medium" @click="closeSessionManager"></button>
+            <button
+              class="delete is-medium"
+              @click="closeSessionManager"
+            ></button>
           </div>
           <div class="modal-body">
             <p class="has-text-white mb-4">
-              You have a saved session with <strong>{{ selectedCompanion?.name }}</strong> in
+              You have a saved session with
+              <strong>{{ selectedCompanion?.name }}</strong>
+              in
               <strong>{{ selectedScenario?.name }}</strong>
-              ({{ contentLevels[settings.contentLevel]?.label }}, {{ formatResponseMode(responseMode) }}).
+              ({{ contentLevels[settings.contentLevel]?.label }},
+              {{ formatResponseMode(responseMode) }}).
             </p>
-            <p class="has-text-grey-light is-size-7 mb-4" v-if="matchingSession">
-              {{ matchingSession.history?.length || 0 }} messages • Last activity: {{ formatSessionDate(matchingSession.updatedAt) }}
+            <p
+              class="has-text-grey-light is-size-7 mb-4"
+              v-if="matchingSession"
+            >
+              {{ matchingSession.history?.length || 0 }} messages • Last
+              activity: {{ formatSessionDate(matchingSession.updatedAt) }}
             </p>
             <div class="buttons is-centered">
-              <button class="button is-info is-medium" @click="resumeMatchingSession">
+              <button
+                class="button is-info is-medium"
+                @click="resumeMatchingSession"
+              >
                 <span class="material-symbols-outlined mr-2">replay</span>
                 Resume Session
               </button>
-              <button class="button is-warning is-medium" @click="forceStartNewChat">
+              <button
+                class="button is-warning is-medium"
+                @click="forceStartNewChat"
+              >
                 <span class="material-symbols-outlined mr-2">add</span>
                 Start Fresh
               </button>
@@ -348,25 +556,36 @@
           <div class="column">
             <div class="companion-header">
               <span class="material-symbols-outlined mr-2">
-                {{ getAvatarIcon(selectedCompanion?.avatar) }}
+                {{ getAvatarIcon(selectedCompanion?.avatar, selectedCompanion?.gender) }}
               </span>
               <div>
                 <h3 class="fira-sans-condensed-black-italic has-text-white">
                   {{ selectedCompanion?.name }}
                 </h3>
-                <p class="has-text-grey-light is-size-7">{{ selectedScenario?.name }}</p>
+                <p class="has-text-grey-light is-size-7">
+                  {{ selectedScenario?.name }}
+                </p>
               </div>
             </div>
           </div>
           <div class="column is-narrow">
             <div class="tags">
-              <span class="tag is-info">{{ contentLevels[settings.contentLevel]?.label }}</span>
-              <span class="tag is-dark">{{ formatResponseMode(responseMode) }}</span>
+              <span class="tag is-info">
+                {{ contentLevels[settings.contentLevel]?.label }}
+              </span>
+              <span class="tag is-dark">
+                {{ formatResponseMode(responseMode) }}
+              </span>
             </div>
           </div>
           <div class="column is-narrow">
             <button class="button is-danger is-small" @click="endChat">
-              <span class="material-symbols-outlined mr-1" style="font-size: 14px;">close</span>
+              <span
+                class="material-symbols-outlined mr-1"
+                style="font-size: 14px"
+              >
+                close
+              </span>
               End
             </button>
           </div>
@@ -391,20 +610,30 @@
         >
           <div class="message-avatar">
             <span class="material-symbols-outlined">
-              {{ msg.role === 'user' ? 'person' : getAvatarIcon(selectedCompanion?.avatar) }}
+              {{
+                msg.role === "user"
+                  ? "person"
+                  : getAvatarIcon(selectedCompanion?.avatar, selectedCompanion?.gender)
+              }}
             </span>
           </div>
           <div class="message-content">
             <div class="message-header">
               <span class="message-sender fira-sans-condensed-black-italic">
-                {{ msg.role === 'user' ? 'You' : selectedCompanion?.name }}
+                {{ msg.role === "user" ? "You" : selectedCompanion?.name }}
               </span>
-              <span v-if="msg.emotion" class="message-emotion tag is-small is-info">
+              <span
+                v-if="msg.emotion"
+                class="message-emotion tag is-small is-info"
+              >
                 {{ msg.emotion }}
               </span>
             </div>
             <div class="message-text">
-              <p v-if="msg.action" class="action-text is-italic has-text-grey-light mb-2">
+              <p
+                v-if="msg.action"
+                class="action-text is-italic has-text-grey-light mb-2"
+              >
                 *{{ msg.action }}*
               </p>
               <p>{{ msg.content }}</p>
@@ -422,7 +651,11 @@
 
             <!-- Video (for peak emotion scenes) -->
             <div v-if="msg.video" class="message-video mt-3">
-              <video controls :src="getVideoSrc(msg.video)" :poster="msg.image ? getImageSrc(msg.image) : undefined"></video>
+              <video
+                controls
+                :src="getVideoSrc(msg.video)"
+                :poster="msg.image ? getImageSrc(msg.image) : undefined"
+              ></video>
             </div>
           </div>
         </div>
@@ -431,7 +664,7 @@
         <div v-if="isTyping" class="chat-message assistant typing">
           <div class="message-avatar">
             <span class="material-symbols-outlined">
-              {{ getAvatarIcon(selectedCompanion?.avatar) }}
+              {{ getAvatarIcon(selectedCompanion?.avatar, selectedCompanion?.gender) }}
             </span>
           </div>
           <div class="message-content">
@@ -440,7 +673,10 @@
               <span></span>
               <span></span>
             </div>
-            <p v-if="typingStatus" class="typing-status is-size-7 has-text-grey-light">
+            <p
+              v-if="typingStatus"
+              class="typing-status is-size-7 has-text-grey-light"
+            >
               {{ typingStatus }}
             </p>
           </div>
@@ -448,11 +684,14 @@
       </div>
 
       <!-- Suggested Responses -->
-      <div v-if="suggestedResponses.length > 0 && !isTyping" class="suggested-responses mb-3">
+      <div
+        v-if="suggestedResponses.length > 0 && !isTyping"
+        class="suggested-responses mb-3"
+      >
         <button
           v-for="(suggestion, idx) in suggestedResponses"
           :key="idx"
-          class="button is-small is-info is-light mr-2 mb-2"
+          class="button is-small is-info is-outlined m-5"
           @click="sendMessage(suggestion)"
         >
           {{ suggestion }}
@@ -463,14 +702,32 @@
       <div v-if="uploadedImage" class="uploaded-image-preview mb-3">
         <div class="image-container">
           <img :src="uploadedImage" alt="Uploaded image" />
-          <button class="delete is-medium" @click="clearUploadedImage" title="Remove image"></button>
+          <button
+            class="delete is-medium"
+            @click="clearUploadedImage"
+            title="Remove image"
+          ></button>
         </div>
-        <p v-if="imageAnalysis" class="image-analysis-text is-size-7 has-text-grey-light mt-2">
-          <span class="material-symbols-outlined" style="font-size: 14px; vertical-align: middle;">visibility</span>
-          {{ imageAnalysis.substring(0, 100) }}{{ imageAnalysis.length > 100 ? '...' : '' }}
+        <p
+          v-if="imageAnalysis"
+          class="image-analysis-text is-size-7 has-text-grey-light mt-2"
+        >
+          <span
+            class="material-symbols-outlined"
+            style="font-size: 14px; vertical-align: middle"
+          >
+            visibility
+          </span>
+          {{ imageAnalysis.substring(0, 100)
+          }}{{ imageAnalysis.length > 100 ? "..." : "" }}
         </p>
         <p v-else-if="isAnalyzingImage" class="is-size-7 has-text-info">
-          <span class="material-symbols-outlined is-spinning" style="font-size: 14px; vertical-align: middle;">sync</span>
+          <span
+            class="material-symbols-outlined is-spinning"
+            style="font-size: 14px; vertical-align: middle"
+          >
+            sync
+          </span>
           Analyzing image...
         </p>
       </div>
@@ -486,6 +743,7 @@
               :disabled="isTyping || isAnalyzingImage"
               :class="{ 'is-info': uploadedImage }"
               title="Upload an image for vision analysis"
+              style="box-shadow: none;"
             >
               <span class="material-symbols-outlined">add_photo_alternate</span>
             </button>
@@ -493,7 +751,7 @@
               ref="imageInput"
               type="file"
               accept="image/*"
-              style="display: none;"
+              style="display: none"
               @change="handleImageUpload"
             />
           </div>
@@ -503,7 +761,11 @@
               v-model="userMessage"
               class="input is-medium"
               type="text"
-              :placeholder="uploadedImage ? `Describe what you see or ask about the image...` : `What do you say to ${selectedCompanion?.name}?`"
+              :placeholder="
+                uploadedImage
+                  ? `Describe what you see or ask about the image...`
+                  : `What do you say to ${selectedCompanion?.name}?`
+              "
               @keyup.enter="sendMessage()"
               :disabled="isTyping"
             />
@@ -513,6 +775,7 @@
               class="button is-success is-medium"
               @click="sendMessage()"
               :disabled="(!userMessage.trim() && !uploadedImage) || isTyping"
+              style="box-shadow: none;"
             >
               <span class="material-symbols-outlined">send</span>
             </button>
@@ -524,42 +787,42 @@
 </template>
 
 <script>
-import { ref, computed, reactive, nextTick, onMounted, toRaw } from 'vue';
+import { ref, computed, reactive, nextTick, onMounted, toRaw } from "vue";
 import {
   PREDEFINED_COMPANIONS,
   PREDEFINED_SCENARIOS,
   CONTENT_LEVELS,
   MODEL_REQUIREMENTS,
   roleplayCompanion,
-} from '../../skills/flagship.js';
+} from "../../skills/flagship.js";
 
 export default {
-  name: 'RoleplayChat',
+  name: "RoleplayChat",
   props: {
     skill: {
       type: Object,
       required: true,
     },
   },
-  emits: ['charge-fee'],
+  emits: ["charge-fee"],
   setup(props, { emit }) {
     // Phase management
-    const phase = ref('setup'); // 'setup' | 'chat'
+    const phase = ref("setup"); // 'setup' | 'chat'
 
     // Setup state
     const selectedCompanion = ref(null);
     const selectedScenario = ref(null);
     const showCustomCompanion = ref(false);
     const showCustomScenario = ref(false);
-    const customCompanionPrompt = ref('');
-    const customCompanionStyle = ref('romantic');
-    const customScenarioPrompt = ref('');
+    const customCompanionPrompt = ref("");
+    const customCompanionStyle = ref("romantic");
+    const customScenarioPrompt = ref("");
     const customCompanion = ref(null);
     const customScenario = ref(null);
     const isGenerating = ref(false);
 
     const settings = ref({
-      contentLevel: 'pg13',
+      contentLevel: "pg13",
       // Media options as individual checkboxes
       enableImage: true,
       enableAudio: false,
@@ -569,12 +832,12 @@ export default {
 
     // Build responseMode string from checkbox settings (for backward compatibility)
     const responseMode = computed(() => {
-      const parts = ['text'];
-      if (settings.value.enableImage) parts.push('image');
-      if (settings.value.enableAudio) parts.push('audio');
-      if (settings.value.enableVideo) parts.push('video');
-      if (settings.value.enableVision) parts.push('vision');
-      return parts.join('+');
+      const parts = ["text"];
+      if (settings.value.enableImage) parts.push("image");
+      if (settings.value.enableAudio) parts.push("audio");
+      if (settings.value.enableVideo) parts.push("video");
+      if (settings.value.enableVision) parts.push("vision");
+      return parts.join("+");
     });
 
     // ═══════════════════════════════════════════════════════════════════════════
@@ -584,23 +847,62 @@ export default {
     const modelAvailabilityChecked = ref(false);
 
     // Required LLM for roleplay
-    const REQUIRED_LLM = 'llm_mythomax';
-    const requiredLLMName = computed(() => MODEL_REQUIREMENTS[REQUIRED_LLM]?.name || 'MythoMax L2 13B');
+    const REQUIRED_LLM = "llm_mythomax";
+    const requiredLLMName = computed(
+      () => MODEL_REQUIREMENTS[REQUIRED_LLM]?.name || "MythoMax L2 13B",
+    );
 
     // Check if a specific model is available
     const isModelAvailable = (modelKey) => {
       return modelAvailability[modelKey] === true;
     };
 
-    // Check if chat can start (LLM must be available)
+    // Get required models based on current media selection
+    const requiredModelsForSelection = computed(() => {
+      const required = [REQUIRED_LLM]; // LLM is always required
+      if (settings.value.enableImage) required.push("image_turbo");
+      if (settings.value.enableAudio) required.push("audio_quality"); // Qwen3-TTS
+      if (settings.value.enableVideo) required.push("video_fast");
+      if (settings.value.enableVision) required.push("vision");
+      return required;
+    });
+
+    // Get missing models (required but not available)
+    const missingModels = computed(() => {
+      if (!modelAvailabilityChecked.value) return [];
+      return requiredModelsForSelection.value.filter(
+        (key) => !isModelAvailable(key),
+      );
+    });
+
+    // Get satisfied models (required and available)
+    const satisfiedModels = computed(() => {
+      if (!modelAvailabilityChecked.value) return [];
+      return requiredModelsForSelection.value.filter((key) =>
+        isModelAvailable(key),
+      );
+    });
+
+    // Get model display info
+    const getModelInfo = (modelKey) => {
+      const info = MODEL_REQUIREMENTS[modelKey];
+      return {
+        key: modelKey,
+        name: info?.name || modelKey,
+        size: info?.size || "Unknown",
+        type: modelKey === REQUIRED_LLM ? "LLM" : info?.type || "model",
+      };
+    };
+
+    // Check if chat can start (LLM + all selected media models must be available)
     const canStartChat = computed(() => {
       if (!modelAvailabilityChecked.value) return false;
-      return isModelAvailable(REQUIRED_LLM);
+      return missingModels.value.length === 0;
     });
 
     // Check all model availability
     const checkModelAvailability = async () => {
-      console.log('[RoleplayChat] Checking model availability...');
+      console.log("[RoleplayChat] Checking model availability...");
       const port = window.BONZAI_SERVER_PORT || 65000;
 
       // Check LLM model via electron API
@@ -608,9 +910,13 @@ export default {
         const llmModel = MODEL_REQUIREMENTS[REQUIRED_LLM];
         if (llmModel?.filename) {
           try {
-            const exists = await window.electronAPI.checkModel(llmModel.filename);
+            const exists = await window.electronAPI.checkModel(
+              llmModel.filename,
+            );
             modelAvailability[REQUIRED_LLM] = exists;
-            console.log(`[RoleplayChat] LLM ${llmModel.filename}: ${exists ? 'available' : 'not found'}`);
+            console.log(
+              `[RoleplayChat] LLM ${llmModel.filename}: ${exists ? "available" : "not found"}`,
+            );
           } catch (e) {
             modelAvailability[REQUIRED_LLM] = false;
           }
@@ -619,32 +925,39 @@ export default {
 
       // Check Flask pipelines
       const pipelineMap = {
-        'image_turbo': 'image_turbo',
-        'image_standard': 'image_standard',
-        'image_quality': 'image_quality',
-        'audio': 'audio',
-        'video_fast': 'video_fast',
-        'vision': 'qwen3_vision',
+        image_turbo: "image_turbo",
+        image_standard: "image_standard",
+        image_quality: "image_quality",
+        audio_quality: "audio_quality_persona", // Qwen3-TTS for companion audio
+        video_fast: "video_fast",
+        vision: "qwen3_vision",
       };
 
-      const checks = Object.entries(pipelineMap).map(async ([modelKey, pipeline]) => {
-        try {
-          const response = await fetch(`http://localhost:${port}/pipelines/plan`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ pipeline }),
-          });
-          if (response.ok) {
-            const data = await response.json();
-            modelAvailability[modelKey] = data.ok === true;
-          } else {
+      const checks = Object.entries(pipelineMap).map(
+        async ([modelKey, pipeline]) => {
+          try {
+            const response = await fetch(
+              `http://localhost:${port}/pipelines/plan`,
+              {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ pipeline }),
+              },
+            );
+            if (response.ok) {
+              const data = await response.json();
+              modelAvailability[modelKey] = data.ok === true;
+            } else {
+              modelAvailability[modelKey] = false;
+            }
+          } catch (e) {
             modelAvailability[modelKey] = false;
           }
-        } catch (e) {
-          modelAvailability[modelKey] = false;
-        }
-        console.log(`[RoleplayChat] ${modelKey}: ${modelAvailability[modelKey] ? 'available' : 'not found'}`);
-      });
+          console.log(
+            `[RoleplayChat] ${modelKey}: ${modelAvailability[modelKey] ? "available" : "not found"}`,
+          );
+        },
+      );
 
       await Promise.all(checks);
       modelAvailabilityChecked.value = true;
@@ -652,39 +965,43 @@ export default {
 
     // Chat state
     const chatHistory = ref([]);
-    const userMessage = ref('');
+    const userMessage = ref("");
     const isTyping = ref(false);
-    const typingStatus = ref('');
+    const typingStatus = ref("");
     const suggestedResponses = ref([]);
     const messagesContainer = ref(null);
     const chatInput = ref(null);
 
     // Vision/Image upload state
     const imageInput = ref(null);
-    const uploadedImage = ref(null);        // Base64 data URL of uploaded image
-    const uploadedImageBase64 = ref(null);  // Raw base64 without data URL prefix
-    const imageAnalysis = ref(null);        // Result from /vision/analyze
+    const uploadedImage = ref(null); // Base64 data URL of uploaded image
+    const uploadedImageBase64 = ref(null); // Raw base64 without data URL prefix
+    const imageAnalysis = ref(null); // Result from /vision/analyze
     const isAnalyzingImage = ref(false);
 
     // Scene state for smart image generation and anti-repetition
     const sceneState = ref({
-      lastImageAt: -3,           // Message index of last image (-3 to allow first message to have image)
-      currentLocation: '',       // Current location/setting
-      recentEmotions: [],        // Last few emotions (for variety)
-      recentActions: [],         // Last few actions (for variety)
-      lastOpeningPhrase: '',     // Last response opening (avoid repetition)
+      lastImageAt: -3, // Message index of last image (-3 to allow first message to have image)
+      currentLocation: "", // Current location/setting
+      recentEmotions: [], // Last few emotions (for variety)
+      recentActions: [], // Last few actions (for variety)
+      lastOpeningPhrase: "", // Last response opening (avoid repetition)
     });
 
     // Session persistence
-    const STORAGE_KEY = 'roleplaySessions';
+    const STORAGE_KEY = "roleplaySessions";
     const savedSessions = ref({});
-    const showSessionManager = ref(false);  // Show session manager overlay
+    const showSessionManager = ref(false); // Show session manager overlay
 
     // Generate unique session key from all parameters
     const getSessionKey = (companion, scenario, contentLevel, responseMode) => {
       if (!companion || !scenario) return null;
-      const companionId = companion.id || `custom_${companion.name?.toLowerCase().replace(/\s+/g, '_')}`;
-      const scenarioId = scenario.id || `custom_${scenario.name?.toLowerCase().replace(/\s+/g, '_')}`;
+      const companionId =
+        companion.id ||
+        `custom_${companion.name?.toLowerCase().replace(/\s+/g, "_")}`;
+      const scenarioId =
+        scenario.id ||
+        `custom_${scenario.name?.toLowerCase().replace(/\s+/g, "_")}`;
       return `${companionId}__${scenarioId}__${contentLevel}__${responseMode}`;
     };
 
@@ -694,7 +1011,7 @@ export default {
         selectedCompanion.value,
         selectedScenario.value,
         settings.value.contentLevel,
-        responseMode.value  // Use computed responseMode from checkboxes
+        responseMode.value, // Use computed responseMode from checkboxes
       );
     });
 
@@ -707,9 +1024,11 @@ export default {
     // Get all sessions for the selected companion (any scenario/settings)
     const companionSessions = computed(() => {
       if (!selectedCompanion.value) return [];
-      const companionId = selectedCompanion.value.id || `custom_${selectedCompanion.value.name?.toLowerCase().replace(/\s+/g, '_')}`;
+      const companionId =
+        selectedCompanion.value.id ||
+        `custom_${selectedCompanion.value.name?.toLowerCase().replace(/\s+/g, "_")}`;
       return Object.entries(savedSessions.value)
-        .filter(([key]) => key.startsWith(companionId + '__'))
+        .filter(([key]) => key.startsWith(companionId + "__"))
         .map(([key, session]) => ({
           key,
           ...session,
@@ -722,28 +1041,34 @@ export default {
     const saveSession = async () => {
       const key = currentSessionKey.value;
       if (!key || chatHistory.value.length === 0) {
-        console.log('[Roleplay] Skip save: no key or empty history');
+        console.log("[Roleplay] Skip save: no key or empty history");
         return;
       }
 
       // Convert Vue reactive proxies to plain objects for Electron IPC
       // Use JSON.parse(JSON.stringify()) to deep clone and remove non-serializable data
-      const plainCompanion = JSON.parse(JSON.stringify(toRaw(selectedCompanion.value)));
-      const plainScenario = JSON.parse(JSON.stringify(toRaw(selectedScenario.value)));
+      const plainCompanion = JSON.parse(
+        JSON.stringify(toRaw(selectedCompanion.value)),
+      );
+      const plainScenario = JSON.parse(
+        JSON.stringify(toRaw(selectedScenario.value)),
+      );
       const plainSettings = JSON.parse(JSON.stringify(toRaw(settings.value)));
-      const plainSceneState = JSON.parse(JSON.stringify(toRaw(sceneState.value)));
+      const plainSceneState = JSON.parse(
+        JSON.stringify(toRaw(sceneState.value)),
+      );
 
       // Add responseMode string to settings for backward compatibility
       const settingsWithMode = {
         ...plainSettings,
-        responseMode: responseMode.value,  // Store computed string for session key matching
+        responseMode: responseMode.value, // Store computed string for session key matching
       };
 
       const session = {
         companion: plainCompanion,
         scenario: plainScenario,
         settings: settingsWithMode,
-        history: chatHistory.value.map(msg => {
+        history: chatHistory.value.map((msg) => {
           const plainMsg = JSON.parse(JSON.stringify(toRaw(msg)));
           // Persist all media (image, audio, video) for full session restoration
           return plainMsg;
@@ -758,14 +1083,20 @@ export default {
       try {
         if (window.electronAPI?.store?.set) {
           // Convert the entire sessions object to plain object
-          const plainSessions = JSON.parse(JSON.stringify(toRaw(savedSessions.value)));
+          const plainSessions = JSON.parse(
+            JSON.stringify(toRaw(savedSessions.value)),
+          );
           await window.electronAPI.store.set(STORAGE_KEY, plainSessions);
-          console.log(`[Roleplay] Session saved for ${key}: ${session.history.length} messages`);
+          console.log(
+            `[Roleplay] Session saved for ${key}: ${session.history.length} messages`,
+          );
         } else {
-          console.warn('[Roleplay] Electron store API not available - session not persisted');
+          console.warn(
+            "[Roleplay] Electron store API not available - session not persisted",
+          );
         }
       } catch (e) {
-        console.error('[Roleplay] Failed to save session:', e);
+        console.error("[Roleplay] Failed to save session:", e);
       }
     };
 
@@ -776,13 +1107,18 @@ export default {
           const stored = await window.electronAPI.store.get(STORAGE_KEY, {});
           savedSessions.value = stored || {};
           const sessionKeys = Object.keys(savedSessions.value);
-          console.log(`[Roleplay] Loaded ${sessionKeys.length} saved sessions:`, sessionKeys);
+          console.log(
+            `[Roleplay] Loaded ${sessionKeys.length} saved sessions:`,
+            sessionKeys,
+          );
         } else {
-          console.warn('[Roleplay] Electron store API not available - no sessions loaded');
+          console.warn(
+            "[Roleplay] Electron store API not available - no sessions loaded",
+          );
           savedSessions.value = {};
         }
       } catch (e) {
-        console.error('[Roleplay] Failed to load sessions:', e);
+        console.error("[Roleplay] Failed to load sessions:", e);
         savedSessions.value = {};
       }
     };
@@ -797,15 +1133,18 @@ export default {
 
       // Handle both old (responseMode string) and new (checkbox) settings formats
       const savedSettings = session.settings || {};
-      if (savedSettings.responseMode && typeof savedSettings.responseMode === 'string') {
+      if (
+        savedSettings.responseMode &&
+        typeof savedSettings.responseMode === "string"
+      ) {
         // Old format: convert responseMode string to checkbox settings
         const mode = savedSettings.responseMode;
         settings.value = {
-          contentLevel: savedSettings.contentLevel || 'pg13',
-          enableImage: mode.includes('image'),
-          enableAudio: mode.includes('audio'),
-          enableVideo: mode.includes('video'),
-          enableVision: mode.includes('vision'),
+          contentLevel: savedSettings.contentLevel || "pg13",
+          enableImage: mode.includes("image"),
+          enableAudio: mode.includes("audio"),
+          enableVideo: mode.includes("video"),
+          enableVision: mode.includes("vision"),
         };
       } else if (savedSettings.enableImage !== undefined) {
         // New format: use checkbox settings directly
@@ -813,7 +1152,7 @@ export default {
       } else {
         // Fallback defaults
         settings.value = {
-          contentLevel: savedSettings.contentLevel || 'pg13',
+          contentLevel: savedSettings.contentLevel || "pg13",
           enableImage: true,
           enableAudio: false,
           enableVideo: false,
@@ -840,19 +1179,21 @@ export default {
       try {
         if (window.electronAPI?.store?.set) {
           // Convert to plain object before saving
-          const plainSessions = JSON.parse(JSON.stringify(toRaw(savedSessions.value)));
+          const plainSessions = JSON.parse(
+            JSON.stringify(toRaw(savedSessions.value)),
+          );
           await window.electronAPI.store.set(STORAGE_KEY, plainSessions);
           console.log(`[Roleplay] Session deleted: ${key}`);
         }
       } catch (e) {
-        console.error('[Roleplay] Failed to delete session:', e);
+        console.error("[Roleplay] Failed to delete session:", e);
       }
     };
 
     // Resume a specific session
     const resumeSession = (key) => {
       if (loadSession(key)) {
-        phase.value = 'chat';
+        phase.value = "chat";
         showSessionManager.value = false;
         suggestedResponses.value = [];
         nextTick(() => {
@@ -864,20 +1205,24 @@ export default {
 
     // Parse session key to get human-readable info
     const parseSessionKey = (key) => {
-      const parts = key.split('__');
+      const parts = key.split("__");
       return {
-        companionId: parts[0] || '',
-        scenarioId: parts[1] || '',
-        contentLevel: parts[2] || '',
-        responseMode: parts[3] || '',
+        companionId: parts[0] || "",
+        scenarioId: parts[1] || "",
+        contentLevel: parts[2] || "",
+        responseMode: parts[3] || "",
       };
     };
 
     // Get formatted date for session
     const formatSessionDate = (timestamp) => {
-      if (!timestamp) return '';
+      if (!timestamp) return "";
       const date = new Date(timestamp);
-      return date.toLocaleDateString() + ' ' + date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+      return (
+        date.toLocaleDateString() +
+        " " +
+        date.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })
+      );
     };
 
     // Data
@@ -887,20 +1232,26 @@ export default {
 
     // Computed
     const canStart = computed(() => {
-      return selectedCompanion.value && selectedScenario.value && canStartChat.value;
+      return (
+        selectedCompanion.value && selectedScenario.value && canStartChat.value
+      );
     });
 
     // Methods
-    const getAvatarIcon = (avatar) => {
-      const icons = {
-        woman: 'face_4',
-        man: 'face',
-        android: 'smart_toy',
-        demon: 'mood_bad',
-        soldier: 'military_tech',
-        fantasy: 'auto_awesome',
-      };
-      return icons[avatar] || 'person';
+    const getAvatarIcon = (avatar, gender) => {
+      // Robot/android companions use agender icon
+      if (avatar === "android" || avatar === "smart_toy") {
+        return "agender";
+      }
+      // Use gender-based icons for human-like companions
+      if (gender === "female" || avatar === "woman") {
+        return "female";
+      }
+      if (gender === "male" || avatar === "man" || avatar === "soldier" || avatar === "demon") {
+        return "male";
+      }
+      // Fallback
+      return "person";
     };
 
     const selectCompanion = (companion) => {
@@ -928,12 +1279,15 @@ export default {
 
       try {
         const result = await roleplayCompanion.execution.generateCompanion(
-          { description: customCompanionPrompt.value, style: customCompanionStyle.value },
-          { updateStatus: (s) => console.log('[Roleplay]', s) }
+          {
+            description: customCompanionPrompt.value,
+            style: customCompanionStyle.value,
+          },
+          { updateStatus: (s) => console.log("[Roleplay]", s) },
         );
         customCompanion.value = result;
       } catch (e) {
-        console.error('[Roleplay] Failed to generate companion:', e);
+        console.error("[Roleplay] Failed to generate companion:", e);
       } finally {
         isGenerating.value = false;
       }
@@ -952,12 +1306,12 @@ export default {
 
       try {
         const result = await roleplayCompanion.execution.generateScenario(
-          { description: customScenarioPrompt.value, mood: 'romantic' },
-          { updateStatus: (s) => console.log('[Roleplay]', s) }
+          { description: customScenarioPrompt.value, mood: "romantic" },
+          { updateStatus: (s) => console.log("[Roleplay]", s) },
         );
         customScenario.value = result;
       } catch (e) {
-        console.error('[Roleplay] Failed to generate scenario:', e);
+        console.error("[Roleplay] Failed to generate scenario:", e);
       } finally {
         isGenerating.value = false;
       }
@@ -972,12 +1326,12 @@ export default {
 
     const formatResponseMode = (mode) => {
       const modes = {
-        'text': 'Text',
-        'text+image': 'Text + Image',
-        'text+audio': 'Text + Voice',
-        'text+image+audio': 'Full Multimodal',
-        'text+image+video': 'Text + Image + Video',
-        'text+image+audio+video': 'Ultimate Experience',
+        text: "Text",
+        "text+image": "Text + Image",
+        "text+audio": "Text + Voice",
+        "text+image+audio": "Full Multimodal",
+        "text+image+video": "Text + Image + Video",
+        "text+image+audio+video": "Ultimate Experience",
       };
       return modes[mode] || mode;
     };
@@ -996,13 +1350,13 @@ export default {
       chatHistory.value = [];
       sceneState.value = {
         lastImageAt: -3,
-        currentLocation: selectedScenario.value?.setting || '',
+        currentLocation: selectedScenario.value?.setting || "",
         recentEmotions: [],
         recentActions: [],
-        lastOpeningPhrase: '',
+        lastOpeningPhrase: "",
       };
 
-      phase.value = 'chat';
+      phase.value = "chat";
       showSessionManager.value = false;
       suggestedResponses.value = [];
 
@@ -1022,13 +1376,13 @@ export default {
       chatHistory.value = [];
       sceneState.value = {
         lastImageAt: -3,
-        currentLocation: selectedScenario.value?.setting || '',
+        currentLocation: selectedScenario.value?.setting || "",
         recentEmotions: [],
         recentActions: [],
-        lastOpeningPhrase: '',
+        lastOpeningPhrase: "",
       };
 
-      phase.value = 'chat';
+      phase.value = "chat";
       showSessionManager.value = false;
       suggestedResponses.value = [];
 
@@ -1042,7 +1396,7 @@ export default {
     const resumeMatchingSession = () => {
       const key = currentSessionKey.value;
       if (key && loadSession(key)) {
-        phase.value = 'chat';
+        phase.value = "chat";
         showSessionManager.value = false;
         suggestedResponses.value = [];
         nextTick(() => {
@@ -1063,26 +1417,38 @@ export default {
 
     // Rebuild scene state from chat history (for continued sessions without saved state)
     const rebuildSceneState = () => {
-      const assistantMessages = chatHistory.value.filter(m => m.role === 'assistant');
+      const assistantMessages = chatHistory.value.filter(
+        (m) => m.role === "assistant",
+      );
       const lastImageIdx = assistantMessages.reduce((lastIdx, msg, idx) => {
         return msg.image ? idx : lastIdx;
       }, -3);
 
       sceneState.value = {
         lastImageAt: lastImageIdx,
-        currentLocation: selectedScenario.value?.setting || '',
-        recentEmotions: assistantMessages.slice(-3).map(m => m.emotion).filter(Boolean),
-        recentActions: assistantMessages.slice(-2).map(m => m.action).filter(Boolean),
-        lastOpeningPhrase: assistantMessages.length > 0
-          ? (assistantMessages[assistantMessages.length - 1].content || '').split(/\s+/).slice(0, 5).join(' ')
-          : '',
+        currentLocation: selectedScenario.value?.setting || "",
+        recentEmotions: assistantMessages
+          .slice(-3)
+          .map((m) => m.emotion)
+          .filter(Boolean),
+        recentActions: assistantMessages
+          .slice(-2)
+          .map((m) => m.action)
+          .filter(Boolean),
+        lastOpeningPhrase:
+          assistantMessages.length > 0
+            ? (assistantMessages[assistantMessages.length - 1].content || "")
+                .split(/\s+/)
+                .slice(0, 5)
+                .join(" ")
+            : "",
       };
     };
 
     const endChat = async () => {
       // Save session before ending
       await saveSession();
-      phase.value = 'setup';
+      phase.value = "setup";
       chatHistory.value = [];
       suggestedResponses.value = [];
       showSessionManager.value = false;
@@ -1091,23 +1457,30 @@ export default {
     const scrollToBottom = () => {
       nextTick(() => {
         if (messagesContainer.value) {
-          messagesContainer.value.scrollTop = messagesContainer.value.scrollHeight;
+          messagesContainer.value.scrollTop =
+            messagesContainer.value.scrollHeight;
         }
       });
     };
 
     const getImageSrc = (image) => {
-      if (!image) return '';
-      if (image.startsWith('data:')) return image;
+      if (!image) return "";
+      if (image.startsWith("data:")) return image;
+      if (image.startsWith("http")) return image;
+      // Local file path - use Flask media stream endpoint
+      if (image.startsWith("/")) {
+        const port = window.BONZAI_SERVER_PORT || 65000;
+        return `http://localhost:${port}/media/stream?path=${encodeURIComponent(image)}`;
+      }
       return `data:image/png;base64,${image}`;
     };
 
     const getAudioSrc = (audio) => {
-      if (!audio) return '';
-      if (audio.startsWith('data:')) return audio;
-      if (audio.startsWith('http')) return audio;
+      if (!audio) return "";
+      if (audio.startsWith("data:")) return audio;
+      if (audio.startsWith("http")) return audio;
       // Local file path - use Flask media stream endpoint
-      if (audio.startsWith('/')) {
+      if (audio.startsWith("/")) {
         const port = window.BONZAI_SERVER_PORT || 65000;
         return `http://localhost:${port}/media/stream?path=${encodeURIComponent(audio)}`;
       }
@@ -1115,11 +1488,11 @@ export default {
     };
 
     const getVideoSrc = (video) => {
-      if (!video) return '';
-      if (video.startsWith('data:')) return video;
-      if (video.startsWith('http')) return video;
+      if (!video) return "";
+      if (video.startsWith("data:")) return video;
+      if (video.startsWith("http")) return video;
       // Local file path - use Flask media stream endpoint
-      if (video.startsWith('/')) {
+      if (video.startsWith("/")) {
         const port = window.BONZAI_SERVER_PORT || 65000;
         return `http://localhost:${port}/media/stream?path=${encodeURIComponent(video)}`;
       }
@@ -1143,7 +1516,7 @@ export default {
       reader.onload = async (e) => {
         uploadedImage.value = e.target.result; // data:image/...;base64,...
         // Extract raw base64 (without data URL prefix)
-        uploadedImageBase64.value = e.target.result.split(',')[1];
+        uploadedImageBase64.value = e.target.result.split(",")[1];
 
         // Automatically analyze the image
         await analyzeUploadedImage();
@@ -1151,7 +1524,7 @@ export default {
       reader.readAsDataURL(file);
 
       // Reset input so same file can be selected again
-      event.target.value = '';
+      event.target.value = "";
     };
 
     const analyzeUploadedImage = async () => {
@@ -1162,32 +1535,38 @@ export default {
 
       try {
         const port = window.BONZAI_SERVER_PORT || 65000;
-        const response = await fetch(`http://localhost:${port}/vision/analyze`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            image_base64: uploadedImageBase64.value,
-            prompt: `Describe this image in detail for a roleplay companion interaction. Focus on:
+        const response = await fetch(
+          `http://localhost:${port}/vision/analyze`,
+          {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              image_base64: uploadedImageBase64.value,
+              prompt: `Describe this image in detail for a roleplay companion interaction. Focus on:
               - What is shown in the image (objects, people, scenes)
               - The mood or atmosphere
               - Any notable details that could be used for conversation or storytelling
               - If there's a person, describe their appearance, expression, and what they might be doing`,
-            max_tokens: 512,
-            auto_download: true,
-          }),
-        });
+              max_tokens: 512,
+              auto_download: true,
+            }),
+          },
+        );
 
         if (response.ok) {
           const data = await response.json();
           if (data.success && data.response) {
             imageAnalysis.value = data.response;
-            console.log('[RoleplayChat] Vision analysis:', data.response);
+            console.log("[RoleplayChat] Vision analysis:", data.response);
           }
         } else {
-          console.warn('[RoleplayChat] Vision analysis failed:', await response.text());
+          console.warn(
+            "[RoleplayChat] Vision analysis failed:",
+            await response.text(),
+          );
         }
       } catch (e) {
-        console.error('[RoleplayChat] Vision analysis error:', e);
+        console.error("[RoleplayChat] Vision analysis error:", e);
       } finally {
         isAnalyzingImage.value = false;
       }
@@ -1209,36 +1588,38 @@ export default {
       if ((!msg && !hasImage) || isTyping.value) return;
 
       // Capture image data before clearing
-      const visionData = hasImage ? {
-        imageBase64: uploadedImageBase64.value,
-        imageAnalysis: imageAnalysis.value,
-        imageDataUrl: uploadedImage.value,
-      } : null;
+      const visionData = hasImage
+        ? {
+            imageBase64: uploadedImageBase64.value,
+            imageAnalysis: imageAnalysis.value,
+            imageDataUrl: uploadedImage.value,
+          }
+        : null;
 
       // Build user message content
-      const messageContent = msg || (hasImage ? '*shares an image*' : '');
+      const messageContent = msg || (hasImage ? "*shares an image*" : "");
 
       // Add user message (include image if present)
       chatHistory.value.push({
-        role: 'user',
+        role: "user",
         content: messageContent,
-        image: visionData?.imageDataUrl || null,  // Show uploaded image in chat
+        image: visionData?.imageDataUrl || null, // Show uploaded image in chat
       });
-      userMessage.value = '';
+      userMessage.value = "";
       suggestedResponses.value = [];
-      clearUploadedImage();  // Clear after capturing
+      clearUploadedImage(); // Clear after capturing
       scrollToBottom();
 
       // No fee - chatting is free with access level
 
       // Generate response
       isTyping.value = true;
-      typingStatus.value = '';
+      typingStatus.value = "";
 
       // Build settings with computed responseMode
       const executionSettings = {
         contentLevel: settings.value.contentLevel,
-        responseMode: responseMode.value,  // Built from checkbox options
+        responseMode: responseMode.value, // Built from checkbox options
       };
 
       try {
@@ -1252,25 +1633,25 @@ export default {
             },
             settings: executionSettings,
             sceneState: sceneState.value,
-            visionData,  // Pass vision analysis to LLM
+            visionData, // Pass vision analysis to LLM
           },
           {
             updateStatus: (status) => {
               typingStatus.value = status;
             },
-          }
+          },
         );
 
         if (result.success) {
           // Add assistant message (now may include video)
           chatHistory.value.push({
-            role: 'assistant',
+            role: "assistant",
             content: result.response.response,
             emotion: result.response.emotion,
             action: result.response.action,
             image: result.response.image,
             audio: result.response.audio,
-            video: result.response.video,  // New: video for peak emotions
+            video: result.response.video, // New: video for peak emotions
           });
 
           // Update scene state from response
@@ -1285,19 +1666,21 @@ export default {
 
           // Log smart image decision for debugging
           if (result.meta?.imageSkipped) {
-            console.log(`[Roleplay] Image skipped: shouldVisualize=${result.meta.shouldVisualize}`);
+            console.log(
+              `[Roleplay] Image skipped: shouldVisualize=${result.meta.shouldVisualize}`,
+            );
           }
         }
       } catch (e) {
-        console.error('[Roleplay] Message failed:', e);
+        console.error("[Roleplay] Message failed:", e);
         chatHistory.value.push({
-          role: 'assistant',
+          role: "assistant",
           content: `*${selectedCompanion.value?.name} seems distracted for a moment* I'm sorry, could you repeat that?`,
-          emotion: 'confused',
+          emotion: "confused",
         });
       } finally {
         isTyping.value = false;
-        typingStatus.value = '';
+        typingStatus.value = "";
         scrollToBottom();
         nextTick(() => {
           chatInput.value?.focus();
@@ -1310,27 +1693,29 @@ export default {
 
     // Load sessions and check model availability on mount
     onMounted(async () => {
-      await Promise.all([
-        loadSessions(),
-        checkModelAvailability(),
-      ]);
+      await Promise.all([loadSessions(), checkModelAvailability()]);
     });
 
     // Get session info for a companion (aggregated across all scenarios/settings)
     const getSessionInfo = (companion) => {
       if (!companion) return null;
-      const companionId = companion.id || `custom_${companion.name?.toLowerCase().replace(/\s+/g, '_')}`;
+      const companionId =
+        companion.id ||
+        `custom_${companion.name?.toLowerCase().replace(/\s+/g, "_")}`;
 
       // Find all sessions for this companion
       const sessions = Object.entries(savedSessions.value)
-        .filter(([key]) => key.startsWith(companionId + '__'))
+        .filter(([key]) => key.startsWith(companionId + "__"))
         .map(([, session]) => session);
 
       if (sessions.length === 0) return null;
 
       // Aggregate info
-      const totalMessages = sessions.reduce((sum, s) => sum + (s.history?.length || 0), 0);
-      const latestUpdate = Math.max(...sessions.map(s => s.updatedAt || 0));
+      const totalMessages = sessions.reduce(
+        (sum, s) => sum + (s.history?.length || 0),
+        0,
+      );
+      const latestUpdate = Math.max(...sessions.map((s) => s.updatedAt || 0));
 
       return {
         sessionCount: sessions.length,
@@ -1413,6 +1798,10 @@ export default {
       isModelAvailable,
       canStartChat,
       requiredLLMName,
+      requiredModelsForSelection,
+      missingModels,
+      satisfiedModels,
+      getModelInfo,
       responseMode,
     };
   },
@@ -1435,7 +1824,7 @@ export default {
 .companion-card,
 .scenario-card {
   background: rgba(0, 0, 0, 0.3);
-  border: 2px solid transparent;
+  border: 1px solid rgba(255, 255, 255, 0.1);
   border-radius: 8px;
   padding: 1rem;
   cursor: pointer;
@@ -1444,14 +1833,15 @@ export default {
 
 .companion-card:hover,
 .scenario-card:hover {
-  background: rgba(0, 0, 0, 0.4);
-  border-color: rgba(255, 255, 255, 0.2);
+  background: rgba(97, 55, 142, 0.2);
+  border-color: rgba(255, 255, 255, 0.3);
 }
 
 .companion-card.is-selected,
 .scenario-card.is-selected {
-  border-color: #00d1b2;
-  background: rgba(0, 209, 178, 0.1);
+  border-color: rgba(255, 255, 255, 1);
+  background: rgba(97, 55, 142, 0.33);
+  backdrop-filter: blur(64px);
 }
 
 .companion-card.is-custom,
@@ -1484,7 +1874,7 @@ export default {
   position: absolute;
   top: -4px;
   right: -4px;
-  background: #3273dc;
+  background: rgba(97, 55, 142, 0.9);
   color: #fff;
   font-size: 10px;
   font-weight: bold;
@@ -1499,7 +1889,7 @@ export default {
 }
 
 .companion-card.has-session {
-  border-color: rgba(50, 115, 220, 0.4);
+  border-color: rgba(97, 55, 142, 0.6);
 }
 
 /* Saved Sessions List */
@@ -1514,15 +1904,15 @@ export default {
   align-items: center;
   justify-content: space-between;
   background: rgba(0, 0, 0, 0.3);
-  border: 1px solid rgba(50, 115, 220, 0.3);
+  border: 1px solid rgba(97, 55, 142, 0.4);
   border-radius: 8px;
   padding: 0.75rem 1rem;
   transition: all 0.2s;
 }
 
 .saved-session-card:hover {
-  background: rgba(0, 0, 0, 0.4);
-  border-color: rgba(50, 115, 220, 0.5);
+  background: rgba(97, 55, 142, 0.2);
+  border-color: rgba(97, 55, 142, 0.6);
 }
 
 .saved-session-card .session-info {
@@ -1608,9 +1998,9 @@ export default {
 
 .custom-companion-preview,
 .custom-scenario-preview {
-  background: rgba(0, 209, 178, 0.1);
+  background: rgba(97, 55, 142, 0.2);
   border-radius: 8px;
-  border: 1px solid #00d1b2;
+  border: 1px solid rgba(97, 55, 142, 0.6);
 }
 
 .content-level-selector {
@@ -1624,17 +2014,19 @@ export default {
   padding: 0.75rem;
   border-radius: 6px;
   cursor: pointer;
-  border: 2px solid transparent;
+  border: 1px solid rgba(255, 255, 255, 0.1);
   transition: all 0.2s;
 }
 
 .content-level-option:hover {
-  background: rgba(0, 0, 0, 0.4);
+  background: rgba(97, 55, 142, 0.2);
+  border-color: rgba(255, 255, 255, 0.3);
 }
 
 .content-level-option.is-selected {
-  border-color: #00d1b2;
-  background: rgba(0, 209, 178, 0.1);
+  border-color: rgba(255, 255, 255, 1);
+  background: rgba(97, 55, 142, 0.33);
+  backdrop-filter: blur(64px);
 }
 
 .content-level-option strong {
@@ -1660,11 +2052,18 @@ export default {
 
 .companion-header .material-symbols-outlined {
   font-size: 32px;
-  color: #00d1b2;
+  color: rgba(167, 139, 250, 1);
+}
+
+.chat-phase {
+  display: flex;
+  flex-direction: column;
+  height: calc(100vh - 180px);
+  min-height: 400px;
 }
 
 .chat-messages {
-  max-height: 500px;
+  flex: 1;
   overflow-y: auto;
   padding: 1rem;
   background: rgba(0, 0, 0, 0.2);
@@ -1673,8 +2072,9 @@ export default {
 }
 
 .scene-description .notification {
-  background: rgba(255, 255, 255, 0.05);
-  border-left: 3px solid #00d1b2;
+  background: rgba(50, 115, 220, 0.75);
+  border: none;
+  border-radius: 8px;
 }
 
 .chat-message {
@@ -1692,7 +2092,7 @@ export default {
 }
 
 .chat-message.user .message-text {
-  background: #3273dc;
+  background: rgba(97, 55, 142, 0.9);
 }
 
 .message-avatar {
@@ -1722,6 +2122,7 @@ export default {
   align-items: center;
   gap: 0.5rem;
   margin-bottom: 0.25rem;
+  border-radius: 12px;
 }
 
 .message-sender {
@@ -1734,11 +2135,14 @@ export default {
   padding: 0.75rem 1rem;
   border-radius: 12px;
   color: #fff;
+   backdrop-filter: blur(32px);
 }
 
 .action-text {
-  font-size: 0.9rem;
-  opacity: 0.8;
+  margin-bottom: 2em !important;
+  font-size: 0.8rem;
+  opacity: 0.5;
+  text-align: left;
 }
 
 .message-image {
@@ -1753,12 +2157,12 @@ export default {
 }
 
 .message-audio {
-  width: 100%;
+  width: 100% !important;
 }
 
 .message-audio audio {
   width: 100%;
-  max-width: 300px;
+  color-scheme: dark;
 }
 
 /* Typing Indicator */
@@ -1788,7 +2192,9 @@ export default {
 }
 
 @keyframes typing {
-  0%, 80%, 100% {
+  0%,
+  80%,
+  100% {
     transform: scale(0.8);
     opacity: 0.5;
   }
@@ -1817,8 +2223,12 @@ export default {
 }
 
 @keyframes rotate {
-  from { transform: rotate(0deg); }
-  to { transform: rotate(360deg); }
+  from {
+    transform: rotate(0deg);
+  }
+  to {
+    transform: rotate(360deg);
+  }
 }
 
 /* Uploaded Image Preview */
@@ -1857,8 +2267,12 @@ export default {
 }
 
 @keyframes spin {
-  from { transform: rotate(0deg); }
-  to { transform: rotate(360deg); }
+  from {
+    transform: rotate(0deg);
+  }
+  to {
+    transform: rotate(360deg);
+  }
 }
 
 /* Video in messages */
@@ -1922,5 +2336,55 @@ export default {
 
 .media-option.is-unavailable:hover {
   background: rgba(255, 255, 255, 0.1);
+}
+
+/* Model Requirements Section */
+.model-requirements {
+  margin-top: 1rem;
+}
+
+.requirements-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.requirement-item {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.4rem 0.6rem;
+  border-radius: 6px;
+  font-size: 0.9rem;
+}
+
+.requirement-item.is-missing {
+  background: rgba(255, 56, 96, 0.1);
+}
+
+.requirement-item.is-satisfied {
+  background: rgba(72, 199, 142, 0.1);
+}
+
+.requirement-item .model-name {
+  flex: 1;
+  font-weight: 500;
+}
+
+.satisfied-requirements {
+  padding: 0.75rem;
+  background: rgba(72, 199, 142, 0.05);
+  border-radius: 8px;
+  border: 1px solid rgba(72, 199, 142, 0.2);
+}
+
+.requirements-list.is-satisfied {
+  gap: 0.25rem;
+}
+
+.requirements-list.is-satisfied .requirement-item {
+  padding: 0.25rem 0.5rem;
+  font-size: 0.85rem;
+  background: transparent;
 }
 </style>

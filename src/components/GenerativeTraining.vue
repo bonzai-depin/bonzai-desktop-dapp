@@ -1550,4 +1550,18 @@ input[type="radio"]:checked + label {
   opacity: 0.5;
   cursor: not-allowed;
 }
+
+@keyframes move {
+  0% {
+    transform: scale(1.1);
+    transform-origin: bottom left;
+  }
+  50% {
+    transform: scale(1.2);
+  }
+  100% {
+    transform: scale(1.1);
+    transform-origin: bottom left;
+  }
+}
 </style>

@@ -9,6 +9,11 @@
 import { createSkillDefinition } from './types.js';
 import { getAuthHeaders } from '../services/auth.service.js';
 
+// Finance skills (formerly builtin)
+import { skill as polymarketTopPerformers } from './builtin/polymarketTopPerformers.js';
+import { skill as tcgPredictionMarket } from './builtin/tcgPredictionMarket.js';
+import { skill as dslaSmartMarket } from './builtin/dslaSmartMarket.js';
+
 // ═══════════════════════════════════════════════════════════════════════════
 // MODEL REQUIREMENTS DEFINITIONS
 // ═══════════════════════════════════════════════════════════════════════════
@@ -802,6 +807,51 @@ async function generateNarration(text, options = {}) {
   }, true);
 }
 
+// Scenery background generation using turbo endpoint (fast)
+async function generateSceneryBackground(scenarioOrLocation, options = {}) {
+  // Build a scenery-focused prompt (no characters, just environment)
+  let sceneryPrompt;
+  if (typeof scenarioOrLocation === 'object') {
+    // Full scenario object
+    sceneryPrompt = `${scenarioOrLocation.setting || scenarioOrLocation.description}, ${scenarioOrLocation.mood || 'atmospheric'} mood, scenic background, no people, environmental shot, cinematic lighting, high quality`;
+  } else {
+    // Location string
+    sceneryPrompt = `${scenarioOrLocation}, scenic background, no people, environmental shot, cinematic lighting, high quality`;
+  }
+
+  console.log(`[Roleplay] Generating scenery background: ${sceneryPrompt.substring(0, 100)}...`);
+
+  try {
+    const result = await callFlaskEndpoint('/image/turbo', {
+      prompt: sceneryPrompt,
+      negative_prompt: 'person, people, character, face, human, portrait',
+      width: options.width || 1280,
+      height: options.height || 720,
+      steps: 4,
+      guidance_scale: 3.5,
+    }, true);
+
+    return result.image_base64 || result.image || null;
+  } catch (e) {
+    console.warn('[Roleplay] Scenery background generation failed:', e.message);
+    return null;
+  }
+}
+
+// Clear VRAM/RAM after generation to free memory for next task
+async function clearGenerationMemory() {
+  try {
+    const port = getFlaskPort();
+    await fetch(`http://localhost:${port}/memory/clear`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+    });
+    console.log('[Flagship] Memory cleared after generation');
+  } catch (e) {
+    console.warn('[Flagship] Failed to clear memory:', e.message);
+  }
+}
+
 // Video generation (I2V or T2V)
 async function generateVideo(imageBase64OrNull, prompt, options = {}) {
   const mode = imageBase64OrNull ? 'i2v' : 't2v';
@@ -817,12 +867,6 @@ async function generateVideo(imageBase64OrNull, prompt, options = {}) {
     guidance_scale: options.guidanceScale || 1.0,
   }, true); // Enable demo mode fallback
 }
-
-// Default pricing for all skills - 99 BONZAI per run, no purchase required
-const DEFAULT_PRICING = {
-  runningFee: 99,
-  runningFeeToken: 'BONZAI',
-};
 
 // ═══════════════════════════════════════════════════════════════════════════
 // ROLEPLAY COMPANION BEHAVIOR HELPERS
@@ -919,7 +963,6 @@ export const storyStudio = createSkillDefinition({
   author: { address: '0x8Ff3b2e823b33BeE30e699bB1b6BBc8F622fEa89', name: 'BonzAI', verified: true },
   category: 'entertainment',
   tags: ['story', 'illustration', 'audiobook', 'creative'],
-  pricing: DEFAULT_PRICING,
   requirements: {
     minLevel: 3,
     requiredApis: ['llm', 'image', 'audio'],
@@ -1009,7 +1052,6 @@ export const meditationForge = createSkillDefinition({
   author: { address: '0x8Ff3b2e823b33BeE30e699bB1b6BBc8F622fEa89', name: 'BonzAI', verified: true },
   category: 'healthcare',
   tags: ['meditation', 'wellness', 'mindfulness', 'relaxation'],
-  pricing: DEFAULT_PRICING,
   requirements: {
     minLevel: 3,
     requiredApis: ['llm', 'image', 'audio'],
@@ -1087,7 +1129,6 @@ export const virtualStagingPro = createSkillDefinition({
   author: { address: '0x8Ff3b2e823b33BeE30e699bB1b6BBc8F622fEa89', name: 'BonzAI', verified: true },
   category: 'housing',
   tags: ['interior-design', 'staging', 'real-estate'],
-  pricing: DEFAULT_PRICING,
   requirements: {
     minLevel: 3,
     requiredApis: ['llm', 'image'],
@@ -1170,7 +1211,6 @@ export const virtualTryOn = createSkillDefinition({
   author: { address: '0x8Ff3b2e823b33BeE30e699bB1b6BBc8F622fEa89', name: 'BonzAI', verified: true },
   category: 'fashion',
   tags: ['fashion', 'try-on', 'clothing', 'style', 'virtual-fitting'],
-  pricing: DEFAULT_PRICING,
   requirements: {
     minLevel: 3,
     requiredApis: ['llm', 'image'],
@@ -1263,7 +1303,6 @@ export const chefsTable = createSkillDefinition({
   author: { address: '0x8Ff3b2e823b33BeE30e699bB1b6BBc8F622fEa89', name: 'BonzAI', verified: true },
   category: 'food',
   tags: ['cooking', 'recipes', 'food-photography'],
-  pricing: DEFAULT_PRICING,
   requirements: {
     minLevel: 3,
     requiredApis: ['llm', 'image'],
@@ -1339,7 +1378,6 @@ export const eli5 = createSkillDefinition({
   author: { address: '0x8Ff3b2e823b33BeE30e699bB1b6BBc8F622fEa89', name: 'BonzAI', verified: true },
   category: 'education',
   tags: ['education', 'explainer', 'learning', 'eli5', 'simple'],
-  pricing: DEFAULT_PRICING,
   requirements: {
     minLevel: 3,
     requiredApis: ['llm', 'image', 'audio'],
@@ -1423,7 +1461,6 @@ export const musicVideoForge = createSkillDefinition({
   author: { address: '0x8Ff3b2e823b33BeE30e699bB1b6BBc8F622fEa89', name: 'BonzAI', verified: true },
   category: 'entertainment',
   tags: ['music', 'video', 'visuals', 'creative'],
-  pricing: DEFAULT_PRICING,
   requirements: {
     minLevel: 4,
     requiredApis: ['llm', 'image', 'video'],
@@ -1504,7 +1541,6 @@ export const gameMaker = createSkillDefinition({
   author: { address: '0x8Ff3b2e823b33BeE30e699bB1b6BBc8F622fEa89', name: 'BonzAI', verified: true },
   category: 'entertainment',
   tags: ['game', 'gamedev', '2d', '3d', 'creative', 'assets'],
-  pricing: DEFAULT_PRICING,
   requirements: {
     minLevel: 5,
     requiredApis: ['llm', 'image', '3d'],
@@ -1608,7 +1644,6 @@ export const mangaToAnime = createSkillDefinition({
   author: { address: '0x8Ff3b2e823b33BeE30e699bB1b6BBc8F622fEa89', name: 'BonzAI', verified: true },
   category: 'entertainment',
   tags: ['manga', 'anime', 'animation', 'japanese', 'creative'],
-  pricing: DEFAULT_PRICING,
   requirements: {
     minLevel: 4,
     requiredApis: ['llm', 'image', 'video'],
@@ -1705,7 +1740,6 @@ export const hairstyleStudio = createSkillDefinition({
   author: { address: '0x8Ff3b2e823b33BeE30e699bB1b6BBc8F622fEa89', name: 'BonzAI', verified: true },
   category: 'personal-care',
   tags: ['hairstyle', 'beauty', 'transformation'],
-  pricing: DEFAULT_PRICING,
   requirements: {
     minLevel: 3,
     requiredApis: ['llm', 'image'],
@@ -1787,7 +1821,7 @@ export const roleplayCompanion = createSkillDefinition({
   author: { address: '0x8Ff3b2e823b33BeE30e699bB1b6BBc8F622fEa89', name: 'BonzAI', verified: true },
   category: 'entertainment',
   tags: ['roleplay', 'chat', 'character', 'interactive', 'creative', 'companion'],
-  pricing: DEFAULT_PRICING,
+  featured: true,
   requirements: {
     minLevel: 4,
     requiredApis: ['llm', 'image', 'audio'],
@@ -1870,7 +1904,7 @@ Scene: ${scenario.description}
       const recentEmotionsStr = recentEmotions.slice(-3).join(', ');
       const recentActionsStr = recentActions.slice(-2).join('; ');
 
-      context.updateStatus?.('Loading Nous Hermes...');
+      context.updateStatus?.('Loading language model...');
       await ensureLLMLoaded(ROLEPLAY_LLM);
 
       context.updateStatus?.(`${companion.name} is thinking...`);
@@ -2125,6 +2159,9 @@ Respond with JSON:
             imageResult = await generateImage(prompt, { width: 768, height: 1024 });
           }
           response.image = imageResult.image_base64 || imageResult.image;
+
+          // Clear memory after image generation
+          await clearGenerationMemory();
         } catch (e) {
           console.warn('[Roleplay] Image generation failed:', e.message);
           response.image = null;
@@ -2133,6 +2170,20 @@ Respond with JSON:
         // Log why we skipped image generation
         console.log(`[Roleplay] Skipped image: shouldVisualize=${response.shouldVisualize}, messagesSinceLastImage=${messagesSinceLastImage}`);
         response.image = null;
+      }
+
+      // Generate new scenery background when location changes
+      if (includeImage && response.newLocation && response.newLocation !== currentLocation) {
+        context.updateStatus?.('Changing scenery...');
+        try {
+          response.backgroundImage = await generateSceneryBackground(response.newLocation);
+          console.log('[Roleplay] Generated new scenery for location change');
+
+          // Clear memory after background generation
+          await clearGenerationMemory();
+        } catch (e) {
+          console.warn('[Roleplay] Scenery background generation failed:', e.message);
+        }
       }
 
       // Generate voice response using Qwen3-TTS persona (high quality voice design + cloning)
@@ -2144,6 +2195,9 @@ Respond with JSON:
             companion, // Pass full companion object for persona voice design
           });
           response.audio = audioResult.audio_path || audioResult.audio;
+
+          // Clear memory after audio generation
+          await clearGenerationMemory();
         } catch (e) {
           console.warn('[Roleplay] Audio generation failed:', e.message);
           response.audio = null;
@@ -2173,9 +2227,19 @@ Respond with JSON:
           console.log(`[Roleplay] Generating peak emotion video: ${videoPrompt.substring(0, 100)}...`);
 
           const port = window.BONZAI_SERVER_PORT || 65000;
+          const authHeaders = getAuthHeaders();
+          const videoHeaders = {
+            'Content-Type': 'application/json',
+            ...authHeaders,
+          };
+          // Use demo mode if no auth token available
+          if (!authHeaders.Authorization) {
+            videoHeaders['X-Demo-Mode'] = 'true';
+          }
+
           const videoResponse = await fetch(`http://localhost:${port}/video`, {
             method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
+            headers: videoHeaders,
             body: JSON.stringify({
               mode: 'i2v',  // Image-to-video
               prompt: videoPrompt,
@@ -2200,6 +2264,9 @@ Respond with JSON:
               // If we have audio, the frontend can combine them
               // Store dialogue for potential TTS overlay
               response.videoDialogue = dialogueOnly;
+
+              // Clear memory after video generation
+              await clearGenerationMemory();
             }
           } else {
             console.warn('[Roleplay] Video generation failed:', await videoResponse.text());
@@ -2234,6 +2301,59 @@ Respond with JSON:
           isPeakEmotion,
           imageSkipped: includeImage && !response.image,
           shouldVisualize: response.shouldVisualize,
+        },
+      };
+    },
+
+    /**
+     * Initialize a new roleplay session - generates background from scenario
+     * Call this when starting a new chat session
+     * @param {Object} params - Session parameters
+     * @param {Object} params.companion - Selected companion
+     * @param {Object} params.scenario - Selected scenario
+     * @param {Object} params.settings - Content level and response mode
+     * @param {Object} context - Execution context
+     */
+    async initSession({ companion, scenario, settings }, context) {
+      context.updateStatus?.('Preparing scene...');
+
+      let backgroundImage = null;
+
+      // Generate initial scenery background from scenario
+      if (scenario && settings?.responseMode?.includes('image')) {
+        context.updateStatus?.('Setting the scene...');
+        backgroundImage = await generateSceneryBackground(scenario);
+
+        // Clear memory after background generation
+        await clearGenerationMemory();
+      }
+
+      // Initialize voice for companion (pre-cache for consistency)
+      if (companion && settings?.responseMode?.includes('audio')) {
+        context.updateStatus?.('Preparing voice...');
+        try {
+          // Pre-generate voice prompt by synthesizing a short greeting
+          await generateNarration(`Hello.`, {
+            companion,
+            sampleText: `Hello, I'm ${companion.name}. It's wonderful to meet you.`,
+          });
+
+          // Clear memory after voice initialization
+          await clearGenerationMemory();
+        } catch (e) {
+          console.warn('[Roleplay] Voice pre-cache failed:', e.message);
+        }
+      }
+
+      return {
+        success: true,
+        backgroundImage,
+        sceneState: {
+          lastImageAt: -IMAGE_GENERATION_CONFIG.MIN_MESSAGES_BETWEEN_IMAGES,
+          currentLocation: scenario?.setting || '',
+          recentEmotions: [],
+          recentActions: [],
+          lastOpeningPhrase: '',
         },
       };
     },
@@ -2307,17 +2427,10 @@ Return ONLY valid JSON.`;
 // ═══════════════════════════════════════════════════════════════════════════
 
 export const flagshipSkills = [
-  storyStudio,
-  meditationForge,
-  virtualStagingPro,
-  virtualTryOn,       // Formerly personalLookbook
-  chefsTable,
-  eli5,               // Formerly lessonAnimator
-  musicVideoForge,
-  gameMaker,          // Formerly gameAssetFoundry
-  mangaToAnime,       // Formerly bookTrailerStudio
-  hairstyleStudio,
-  roleplayCompanion,  // NEW
+  polymarketTopPerformers,  // Polymarket Top Performers
+  dslaSmartMarket,          // Prediction Market Maker
+  roleplayCompanion,        // Roleplay Companion
+  tcgPredictionMarket,      // Trading Card Game Insurance
 ];
 
 export default flagshipSkills;

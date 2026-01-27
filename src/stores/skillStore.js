@@ -56,7 +56,7 @@ export const useSkillStore = defineStore('skill', () => {
     return skills.value.filter(s => s.category === selectedCategory.value);
   });
 
-  // Skills filtered by search query
+  // Skills filtered by search query, with featured skills first
   const filteredSkills = computed(() => {
     let result = skillsByCategory.value;
 
@@ -65,12 +65,16 @@ export const useSkillStore = defineStore('skill', () => {
       result = result.filter(
         s =>
           s.name.toLowerCase().includes(query) ||
-          s.description.toLowerCase().includes(query) ||
-          (s.tags && s.tags.some(t => t.toLowerCase().includes(query)))
+          s.description.toLowerCase().includes(query)
       );
     }
 
-    return result;
+    // Sort featured skills to the top
+    return [...result].sort((a, b) => {
+      if (a.featured && !b.featured) return -1;
+      if (!a.featured && b.featured) return 1;
+      return 0;
+    });
   });
 
   // Skills by specific category
@@ -181,9 +185,9 @@ export const useSkillStore = defineStore('skill', () => {
     error.value = null;
 
     try {
-      // Load all skills (builtin + flagship)
-      const { builtin, flagship } = await skillService.initializeSkills();
-      skills.value = [...builtin, ...flagship];
+      // Load all flagship skills
+      const { skills: loadedSkills } = await skillService.initializeSkills();
+      skills.value = [...loadedSkills];
 
       // Load user-created skills
       await loadUserSkills();
@@ -192,7 +196,7 @@ export const useSkillStore = defineStore('skill', () => {
       await loadExecutionHistory();
 
       isInitialized.value = true;
-      console.log(`[SkillStore] Initialized with ${skills.value.length} skills (${builtin.length} builtin, ${flagship.length} flagship)`);
+      console.log(`[SkillStore] Initialized with ${skills.value.length} skills`);
     } catch (e) {
       console.error('[SkillStore] Initialization error:', e);
       error.value = e.message;
@@ -385,14 +389,7 @@ export const useSkillStore = defineStore('skill', () => {
           name: 'User',
           verified: false,
         },
-        category: skillForm.category || 'utility',
-        tags: [skillForm.category, 'user-created'],
-        pricing: {
-          purchasePrice: String(skillForm.price || 0.1),
-          purchaseToken: 'ETH',
-          runningFee: 99,
-          runningFeeToken: 'BONZAI',
-        },
+        category: skillForm.category || 'finance',
         requirements: {
           minLevel: 1,
           requiredApis,

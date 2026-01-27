@@ -194,9 +194,9 @@
             <a>
               <h1>
                 <span class="material-symbols-outlined is-size-1">
-                  finance_mode
+                  hub
                 </span>
-                Prediction
+                Agents
               </h1>
             </a>
           </li>

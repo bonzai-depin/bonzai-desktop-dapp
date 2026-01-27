@@ -80,6 +80,10 @@ const state = reactive({
   isUnlocking: false,
   lastCheck: null,
   error: null,
+
+  // Cross-component communication: request to open level modal
+  // Set to a level number (1-6) to request opening the modal
+  openLevelModalFor: null,
 });
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -251,9 +255,10 @@ export const canUnlockWithEth = () => {
 /**
  * Unlock ALL levels by paying 1 ETH
  * Single payment permanently unlocks all 6 levels
+ * @param {Function} onStatusChange - Optional callback for status updates
  * @returns {Promise<{success: boolean, txHash?: string, error?: string}>}
  */
-export const unlockAllWithEth = async () => {
+export const unlockAllWithEth = async (onStatusChange) => {
   // Validate can unlock
   const { canUnlock, reason } = canUnlockWithEth();
   if (!canUnlock) {
@@ -271,8 +276,19 @@ export const unlockAllWithEth = async () => {
     // Get price from contract (should be 1 ETH)
     const price = await contract.unlockPrice();
 
+    // Notify that we're about to request payment
+    if (onStatusChange) {
+      onStatusChange('awaiting_payment');
+    }
+
     // Call unlock function with exact payment
     const tx = await contract.unlock({ value: price });
+
+    // Notify that payment was submitted, waiting for confirmation
+    if (onStatusChange) {
+      onStatusChange('confirming');
+    }
+
     const receipt = await tx.wait();
 
     console.log('[Level] All levels unlocked via ETH payment:', receipt.hash);
@@ -427,6 +443,28 @@ export const getAllLevelsWithStatus = computed(() => {
 });
 
 // ═══════════════════════════════════════════════════════════════════════════
+// CROSS-COMPONENT COMMUNICATION
+// ═══════════════════════════════════════════════════════════════════════════
+
+/**
+ * Request opening the level modal for a specific level
+ * BonzaiBottomBar watches this and opens the modal when it changes
+ * @param {number} levelNum - Level number 1-6
+ */
+export const requestOpenLevelModal = (levelNum) => {
+  if (levelNum >= 1 && levelNum <= 6) {
+    state.openLevelModalFor = levelNum;
+  }
+};
+
+/**
+ * Clear the open modal request (called after modal opens)
+ */
+export const clearOpenLevelModalRequest = () => {
+  state.openLevelModalFor = null;
+};
+
+// ═══════════════════════════════════════════════════════════════════════════
 // EXPORT
 // ═══════════════════════════════════════════════════════════════════════════
 
@@ -456,6 +494,10 @@ export const levelService = {
   // Info helpers
   getLevelConfig,
   getAllLevelsWithStatus,
+
+  // Cross-component communication
+  requestOpenLevelModal,
+  clearOpenLevelModalRequest,
 
   // Config reference
   CONFIG,

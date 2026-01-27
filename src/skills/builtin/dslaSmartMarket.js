@@ -66,8 +66,8 @@ export const skill = {
   // IDENTITY
   // ═══════════════════════════════════════════════════════════════════════════
 
-  id: 'dsla-smart-market-v1.0.0',
-  name: 'DSLA Smart Market',
+  id: 'prediction-market-maker-v1.0.0',
+  name: 'Prediction Market Maker',
   description:
     'Create and manage prediction markets using the Decentralized Service Level Agreement (DSLA) protocol. Define verifiable SLA-based outcomes for any measurable on-chain or off-chain metric.',
   version: '1.0.0',
@@ -82,26 +82,15 @@ export const skill = {
     verified: true,
   },
 
-  category: 'prediction-market',
-  tags: ['dsla', 'sla', 'prediction-market', 'defi', 'nft', 'uptime', 'yields'],
-
-  // ═══════════════════════════════════════════════════════════════════════════
-  // PRICING
-  // ═══════════════════════════════════════════════════════════════════════════
-
-  pricing: {
-    purchasePrice: '0.1',
-    purchaseToken: 'ETH',
-    runningFee: 99,
-    runningFeeToken: 'BONZAI',
-  },
+  category: 'finance',
+  tags: ['demo'],
 
   // ═══════════════════════════════════════════════════════════════════════════
   // REQUIREMENTS
   // ═══════════════════════════════════════════════════════════════════════════
 
   requirements: {
-    minLevel: 2,
+    minLevel: 1,
     requiredApis: ['dsla', 'coingecko', 'chainlink'],
     requiredPermissions: ['network:read', 'wallet:sign'],
   },

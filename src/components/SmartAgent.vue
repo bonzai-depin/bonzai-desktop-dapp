@@ -37,17 +37,8 @@
                 >
                   hub
                 </span>
-                Skills Marketplace
+                Agentic Skills
               </h1>
-            </div>
-            <div class="level-right">
-              <button
-                class="button is-info is-large is-outlined fira-sans-condensed-black-italic"
-                @click="refreshSkills"
-              >
-                <span class="material-symbols-outlined mr-2">refresh</span>
-                Refresh
-              </button>
             </div>
           </div>
 
@@ -71,20 +62,9 @@
                   class="fira-sans-condensed-black-italic is-size-1"
                 >
                   <span class="material-symbols-outlined mr-2 is-size-1">
-                    inventory_2
+                    start
                   </span>
-                  My Skills
-                </a>
-              </li>
-              <li :class="{ 'is-active': activeTab === 'create' }">
-                <a
-                  @click.prevent="activeTab = 'create'"
-                  class="fira-sans-condensed-black-italic is-size-1"
-                >
-                  <span class="material-symbols-outlined mr-2 is-size-1">
-                    add_circle
-                  </span>
-                  Create
+                  Run
                 </a>
               </li>
             </ul>
@@ -94,43 +74,37 @@
           <div v-if="activeTab === 'browse'">
             <!-- Category Filter -->
             <div class="category-filter mb-5">
-              <div class="control category-selector">
-                <button
-                  class="button category-btn"
-                  :class="{ 'is-active': !selectedCategory }"
-                  @click="setCategory(null)"
-                >
+              <span class="category-selector">
+                <input
+                  type="radio"
+                  name="skill_category"
+                  id="category_all"
+                  :checked="!selectedCategory"
+                  @change="setCategory(null)"
+                />
+                <label for="category_all" class="radio category">
                   <span class="material-symbols-outlined mr-1">apps</span>
                   All
-                </button>
-                <button
-                  v-for="cat in categories"
-                  :key="cat.key"
-                  class="button category-btn"
-                  :class="{ 'is-active': selectedCategory === cat.key }"
-                  @click="setCategory(cat.key)"
-                >
-                  <span class="material-symbols-outlined mr-1">{{ cat.icon }}</span>
-                  {{ cat.label }}
-                </button>
-              </div>
-            </div>
-
-            <!-- Search -->
-            <div class="field has-addons mb-5">
-              <div class="control is-expanded">
-                <input
-                  class="input is-large no-shadow"
-                  type="text"
-                  v-model="searchQuery"
-                  placeholder="Search skills by name, description, or tags..."
-                />
-              </div>
-              <div class="control">
-                <button class="button is-info is-large no-shadow">
-                  <span class="material-symbols-outlined">search</span>
-                </button>
-              </div>
+                </label>
+                <template v-for="cat in categories" :key="cat.key">
+                  <input
+                    type="radio"
+                    name="skill_category"
+                    :id="'category_' + cat.key"
+                    :checked="selectedCategory === cat.key"
+                    @change="setCategory(cat.key)"
+                  />
+                  <label :for="'category_' + cat.key" class="radio category">
+                    <span
+                      class="material-symbols-outlined mr-1"
+                      style="font-size: 32px !important"
+                    >
+                      {{ cat.icon }}
+                    </span>
+                    {{ cat.label }}
+                  </label>
+                </template>
+              </span>
             </div>
 
             <!-- Skills Grid -->
@@ -139,22 +113,34 @@
                 v-for="skill in filteredSkills"
                 :key="skill.id"
                 class="skill-card models__activity--payouts"
-                :class="{ 'is-owned': canRunSkill(skill.id).canRun }"
+                :class="{
+                  'is-owned': canRunSkill(skill.id).canRun,
+                  featured: skill.featured,
+                }"
               >
                 <div class="skill-header">
-                  <h3 class="skill-name fira-sans-condensed-black-italic">
+                  <h3
+                    class="skill-name is-size-3 fira-sans-condensed-black-italic"
+                  >
+                    <span class="material-symbols-outlined mr-2 is-size-3">
+                      {{ getCategoryIcon(skill.category) }}
+                    </span>
                     {{ skill.name }}
                   </h3>
                   <div class="tags">
-                    <span class="tag is-info fira-sans-condensed-black-italic">
+                    <span
+                      class="tag is-info is-medium fira-sans-condensed-black-italic"
+                    >
                       {{ getCategoryLabel(skill.category) }}
                     </span>
-                    <span class="tag fira-sans-condensed-black-italic" :class="canRunSkill(skill.id).canRun ? 'is-success' : 'is-warning'">
-                      {{ getRequiredLevel(skill) }}
+                    <span
+                      class="tag is-warning is-medium fira-sans-condensed-black-italic"
+                    >
+                      {{ getRequiredLevel(skill) }} REQUIRED
                     </span>
                     <span
                       v-if="skill.author?.verified"
-                      class="tag is-warning fira-sans-condensed-black-italic"
+                      class="tag is-success is-medium fira-sans-condensed-black-italic"
                     >
                       Verified
                     </span>
@@ -163,30 +149,9 @@
 
                 <p class="skill-description">{{ skill.description }}</p>
 
-                <div class="skill-tags mt-3">
-                  <span
-                    v-for="tag in (skill.tags || []).slice(0, 4)"
-                    :key="tag"
-                    class="tag is-dark is-small mr-1"
-                  >
-                    {{ tag }}
-                  </span>
-                </div>
-
                 <hr />
 
                 <div class="skill-footer">
-                  <div class="skill-pricing">
-                    <div class="tags has-addons">
-                      <span class="tag is-dark fira-sans-condensed-black-italic">
-                        {{ skill.pricing?.purchasePrice || '0.1' }}
-                        {{ skill.pricing?.purchaseToken || 'ETH' }}
-                      </span>
-                      <span class="tag is-info fira-sans-condensed-black-italic">
-                        {{ skill.pricing?.runningFee || 99 }} BONZAI/run
-                      </span>
-                    </div>
-                  </div>
                   <div class="skill-actions">
                     <template v-if="canRunSkill(skill.id).canRun">
                       <button
@@ -200,10 +165,18 @@
                       </button>
                     </template>
                     <template v-else>
-                      <span class="tag is-warning is-medium">
-                        <span class="material-symbols-outlined mr-1" style="font-size: 16px;">lock</span>
-                        {{ getRequiredLevel(skill) }} Required
-                      </span>
+                      <button
+                        class="button is-warning is-medium fira-sans-condensed-black-italic"
+                        @click="openUnlockModal(skill)"
+                      >
+                        <span
+                          class="material-symbols-outlined mr-2"
+                          style="font-size: 24px"
+                        >
+                          lock_open
+                        </span>
+                        UNLOCK {{ getRequiredLevel(skill) }}
+                      </button>
                     </template>
                   </div>
                 </div>
@@ -211,169 +184,230 @@
             </div>
 
             <div v-else class="notification is-info">
-              <span class="fira-sans-condensed-black-italic is-size-4">
-                No skills found matching your criteria.
+              <span class="fira-sans-condensed-black-italic is-size-1">
+                Coming Soon.
               </span>
             </div>
           </div>
 
           <!-- MY SKILLS TAB -->
           <div v-if="activeTab === 'my-skills'">
-            <div v-if="accessibleSkills.length === 0" class="notification is-info">
-              <span class="fira-sans-condensed-black-italic is-size-4">
-                No skills available at your current level. Upgrade your level to unlock more skills!
-              </span>
-              <div class="control has-text-center mt-5">
+            <div
+              v-if="accessibleSkills.length === 0"
+              class="notification is-warning p-5"
+            >
+              <span class="material-symbols-outlined mr-2 is-size-1">lock</span>
+              <h2 class="fira-sans-condensed-black-italic is-size-3 mt-5">
+                Connect Wallet or Upgrade your Level to unlock skills.
+              </h2>
+              <div class="control has-text-center mt-5 mb-5">
                 <button
                   class="button is-success is-large"
                   @click="activeTab = 'browse'"
                 >
-                  <span class="material-symbols-outlined mr-2">shopping_cart</span>
+                  <span class="material-symbols-outlined mr-2">
+                    shopping_cart
+                  </span>
                   Browse Skills
                 </button>
               </div>
             </div>
 
             <div v-else>
-              <!-- Skill Selector -->
-              <div class="models__activity--payouts mb-5">
-                <div
-                  v-if="!isModelAvailable"
-                  class="notification is-danger mb-5"
-                >
-                  <div class="columns is-vcentered">
-                    <div class="column">
-                      <h3
-                        class="is-size-4 mb-0 fira-sans-condensed-black-italic has-text-left"
+              <!-- DOWNLOAD REQUIRED (only when not actively downloading) -->
+              <div
+                v-if="
+                  skillModelRequirements.length > 0 &&
+                  hasMissingModels &&
+                  !downloads.active
+                "
+                class="notification is-danger mb-6 mt-4 p-6 has-text-left"
+              >
+                <div class="mb-2">
+                  <strong class="fira-sans-condensed-black-italic is-size-2">
+                    Download Required
+                  </strong>
+                  <!-- Show all missing repos -->
+                  <ul style="margin-top: 0.5rem; text-transform: lowercase">
+                    <template v-for="model in missingModels" :key="model.key">
+                      <li
+                        v-for="repo in modelReadinessDetails[model.key]
+                          ?.repos || []"
+                        :key="repo"
                       >
-                        AI Model Required
-                      </h3>
-                    </div>
-                    <div class="column is-narrow">
-                      <button
-                        class="button is-success is-large fira-sans-condensed-black-italic"
-                        @click="downloadModel"
-                        :disabled="isDownloading"
-                      >
-                        <span class="material-symbols-outlined mr-2">
-                          deployed_code_update
+                        <span class="material-symbols-outlined is-size-3 mr-1">
+                          deployed_code
                         </span>
-                        Download
-                        <span
-                          v-if="downloadProgress"
-                          class="filesize ml-2"
-                          style="font-size: 14px"
-                        >
-                          {{ downloadProgress }}%
-                        </span>
-                        <span
-                          v-else
-                          class="filesize ml-2"
-                          style="font-size: 14px"
-                        >
-                          4.08 GB
-                        </span>
-                      </button>
-                    </div>
-                  </div>
-                </div>
-                <h3
-                  class="fira-sans-condensed-black-italic has-text-white has-text-left is-size-2 mb-3"
-                >
-                  Available Skills
-                </h3>
-                <div class="control agent-selector">
-                  <template v-for="skill in availableSkills" :key="skill.id">
-                    <input
-                      type="radio"
-                      name="skill_selector"
-                      :id="'skill_' + skill.id"
-                      :value="skill.id"
-                      :checked="selectedSkillId === skill.id"
-                      @change="selectSkillById(skill.id)"
-                    />
-                    <label :for="'skill_' + skill.id" class="radio">
-                      {{ skill.name }}
-                      <span
-                        class="tag is-small ml-2"
-                        :class="canRunSkill(skill.id).canRun ? 'is-success' : 'is-warning'"
-                        :title="getRequiredLevel(skill)"
-                      >
-                        {{ getRequiredLevel(skill) }}
-                      </span>
-                      <span
-                        v-if="hasIssuedToken(skill.id)"
-                        class="tag is-success is-small ml-2"
-                        title="Token Issued"
-                      >
-                        <span class="material-symbols-outlined" style="font-size: 12px;">
-                          token
-                        </span>
-                      </span>
-                    </label>
-                  </template>
-                </div>
-
-                <!-- Token Issuance Section -->
-                <div v-if="selectedSkill" class="token-issuance-section mt-4">
-                  <div v-if="hasIssuedToken(selectedSkillId)" class="notification is-success is-light">
-                    <div class="columns is-vcentered">
-                      <div class="column">
-                        <p class="fira-sans-condensed-black-italic">
-                          <span class="material-symbols-outlined mr-2" style="vertical-align: middle;">
-                            token
-                          </span>
-                          Token Issued: <strong>{{ getSkillTokenData(selectedSkillId)?.symbol }}</strong>
-                        </p>
-                        <p class="is-size-7 has-text-grey">
-                          Address: {{ getSkillTokenData(selectedSkillId)?.address?.slice(0, 10) }}...{{ getSkillTokenData(selectedSkillId)?.address?.slice(-8) }}
-                        </p>
-                      </div>
-                      <div class="column is-narrow">
-                        <a
-                          :href="`https://arbiscan.io/token/${getSkillTokenData(selectedSkillId)?.address}`"
-                          target="_blank"
-                          class="button is-small is-info"
-                        >
-                          <span class="material-symbols-outlined mr-1" style="font-size: 14px;">
-                            open_in_new
-                          </span>
-                          View on Arbiscan
-                        </a>
-                      </div>
-                    </div>
-                  </div>
-                  <div v-else class="has-text-right">
-                    <button
-                      class="button is-warning is-medium fira-sans-condensed-black-italic"
-                      @click="openTokenIssuanceModal(selectedSkill)"
+                        {{ repo }}
+                      </li>
+                    </template>
+                  </ul>
+                  <!-- Show all missing files/ggufs -->
+                  <ul style="margin-top: 0.5rem; text-transform: lowercase">
+                    <template
+                      v-for="model in missingModels"
+                      :key="model.key + '_files'"
                     >
-                      <span class="material-symbols-outlined mr-2">
-                        generating_tokens
-                      </span>
-                      Issue Token
-                    </button>
-                  </div>
+                      <li
+                        v-for="file in modelReadinessDetails[model.key]
+                          ?.files || []"
+                        :key="file"
+                      >
+                        <span class="material-symbols-outlined is-size-3 mr-1">
+                          deployed_code
+                        </span>
+                        {{ file }}
+                      </li>
+                      <!-- Fallback for models without repo/file details -->
+                      <template
+                        v-if="
+                          !modelReadinessDetails[model.key]?.repos?.length &&
+                          !modelReadinessDetails[model.key]?.files?.length
+                        "
+                      >
+                        <!-- Handle array repos (e.g., Qwen TTS) -->
+                        <template v-if="Array.isArray(model.repo)">
+                          <li
+                            v-for="(r, rIdx) in model.repo"
+                            :key="model.key + '_fallback_repo_' + rIdx"
+                          >
+                            <span
+                              class="material-symbols-outlined is-size-3 mr-1"
+                            >
+                              deployed_code
+                            </span>
+                            {{ r }}
+                          </li>
+                        </template>
+                        <!-- Handle single repo/filename -->
+                        <li v-else>
+                          <span
+                            class="material-symbols-outlined is-size-3 mr-1"
+                          >
+                            deployed_code
+                          </span>
+                          {{ model.filename || model.repo || model.name }}
+                        </li>
+                      </template>
+                    </template>
+                  </ul>
+                </div>
+                <hr />
+                <div class="buttons">
+                  <button
+                    class="button is-warning mr-5 is-large"
+                    @click="downloadAllMissingModels"
+                    :disabled="downloads.active"
+                  >
+                    <span class="material-symbols-outlined mr-1">download</span>
+                    Download Now
+                  </button>
                 </div>
               </div>
 
-              <hr />
+              <!-- DOWNLOAD PROGRESS (like GenerativeImage.vue) -->
+              <div
+                v-if="downloads && downloads.active"
+                class="notification is-info p-6 mb-6 mt-4"
+              >
+                <p class="mb-2">
+                  <span class="fira-sans-condensed-black-italic is-size-4">
+                    Downloading
+                    <button
+                      disabled
+                      class="button is-loading is-info is-small mr-2 p-4"
+                    ></button>
+                  </span>
+                  <span
+                    class="fira-sans-condensed-black-italic is-pulled-right is-size-1"
+                  >
+                    {{ Math.round(downloads.total_progress || 0) }}%
+                  </span>
+                </p>
+                <progress
+                  class="progress is-success is-large"
+                  :value="downloads.progress || 0"
+                  max="100"
+                >
+                  {{ Math.round(downloads.progress || 0) }}%
+                </progress>
+                <div
+                  v-if="downloadTaskList.length"
+                  style="max-height: 180px; overflow: auto"
+                >
+                  <ul>
+                    <li
+                      v-for="t in downloadTaskList"
+                      :key="t.task_id"
+                      class="is-size-7 columns"
+                      style="text-transform: lowercase"
+                    >
+                      <div class="column has-text-left">
+                        <span class="material-symbols-outlined is-size-6">
+                          deployed_code
+                        </span>
+                        {{ t.filename }} —
+                        <span class="fira-sans-condensed-black-italic">
+                          {{ t.status }}
+                        </span>
+                      </div>
+                      <div
+                        class="column is-2 fira-sans-condensed-black-italic has-text-right"
+                      >
+                        {{ Math.round(t.progress || 0) }}%
+                      </div>
+                    </li>
+                  </ul>
+                </div>
+              </div>
 
-              <!-- POLYMARKET INTERFACE -->
-              <div v-if="selectedSkillId === 'polymarket-top-performers-v1.0.0'">
+              <!-- POLYMARKET SKILL (modular component) -->
+              <div
+                v-if="selectedSkillId === 'polymarket-top-performers-v1.0.0'"
+              >
+                <PolymarketSkill
+                  :skill="selectedSkill"
+                  :model-available="isModelAvailable"
+                  @analyzing="isAnalyzing = $event"
+                />
+              </div>
+
+              <!-- Legacy Polymarket Skill UI (commented out - now using PolymarketSkill component) -->
+              <div
+                v-if="false && selectedSkillId === 'polymarket-top-performers-v1.0.0-legacy'"
+              >
+                <!-- Skill Header (same style as Roleplay Companion) -->
+                <div class="models__activity--payouts mb-4 has-text-left">
+                  <div class="columns is-vcentered">
+                    <div class="column">
+                      <h3
+                        class="skill-name is-size-1 fira-sans-condensed-black-italic"
+                      >
+                        <span
+                          class="material-symbols-outlined mr-2"
+                          style="font-size: 48px; color: var(--bulma-primary)"
+                        >
+                          {{ getCategoryIcon(selectedSkill?.category) }}
+                        </span>
+                        {{ selectedSkill?.name }}
+                      </h3>
+                      <p class="is-size-5 mt-3">
+                        {{ selectedSkill?.description }}
+                      </p>
+                    </div>
+                  </div>
+                </div>
+
                 <div
                   class="models__activity--payouts pt-5 pb-5"
                   style="position: relative; bottom: -40px; z-index: 11"
                 >
                   <!-- Category Selector -->
-                  <h2
-                    class="fira-sans-condensed-black-italic is-size-5 has-text-white has-text-left mb-4"
-                  >
-                    Category
-                  </h2>
                   <div class="columns">
                     <div class="column is-12">
-                      <div class="control category-selector polymarket-category">
+                      <div
+                        class="control category-selector polymarket-category"
+                      >
                         <template
                           v-for="cat in polymarketCategories"
                           :key="cat.key"
@@ -406,13 +440,6 @@
                             >
                               progress_activity
                             </span>
-                            <span
-                              v-else
-                              class="material-symbols-outlined mr-1"
-                              style="font-size: 18px !important"
-                            >
-                              {{ cat.icon }}
-                            </span>
                             {{ cat.label }}
                           </label>
                         </template>
@@ -421,13 +448,13 @@
                   </div>
 
                   <!-- Time Period Selector -->
-                  <h2
-                    class="fira-sans-condensed-black-italic is-size-5 has-text-white has-text-left mb-4 mt-5"
-                  >
-                    Timeframe
-                  </h2>
                   <div class="columns">
-                    <div class="column is-12">
+                    <div class="column is-6">
+                      <h2
+                        class="fira-sans-condensed-black-italic is-size-5 has-text-white has-text-left mb-4"
+                      >
+                        Timeframe
+                      </h2>
                       <div class="control timeperiod-selector">
                         <template
                           v-for="period in polymarketPeriods"
@@ -466,16 +493,13 @@
                         </template>
                       </div>
                     </div>
-                  </div>
-
-                  <!-- Min Conviction Selector -->
-                  <h2
-                    class="fira-sans-condensed-black-italic is-size-5 has-text-white has-text-left mb-4 mt-5"
-                  >
-                    Consensus
-                  </h2>
-                  <div class="columns">
-                    <div class="column is-12">
+                    <div class="column is-6">
+                      <!-- Min Conviction Selector -->
+                      <h2
+                        class="fira-sans-condensed-black-italic is-size-5 has-text-white has-text-left mb-4"
+                      >
+                        Consensus
+                      </h2>
                       <div class="control conviction-selector">
                         <template
                           v-for="level in polymarketConvictionLevels"
@@ -532,10 +556,10 @@
                       v-if="
                         analysis.topTraders && analysis.topTraders.length > 0
                       "
-                      class="top-traders-panel mt-4 mb-4"
+                      class="top-traders-panel mt-5 mb-5 pt-1"
                     >
                       <h4
-                        class="fira-sans-condensed-black-italic is-size-2 has-text-info mb-3"
+                        class="fira-sans-condensed-black-italic is-size-2 has-text-white mb-3 has-text-left mt-5"
                       >
                         <span class="material-symbols-outlined is-size-1 mr-2">
                           leaderboard
@@ -546,7 +570,7 @@
                         <div
                           v-for="(trader, tIdx) in analysis.topTraders.slice(
                             0,
-                            10
+                            10,
                           )"
                           :key="tIdx"
                           class="tags has-addons mt-5 mb-5 column is-6 has-text-left"
@@ -584,13 +608,13 @@
                         analysis.recommendations &&
                         analysis.recommendations.length > 0
                       "
-                      class="has-text-left"
+                      class="has-text-left pt-3"
                     >
                       <h4
-                        class="fira-sans-condensed-black-italic is-size-2 has-text-success mt-5"
+                        class="fira-sans-condensed-black-italic is-size-2 has-text-brand mt-5 mb-5"
                       >
                         <span class="material-symbols-outlined is-size-1 mr-1">
-                          online_prediction
+                          diamond
                         </span>
                         High Conviction Positions
                       </h4>
@@ -598,11 +622,11 @@
                       <div
                         v-for="(rec, rIdx) in analysis.recommendations"
                         :key="rIdx"
-                        class="market-card mt-4 mb-4"
+                        class="market-card mt-5 mb-5 p-5"
                       >
                         <div class="market-question">
                           <span
-                            class="material-symbols-outlined is-size-3 mr-2"
+                            class="material-symbols-outlined is-size-4 mr-2 has-text-white"
                           >
                             help_outline
                           </span>
@@ -611,13 +635,14 @@
                           </strong>
                         </div>
 
-                        <hr />
+                        <hr class="m-5" />
 
-                        <div class="conviction-info mt-3">
+                        <div class="conviction-info mt-5 mb-5">
                           <div class="tags has-addons">
                             <span
-                              class="tag is-warning is-large fira-sans-condensed-black-italic"
+                              class="tag is-brand is-large fira-sans-condensed-black-italic"
                             >
+                              {{ (rec.market.currentPrice * 100).toFixed(0) }}%
                               {{ rec.outcome }}
                             </span>
                             <span
@@ -640,22 +665,23 @@
                             </span>
                           </div>
                         </div>
-                        <div class="is-pulled-right">
-                          <h2
-                            class="fira-sans-condensed-black-italic is-pulled-right"
-                          >
-                            {{ (rec.market.currentPrice * 100).toFixed(0) }}%
-                          </h2>
-                        </div>
                         <!-- Traders holding this position -->
                         <div
                           v-if="rec.traders && rec.traders.length > 0"
-                          class="traders-holding mt-3"
+                          class="traders-holding mt-5 pt-5"
                         >
-                          <div class="tags">
+                          <div
+                            v-for="(t, tIdx) in rec.traders"
+                            :key="tIdx"
+                            class="tags has-addons mr-2"
+                            style="display: inline-flex"
+                          >
                             <span
-                              v-for="(t, tIdx) in rec.traders"
-                              :key="tIdx"
+                              class="tag is-warning fira-sans-condensed-black-italic"
+                            >
+                              #{{ t.rank }}
+                            </span>
+                            <span
                               class="tag is-dark fira-sans-condensed-black-italic"
                             >
                               {{
@@ -665,12 +691,16 @@
                                     t.proxyWallet.slice(-4)
                                   : t.userName
                               }}
-                              (${{ formatNumber(t.size) }})
+                            </span>
+                            <span
+                              class="tag is-success fira-sans-condensed-black-italic"
+                            >
+                              ${{ formatNumber(t.size) }}
                             </span>
                           </div>
                         </div>
-                        <hr />
-                        <div class="rec-action mt-3 p-0">
+                        <hr class="m-5" />
+                        <div class="rec-action mt-3 p-0 mb-5">
                           <button
                             class="button is-info is-medium fira-sans-condensed-black-italic mr-5"
                             @click="generateInvestmentThesis(idx, rIdx, rec)"
@@ -755,8 +785,44 @@
                 </div>
               </div>
 
-              <!-- TCG INTERFACE -->
-              <div v-else-if="selectedSkillId === 'tcg-prediction-market-v1.0.0'" class="tcg-interface">
+              <!-- TCG SKILL (modular component) -->
+              <div
+                v-else-if="selectedSkillId === 'tcg-prediction-market-v1.0.0'"
+                class="tcg-interface"
+              >
+                <TCGSkill
+                  :skill="selectedSkill"
+                  @market-created="showNotification('Prediction market created!', 'success')"
+                />
+              </div>
+
+              <!-- Legacy TCG UI (commented out - now using TCGSkill component) -->
+              <div
+                v-if="false && selectedSkillId === 'tcg-prediction-market-v1.0.0-legacy'"
+                class="tcg-interface"
+              >
+                <!-- Skill Header (same style as Roleplay Companion) -->
+                <div class="models__activity--payouts mb-4 has-text-left">
+                  <div class="columns is-vcentered">
+                    <div class="column">
+                      <h3
+                        class="skill-name is-size-1 fira-sans-condensed-black-italic"
+                      >
+                        <span
+                          class="material-symbols-outlined mr-2"
+                          style="font-size: 48px; color: var(--bulma-primary)"
+                        >
+                          {{ getCategoryIcon(selectedSkill?.category) }}
+                        </span>
+                        {{ selectedSkill?.name }}
+                      </h3>
+                      <p class="is-size-5 mt-3">
+                        {{ selectedSkill?.description }}
+                      </p>
+                    </div>
+                  </div>
+                </div>
+
                 <!-- Collection Selector -->
                 <div class="tcg-header mb-4">
                   <div class="control collection-selector">
@@ -1004,7 +1070,7 @@
                               class="tag is-medium is-success fira-sans-condensed-black-italic mr-2"
                             >
                               FOR:
-                              {{ getPosition('tcg', market.id, 'for').amount }}
+                              {{ getPosition("tcg", market.id, "for").amount }}
                               tokens
                             </span>
                             <span
@@ -1012,7 +1078,9 @@
                               class="tag is-medium is-danger fira-sans-condensed-black-italic"
                             >
                               AGAINST:
-                              {{ getPosition('tcg', market.id, 'against').amount }}
+                              {{
+                                getPosition("tcg", market.id, "against").amount
+                              }}
                               tokens
                             </span>
                           </div>
@@ -1020,7 +1088,9 @@
                         <div class="column is-3 is-offset-3">
                           <button
                             class="button is-success fira-sans-condensed-black-italic is-fullwidth"
-                            @click="openPositionModal('tcg', market.id, 'for', market)"
+                            @click="
+                              openPositionModal('tcg', market.id, 'for', market)
+                            "
                           >
                             <span class="material-symbols-outlined mr-1">
                               thumb_up
@@ -1031,7 +1101,14 @@
                         <div class="column is-3">
                           <button
                             class="button is-danger fira-sans-condensed-black-italic is-fullwidth"
-                            @click="openPositionModal('tcg', market.id, 'against', market)"
+                            @click="
+                              openPositionModal(
+                                'tcg',
+                                market.id,
+                                'against',
+                                market,
+                              )
+                            "
                           >
                             <span class="material-symbols-outlined mr-1">
                               thumb_down
@@ -1045,8 +1122,38 @@
                 </div>
               </div>
 
-              <!-- DSLA SKILL FACTORY -->
+              <!-- DSLA SKILL (modular component) -->
               <div v-else-if="selectedSkillId === 'dsla-smart-market-v1.0.0'">
+                <DSLASkill
+                  :skill="selectedSkill"
+                  @skill-created="showNotification('Prediction market skill created!', 'success')"
+                />
+              </div>
+
+              <!-- Legacy DSLA UI (commented out - now using DSLASkill component) -->
+              <div v-if="false && selectedSkillId === 'dsla-smart-market-v1.0.0-legacy'">
+                <!-- Skill Header (same style as Roleplay Companion) -->
+                <div class="models__activity--payouts mb-4 has-text-left">
+                  <div class="columns is-vcentered">
+                    <div class="column">
+                      <h3
+                        class="skill-name is-size-1 fira-sans-condensed-black-italic"
+                      >
+                        <span
+                          class="material-symbols-outlined mr-2"
+                          style="font-size: 48px; color: var(--bulma-primary)"
+                        >
+                          {{ getCategoryIcon(selectedSkill?.category) }}
+                        </span>
+                        {{ selectedSkill?.name }}
+                      </h3>
+                      <p class="is-size-5 mt-3">
+                        {{ selectedSkill?.description }}
+                      </p>
+                    </div>
+                  </div>
+                </div>
+
                 <div class="models__activity--payouts">
                   <div class="bonzai__agent">
                     <div class="desc">
@@ -1056,9 +1163,10 @@
                         build_circle
                       </span>
                       <p class="notification is-info">
-                        Create a new Prediction Market Skill using the Decentralized
-                        Service Level Agreement (DSLA) framework. Select a use case,
-                        define your skill's identity and token economics.
+                        Create a new Prediction Market Skill using the
+                        Decentralized Service Level Agreement (DSLA) framework.
+                        Select a use case, define your skill's identity and
+                        token economics.
                       </p>
                     </div>
 
@@ -1094,7 +1202,10 @@
                             </label>
                           </template>
                         </div>
-                        <p v-if="selectedUseCase" class="has-text-grey-light mt-2 is-size-7">
+                        <p
+                          v-if="selectedUseCase"
+                          class="has-text-grey-light mt-2 is-size-7"
+                        >
                           {{ selectedUseCase.context }}
                         </p>
                       </div>
@@ -1225,87 +1336,29 @@
               </div>
 
               <!-- Roleplay Companion - Special Chat Interface -->
-              <div v-else-if="selectedSkillId === 'roleplay-companion-v1.0.0'" class="roleplay-interface">
-                <div class="models__activity--payouts mb-4">
+              <div
+                v-else-if="selectedSkillId === 'roleplay-companion-v1.0.0'"
+                class="roleplay-interface"
+              >
+                <div class="models__activity--payouts mb-4 has-text-left">
                   <!-- Skill Header -->
-                  <div class="skill-header-banner">
-                    <div class="columns is-vcentered">
-                      <div class="column">
-                        <div class="is-flex is-align-items-center">
-                          <span class="material-symbols-outlined mr-3" style="font-size: 48px; color: var(--bulma-primary);">
-                            {{ getCategoryIcon(selectedSkill.category) }}
-                          </span>
-                          <div>
-                            <h3 class="fira-sans-condensed-black-italic is-size-2 has-text-white mb-1">
-                              {{ selectedSkill.name }}
-                            </h3>
-                            <p class="has-text-grey-light">{{ selectedSkill.description }}</p>
-                          </div>
-                        </div>
-                      </div>
-                      <div class="column is-narrow">
-                        <div class="tags">
-                          <span class="tag is-medium" :class="getCategoryColor(selectedSkill.category)">
-                            {{ getCategoryLabel(selectedSkill.category) }}
-                          </span>
-                          <span class="tag is-info is-medium">{{ getRequiredLevel(selectedSkill) }}</span>
-                        </div>
-                      </div>
+                  <div class="columns is-vcentered">
+                    <div class="column">
+                      <h3
+                        class="skill-name is-size-1 fira-sans-condensed-black-italic"
+                      >
+                        <span
+                          class="material-symbols-outlined mr-2"
+                          style="font-size: 48px; color: var(--bulma-primary)"
+                        >
+                          {{ getCategoryIcon(selectedSkill.category) }}
+                        </span>
+                        {{ selectedSkill.name }}
+                      </h3>
+                      <p class="is-size-5 mt-3">
+                        {{ selectedSkill.description }}
+                      </p>
                     </div>
-                  </div>
-                </div>
-
-                <!-- Model Requirements (matching GenerativeImage style) -->
-                <div v-if="skillModelRequirements.length > 0 && hasMissingModels" class="notification is-danger mb-6 mt-4 p-6 has-text-left">
-                  <p class="mb-2">
-                    <strong class="fira-sans-condensed-black-italic is-size-2">
-                      Download Required
-                    </strong>
-                    <!-- Show missing repos -->
-                    <template v-for="model in missingModels" :key="model.key">
-                      <ul v-if="modelReadinessDetails[model.key]?.repos?.length" style="margin-top: 0.5rem; text-transform: lowercase">
-                        <li v-for="repo in modelReadinessDetails[model.key].repos" :key="repo">
-                          <span class="material-symbols-outlined is-size-4 mr-1">
-                            deployed_code
-                          </span>
-                          {{ repo }}
-                        </li>
-                      </ul>
-                      <!-- Show missing files -->
-                      <ul v-if="modelReadinessDetails[model.key]?.files?.length" style="margin-top: 0.5rem; text-transform: lowercase">
-                        <li v-for="file in modelReadinessDetails[model.key].files" :key="file">
-                          <span class="material-symbols-outlined is-size-4 mr-1">
-                            deployed_code
-                          </span>
-                          {{ file }}
-                        </li>
-                      </ul>
-                      <!-- Fallback if no details available (show filename for LLM, repo for others) -->
-                      <ul v-if="!modelReadinessDetails[model.key]?.repos?.length && !modelReadinessDetails[model.key]?.files?.length" style="margin-top: 0.5rem; text-transform: lowercase">
-                        <li>
-                          <span class="material-symbols-outlined is-size-4 mr-1">
-                            deployed_code
-                          </span>
-                          {{ model.filename || model.repo || model.name }}
-                        </li>
-                      </ul>
-                    </template>
-                  </p>
-                  <hr />
-                  <div class="buttons">
-                    <button
-                      class="button is-warning mr-5 is-large"
-                      @click="downloadAllMissingModels"
-                      :disabled="downloadingModelKey !== null"
-                    >
-                      <span v-if="downloadingModelKey" class="material-symbols-outlined mr-1 rotating">
-                        progress_activity
-                      </span>
-                      <span v-else class="material-symbols-outlined mr-1">
-                        download
-                      </span>
-                      {{ downloadingModelKey ? `Downloading... ${downloadProgress}%` : 'Download Now' }}
-                    </button>
                   </div>
                 </div>
 
@@ -1318,97 +1371,211 @@
 
               <!-- Generic Skill Interface (for other flagship skills) -->
               <div v-else-if="selectedSkill" class="generic-skill-interface">
+                <div class="models__activity--payouts has-text-left mb-5">
+                  <div>
+                    <h3
+                      class="skill-name is-size-1 fira-sans-condensed-black-italic"
+                    >
+                      <span
+                        class="material-symbols-outlined mr-3 is-size-1"
+                      >
+                        {{ getCategoryIcon(selectedSkill.category) }}
+                      </span>
+                      {{ selectedSkill.name }}
+                    </h3>
+                    <p class="skill-description">
+                      {{ selectedSkill.description }}
+                    </p>
+                  </div>
+                </div>
                 <div class="models__activity--payouts">
                   <!-- Skill Header -->
-                  <div class="skill-header-banner mb-5">
-                    <div class="columns is-vcentered">
-                      <div class="column">
-                        <div class="is-flex is-align-items-center">
-                          <span class="material-symbols-outlined mr-3" style="font-size: 48px; color: var(--bulma-primary);">
-                            {{ getCategoryIcon(selectedSkill.category) }}
-                          </span>
-                          <div>
-                            <h3 class="fira-sans-condensed-black-italic is-size-2 has-text-white mb-1">
-                              {{ selectedSkill.name }}
-                            </h3>
-                            <p class="has-text-grey-light">{{ selectedSkill.description }}</p>
-                          </div>
-                        </div>
-                      </div>
-                      <div class="column is-narrow">
-                        <div class="tags">
-                          <span class="tag is-medium" :class="getCategoryColor(selectedSkill.category)">
-                            {{ getCategoryLabel(selectedSkill.category) }}
-                          </span>
-                          <span class="tag is-info is-medium">{{ getRequiredLevel(selectedSkill) }}</span>
-                        </div>
-                      </div>
-                    </div>
-                  </div>
 
                   <!-- Model Requirements Section -->
-                  <div v-if="skillModelRequirements.length > 0" class="model-requirements-section mb-5">
-                    <h4 class="fira-sans-condensed-black-italic has-text-white has-text-left is-size-5 mb-3">
-                      <span class="material-symbols-outlined mr-2" style="vertical-align: middle;">deployed_code</span>
+                  <div
+                    v-if="skillModelRequirements.length > 0"
+                    class="model-requirements-section mb-5"
+                  >
+                    <h4
+                      class="fira-sans-condensed-black-italic has-text-white has-text-left is-size-5 mb-3"
+                    >
+                      <span
+                        class="material-symbols-outlined mr-2"
+                        style="vertical-align: middle"
+                      >
+                        deployed_code
+                      </span>
                       Required Models
                     </h4>
 
                     <!-- Loading state while checking -->
-                    <div v-if="!modelAvailabilityChecked" class="notification is-info mb-4">
-                      <span class="material-symbols-outlined rotating mr-2" style="vertical-align: middle;">progress_activity</span>
+                    <div
+                      v-if="!modelAvailabilityChecked"
+                      class="notification is-info mb-4"
+                    >
+                      <span
+                        class="material-symbols-outlined rotating mr-2"
+                        style="vertical-align: middle"
+                      >
+                        progress_activity
+                      </span>
                       Checking model availability...
                     </div>
 
-                    <!-- Missing Models Warning -->
-                    <div v-else-if="hasMissingModels" class="notification is-danger mb-4 p-6">
+                    <!-- Missing Models Warning (only when not downloading) -->
+                    <div
+                      v-else-if="hasMissingModels && !downloads.active"
+                      class="notification is-danger mb-4 p-6"
+                    >
                       <p class="mb-3">
-                        <strong class="fira-sans-condensed-black-italic is-size-2">
+                        <strong
+                          class="fira-sans-condensed-black-italic is-size-2"
+                        >
                           Download Required
                         </strong>
                       </p>
-                      <!-- Show missing repos and files for each model -->
-                      <template v-for="model in missingModels" :key="model.key">
-                        <ul v-if="modelReadinessDetails[model.key]?.repos?.length" style="margin-top: 0.5rem; text-transform: lowercase">
-                          <li v-for="repo in modelReadinessDetails[model.key].repos" :key="repo">
-                            <span class="material-symbols-outlined is-size-3 mr-1">
+                      <!-- Show all missing repos -->
+                      <ul style="margin-top: 0.5rem; text-transform: lowercase">
+                        <template
+                          v-for="model in missingModels"
+                          :key="model.key"
+                        >
+                          <li
+                            v-for="repo in modelReadinessDetails[model.key]
+                              ?.repos || []"
+                            :key="repo"
+                          >
+                            <span
+                              class="material-symbols-outlined is-size-3 mr-1"
+                            >
                               deployed_code
                             </span>
                             {{ repo }}
                           </li>
-                        </ul>
-                        <ul v-if="modelReadinessDetails[model.key]?.files?.length" style="margin-top: 0.5rem; text-transform: lowercase">
-                          <li v-for="file in modelReadinessDetails[model.key].files" :key="file">
-                            <span class="material-symbols-outlined is-size-3 mr-1">
+                        </template>
+                      </ul>
+                      <!-- Show all missing files/ggufs -->
+                      <ul style="margin-top: 0.5rem; text-transform: lowercase">
+                        <template
+                          v-for="model in missingModels"
+                          :key="model.key + '_files'"
+                        >
+                          <li
+                            v-for="file in modelReadinessDetails[model.key]
+                              ?.files || []"
+                            :key="file"
+                          >
+                            <span
+                              class="material-symbols-outlined is-size-3 mr-1"
+                            >
                               deployed_code
                             </span>
                             {{ file }}
                           </li>
-                        </ul>
-                        <!-- Fallback if no details available (show filename for LLM, repo for others) -->
-                        <ul v-if="!modelReadinessDetails[model.key]?.repos?.length && !modelReadinessDetails[model.key]?.files?.length" style="margin-top: 0.5rem; text-transform: lowercase">
-                          <li>
-                            <span class="material-symbols-outlined is-size-3 mr-1">
-                              deployed_code
-                            </span>
-                            {{ model.filename || model.repo || model.name }}
-                          </li>
-                        </ul>
-                      </template>
+                          <!-- Fallback for models without repo/file details -->
+                          <template
+                            v-if="
+                              !modelReadinessDetails[model.key]?.repos
+                                ?.length &&
+                              !modelReadinessDetails[model.key]?.files?.length
+                            "
+                          >
+                            <!-- Handle array repos (e.g., Qwen TTS) -->
+                            <template v-if="Array.isArray(model.repo)">
+                              <li
+                                v-for="(r, rIdx) in model.repo"
+                                :key="model.key + '_fallback_repo_' + rIdx"
+                              >
+                                <span
+                                  class="material-symbols-outlined is-size-3 mr-1"
+                                >
+                                  deployed_code
+                                </span>
+                                {{ r }}
+                              </li>
+                            </template>
+                            <!-- Handle single repo/filename -->
+                            <li v-else>
+                              <span
+                                class="material-symbols-outlined is-size-3 mr-1"
+                              >
+                                deployed_code
+                              </span>
+                              {{ model.filename || model.repo || model.name }}
+                            </li>
+                          </template>
+                        </template>
+                      </ul>
                       <hr />
                       <div class="buttons">
                         <button
                           class="button is-warning mr-5 is-large"
                           @click="downloadAllMissingModels"
-                          :disabled="downloadingModelKey !== null"
+                          :disabled="downloads.active"
                         >
-                          <span v-if="downloadingModelKey" class="material-symbols-outlined mr-1 rotating">
-                            progress_activity
-                          </span>
-                          <span v-else class="material-symbols-outlined mr-1">
+                          <span class="material-symbols-outlined mr-1">
                             download
                           </span>
-                          {{ downloadingModelKey ? `Downloading... ${downloadProgress}%` : 'Download Now' }}
+                          Download Now
                         </button>
+                      </div>
+                    </div>
+
+                    <!-- Download Progress (like GenerativeImage.vue) -->
+                    <div
+                      v-else-if="downloads && downloads.active"
+                      class="notification is-info mb-4 p-6"
+                    >
+                      <p class="mb-2">
+                        <span
+                          class="fira-sans-condensed-black-italic is-size-4"
+                        >
+                          Downloading
+                          <button
+                            disabled
+                            class="button is-loading is-info is-small mr-2 p-4"
+                          ></button>
+                        </span>
+                        <span
+                          class="fira-sans-condensed-black-italic is-pulled-right is-size-1"
+                        >
+                          {{ Math.round(downloads.total_progress || 0) }}%
+                        </span>
+                      </p>
+                      <progress
+                        class="progress is-success is-large"
+                        :value="downloads.progress || 0"
+                        max="100"
+                      >
+                        {{ Math.round(downloads.progress || 0) }}%
+                      </progress>
+                      <div
+                        v-if="downloadTaskList.length"
+                        style="max-height: 180px; overflow: auto"
+                      >
+                        <ul>
+                          <li
+                            v-for="t in downloadTaskList"
+                            :key="t.task_id"
+                            class="is-size-7 columns"
+                            style="text-transform: lowercase"
+                          >
+                            <div class="column has-text-left">
+                              <span class="material-symbols-outlined is-size-6">
+                                deployed_code
+                              </span>
+                              {{ t.filename }} —
+                              <span class="fira-sans-condensed-black-italic">
+                                {{ t.status }}
+                              </span>
+                            </div>
+                            <div
+                              class="column is-2 fira-sans-condensed-black-italic has-text-right"
+                            >
+                              {{ Math.round(t.progress || 0) }}%
+                            </div>
+                          </li>
+                        </ul>
                       </div>
                     </div>
 
@@ -1419,56 +1586,37 @@
                         :key="model.key"
                         class="tag is-medium is-success mr-2 mb-2"
                       >
-                        <span class="material-symbols-outlined mr-1" style="font-size: 14px;">check_circle</span>
-                        {{ model.name }}
-                        <span class="ml-1 has-text-grey-light" style="font-size: 10px;">({{ model.vram }})</span>
-                      </span>
-                    </div>
-                  </div>
-
-                  <!-- LLM Auto-Fill Section -->
-                  <div class="autofill-section models__activity--payouts mb-5 p-4" style="background: rgba(0,0,0,0.3); border-radius: 8px;">
-                    <div class="columns is-vcentered">
-                      <div class="column">
-                        <h4 class="fira-sans-condensed-black-italic has-text-white has-text-left is-size-5">
-                          <span class="material-symbols-outlined mr-2" style="vertical-align: middle;">auto_awesome</span>
-                          AI Auto-Fill
-                        </h4>
-                        <p class="has-text-grey-light is-size-7 has-text-left">
-                          Describe what you want and let AI fill in the details
-                        </p>
-                      </div>
-                      <div class="column is-narrow">
-                        <button
-                          class="button is-info"
-                          :disabled="!autoFillPrompt || isAutoFilling"
-                          @click="autoFillSkillInputs"
+                        <span
+                          class="material-symbols-outlined mr-1"
+                          style="font-size: 14px"
                         >
-                          <span v-if="isAutoFilling" class="material-symbols-outlined rotating mr-1">progress_activity</span>
-                          <span v-else class="material-symbols-outlined mr-1">magic_button</span>
-                          {{ isAutoFilling ? 'Generating...' : 'Generate' }}
-                        </button>
-                      </div>
-                    </div>
-                    <div class="field mt-3">
-                      <div class="control">
-                        <textarea
-                          v-model="autoFillPrompt"
-                          class="textarea"
-                          placeholder="Describe what you want to create (e.g., 'A cozy coffee shop scene with warm lighting and jazz music')..."
-                          rows="2"
-                          :disabled="isAutoFilling"
-                        ></textarea>
-                      </div>
+                          check_circle
+                        </span>
+                        {{ model.name }}
+                        <span
+                          class="ml-1 has-text-grey-light"
+                          style="font-size: 10px"
+                        >
+                          ({{ model.vram }})
+                        </span>
+                      </span>
                     </div>
                   </div>
 
                   <!-- Skill Inputs - Visual Selectors -->
                   <div class="skill-inputs-visual">
-                    <template v-for="(field, key) in selectedSkill.inputs" :key="key">
+                    <template
+                      v-for="(field, key) in selectedSkill.inputs"
+                      :key="key"
+                    >
                       <!-- Select type: Visual card selector -->
-                      <div v-if="field.type === 'select'" class="input-section mb-5">
-                        <h4 class="fira-sans-condensed-black-italic is-size-5 has-text-white mb-3">
+                      <div
+                        v-if="field.type === 'select'"
+                        class="input-section mb-5"
+                      >
+                        <h4
+                          class="fira-sans-condensed-black-italic is-size-5 has-text-white mb-3"
+                        >
                           {{ field.label || key }}
                         </h4>
                         <div class="control visual-selector">
@@ -1481,24 +1629,40 @@
                               :checked="skillInputs[key] === opt"
                               @change="skillInputs[key] = opt"
                             />
-                            <label :for="'input_' + key + '_' + opt" class="radio">
+                            <label
+                              :for="'input_' + key + '_' + opt"
+                              class="radio"
+                            >
                               {{ formatOptionLabel(opt) }}
                             </label>
                           </template>
                         </div>
-                        <p v-if="field.description" class="help has-text-grey-light mt-2">
+                        <p
+                          v-if="field.description"
+                          class="help has-text-grey-light mt-2"
+                        >
                           {{ field.description }}
                         </p>
                       </div>
 
                       <!-- Boolean type: Toggle switch -->
-                      <div v-else-if="field.type === 'boolean'" class="input-section mb-5">
-                        <div class="is-flex is-align-items-center is-justify-content-space-between">
+                      <div
+                        v-else-if="field.type === 'boolean'"
+                        class="input-section mb-5"
+                      >
+                        <div
+                          class="is-flex is-align-items-center is-justify-content-space-between"
+                        >
                           <div>
-                            <h4 class="fira-sans-condensed-black-italic is-size-5 has-text-white mb-1">
+                            <h4
+                              class="fira-sans-condensed-black-italic is-size-5 has-text-white mb-1"
+                            >
                               {{ field.label || key }}
                             </h4>
-                            <p v-if="field.description" class="help has-text-grey-light">
+                            <p
+                              v-if="field.description"
+                              class="help has-text-grey-light"
+                            >
                               {{ field.description }}
                             </p>
                           </div>
@@ -1510,17 +1674,29 @@
                       </div>
 
                       <!-- Number type: Styled input with +/- buttons -->
-                      <div v-else-if="field.type === 'number'" class="input-section mb-5">
-                        <h4 class="fira-sans-condensed-black-italic is-size-5 has-text-white mb-3">
+                      <div
+                        v-else-if="field.type === 'number'"
+                        class="input-section mb-5"
+                      >
+                        <h4
+                          class="fira-sans-condensed-black-italic is-size-5 has-text-white mb-3"
+                        >
                           {{ field.label || key }}
                         </h4>
                         <div class="field has-addons number-input-group">
                           <div class="control">
                             <button
                               class="button is-dark"
-                              @click="skillInputs[key] = Math.max(field.min || 0, (skillInputs[key] || 0) - 1)"
+                              @click="
+                                skillInputs[key] = Math.max(
+                                  field.min || 0,
+                                  (skillInputs[key] || 0) - 1,
+                                )
+                              "
                             >
-                              <span class="material-symbols-outlined">remove</span>
+                              <span class="material-symbols-outlined">
+                                remove
+                              </span>
                             </button>
                           </div>
                           <div class="control is-expanded">
@@ -1535,27 +1711,52 @@
                           <div class="control">
                             <button
                               class="button is-dark"
-                              @click="skillInputs[key] = Math.min(field.max || 999, (skillInputs[key] || 0) + 1)"
+                              @click="
+                                skillInputs[key] = Math.min(
+                                  field.max || 999,
+                                  (skillInputs[key] || 0) + 1,
+                                )
+                              "
                             >
                               <span class="material-symbols-outlined">add</span>
                             </button>
                           </div>
                         </div>
-                        <p v-if="field.description" class="help has-text-grey-light mt-2">
+                        <p
+                          v-if="field.description"
+                          class="help has-text-grey-light mt-2"
+                        >
                           {{ field.description }}
                         </p>
                       </div>
 
                       <!-- Image type: File upload with preview -->
-                      <div v-else-if="field.type === 'image'" class="input-section mb-5">
-                        <h4 class="fira-sans-condensed-black-italic is-size-5 has-text-white mb-3">
+                      <div
+                        v-else-if="field.type === 'image'"
+                        class="input-section mb-5"
+                      >
+                        <h4
+                          class="fira-sans-condensed-black-italic is-size-5 has-text-white mb-3"
+                        >
                           {{ field.label || key }}
                         </h4>
                         <div class="image-upload-area">
-                          <div v-if="skillInputs[key]" class="image-preview mb-3">
-                            <img :src="'data:image/png;base64,' + skillInputs[key]" alt="Preview" class="preview-image" />
-                            <button class="button is-small is-danger is-light mt-2" @click="skillInputs[key] = ''">
-                              <span class="material-symbols-outlined mr-1">delete</span>
+                          <div
+                            v-if="skillInputs[key]"
+                            class="image-preview mb-3"
+                          >
+                            <img
+                              :src="'data:image/png;base64,' + skillInputs[key]"
+                              alt="Preview"
+                              class="preview-image"
+                            />
+                            <button
+                              class="button is-small is-danger is-light mt-2"
+                              @click="skillInputs[key] = ''"
+                            >
+                              <span class="material-symbols-outlined mr-1">
+                                delete
+                              </span>
                               Remove
                             </button>
                           </div>
@@ -1569,31 +1770,47 @@
                               />
                               <span class="file-cta">
                                 <span class="file-icon">
-                                  <span class="material-symbols-outlined">upload</span>
+                                  <span class="material-symbols-outlined">
+                                    upload
+                                  </span>
                                 </span>
-                                <span class="file-label fira-sans-condensed-black-italic">
+                                <span
+                                  class="file-label fira-sans-condensed-black-italic"
+                                >
                                   Upload Image
                                 </span>
                               </span>
                             </label>
                           </div>
                         </div>
-                        <p v-if="field.description" class="help has-text-grey-light mt-2">
+                        <p
+                          v-if="field.description"
+                          class="help has-text-grey-light mt-2"
+                        >
                           {{ field.description }}
                         </p>
                       </div>
 
                       <!-- String type: Styled textarea for longer inputs -->
                       <div v-else class="input-section mb-5">
-                        <h4 class="fira-sans-condensed-black-italic is-size-5 has-text-white mb-3">
+                        <h4
+                          class="fira-sans-condensed-black-italic is-size-5 has-text-white mb-3"
+                        >
                           {{ field.label || key }}
                         </h4>
                         <div class="control">
                           <textarea
-                            v-if="(field.description || '').includes('Describe') || key.includes('description') || key.includes('idea') || key.includes('summary')"
+                            v-if="
+                              (field.description || '').includes('Describe') ||
+                              key.includes('description') ||
+                              key.includes('idea') ||
+                              key.includes('summary')
+                            "
                             class="textarea"
                             v-model="skillInputs[key]"
-                            :placeholder="field.description || String(field.default || '')"
+                            :placeholder="
+                              field.description || String(field.default || '')
+                            "
                             rows="3"
                           ></textarea>
                           <input
@@ -1601,7 +1818,9 @@
                             class="input is-medium"
                             type="text"
                             v-model="skillInputs[key]"
-                            :placeholder="field.description || String(field.default || '')"
+                            :placeholder="
+                              field.description || String(field.default || '')
+                            "
                           />
                         </div>
                       </div>
@@ -1625,15 +1844,24 @@
                         auto_awesome
                       </span>
                       <span class="fira-sans-condensed-black-italic is-size-4">
-                        {{ isExecuting ? executionStatus : 'Generate' }}
-                      </span>
-                      <span class="tag is-warning ml-3 fira-sans-condensed-black-italic">
-                        {{ selectedSkill.pricing?.runningFee || 99 }} BONZAI
+                        {{ isExecuting ? executionStatus : "Generate" }}
                       </span>
                     </button>
-                    <p v-if="selectedSkill" class="help has-text-info has-text-centered mt-2">
-                      <span class="material-symbols-outlined mr-1" style="font-size: 14px; vertical-align: middle;">verified</span>
-                      {{ getRequiredLevel(selectedSkill) }} - {{ selectedSkill.requirements?.requiredApis?.join(', ') || 'text' }}
+                    <p
+                      v-if="selectedSkill"
+                      class="help has-text-info has-text-centered mt-2"
+                    >
+                      <span
+                        class="material-symbols-outlined mr-1"
+                        style="font-size: 14px; vertical-align: middle"
+                      >
+                        verified
+                      </span>
+                      {{ getRequiredLevel(selectedSkill) }} -
+                      {{
+                        selectedSkill.requirements?.requiredApis?.join(", ") ||
+                        "text"
+                      }}
                     </p>
                   </div>
 
@@ -1642,8 +1870,15 @@
                     v-if="executionResults[selectedSkillId]"
                     class="execution-results mt-5"
                   >
-                    <h4 class="fira-sans-condensed-black-italic is-size-4 has-text-white mb-4">
-                      <span class="material-symbols-outlined mr-2" style="vertical-align: middle;">auto_awesome</span>
+                    <h4
+                      class="fira-sans-condensed-black-italic is-size-4 has-text-white mb-4"
+                    >
+                      <span
+                        class="material-symbols-outlined mr-2"
+                        style="vertical-align: middle"
+                      >
+                        auto_awesome
+                      </span>
                       Generated Content
                     </h4>
 
@@ -1652,19 +1887,52 @@
                       <!-- Story/Narrative Results -->
                       <template v-if="executionResults[selectedSkillId].story">
                         <div class="result-section story-result">
-                          <div v-if="executionResults[selectedSkillId].story.coverImage" class="cover-image mb-4">
-                            <img :src="'data:image/png;base64,' + executionResults[selectedSkillId].story.coverImage" alt="Cover" class="generated-image" />
+                          <div
+                            v-if="
+                              executionResults[selectedSkillId].story.coverImage
+                            "
+                            class="cover-image mb-4"
+                          >
+                            <img
+                              :src="
+                                'data:image/png;base64,' +
+                                executionResults[selectedSkillId].story
+                                  .coverImage
+                              "
+                              alt="Cover"
+                              class="generated-image"
+                            />
                           </div>
-                          <h3 class="is-size-3 has-text-white mb-2">{{ executionResults[selectedSkillId].story.title }}</h3>
-                          <p class="has-text-grey-light mb-4">{{ executionResults[selectedSkillId].story.synopsis }}</p>
-                          <div v-for="(scene, idx) in executionResults[selectedSkillId].story.scenes" :key="idx" class="scene-card mb-4">
+                          <h3 class="is-size-3 has-text-white mb-2">
+                            {{ executionResults[selectedSkillId].story.title }}
+                          </h3>
+                          <p class="has-text-grey-light mb-4">
+                            {{
+                              executionResults[selectedSkillId].story.synopsis
+                            }}
+                          </p>
+                          <div
+                            v-for="(scene, idx) in executionResults[
+                              selectedSkillId
+                            ].story.scenes"
+                            :key="idx"
+                            class="scene-card mb-4"
+                          >
                             <div class="columns">
                               <div class="column is-4" v-if="scene.image">
-                                <img :src="'data:image/png;base64,' + scene.image" alt="Scene" class="generated-image" />
+                                <img
+                                  :src="'data:image/png;base64,' + scene.image"
+                                  alt="Scene"
+                                  class="generated-image"
+                                />
                               </div>
                               <div class="column">
-                                <h4 class="is-size-5 has-text-white">{{ scene.title }}</h4>
-                                <p class="has-text-grey-light">{{ scene.narrative }}</p>
+                                <h4 class="is-size-5 has-text-white">
+                                  {{ scene.title }}
+                                </h4>
+                                <p class="has-text-grey-light">
+                                  {{ scene.narrative }}
+                                </p>
                               </div>
                             </div>
                           </div>
@@ -1672,14 +1940,31 @@
                       </template>
 
                       <!-- Image Gallery Results -->
-                      <template v-else-if="hasImageResults(executionResults[selectedSkillId])">
+                      <template
+                        v-else-if="
+                          hasImageResults(executionResults[selectedSkillId])
+                        "
+                      >
                         <div class="image-gallery">
                           <div class="columns is-multiline">
-                            <template v-for="(img, idx) in extractImages(executionResults[selectedSkillId])" :key="idx">
+                            <template
+                              v-for="(img, idx) in extractImages(
+                                executionResults[selectedSkillId],
+                              )"
+                              :key="idx"
+                            >
                               <div class="column is-4">
                                 <div class="generated-image-card">
-                                  <img :src="'data:image/png;base64,' + img.data" :alt="img.label" class="generated-image" />
-                                  <p class="has-text-centered has-text-grey-light mt-2">{{ img.label }}</p>
+                                  <img
+                                    :src="'data:image/png;base64,' + img.data"
+                                    :alt="img.label"
+                                    class="generated-image"
+                                  />
+                                  <p
+                                    class="has-text-centered has-text-grey-light mt-2"
+                                  >
+                                    {{ img.label }}
+                                  </p>
                                 </div>
                               </div>
                             </template>
@@ -1688,22 +1973,67 @@
                       </template>
 
                       <!-- Recipe Results -->
-                      <template v-else-if="executionResults[selectedSkillId].recipe">
+                      <template
+                        v-else-if="executionResults[selectedSkillId].recipe"
+                      >
                         <div class="recipe-result">
                           <div class="columns">
-                            <div class="column is-5" v-if="executionResults[selectedSkillId].recipe.dishImage">
-                              <img :src="'data:image/png;base64,' + executionResults[selectedSkillId].recipe.dishImage" alt="Dish" class="generated-image" />
+                            <div
+                              class="column is-5"
+                              v-if="
+                                executionResults[selectedSkillId].recipe
+                                  .dishImage
+                              "
+                            >
+                              <img
+                                :src="
+                                  'data:image/png;base64,' +
+                                  executionResults[selectedSkillId].recipe
+                                    .dishImage
+                                "
+                                alt="Dish"
+                                class="generated-image"
+                              />
                             </div>
                             <div class="column">
-                              <h3 class="is-size-3 has-text-white">{{ executionResults[selectedSkillId].recipe.name }}</h3>
-                              <p class="has-text-grey-light mb-3">{{ executionResults[selectedSkillId].recipe.description }}</p>
+                              <h3 class="is-size-3 has-text-white">
+                                {{
+                                  executionResults[selectedSkillId].recipe.name
+                                }}
+                              </h3>
+                              <p class="has-text-grey-light mb-3">
+                                {{
+                                  executionResults[selectedSkillId].recipe
+                                    .description
+                                }}
+                              </p>
                               <div class="tags">
-                                <span class="tag is-info">{{ executionResults[selectedSkillId].recipe.prepTime }} min prep</span>
-                                <span class="tag is-warning">{{ executionResults[selectedSkillId].recipe.cookTime }} min cook</span>
+                                <span class="tag is-info">
+                                  {{
+                                    executionResults[selectedSkillId].recipe
+                                      .prepTime
+                                  }}
+                                  min prep
+                                </span>
+                                <span class="tag is-warning">
+                                  {{
+                                    executionResults[selectedSkillId].recipe
+                                      .cookTime
+                                  }}
+                                  min cook
+                                </span>
                               </div>
-                              <h4 class="is-size-5 has-text-white mt-4 mb-2">Ingredients</h4>
+                              <h4 class="is-size-5 has-text-white mt-4 mb-2">
+                                Ingredients
+                              </h4>
                               <ul>
-                                <li v-for="(ing, idx) in executionResults[selectedSkillId].recipe.ingredients" :key="idx" class="has-text-grey-light">
+                                <li
+                                  v-for="(ing, idx) in executionResults[
+                                    selectedSkillId
+                                  ].recipe.ingredients"
+                                  :key="idx"
+                                  class="has-text-grey-light"
+                                >
                                   {{ ing.amount }} {{ ing.unit }} {{ ing.item }}
                                 </li>
                               </ul>
@@ -1715,236 +2045,21 @@
                       <!-- Generic JSON Results (fallback) -->
                       <template v-else>
                         <div class="notification is-dark">
-                          <pre class="has-text-success" style="white-space: pre-wrap;">{{ JSON.stringify(executionResults[selectedSkillId], null, 2) }}</pre>
+                          <pre
+                            class="has-text-success"
+                            style="white-space: pre-wrap"
+                            >{{
+                              JSON.stringify(
+                                executionResults[selectedSkillId],
+                                null,
+                                2,
+                              )
+                            }}</pre
+                          >
                         </div>
                       </template>
                     </div>
                   </div>
-                </div>
-              </div>
-            </div>
-          </div>
-
-          <!-- CREATE TAB (Agentic Workflow Builder) -->
-          <div v-if="activeTab === 'create'">
-            <div class="models__activity--payouts">
-              <div class="bonzai__agent">
-                <!-- Model Download Section -->
-                <div v-if="!isModelAvailable" class="notification is-danger mb-5">
-                  <div class="columns is-vcentered">
-                    <div class="column">
-                      <h3 class="is-size-4 mb-0 fira-sans-condensed-black-italic has-text-left">
-                        AI Model Required for Skill Generation
-                      </h3>
-                    </div>
-                    <div class="column is-narrow">
-                      <button
-                        class="button is-success is-large fira-sans-condensed-black-italic"
-                        @click="downloadModel"
-                        :disabled="isDownloading"
-                      >
-                        <span class="material-symbols-outlined mr-2">
-                          deployed_code_update
-                        </span>
-                        Download
-                        <span
-                          v-if="downloadProgress"
-                          class="filesize ml-2"
-                          style="font-size: 14px"
-                        >
-                          {{ downloadProgress }}%
-                        </span>
-                        <span v-else class="filesize ml-2" style="font-size: 14px">
-                          4.08 GB
-                        </span>
-                      </button>
-                    </div>
-                  </div>
-                </div>
-
-                <!-- Skill Identity -->
-                <h2 class="fira-sans-condensed-black-italic is-size-2 has-text-white has-text-left mb-4">
-                  Skill Identity
-                </h2>
-                <div class="columns">
-                  <div class="field column is-6">
-                    <label class="label has-text-white has-text-left fira-sans-condensed-black-italic is-size-5">
-                      Skill Name *
-                    </label>
-                    <div class="control">
-                      <input
-                        class="input is-large"
-                        v-model="skillForm.name"
-                        placeholder="Enter skill name"
-                      />
-                    </div>
-                  </div>
-                  <div class="field column is-3">
-                    <label class="label has-text-white has-text-left fira-sans-condensed-black-italic is-size-5">
-                      Category
-                    </label>
-                    <div class="control">
-                      <div class="select is-large is-fullwidth">
-                        <select v-model="skillForm.category">
-                          <option
-                            v-for="cat in categories"
-                            :key="cat.key"
-                            :value="cat.key"
-                          >
-                            {{ cat.label }}
-                          </option>
-                        </select>
-                      </div>
-                    </div>
-                  </div>
-                  <div class="field column is-3">
-                    <label class="label has-text-white has-text-left fira-sans-condensed-black-italic is-size-5">
-                      Price (ETH)
-                    </label>
-                    <div class="control">
-                      <input
-                        class="input is-large"
-                        type="number"
-                        step="0.01"
-                        v-model.number="skillForm.price"
-                        placeholder="0.1"
-                      />
-                    </div>
-                  </div>
-                </div>
-                <div class="field">
-                  <label class="label has-text-white has-text-left fira-sans-condensed-black-italic is-size-5">
-                    Description *
-                  </label>
-                  <div class="control">
-                    <textarea
-                      class="textarea is-large"
-                      v-model="skillForm.description"
-                      placeholder="Describe what your skill does"
-                    ></textarea>
-                  </div>
-                </div>
-
-                <hr class="mt-5 mb-5" />
-
-                <!-- Agentic Workflow -->
-                <h2 class="fira-sans-condensed-black-italic is-size-2 has-text-white has-text-left mb-4">
-                  Agentic Workflow
-                </h2>
-                <p class="has-text-white has-text-left mb-4">
-                  Define the steps your skill will execute. Each step can use different AI capabilities.
-                </p>
-
-                <div class="workflow-steps">
-                  <div
-                    v-for="(step, idx) in skillForm.steps"
-                    :key="idx"
-                    class="workflow-step box mb-4"
-                  >
-                    <div class="step-header">
-                      <span class="tag is-info is-large fira-sans-condensed-black-italic">
-                        Step {{ idx + 1 }}
-                      </span>
-                      <button
-                        class="delete is-medium"
-                        @click="removeStep(idx)"
-                      ></button>
-                    </div>
-
-                    <div class="columns mt-3">
-                      <div class="field column is-4">
-                        <label class="label has-text-white fira-sans-condensed-black-italic">
-                          Task Type
-                        </label>
-                        <div class="control">
-                          <div class="select is-fullwidth">
-                            <select v-model="step.type">
-                              <option value="script">Script (Text)</option>
-                              <option value="picture">Picture (Image)</option>
-                              <option value="motion">Motion (Video)</option>
-                              <option value="speech">Speech (TTS)</option>
-                              <option value="soundtrack">Soundtrack (Audio)</option>
-                              <option value="asset">Asset (3D)</option>
-                            </select>
-                          </div>
-                        </div>
-                      </div>
-                      <div class="field column is-4">
-                        <label class="label has-text-white fira-sans-condensed-black-italic">
-                          Mode
-                        </label>
-                        <div class="control">
-                          <div class="select is-fullwidth">
-                            <select v-model="step.mode">
-                              <option value="one-pass">One-Pass</option>
-                              <option value="multi-pass">Multi-Pass</option>
-                            </select>
-                          </div>
-                        </div>
-                      </div>
-                      <div class="field column is-4">
-                        <label class="label has-text-white fira-sans-condensed-black-italic">
-                          Reasoning
-                        </label>
-                        <div class="control">
-                          <div class="select is-fullwidth">
-                            <select v-model="step.reasoning">
-                              <option value="offline">Offline (Local)</option>
-                              <option value="online">Online (API)</option>
-                            </select>
-                          </div>
-                        </div>
-                      </div>
-                    </div>
-
-                    <div class="field mt-3">
-                      <label class="label has-text-white fira-sans-condensed-black-italic">
-                        Prompt Template
-                      </label>
-                      <div class="control">
-                        <textarea
-                          class="textarea"
-                          v-model="step.prompt"
-                          placeholder="Enter the prompt for this step. Use {{input}} for dynamic values."
-                          rows="3"
-                        ></textarea>
-                      </div>
-                      <p class="help has-text-grey-light">
-                        Use <code v-pre>{{previousStep}}</code> to reference the output of the previous step.
-                      </p>
-                    </div>
-                  </div>
-                </div>
-
-                <div class="control has-text-left mt-4">
-                  <button
-                    class="button is-info is-large"
-                    @click="addStep"
-                  >
-                    <span class="material-symbols-outlined mr-2">add</span>
-                    Add Step
-                  </button>
-                </div>
-
-                <hr class="mt-5 mb-5" />
-
-                <!-- Publish -->
-                <div class="control mt-4 has-text-centered">
-                  <button
-                    class="button is-success is-large mt-5"
-                    @click="publishSkill"
-                    :disabled="!skillForm.name || !skillForm.description || skillForm.steps.length === 0"
-                  >
-                    <span class="material-symbols-outlined mr-2 is-size-3">
-                      rocket_launch
-                    </span>
-                    Publish Skill
-                    <div class="tags has-addons ml-3">
-                      <span class="tag is-warning partner fira-sans-condensed-black-italic">
-                        1 ETH
-                      </span>
-                    </div>
-                  </button>
                 </div>
               </div>
             </div>
@@ -1975,7 +2090,10 @@
       class="position-modal-overlay"
       @click.self="closePositionModal"
     >
-      <div class="position-modal" :class="positionModal.side === 'for' ? 'is-for' : 'is-against'">
+      <div
+        class="position-modal"
+        :class="positionModal.side === 'for' ? 'is-for' : 'is-against'"
+      >
         <div class="has-text-right">
           <button
             class="button is-danger"
@@ -1988,18 +2106,24 @@
 
         <div class="position-modal-header has-text-center">
           <span class="material-symbols-outlined is-size-1">
-            {{ positionModal.side === 'for' ? 'thumb_up' : 'thumb_down' }}
+            {{ positionModal.side === "for" ? "thumb_up" : "thumb_down" }}
           </span>
-          <h2 class="fira-sans-condensed-black-italic is-size-3 has-text-centered">
-            Open {{ positionModal.side === 'for' ? 'FOR' : 'AGAINST' }} Position
+          <h2
+            class="fira-sans-condensed-black-italic is-size-3 has-text-centered"
+          >
+            Open {{ positionModal.side === "for" ? "FOR" : "AGAINST" }} Position
           </h2>
         </div>
 
         <div class="position-modal-body">
           <div class="position-market-preview">
             <div class="position-modal-status mb-4">
-              <span class="position-status-pill fira-sans-condensed-black-italic is-size-6">
-                {{ positionModal.side === 'for' ? 'STAKING YES' : 'STAKING NO' }}
+              <span
+                class="position-status-pill fira-sans-condensed-black-italic is-size-6"
+              >
+                {{
+                  positionModal.side === "for" ? "STAKING YES" : "STAKING NO"
+                }}
               </span>
             </div>
             <p class="position-question has-text-centered">
@@ -2009,7 +2133,9 @@
 
           <div class="position-form-section">
             <div class="position-field">
-              <label class="position-label fira-sans-condensed-black-italic is-size-5 has-text-left">
+              <label
+                class="position-label fira-sans-condensed-black-italic is-size-5 has-text-left"
+              >
                 Amount (BONZAI)
               </label>
               <input
@@ -2027,7 +2153,9 @@
               You are staking
               <strong>{{ positionModal.amount || 0 }} tokens</strong>
               that the condition will
-              <strong>{{ positionModal.side === "for" ? "be met" : "NOT be met" }}</strong>
+              <strong>
+                {{ positionModal.side === "for" ? "be met" : "NOT be met" }}
+              </strong>
               by the target date.
             </p>
           </div>
@@ -2143,7 +2271,10 @@
             <!-- Data Sources Section -->
             <div class="tcg-field mt-5">
               <label class="tcg-label fira-sans-condensed-black-italic">
-                <span class="material-symbols-outlined mr-1" style="font-size: 18px; vertical-align: middle;">
+                <span
+                  class="material-symbols-outlined mr-1"
+                  style="font-size: 18px; vertical-align: middle"
+                >
                   database
                 </span>
                 Data Sources
@@ -2178,7 +2309,10 @@
                       @click="removeDataSource(idx)"
                       :disabled="tcgMarketModal.dataSources.length <= 1"
                     >
-                      <span class="material-symbols-outlined" style="font-size: 14px;">
+                      <span
+                        class="material-symbols-outlined"
+                        style="font-size: 14px"
+                      >
                         delete
                       </span>
                     </button>
@@ -2191,11 +2325,11 @@
                 />
               </div>
 
-              <button
-                class="button is-small is-info"
-                @click="addDataSource"
-              >
-                <span class="material-symbols-outlined mr-1" style="font-size: 14px;">
+              <button class="button is-small is-info" @click="addDataSource">
+                <span
+                  class="material-symbols-outlined mr-1"
+                  style="font-size: 14px"
+                >
                   add
                 </span>
                 Add Data Source
@@ -2234,7 +2368,7 @@
             :disabled="
               !tcgMarketModal.targetPrice ||
               !tcgMarketModal.targetDate ||
-              !tcgMarketModal.dataSources.some(s => s.name && s.endpoint)
+              !tcgMarketModal.dataSources.some((s) => s.name && s.endpoint)
             "
           >
             <span class="material-symbols-outlined mr-2">
@@ -2340,7 +2474,10 @@
           <!-- Liquidity Settings -->
           <div class="tcg-form-section has-text-left">
             <h4 class="fira-sans-condensed-black-italic has-text-white mb-3">
-              <span class="material-symbols-outlined mr-1" style="vertical-align: middle; font-size: 20px;">
+              <span
+                class="material-symbols-outlined mr-1"
+                style="vertical-align: middle; font-size: 20px"
+              >
                 water_drop
               </span>
               Initial Liquidity (Uniswap V3)
@@ -2360,7 +2497,13 @@
                     :disabled="tokenIssuanceModal.isIssuing"
                   />
                   <p class="help has-text-grey-light">
-                    {{ Math.round((tokenIssuanceModal.initialLiquidityTokens / tokenIssuanceModal.totalSupply) * 100) || 0 }}% of supply
+                    {{
+                      Math.round(
+                        (tokenIssuanceModal.initialLiquidityTokens /
+                          tokenIssuanceModal.totalSupply) *
+                          100,
+                      ) || 0
+                    }}% of supply
                   </p>
                 </div>
               </div>
@@ -2397,9 +2540,15 @@
             </div>
 
             <!-- DSLA Pool (for prediction market skills) -->
-            <div v-if="isDslaSkill(tokenIssuanceModal.skill)" class="dsla-pool-section mt-5">
+            <div
+              v-if="isDslaSkill(tokenIssuanceModal.skill)"
+              class="dsla-pool-section mt-5"
+            >
               <h5 class="fira-sans-condensed-black-italic has-text-info mb-3">
-                <span class="material-symbols-outlined mr-1" style="vertical-align: middle; font-size: 18px;">
+                <span
+                  class="material-symbols-outlined mr-1"
+                  style="vertical-align: middle; font-size: 18px"
+                >
                   currency_exchange
                 </span>
                 DSLA Pool (Prediction Market)
@@ -2407,7 +2556,8 @@
 
               <div class="notification is-info is-light mb-3">
                 <p class="is-size-7">
-                  As a DSLA prediction market skill, an additional SKILL/DSLA liquidity pool will be created.
+                  As a DSLA prediction market skill, an additional SKILL/DSLA
+                  liquidity pool will be created.
                 </p>
               </div>
 
@@ -2436,14 +2586,21 @@
                       <span v-else-if="dslaEthPrice" class="has-text-success">
                         {{ dslaEthPrice.toFixed(10) }} ETH
                       </span>
-                      <span v-else class="has-text-danger">
-                        Unavailable
-                      </span>
+                      <span v-else class="has-text-danger">Unavailable</span>
                     </p>
-                    <p v-if="dslaEthPrice && tokenIssuanceModal.startingPriceEth" class="is-size-7 has-text-grey-light mt-1">
+                    <p
+                      v-if="dslaEthPrice && tokenIssuanceModal.startingPriceEth"
+                      class="is-size-7 has-text-grey-light mt-1"
+                    >
                       Starting Price in DSLA:
                       <strong class="has-text-info">
-                        {{ (parseFloat(tokenIssuanceModal.startingPriceEth) / dslaEthPrice).toFixed(2) }} DSLA
+                        {{
+                          (
+                            parseFloat(tokenIssuanceModal.startingPriceEth) /
+                            dslaEthPrice
+                          ).toFixed(2)
+                        }}
+                        DSLA
                       </strong>
                     </p>
                   </div>
@@ -2453,20 +2610,27 @@
           </div>
 
           <!-- Progress -->
-          <div v-if="tokenIssuanceModal.isIssuing" class="issuance-progress mt-4">
+          <div
+            v-if="tokenIssuanceModal.isIssuing"
+            class="issuance-progress mt-4"
+          >
             <div class="notification is-warning">
               <div class="columns is-vcentered">
                 <div class="column is-narrow">
-                  <span class="material-symbols-outlined rotating" style="font-size: 32px;">
+                  <span
+                    class="material-symbols-outlined rotating"
+                    style="font-size: 32px"
+                  >
                     progress_activity
                   </span>
                 </div>
                 <div class="column">
                   <p class="fira-sans-condensed-black-italic">
-                    {{ tokenIssuanceModal.progress.message || 'Processing...' }}
+                    {{ tokenIssuanceModal.progress.message || "Processing..." }}
                   </p>
                   <p class="is-size-7 has-text-grey">
-                    Step {{ tokenIssuanceModal.progress.step }} of {{ tokenIssuanceModal.progress.total }}
+                    Step {{ tokenIssuanceModal.progress.step }} of
+                    {{ tokenIssuanceModal.progress.total }}
                   </p>
                 </div>
               </div>
@@ -2474,15 +2638,34 @@
           </div>
 
           <!-- Summary -->
-          <div v-if="!tokenIssuanceModal.isIssuing" class="tcg-preview-box mt-4">
+          <div
+            v-if="!tokenIssuanceModal.isIssuing"
+            class="tcg-preview-box mt-4"
+          >
             <p class="tcg-preview-text has-text-centered">
-              <strong>{{ tokenIssuanceModal.tokenSymbol }}</strong> token will be created with
-              <strong>{{ Number(tokenIssuanceModal.totalSupply).toLocaleString() }}</strong> total supply.
+              <strong>{{ tokenIssuanceModal.tokenSymbol }}</strong>
+              token will be created with
+              <strong>
+                {{ Number(tokenIssuanceModal.totalSupply).toLocaleString() }}
+              </strong>
+              total supply.
               <br />
               <span class="is-size-7">
-                SKILL/ETH pool with {{ tokenIssuanceModal.initialLiquidityEth }} ETH liquidity
-                <span v-if="isDslaSkill(tokenIssuanceModal.skill) && tokenIssuanceModal.initialLiquidityDsla">
-                  + SKILL/DSLA pool with {{ Number(tokenIssuanceModal.initialLiquidityDsla).toLocaleString() }} DSLA
+                SKILL/ETH pool with
+                {{ tokenIssuanceModal.initialLiquidityEth }} ETH liquidity
+                <span
+                  v-if="
+                    isDslaSkill(tokenIssuanceModal.skill) &&
+                    tokenIssuanceModal.initialLiquidityDsla
+                  "
+                >
+                  + SKILL/DSLA pool with
+                  {{
+                    Number(
+                      tokenIssuanceModal.initialLiquidityDsla,
+                    ).toLocaleString()
+                  }}
+                  DSLA
                 </span>
               </span>
             </p>
@@ -2501,13 +2684,20 @@
               !tokenIssuanceModal.initialLiquidityEth
             "
           >
-            <span v-if="tokenIssuanceModal.isIssuing" class="material-symbols-outlined rotating mr-2">
+            <span
+              v-if="tokenIssuanceModal.isIssuing"
+              class="material-symbols-outlined rotating mr-2"
+            >
               progress_activity
             </span>
             <span v-else class="material-symbols-outlined mr-2">
               rocket_launch
             </span>
-            {{ tokenIssuanceModal.isIssuing ? 'Issuing...' : 'Issue Token & Create Pool' }}
+            {{
+              tokenIssuanceModal.isIssuing
+                ? "Issuing..."
+                : "Issue Token & Create Pool"
+            }}
           </button>
           <button
             class="button is-danger is-medium"
@@ -2525,17 +2715,42 @@
 <script>
 import { ref, reactive, computed, onMounted, watch } from "vue";
 import VueMarkdown from "vue-markdown-render";
+import axios from "axios";
+import { io } from "socket.io-client";
 import { useSkillStore } from "../stores/skillStore.js";
 import { SKILL_CATEGORY_META } from "../skills/types.js";
 import polymarketAgent from "./polymarketAgent.js";
 import { tokenService } from "../services/token.service.js";
+import { requestOpenLevelModal } from "../services/level.service.js";
 import SkillRunner from "./skills/SkillRunner.vue";
 import RoleplayChat from "./skills/RoleplayChat.vue";
-import { getSkillModelRequirements, MODEL_REQUIREMENTS } from "../skills/flagship.js";
+import SkillDownloader from "./skills/SkillDownloader.vue";
+import PolymarketSkill from "./skills/PolymarketSkill.vue";
+import TCGSkill from "./skills/TCGSkill.vue";
+import DSLASkill from "./skills/DSLASkill.vue";
+import {
+  getSkillModelRequirements,
+  MODEL_REQUIREMENTS,
+} from "../skills/flagship.js";
+
+const API_BASE =
+  (typeof process !== "undefined" && process.env?.VITE_API_BASE) ||
+  (window?.electronAPI?.env && window.electronAPI.env.API_BASE) ||
+  "http://127.0.0.1:65000";
+
+const WS_DL = `${API_BASE}/downloads`;
 
 export default {
   name: "SmartAgent",
-  components: { VueMarkdown, SkillRunner, RoleplayChat },
+  components: {
+    VueMarkdown,
+    SkillRunner,
+    RoleplayChat,
+    SkillDownloader,
+    PolymarketSkill,
+    TCGSkill,
+    DSLASkill,
+  },
   setup() {
     // Store
     const skillStore = useSkillStore();
@@ -2557,7 +2772,9 @@ export default {
 
     // Skill execution state
     const selectedSkillId = ref(null);
-    const selectedSkill = computed(() => skillStore.getSkillById(selectedSkillId.value));
+    const selectedSkill = computed(() =>
+      skillStore.getSkillById(selectedSkillId.value),
+    );
     const skillInputs = reactive({});
     const isExecuting = ref(false);
     const executionStatus = ref("");
@@ -2568,8 +2785,37 @@ export default {
     const modelReadinessDetails = reactive({}); // Stores { repos: [], files: [] } per model key
     const modelAvailabilityChecked = ref(false);
     const downloadingModelKey = ref(null);
-    const autoFillPrompt = ref('');
+    const autoFillPrompt = ref("");
     const isAutoFilling = ref(false);
+
+    // Downloads state (like GenerativeImage.vue)
+    const downloads = reactive({
+      active: false,
+      pipelineId: null,
+      progress: 0,
+      total_progress: 0,
+      status: null,
+      pipeline: { tasks: {} },
+      wsUrl: null,
+    });
+    const downloadsSocket = ref(null);
+    const lastDlEventAt = ref(0);
+    let httpPollTimer = null;
+
+    // Download task list computed
+    const downloadTaskList = computed(() => {
+      const tasks = downloads.pipeline?.tasks || {};
+      const arr = Object.values(tasks);
+      const order = {
+        downloading: 0,
+        pending: 1,
+        completed: 2,
+        failed: 3,
+        cancelled: 4,
+      };
+      arr.sort((a, b) => (order[a.status] ?? 99) - (order[b.status] ?? 99));
+      return arr;
+    });
 
     // Computed: Model requirements for selected skill
     const skillModelRequirements = computed(() => {
@@ -2578,7 +2824,9 @@ export default {
     });
 
     const missingModels = computed(() => {
-      return skillModelRequirements.value.filter(model => !isModelReady(model));
+      return skillModelRequirements.value.filter(
+        (model) => !isModelReady(model),
+      );
     });
 
     const hasMissingModels = computed(() => {
@@ -2588,38 +2836,56 @@ export default {
     // Check if a model is ready/available
     const isModelReady = (model) => {
       // For LLM models, check file availability - default to NOT available until checked
-      if (model.type === 'llm') {
+      if (model.type === "llm") {
         if (!modelAvailabilityChecked.value) return false;
         return modelAvailability[model.filename] === true;
       }
-      // For Flask models (diffusion/audio/video/3d), check if Flask reported them as ready
-      if (model.type === 'diffusion' || model.type === 'audio' || model.type === 'video' || model.type === '3d') {
+      // For Flask models (diffusion/audio/video/3d/vision), check if Flask reported them as ready
+      if (
+        model.type === "diffusion" ||
+        model.type === "audio" ||
+        model.type === "video" ||
+        model.type === "3d" ||
+        model.type === "vision"
+      ) {
         if (!modelAvailabilityChecked.value) return false;
         // If we checked and it's marked available, it's ready
         // If we checked and it's not in the map, assume it needs download
-        return modelAvailability[model.key] === true;
+        const ready = modelAvailability[model.key] === true;
+        console.log(
+          `[SmartAgent] isModelReady ${model.key}: ${ready}, modelAvailability:`,
+          modelAvailability[model.key],
+        );
+        return ready;
       }
       return true;
     };
 
     // Check model availability on mount and when skill changes
     const checkModelAvailability = async () => {
-      console.log('[SmartAgent] Checking model availability...');
+      console.log("[SmartAgent] Checking model availability...");
 
       // Check LLM models via electron API (check each model individually)
       if (window.electronAPI?.checkModel) {
         // Check all LLM models defined in MODEL_REQUIREMENTS
-        const llmModelKeys = ['llm_default', 'llm_hermes', 'llm_mythomax'];
+        const llmModelKeys = ["llm_default", "llm_hermes", "llm_mythomax"];
 
         for (const key of llmModelKeys) {
           const model = MODEL_REQUIREMENTS[key];
           if (model?.filename) {
             try {
-              const exists = await window.electronAPI.checkModel(model.filename);
+              const exists = await window.electronAPI.checkModel(
+                model.filename,
+              );
               modelAvailability[model.filename] = exists;
-              console.log(`[SmartAgent] LLM model ${model.filename}: ${exists ? 'available' : 'not found'}`);
+              console.log(
+                `[SmartAgent] LLM model ${model.filename}: ${exists ? "available" : "not found"}`,
+              );
             } catch (e) {
-              console.warn(`[SmartAgent] Failed to check model ${model.filename}:`, e);
+              console.warn(
+                `[SmartAgent] Failed to check model ${model.filename}:`,
+                e,
+              );
               modelAvailability[model.filename] = false;
             }
           }
@@ -2631,53 +2897,94 @@ export default {
 
       // Pipeline mappings: model key -> pipeline name (keys match MODEL_REQUIREMENTS)
       const pipelineMap = {
-        'image_standard': 'image_standard',
-        'image_turbo': 'image_turbo',
-        'image_quality': 'image_quality',
-        'image_advanced': 'image_advanced',
-        'audio': 'audio',
-        'video_fast': 'video_fast',
-        'vision': 'qwen3_vision',
+        image_standard: "image_standard",
+        image_turbo: "image_turbo",
+        image_quality: "image_quality",
+        image_advanced: "image_advanced",
+        audio: "audio",
+        audio_turbo: "audio_turbo",
+        audio_quality: "audio_quality_persona",
+        video_fast: "video_fast",
+        vision: "qwen3_vision",
         // 'trellis_3d': '3d', // Not defined in Flask yet
       };
 
       // Check each pipeline in parallel
-      const pipelineChecks = Object.entries(pipelineMap).map(async ([modelKey, pipeline]) => {
-        try {
-          const response = await fetch(`http://localhost:${port}/pipelines/plan`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ pipeline }),
-          });
-          if (response.ok) {
-            const data = await response.json();
-            console.log(`[SmartAgent] Pipeline ${pipeline} plan:`, data);
+      const pipelineChecks = Object.entries(pipelineMap).map(
+        async ([modelKey, pipeline]) => {
+          try {
+            console.log(
+              `[SmartAgent] Checking pipeline ${pipeline} for model ${modelKey}...`,
+            );
+            const response = await fetch(
+              `http://localhost:${port}/pipelines/plan`,
+              {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ pipeline }),
+              },
+            );
+            if (response.ok) {
+              const data = await response.json();
+              console.log(
+                `[SmartAgent] Pipeline ${pipeline} (${modelKey}) response:`,
+                JSON.stringify(data, null, 2),
+              );
 
-            // Use the top-level ok field from the server response
-            if (data.ok === true) {
-              modelAvailability[modelKey] = true;
-              modelReadinessDetails[modelKey] = { repos: [], files: [] };
-              console.log(`[SmartAgent] Model ${modelKey} is ready`);
+              // Use the top-level ok field from the server response
+              if (data.ok === true) {
+                modelAvailability[modelKey] = true;
+                modelReadinessDetails[modelKey] = { repos: [], files: [] };
+                console.log(`[SmartAgent] ✓ Model ${modelKey} is READY`);
+              } else {
+                modelAvailability[modelKey] = false;
+                // Store missing repos and files for display
+                // Flatten repos in case r.repo is an array (e.g., Qwen TTS has multiple repos)
+                const missingRepos = (data.repos || [])
+                  .filter(
+                    (r) =>
+                      r.ok === false ||
+                      (Number.isFinite(r.missing) && r.missing > 0),
+                  )
+                  .flatMap((r) => (Array.isArray(r.repo) ? r.repo : [r.repo]));
+                const missingFiles = (data.required_files || [])
+                  .filter((f) => !f.ok || !f.exists)
+                  .map((f) => (f.path || f.name || "").split("/").pop());
+                modelReadinessDetails[modelKey] = {
+                  repos: missingRepos,
+                  files: missingFiles,
+                };
+                console.log(
+                  `[SmartAgent] ✗ Model ${modelKey} needs download:`,
+                  modelReadinessDetails[modelKey],
+                );
+              }
             } else {
+              console.error(
+                `[SmartAgent] HTTP error for pipeline ${pipeline}: ${response.status} ${response.statusText}`,
+              );
               modelAvailability[modelKey] = false;
-              // Store missing repos and files for display
-              const missingRepos = (data.repos || [])
-                .filter(r => r.ok === false || (Number.isFinite(r.missing) && r.missing > 0))
-                .map(r => r.repo);
-              const missingFiles = (data.required_files || [])
-                .filter(f => !f.ok || !f.exists)
-                .map(f => (f.path || f.name || '').split('/').pop());
-              modelReadinessDetails[modelKey] = { repos: missingRepos, files: missingFiles };
-              console.log(`[SmartAgent] Model ${modelKey} needs download:`, modelReadinessDetails[modelKey]);
+              modelReadinessDetails[modelKey] = {
+                repos: [],
+                files: [],
+                error: `HTTP ${response.status}`,
+              };
             }
+          } catch (e) {
+            console.error(
+              `[SmartAgent] Failed to check pipeline ${pipeline}:`,
+              e.message,
+            );
+            // If Flask isn't running, don't mark as available
+            modelAvailability[modelKey] = false;
+            modelReadinessDetails[modelKey] = {
+              repos: [],
+              files: [],
+              error: e.message,
+            };
           }
-        } catch (e) {
-          console.warn(`[SmartAgent] Failed to check pipeline ${pipeline}:`, e.message);
-          // If Flask isn't running, don't mark as available
-          modelAvailability[modelKey] = false;
-          modelReadinessDetails[modelKey] = { repos: [], files: [], error: e.message };
-        }
-      });
+        },
+      );
 
       await Promise.all(pipelineChecks);
 
@@ -2686,92 +2993,165 @@ export default {
 
     const getModelTypeIcon = (type) => {
       const icons = {
-        llm: 'psychology',
-        diffusion: 'image',
-        audio: 'headphones',
-        video: 'movie',
-        '3d': '3d_rotation',
+        llm: "psychology",
+        diffusion: "image",
+        audio: "headphones",
+        video: "movie",
+        "3d": "3d_rotation",
       };
-      return icons[type] || 'deployed_code';
+      return icons[type] || "deployed_code";
     };
 
-    // Download a skill model
-    const downloadSkillModel = async (model) => {
-      if (downloadingModelKey.value) return;
+    // ═══════════════════════════════════════════════════════════════════════════
+    // DOWNLOAD TRACKING (like GenerativeImage.vue)
+    // ═══════════════════════════════════════════════════════════════════════════
 
-      downloadingModelKey.value = model.key;
-      downloadProgress.value = 0;
+    const socketOpts = {
+      transports: ["websocket", "polling"],
+      reconnection: true,
+      reconnectionAttempts: 5,
+      reconnectionDelay: 1000,
+    };
 
-      try {
-        if (model.type === 'llm' && model.url) {
-          // Download LLM model via electron API
-          if (window.electronAPI?.downloadModel) {
-            showNotification(`Downloading ${model.name}...`, 'info', 0);
+    const mergeTask = (existing, incoming) => {
+      if (!existing) return incoming;
+      return {
+        ...existing,
+        ...incoming,
+        progress: Math.max(existing.progress || 0, incoming.progress || 0),
+      };
+    };
 
-            // Set up progress listener
-            const progressHandler = (e, data) => {
-              if (data.filename === model.filename) {
-                downloadProgress.value = Math.round(data.percent * 100);
-              }
-            };
-            window.electronAPI.onDownloadProgress(progressHandler);
-
-            // Download without callback (IPC can't clone functions)
-            const success = await window.electronAPI.downloadModel(model.url, model.filename);
-
-            if (success) {
-              // Mark as available immediately
-              modelAvailability[model.filename] = true;
-              console.log(`[SmartAgent] Model downloaded, marking ${model.filename} as available`);
-
-              // Also re-check all models to ensure consistency
-              await checkModelAvailability();
-
-              showNotification(`${model.name} downloaded successfully!`, 'success');
-            } else {
-              showNotification(`Failed to download ${model.name}`, 'danger');
-            }
-          } else {
-            showNotification('Download API not available', 'warning');
-          }
-        } else if (model.type === 'diffusion' || model.type === 'audio' || model.type === 'video' || model.type === '3d') {
-          // For Flask models, trigger prefetch via /pipelines/prefetch endpoint
-          const port = window.BONZAI_SERVER_PORT || 65000;
-          // Model keys now match pipeline names (e.g., image_standard, audio, video_fast)
-          const pipeline = model.pipeline || model.key;
-          if (pipeline) {
-            showNotification(`Downloading ${model.name}...`, 'info');
-            try {
-              const response = await fetch(`http://localhost:${port}/pipelines/prefetch`, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ pipeline }),
-              });
-              if (response.ok || response.status === 202) {
-                modelAvailability[model.key] = true;
-                showNotification(`${model.name} downloaded successfully!`, 'success');
-              } else {
-                showNotification(`${model.name} will download on first use`, 'info');
-                modelAvailability[model.key] = true;
-              }
-            } catch (e) {
-              // Flask not running, mark as ready anyway (will download on use)
-              modelAvailability[model.key] = true;
-              showNotification(`${model.name} will download on first use`, 'info');
-            }
-          } else {
-            modelAvailability[model.key] = true;
-          }
-        } else {
-          modelAvailability[model.key] = true;
-          showNotification(`${model.name} ready`, 'success');
+    const computeTotalFromTasks = (tasks) => {
+      const arr = Object.values(tasks || {});
+      if (!arr.length) return 0;
+      let totalBytes = 0;
+      let doneBytes = 0;
+      for (const t of arr) {
+        if (t.total_size) {
+          totalBytes += t.total_size;
+          doneBytes += t.downloaded_size || 0;
         }
-      } catch (e) {
-        showNotification(`Failed to download ${model.name}: ${e.message}`, 'danger');
-      } finally {
-        downloadingModelKey.value = null;
-        downloadProgress.value = 0;
       }
+      if (totalBytes > 0) return (doneBytes / totalBytes) * 100;
+      const sumPct = arr.reduce((s, t) => s + Number(t.progress || 0), 0);
+      return sumPct / arr.length;
+    };
+
+    const applyPipelineUpdate = (p) => {
+      if (!p) return;
+      downloads.pipelineId = p.pipeline_id || downloads.pipelineId;
+      downloads.status = p.status || downloads.status || "downloading";
+
+      const existing = downloads.pipeline?.tasks || {};
+      const incoming = p.tasks || {};
+      const merged = { ...existing };
+      for (const [tid, t] of Object.entries(incoming)) {
+        merged[tid] = mergeTask(existing[tid], t);
+      }
+      downloads.pipeline = {
+        ...(downloads.pipeline || {}),
+        ...p,
+        tasks: merged,
+      };
+
+      const serverPct = Number(p.total_progress ?? 0);
+      const tasksPct = computeTotalFromTasks(merged);
+      let next =
+        Number.isFinite(serverPct) && serverPct > 0 ? serverPct : tasksPct;
+
+      // Don't show 100% until every task is finished
+      const tasksList = Object.values(merged);
+      const anyActive = tasksList.some((t) =>
+        ["downloading", "pending"].includes(t.status),
+      );
+      if (anyActive) next = Math.min(next, 99.9);
+
+      downloads.total_progress = next;
+      downloads.progress = next;
+      downloadProgress.value = Math.round(next);
+
+      // If all tasks complete, force completion
+      const allTasksComplete =
+        tasksList.length > 0 &&
+        tasksList.every((t) => t.status === "completed");
+      if (allTasksComplete && downloads.status === "downloading") {
+        downloads.status = "completed";
+      }
+
+      downloads.active = !["completed", "failed", "cancelled"].includes(
+        downloads.status,
+      );
+    };
+
+    const ensureDownloadsSocket = (base = WS_DL) => {
+      if (downloadsSocket.value) {
+        try {
+          downloadsSocket.value.disconnect();
+        } catch {}
+      }
+      downloads.wsUrl = base;
+      downloadsSocket.value = io(base, socketOpts);
+
+      downloadsSocket.value.on("connect", () => {
+        if (downloads.pipelineId) {
+          downloadsSocket.value.emit("subscribe", {
+            pipeline_id: downloads.pipelineId,
+          });
+        }
+      });
+
+      downloadsSocket.value.on("download_progress", ({ pipeline }) => {
+        lastDlEventAt.value = Date.now();
+        if (!pipeline) return;
+        applyPipelineUpdate(pipeline);
+      });
+    };
+
+    const kickHttpPollIfStale = (pipelineId) => {
+      if (httpPollTimer) return;
+      httpPollTimer = setInterval(async () => {
+        const idleMs = Date.now() - lastDlEventAt.value;
+        if (idleMs < 1500) return;
+        try {
+          const { data } = await axios.get(
+            `${API_BASE}/downloads/status/${pipelineId}`,
+          );
+          if (data) {
+            applyPipelineUpdate(data);
+            if (!downloads.active) {
+              clearInterval(httpPollTimer);
+              httpPollTimer = null;
+            }
+          }
+        } catch {
+          clearInterval(httpPollTimer);
+          httpPollTimer = null;
+        }
+      }, 1000);
+    };
+
+    const connectAndSubscribe = (pipelineId, websocketUrl) => {
+      if (!pipelineId) return;
+      ensureDownloadsSocket(websocketUrl || WS_DL);
+      downloads.active = true;
+      downloads.pipelineId = pipelineId;
+      downloads.status = downloads.status || "downloading";
+      try {
+        downloadsSocket.value.emit("subscribe", { pipeline_id: pipelineId });
+      } catch {}
+      kickHttpPollIfStale(pipelineId);
+    };
+
+    const startDownloadTracking = (pipelineId, websocketUrl) => {
+      connectAndSubscribe(pipelineId, websocketUrl);
+      const t = setInterval(async () => {
+        if (!downloads.active && downloads.status !== "failed") {
+          clearInterval(t);
+          await checkModelAvailability();
+        }
+        if (downloads.status === "failed") clearInterval(t);
+      }, 1000);
     };
 
     // Download all missing models
@@ -2779,36 +3159,142 @@ export default {
       const missing = missingModels.value;
       if (missing.length === 0) return;
 
-      for (const model of missing) {
-        await downloadSkillModel(model);
+      // Reset download state
+      downloads.active = true;
+      downloads.progress = 0;
+      downloads.total_progress = 0;
+      downloads.status = "downloading";
+      downloads.pipeline = { tasks: {} };
+      downloadingModelKey.value = "all";
+      downloadProgress.value = 0;
+
+      let hasActiveDownload = false;
+
+      try {
+        // Collect all pipelines to prefetch
+        const pipelines = [];
+        for (const model of missing) {
+          if (model.type === "llm" && model.url) {
+            // LLM models via electron API
+            if (window.electronAPI?.downloadModel) {
+              hasActiveDownload = true;
+              const progressHandler = (e, data) => {
+                if (data.filename === model.filename) {
+                  downloadProgress.value = Math.round(data.percent * 100);
+                  downloads.progress = downloadProgress.value;
+                  downloads.total_progress = downloadProgress.value;
+                }
+              };
+              window.electronAPI.onDownloadProgress(progressHandler);
+
+              const success = await window.electronAPI.downloadModel(
+                model.url,
+                model.filename,
+              );
+
+              if (success) {
+                modelAvailability[model.filename] = true;
+              }
+            }
+          } else if (
+            model.type === "diffusion" ||
+            model.type === "audio" ||
+            model.type === "video" ||
+            model.type === "3d" ||
+            model.type === "vision"
+          ) {
+            const pipeline = model.pipeline || model.key;
+            if (pipeline) {
+              pipelines.push({ pipeline, model });
+            }
+          }
+        }
+
+        // Prefetch all Flask pipelines together
+        if (pipelines.length > 0) {
+          for (const { pipeline, model } of pipelines) {
+            try {
+              const res = await axios.post(
+                `${API_BASE}/pipelines/prefetch`,
+                { pipeline, deep_validate: true },
+                { validateStatus: () => true },
+              );
+
+              console.log(
+                `[SmartAgent] Prefetch ${pipeline}:`,
+                res.status,
+                res.data,
+              );
+
+              if (res.status === 202 && res.data?.pipeline_id) {
+                // Start tracking downloads via socket
+                hasActiveDownload = true;
+                startDownloadTracking(
+                  res.data.pipeline_id,
+                  res.data.websocket_url || WS_DL,
+                );
+              } else if (res.status === 200) {
+                // Already downloaded - mark as available
+                modelAvailability[model.key] = true;
+                modelReadinessDetails[model.key] = { repos: [], files: [] };
+                console.log(
+                  `[SmartAgent] Model ${model.key} already downloaded`,
+                );
+              }
+            } catch (e) {
+              console.error(`[SmartAgent] Prefetch failed for ${pipeline}:`, e);
+            }
+          }
+        }
+
+        // If no active downloads started (all models already available), complete immediately
+        if (!hasActiveDownload) {
+          console.log("[SmartAgent] All models already downloaded, completing");
+          downloads.status = "completed";
+          downloads.active = false;
+          downloads.progress = 100;
+          downloads.total_progress = 100;
+        }
+      } catch (e) {
+        console.error("[SmartAgent] Download error:", e);
+        downloads.status = "failed";
+        downloads.active = false;
+      } finally {
+        // Reset helper state if no active downloads
+        if (!hasActiveDownload) {
+          downloadingModelKey.value = null;
+          downloadProgress.value = 0;
+        }
       }
 
-      // Re-check availability after downloads
+      // Re-check availability after downloads complete
       await checkModelAvailability();
     };
 
     // Auto-fill skill inputs using LLM
     const autoFillSkillInputs = async () => {
-      if (!autoFillPrompt.value || isAutoFilling.value || !selectedSkill.value) return;
+      if (!autoFillPrompt.value || isAutoFilling.value || !selectedSkill.value)
+        return;
 
       isAutoFilling.value = true;
 
       try {
         // Build schema for LLM
         const inputSchema = Object.entries(selectedSkill.value.inputs)
-          .filter(([key, field]) => !['image', 'object'].includes(field.type))
+          .filter(([key, field]) => !["image", "object"].includes(field.type))
           .map(([key, field]) => {
             let schema = `- "${key}": ${field.label || key}`;
-            if (field.type === 'select') {
-              schema += ` (options: ${field.options.join(', ')})`;
-            } else if (field.type === 'number') {
-              schema += ` (number${field.min !== undefined ? `, min: ${field.min}` : ''}${field.max !== undefined ? `, max: ${field.max}` : ''})`;
+            if (field.type === "select") {
+              schema += ` (options: ${field.options.join(", ")})`;
+            } else if (field.type === "number") {
+              schema += ` (number${field.min !== undefined ? `, min: ${field.min}` : ""}${field.max !== undefined ? `, max: ${field.max}` : ""})`;
             }
             if (field.description) {
               schema += ` - ${field.description}`;
             }
             return schema;
-          }).join('\n');
+          })
+          .join("\n");
 
         const prompt = `Based on this user request: "${autoFillPrompt.value}"
 
@@ -2826,8 +3312,9 @@ Return ONLY the JSON, no explanation.`;
           // Extract JSON from response
           let json;
           try {
-            const jsonMatch = response.match(/```(?:json)?\s*([\s\S]*?)```/) ||
-                             response.match(/\{[\s\S]*\}/);
+            const jsonMatch =
+              response.match(/```(?:json)?\s*([\s\S]*?)```/) ||
+              response.match(/\{[\s\S]*\}/);
             if (jsonMatch) {
               json = JSON.parse(jsonMatch[1] || jsonMatch[0]);
             } else {
@@ -2836,20 +3323,23 @@ Return ONLY the JSON, no explanation.`;
 
             // Apply generated values
             Object.entries(json).forEach(([key, value]) => {
-              if (skillInputs.hasOwnProperty(key) || selectedSkill.value.inputs[key]) {
+              if (
+                skillInputs.hasOwnProperty(key) ||
+                selectedSkill.value.inputs[key]
+              ) {
                 skillInputs[key] = value;
               }
             });
 
-            showNotification('Inputs auto-filled successfully!', 'success');
+            showNotification("Inputs auto-filled successfully!", "success");
           } catch (e) {
-            console.warn('[SmartAgent] Failed to parse auto-fill response:', e);
-            showNotification('Could not parse AI response', 'warning');
+            console.warn("[SmartAgent] Failed to parse auto-fill response:", e);
+            showNotification("Could not parse AI response", "warning");
           }
         }
       } catch (e) {
-        console.error('[SmartAgent] Auto-fill error:', e);
-        showNotification(`Auto-fill failed: ${e.message}`, 'danger');
+        console.error("[SmartAgent] Auto-fill error:", e);
+        showNotification(`Auto-fill failed: ${e.message}`, "danger");
       } finally {
         isAutoFilling.value = false;
       }
@@ -2869,11 +3359,11 @@ Return ONLY the JSON, no explanation.`;
 
     // TCG state
     const tcgCollections = ref([
-      { id: 'pokemon', name: 'Pokemon', icon: 'amp_stories' },
-      { id: 'mtg', name: 'Magic: The Gathering', icon: 'amp_stories' },
-      { id: 'yugioh', name: 'Yu-Gi-Oh!', icon: 'amp_stories' },
-      { id: 'onepiece', name: 'One Piece', icon: 'amp_stories' },
-      { id: 'lorcana', name: 'Lorcana', icon: 'amp_stories' },
+      { id: "pokemon", name: "Pokemon", icon: "amp_stories" },
+      { id: "mtg", name: "Magic: The Gathering", icon: "amp_stories" },
+      { id: "yugioh", name: "Yu-Gi-Oh!", icon: "amp_stories" },
+      { id: "onepiece", name: "One Piece", icon: "amp_stories" },
+      { id: "lorcana", name: "Lorcana", icon: "amp_stories" },
     ]);
     const selectedTcgCollection = ref("pokemon");
     const tcgTopCards = ref([]);
@@ -2893,12 +3383,36 @@ Return ONLY the JSON, no explanation.`;
 
     // DSLA state
     const dslaUseCases = [
-      { key: "vol_returns", label: "Volatility of Returns", context: "DeFi yields, staking rewards, lending rates" },
-      { key: "vol_availability", label: "Volatility of Availability", context: "blockchain uptime, API availability, node reliability" },
-      { key: "vol_asset_floors", label: "Volatility of Asset Floors", context: "NFT floor prices, token minimums, collateral ratios" },
-      { key: "vol_currency_pegs", label: "Volatility of Currency Pegs", context: "stablecoin pegs, wrapped token ratios, synthetic assets" },
-      { key: "vol_response_time", label: "Volatility of Response Time", context: "block times, transaction confirmations, oracle updates" },
-      { key: "vol_delivery_time", label: "Volatility of Delivery Time", context: "NFT mints, token distributions, airdrop claims" },
+      {
+        key: "vol_returns",
+        label: "Volatility of Returns",
+        context: "DeFi yields, staking rewards, lending rates",
+      },
+      {
+        key: "vol_availability",
+        label: "Volatility of Availability",
+        context: "blockchain uptime, API availability, node reliability",
+      },
+      {
+        key: "vol_asset_floors",
+        label: "Volatility of Asset Floors",
+        context: "NFT floor prices, token minimums, collateral ratios",
+      },
+      {
+        key: "vol_currency_pegs",
+        label: "Volatility of Currency Pegs",
+        context: "stablecoin pegs, wrapped token ratios, synthetic assets",
+      },
+      {
+        key: "vol_response_time",
+        label: "Volatility of Response Time",
+        context: "block times, transaction confirmations, oracle updates",
+      },
+      {
+        key: "vol_delivery_time",
+        label: "Volatility of Delivery Time",
+        context: "NFT mints, token distributions, airdrop claims",
+      },
     ];
     const selectedUseCase = ref(null);
     const projectForm = reactive({
@@ -2924,7 +3438,9 @@ Return ONLY the JSON, no explanation.`;
       progress: { step: 0, total: 0, message: "" },
     });
     const dslaEthPrice = computed(() => tokenService.state.dslaEthPrice);
-    const isFetchingDslaPrice = computed(() => tokenService.state.isFetchingPrice);
+    const isFetchingDslaPrice = computed(
+      () => tokenService.state.isFetchingPrice,
+    );
 
     // Positions
     const positions = ref({});
@@ -2991,6 +3507,15 @@ Return ONLY the JSON, no explanation.`;
     const canRunSkill = (skillId) => skillStore.canRunSkill(skillId);
     const getRequiredLevel = (skill) => skillStore.getRequiredLevel(skill);
 
+    // Open level unlock modal for a skill
+    const openUnlockModal = (skill) => {
+      const levelStr = getRequiredLevel(skill); // e.g., 'LVL6'
+      const levelNum = parseInt(levelStr.replace("LVL", ""), 10);
+      if (levelNum >= 1 && levelNum <= 6) {
+        requestOpenLevelModal(levelNum);
+      }
+    };
+
     // Available skills - show accessible skills (user has required level)
     const availableSkills = computed(() => {
       return accessibleSkills.value;
@@ -3006,56 +3531,63 @@ Return ONLY the JSON, no explanation.`;
     };
 
     const getCategoryIcon = (categoryKey) => {
-      return SKILL_CATEGORY_META[categoryKey]?.icon || 'extension';
+      return SKILL_CATEGORY_META[categoryKey]?.icon || "extension";
     };
 
     const getCategoryColor = (categoryKey) => {
       const colorMap = {
-        'entertainment': 'is-danger',
-        'healthcare': 'is-success',
-        'housing': 'is-info',
-        'fashion': 'is-warning',
-        'food': 'is-primary',
-        'education': 'is-link',
-        'reading': 'is-dark',
-        'personal-care': 'is-light',
-        'prediction-market': 'is-info',
-        'analysis': 'is-success',
-        'trading': 'is-warning',
+        entertainment: "is-danger",
+        healthcare: "is-success",
+        housing: "is-info",
+        fashion: "is-warning",
+        food: "is-primary",
+        education: "is-link",
+        reading: "is-dark",
+        "personal-care": "is-light",
+        "prediction-market": "is-info",
+        analysis: "is-success",
+        trading: "is-warning",
       };
-      return colorMap[categoryKey] || 'is-dark';
+      return colorMap[categoryKey] || "is-dark";
     };
 
     const formatOptionLabel = (opt) => {
       // Convert kebab-case or snake_case to Title Case
       return String(opt)
-        .replace(/[-_]/g, ' ')
-        .replace(/\b\w/g, c => c.toUpperCase());
+        .replace(/[-_]/g, " ")
+        .replace(/\b\w/g, (c) => c.toUpperCase());
     };
 
     const hasImageResults = (results) => {
       if (!results) return false;
       const str = JSON.stringify(results);
-      return str.includes('image') || str.includes('Image') || str.includes('base64');
+      return (
+        str.includes("image") || str.includes("Image") || str.includes("base64")
+      );
     };
 
-    const extractImages = (results, path = '', images = []) => {
+    const extractImages = (results, path = "", images = []) => {
       if (!results) return images;
 
       for (const [key, value] of Object.entries(results)) {
         const currentPath = path ? `${path}.${key}` : key;
 
-        if (typeof value === 'string' && value.length > 100 &&
-            (key.toLowerCase().includes('image') || key.toLowerCase().includes('portrait') ||
-             key.toLowerCase().includes('cover') || key.toLowerCase().includes('photo'))) {
+        if (
+          typeof value === "string" &&
+          value.length > 100 &&
+          (key.toLowerCase().includes("image") ||
+            key.toLowerCase().includes("portrait") ||
+            key.toLowerCase().includes("cover") ||
+            key.toLowerCase().includes("photo"))
+        ) {
           images.push({ label: formatOptionLabel(key), data: value });
         } else if (Array.isArray(value)) {
           value.forEach((item, idx) => {
-            if (typeof item === 'object') {
+            if (typeof item === "object") {
               extractImages(item, `${currentPath}[${idx}]`, images);
             }
           });
-        } else if (typeof value === 'object' && value !== null) {
+        } else if (typeof value === "object" && value !== null) {
           extractImages(value, currentPath, images);
         }
       }
@@ -3071,7 +3603,7 @@ Return ONLY the JSON, no explanation.`;
       const reader = new FileReader();
       reader.onload = (e) => {
         // Extract base64 without the data:image prefix
-        const base64 = e.target.result.split(',')[1];
+        const base64 = e.target.result.split(",")[1];
         skillInputs[inputKey] = base64;
       };
       reader.readAsDataURL(file);
@@ -3095,7 +3627,10 @@ Return ONLY the JSON, no explanation.`;
       // Check level access before running
       const access = canRunSkill(skill.id);
       if (!access.canRun) {
-        showNotification(`${access.requiredLevel} required: ${access.reason}`, "warning");
+        showNotification(
+          `${access.requiredLevel} required: ${access.reason}`,
+          "warning",
+        );
         return;
       }
       selectSkillById(skill.id);
@@ -3111,7 +3646,7 @@ Return ONLY the JSON, no explanation.`;
         });
 
         // Auto-load data for specific skills
-        if (skillId === 'tcg-prediction-market-v1.0.0') {
+        if (skillId === "tcg-prediction-market-v1.0.0") {
           loadTcgTopCards();
         }
       }
@@ -3124,10 +3659,9 @@ Return ONLY the JSON, no explanation.`;
       executionStatus.value = "Starting...";
 
       try {
-        const result = await skillStore.executeSkill(
-          selectedSkill.value.id,
-          { ...skillInputs }
-        );
+        const result = await skillStore.executeSkill(selectedSkill.value.id, {
+          ...skillInputs,
+        });
 
         if (result.success) {
           executionResults[selectedSkill.value.id] = result.result;
@@ -3163,7 +3697,10 @@ Return ONLY the JSON, no explanation.`;
       isAnalyzing.value = true;
       // Clear previous theses when running new analysis
       investmentTheses.value = {};
-      const categoryLabel = polymarketCategories.find(c => c.key === selectedPolymarketCategory.value)?.label || 'All Markets';
+      const categoryLabel =
+        polymarketCategories.find(
+          (c) => c.key === selectedPolymarketCategory.value,
+        )?.label || "All Markets";
       loadingMessage.value = `Fetching ${categoryLabel} leaderboard from Polymarket...`;
 
       try {
@@ -3180,28 +3717,33 @@ Return ONLY the JSON, no explanation.`;
             updateStatus: (status) => {
               loadingMessage.value = status;
             },
-          }
+          },
         );
 
         // Store the analysis results (top 10 recommendations)
-        analysisHistory.value = [{
-          topTraders: results.topTraders || [],
-          recommendations: (results.recommendations || []).slice(0, 10), // Top 10 high conviction positions
-          meta: results.meta || {
-            timePeriod: polymarketTimePeriod.value,
-            category: selectedPolymarketCategory.value,
-            minConviction: polymarketMinConviction.value,
-            analyzedAt: new Date().toISOString(),
+        analysisHistory.value = [
+          {
+            topTraders: results.topTraders || [],
+            recommendations: (results.recommendations || []).slice(0, 10), // Top 10 high conviction positions
+            meta: results.meta || {
+              timePeriod: polymarketTimePeriod.value,
+              category: selectedPolymarketCategory.value,
+              minConviction: polymarketMinConviction.value,
+              analyzedAt: new Date().toISOString(),
+            },
           },
-        }];
+        ];
 
-        console.log('[SmartAgent] Polymarket analysis complete:', results);
+        console.log("[SmartAgent] Polymarket analysis complete:", results);
 
         if (results.recommendations?.length === 0) {
-          showNotification(`No high conviction positions found for ${categoryLabel}. Try lowering consensus threshold.`, "info");
+          showNotification(
+            `No high conviction positions found for ${categoryLabel}. Try lowering consensus threshold.`,
+            "info",
+          );
         }
       } catch (e) {
-        console.error('[SmartAgent] Polymarket analysis error:', e);
+        console.error("[SmartAgent] Polymarket analysis error:", e);
         analysisHistory.value = [{ error: e.message }];
         showNotification(`Analysis failed: ${e.message}`, "danger");
       } finally {
@@ -3211,7 +3753,11 @@ Return ONLY the JSON, no explanation.`;
 
     const generateInvestmentThesis = async (analysisIdx, recIdx, rec) => {
       const key = `${analysisIdx}-${recIdx}`;
-      investmentTheses.value[key] = { loading: true, thesis: null, error: null };
+      investmentTheses.value[key] = {
+        loading: true,
+        thesis: null,
+        error: null,
+      };
 
       try {
         await loadModel();
@@ -3231,7 +3777,9 @@ Provide a concise analysis covering:
         const response = await window.electronAPI?.chat?.(prompt);
 
         if (!response) {
-          throw new Error("No response from model. Please ensure the model is loaded.");
+          throw new Error(
+            "No response from model. Please ensure the model is loaded.",
+          );
         }
 
         investmentTheses.value[key] = {
@@ -3267,31 +3815,108 @@ Provide a concise analysis covering:
         // Mock data for development
         const mockCards = {
           pokemon: [
-            { id: 'p1', name: 'Charizard VMAX', set: "Champion's Path", rarity: 'Ultra Rare', price: 350, priceChange: 15 },
-            { id: 'p2', name: 'Pikachu VMAX', set: 'Vivid Voltage', rarity: 'Ultra Rare', price: 180, priceChange: 8 },
-            { id: 'p3', name: 'Umbreon VMAX', set: 'Evolving Skies', rarity: 'Alternate Art', price: 420, priceChange: -5 },
+            {
+              id: "p1",
+              name: "Charizard VMAX",
+              set: "Champion's Path",
+              rarity: "Ultra Rare",
+              price: 350,
+              priceChange: 15,
+            },
+            {
+              id: "p2",
+              name: "Pikachu VMAX",
+              set: "Vivid Voltage",
+              rarity: "Ultra Rare",
+              price: 180,
+              priceChange: 8,
+            },
+            {
+              id: "p3",
+              name: "Umbreon VMAX",
+              set: "Evolving Skies",
+              rarity: "Alternate Art",
+              price: 420,
+              priceChange: -5,
+            },
           ],
           mtg: [
-            { id: 'm1', name: 'Black Lotus', set: 'Alpha', rarity: 'Rare', price: 150000, priceChange: 5 },
-            { id: 'm2', name: 'Mox Sapphire', set: 'Beta', rarity: 'Rare', price: 8500, priceChange: -3 },
+            {
+              id: "m1",
+              name: "Black Lotus",
+              set: "Alpha",
+              rarity: "Rare",
+              price: 150000,
+              priceChange: 5,
+            },
+            {
+              id: "m2",
+              name: "Mox Sapphire",
+              set: "Beta",
+              rarity: "Rare",
+              price: 8500,
+              priceChange: -3,
+            },
           ],
           yugioh: [
-            { id: 'y1', name: 'Blue-Eyes White Dragon', set: 'LOB', rarity: '1st Edition', price: 2500, priceChange: 10 },
-            { id: 'y2', name: 'Dark Magician', set: 'LOB', rarity: '1st Edition', price: 1200, priceChange: 5 },
+            {
+              id: "y1",
+              name: "Blue-Eyes White Dragon",
+              set: "LOB",
+              rarity: "1st Edition",
+              price: 2500,
+              priceChange: 10,
+            },
+            {
+              id: "y2",
+              name: "Dark Magician",
+              set: "LOB",
+              rarity: "1st Edition",
+              price: 1200,
+              priceChange: 5,
+            },
           ],
           onepiece: [
-            { id: 'o1', name: 'Monkey D. Luffy', set: 'OP01', rarity: 'Leader', price: 45, priceChange: 20 },
-            { id: 'o2', name: 'Roronoa Zoro', set: 'OP01', rarity: 'Super Rare', price: 85, priceChange: 12 },
+            {
+              id: "o1",
+              name: "Monkey D. Luffy",
+              set: "OP01",
+              rarity: "Leader",
+              price: 45,
+              priceChange: 20,
+            },
+            {
+              id: "o2",
+              name: "Roronoa Zoro",
+              set: "OP01",
+              rarity: "Super Rare",
+              price: 85,
+              priceChange: 12,
+            },
           ],
           lorcana: [
-            { id: 'l1', name: 'Elsa, Snow Queen', set: 'The First Chapter', rarity: 'Enchanted', price: 450, priceChange: -10 },
-            { id: 'l2', name: 'Mickey Mouse, True Friend', set: 'The First Chapter', rarity: 'Enchanted', price: 280, priceChange: 5 },
+            {
+              id: "l1",
+              name: "Elsa, Snow Queen",
+              set: "The First Chapter",
+              rarity: "Enchanted",
+              price: 450,
+              priceChange: -10,
+            },
+            {
+              id: "l2",
+              name: "Mickey Mouse, True Friend",
+              set: "The First Chapter",
+              rarity: "Enchanted",
+              price: 280,
+              priceChange: 5,
+            },
           ],
         };
 
         tcgTopCards.value = mockCards[selectedTcgCollection.value] || [];
       } catch (e) {
-        console.error('[SmartAgent] TCG load error:', e);
+        console.error("[SmartAgent] TCG load error:", e);
       } finally {
         isTcgLoading.value = false;
       }
@@ -3308,18 +3933,18 @@ Provide a concise analysis covering:
       try {
         // Mock search
         const query = tcgSearchQuery.value.toLowerCase();
-        tcgSearchResults.value = tcgTopCards.value.filter(
-          c => c.name.toLowerCase().includes(query)
+        tcgSearchResults.value = tcgTopCards.value.filter((c) =>
+          c.name.toLowerCase().includes(query),
         );
       } catch (e) {
-        console.error('[SmartAgent] TCG search error:', e);
+        console.error("[SmartAgent] TCG search error:", e);
       } finally {
         isTcgLoading.value = false;
       }
     };
 
     const addToPortfolio = (card) => {
-      if (!userTcgPortfolio.value.some(c => c.id === card.id)) {
+      if (!userTcgPortfolio.value.some((c) => c.id === card.id)) {
         userTcgPortfolio.value.push({
           ...card,
           collection: selectedTcgCollection.value,
@@ -3328,7 +3953,9 @@ Provide a concise analysis covering:
     };
 
     const removeFromPortfolio = (cardId) => {
-      userTcgPortfolio.value = userTcgPortfolio.value.filter(c => c.id !== cardId);
+      userTcgPortfolio.value = userTcgPortfolio.value.filter(
+        (c) => c.id !== cardId,
+      );
     };
 
     const openTcgMarketModal = (card) => {
@@ -3369,9 +3996,14 @@ Provide a concise analysis covering:
       if (!tcgMarketModal.targetPrice || !tcgMarketModal.targetDate) return;
 
       // Validate at least one data source
-      const validSources = tcgMarketModal.dataSources.filter(s => s.name && s.endpoint);
+      const validSources = tcgMarketModal.dataSources.filter(
+        (s) => s.name && s.endpoint,
+      );
       if (validSources.length === 0) {
-        showNotification("Please add at least one data source with name and endpoint", "warning");
+        showNotification(
+          "Please add at least one data source with name and endpoint",
+          "warning",
+        );
         return;
       }
 
@@ -3391,7 +4023,7 @@ Provide a concise analysis covering:
         operator: tcgMarketModal.operator,
         targetPrice: tcgMarketModal.targetPrice,
         targetDate: tcgMarketModal.targetDate,
-        dataSources: validSources.map(s => ({ ...s })),
+        dataSources: validSources.map((s) => ({ ...s })),
         createdAt: new Date().toISOString(),
       };
 
@@ -3407,8 +4039,15 @@ Provide a concise analysis covering:
     };
 
     const createPredictionMarketSkill = async () => {
-      if (!projectForm.name || !projectForm.tokenSymbol || !selectedUseCase.value) {
-        showNotification("Please fill in all required fields and select a use case", "warning");
+      if (
+        !projectForm.name ||
+        !projectForm.tokenSymbol ||
+        !selectedUseCase.value
+      ) {
+        showNotification(
+          "Please fill in all required fields and select a use case",
+          "warning",
+        );
         return;
       }
 
@@ -3416,7 +4055,9 @@ Provide a concise analysis covering:
 
       const result = await skillStore.publishSkill({
         name: projectForm.name,
-        description: projectForm.description || `${selectedUseCase.value.label} prediction market for ${projectForm.tokenSymbol}`,
+        description:
+          projectForm.description ||
+          `${selectedUseCase.value.label} prediction market for ${projectForm.tokenSymbol}`,
         category: "prediction-market",
         price: projectForm.price || 0.1,
         useCase: selectedUseCase.value.key,
@@ -3437,7 +4078,10 @@ Provide a concise analysis covering:
       });
 
       if (result.success) {
-        showNotification(`Skill "${projectForm.name}" created successfully!`, "success");
+        showNotification(
+          `Skill "${projectForm.name}" created successfully!`,
+          "success",
+        );
 
         // Reset form
         projectForm.name = "";
@@ -3503,7 +4147,10 @@ Provide a concise analysis covering:
         timestamp: new Date().toISOString(),
       };
 
-      showNotification(`Position opened: ${positionModal.amount} tokens ${side === 'for' ? 'FOR' : 'AGAINST'}`, "success");
+      showNotification(
+        `Position opened: ${positionModal.amount} tokens ${side === "for" ? "FOR" : "AGAINST"}`,
+        "success",
+      );
       closePositionModal();
     };
 
@@ -3522,7 +4169,11 @@ Provide a concise analysis covering:
     };
 
     const publishSkill = async () => {
-      if (!skillForm.name || !skillForm.description || skillForm.steps.length === 0) {
+      if (
+        !skillForm.name ||
+        !skillForm.description ||
+        skillForm.steps.length === 0
+      ) {
         showNotification("Please fill in all required fields", "warning");
         return;
       }
@@ -3538,7 +4189,10 @@ Provide a concise analysis covering:
       });
 
       if (result.success) {
-        showNotification(`Skill "${skillForm.name}" published successfully!`, "success");
+        showNotification(
+          `Skill "${skillForm.name}" published successfully!`,
+          "success",
+        );
 
         // Reset form
         skillForm.name = "";
@@ -3558,10 +4212,15 @@ Provide a concise analysis covering:
     const openTokenIssuanceModal = async (skill) => {
       tokenIssuanceModal.show = true;
       tokenIssuanceModal.skill = skill;
-      tokenIssuanceModal.tokenName = skill.tokenSymbol ? `${skill.name} Token` : skill.name;
-      tokenIssuanceModal.tokenSymbol = skill.tokenSymbol || skill.name.substring(0, 4).toUpperCase();
+      tokenIssuanceModal.tokenName = skill.tokenSymbol
+        ? `${skill.name} Token`
+        : skill.name;
+      tokenIssuanceModal.tokenSymbol =
+        skill.tokenSymbol || skill.name.substring(0, 4).toUpperCase();
       tokenIssuanceModal.totalSupply = skill.totalSupply || "1000000000";
-      tokenIssuanceModal.initialLiquidityTokens = String(Math.floor(Number(tokenIssuanceModal.totalSupply) * 0.1));
+      tokenIssuanceModal.initialLiquidityTokens = String(
+        Math.floor(Number(tokenIssuanceModal.totalSupply) * 0.1),
+      );
       tokenIssuanceModal.initialLiquidityEth = "0.5";
       tokenIssuanceModal.startingPriceEth = "0.0000001";
       tokenIssuanceModal.initialLiquidityDsla = "";
@@ -3573,9 +4232,12 @@ Provide a concise analysis covering:
         await tokenService.fetchDslaEthPrice();
         // Calculate suggested DSLA liquidity based on ETH liquidity
         if (dslaEthPrice.value) {
-          const ethAmount = parseFloat(tokenIssuanceModal.initialLiquidityEth) || 0;
+          const ethAmount =
+            parseFloat(tokenIssuanceModal.initialLiquidityEth) || 0;
           const dslaAmount = tokenService.ethToDsla(ethAmount);
-          tokenIssuanceModal.initialLiquidityDsla = String(Math.floor(dslaAmount));
+          tokenIssuanceModal.initialLiquidityDsla = String(
+            Math.floor(dslaAmount),
+          );
         }
       }
     };
@@ -3586,7 +4248,7 @@ Provide a concise analysis covering:
     };
 
     const isDslaSkill = (skill) => {
-      return skill?.category === 'prediction-market' || skill?.useCase;
+      return skill?.category === "prediction-market" || skill?.useCase;
     };
 
     const hasIssuedToken = (skillId) => {
@@ -3599,9 +4261,12 @@ Provide a concise analysis covering:
 
     const calculateDslaFromEth = () => {
       if (dslaEthPrice.value) {
-        const ethAmount = parseFloat(tokenIssuanceModal.initialLiquidityEth) || 0;
+        const ethAmount =
+          parseFloat(tokenIssuanceModal.initialLiquidityEth) || 0;
         const dslaAmount = tokenService.ethToDsla(ethAmount);
-        tokenIssuanceModal.initialLiquidityDsla = String(Math.floor(dslaAmount));
+        tokenIssuanceModal.initialLiquidityDsla = String(
+          Math.floor(dslaAmount),
+        );
       }
     };
 
@@ -3622,7 +4287,9 @@ Provide a concise analysis covering:
           initialLiquidityEth: tokenIssuanceModal.initialLiquidityEth,
           startingPriceEth: parseFloat(tokenIssuanceModal.startingPriceEth),
           isDslaSkill: isDsla,
-          initialLiquidityDsla: isDsla ? tokenIssuanceModal.initialLiquidityDsla : null,
+          initialLiquidityDsla: isDsla
+            ? tokenIssuanceModal.initialLiquidityDsla
+            : null,
           onProgress: (progress) => {
             tokenIssuanceModal.progress = progress;
           },
@@ -3631,7 +4298,7 @@ Provide a concise analysis covering:
         if (result.success) {
           showNotification(
             `Token ${tokenIssuanceModal.tokenSymbol} issued successfully! Pool created on Uniswap.`,
-            "success"
+            "success",
           );
           closeTokenIssuanceModal();
         } else {
@@ -3648,7 +4315,7 @@ Provide a concise analysis covering:
     const checkPolymarketModelAvailability = async () => {
       if (window.electronAPI?.checkModel) {
         isModelAvailable.value = await window.electronAPI.checkModel(
-          modelConfig.filename
+          modelConfig.filename,
         );
       }
     };
@@ -3662,13 +4329,13 @@ Provide a concise analysis covering:
       const removeListener = window.electronAPI.onDownloadProgress?.(
         (_event, progress) => {
           downloadProgress.value = Math.round(progress.percent * 100);
-        }
+        },
       );
 
       try {
         const success = await window.electronAPI.downloadModel(
           modelConfig.url,
-          modelConfig.filename
+          modelConfig.filename,
         );
         if (success) {
           isModelAvailable.value = true;
@@ -3718,13 +4385,13 @@ Provide a concise analysis covering:
         if (status) {
           executionStatus.value = status;
         }
-      }
+      },
     );
 
     // Watch for skill changes to refresh model availability
     watch(selectedSkillId, async (newSkillId) => {
       if (newSkillId) {
-        console.log('[SmartAgent] Skill changed to:', newSkillId);
+        console.log("[SmartAgent] Skill changed to:", newSkillId);
         // Re-check model availability when skill changes
         await checkModelAvailability();
       }
@@ -3756,6 +4423,7 @@ Provide a concise analysis covering:
       accessibleSkills,
       canRunSkill,
       getRequiredLevel,
+      openUnlockModal,
       refreshSkills,
       runSkill,
       availableSkills,
@@ -3778,9 +4446,10 @@ Provide a concise analysis covering:
       modelReadinessDetails,
       modelAvailabilityChecked,
       downloadingModelKey,
+      downloads,
+      downloadTaskList,
       isModelReady,
       getModelTypeIcon,
-      downloadSkillModel,
       checkModelAvailability,
       downloadAllMissingModels,
 
@@ -3880,7 +4549,11 @@ Provide a concise analysis covering:
 @import url("https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:opsz,wght,FILL,GRAD@20..48,100..700,0..1,-50..200");
 
 .material-symbols-outlined {
-  font-variation-settings: "FILL" 0, "wght" 100, "GRAD" -25, "opsz" 48;
+  font-variation-settings:
+    "FILL" 0,
+    "wght" 100,
+    "GRAD" -25,
+    "opsz" 48;
   border-radius: 100%;
 }
 
@@ -3889,8 +4562,12 @@ Provide a concise analysis covering:
 }
 
 @keyframes spin {
-  from { transform: rotate(0deg); }
-  to { transform: rotate(360deg); }
+  from {
+    transform: rotate(0deg);
+  }
+  to {
+    transform: rotate(360deg);
+  }
 }
 
 .columns {
@@ -3952,7 +4629,14 @@ Provide a concise analysis covering:
 hr {
   margin: 12px 0;
   width: 100%;
-  background-color: rgba(255, 255, 255, 0.1);
+  border: none;
+  height: 1px;
+  background: linear-gradient(
+    to right,
+    transparent,
+    rgba(255, 255, 255, 1),
+    transparent
+  );
 }
 
 h1 {
@@ -4034,50 +4718,120 @@ p {
 /* Category filter */
 .category-filter {
   overflow-x: auto;
-  white-space: nowrap;
 }
 
 .category-selector {
-  display: flex;
+  display: grid;
+  grid-template-columns: repeat(6, 1fr);
   gap: 0.5em;
 }
 
-.category-btn {
-  background: rgba(255, 255, 255, 0.1);
-  border: 1px solid rgba(255, 255, 255, 0.2);
-  color: rgba(255, 255, 255, 0.7);
+.category-selector input[type="radio"] {
+  display: none;
+}
+
+.category-selector input[type="radio"] + label.radio.category {
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+  padding: 6px 12px;
+  font-family: "Fira Sans", sans-serif !important;
+  font-weight: 600 !important;
+  font-size: 14px;
+  background: transparent;
+  border: 1px solid rgba(255, 255, 255, 0.3);
+  border-radius: 4px;
+  color: rgba(255, 255, 255, 0.3);
+  cursor: pointer;
   transition: all 0.2s ease;
+  white-space: nowrap;
+  backdrop-filter: blur(32px);
 }
 
-.category-btn:hover {
-  background: rgba(255, 255, 255, 0.2);
-  color: #fff;
+.category-selector input[type="radio"] + label.radio.category:hover {
+  background: rgba(97, 55, 142, 0.2);
+  border-color: rgba(255, 255, 255, 0.5);
+  color: rgba(255, 255, 255, 0.8);
 }
 
-.category-btn.is-active {
-  background: rgba(62, 142, 208, 0.5);
-  border-color: #3e8ed0;
-  color: #fff;
+.category-selector input[type="radio"]:checked + label.radio.category {
+  color: rgba(255, 255, 255, 1) !important;
+  border: 1px solid rgba(255, 255, 255, 1) !important;
+  background: rgba(97, 55, 142, 0.33) !important;
+  backdrop-filter: blur(64px) !important;
+}
+
+.category-selector label.radio.category .material-symbols-outlined {
+  font-size: 18px;
+  margin-right: 4px;
 }
 
 /* Skills grid */
 .skills-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(400px, 1fr));
-  gap: 1.5em;
+  display: flex;
+  flex-direction: column;
+  gap: 1em;
 }
 
 .skill-card {
-  transition: all 0.2s ease;
+  transition:
+    transform 0.3s cubic-bezier(0.4, 0, 0.2, 1),
+    border-color 0.3s ease,
+    box-shadow 0.3s ease,
+    background 0.3s ease;
+  transform: translateY(0);
 }
 
 .skill-card:hover {
-  border-color: rgba(255, 255, 255, 0.3);
-  transform: translateY(-2px);
+  border-color: rgba(255, 255, 255, 0.4);
+  transform: translateY(-4px);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.3);
 }
 
 .skill-card.is-owned {
   border-color: rgba(57, 213, 130, 0.5);
+}
+
+.skill-card.is-owned:hover {
+  border-color: rgba(57, 213, 130, 0.8);
+  box-shadow: 0 8px 24px rgba(57, 213, 130, 0.2);
+}
+
+.skill-card.featured {
+  background: linear-gradient(
+    135deg,
+    rgba(155, 109, 200, 0.25) 0%,
+    rgba(255, 153, 51, 0.15) 100%
+  );
+  border: 1px solid rgba(155, 109, 200, 0.5);
+  position: relative;
+  overflow: hidden;
+}
+
+.skill-card.featured::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 3px;
+  background: linear-gradient(90deg, rgb(155, 109, 200), rgb(255, 153, 51));
+  opacity: 0.8;
+  transition: opacity 0.3s ease;
+}
+
+.skill-card.featured:hover {
+  border-color: rgba(155, 109, 200, 0.8);
+  background: linear-gradient(
+    135deg,
+    rgba(155, 109, 200, 0.35) 0%,
+    rgba(255, 153, 51, 0.25) 100%
+  );
+  box-shadow: 0 8px 24px rgba(155, 109, 200, 0.25);
+}
+
+.skill-card.featured:hover::before {
+  opacity: 1;
 }
 
 .skill-header {
@@ -4089,13 +4843,25 @@ p {
 
 .skill-name {
   font-size: 1.5rem;
-  color: #fff;
   margin: 0;
+  font-family: "Fira Sans Condensed", sans-serif;
+  font-style: italic;
+  font-weight: 900;
+  -webkit-text-fill-color: transparent;
+  background: linear-gradient(135deg, rgb(155, 109, 200), rgb(255, 153, 51))
+    text;
+}
+
+.has-text-brand {
+  -webkit-text-fill-color: transparent;
+  background: linear-gradient(135deg, rgb(155, 109, 200), rgb(255, 153, 51))
+    text;
 }
 
 .skill-description {
   color: rgba(255, 255, 255, 0.8);
   margin-bottom: 0.5em;
+  text-align: left;
 }
 
 .skill-footer {
@@ -4154,7 +4920,11 @@ p {
 }
 
 .visual-selector input[type="radio"]:checked + .radio {
-  background: linear-gradient(135deg, rgba(62, 142, 208, 0.6), rgba(102, 126, 234, 0.6));
+  background: linear-gradient(
+    135deg,
+    rgba(62, 142, 208, 0.6),
+    rgba(102, 126, 234, 0.6)
+  );
   border-color: #3e8ed0;
   color: #fff;
   box-shadow: 0 2px 8px rgba(62, 142, 208, 0.3);
@@ -4256,10 +5026,20 @@ input:checked + .slider:before {
   margin-bottom: 1rem;
 }
 
+.tag.is-brand {
+  color: #fff;
+  background: linear-gradient(135deg, rgb(155, 109, 200), rgb(255, 153, 51));
+  text-transform: uppercase;
+}
+
 /* Skill Header Banner */
 .skill-header-banner {
   padding: 1.5rem;
-  background: linear-gradient(135deg, rgba(255, 255, 255, 0.05), rgba(255, 255, 255, 0.02));
+  background: linear-gradient(
+    135deg,
+    rgba(255, 255, 255, 0.05),
+    rgba(255, 255, 255, 0.02)
+  );
   border-radius: 12px;
   border: 1px solid rgba(255, 255, 255, 0.1);
 }
@@ -4362,6 +5142,32 @@ input:checked + .slider:before {
   gap: 0.5em;
 }
 
+.polymarket-category {
+  font-size: 12px;
+  display: flex;
+  flex-wrap: nowrap;
+}
+
+.polymarket-category .radio {
+  flex: 1;
+  text-align: center;
+  justify-content: center;
+}
+
+.timeperiod-selector,
+.conviction-selector {
+  font-size: 12px;
+  display: flex;
+  flex-wrap: nowrap;
+}
+
+.timeperiod-selector .radio,
+.conviction-selector .radio {
+  flex: 1;
+  text-align: center;
+  justify-content: center;
+}
+
 .timeperiod-selector input[type="radio"],
 .conviction-selector input[type="radio"],
 .usecase-selector input[type="radio"],
@@ -4382,8 +5188,8 @@ input:checked + .slider:before {
   color: rgba(255, 255, 255, 0.7);
   cursor: pointer;
   transition: all 0.2s ease;
-  font-family: "Fira Sans Condensed", sans-serif;
-  font-weight: 700;
+  font-family: "Fira Sans", sans-serif;
+  font-weight: 600;
 }
 
 .timeperiod-selector .radio:hover,
@@ -4699,19 +5505,100 @@ input:checked + .slider:before {
   border-radius: 4px;
 }
 
-/* Investment thesis */
+/* Investment thesis - matches GenerativeText markdown chat styling */
 .investment-thesis {
+  position: relative;
   background: rgba(0, 0, 0, 0.3);
   border-radius: 8px;
   padding: 1.5em;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  backdrop-filter: blur(32px);
+  animation: fadeInUp 0.4s ease-out forwards;
 }
 
 .thesis-header {
   color: #3e8ed0;
   margin-bottom: 1em;
+  font-size: 24px;
 }
 
 .thesis-content {
+  white-space: pre-line;
   line-height: 1.6;
+  font-size: 18px;
+  color: #fff;
+  font-family: "Fira Sans", sans-serif;
+  font-weight: 100;
+  font-style: normal;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+.thesis-content :deep(p) {
+  margin-bottom: 1em;
+  text-align: justify;
+}
+
+.thesis-content :deep(ul),
+.thesis-content :deep(ol) {
+  margin-left: 1.5em;
+  margin-bottom: 1em;
+}
+
+.thesis-content :deep(li) {
+  margin-bottom: 0.5em;
+}
+
+.thesis-content :deep(strong) {
+  font-weight: 700;
+  color: #fff;
+}
+
+.thesis-content :deep(code) {
+  background: rgba(255, 255, 255, 0.1);
+  padding: 0.2em 0.4em;
+  border-radius: 4px;
+  font-family: monospace;
+}
+
+.thesis-content :deep(pre) {
+  background: rgba(0, 0, 0, 0.4);
+  padding: 1em;
+  border-radius: 4px;
+  overflow-x: auto;
+  margin-bottom: 1em;
+}
+
+.thesis-content :deep(blockquote) {
+  border-left: 3px solid #3e8ed0;
+  padding-left: 1em;
+  margin-left: 0;
+  color: rgba(255, 255, 255, 0.8);
+  font-style: italic;
+}
+
+@keyframes fadeInUp {
+  from {
+    opacity: 0;
+    transform: translateY(20px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes move {
+  0% {
+    transform: scale(1.1);
+    transform-origin: bottom left;
+  }
+  50% {
+    transform: scale(1.2);
+  }
+  100% {
+    transform: scale(1.1);
+    transform-origin: bottom left;
+  }
 }
 </style>

@@ -29,40 +29,8 @@ export function registerSkillLoader(source, loader) {
 }
 
 /**
- * Load all built-in skills from the local skills directory
- * @returns {Promise<SkillDefinition[]>}
- */
-export async function loadBuiltinSkills() {
-  const skills = [];
-
-  // Dynamically import all skill definitions from builtin directory
-  // In production, these would be bundled; in dev, use dynamic imports
-  try {
-    const builtinModules = import.meta.glob('../skills/builtin/*.js', { eager: true });
-
-    for (const [path, module] of Object.entries(builtinModules)) {
-      const skill = module.default || module.skill;
-      if (skill && skill.id) {
-        const validation = validateSkillDefinition(skill);
-        if (validation.valid) {
-          skillCache.set(skill.id, skill);
-          skills.push(skill);
-          console.log(`[SkillService] Loaded builtin skill: ${skill.name} (${skill.id})`);
-        } else {
-          console.warn(`[SkillService] Invalid skill at ${path}:`, validation.errors);
-        }
-      }
-    }
-  } catch (e) {
-    console.warn('[SkillService] No builtin skills found or error loading:', e.message);
-  }
-
-  return skills;
-}
-
-/**
- * Load flagship multi-modal skills
- * These are the premium consumer experience skills combining LLM, diffusion, and transformers
+ * Load all flagship skills
+ * These are the premium skills including finance and consumer experience skills
  * @returns {Promise<SkillDefinition[]>}
  */
 export async function loadFlagshipSkills() {
@@ -86,19 +54,18 @@ export async function loadFlagshipSkills() {
 }
 
 /**
- * Initialize all skills (builtin + flagship)
+ * Initialize all skills
  * Call this on app startup
- * @returns {Promise<{ builtin: SkillDefinition[], flagship: SkillDefinition[] }>}
+ * @returns {Promise<{ skills: SkillDefinition[] }>}
  */
 export async function initializeSkills() {
   console.log('[SkillService] Initializing skills...');
 
-  const builtin = await loadBuiltinSkills();
-  const flagship = await loadFlagshipSkills();
+  const skills = await loadFlagshipSkills();
 
-  console.log(`[SkillService] Initialization complete: ${builtin.length} builtin, ${flagship.length} flagship skills`);
+  console.log(`[SkillService] Initialization complete: ${skills.length} skills`);
 
-  return { builtin, flagship };
+  return { skills };
 }
 
 /**
@@ -172,8 +139,7 @@ export function searchSkills(query) {
   return getAllSkills().filter(
     s =>
       s.name.toLowerCase().includes(lower) ||
-      s.description.toLowerCase().includes(lower) ||
-      (s.tags && s.tags.some(t => t.toLowerCase().includes(lower)))
+      s.description.toLowerCase().includes(lower)
   );
 }
 
@@ -476,7 +442,6 @@ export function registerSkill(skill) {
 export const skillService = {
   // Loaders
   registerSkillLoader,
-  loadBuiltinSkills,
   loadFlagshipSkills,
   loadSkillFromIPFS,
   initializeSkills,

@@ -204,10 +204,10 @@
                 <div class="req-row">
                   <span class="material-symbols-outlined">lock_open</span>
                   <span class="req-text">
-                    Pay
+                    Spend
                     <strong>{{ unlockPrice }} ETH</strong>
                     to unlock
-                    <strong>ALL 6 levels</strong>
+                    <strong>ALL 6 LVL</strong>
                     permanently
                   </span>
                   <span
@@ -220,6 +220,12 @@
               </div>
             </div>
 
+            <!-- Unlock Status Notification -->
+            <div v-if="unlockStatus" class="notification unlock-status-notification mt-5" :class="unlockStatusClass">
+              <span class="material-symbols-outlined mr-2" style="vertical-align: middle;">{{ unlockStatusIcon }}</span>
+              {{ unlockStatus }}
+            </div>
+
             <div class="modal-footer has-text-centered">
               <a
                 :href="buyLink"
@@ -230,10 +236,9 @@
                 Buy BONZAI
               </a>
               <button
-                v-if="!isLevelUnlockedOrHolding(selectedLevel) && !allLevelsUnlocked"
                 class="button is-success mr-2 is-medium"
                 @click="unlockAllLevels"
-                :disabled="isUnlocking"
+                :disabled="isUnlocking || allLevelsUnlocked"
                 title="Unlock All Levels"
               >
                 <span
@@ -241,25 +246,16 @@
                   class="spinner"
                 ></span>
                 <span v-else>
-                  <span class="material-symbols-outlined mr-1" style="vertical-align: middle; font-size: 18px">lock_open</span>
-                  Unlock All
+                  <span class="material-symbols-outlined mr-1" style="vertical-align: middle; font-size: 18px">{{ allLevelsUnlocked ? 'check_circle' : 'lock_open' }}</span>
+                  {{ allLevelsUnlocked ? 'All Unlocked' : 'Unlock All' }}
                 </span>
-                <div class="tags has-addons">
+                <div v-if="!allLevelsUnlocked" class="tags has-addons">
                   <span
                     class="tag is-warning partner fira-sans-condensed-black-italic is-small"
                   >
                     {{ unlockPrice }} ETH
                   </span>
                 </div>
-              </button>
-
-              <button
-                v-else
-                class="button is-success is-medium"
-                @click="selectedLevel = null"
-                title="Close"
-              >
-                Confirm
               </button>
             </div>
           </div>
@@ -273,7 +269,7 @@
 import { ref, computed, onMounted, watch } from "vue";
 import { useBonzaiWeb3 } from "../composables/useBonzaiWeb3.js";
 import { CONFIG } from "../config/web3.config.js";
-import { levelService, checkAllLevels, canUnlockWithEth, unlockAllWithEth } from "../services/level.service.js";
+import { levelService, checkAllLevels, canUnlockWithEth, unlockAllWithEth, clearOpenLevelModalRequest } from "../services/level.service.js";
 
 const {
   isConnected,
@@ -294,6 +290,20 @@ const {
 const isRefreshing = ref(false);
 const isUnlocking = ref(false);
 const selectedLevel = ref(null);
+const unlockStatus = ref('');
+const unlockStatusType = ref('info'); // 'info', 'warning', 'success', 'danger'
+
+// Unlock status styling
+const unlockStatusClass = computed(() => `is-${unlockStatusType.value}`);
+const unlockStatusIcon = computed(() => {
+  const icons = {
+    info: 'hourglass_empty',
+    warning: 'warning',
+    success: 'check_circle',
+    danger: 'error',
+  };
+  return icons[unlockStatusType.value] || 'info';
+});
 
 // ETH unlock state from levelService
 const unlockPrice = computed(() => levelService.state.unlockPrice || 1.0);
@@ -405,25 +415,65 @@ const openLevelModal = (lvl) => {
   selectedLevel.value = lvl;
 };
 
+// Helper to set unlock status
+const setUnlockStatus = (message, type = 'info') => {
+  unlockStatus.value = message;
+  unlockStatusType.value = type;
+};
+
+const clearUnlockStatus = () => {
+  unlockStatus.value = '';
+  unlockStatusType.value = 'info';
+};
+
 // Unlock all levels with 1 ETH payment
 const unlockAllLevels = async () => {
   if (isUnlocking.value) return;
 
   isUnlocking.value = true;
+  clearUnlockStatus();
+
   try {
-    const result = await unlockAllWithEth();
+    // Step 1: Check if connected, if not connect first
+    if (!isConnected.value) {
+      setUnlockStatus('Connecting wallet...', 'info');
+      await doConnect();
+
+      // Wait for connection to complete
+      if (!isConnected.value) {
+        setUnlockStatus('Wallet connection failed or cancelled', 'danger');
+        return;
+      }
+    }
+
+    // Step 2: Show awaiting signature notification
+    setUnlockStatus('Awaiting signature...', 'warning');
+
+    // Step 3: Call unlock - this will trigger the signature request
+    // The unlockAllWithEth function handles the transaction
+    const result = await unlockAllWithEth((status) => {
+      // Callback for status updates from the service
+      if (status === 'awaiting_payment') {
+        setUnlockStatus('Awaiting payment approval (1 ETH)...', 'warning');
+      }
+    });
+
     if (result.success) {
       console.log('[BonzaiBottomBar] All levels unlocked!', result.txHash);
+      setUnlockStatus('All levels unlocked successfully!', 'success');
       await checkAllLevels();
-      // Success - close modal
-      selectedLevel.value = null;
+      // Clear status after a delay and close modal
+      setTimeout(() => {
+        clearUnlockStatus();
+        selectedLevel.value = null;
+      }, 2000);
     } else {
       console.error('[BonzaiBottomBar] Unlock failed:', result.error);
-      alert(`Unlock failed: ${result.error}`);
+      setUnlockStatus(`Unlock failed: ${result.error}`, 'danger');
     }
   } catch (e) {
     console.error('[BonzaiBottomBar] Unlock error:', e);
-    alert(`Unlock error: ${e.message || e}`);
+    setUnlockStatus(`Unlock error: ${e.message || e}`, 'danger');
   } finally {
     isUnlocking.value = false;
   }
@@ -441,6 +491,17 @@ watch(isConnected, async (connected) => {
     await checkAllLevels();
   }
 });
+
+// Watch for cross-component level modal requests (from SmartAgent, etc.)
+watch(
+  () => levelService.state.openLevelModalFor,
+  (levelNum) => {
+    if (levelNum !== null && levelNum >= 1 && levelNum <= 6) {
+      openLevelModal(levelNum);
+      clearOpenLevelModalRequest();
+    }
+  }
+);
 </script>
 
 <style scoped>
@@ -972,6 +1033,16 @@ hr {
 .wallet-fade-enter-from,
 .wallet-fade-leave-to {
   opacity: 0;
+}
+
+/* Unlock Status Notification */
+.unlock-status-notification {
+  padding: 12px 16px;
+  border-radius: 8px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-weight: 600;
 }
 
 /* Responsive */

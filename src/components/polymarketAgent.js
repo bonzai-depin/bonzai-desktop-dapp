@@ -34,7 +34,7 @@ export default {
    * Available Polymarket categories for filtering
    */
   categories: [
-    { key: 'OVERALL', label: 'All Markets', icon: 'apps' },
+    { key: 'OVERALL', label: 'All', icon: 'apps' },
     { key: 'POLITICS', label: 'Politics', icon: 'how_to_vote' },
     { key: 'SPORTS', label: 'Sports', icon: 'sports_soccer' },
     { key: 'CRYPTO', label: 'Crypto', icon: 'currency_bitcoin' },

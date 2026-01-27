@@ -106,6 +106,44 @@
                   </div>
                 </div>
 
+                <!-- VOICE GENDER SELECTOR (TTS mode only) -->
+                <div v-if="mode === 'tts'" class="control mb-4 has-text-left">
+                  <span class="has-text-grey mr-3">Voice:</span>
+                  <input
+                    v-model="voiceGender"
+                    value="female"
+                    id="gender_female"
+                    type="radio"
+                    name="gender"
+                  />
+                  <label for="gender_female" class="radio mr-2">
+                    <span
+                      class="material-symbols-outlined"
+                      style="font-size: 24px !important"
+                    >
+                      face_3
+                    </span>
+                    Female
+                  </label>
+
+                  <input
+                    v-model="voiceGender"
+                    value="male"
+                    id="gender_male"
+                    type="radio"
+                    name="gender"
+                  />
+                  <label for="gender_male" class="radio">
+                    <span
+                      class="material-symbols-outlined"
+                      style="font-size: 24px !important"
+                    >
+                      face_6
+                    </span>
+                    Male
+                  </label>
+                </div>
+
                 <!-- VOICE CLONE FILE INPUT -->
                 <div v-if="mode === 'clone'">
                   <div class="file is-fullwidth is-medium">
@@ -703,8 +741,9 @@ export default {
     const generation = computed(() => generationStore.state.audio);
 
     // ------------ pipeline/endpoint maps --
-    const endpointForMode = () => "/audio";
-    const pipelineForMode = () => "audio";
+    // Use Qwen TTS for both modes (design for TTS, clone for voice cloning)
+    const endpointForMode = () => mode.value === 'clone' ? "/audio/quality/clone" : "/audio/quality/design";
+    const pipelineForMode = () => mode.value === 'clone' ? "audio_quality_clone" : "audio_quality_design";
     const currentPipeline = computed(() => pipelineForMode());
 
     // ------------ downloads state/socket --
@@ -1208,23 +1247,39 @@ export default {
       reader.readAsDataURL(file);
     };
 
+    // Voice gender for TTS mode
+    const voiceGender = ref("female");
+
     // ------------ actions -----------------
     const sendMessage = async (prompt, isDemo = false) => {
       if (!prompt) return;
       // Allow demo generation even without access
       if (!isDemo && !canGenerateWithAccess.value) return;
 
-      const payload = {
-        prompt,
-        auto_download: true,
-        language: language.value,
-        exaggeration: exaggerationPct.value / 100,
-        cfg_weight: 0.5,
-        temperature: 0.8,
-      };
+      let payload;
 
       if (mode.value === "clone" && synthesisBase64.value) {
-        payload.synthesis_base64 = synthesisBase64.value;
+        // Clone mode: use reference audio with Qwen TTS clone endpoint
+        payload = {
+          text: prompt,
+          ref_audio_base64: synthesisBase64.value,
+          ref_text: "This is a sample of my voice for cloning.",
+          language: languages[language.value] || "English",
+          auto_download: true,
+        };
+      } else {
+        // TTS mode: use voice design with Qwen TTS design endpoint
+        // Build voice instruction based on selected gender and language
+        const genderDesc = voiceGender.value === "male" ? "Male" : "Female";
+        const langName = languages[language.value] || "English";
+        const instruct = `${genderDesc}, clear and natural speaking voice, ${langName} speaker, pleasant tone`;
+
+        payload = {
+          text: prompt,
+          instruct,
+          language: langName,
+          auto_download: true,
+        };
       }
 
       const url = `${API_BASE}${endpointForMode()}`;
@@ -1243,8 +1298,9 @@ export default {
             },
             id: uuid(),
             language: language.value,
-            model: "multilingual",
+            model: "qwen3-tts",
             hasClone: mode.value === "clone",
+            voiceGender: voiceGender.value,
           });
           try {
             await window.electronAPI?.store?.set?.(
@@ -1503,6 +1559,8 @@ export default {
       probeCurrentMode,
       handleSynthesisFile,
       fileUrl,
+      // Voice gender for TTS
+      voiceGender,
       // Access control
       accessRef,
       hasAccess,

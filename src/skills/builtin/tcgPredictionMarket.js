@@ -33,8 +33,8 @@ export const skill = {
   // IDENTITY
   // ═══════════════════════════════════════════════════════════════════════════
 
-  id: 'tcg-prediction-market-v1.0.0',
-  name: 'TCG Prediction Market',
+  id: 'tcg-insurance-v1.0.0',
+  name: 'Trading Card Game Insurance',
   description:
     'Build your trading card portfolio and create or join prediction markets on card prices. Uses real-time pricing from JustTCG.com for Pokemon, MTG, Yu-Gi-Oh!, One Piece, and Lorcana.',
   version: '1.0.0',
@@ -49,19 +49,8 @@ export const skill = {
     verified: true,
   },
 
-  category: 'prediction-market',
-  tags: ['tcg', 'trading-cards', 'pokemon', 'mtg', 'yugioh', 'collectibles', 'price-prediction'],
-
-  // ═══════════════════════════════════════════════════════════════════════════
-  // PRICING
-  // ═══════════════════════════════════════════════════════════════════════════
-
-  pricing: {
-    purchasePrice: '0.05',
-    purchaseToken: 'ETH',
-    runningFee: 49,
-    runningFeeToken: 'BONZAI',
-  },
+  category: 'finance',
+  tags: ['demo'],
 
   // ═══════════════════════════════════════════════════════════════════════════
   // REQUIREMENTS

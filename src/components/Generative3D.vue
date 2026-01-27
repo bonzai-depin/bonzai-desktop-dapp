@@ -3998,12 +3998,16 @@ ${innerCode}`;
   overflow: hidden;
 }
 @keyframes move {
-  0%,
-  100% {
-    background-position: 0% 50%;
+  0% {
+    transform: scale(1.1);
+    transform-origin: bottom left;
   }
   50% {
-    background-position: 100% 50%;
+    transform: scale(1.2);
+  }
+  100% {
+    transform: scale(1.1);
+    transform-origin: bottom left;
   }
 }
 .viewer-container {

@@ -34,26 +34,14 @@ export const skill = {
     verified: true,
   },
 
-  category: 'prediction-market',
-  tags: ['polymarket', 'copy-trading', 'whales', 'pnl', 'analysis'],
-
-  // ═══════════════════════════════════════════════════════════════════════════
-  // PRICING
-  // ═══════════════════════════════════════════════════════════════════════════
-
-  pricing: {
-    purchasePrice: '0.1',
-    purchaseToken: 'ETH',
-    runningFee: 99,
-    runningFeeToken: 'BONZAI',
-  },
+  category: 'finance',
 
   // ═══════════════════════════════════════════════════════════════════════════
   // REQUIREMENTS
   // ═══════════════════════════════════════════════════════════════════════════
 
   requirements: {
-    minLevel: 1,
+    minLevel: 6,
     requiredApis: ['polymarket'],
     requiredPermissions: ['network:read'],
   },
