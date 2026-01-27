@@ -7,8 +7,7 @@
         <h3
           class="fira-sans-condensed-black-italic has-text-white has-text-left is-size-3 mb-4"
         >
-          <span class="material-symbols-outlined mr-2 is-size-1">person</span>
-          Choose Companion
+          Select Companion
         </h3>
 
         <!-- Predefined Companions -->
@@ -47,6 +46,55 @@
               </h4>
               <p class="companion-desc">{{ companion.description }}</p>
             </div>
+          </div>
+
+          <!-- Saved Custom Companions -->
+          <div
+            v-for="companion in savedCustomCompanions"
+            :key="companion.id"
+            class="companion-card is-saved-custom"
+            :class="{
+              'is-selected': selectedCompanion?.id === companion.id,
+              'has-session': getSessionInfo(companion),
+            }"
+            @click="selectCompanion(companion)"
+          >
+            <div class="companion-avatar">
+              <span class="material-symbols-outlined">
+                {{ getAvatarIcon(companion.avatar, companion.gender) }}
+              </span>
+              <!-- Session indicator badge -->
+              <span
+                v-if="getSessionInfo(companion)"
+                class="session-badge"
+                :title="
+                  getSessionInfo(companion).sessionCount +
+                  ' session(s), ' +
+                  getSessionInfo(companion).messageCount +
+                  ' total msgs'
+                "
+              >
+                {{ getSessionInfo(companion).sessionCount }}
+              </span>
+              <!-- Custom badge -->
+              <span class="custom-badge" title="Custom character">
+                <span class="material-symbols-outlined" style="font-size: 10px">auto_awesome</span>
+              </span>
+            </div>
+            <div class="companion-info">
+              <h4 class="companion-name fira-sans-condensed-black-italic">
+                {{ companion.name }}
+              </h4>
+              <p class="companion-desc">{{ companion.description }}</p>
+            </div>
+            <!-- Delete button -->
+            <button
+              class="delete-custom-btn"
+              @click.stop="deleteCustomCompanion(companion.id)"
+              title="Delete character"
+            >
+              <span class="material-symbols-outlined" style="font-size: 14px">close</span>
+            </button>
           </div>
 
           <!-- Custom Companion Card -->
@@ -119,6 +167,7 @@
             </button>
           </div>
 
+          <pre>{{  customCompanion }}</pre>
           <!-- Generated Custom Companion Preview -->
           <div v-if="customCompanion" class="custom-companion-preview mt-4 p-3">
             <h5 class="fira-sans-condensed-black-italic has-text-success">
@@ -132,18 +181,33 @@
                 {{ customCompanion.personality }}
               </span>
             </div>
-            <button
-              class="button is-success is-small mt-2"
-              @click="useCustomCompanion"
-            >
-              <span
-                class="material-symbols-outlined mr-1"
-                style="font-size: 14px"
+            <div class="buttons mt-2">
+              <button
+                class="button is-success is-small"
+                @click="useCustomCompanion"
               >
-                check
-              </span>
-              Use This Companion
-            </button>
+                <span
+                  class="material-symbols-outlined mr-1"
+                  style="font-size: 14px"
+                >
+                  check
+                </span>
+                Use This Companion
+              </button>
+              <button
+                class="button is-info is-small"
+                @click="saveCustomCompanionToStore"
+                :disabled="isCompanionAlreadySaved(customCompanion)"
+              >
+                <span
+                  class="material-symbols-outlined mr-1"
+                  style="font-size: 14px"
+                >
+                  save
+                </span>
+                {{ isCompanionAlreadySaved(customCompanion) ? 'Saved' : 'Save Character' }}
+              </button>
+            </div>
           </div>
         </div>
       </div>
@@ -425,6 +489,15 @@
                 Resume
               </button>
               <button
+                class="button is-warning is-small is-outlined"
+                @click="exportSession(session.key)"
+                title="Export session"
+              >
+                <span class="material-symbols-outlined" style="font-size: 14px">
+                  download
+                </span>
+              </button>
+              <button
                 class="button is-danger is-small is-outlined"
                 @click="deleteSession(session.key)"
               >
@@ -435,6 +508,40 @@
             </div>
           </div>
         </div>
+      </div>
+
+      <!-- Import/Export Sessions -->
+      <div class="models__activity--payouts mb-5">
+        <h3
+          class="fira-sans-condensed-black-italic has-text-white has-text-left is-size-3 mb-4"
+        >
+          <span class="material-symbols-outlined mr-2 is-size-1">folder</span>
+          Import / Export Sessions
+        </h3>
+        <div class="buttons">
+          <button class="button is-info" @click="triggerImportSession">
+            <span class="material-symbols-outlined mr-1">upload</span>
+            Import Session
+          </button>
+          <button
+            class="button is-warning"
+            @click="exportAllSessions"
+            :disabled="Object.keys(savedSessions).length === 0"
+          >
+            <span class="material-symbols-outlined mr-1">download</span>
+            Export All Sessions
+          </button>
+        </div>
+        <input
+          ref="importInput"
+          type="file"
+          accept=".json"
+          style="display: none"
+          @change="handleImportSession"
+        />
+        <p class="help has-text-grey-light">
+          Export your chat sessions to backup or share, or import previously exported sessions.
+        </p>
       </div>
 
       <!-- Dynamic Download Requirements -->
@@ -554,7 +661,7 @@
       <div class="chat-header models__activity--payouts mb-4">
         <div class="columns is-vcentered">
           <div class="column">
-            <div class="companion-header">
+            <div class="companion-header has-text-left">
               <span class="material-symbols-outlined mr-2">
                 {{ getAvatarIcon(selectedCompanion?.avatar, selectedCompanion?.gender) }}
               </span>
@@ -570,15 +677,23 @@
           </div>
           <div class="column is-narrow">
             <div class="tags">
-              <span class="tag is-info">
+              <span class="tag is-info is-medium">
                 {{ contentLevels[settings.contentLevel]?.label }}
               </span>
-              <span class="tag is-dark">
+              <span class="tag is-dark is-medium">
                 {{ formatResponseMode(responseMode) }}
               </span>
             </div>
           </div>
           <div class="column is-narrow">
+            <!-- Autonomous Mode Toggle -->
+            <label class="checkbox autonomous-toggle mr-3" :class="{ active: autonomousMode }">
+              <input type="checkbox" :checked="autonomousMode" @change="toggleAutonomousMode($event.target.checked)">
+              <span class="material-symbols-outlined mr-1" style="font-size: 16px">
+                {{ autonomousMode ? 'self_improvement' : 'person_off' }}
+              </span>
+              <span class="is-size-7">Auto</span>
+            </label>
             <button class="button is-danger is-small" @click="endChat">
               <span
                 class="material-symbols-outlined mr-1"
@@ -592,12 +707,31 @@
         </div>
       </div>
 
+      <!-- Missed Messages Notification -->
+      <div v-if="missedMessages > 0" class="missed-messages-banner notification is-info is-light mb-3">
+        <div class="level is-mobile">
+          <div class="level-left">
+            <span class="material-symbols-outlined mr-2">notifications</span>
+            <span class="fira-sans-condensed-black-italic">
+              {{ missedMessages }} message{{ missedMessages > 1 ? 's' : '' }} while you were away
+            </span>
+          </div>
+          <div class="level-right">
+            <button class="button is-small is-info" @click="clearMissedMessages">
+              Dismiss
+            </button>
+          </div>
+        </div>
+      </div>
+
       <!-- Chat Messages -->
       <div class="chat-messages" ref="messagesContainer">
-        <!-- Initial Scene Description -->
+        <!-- Initial Scene Description with Generated Image -->
         <div v-if="selectedScenario" class="scene-description mb-4">
-          <div class="notification is-dark">
-            <p class="is-italic">{{ selectedScenario.setting }}</p>
+          <div class="notification is-dark scene-backdrop" :style="scenarioBackgroundStyle">
+            <div class="scene-overlay">
+              <p class="is-italic">{{ selectedScenario.setting }}</p>
+            </div>
           </div>
         </div>
 
@@ -630,13 +764,26 @@
               </span>
             </div>
             <div class="message-text">
-              <p
-                v-if="msg.action"
-                class="action-text is-italic has-text-grey-light mb-2"
-              >
-                *{{ msg.action }}*
-              </p>
-              <p>{{ msg.content }}</p>
+              <!-- Loading placeholder when waiting for text -->
+              <div v-if="msg.isGenerating && !msg.content" class="typing-placeholder">
+                <div class="typing-indicator inline">
+                  <span></span>
+                  <span></span>
+                  <span></span>
+                </div>
+                <p v-if="typingStatus" class="typing-status is-size-7 has-text-grey-light mt-2">
+                  {{ typingStatus }}
+                </p>
+              </div>
+              <template v-else>
+                <p
+                  v-if="msg.action"
+                  class="action-text is-italic has-text-grey-light mb-2"
+                >
+                  *{{ msg.action }}*
+                </p>
+                <p>{{ msg.content }}</p>
+              </template>
             </div>
 
             <!-- Image -->
@@ -660,8 +807,8 @@
           </div>
         </div>
 
-        <!-- Typing Indicator -->
-        <div v-if="isTyping" class="chat-message assistant typing">
+        <!-- Typing Indicator - only show if no message is currently being generated inline -->
+        <div v-if="isTyping && !chatHistory.some(m => m.isGenerating)" class="chat-message assistant typing">
           <div class="message-avatar">
             <span class="material-symbols-outlined">
               {{ getAvatarIcon(selectedCompanion?.avatar, selectedCompanion?.gender) }}
@@ -787,7 +934,7 @@
 </template>
 
 <script>
-import { ref, computed, reactive, nextTick, onMounted, toRaw } from "vue";
+import { ref, computed, reactive, nextTick, onMounted, onUnmounted, toRaw, watch } from "vue";
 import {
   PREDEFINED_COMPANIONS,
   PREDEFINED_SCENARIOS,
@@ -795,6 +942,7 @@ import {
   MODEL_REQUIREMENTS,
   roleplayCompanion,
 } from "../../skills/flagship.js";
+import { useSkillStore } from "../../stores/skillStore.js";
 
 export default {
   name: "RoleplayChat",
@@ -806,6 +954,9 @@ export default {
   },
   emits: ["charge-fee"],
   setup(props, { emit }) {
+    // Skill store for autonomous mode (global state)
+    const skillStore = useSkillStore();
+
     // Phase management
     const phase = ref("setup"); // 'setup' | 'chat'
 
@@ -979,6 +1130,18 @@ export default {
     const imageAnalysis = ref(null); // Result from /vision/analyze
     const isAnalyzingImage = ref(false);
 
+    // Import/Export state
+    const importInput = ref(null);
+
+    // Scenario background image state
+    const scenarioBackgroundImage = ref(null);
+    const isInitializingSession = ref(false);
+
+    // Autonomous companion mode - uses global store (skillStore)
+    // Local computed refs for template convenience
+    const autonomousMode = computed(() => skillStore.autonomousMode);
+    const missedMessages = computed(() => skillStore.missedMessages);
+
     // Scene state for smart image generation and anti-repetition
     const sceneState = ref({
       lastImageAt: -3, // Message index of last image (-3 to allow first message to have image)
@@ -992,6 +1155,10 @@ export default {
     const STORAGE_KEY = "roleplaySessions";
     const savedSessions = ref({});
     const showSessionManager = ref(false); // Show session manager overlay
+
+    // Custom companions persistence
+    const CUSTOM_COMPANIONS_KEY = "roleplayCustomCompanions";
+    const savedCustomCompanions = ref([]);
 
     // Generate unique session key from all parameters
     const getSessionKey = (companion, scenario, contentLevel, responseMode) => {
@@ -1075,6 +1242,8 @@ export default {
         }),
         // Persist scene state for smart image generation continuity
         sceneState: plainSceneState,
+        // Persist scenario background image
+        backgroundImage: scenarioBackgroundImage.value || null,
         updatedAt: Date.now(),
       };
 
@@ -1169,6 +1338,9 @@ export default {
         rebuildSceneState();
       }
 
+      // Restore scenario background image if available
+      scenarioBackgroundImage.value = session.backgroundImage || null;
+
       return true;
     };
 
@@ -1188,6 +1360,319 @@ export default {
       } catch (e) {
         console.error("[Roleplay] Failed to delete session:", e);
       }
+    };
+
+    // ═══════════════════════════════════════════════════════════════════════════
+    // CUSTOM COMPANIONS PERSISTENCE
+    // ═══════════════════════════════════════════════════════════════════════════
+
+    // Load saved custom companions from storage
+    const loadCustomCompanions = async () => {
+      try {
+        if (window.electronAPI?.store?.get) {
+          const stored = await window.electronAPI.store.get(CUSTOM_COMPANIONS_KEY, []);
+          savedCustomCompanions.value = stored || [];
+          console.log(
+            `[Roleplay] Loaded ${savedCustomCompanions.value.length} custom companions`,
+          );
+        } else {
+          console.warn(
+            "[Roleplay] Electron store API not available - no custom companions loaded",
+          );
+          savedCustomCompanions.value = [];
+        }
+      } catch (e) {
+        console.error("[Roleplay] Failed to load custom companions:", e);
+        savedCustomCompanions.value = [];
+      }
+    };
+
+    // Save a custom companion to the store
+    const saveCustomCompanionToStore = async () => {
+      if (!customCompanion.value) return;
+
+      // Generate a unique ID if not present
+      const companionToSave = {
+        ...JSON.parse(JSON.stringify(toRaw(customCompanion.value))),
+        id: customCompanion.value.id || `custom_${Date.now()}`,
+        isCustom: true,
+        createdAt: Date.now(),
+      };
+
+      // Check if already saved (by name)
+      const existingIdx = savedCustomCompanions.value.findIndex(
+        (c) => c.name.toLowerCase() === companionToSave.name.toLowerCase(),
+      );
+
+      if (existingIdx >= 0) {
+        // Update existing
+        savedCustomCompanions.value[existingIdx] = companionToSave;
+      } else {
+        // Add new
+        savedCustomCompanions.value.push(companionToSave);
+      }
+
+      try {
+        if (window.electronAPI?.store?.set) {
+          const plainCompanions = JSON.parse(
+            JSON.stringify(toRaw(savedCustomCompanions.value)),
+          );
+          await window.electronAPI.store.set(CUSTOM_COMPANIONS_KEY, plainCompanions);
+          console.log(
+            `[Roleplay] Custom companion saved: ${companionToSave.name}`,
+          );
+        }
+      } catch (e) {
+        console.error("[Roleplay] Failed to save custom companion:", e);
+      }
+    };
+
+    // Delete a custom companion
+    const deleteCustomCompanion = async (companionId) => {
+      if (!companionId) return;
+
+      const idx = savedCustomCompanions.value.findIndex((c) => c.id === companionId);
+      if (idx < 0) return;
+
+      const companionName = savedCustomCompanions.value[idx].name;
+      savedCustomCompanions.value.splice(idx, 1);
+
+      try {
+        if (window.electronAPI?.store?.set) {
+          const plainCompanions = JSON.parse(
+            JSON.stringify(toRaw(savedCustomCompanions.value)),
+          );
+          await window.electronAPI.store.set(CUSTOM_COMPANIONS_KEY, plainCompanions);
+          console.log(`[Roleplay] Custom companion deleted: ${companionName}`);
+        }
+      } catch (e) {
+        console.error("[Roleplay] Failed to delete custom companion:", e);
+      }
+
+      // If this companion was selected, deselect it
+      if (selectedCompanion.value?.id === companionId) {
+        selectedCompanion.value = null;
+      }
+    };
+
+    // Check if a companion is already saved
+    const isCompanionAlreadySaved = (companion) => {
+      if (!companion) return false;
+      return savedCustomCompanions.value.some(
+        (c) => c.name.toLowerCase() === companion.name.toLowerCase(),
+      );
+    };
+
+    // ═══════════════════════════════════════════════════════════════════════════
+    // AUTONOMOUS COMPANION MODE (uses global skillStore)
+    // Autonomous mode persists even when navigating away from this component
+    // ═══════════════════════════════════════════════════════════════════════════
+
+    /**
+     * Toggle autonomous mode via the store
+     * When enabled, starts an autonomous session that persists across views
+     */
+    const toggleAutonomousMode = (enabled) => {
+      if (enabled) {
+        console.log('[Roleplay] Enabling autonomous mode with session:', {
+          sessionKey: currentSessionKey.value,
+          companion: selectedCompanion.value?.name,
+          scenario: selectedScenario.value?.name,
+          historyLength: chatHistory.value.length,
+        });
+        // Start autonomous session in the store with full session data
+        skillStore.startAutonomousSession({
+          sessionKey: currentSessionKey.value,
+          companion: selectedCompanion.value,
+          scenario: selectedScenario.value,
+          settings: settings.value,
+          history: chatHistory.value,
+          sceneState: sceneState.value,
+          backgroundImage: scenarioBackgroundImage.value,
+        });
+        skillStore.toggleAutonomousMode(true);
+      } else {
+        console.log('[Roleplay] Disabling autonomous mode');
+        // Stop autonomous mode completely
+        skillStore.stopAutonomousMode();
+      }
+    };
+
+    /**
+     * Sync history with the store after user sends a message
+     * This keeps the store in sync when user is actively chatting
+     */
+    const syncHistoryWithStore = () => {
+      if (skillStore.autonomousMode && skillStore.autonomousSession.sessionKey === currentSessionKey.value) {
+        skillStore.syncAutonomousHistory(chatHistory.value, sceneState.value);
+      }
+    };
+
+    /**
+     * Sync from store - pull any messages generated while component was unmounted
+     */
+    const syncFromStore = () => {
+      const storeData = skillStore.getAutonomousSessionData();
+      if (storeData.sessionKey && storeData.sessionKey === currentSessionKey.value) {
+        // Store has messages for this session - merge them
+        if (storeData.history.length > chatHistory.value.length) {
+          console.log(`[Roleplay] Syncing ${storeData.history.length - chatHistory.value.length} messages from store`);
+          chatHistory.value = [...storeData.history];
+          sceneState.value = { ...storeData.sceneState };
+          scrollToBottom();
+        }
+      }
+    };
+
+    /**
+     * Clear missed messages via store
+     */
+    const clearMissedMessages = () => {
+      skillStore.clearMissedMessages();
+    };
+
+    // Watch for autonomous session changes (messages generated while viewing)
+    watch(
+      () => skillStore.autonomousSession.history.length,
+      (newLen, oldLen) => {
+        // If store has new messages and we're viewing this session
+        if (
+          phase.value === 'chat' &&
+          skillStore.autonomousSession.sessionKey === currentSessionKey.value &&
+          newLen > chatHistory.value.length
+        ) {
+          syncFromStore();
+        }
+      }
+    );
+
+    // ═══════════════════════════════════════════════════════════════════════════
+    // IMPORT/EXPORT SESSIONS
+    // ═══════════════════════════════════════════════════════════════════════════
+
+    const triggerImportSession = () => {
+      importInput.value?.click();
+    };
+
+    const handleImportSession = async (event) => {
+      const file = event.target.files?.[0];
+      if (!file) return;
+
+      try {
+        const text = await file.text();
+        const importedData = JSON.parse(text);
+
+        // Check if it's a single session or multiple sessions
+        if (importedData.sessions) {
+          // Multiple sessions export format
+          const sessions = importedData.sessions;
+          let importedCount = 0;
+
+          for (const [key, session] of Object.entries(sessions)) {
+            if (session.companion && session.scenario && session.history) {
+              savedSessions.value[key] = session;
+              importedCount++;
+            }
+          }
+
+          // Also import custom companions if present
+          if (importedData.customCompanions && Array.isArray(importedData.customCompanions)) {
+            for (const companion of importedData.customCompanions) {
+              const existingIdx = savedCustomCompanions.value.findIndex(
+                (c) => c.name.toLowerCase() === companion.name.toLowerCase(),
+              );
+              if (existingIdx < 0) {
+                savedCustomCompanions.value.push(companion);
+              }
+            }
+          }
+
+          // Save to store
+          if (window.electronAPI?.store?.set) {
+            const plainSessions = JSON.parse(JSON.stringify(toRaw(savedSessions.value)));
+            await window.electronAPI.store.set(STORAGE_KEY, plainSessions);
+
+            const plainCompanions = JSON.parse(JSON.stringify(toRaw(savedCustomCompanions.value)));
+            await window.electronAPI.store.set(CUSTOM_COMPANIONS_KEY, plainCompanions);
+          }
+
+          console.log(`[Roleplay] Imported ${importedCount} sessions`);
+          alert(`Successfully imported ${importedCount} session(s)`);
+
+        } else if (importedData.companion && importedData.scenario) {
+          // Single session format
+          const key = getSessionKey(
+            importedData.companion,
+            importedData.scenario,
+            importedData.settings?.contentLevel || 'pg13',
+            importedData.settings?.responseMode || 'text+image',
+          );
+
+          if (key) {
+            savedSessions.value[key] = importedData;
+
+            if (window.electronAPI?.store?.set) {
+              const plainSessions = JSON.parse(JSON.stringify(toRaw(savedSessions.value)));
+              await window.electronAPI.store.set(STORAGE_KEY, plainSessions);
+            }
+
+            console.log(`[Roleplay] Imported session: ${key}`);
+            alert(`Successfully imported session with ${importedData.companion.name}`);
+          }
+        } else {
+          alert('Invalid session file format');
+        }
+      } catch (e) {
+        console.error('[Roleplay] Import failed:', e);
+        alert(`Import failed: ${e.message}`);
+      }
+
+      // Reset input
+      event.target.value = '';
+    };
+
+    const exportSession = (key) => {
+      const session = savedSessions.value[key];
+      if (!session) return;
+
+      const exportData = {
+        ...session,
+        exportedAt: new Date().toISOString(),
+        version: '1.0',
+      };
+
+      const blob = new Blob([JSON.stringify(exportData, null, 2)], { type: 'application/json' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `roleplay-${session.companion?.name?.toLowerCase().replace(/\s+/g, '-') || 'session'}-${Date.now()}.json`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+
+      console.log(`[Roleplay] Exported session: ${key}`);
+    };
+
+    const exportAllSessions = () => {
+      const exportData = {
+        sessions: JSON.parse(JSON.stringify(toRaw(savedSessions.value))),
+        customCompanions: JSON.parse(JSON.stringify(toRaw(savedCustomCompanions.value))),
+        exportedAt: new Date().toISOString(),
+        version: '1.0',
+      };
+
+      const blob = new Blob([JSON.stringify(exportData, null, 2)], { type: 'application/json' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `roleplay-all-sessions-${Date.now()}.json`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+
+      console.log(`[Roleplay] Exported all sessions`);
     };
 
     // Resume a specific session
@@ -1235,6 +1720,17 @@ export default {
       return (
         selectedCompanion.value && selectedScenario.value && canStartChat.value
       );
+    });
+
+    // Scenario background style computed
+    const scenarioBackgroundStyle = computed(() => {
+      if (!scenarioBackgroundImage.value) return {};
+      const imageSrc = getImageSrc(scenarioBackgroundImage.value);
+      return {
+        backgroundImage: `linear-gradient(rgba(0,0,0,0.4), rgba(0,0,0,0.6)), url(${imageSrc})`,
+        backgroundSize: 'cover',
+        backgroundPosition: 'center',
+      };
     });
 
     // Methods
@@ -1337,7 +1833,7 @@ export default {
     };
 
     // Start a new chat (fresh session)
-    const startNewChat = () => {
+    const startNewChat = async () => {
       // Check if there's an existing session with same params
       const key = currentSessionKey.value;
       if (key && savedSessions.value[key]) {
@@ -1348,6 +1844,7 @@ export default {
 
       // Start fresh
       chatHistory.value = [];
+      scenarioBackgroundImage.value = null;
       sceneState.value = {
         lastImageAt: -3,
         currentLocation: selectedScenario.value?.setting || "",
@@ -1364,6 +1861,46 @@ export default {
         chatInput.value?.focus();
         scrollToBottom();
       });
+
+      // Initialize session with background image generation
+      if (selectedCompanion.value && selectedScenario.value && settings.value.enableImage) {
+        isInitializingSession.value = true;
+        typingStatus.value = 'Setting the scene...';
+        isTyping.value = true;
+
+        try {
+          const result = await roleplayCompanion.execution.initSession(
+            {
+              companion: selectedCompanion.value,
+              scenario: selectedScenario.value,
+              settings: {
+                contentLevel: settings.value.contentLevel,
+                responseMode: responseMode.value,
+              },
+            },
+            {
+              updateStatus: (status) => {
+                typingStatus.value = status;
+              },
+            },
+          );
+
+          if (result.success && result.backgroundImage) {
+            scenarioBackgroundImage.value = result.backgroundImage;
+          }
+
+          // Update scene state from init
+          if (result.sceneState) {
+            sceneState.value = { ...result.sceneState };
+          }
+        } catch (e) {
+          console.error('[Roleplay] Session init failed:', e);
+        } finally {
+          isInitializingSession.value = false;
+          isTyping.value = false;
+          typingStatus.value = '';
+        }
+      }
     };
 
     // Force start new chat (overwrite existing)
@@ -1374,6 +1911,7 @@ export default {
       }
 
       chatHistory.value = [];
+      scenarioBackgroundImage.value = null;
       sceneState.value = {
         lastImageAt: -3,
         currentLocation: selectedScenario.value?.setting || "",
@@ -1390,6 +1928,45 @@ export default {
         chatInput.value?.focus();
         scrollToBottom();
       });
+
+      // Initialize session with background image generation
+      if (selectedCompanion.value && selectedScenario.value && settings.value.enableImage) {
+        isInitializingSession.value = true;
+        typingStatus.value = 'Setting the scene...';
+        isTyping.value = true;
+
+        try {
+          const result = await roleplayCompanion.execution.initSession(
+            {
+              companion: selectedCompanion.value,
+              scenario: selectedScenario.value,
+              settings: {
+                contentLevel: settings.value.contentLevel,
+                responseMode: responseMode.value,
+              },
+            },
+            {
+              updateStatus: (status) => {
+                typingStatus.value = status;
+              },
+            },
+          );
+
+          if (result.success && result.backgroundImage) {
+            scenarioBackgroundImage.value = result.backgroundImage;
+          }
+
+          if (result.sceneState) {
+            sceneState.value = { ...result.sceneState };
+          }
+        } catch (e) {
+          console.error('[Roleplay] Session init failed:', e);
+        } finally {
+          isInitializingSession.value = false;
+          isTyping.value = false;
+          typingStatus.value = '';
+        }
+      }
     };
 
     // Resume the matching session (same companion + scenario + settings)
@@ -1446,6 +2023,11 @@ export default {
     };
 
     const endChat = async () => {
+      // Stop autonomous mode completely if active
+      if (skillStore.autonomousMode) {
+        skillStore.stopAutonomousMode();
+      }
+
       // Save session before ending
       await saveSession();
       phase.value = "setup";
@@ -1622,6 +2204,20 @@ export default {
         responseMode: responseMode.value, // Built from checkbox options
       };
 
+      // Add placeholder assistant message for streaming display
+      const assistantMessageIndex = chatHistory.value.length;
+      chatHistory.value.push({
+        role: "assistant",
+        content: null, // Will be filled by streaming callback
+        emotion: null,
+        action: null,
+        image: null,
+        audio: null,
+        video: null,
+        isGenerating: true, // Flag to show loading state
+      });
+      scrollToBottom();
+
       try {
         const result = await roleplayCompanion.execution.executeMessage(
           {
@@ -1629,7 +2225,7 @@ export default {
             session: {
               companion: selectedCompanion.value,
               scenario: selectedScenario.value,
-              history: chatHistory.value,
+              history: chatHistory.value.slice(0, -1), // Exclude the placeholder
             },
             settings: executionSettings,
             sceneState: sceneState.value,
@@ -1639,20 +2235,43 @@ export default {
             updateStatus: (status) => {
               typingStatus.value = status;
             },
+            // Streaming callback - update message as content becomes available
+            onProgress: (progress) => {
+              const msg = chatHistory.value[assistantMessageIndex];
+              if (!msg) return;
+
+              // Update the message with new content
+              if (progress.type === 'text') {
+                msg.content = progress.response.response;
+                msg.emotion = progress.response.emotion;
+                msg.action = progress.response.action;
+                msg.isGenerating = true; // Still generating media
+                scrollToBottom();
+              } else if (progress.type === 'image') {
+                msg.image = progress.response.image;
+                scrollToBottom();
+              } else if (progress.type === 'audio') {
+                msg.audio = progress.response.audio;
+              } else if (progress.type === 'video') {
+                msg.video = progress.response.video;
+                scrollToBottom();
+              }
+            },
           },
         );
 
         if (result.success) {
-          // Add assistant message (now may include video)
-          chatHistory.value.push({
-            role: "assistant",
-            content: result.response.response,
-            emotion: result.response.emotion,
-            action: result.response.action,
-            image: result.response.image,
-            audio: result.response.audio,
-            video: result.response.video, // New: video for peak emotions
-          });
+          // Final update - ensure all content is present and remove generating flag
+          const msg = chatHistory.value[assistantMessageIndex];
+          if (msg) {
+            msg.content = result.response.response;
+            msg.emotion = result.response.emotion;
+            msg.action = result.response.action;
+            msg.image = result.response.image;
+            msg.audio = result.response.audio;
+            msg.video = result.response.video;
+            msg.isGenerating = false;
+          }
 
           // Update scene state from response
           if (result.sceneState) {
@@ -1670,14 +2289,19 @@ export default {
               `[Roleplay] Image skipped: shouldVisualize=${result.meta.shouldVisualize}`,
             );
           }
+        } else {
+          // Remove placeholder on failure
+          chatHistory.value.splice(assistantMessageIndex, 1);
         }
       } catch (e) {
         console.error("[Roleplay] Message failed:", e);
-        chatHistory.value.push({
-          role: "assistant",
-          content: `*${selectedCompanion.value?.name} seems distracted for a moment* I'm sorry, could you repeat that?`,
-          emotion: "confused",
-        });
+        // Update the placeholder with error message
+        const msg = chatHistory.value[assistantMessageIndex];
+        if (msg) {
+          msg.content = `*${selectedCompanion.value?.name} seems distracted for a moment* I'm sorry, could you repeat that?`;
+          msg.emotion = "confused";
+          msg.isGenerating = false;
+        }
       } finally {
         isTyping.value = false;
         typingStatus.value = "";
@@ -1688,12 +2312,125 @@ export default {
 
         // Auto-save session after each message
         await saveSession();
+
+        // Sync with store if autonomous mode is active
+        syncHistoryWithStore();
       }
     };
 
-    // Load sessions and check model availability on mount
+    // Load sessions, custom companions, and check model availability on mount
     onMounted(async () => {
-      await Promise.all([loadSessions(), checkModelAvailability()]);
+      await Promise.all([
+        loadSessions(),
+        loadCustomCompanions(),
+        checkModelAvailability(),
+      ]);
+
+      // Check if there's an active autonomous session for this companion
+      // If so, restore to chat phase and sync history
+      const storeData = skillStore.getAutonomousSessionData();
+      console.log('[Roleplay] Checking for autonomous session:', {
+        sessionKey: storeData.sessionKey,
+        autonomousMode: skillStore.autonomousMode,
+        historyLength: storeData.history?.length || 0,
+        missedMessages: skillStore.missedMessages,
+      });
+
+      if (storeData.sessionKey && skillStore.autonomousMode) {
+        // Parse session key to find companion/scenario
+        const parts = storeData.sessionKey.split('__');
+        if (parts.length >= 4) {
+          const [companionId, scenarioId, contentLevel, respMode] = parts;
+          console.log('[Roleplay] Looking for companion with ID:', companionId, 'scenario:', scenarioId);
+
+          // Find matching companion - check predefined first, then custom companions
+          let companion = predefinedCompanions.find(c => c.id === companionId);
+          let companionSource = companion ? 'predefined' : null;
+
+          if (!companion) {
+            // Try savedCustomCompanions by ID or name-based ID
+            companion = savedCustomCompanions.value.find(c =>
+              c.id === companionId ||
+              `custom_${c.name?.toLowerCase().replace(/\s+/g, "_")}` === companionId
+            );
+            if (companion) companionSource = 'savedCustom';
+          }
+
+          if (!companion) {
+            // Fallback: Try getting companion directly from the store session
+            const storeCompanion = skillStore.autonomousSession?.companion;
+            if (storeCompanion) {
+              const storeCompanionId = storeCompanion.id || `custom_${storeCompanion.name?.toLowerCase().replace(/\s+/g, "_")}`;
+              if (storeCompanionId === companionId || storeCompanion.id === companionId) {
+                companion = storeCompanion;
+                companionSource = 'storeSession';
+              }
+            }
+          }
+
+          if (!companion) {
+            // Last resort: Check savedSessions for this exact session key
+            const savedSession = savedSessions.value[storeData.sessionKey];
+            if (savedSession?.companion) {
+              companion = savedSession.companion;
+              companionSource = 'savedSession';
+            }
+          }
+
+          // Find matching scenario
+          let scenario = predefinedScenarios.find(s => s.id === scenarioId);
+          if (!scenario) {
+            // Try store session
+            scenario = skillStore.autonomousSession?.scenario?.id === scenarioId
+              ? skillStore.autonomousSession.scenario
+              : null;
+          }
+          if (!scenario) {
+            // Try savedSessions
+            const savedSession = savedSessions.value[storeData.sessionKey];
+            scenario = savedSession?.scenario || { id: scenarioId, name: scenarioId };
+          }
+
+          console.log('[Roleplay] Found companion:', companion?.name, `(source: ${companionSource})`, 'scenario:', scenario?.name);
+
+          if (companion && scenario) {
+            console.log(`[Roleplay] Restoring autonomous session: ${companion.name} in ${scenario.name} with ${storeData.history.length} messages`);
+            selectedCompanion.value = companion;
+            selectedScenario.value = scenario;
+            settings.value.contentLevel = contentLevel;
+
+            // Parse responseMode
+            settings.value.enableImage = respMode.includes('image');
+            settings.value.enableAudio = respMode.includes('audio');
+            settings.value.enableVideo = respMode.includes('video');
+            settings.value.enableVision = respMode.includes('vision');
+
+            // Sync history and scene state
+            chatHistory.value = [...storeData.history];
+            sceneState.value = { ...storeData.sceneState };
+
+            // Enter chat phase
+            phase.value = 'chat';
+
+            // Clear missed messages since we're viewing them now
+            skillStore.clearMissedMessages();
+
+            // Scroll to see new messages
+            nextTick(() => scrollToBottom());
+          } else {
+            console.warn('[Roleplay] Could not find companion or scenario for session key:', storeData.sessionKey);
+          }
+        }
+      }
+    });
+
+    // Cleanup on unmount - DO NOT stop autonomous mode, let it continue
+    onUnmounted(() => {
+      // Just sync the current state to store if autonomous mode is active
+      if (skillStore.autonomousMode && phase.value === 'chat') {
+        skillStore.syncAutonomousHistory(chatHistory.value, sceneState.value);
+      }
+      // Autonomous mode continues running - companion keeps generating messages
     });
 
     // Get session info for a companion (aggregated across all scenarios/settings)
@@ -1768,6 +2505,26 @@ export default {
       openSessionManager,
       closeSessionManager,
       getSessionInfo,
+      // Custom companions persistence
+      savedCustomCompanions,
+      saveCustomCompanionToStore,
+      deleteCustomCompanion,
+      isCompanionAlreadySaved,
+      // Import/Export sessions
+      importInput,
+      triggerImportSession,
+      handleImportSession,
+      exportSession,
+      exportAllSessions,
+      // Scenario background
+      scenarioBackgroundImage,
+      scenarioBackgroundStyle,
+      isInitializingSession,
+      // Autonomous companion mode (uses global skillStore)
+      autonomousMode,
+      missedMessages,
+      toggleAutonomousMode,
+      clearMissedMessages,
       // Methods
       getAvatarIcon,
       selectCompanion,
@@ -1890,6 +2647,59 @@ export default {
 
 .companion-card.has-session {
   border-color: rgba(97, 55, 142, 0.6);
+}
+
+/* Saved custom companions */
+.companion-card.is-saved-custom {
+  position: relative;
+  border-color: rgba(50, 115, 220, 0.4);
+}
+
+.companion-card.is-saved-custom:hover {
+  border-color: rgba(50, 115, 220, 0.7);
+}
+
+.custom-badge {
+  position: absolute;
+  bottom: -4px;
+  right: -4px;
+  background: rgba(50, 115, 220, 0.9);
+  color: #fff;
+  min-width: 16px;
+  height: 16px;
+  border-radius: 8px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0 3px;
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.3);
+}
+
+.delete-custom-btn {
+  position: absolute;
+  top: 4px;
+  right: 4px;
+  background: rgba(255, 56, 96, 0.8);
+  border: none;
+  border-radius: 50%;
+  width: 20px;
+  height: 20px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity 0.2s;
+  color: #fff;
+  padding: 0;
+}
+
+.companion-card.is-saved-custom:hover .delete-custom-btn {
+  opacity: 1;
+}
+
+.delete-custom-btn:hover {
+  background: rgba(255, 56, 96, 1);
 }
 
 /* Saved Sessions List */
@@ -2077,6 +2887,30 @@ export default {
   border-radius: 8px;
 }
 
+.scene-description .scene-backdrop {
+  min-height: 150px;
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+  transition: background-image 0.5s ease;
+  position: relative;
+  overflow: hidden;
+}
+
+.scene-description .scene-overlay {
+  background: linear-gradient(transparent, rgba(0, 0, 0, 0.8));
+  padding: 2rem 1.5rem 1.5rem;
+  width: 100%;
+  text-align: center;
+}
+
+.scene-description .scene-overlay p {
+  color: rgba(255, 255, 255, 0.95);
+  text-shadow: 0 2px 4px rgba(0, 0, 0, 0.5);
+  font-size: 1.1rem;
+  line-height: 1.6;
+}
+
 .chat-message {
   display: flex;
   gap: 0.75rem;
@@ -2173,6 +3007,67 @@ export default {
   background: rgba(255, 255, 255, 0.1);
   border-radius: 12px;
   width: fit-content;
+}
+
+.typing-indicator.inline {
+  display: inline-flex;
+  padding: 0.5rem 0.75rem;
+  background: transparent;
+}
+
+/* Generating media indicator */
+.generating-media {
+  display: inline-flex;
+  align-items: center;
+  opacity: 0.8;
+}
+
+/* Autonomous mode toggle */
+.autonomous-toggle {
+  display: inline-flex;
+  align-items: center;
+  padding: 6px 12px;
+  border-radius: 20px;
+  background: rgba(255, 255, 255, 0.1);
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  cursor: pointer;
+  transition: all 0.2s;
+  color: rgba(255, 255, 255, 0.7);
+}
+
+.autonomous-toggle:hover {
+  background: rgba(255, 255, 255, 0.15);
+  border-color: rgba(255, 255, 255, 0.3);
+}
+
+.autonomous-toggle.active {
+  background: rgba(72, 199, 142, 0.2);
+  border-color: rgba(72, 199, 142, 0.5);
+  color: #48c78e;
+}
+
+.autonomous-toggle input[type="checkbox"] {
+  display: none;
+}
+
+/* Missed messages banner */
+.missed-messages-banner {
+  animation: slideDown 0.3s ease-out;
+}
+
+.missed-messages-banner .level {
+  margin-bottom: 0;
+}
+
+@keyframes slideDown {
+  from {
+    opacity: 0;
+    transform: translateY(-10px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
 }
 
 .typing-indicator span {
@@ -2386,5 +3281,12 @@ export default {
   padding: 0.25rem 0.5rem;
   font-size: 0.85rem;
   background: transparent;
+}
+
+.models__activity--payouts {
+  padding: 2em;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  backdrop-filter: blur(32px);
+  border-radius: 4px !important;
 }
 </style>

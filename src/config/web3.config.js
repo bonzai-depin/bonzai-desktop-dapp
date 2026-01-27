@@ -158,8 +158,8 @@ export const CONFIG = {
     // Built-in skills (bundled with app, available for purchase)
     builtinSkills: [
       "polymarket-top-performers-v1.0.0",
-      "tcg-prediction-market-v1.0.0",
-      "dsla-smart-market-v1.0.0",
+      "tcg-insurance-v1.0.0",
+      "prediction-market-maker-v1.0.0",
     ],
 
     // IPFS/Arweave gateways for skill definition fetching

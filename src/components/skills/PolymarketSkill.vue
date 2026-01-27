@@ -13,7 +13,7 @@
             </span>
             {{ skill?.name || 'Polymarket Top Performers' }}
           </h3>
-          <p class="is-size-5 mt-3">
+          <p class="skill-description is-size-5 mt-3">
             {{ skill?.description || 'Analyze top PnL traders and find positions where multiple winners agree.' }}
           </p>
         </div>
@@ -576,5 +576,35 @@ Be direct and analytical.`;
 
 .thesis-content :deep(li) {
   margin-bottom: 0.5rem;
+}
+
+.models__activity--payouts {
+  padding: 2em;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  backdrop-filter: blur(32px);
+  border-radius: 4px !important;
+}
+
+.skill-name {
+  font-size: 1.5rem;
+  margin: 0;
+  font-family: "Fira Sans Condensed", sans-serif;
+  font-style: italic;
+  font-weight: 900;
+  -webkit-text-fill-color: transparent;
+  background: linear-gradient(135deg, rgb(155, 109, 200), rgb(255, 153, 51))
+    text;
+}
+
+.has-text-brand {
+  -webkit-text-fill-color: transparent;
+  background: linear-gradient(135deg, rgb(155, 109, 200), rgb(255, 153, 51))
+    text;
+}
+
+.skill-description {
+  color: rgba(255, 255, 255, 0.8);
+  margin-bottom: 0.5em;
+  text-align: left;
 }
 </style>

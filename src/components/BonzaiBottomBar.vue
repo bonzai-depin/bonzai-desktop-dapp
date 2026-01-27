@@ -108,13 +108,13 @@
         <div
           v-if="selectedLevel"
           class="level-modal-overlay"
-          @click.self="selectedLevel = null"
+          @click.self="closeModal"
         >
           <div class="level-modal">
             <div class="has-text-right">
               <button
                 class="button is-danger"
-                @click="selectedLevel = null"
+                @click="closeModal"
                 title="Close"
               >
                 <span class="material-symbols-outlined">close</span>
@@ -424,6 +424,12 @@ const setUnlockStatus = (message, type = 'info') => {
 const clearUnlockStatus = () => {
   unlockStatus.value = '';
   unlockStatusType.value = 'info';
+};
+
+// Close modal and clear notification status
+const closeModal = () => {
+  selectedLevel.value = null;
+  clearUnlockStatus();
 };
 
 // Unlock all levels with 1 ETH payment

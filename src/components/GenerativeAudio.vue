@@ -146,7 +146,7 @@
 
                 <!-- VOICE CLONE FILE INPUT -->
                 <div v-if="mode === 'clone'">
-                  <div class="file is-fullwidth is-medium">
+                  <div class="file is-fullwidth is-medium mb-3">
                     <label class="file-label">
                       <input
                         class="file-input"
@@ -166,6 +166,29 @@
                         {{ synthesisFileName || "No file selected" }}
                       </span>
                     </label>
+                  </div>
+                  <!-- Reference Transcript Input -->
+                  <div v-if="synthesisBase64" class="field">
+                    <label class="label has-text-white has-text-left is-size-6">
+                      <span class="material-symbols-outlined mr-1" style="font-size: 18px; vertical-align: middle;">
+                        subtitles
+                      </span>
+                      Reference Transcript
+                      <span class="has-text-grey-light is-size-7 ml-2">
+                        (type exactly what is said in the audio)
+                      </span>
+                    </label>
+                    <div class="control">
+                      <textarea
+                        class="textarea"
+                        v-model="referenceTranscript"
+                        placeholder="Enter the exact words spoken in your reference audio..."
+                        rows="2"
+                      ></textarea>
+                    </div>
+                    <p class="help has-text-grey-light">
+                      For best results, provide an accurate transcription of your reference audio.
+                    </p>
                   </div>
                 </div>
 
@@ -696,6 +719,7 @@ export default {
     const synthesisFile = ref(null);
     const synthesisFileName = ref("");
     const synthesisBase64 = ref("");
+    const referenceTranscript = ref(""); // Transcript of what the reference audio says
 
     // controller for abortable /plan calls
     const planReq = reactive({ controller: null, seq: 0 });
@@ -725,15 +749,22 @@ export default {
     const canGenerate = computed(() => {
       if (!readiness.ok || readiness.authRequired || generation.active)
         return false;
-      // Clone mode requires voice reference
-      if (mode.value === "clone" && !synthesisBase64.value) return false;
+      // Clone mode requires voice reference AND transcript
+      if (mode.value === "clone" && (!synthesisBase64.value || !referenceTranscript.value.trim())) return false;
       return true;
     });
 
     const promptPlaceholder = computed(() => {
-      return mode.value === "clone"
-        ? `Enter text in ${languages[language.value]} to speak in the cloned voice...`
-        : `Enter text in ${languages[language.value]} to convert to speech...`;
+      if (mode.value === "clone") {
+        if (!synthesisBase64.value) {
+          return "Upload a reference audio file first...";
+        }
+        if (!referenceTranscript.value.trim()) {
+          return "Enter the transcript of your reference audio above...";
+        }
+        return `Enter text in ${languages[language.value]} to speak in the cloned voice...`;
+      }
+      return `Enter text in ${languages[language.value]} to convert to speech...`;
     });
 
     // ------------ generation --------------
@@ -1263,7 +1294,7 @@ export default {
         payload = {
           text: prompt,
           ref_audio_base64: synthesisBase64.value,
-          ref_text: "This is a sample of my voice for cloning.",
+          ref_text: referenceTranscript.value.trim(),
           language: languages[language.value] || "English",
           auto_download: true,
         };
@@ -1288,29 +1319,46 @@ export default {
       startGeneration("audio"); // Initialize generation state
 
       const onSuccess = async (response) => {
-        if (response?.data?.audio_path) {
+        // Check for audio_path in response data
+        const audioPath = response?.data?.audio_path || response?.data?.path || response?.data?.output_path;
+        if (audioPath) {
+          // Normalize the data structure
+          const normalizedData = {
+            ...response.data,
+            audio_path: audioPath,
+          };
+
           // Only store serializable data - axios response contains non-serializable properties
-          inferences.push({
+          const newInference = {
             question: prompt,
             answer: {
               status: response.status,
-              data: response.data,
+              data: normalizedData,
             },
             id: uuid(),
             language: language.value,
             model: "qwen3-tts",
             hasClone: mode.value === "clone",
             voiceGender: voiceGender.value,
-          });
+          };
+
+          inferences.push(newInference);
+          console.log('[GenerativeAudio] Added inference to history:', newInference.id);
+
           try {
             await window.electronAPI?.store?.set?.(
               "audioInferences",
               [...inferences]
             );
-          } catch {}
+            console.log('[GenerativeAudio] Saved', inferences.length, 'inferences to storage');
+          } catch (e) {
+            console.error('[GenerativeAudio] Failed to save to storage:', e);
+          }
           form.prompt = "";
           // Reset to first page to show the new result
           resetToFirstPage();
+        } else {
+          console.warn('[GenerativeAudio] No audio path in response:', response?.data);
         }
       };
 
@@ -1338,24 +1386,32 @@ export default {
             res.data?.websocket_url ||
             WS_DL;
           if (pid) startDownloadTracking(pid, ws);
+          // Don't stop generation yet - download tracking will handle it
           return;
         }
 
         if (res.status >= 200 && res.status < 300) {
           setBlocked("audio", false);
+          stopGeneration("audio"); // Stop generation state on success
           await onSuccess(res);
           return;
         }
 
-        if (res.status === 403) return apply403ToReadiness(res);
+        if (res.status === 403) {
+          stopGeneration("audio");
+          return apply403ToReadiness(res);
+        }
         if (res.status === 409) {
+          stopGeneration("audio");
           apply409ToReadiness(res);
           await probeCurrentMode();
           return;
         }
 
+        stopGeneration("audio");
         setError("audio", res?.data?.error, res.status);
       } catch (err) {
+        stopGeneration("audio");
         setError("audio", err?.message || "Network error");
       } finally {
         isLoading.value = false;
@@ -1478,9 +1534,16 @@ export default {
           "audioInferences",
           []
         );
-        if (Array.isArray(saved))
+        console.log('[GenerativeAudio] Loading saved inferences:', saved?.length || 0);
+        if (Array.isArray(saved) && saved.length > 0) {
+          // Clear existing and add all saved items
+          inferences.length = 0;
           saved.forEach((item) => inferences.push(item));
-      } catch {}
+          console.log('[GenerativeAudio] Loaded', inferences.length, 'inferences');
+        }
+      } catch (e) {
+        console.error('[GenerativeAudio] Failed to load saved inferences:', e);
+      }
       await probeCurrentMode();
       // Setup scroll observer after DOM is rendered
       setTimeout(setupScrollObserver, 100);
@@ -1536,6 +1599,8 @@ export default {
       showScrollTop,
       scrollToTop,
       synthesisFileName,
+      synthesisBase64,
+      referenceTranscript,
       readiness,
       canGenerate,
       canGenerateWithAccess,

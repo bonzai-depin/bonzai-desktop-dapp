@@ -22,6 +22,31 @@
     ></progress>
   </div>
 
+  <!-- Autonomous Companion Away Notification -->
+  <div
+    v-else-if="skillStore.autonomousMode && skillStore.isIdle"
+    class="server-notification notification is-info"
+  >
+    <button class="delete" @click="skillStore.updateActivity()"></button>
+    <p class="mb-2">
+      <span class="fira-sans-condensed-black-italic is-size-4">
+        <span class="material-symbols-outlined mr-2" style="vertical-align: middle">self_improvement</span>
+        Companion active
+      </span>
+    </p>
+    <p class="is-size-6" style="opacity: 0.8">
+      {{ skillStore.autonomousSession?.companion?.name || 'Your companion' }} is continuing their day while you're away.
+      <span v-if="skillStore.missedMessages > 0" class="has-text-weight-bold">
+        ({{ skillStore.missedMessages }} new message{{ skillStore.missedMessages > 1 ? 's' : '' }})
+      </span>
+    </p>
+    <progress
+      v-if="skillStore.isGeneratingAutonomous"
+      class="progress is-small is-info"
+      max="100"
+    ></progress>
+  </div>
+
   <!-- Server Status Notification (using standard notification pattern) -->
   <div
     v-else-if="serverStatus.show"
@@ -226,6 +251,7 @@ import GenerativeTraining from "./components/GenerativeTraining.vue";
 import SmartAgent from "./components/SmartAgent.vue";
 import BonzaiBottomBar from "./components/BonzaiBottomBar.vue";
 import { authService } from "./services/auth.service.js";
+import { useSkillStore } from "./stores/skillStore.js";
 
 export default {
   name: "App",
@@ -245,6 +271,7 @@ export default {
     const systemValues = ref({});
     const videoImageBase64 = ref("");
     const authState = authService.state;
+    const skillStore = useSkillStore();
 
     // Server status tracking for self-healing notifications
     const serverStatus = reactive({
@@ -340,6 +367,7 @@ export default {
       serverStatus,
       handleServerRestart,
       authState,
+      skillStore,
     };
   },
 };

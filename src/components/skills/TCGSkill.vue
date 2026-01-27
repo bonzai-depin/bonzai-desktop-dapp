@@ -11,9 +11,9 @@
             >
               amp_stories
             </span>
-            {{ skill?.name || 'TCG Prediction Market' }}
+            {{ skill?.name || 'Trading Card Game Insurance' }}
           </h3>
-          <p class="is-size-5 mt-3">
+          <p class="skill-description is-size-5 mt-3">
             {{ skill?.description || 'Create prediction markets for trading card prices.' }}
           </p>
         </div>
@@ -21,29 +21,32 @@
     </div>
 
     <!-- Collection Selector -->
-    <div class="tcg-header mb-4">
-      <div class="control collection-selector">
-        <template v-for="col in collections" :key="col.id">
-          <input
-            type="radio"
-            name="tcg_collection"
-            :id="'tcg_col_' + col.id"
-            :value="col.id"
-            :checked="selectedCollection === col.id"
-            @change="selectCollection(col.id)"
-          />
-          <label :for="'tcg_col_' + col.id" class="radio">
-            <span
-              class="material-symbols-outlined mr-1"
-              style="font-size: 24px !important"
-            >
-              {{ col.icon }}
-            </span>
-            {{ col.name }}
-          </label>
-        </template>
+    <div
+      class="models__activity--payouts pt-5 pb-5"
+      style="position: relative; bottom: -40px; z-index: 11"
+    >
+      <div class="columns">
+        <div class="column is-12">
+          <span class="category-selector">
+            <template v-for="col in collections" :key="col.id">
+              <input
+                type="radio"
+                name="tcg_collection"
+                :id="'tcg_col_' + col.id"
+                :value="col.id"
+                :checked="selectedCollection === col.id"
+                @change="selectCollection(col.id)"
+              />
+              <label :for="'tcg_col_' + col.id" class="radio category">
+                {{ col.name }}
+              </label>
+            </template>
+          </span>
+        </div>
       </div>
     </div>
+
+    <hr />
 
     <div class="columns">
       <!-- Left: Top Cards & Search -->
@@ -113,7 +116,7 @@
               class="tcg-card-item"
             >
               <div class="tcg-card-info">
-                <strong>{{ card.name }}</strong>
+                <strong class="has-text-brand">{{ card.name }}</strong>
                 <span class="has-text-grey-light is-size-7 ml-2">
                   {{ card.set }}
                 </span>
@@ -145,7 +148,7 @@
       <!-- Right: Your Portfolio -->
       <div class="column is-5">
         <div class="tcg-section portfolio-section models__activity--payouts">
-          <h4 class="fira-sans-condensed-black-italic has-text-white is-size-4">
+          <h4 class="fira-sans-condensed-black-italic has-text-white has-text-left is-size-4">
             <span class="material-symbols-outlined is-size-1">amp_stories</span>
             My Cards
             <span class="tag is-info ml-2 is-pulled-right is-large">
@@ -159,7 +162,7 @@
               :key="'portfolio-' + card.id"
               class="tcg-portfolio-card pb-5"
             >
-              <div class="portfolio-card-header">
+              <div class="portfolio-card-header has-text-brand has-text-left">
                 <strong>{{ card.collection }} — {{ card.name }}</strong>
               </div>
               <hr />
@@ -528,36 +531,46 @@ export default {
   width: 100%;
 }
 
-.collection-selector {
-  display: flex;
-  flex-wrap: nowrap;
-  gap: 0;
+/* Selector styles matching Browse tab */
+.category-selector {
+  display: grid;
+  grid-template-columns: repeat(5, 1fr);
+  gap: 0.5em;
 }
 
-.collection-selector input[type='radio'] {
+.category-selector input[type='radio'] {
   display: none;
 }
 
-.collection-selector .radio {
-  flex: 1;
-  display: inline-flex;
+.category-selector input[type='radio'] + label.radio.category {
+  display: flex;
   align-items: center;
   justify-content: center;
-  padding: 0.5rem 1rem;
-  border: 1px solid rgba(255, 255, 255, 0.2);
-  background: rgba(0, 0, 0, 0.3);
-  color: white;
+  padding: 6px 12px;
+  font-family: 'Fira Sans', sans-serif;
+  font-weight: 600;
+  font-size: 14px;
+  background: transparent;
+  border: 1px solid rgba(255, 255, 255, 0.3);
+  border-radius: 4px;
+  color: rgba(255, 255, 255, 0.3);
   cursor: pointer;
   transition: all 0.2s ease;
+  white-space: nowrap;
+  backdrop-filter: blur(32px);
 }
 
-.collection-selector .radio:hover {
-  background: rgba(255, 255, 255, 0.1);
+.category-selector input[type='radio'] + label.radio.category:hover {
+  background: rgba(97, 55, 142, 0.2);
+  border-color: rgba(255, 255, 255, 0.5);
+  color: rgba(255, 255, 255, 0.8);
 }
 
-.collection-selector input[type='radio']:checked + .radio {
-  background: var(--bulma-primary);
-  border-color: var(--bulma-primary);
+.category-selector input[type='radio']:checked + label.radio.category {
+  color: rgba(255, 255, 255, 1);
+  border: 1px solid rgba(255, 255, 255, 1);
+  background: rgba(97, 55, 142, 0.33);
+  backdrop-filter: blur(64px);
 }
 
 .tcg-section {
@@ -612,6 +625,36 @@ export default {
 
 .rotating {
   animation: rotate 1s linear infinite;
+}
+
+.models__activity--payouts {
+  padding: 2em;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  backdrop-filter: blur(32px);
+  border-radius: 4px !important;
+}
+
+.skill-name {
+  font-size: 1.5rem;
+  margin: 0;
+  font-family: "Fira Sans Condensed", sans-serif;
+  font-style: italic;
+  font-weight: 900;
+  -webkit-text-fill-color: transparent;
+  background: linear-gradient(135deg, rgb(155, 109, 200), rgb(255, 153, 51))
+    text;
+}
+
+.has-text-brand {
+  -webkit-text-fill-color: transparent;
+  background: linear-gradient(135deg, rgb(155, 109, 200), rgb(255, 153, 51))
+    text;
+}
+
+.skill-description {
+  color: rgba(255, 255, 255, 0.8);
+  margin-bottom: 0.5em;
+  text-align: left;
 }
 
 @keyframes rotate {

@@ -1997,6 +1997,14 @@ Return ONLY valid JSON.`;
         throw new Error(`Failed to parse response: ${e.message}`);
       }
 
+      // Streaming callback - notify text is ready
+      if (context.onProgress) {
+        context.onProgress({
+          type: 'text',
+          response: { ...response },
+        });
+      }
+
       // Loop detection and recovery
       const loopCheck = detectResponseLoop(response.response, history);
       if (loopCheck.isLoop) {
@@ -2160,6 +2168,14 @@ Respond with JSON:
           }
           response.image = imageResult.image_base64 || imageResult.image;
 
+          // Streaming callback - notify image is ready
+          if (context.onProgress) {
+            context.onProgress({
+              type: 'image',
+              response: { ...response },
+            });
+          }
+
           // Clear memory after image generation
           await clearGenerationMemory();
         } catch (e) {
@@ -2195,6 +2211,14 @@ Respond with JSON:
             companion, // Pass full companion object for persona voice design
           });
           response.audio = audioResult.audio_path || audioResult.audio;
+
+          // Streaming callback - notify audio is ready
+          if (context.onProgress) {
+            context.onProgress({
+              type: 'audio',
+              response: { ...response },
+            });
+          }
 
           // Clear memory after audio generation
           await clearGenerationMemory();
@@ -2264,6 +2288,14 @@ Respond with JSON:
               // If we have audio, the frontend can combine them
               // Store dialogue for potential TTS overlay
               response.videoDialogue = dialogueOnly;
+
+              // Streaming callback - notify video is ready
+              if (context.onProgress) {
+                context.onProgress({
+                  type: 'video',
+                  response: { ...response },
+                });
+              }
 
               // Clear memory after video generation
               await clearGenerationMemory();

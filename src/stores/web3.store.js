@@ -197,51 +197,17 @@ export const useWeb3Store = defineStore('web3', () => {
   // ═══════════════════════════════════════════════════════════════════════════
 
   /**
-   * Unlock a level by paying ETH
-   * @param {number} levelId - Level to unlock (1-6)
-   */
-  const unlockLevel = async (levelId) => {
-    const result = await levelService.unlockLevelWithEth(levelId);
-    if (result.success) {
-      await refreshLevels();
-    }
-    return result;
-  };
-
-  /**
-   * Unlock multiple levels by paying ETH
-   * @param {number[]} levelIds - Levels to unlock
-   */
-  const unlockLevels = async (levelIds) => {
-    const result = await levelService.unlockLevelsWithEth(levelIds);
-    if (result.success) {
-      await refreshLevels();
-    }
-    return result;
-  };
-
-  /**
-   * Unlock ALL levels at discounted bulk price
+   * Unlock ALL levels by paying 1 ETH
+   * Single payment permanently unlocks all 6 levels
    */
   const unlockAllLevels = async () => {
-    const result = await levelService.unlockAllLevelsWithEth();
+    const result = await levelService.unlockAllWithEth();
     if (result.success) {
       await refreshLevels();
     }
     return result;
   };
 
-  /**
-   * Mint a Level NFT
-   * @param {number} levelId - Level to mint (1-6)
-   */
-  const mintLevelNFT = async (levelId) => {
-    const result = await levelService.mintLevelNFT(levelId);
-    if (result.success) {
-      await refreshLevels();
-    }
-    return result;
-  };
 
   /**
    * Get NFT price for a level
@@ -385,8 +351,6 @@ export const useWeb3Store = defineStore('web3', () => {
     switchToArbitrum,
 
     // Level actions
-    unlockLevel,
-    unlockLevels,
     unlockAllLevels,
     canAccess,
     isLevelActive,
@@ -394,7 +358,6 @@ export const useWeb3Store = defineStore('web3', () => {
     getLevelUnlockOptions,
 
     // NFT minting
-    mintLevelNFT,
     getNFTPrice,
     getNFTRemainingSupply,
 

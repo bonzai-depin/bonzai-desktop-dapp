@@ -650,7 +650,13 @@ class ChatterboxONNX:
 
 app = Flask(__name__)
 app.config["SECRET_KEY"] = os.environ.get("SECRET_KEY", "bonzai-secret-key")
-CORS(app, supports_credentials=True)
+CORS(app, supports_credentials=True, resources={
+    r"/*": {
+        "origins": "*",
+        "methods": ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+        "allow_headers": ["Content-Type", "Authorization", "X-Requested-With", "X-Demo-Mode"],
+    }
+})
 
 socketio = SocketIO(
     app,
@@ -5337,12 +5343,16 @@ def health():
     }))
 
 
-@app.route("/memory/clear", methods=["POST"])
+@app.route("/memory/clear", methods=["POST", "OPTIONS"])
 def memory_clear():
     """
     Clear GPU/CPU memory after generation to free resources.
     Called by frontend between generation tasks.
     """
+    # Handle CORS preflight
+    if request.method == "OPTIONS":
+        return jsonify({"success": True}), 200
+
     try:
         gc.collect()
         DeviceManager.free_memory()

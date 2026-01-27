@@ -4,13 +4,16 @@
  * Manages skill loading, purchasing, and execution state.
  * Integrates with skill.service.js for core functionality.
  * Level-based access: skills require appropriate level based on models used.
+ *
+ * Also manages global Autonomous Companion Mode that persists across views.
  */
 
 import { defineStore } from 'pinia';
-import { ref, computed } from 'vue';
+import { ref, computed, toRaw } from 'vue';
 import { skillService } from '../services/skill.service.js';
 import { levelService } from '../services/level.service.js';
 import { SKILL_CATEGORIES, SKILL_CATEGORY_META } from '../skills/types.js';
+import { roleplayCompanion } from '../skills/flagship.js';
 
 export const useSkillStore = defineStore('skill', () => {
   // ═══════════════════════════════════════════════════════════════════════════
@@ -37,6 +40,40 @@ export const useSkillStore = defineStore('skill', () => {
 
   // Search query
   const searchQuery = ref('');
+
+  // ═══════════════════════════════════════════════════════════════════════════
+  // AUTONOMOUS COMPANION MODE (Global State)
+  // Persists across views - companion continues generating while user navigates
+  // ═══════════════════════════════════════════════════════════════════════════
+
+  const autonomousMode = ref(false);
+  const isIdle = ref(false);
+  const missedMessages = ref(0);
+  const lastActiveTime = ref(Date.now());
+  const lastMousePosition = ref({ x: 0, y: 0 });
+  const idleCheckInterval = ref(null);
+  const autonomousInterval = ref(null);
+  const isGeneratingAutonomous = ref(false);
+  const IDLE_TIMEOUT = 300000; // 5 minutes of inactivity to consider idle
+  const AUTONOMOUS_MESSAGE_INTERVAL = 60000; // 1 minute between autonomous messages
+  const STORAGE_KEY = 'roleplaySessions';
+
+  // Full autonomous session state (persists across views)
+  const autonomousSession = ref({
+    sessionKey: null,
+    companion: null,
+    scenario: null,
+    settings: null,
+    history: [],
+    sceneState: {
+      lastImageAt: -3,
+      currentLocation: '',
+      recentEmotions: [],
+      recentActions: [],
+      lastOpeningPhrase: '',
+    },
+    backgroundImage: null,
+  });
 
   // ═══════════════════════════════════════════════════════════════════════════
   // GETTERS
@@ -503,6 +540,353 @@ export const useSkillStore = defineStore('skill', () => {
   };
 
   // ═══════════════════════════════════════════════════════════════════════════
+  // AUTONOMOUS COMPANION MODE ACTIONS
+  // Full standalone implementation - works even when RoleplayChat is unmounted
+  // ═══════════════════════════════════════════════════════════════════════════
+
+  /**
+   * Update last active time (called on user activity)
+   */
+  const updateActivity = () => {
+    lastActiveTime.value = Date.now();
+    if (isIdle.value) {
+      isIdle.value = false;
+    }
+  };
+
+  /**
+   * Track mouse movement for activity detection
+   */
+  const onMouseMove = (e) => {
+    const pos = lastMousePosition.value;
+    if (Math.abs(e.clientX - pos.x) > 5 || Math.abs(e.clientY - pos.y) > 5) {
+      lastMousePosition.value = { x: e.clientX, y: e.clientY };
+      updateActivity();
+    }
+  };
+
+  /**
+   * Check if user is idle
+   */
+  const checkIdle = () => {
+    if (!autonomousMode.value) return;
+
+    const timeSinceActive = Date.now() - lastActiveTime.value;
+    const wasIdle = isIdle.value;
+    const hasFocus = document.hasFocus();
+
+    // Consider idle if: window not focused, or no activity for IDLE_TIMEOUT
+    isIdle.value = !hasFocus || timeSinceActive > IDLE_TIMEOUT;
+
+    if (isIdle.value && !wasIdle) {
+      console.log(`[SkillStore] User became idle (focus: ${hasFocus}, inactive: ${Math.round(timeSinceActive/1000)}s)`);
+    } else if (!isIdle.value && wasIdle) {
+      console.log('[SkillStore] User became active');
+    }
+  };
+
+  /**
+   * Save autonomous session to storage
+   */
+  const saveAutonomousSession = async () => {
+    const session = autonomousSession.value;
+    if (!session.sessionKey || session.history.length === 0) return;
+
+    try {
+      if (window.electronAPI?.store?.get && window.electronAPI?.store?.set) {
+        const allSessions = await window.electronAPI.store.get(STORAGE_KEY, {});
+
+        // Create plain session object
+        const plainSession = {
+          companion: JSON.parse(JSON.stringify(toRaw(session.companion))),
+          scenario: JSON.parse(JSON.stringify(toRaw(session.scenario))),
+          settings: JSON.parse(JSON.stringify(toRaw(session.settings))),
+          history: session.history.map(msg => JSON.parse(JSON.stringify(toRaw(msg)))),
+          sceneState: JSON.parse(JSON.stringify(toRaw(session.sceneState))),
+          backgroundImage: session.backgroundImage,
+          updatedAt: Date.now(),
+        };
+
+        allSessions[session.sessionKey] = plainSession;
+        await window.electronAPI.store.set(STORAGE_KEY, allSessions);
+        console.log(`[SkillStore] Autonomous session saved: ${session.history.length} messages`);
+      }
+    } catch (e) {
+      console.error('[SkillStore] Failed to save autonomous session:', e);
+    }
+  };
+
+  /**
+   * Generate autonomous companion message (standalone - no component needed)
+   */
+  const generateAutonomousMessage = async () => {
+    // Guard checks with detailed logging
+    if (!autonomousMode.value) {
+      return;
+    }
+    if (!isIdle.value) {
+      console.log('[SkillStore] Skipping autonomous generation - user is not idle');
+      return;
+    }
+    if (isGeneratingAutonomous.value) {
+      console.log('[SkillStore] Skipping autonomous generation - already generating');
+      return;
+    }
+
+    // Check if user came back
+    if (document.hasFocus() && Date.now() - lastActiveTime.value < IDLE_TIMEOUT) {
+      console.log('[SkillStore] Skipping autonomous generation - user came back');
+      return;
+    }
+
+    const session = autonomousSession.value;
+    if (!session.companion || !session.scenario) {
+      console.log('[SkillStore] No active autonomous session - companion:', !!session.companion, 'scenario:', !!session.scenario);
+      return;
+    }
+
+    isGeneratingAutonomous.value = true;
+    console.log(`[SkillStore] Generating autonomous message for ${session.companion.name}...`);
+
+    try {
+      // Create autonomous prompt
+      const autonomousPrompt = `*${session.companion.name} notices you haven't responded in a while. They continue with their day, doing something within the scenario context, and update you about what they're doing.*`;
+
+      // Add user message to history
+      const userMsg = {
+        role: 'user',
+        content: autonomousPrompt,
+        timestamp: Date.now(),
+        isAutonomous: true,
+      };
+      session.history.push(userMsg);
+
+      // Build responseMode from settings
+      const responseMode = ['text'];
+      if (session.settings.enableImage) responseMode.push('image');
+      if (session.settings.enableAudio) responseMode.push('audio');
+      if (session.settings.enableVideo) responseMode.push('video');
+
+      // Create execution context
+      const context = {
+        updateStatus: (status) => {
+          runningStatus.value = status;
+        },
+        onProgress: null, // No streaming when running autonomously
+      };
+
+      // Call roleplayCompanion.execution.executeMessage
+      const result = await roleplayCompanion.execution.executeMessage(
+        {
+          userMessage: autonomousPrompt,
+          session: {
+            companion: session.companion,
+            scenario: session.scenario,
+            history: session.history.slice(0, -1), // Exclude the message we just added
+          },
+          settings: {
+            contentLevel: session.settings.contentLevel,
+            responseMode: responseMode.join('+'),
+          },
+          sceneState: session.sceneState,
+        },
+        context
+      );
+
+      console.log('[SkillStore] Autonomous generation result:', result);
+
+      // The result structure is: { success, character, response: {...}, sceneState, meta }
+      // The actual response data is in result.response
+      const responseData = result.response || {};
+
+      // Extract response text - it's in result.response.response
+      const responseText = typeof responseData.response === 'string'
+        ? responseData.response
+        : (responseData.text || responseData.content || result.text || '');
+
+      if (!responseText) {
+        console.warn('[SkillStore] No response text in result. responseData:', responseData);
+        throw new Error('No response text generated');
+      }
+
+      // Update scene state from result.sceneState or responseData
+      const newSceneState = result.sceneState || {};
+      if (newSceneState.currentLocation || responseData.newLocation) {
+        session.sceneState.currentLocation = newSceneState.currentLocation || responseData.newLocation;
+      }
+      if (newSceneState.lastImageAt !== undefined) {
+        session.sceneState.lastImageAt = newSceneState.lastImageAt;
+      }
+      if (responseData.emotion) {
+        session.sceneState.recentEmotions = [
+          ...session.sceneState.recentEmotions.slice(-2),
+          responseData.emotion,
+        ];
+      }
+      if (responseData.action) {
+        session.sceneState.recentActions = [
+          ...session.sceneState.recentActions.slice(-1),
+          responseData.action,
+        ];
+      }
+      if (responseText) {
+        const firstWords = responseText.split(' ').slice(0, 3).join(' ');
+        session.sceneState.lastOpeningPhrase = firstWords;
+      }
+      if (responseData.image) {
+        session.sceneState.lastImageAt = session.history.length;
+      }
+
+      // Create assistant message
+      const assistantMsg = {
+        role: 'assistant',
+        content: responseText,
+        emotion: responseData.emotion,
+        action: responseData.action,
+        image: responseData.image || null,
+        audio: responseData.audio || null,
+        video: responseData.video || null,
+        timestamp: Date.now(),
+        isAutonomous: true,
+      };
+
+      session.history.push(assistantMsg);
+      missedMessages.value++;
+
+      // Save session to storage
+      await saveAutonomousSession();
+
+      console.log(`[SkillStore] Autonomous message generated: "${responseText?.substring(0, 50)}..."`);
+    } catch (e) {
+      console.error('[SkillStore] Autonomous message generation failed:', e);
+      // Remove the user message we added
+      session.history.pop();
+    } finally {
+      isGeneratingAutonomous.value = false;
+      runningStatus.value = '';
+    }
+  };
+
+  /**
+   * Start autonomous session with companion data
+   * Called by RoleplayChat when enabling autonomous mode
+   */
+  const startAutonomousSession = (sessionData) => {
+    autonomousSession.value = {
+      sessionKey: sessionData.sessionKey,
+      companion: sessionData.companion,
+      scenario: sessionData.scenario,
+      settings: sessionData.settings,
+      history: [...sessionData.history],
+      sceneState: { ...sessionData.sceneState },
+      backgroundImage: sessionData.backgroundImage,
+    };
+    console.log(`[SkillStore] Autonomous session started: ${sessionData.companion?.name} in ${sessionData.scenario?.name}`);
+  };
+
+  /**
+   * Sync history from RoleplayChat (when user sends a message while on the view)
+   */
+  const syncAutonomousHistory = (history, sceneState) => {
+    if (autonomousSession.value.sessionKey) {
+      autonomousSession.value.history = [...history];
+      if (sceneState) {
+        autonomousSession.value.sceneState = { ...sceneState };
+      }
+    }
+  };
+
+  /**
+   * Get current autonomous session history (for RoleplayChat to sync when mounting)
+   */
+  const getAutonomousSessionData = () => {
+    return {
+      sessionKey: autonomousSession.value.sessionKey,
+      history: [...autonomousSession.value.history],
+      sceneState: { ...autonomousSession.value.sceneState },
+    };
+  };
+
+  /**
+   * Clear autonomous session
+   */
+  const clearAutonomousSession = () => {
+    autonomousSession.value = {
+      sessionKey: null,
+      companion: null,
+      scenario: null,
+      settings: null,
+      history: [],
+      sceneState: {
+        lastImageAt: -3,
+        currentLocation: '',
+        recentEmotions: [],
+        recentActions: [],
+        lastOpeningPhrase: '',
+      },
+      backgroundImage: null,
+    };
+  };
+
+  /**
+   * Toggle autonomous mode on/off
+   */
+  const toggleAutonomousMode = (enabled) => {
+    autonomousMode.value = enabled;
+
+    if (enabled) {
+      // Start idle checking
+      idleCheckInterval.value = setInterval(checkIdle, 5000);
+
+      // Start autonomous message generation
+      autonomousInterval.value = setInterval(generateAutonomousMessage, AUTONOMOUS_MESSAGE_INTERVAL);
+
+      // Add event listeners
+      document.addEventListener('mousemove', onMouseMove);
+      document.addEventListener('keydown', updateActivity);
+      document.addEventListener('click', updateActivity);
+      window.addEventListener('focus', updateActivity);
+
+      console.log('[SkillStore] Autonomous mode enabled');
+    } else {
+      // Clean up intervals
+      if (idleCheckInterval.value) {
+        clearInterval(idleCheckInterval.value);
+        idleCheckInterval.value = null;
+      }
+      if (autonomousInterval.value) {
+        clearInterval(autonomousInterval.value);
+        autonomousInterval.value = null;
+      }
+
+      // Remove event listeners
+      document.removeEventListener('mousemove', onMouseMove);
+      document.removeEventListener('keydown', updateActivity);
+      document.removeEventListener('click', updateActivity);
+      window.removeEventListener('focus', updateActivity);
+
+      isIdle.value = false;
+      console.log('[SkillStore] Autonomous mode disabled');
+    }
+  };
+
+  /**
+   * Fully stop autonomous mode and clear session
+   */
+  const stopAutonomousMode = () => {
+    toggleAutonomousMode(false);
+    clearAutonomousSession();
+    missedMessages.value = 0;
+  };
+
+  /**
+   * Clear missed messages counter
+   */
+  const clearMissedMessages = () => {
+    missedMessages.value = 0;
+  };
+
+  // ═══════════════════════════════════════════════════════════════════════════
   // RETURN
   // ═══════════════════════════════════════════════════════════════════════════
 
@@ -518,6 +902,13 @@ export const useSkillStore = defineStore('skill', () => {
     executionHistory,
     selectedCategory,
     searchQuery,
+
+    // Autonomous companion mode state
+    autonomousMode,
+    isIdle,
+    missedMessages,
+    autonomousSession,
+    isGeneratingAutonomous,
 
     // Getters
     categories,
@@ -538,6 +929,16 @@ export const useSkillStore = defineStore('skill', () => {
     setCategory,
     setSearchQuery,
     clearFilters,
+
+    // Autonomous companion mode actions
+    toggleAutonomousMode,
+    startAutonomousSession,
+    syncAutonomousHistory,
+    getAutonomousSessionData,
+    clearAutonomousSession,
+    stopAutonomousMode,
+    clearMissedMessages,
+    updateActivity,
   };
 });
 

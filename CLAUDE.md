@@ -70,7 +70,12 @@ npm run publish
 | `src/server/diffuser.py` | Flask ML server with all inference pipelines |
 | `src/stores/inferenceStore.js` | Unified history for all generation types |
 | `src/stores/web3.store.js` | Wallet state and blockchain data |
-| `src/config/web3.config.js` | Network addresses, token contracts, level thresholds |
+| `src/stores/skillStore.js` | Skill state and purchased skills |
+| `src/config/web3.config.js` | Network addresses, token contracts, level thresholds, skill registry |
+| `src/components/SmartAgent.vue` | Skill browser and runner interface |
+| `src/components/skills/*.vue` | Modular skill UI components (DSLA, TCG, Polymarket) |
+| `src/skills/builtin/*.js` | Built-in skill definitions |
+| `src/services/skill.service.js` | Skill loading, validation, and execution |
 | `forge.config.mjs` | Electron Forge packaging, code signing, PyInstaller embedding |
 
 ## IPC Communication Pattern
@@ -91,6 +96,66 @@ Common channels:
 - NFT minting: Pinata IPFS upload → smart contract mint
 - Level system: 6 tiers (LVL1-LVL5 + LVL∞) requiring BONZAI tokens
 - Contracts in `src/contracts/` (BonzaiAccessPass, BonzaiLevelRegistry, BonzaiEconomy)
+
+## Skill System (SmartAgent)
+
+BonzAI includes a modular skill system in `src/components/SmartAgent.vue` that allows users to run specialized AI-powered tools.
+
+### Skill Architecture
+
+```
+src/
+├── skills/
+│   ├── builtin/                    # Built-in skill definitions
+│   │   ├── dslaSmartMarket.js      # DSLA Prediction Market Maker
+│   │   ├── tcgPredictionMarket.js  # TCG Insurance
+│   │   └── polymarketTopPerformers.js
+│   └── types.js                    # Skill schema version
+├── components/skills/              # Modular Vue components for skill UIs
+│   ├── DSLASkill.vue               # Prediction Market Maker UI
+│   ├── TCGSkill.vue                # TCG Insurance UI
+│   └── PolymarketSkill.vue         # Polymarket analysis UI
+└── services/skill.service.js       # Skill loading and execution
+```
+
+### Built-in Skills
+
+| Skill ID | Name | Category | Tags |
+|----------|------|----------|------|
+| `prediction-market-maker-v1.0.0` | Prediction Market Maker | finance | demo, verified |
+| `tcg-insurance-v1.0.0` | Trading Card Game Insurance | finance | demo, verified |
+| `polymarket-top-performers-v1.0.0` | Polymarket Top Performers | analysis | verified |
+
+### DSLA Protocol Integration
+
+The Prediction Market Maker skill creates prediction markets using the **DSLA Protocol** (Decentralized Service Level Agreements).
+
+**SLA Data Model:**
+- `serviceName`: Human-readable service name
+- `serviceTicker`: Short identifier (e.g., ETH, BAYC)
+- `serviceAddress`: Flexible string identifier (can be 0x address, domain, API URL, etc.)
+- `sloType`: Service Level Objective comparison type
+  - `eq` (=), `neq` (!=), `lt` (<), `lte` (<=), `gt` (>), `gte` (>=)
+- `sloValue`: Target value as integer (10000 = 100% for percentages, raw value for other metrics)
+- `startDate` / `endDate`: SLA monitoring period (timestamps)
+- `leverage`: Multiplier for rewards/penalties (1-100x)
+- `severity[]` / `penalty[]`: Tiered penalty system (basis points, max 2500 = 25%)
+- `whitelisted`: Restrict staking to approved addresses
+- `dataSources[]`: External APIs for SLI verification
+
+**Use Cases:**
+- Volatility of Returns (DeFi yields, staking APY)
+- Volatility of Availability (uptime, latency)
+- Volatility of Asset Floors (NFT floors)
+- Volatility of Currency Pegs (stablecoins)
+- Volatility of Response Time (block times)
+- Volatility of Delivery Time (airdrops, mints)
+
+**Verification Flow:**
+1. After `endDate`, anyone calls `requestSLI()` on the SLA contract
+2. A Messenger oracle fetches data from configured data sources
+3. Oracle returns the Service Level Indicator (SLI) value on-chain
+4. Smart contract compares SLI vs SLO and distributes rewards/penalties
 
 ## Environment Variables
 
