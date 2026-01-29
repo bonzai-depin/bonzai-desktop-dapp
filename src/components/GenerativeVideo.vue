@@ -95,16 +95,6 @@
                   <span class="control">
                     <input
                       v-model="duration"
-                      :value="3"
-                      id="video_duration_3s"
-                      type="radio"
-                      name="video_duration"
-                    />
-                    <label for="video_duration_3s" class="radio duration">
-                      3s
-                    </label>
-                    <input
-                      v-model="duration"
                       :value="5"
                       id="video_duration_5s"
                       type="radio"
@@ -130,11 +120,21 @@
                   <span class="control">
                     <input
                       v-model="fps"
+                      :value="12"
+                      id="video_fps_12"
+                      type="radio"
+                      name="video_fps"
+                      checked
+                    />
+                    <label for="video_fps_12" class="radio fps">
+                      12fps
+                    </label>
+                    <input
+                      v-model="fps"
                       :value="24"
                       id="video_fps_24"
                       type="radio"
                       name="video_fps"
-                      checked
                     />
                     <label for="video_fps_24" class="radio fps">
                       24fps
@@ -371,7 +371,7 @@
                         :placeholder="mode === 't2v' ? 'Describe your video...' : 'Describe your animation...'"
                         v-model="form.prompt"
                         @keyup.enter="
-                          canGenerate && sendMessage(form.prompt)
+                          canGenerate && hasAccess && sendMessage(form.prompt)
                         "
                         :disabled="isLoading || !hasAccess"
                       />
@@ -379,7 +379,7 @@
                     <div class="column is-4">
                       <button
                         class="button is-warning is-large pl-2 is-fullwidth"
-                        :disabled="!canGenerate"
+                        :disabled="!canGenerate || !hasAccess"
                         @click="sendMessage(form.prompt)"
                         :title="mode === 't2v' ? 'Generate video from text' : 'Generate video from image'"
                       >
@@ -490,7 +490,7 @@
                         <button
                           class="button is-medium is-success copy is-pulled-left p-0 pl-1 pr-1"
                           @click="
-                            copy(inference.question);
+                            copy(inference.prompt);
                             setCopied(inference._originalIndex);
                             scrollToTop();
                           "
@@ -567,6 +567,7 @@ import { v4 as uuid } from "uuid";
 import useClipboard from "vue-clipboard3";
 import axios from "axios";
 import { io } from "socket.io-client";
+import AccessRequirements from "./AccessRequirements.vue";
 
 // ═══════════════════════════════════════════════════════════════════════════
 // PERFORMANCE UTILITIES
@@ -601,7 +602,6 @@ import {
   stopGeneration,
   clearError,
 } from "../stores/generationStore";
-import AccessRequirements from "./AccessRequirements.vue";
 
 const DEMO_PROMPT =
   "A bonsai tree gently swaying in a soft breeze, leaves rustling";
@@ -620,9 +620,9 @@ export default {
   props: { existingImageBase64: { type: String, default: "" } },
   setup(props) {
     const mode = ref("i2v"); // "t2v" (text-to-video) or "i2v" (image-to-video)
-    const quality = ref("480p");
-    const duration = ref(5);  // seconds: 3, 5, or 10
-    const fps = ref(24);      // 24 or 48
+    const quality = ref("480p");  // 480p, 540p, 720p, 1080p, 4k (default 480p for quality)
+    const duration = ref(5);       // seconds: 5 or 10 (default 5s for good motion)
+    const fps = ref(12);           // 12 or 24 (default 12fps for memory efficiency)
     const isLoading = ref(false);
     const form = reactive({ prompt: "" });
     // Use shallowRef for inferences - video data is large
@@ -729,8 +729,7 @@ export default {
     };
 
     const onDemoGenerate = (demoPrompt) => {
-      form.prompt = demoPrompt;
-      sendMessage(demoPrompt, true); // true = isDemo
+      sendMessage(demoPrompt, true);
     };
 
     const canGenerateWithAccess = computed(
@@ -739,7 +738,7 @@ export default {
 
     // Can generate: for t2v mode, just need access; for i2v mode, also need an image
     const canGenerate = computed(() => {
-      if (!hasAccess.value || isLoading.value) return false;
+      if (isLoading.value) return false;
       if (mode.value === "t2v") return true;
       return hasAnyImage.value; // i2v requires image
     });
@@ -1552,6 +1551,19 @@ export default {
         scrollContainer.value = container;
         container.addEventListener("scroll", handleScroll, { passive: true });
       }
+
+      // Check for pending image-to-video from roleplay chat
+      const pendingImage = sessionStorage.getItem('pendingI2VImage');
+      if (pendingImage) {
+        sessionStorage.removeItem('pendingI2VImage');
+        // Extract base64 from data URL
+        const base64Match = pendingImage.match(/^data:image\/[^;]+;base64,(.+)$/);
+        if (base64Match) {
+          uploadedImageBase64.value = base64Match[1];
+          await detectImageAspectRatio(uploadedImageBase64.value);
+          console.log('[GenerativeVideo] Loaded pending image from roleplay chat');
+        }
+      }
     });
 
     onBeforeUnmount(() => {
@@ -1616,10 +1628,10 @@ export default {
       // access control
       accessRef,
       hasAccess,
-      canGenerateWithAccess,
-      canGenerate,
       onAccessChanged,
       onDemoGenerate,
+      canGenerateWithAccess,
+      canGenerate,
       DEMO_PROMPT,
       // actions
       sendMessage,

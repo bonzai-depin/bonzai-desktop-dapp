@@ -525,7 +525,7 @@
                       <button
                         class="button is-medium is-success copy is-pulled-left p-0 pl-1 pr-1"
                         @click="
-                          copy(inference.question);
+                          copy(inference.prompt);
                           setCopied(inference._originalIndex);
                           scrollToTop();
                         "
@@ -1710,10 +1710,8 @@ export default {
       downloadTaskList,
       downloadMatchesMode,
       // access control
-      accessRef,
       hasAccess,
-      onAccessChanged,
-      onDemoGenerate,
+      canGenerateWithAccess,
       DEMO_PROMPT,
       // actions
       sendMessage,

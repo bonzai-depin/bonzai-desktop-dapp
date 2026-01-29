@@ -403,6 +403,21 @@
                 />
               </div>
 
+              <!-- MEDITATION FORGE SKILL (modular component) -->
+              <div
+                v-else-if="selectedSkillId === 'meditation-forge-v1.0.0'"
+                class="meditation-interface"
+              >
+                <MeditationForgeSkill
+                  :skill="selectedSkill"
+                  :model-available="isModelAvailable"
+                  @meditation-created="
+                    showNotification('Meditation session created!', 'success')
+                  "
+                  @status-update="loadingMessage = $event"
+                />
+              </div>
+
               <!-- Roleplay Companion - Special Chat Interface -->
               <div
                 v-else-if="selectedSkillId === 'roleplay-companion-v1.0.0'"
@@ -1102,6 +1117,7 @@ import SkillDownloader from "./skills/SkillDownloader.vue";
 import PolymarketSkill from "./skills/PolymarketSkill.vue";
 import TCGSkill from "./skills/TCGSkill.vue";
 import DSLASkill from "./skills/DSLASkill.vue";
+import MeditationForgeSkill from "./skills/MeditationForgeSkill.vue";
 import {
   getSkillModelRequirements,
   MODEL_REQUIREMENTS,
@@ -1124,6 +1140,7 @@ export default {
     PolymarketSkill,
     TCGSkill,
     DSLASkill,
+    MeditationForgeSkill,
   },
   setup() {
     // Store
@@ -2770,6 +2787,19 @@ Provide a concise analysis covering:
         await checkModelAvailability();
       }
     });
+
+    // Watch for pending skill navigation from external sources (e.g., companion notification)
+    watch(
+      () => skillStore.pendingSkillId,
+      (pendingId) => {
+        if (pendingId) {
+          console.log("[SmartAgent] Navigating to pending skill:", pendingId);
+          selectSkillById(pendingId);
+          skillStore.clearPendingSkillId();
+        }
+      },
+      { immediate: true }
+    );
 
     return {
       // Tab

@@ -60,12 +60,12 @@
           <div class="models__activity--payouts">
             <div class="columns">
               <div class="column is-12">
-                <!-- ACCESS REQUIREMENTS (no demo for training - requires real datasets) -->
+                <!-- ACCESS REQUIREMENTS -->
                 <AccessRequirements
                   ref="accessRef"
                   level="LVL6"
+                  :is-generating="training.active"
                   @access-changed="onAccessChanged"
-                  class="pr-0"
                 />
 
                 <!-- TRAINING TYPE SELECTION -->
@@ -77,6 +77,7 @@
                     type="radio"
                     name="trainingType"
                     checked
+                    :disabled="!hasAccess"
                   />
                   <label for="type_llm" class="radio mr-3">
                     <span
@@ -95,6 +96,7 @@
                     id="type_sdxl"
                     type="radio"
                     name="trainingType"
+                    :disabled="!hasAccess"
                   />
                   <label for="type_sdxl" class="radio">
                     <span
@@ -679,9 +681,7 @@ const WS_TRAINING = `${API_BASE}/training`;
 
 export default {
   name: "GenerativeTraining",
-  components: {
-    AccessRequirements,
-  },
+  components: { AccessRequirements },
   setup() {
     // Training type selection
     const trainingType = ref("llm"); // 'llm' or 'sdxl'
@@ -743,8 +743,8 @@ export default {
     const accessRef = ref(null);
     const hasAccess = ref(false);
 
-    const onAccessChanged = (val) => {
-      hasAccess.value = val;
+    const onAccessChanged = (access) => {
+      hasAccess.value = access;
     };
 
     // Socket
@@ -757,10 +757,10 @@ export default {
     });
 
     const canStartTraining = computed(() => {
+      if (!hasAccess.value) return false;
       if (!selectedDataset.value) return false;
       if (trainingType.value === "sdxl" && !sdxlConfig.instance_prompt)
         return false;
-      if (!hasAccess.value) return false;
       return true;
     });
 
@@ -1022,6 +1022,7 @@ export default {
       accessRef,
       hasAccess,
       onAccessChanged,
+      canStartTraining,
     };
   },
 };

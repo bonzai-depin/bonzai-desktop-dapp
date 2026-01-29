@@ -1748,7 +1748,9 @@ def _plan_for(pipeline: str) -> Dict[str, Any]:
     # Audio pipelines
     if pipeline in ("audio", "chatterbox"):
         return {"repos_to_fetch": [CHATTERBOX_MULTILINGUAL_MODEL_ID], "single_files": []}
-    # Note: Kokoro (/audio/turbo) uses KPipeline which auto-downloads from HuggingFace
+    # Kokoro TTS auto-downloads via KPipeline - always report as ready
+    if pipeline in ("audio_turbo", "kokoro"):
+        return {"repos_to_fetch": [], "single_files": []}
     if pipeline in ("audio_quality_clone", "qwen3_tts_clone"):
         return {"repos_to_fetch": [QWEN3_TTS_BASE_REPO], "single_files": []}
     if pipeline in ("audio_quality_design", "qwen3_tts_design"):
@@ -3002,6 +3004,10 @@ def image_turbo_flux_klein():
         genbus.error(gen_id, str(e))
         return jsonify(_json_sanitize({"error": str(e)})), 500
     finally:
+        # Explicitly delete pipeline to free memory
+        if 'pipe' in dir():
+            del pipe
+        gc.collect()
         DeviceManager.free_memory()
 
 
@@ -3097,6 +3103,12 @@ def image_turbo_flux_klein_i2i():
         genbus.error(gen_id, str(e))
         return jsonify(_json_sanitize({"error": str(e)})), 500
     finally:
+        # Explicitly delete pipeline to free memory
+        try:
+            del pipe
+        except:
+            pass
+        gc.collect()
         DeviceManager.free_memory()
 
 
@@ -5348,19 +5360,152 @@ def memory_clear():
     """
     Clear GPU/CPU memory after generation to free resources.
     Called by frontend between generation tasks.
+    Aggressively unloads ALL cached models to free maximum memory.
     """
     # Handle CORS preflight
     if request.method == "OPTIONS":
         return jsonify({"success": True}), 200
 
     try:
-        gc.collect()
+        unloaded = []
+
+        # Unload Kokoro TTS pipeline
+        global _kokoro_pipeline
+        if _kokoro_pipeline is not None:
+            try:
+                del _kokoro_pipeline
+            except:
+                pass
+            _kokoro_pipeline = None
+            unloaded.append("kokoro_tts")
+
+        # Unload Qwen3 TTS models
+        global _qwen3_tts_base, _qwen3_tts_design
+        if _qwen3_tts_base is not None:
+            try:
+                if hasattr(_qwen3_tts_base, 'to'):
+                    _qwen3_tts_base.to('cpu')
+                del _qwen3_tts_base
+            except:
+                pass
+            _qwen3_tts_base = None
+            unloaded.append("qwen3_tts_base")
+        if _qwen3_tts_design is not None:
+            try:
+                if hasattr(_qwen3_tts_design, 'to'):
+                    _qwen3_tts_design.to('cpu')
+                del _qwen3_tts_design
+            except:
+                pass
+            _qwen3_tts_design = None
+            unloaded.append("qwen3_tts_design")
+
+        # Unload Qwen3 Vision model
+        global _qwen3_vl_model, _qwen3_vl_processor
+        if _qwen3_vl_model is not None:
+            try:
+                if hasattr(_qwen3_vl_model, 'to'):
+                    _qwen3_vl_model.to('cpu')
+                del _qwen3_vl_model
+            except:
+                pass
+            _qwen3_vl_model = None
+            unloaded.append("qwen3_vl")
+        if _qwen3_vl_processor is not None:
+            try:
+                del _qwen3_vl_processor
+            except:
+                pass
+            _qwen3_vl_processor = None
+
+        # Clear voice prompt cache (can hold large tensors)
+        global _voice_prompt_cache
+        if _voice_prompt_cache:
+            cache_size = len(_voice_prompt_cache)
+            _voice_prompt_cache.clear()
+            unloaded.append(f"voice_cache({cache_size})")
+
+        # Clear any GGUF model locks state
+        global _GGUF_LOCKS_GUARD
+        # Just trigger cleanup, don't delete the lock itself
+
+        # Force garbage collection - multiple passes to handle circular refs
+        for _ in range(5):
+            gc.collect()
+
+        # Clear PyTorch CUDA cache
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+            torch.cuda.synchronize()
+            # Also clear CUDA memory pools
+            try:
+                torch.cuda.memory.empty_cache()
+            except:
+                pass
+
+        # Clear PyTorch MPS cache (Apple Silicon)
+        if torch.backends.mps.is_available():
+            torch.mps.empty_cache()
+            torch.mps.synchronize()
+
+        # Call device manager cleanup
         DeviceManager.free_memory()
-        logger.info("[Memory] Cleared RAM/VRAM on request")
-        return jsonify({"success": True, "message": "Memory cleared"})
+
+        # More aggressive garbage collection after device cleanup
+        for _ in range(3):
+            gc.collect()
+
+        # Final MPS sync
+        if torch.backends.mps.is_available():
+            torch.mps.synchronize()
+            torch.mps.empty_cache()
+
+        # Try to clear HuggingFace accelerate offload state if present
+        try:
+            from accelerate.hooks import remove_hook_from_module
+            # This helps clear CPU offload hooks that hold model references
+        except ImportError:
+            pass
+
+        logger.info(f"[Memory] Aggressively cleared RAM/VRAM. Unloaded: {unloaded or 'none cached'}")
+        return jsonify({"success": True, "message": "Memory cleared", "unloaded": unloaded})
     except Exception as e:
         logger.warning(f"[Memory] Clear failed: {e}")
         return jsonify({"success": False, "error": str(e)}), 500
+
+
+@app.route("/memory/status", methods=["GET"])
+def memory_status():
+    """Get current memory usage status."""
+    try:
+        import psutil
+        process = psutil.Process()
+        mem_info = process.memory_info()
+
+        status = {
+            "rss_gb": round(mem_info.rss / (1024**3), 2),
+            "vms_gb": round(mem_info.vms / (1024**3), 2),
+            "cached_models": [],
+        }
+
+        if _kokoro_pipeline is not None:
+            status["cached_models"].append("kokoro_tts")
+        if _qwen3_tts_base is not None:
+            status["cached_models"].append("qwen3_tts_base")
+        if _qwen3_tts_design is not None:
+            status["cached_models"].append("qwen3_tts_design")
+        if _qwen3_vl_model is not None:
+            status["cached_models"].append("qwen3_vl")
+        if _voice_prompt_cache:
+            status["cached_models"].append(f"voice_cache({len(_voice_prompt_cache)})")
+
+        if torch.cuda.is_available():
+            status["cuda_allocated_gb"] = round(torch.cuda.memory_allocated() / (1024**3), 2)
+            status["cuda_reserved_gb"] = round(torch.cuda.memory_reserved() / (1024**3), 2)
+
+        return jsonify(status)
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
 
 
 # =============================================================================

@@ -25,13 +25,18 @@
   <!-- Autonomous Companion Away Notification -->
   <div
     v-else-if="skillStore.autonomousMode && skillStore.isIdle"
-    class="server-notification notification is-info"
+    class="server-notification notification is-info companion-notification"
+    @click="goToCompanionChat"
+    style="cursor: pointer"
   >
-    <button class="delete" @click="skillStore.updateActivity()"></button>
+    <button class="delete" @click.stop="skillStore.updateActivity()"></button>
     <p class="mb-2">
       <span class="fira-sans-condensed-black-italic is-size-4">
         <span class="material-symbols-outlined mr-2" style="vertical-align: middle">self_improvement</span>
         Companion active
+      </span>
+      <span class="is-pulled-right">
+        <span class="material-symbols-outlined" style="vertical-align: middle; opacity: 0.7">arrow_forward</span>
       </span>
     </p>
     <p class="is-size-6" style="opacity: 0.8">
@@ -289,6 +294,14 @@ export default {
       modelMode.value = "video"; // switch view
     };
 
+    // Navigate directly to companion chat
+    const goToCompanionChat = () => {
+      skillStore.requestSkillNavigation('roleplay-companion-v1.0.0');
+      skillStore.clearMissedMessages();
+      skillStore.updateActivity();
+      modelMode.value = "agent";
+    };
+
     // Provide goAnimateToVideo so child components can use it
     provide("goAnimateToVideo", goAnimateToVideo);
 
@@ -364,6 +377,7 @@ export default {
       modelMode,
       videoImageBase64,
       goAnimateToVideo,
+      goToCompanionChat,
       serverStatus,
       handleServerRestart,
       authState,

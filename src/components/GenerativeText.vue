@@ -709,6 +709,7 @@ export default {
       form.prompt = demoPrompt;
       sendMessage(demoPrompt, true); // true = isDemo
     };
+
     const availableModels = ref({
       codestral_22_B: {
         modelname: "Codestral 22B",

@@ -329,7 +329,7 @@
                   :is-generating="isLoading"
                   @access-changed="onAccessChanged"
                   @demo-generate="onDemoGenerate"
-                   class="mt-5"
+                  class="mt-5"
                 />
 
                 <!-- PROMPT -->
@@ -455,7 +455,7 @@
                       <button
                         class="button is-medium is-success copy is-pulled-left p-0 pl-1 pr-1"
                         @click="
-                          copy(inference.question);
+                          copy(inference.prompt);
                           hasCopy[inference._originalIndex] = true;
                           scrollToTop();
                         "
@@ -1631,6 +1631,7 @@ export default {
       hasAccess,
       onAccessChanged,
       onDemoGenerate,
+      canGenerateWithAccess,
       DEMO_PROMPT,
     };
   },

@@ -402,4 +402,38 @@ export const authService = {
   authFetch,
 };
 
+// ═══════════════════════════════════════════════════════════════════════════
+// VISIBILITY CHANGE HANDLER
+// ═══════════════════════════════════════════════════════════════════════════
+
+/**
+ * Handle visibility change to refresh tokens when app becomes active after idle.
+ * setTimeout is unreliable when the system is idle/sleeping - the OS can pause
+ * JavaScript timers. This ensures we check token validity when the user returns.
+ */
+if (typeof document !== "undefined") {
+  document.addEventListener("visibilitychange", async () => {
+    if (document.visibilityState === "visible" && state.accessToken) {
+      // Check if token is expired or about to expire (within 2 minutes)
+      const now = Date.now();
+      const expiryBuffer = 2 * 60 * 1000; // 2 minutes
+
+      if (state.tokenExpiry && now >= state.tokenExpiry - expiryBuffer) {
+        console.log("[Auth] Token expired or expiring soon after idle, refreshing...");
+        try {
+          await refreshToken();
+        } catch (e) {
+          console.error("[Auth] Refresh after idle failed:", e);
+          // Try re-authentication as fallback
+          const reAuthSuccess = await reAuthenticate();
+          if (!reAuthSuccess) {
+            logout();
+            window.dispatchEvent(new CustomEvent("auth:expired"));
+          }
+        }
+      }
+    }
+  });
+}
+
 export default authService;

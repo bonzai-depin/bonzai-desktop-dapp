@@ -97,16 +97,6 @@
           <div class="models__activity--payouts">
             <div class="columns">
               <div class="column is-12">
-                <!-- ACCESS REQUIREMENTS -->
-                <AccessRequirements
-                  ref="accessRef"
-                  level="LVL5"
-                  :demo-prompt="DEMO_PROMPT"
-                  :is-generating="isLoading"
-                  @access-changed="onAccessChanged"
-                  @demo-generate="onDemoGenerate"
-                />
-
                 <!-- MODE & STRATEGY SELECTORS (side by side) -->
                 <div
                   class="environment-controls models__activity--payouts mb-4"
@@ -287,6 +277,16 @@
                   </div>
                 </div>
 
+                <!-- ACCESS REQUIREMENTS -->
+                <AccessRequirements
+                  ref="accessRef"
+                  level="LVL5"
+                  :demo-prompt="DEMO_PROMPT"
+                  :is-generating="isLoading"
+                  @access-changed="onAccessChanged"
+                  @demo-generate="onDemoGenerate"
+                />
+
                 <form ref="promptForm" @submit.prevent="onSubmit">
                   <textarea
                     id="prompt"
@@ -295,7 +295,7 @@
                     v-model="form.prompt"
                     :disabled="isLoading || !hasAccess || !isModel"
                     @keydown.enter.exact.prevent="
-                      canSubmitWithAccess && onSubmit()
+                      canSubmitWithAccess && hasAccess && onSubmit()
                     "
                     style="min-height: 5em"
                   ></textarea>
@@ -1133,6 +1133,22 @@ export default {
     const form = reactive({ prompt: "" });
     const downloadProgress = ref(0);
     const isModel = ref(false);
+
+    // ═══════════════════════════════════════════════════════════════════════
+    // ACCESS CONTROL
+    // ═══════════════════════════════════════════════════════════════════════
+    const accessRef = ref(null);
+    const hasAccess = ref(false);
+
+    const onAccessChanged = (access) => {
+      hasAccess.value = access;
+    };
+
+    const onDemoGenerate = (demoPrompt) => {
+      form.prompt = demoPrompt;
+      // Will be called after onSubmit is defined, uses closure
+      setTimeout(() => onSubmit(true), 0);
+    };
 
     // ═══════════════════════════════════════════════════════════════════════
     // GENERATION MODE
@@ -2136,22 +2152,6 @@ Generate ONLY the additional code for: ${missingList}`;
       screenshotModal.shots.forEach((shot, idx) => {
         setTimeout(() => downloadScreenshot(shot), idx * 200);
       });
-    };
-
-    // ═══════════════════════════════════════════════════════════════════════
-    // ACCESS CONTROL
-    // ═══════════════════════════════════════════════════════════════════════
-    const accessRef = ref(null);
-    const hasAccess = ref(false);
-
-    const onAccessChanged = (val) => {
-      hasAccess.value = val;
-    };
-    const onDemoGenerate = () => {
-      // Pick a fresh random prompt each time for variety
-      const randomPrompt = getRandomDemoPrompt();
-      form.prompt = randomPrompt;
-      onSubmit(true); // true = isDemo
     };
 
     const canSubmitWithAccess = computed(() => {
@@ -3955,9 +3955,9 @@ ${innerCode}`;
       // Access control
       accessRef,
       hasAccess,
-      canSubmitWithAccess,
       onAccessChanged,
       onDemoGenerate,
+      canSubmitWithAccess,
       DEMO_PROMPT,
       // Model management
       currentModel,

@@ -7,7 +7,7 @@
  */
 
 import { createSkillDefinition } from './types.js';
-import { getAuthHeaders } from '../services/auth.service.js';
+import { getAuthHeaders, authFetch } from '../services/auth.service.js';
 
 // Finance skills (formerly builtin)
 import { skill as polymarketTopPerformers } from './builtin/polymarketTopPerformers.js';
@@ -108,7 +108,7 @@ export const MODEL_REQUIREMENTS = {
   audio_turbo: {
     name: 'Kokoro TTS',
     type: 'audio',
-    pipeline: null, // Auto-downloads via KPipeline
+    pipeline: 'audio_turbo', // Auto-downloads via KPipeline, always ready
     endpoint: '/audio/turbo',
     repo: 'hexgrad/Kokoro-82M',
     size: '~327 MB',
@@ -168,7 +168,7 @@ export const MODEL_REQUIREMENTS = {
  */
 export const SKILL_MODEL_REQUIREMENTS = {
   'story-studio-v1.0.0': ['llm_default', 'image_turbo', 'audio'],
-  'meditation-forge-v1.0.0': ['llm_default', 'image_quality', 'audio'],
+  'meditation-forge-v1.0.0': ['llm_default', 'image_turbo', 'audio_turbo'],
   'virtual-staging-pro-v1.0.0': ['llm_default', 'image_turbo'],
   'virtual-try-on-v1.0.0': ['llm_default', 'image_turbo'],
   'chefs-table-v1.0.0': ['llm_default', 'image_quality'],
@@ -177,7 +177,7 @@ export const SKILL_MODEL_REQUIREMENTS = {
   'game-maker-v1.0.0': ['llm_default', 'image_turbo'],
   'manga-to-anime-v1.0.0': ['llm_default', 'image_turbo', 'video_fast'],
   'hairstyle-studio-v1.0.0': ['llm_default', 'image_turbo'],
-  'roleplay-companion-v1.0.0': ['llm_mythomax', 'image_turbo', 'image_quality', 'image_standard', 'audio_quality', 'video_fast', 'vision'],
+  'roleplay-companion-v1.0.0': ['llm_mythomax', 'image_advanced', 'image_quality', 'image_standard', 'audio_quality', 'video_fast', 'vision'],
 };
 
 /**
@@ -357,14 +357,14 @@ export const CONTENT_LEVELS = {
     description: 'Wholesome content suitable for all ages',
     guidelines: 'Keep content family-friendly and wholesome. No romance beyond hand-holding.',
     allowImages: true,
-    imageModel: 'image_turbo',
+    imageModel: 'image_advanced',
   },
   pg13: {
     label: 'Teen (PG-13)',
     description: 'Mild romantic content, no explicit material',
     guidelines: 'Mild romantic content allowed including kissing. No explicit material.',
     allowImages: true,
-    imageModel: 'image_turbo',
+    imageModel: 'image_advanced',
   },
   mature: {
     label: 'Mature (R)',
@@ -378,7 +378,7 @@ export const CONTENT_LEVELS = {
     description: 'Full creative freedom for adult content',
     guidelines: 'Full creative freedom for adult content. Be sensual and descriptive when appropriate.',
     allowImages: true,
-    imageModel: 'image_standard', // SDXL for uncensored content
+    imageModel: 'image_advanced', // Z Turbo for general adult content; image_standard used only for explicit scenes
   },
 };
 
@@ -397,7 +397,6 @@ async function callFlaskEndpoint(endpoint, payload, useDemo = false) {
   // Use demo mode if no auth token available or explicitly requested
   const headers = {
     'Content-Type': 'application/json',
-    ...authHeaders,
   };
 
   // If no auth token and demo mode allowed, use demo header
@@ -405,7 +404,9 @@ async function callFlaskEndpoint(endpoint, payload, useDemo = false) {
     headers['X-Demo-Mode'] = 'true';
   }
 
-  const response = await fetch(`http://localhost:${port}${endpoint}`, {
+  // Use authFetch for automatic 401 handling with token refresh
+  // This handles token expiration during idle periods
+  const response = await authFetch(`http://localhost:${port}${endpoint}`, {
     method: 'POST',
     headers,
     body: JSON.stringify(payload),
@@ -455,6 +456,26 @@ async function unloadLLM() {
   if (!window.electronAPI?.unloadModel) return;
   console.log('[Flagship] Unloading LLM to free memory...');
   await window.electronAPI.unloadModel();
+}
+
+// Clear ALL memory - LLM + Flask server models
+async function clearAllMemory() {
+  console.log('[Flagship] Clearing ALL memory (LLM + Flask models)...');
+
+  // Unload the local LLM
+  await unloadLLM();
+
+  // Aggressively clear Flask server memory
+  await clearGenerationMemory(true);
+
+  // Wait for cleanup to complete
+  await new Promise(r => setTimeout(r, 500));
+
+  // Final status check
+  const memStatus = await getMemoryStatus();
+  if (memStatus) {
+    console.log(`[Flagship] Memory after full clear: ${memStatus.rss_gb}GB RSS`);
+  }
 }
 
 async function generateText(prompt, systemPrompt = '') {
@@ -520,6 +541,62 @@ function extractJSON(response) {
         return JSON.parse(fixedJson);
       } catch (e2) {
         // Fall through to field extraction
+      }
+    }
+  }
+
+  // Try to repair truncated JSON (incomplete output)
+  const incompleteJsonMatch = content.match(/\{[\s\S]*/);
+  if (incompleteJsonMatch) {
+    let truncatedJson = incompleteJsonMatch[0];
+    console.log('[Flagship] Attempting to repair truncated JSON...');
+
+    // Count quotes to see if we're mid-string (simple count, ignore escaped quotes)
+    let inString = false;
+    let quoteCount = 0;
+    for (let i = 0; i < truncatedJson.length; i++) {
+      if (truncatedJson[i] === '"' && (i === 0 || truncatedJson[i - 1] !== '\\')) {
+        quoteCount++;
+      }
+    }
+    inString = quoteCount % 2 !== 0;
+
+    // If we're mid-string, close the string
+    if (inString) {
+      truncatedJson += '"';
+    }
+
+    // Count braces/brackets after potentially closing the string
+    const openBraces = (truncatedJson.match(/\{/g) || []).length;
+    const closeBraces = (truncatedJson.match(/\}/g) || []).length;
+    const openBrackets = (truncatedJson.match(/\[/g) || []).length;
+    const closeBrackets = (truncatedJson.match(/\]/g) || []).length;
+
+    // Close brackets and braces
+    for (let i = 0; i < openBrackets - closeBrackets; i++) truncatedJson += ']';
+    for (let i = 0; i < openBraces - closeBraces; i++) truncatedJson += '}';
+
+    // Remove trailing comma before closing braces/brackets
+    truncatedJson = truncatedJson.replace(/,(\s*[}\]])/g, '$1');
+
+    // Try to parse
+    try {
+      const parsed = JSON.parse(truncatedJson);
+      console.log('[Flagship] Repaired truncated JSON successfully:', Object.keys(parsed));
+      return parsed;
+    } catch (e3) {
+      console.warn('[Flagship] Truncated JSON repair failed:', e3.message);
+      // Try a more aggressive repair - find the last complete field and close there
+      const lastCompleteField = truncatedJson.match(/^([\s\S]*"[^"]+"\s*:\s*(?:"[^"]*"|true|false|null|\d+))\s*,?\s*"[^"]*$/);
+      if (lastCompleteField) {
+        const repairedJson = lastCompleteField[1] + '}';
+        try {
+          const parsed = JSON.parse(repairedJson);
+          console.log('[Flagship] Aggressively repaired JSON:', Object.keys(parsed));
+          return parsed;
+        } catch (e4) {
+          // Fall through
+        }
       }
     }
   }
@@ -706,6 +783,23 @@ function extractJSON(response) {
     return result;
   }
 
+  // Try to extract companion/scenario fields if roleplay fields not found
+  const companionResult = {};
+  const companionFields = ['name', 'description', 'personality', 'appearance', 'background', 'voiceStyle', 'avatar', 'setting', 'mood'];
+
+  for (const fieldName of companionFields) {
+    const value = extractField(fieldName, fieldName === 'background' || fieldName === 'appearance' || fieldName === 'setting');
+    if (value) {
+      companionResult[fieldName] = value;
+    }
+  }
+
+  // If we found companion fields (name is the key indicator), return that
+  if (companionResult.name) {
+    console.log('[Flagship] Extracted companion/scenario fields:', Object.keys(companionResult));
+    return companionResult;
+  }
+
   // Last resort: if content looks like roleplay text (not JSON at all), use it as response
   const cleanedContent = content.trim();
   if (cleanedContent.length > 50 && !cleanedContent.startsWith('{') && !cleanedContent.includes('"response"') && !cleanedContent.match(/^response:/i)) {
@@ -725,13 +819,14 @@ function extractJSON(response) {
 
 // Image generation - FLUX turbo (fast)
 async function generateImage(prompt, options = {}) {
-  const endpoint = options.quality ? '/image/quality' : '/image/turbo';
+  // Endpoint selection: quality (FLUX Krea) > advanced (Z Turbo) > turbo (FLUX Klein)
+  const endpoint = options.quality ? '/image/quality' : (options.advanced ? '/image/advanced' : '/image/turbo');
   return await callFlaskEndpoint(endpoint, {
     prompt,
     negative_prompt: options.negativePrompt || '',
     width: options.width || 1024,
     height: options.height || 1024,
-    steps: options.steps || (options.quality ? 20 : 4),
+    steps: options.steps || (options.quality ? 20 : (options.advanced ? 9 : 4)),
     guidance_scale: options.guidanceScale || 3.5,
   }, true); // Enable demo mode fallback
 }
@@ -771,7 +866,54 @@ async function generateNarration(text, options = {}) {
 
     // Build voice description from companion attributes
     const genderDesc = companion.gender === 'male' ? 'Male' : companion.gender === 'female' ? 'Female' : 'Neutral';
-    const instruct = `${genderDesc}, ${companion.voiceStyle || companion.personality}`;
+    const basePersonality = companion.voiceStyle || companion.personality || '';
+
+    // Map emotions to voice delivery instructions
+    const emotionVoiceStyles = {
+      excited: 'slow bold confident tone, breathless with anticipation, mix of excitement and nervousness',
+      happy: 'warm and cheerful tone, moderate pace, bright voice',
+      playful: 'teasing and lighthearted tone, varied pace, playful inflections',
+      flirty: 'sultry and inviting tone, slower pace, breathy voice',
+      aroused: 'breathless and husky tone, slow pace, soft and intimate',
+      passionate: 'intense and fervent tone, rhythmic pace, deep emotion',
+      loving: 'tender and affectionate tone, gentle pace, warm voice',
+      content: 'relaxed and peaceful tone, slow pace, soft voice',
+      sad: 'melancholic and soft tone, slow pace, lower pitch',
+      angry: 'sharp and forceful tone, fast pace, raised voice',
+      nervous: 'hesitant and trembling tone, uneven pace, higher pitch',
+      shy: 'quiet and timid tone, slow pace, soft whisper',
+      confident: 'bold and assured tone, steady pace, strong projection',
+      curious: 'inquisitive and wondering tone, varied pace, rising inflections',
+      surprised: 'startled and amazed tone, quick pace, exclamatory',
+      thoughtful: 'contemplative and measured tone, slow pace, pauses',
+      teasing: 'mischievous and playful tone, lilting pace, knowing inflections',
+      seductive: 'alluring and sensual tone, slow deliberate pace, low intimate voice',
+      ecstatic: 'overwhelmed and breathless tone, quick gasping pace, high emotion',
+      climax: 'intense gasping tone, rhythmic pace, building to release',
+    };
+
+    // Get emotion-specific voice style
+    const emotion = options.emotion?.toLowerCase() || '';
+    const emotionKey = Object.keys(emotionVoiceStyles).find(e => emotion.includes(e));
+    const emotionStyle = emotionVoiceStyles[emotionKey] || '';
+
+    // Build comprehensive instruct with emotion context
+    let instruct = `${genderDesc}`;
+    if (basePersonality) {
+      instruct += `, ${basePersonality}`;
+    }
+    if (emotionStyle) {
+      instruct += `. Speaking with ${emotionStyle}`;
+    }
+    if (options.action) {
+      // Add action context for additional nuance
+      const actionClean = options.action.replace(/\*+/g, '').trim();
+      if (actionClean.length > 0 && actionClean.length < 50) {
+        instruct += `. While ${actionClean}`;
+      }
+    }
+
+    console.log(`[Roleplay] TTS instruct: ${instruct}`);
 
     // Sample text for voice design (use a characteristic phrase)
     const sampleText = options.sampleText || `Hello, I'm ${companion.name}. It's wonderful to meet you.`;
@@ -822,9 +964,10 @@ async function generateSceneryBackground(scenarioOrLocation, options = {}) {
   console.log(`[Roleplay] Generating scenery background: ${sceneryPrompt.substring(0, 100)}...`);
 
   try {
+    // Use /image/turbo (FLUX Klein) for backgrounds - fast generation, no characters
     const result = await callFlaskEndpoint('/image/turbo', {
       prompt: sceneryPrompt,
-      negative_prompt: 'person, people, character, face, human, portrait',
+      negative_prompt: 'person, people, character, face, human, portrait, figure',
       width: options.width || 1280,
       height: options.height || 720,
       steps: 4,
@@ -839,30 +982,53 @@ async function generateSceneryBackground(scenarioOrLocation, options = {}) {
 }
 
 // Clear VRAM/RAM after generation to free memory for next task
-async function clearGenerationMemory() {
+async function clearGenerationMemory(aggressive = false) {
   try {
     const port = getFlaskPort();
-    await fetch(`http://localhost:${port}/memory/clear`, {
+    const response = await fetch(`http://localhost:${port}/memory/clear`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
     });
-    console.log('[Flagship] Memory cleared after generation');
+    const result = await response.json();
+    console.log('[Flagship] Memory cleared:', result.unloaded || 'none');
+
+    // If aggressive mode, clear multiple times with delays
+    if (aggressive) {
+      await new Promise(r => setTimeout(r, 300));
+      await fetch(`http://localhost:${port}/memory/clear`, { method: 'POST' });
+      await new Promise(r => setTimeout(r, 300));
+      await fetch(`http://localhost:${port}/memory/clear`, { method: 'POST' });
+      console.log('[Flagship] Aggressive memory clear complete');
+    }
   } catch (e) {
     console.warn('[Flagship] Failed to clear memory:', e.message);
   }
 }
 
+// Get memory status for debugging
+async function getMemoryStatus() {
+  try {
+    const port = getFlaskPort();
+    const response = await fetch(`http://localhost:${port}/memory/status`);
+    return await response.json();
+  } catch (e) {
+    console.warn('[Flagship] Failed to get memory status:', e.message);
+    return null;
+  }
+}
+
 // Video generation (I2V or T2V)
+// Reduced defaults for MPS/Apple Silicon memory constraints
 async function generateVideo(imageBase64OrNull, prompt, options = {}) {
   const mode = imageBase64OrNull ? 'i2v' : 't2v';
   return await callFlaskEndpoint('/video', {
     mode,
     prompt,
     ...(imageBase64OrNull && { image_base64: imageBase64OrNull }),
-    height: options.height || 512,
-    width: options.width || 768,
-    frames: options.frames || 97,
-    frame_rate: options.frameRate || 24,
+    height: options.height || 480,
+    width: options.width || 352,
+    frames: options.frames || 37,  // ~3 seconds at 12fps
+    frame_rate: options.frameRate || 12,
     steps: options.steps || 8,
     guidance_scale: options.guidanceScale || 1.0,
   }, true); // Enable demo mode fallback
@@ -1047,26 +1213,31 @@ Return ONLY valid JSON.`;
 export const meditationForge = createSkillDefinition({
   id: 'meditation-forge-v1.0.0',
   name: 'Meditation Forge',
-  description: 'Create personalized guided meditations with calming visuals and narration.',
+  description: 'Create personalized guided meditations with calming visuals and ASMR narration. Choose from 8 unique scenarios designed for stress relief, sleep, focus, and more.',
   version: '1.0.0',
   author: { address: '0x8Ff3b2e823b33BeE30e699bB1b6BBc8F622fEa89', name: 'BonzAI', verified: true },
   category: 'healthcare',
-  tags: ['meditation', 'wellness', 'mindfulness', 'relaxation'],
+  tags: ['meditation', 'wellness', 'mindfulness', 'relaxation', 'ASMR', 'sleep'],
+  featured: true,
+  // Custom UI component handles all rendering
+  hasCustomUI: true,
   requirements: {
     minLevel: 3,
     requiredApis: ['llm', 'image', 'audio'],
     requiredPermissions: [],
   },
+  // Inputs are handled by custom UI (MeditationForgeSkill.vue)
+  // At least one input required for validation - scenario selection handled in UI
   inputs: {
-    intention: { type: 'string', default: '', label: 'Intention', description: 'Focus area (stress relief, sleep, focus, etc.)' },
-    duration: { type: 'select', default: '10', label: 'Duration (minutes)', options: ['5', '10', '15', '20'] },
-    environment: { type: 'select', default: 'forest', label: 'Environment', options: ['forest', 'beach', 'mountain', 'garden', 'space', 'underwater'] },
+    scenario: { type: 'string', default: 'forest-calm', label: 'Scenario', description: 'Meditation scenario (handled by custom UI)' },
   },
   prompt: { system: 'You are a meditation guide.', task: 'Create a meditation script.', outputFormat: { type: 'json' } },
   tools: { bonzai: [], mcp: [] },
+  // Execution is handled by the custom UI component
   execution: {
-    type: 'javascript',
-    entrypoint: 'execute',
+    type: 'custom',
+    entrypoint: 'MeditationForgeSkill',
+    // Legacy execute function kept for backwards compatibility
     async execute(inputs, context) {
       const { intention, duration, environment } = inputs;
 
@@ -1515,7 +1686,7 @@ Return ONLY valid JSON.`;
           scene.image = imgResult.image_base64 || imgResult.image;
 
           context.updateStatus?.(`Animating scene ${i + 1}...`);
-          const videoResult = await generateVideo(scene.image, scene.motionDescription, { frames: 49, fps: 12 });
+          const videoResult = await generateVideo(scene.image, scene.motionDescription, { frames: 37, fps: 12, height: 480, width: 352 });
           scene.video = videoResult.video_path || videoResult.video;
         } catch (e) {
           scene.image = null;
@@ -1714,7 +1885,7 @@ Return ONLY valid JSON.`;
 
           // Animate the frame
           context.updateStatus?.(`Animating frame ${i + 1}...`);
-          const videoResult = await generateVideo(frame.image, `${frame.motion}, anime animation, smooth motion`, { frames: 49, fps: 12 });
+          const videoResult = await generateVideo(frame.image, `${frame.motion}, anime animation, smooth motion`, { frames: 37, fps: 12, height: 480, width: 352 });
           frame.video = videoResult.video_path || videoResult.video;
         } catch (e) {
           frame.image = null;
@@ -1859,7 +2030,7 @@ export const roleplayCompanion = createSkillDefinition({
      */
     async executeMessage({ userMessage, session, settings, sceneState = {}, visionData = null }, context) {
       const { companion, scenario, history = [] } = session;
-      const { contentLevel, responseMode } = settings;
+      const { contentLevel, responseMode, autonomousMode = false, forceVisualize = false, forceLocationChange = false } = settings;
 
       const includeImage = responseMode.includes('image');
       const includeAudio = responseMode.includes('audio');
@@ -1910,7 +2081,22 @@ Scene: ${scenario.description}
       context.updateStatus?.(`${companion.name} is thinking...`);
 
       // Build smart image generation instructions
-      const imageInstructions = includeImage ? `
+      let imageInstructions = '';
+      if (includeImage) {
+        if (forceVisualize || autonomousMode) {
+          // Autonomous mode: always generate images
+          imageInstructions = `
+IMAGE GENERATION (AUTONOMOUS MODE):
+You MUST set "shouldVisualize": true for this message.
+Generate an image showing ${companion.name} in their current activity.
+Make the image prompt specific and detailed about:
+- What ${companion.name} is physically doing right now
+- Their pose, expression, and body language
+- The environment/setting around them
+${forceLocationChange ? `- IMPORTANT: ${companion.name} is in a NEW LOCATION - describe it in "newLocation" field` : ''}
+`;
+        } else {
+          imageInstructions = `
 IMAGE GENERATION DECISION (CRITICAL - READ CAREFULLY):
 You MUST set "shouldVisualize" to decide if a new image is needed. DEFAULT TO FALSE.
 
@@ -1929,7 +2115,9 @@ Set "shouldVisualize": FALSE for (this is the DEFAULT):
 
 IMPORTANT: Images are expensive and slow. Most responses (70-80%) should have shouldVisualize: FALSE.
 Last image was ${messagesSinceLastImage} messages ago. Only set TRUE if something visually significant happens.
-` : '';
+`;
+        }
+      }
 
       // Build anti-repetition instructions
       const antiRepetitionInstructions = `
@@ -1978,16 +2166,22 @@ USER SAYS/DOES: "${userMessage}"
 
 Respond ONLY as ${companion.name}. Be immersive, descriptive, and stay in character.
 DO NOT write the user's response or actions - only ${companion.name}'s perspective.
-Output JSON with:
-- "response": Your in-character response (2-4 paragraphs, descriptive and immersive)
-- "emotion": Current emotion (happy, sad, flirty, angry, shy, excited, playful, nervous, etc.) - MUST BE DIFFERENT from recent: [${recentEmotionsStr}]
-- "action": Physical action description (what you're doing, body language, expressions) - MUST BE DIFFERENT from recent
-- "newLocation": If the setting/location changed, describe it. Otherwise null.
-${includeImage ? `- "shouldVisualize": true/false based on IMAGE GENERATION RULES above
-- "imagePrompt": [ONLY if shouldVisualize is true] Scene description for the image. Focus on: pose, action, expression, clothing state, lighting, atmosphere. Do NOT repeat character appearance (it's added automatically). Example: "looking over shoulder with a seductive smile, dim candlelight, wearing a silk robe slipping off one shoulder"` : ''}
-- "suggestedResponses": Array of 3 SHORT but VARIED suggested user replies (different tones: playful, serious, flirty, etc.)
 
-Return ONLY valid JSON.`;
+OUTPUT FORMAT - STRICT JSON ONLY:
+You MUST output a single valid JSON object. NO prose, NO character names before text, NO numbered lists, NO markdown.
+Do NOT write "${companion.name}:" or any prefix. Do NOT write "Emotion:" as a label. ONLY output the JSON object.
+
+{
+  "response": "Your in-character response here (2-4 paragraphs, descriptive and immersive. Write ONLY as ${companion.name}. Never mention 'the user' - write as if speaking TO them directly.)",
+  "emotion": "single word from: happy, sad, flirty, angry, shy, playful, nervous, loving, content, curious, surprised, confident, teasing, longing, breathless, aroused, passionate, overwhelmed, ecstatic. For physical intimacy use: aroused, passionate, breathless, overwhelmed, ecstatic. MUST be DIFFERENT from recent: [${recentEmotionsStr}]",
+  "action": "Physical action description (what you're doing, body language) - DIFFERENT from recent",
+  "newLocation": null or "new location description if setting changed",
+  ${includeImage ? `"shouldVisualize": true or false based on IMAGE GENERATION RULES,
+  "imagePrompt": "scene description if shouldVisualize is true - pose, action, expression, clothing, lighting",` : ''}
+  "suggestedResponses": ["short reply 1", "short reply 2", "short reply 3"]
+}
+
+CRITICAL: Output ONLY the JSON object above. No other text.`;
 
       let roleplayResponse = await generateTextWithModel(roleplayPrompt, '', ROLEPLAY_LLM);
       let response;
@@ -2069,16 +2263,19 @@ Respond with JSON:
 
       // Smart image generation with throttling
       // HARD GATES:
-      // 1. Never generate images on the first message (let conversation start with text)
-      // 2. Never generate images more frequently than MIN_MESSAGES_BETWEEN_IMAGES
+      // 1. Never generate images on the first message (let conversation start with text) - unless forceVisualize
+      // 2. Never generate images more frequently than MIN_MESSAGES_BETWEEN_IMAGES - unless forceVisualize
       const isFirstMessage = messageIndex < IMAGE_GENERATION_CONFIG.MIN_MESSAGES_BEFORE_FIRST_IMAGE;
       const passesMinimumGate = messagesSinceLastImage >= IMAGE_GENERATION_CONFIG.MIN_MESSAGES_BETWEEN_IMAGES;
       const llmWantsImage = response.shouldVisualize === true;
       const forceImageDueToGap = messagesSinceLastImage >= IMAGE_GENERATION_CONFIG.FORCE_IMAGE_AFTER_MESSAGES;
 
-      const shouldGenerateImage = includeImage && !isFirstMessage && passesMinimumGate && (llmWantsImage || forceImageDueToGap);
+      // In autonomous mode with forceVisualize, bypass the gates and always generate
+      const shouldGenerateImage = forceVisualize
+        ? includeImage  // Just check if images are enabled
+        : includeImage && !isFirstMessage && passesMinimumGate && (llmWantsImage || forceImageDueToGap);
 
-      console.log(`[Roleplay] Image decision: includeImage=${includeImage}, isFirstMessage=${isFirstMessage}, passesMinimumGate=${passesMinimumGate} (${messagesSinceLastImage} msgs since last), llmWantsImage=${llmWantsImage}, forceImageDueToGap=${forceImageDueToGap}, RESULT=${shouldGenerateImage}`);
+      console.log(`[Roleplay] Image decision: includeImage=${includeImage}, forceVisualize=${forceVisualize}, isFirstMessage=${isFirstMessage}, passesMinimumGate=${passesMinimumGate} (${messagesSinceLastImage} msgs since last), llmWantsImage=${llmWantsImage}, forceImageDueToGap=${forceImageDueToGap}, RESULT=${shouldGenerateImage}`);
 
       // If forcing image due to gap but no imagePrompt, create a default one
       if (shouldGenerateImage && !response.imagePrompt && forceImageDueToGap) {
@@ -2091,7 +2288,26 @@ Respond with JSON:
         context.updateStatus?.(`Visualizing ${companion.name}...`);
         try {
           let imageResult;
-          const imageModel = contentConfig.imageModel || 'image_turbo';
+
+          // Detect explicit/sexual scenes based on emotion, action, and context (moved up for model selection)
+          const explicitEmotions = ['aroused', 'lustful', 'passionate', 'breathless', 'overwhelmed', 'ecstatic'];
+          const explicitKeywords = ['sex', 'fuck', 'thrust', 'moan', 'orgasm', 'cum', 'naked', 'undress', 'intimate', 'penetrat', 'riding', 'sucking', 'licking'];
+          const actionLower = (response.action || '').toLowerCase();
+          const emotionLower = (response.emotion || '').toLowerCase();
+          const responseLower = (response.response || '').toLowerCase();
+
+          const isExplicitScene = isAdult && (
+            explicitEmotions.includes(emotionLower) ||
+            explicitKeywords.some(k => actionLower.includes(k)) ||
+            explicitKeywords.some(k => responseLower.includes(k))
+          );
+
+          // Model selection:
+          // - image_standard (SDXL): Only for explicit/NSFW scenes in adult mode
+          // - image_advanced (Z Turbo): Default for all other content including adult non-explicit
+          // - image_quality (FLUX Krea): For mature content
+          const imageModel = isExplicitScene ? 'image_standard' : (contentConfig?.imageModel || 'image_advanced');
+          console.log(`[Roleplay] Image generation: contentLevel=${contentLevel}, isAdult=${isAdult}, isExplicitScene=${isExplicitScene}, imageModel=${imageModel}`);
 
           // ═══════════════════════════════════════════════════════════════════
           // CHARACTER CONSISTENCY: Always use companion's full appearance as base
@@ -2114,20 +2330,8 @@ Respond with JSON:
             ? `, incorporating elements from: ${visionData.imageAnalysis.substring(0, 150)}`
             : '';
 
-          // Detect explicit/sexual scenes based on emotion, action, and context
-          const explicitEmotions = ['excited', 'aroused', 'lustful', 'passionate'];
-          const explicitKeywords = ['sex', 'fuck', 'thrust', 'moan', 'orgasm', 'cum', 'naked', 'undress', 'intimate', 'penetrat', 'riding', 'sucking', 'licking'];
-          const actionLower = (response.action || '').toLowerCase();
-          const emotionLower = (response.emotion || '').toLowerCase();
-          const responseLower = (response.response || '').toLowerCase();
-
-          const isExplicitScene = isAdult && (
-            explicitEmotions.includes(emotionLower) ||
-            explicitKeywords.some(k => actionLower.includes(k)) ||
-            explicitKeywords.some(k => responseLower.includes(k))
-          );
-
           // Build prompt with character consistency as foundation
+          // Note: isExplicitScene, actionLower, emotionLower, responseLower already defined above for model selection
           let prompt;
 
           if (isAdult && isExplicitScene) {
@@ -2155,16 +2359,19 @@ Respond with JSON:
 
           console.log(`[Roleplay] Image prompt with character consistency: ${prompt.substring(0, 200)}...`);
 
-          // Use appropriate model based on content level
+          // Use appropriate model based on content level (landscape orientation)
           if (imageModel === 'image_standard') {
-            // SDXL for adult/uncensored content
-            imageResult = await generateImageSDXL(prompt, { width: 768, height: 1024 });
+            // SDXL for explicit/NSFW scenes (uncensored)
+            imageResult = await generateImageSDXL(prompt, { width: 1024, height: 768 });
           } else if (imageModel === 'image_quality') {
             // FLUX Krea for mature content (high quality)
-            imageResult = await generateImage(prompt, { width: 768, height: 1024, quality: true });
+            imageResult = await generateImage(prompt, { width: 1024, height: 768, quality: true });
+          } else if (imageModel === 'image_advanced') {
+            // Z Turbo for general content (pg, pg13, adult non-explicit)
+            imageResult = await generateImage(prompt, { width: 1024, height: 768, advanced: true });
           } else {
-            // FLUX Klein for PG/PG13 (fast turbo)
-            imageResult = await generateImage(prompt, { width: 768, height: 1024 });
+            // Fallback to Z Turbo (advanced) as default
+            imageResult = await generateImage(prompt, { width: 1024, height: 768, advanced: true });
           }
           response.image = imageResult.image_base64 || imageResult.image;
 
@@ -2188,12 +2395,25 @@ Respond with JSON:
         response.image = null;
       }
 
-      // Generate new scenery background when location changes
-      if (includeImage && response.newLocation && response.newLocation !== currentLocation) {
+      // Generate new scenery background when location changes or forced
+      const locationChanged = response.newLocation && response.newLocation !== currentLocation;
+      const shouldGenerateBackground = includeImage && (locationChanged || forceLocationChange);
+
+      if (shouldGenerateBackground) {
         context.updateStatus?.('Changing scenery...');
         try {
-          response.backgroundImage = await generateSceneryBackground(response.newLocation);
-          console.log('[Roleplay] Generated new scenery for location change');
+          // Use new location if provided, otherwise generate a variation of current setting
+          const locationForBackground = response.newLocation || `${scenario?.setting || 'scenic location'} - new perspective`;
+          response.backgroundImage = await generateSceneryBackground(locationForBackground);
+          console.log(`[Roleplay] Generated new scenery: ${locationForBackground}`);
+
+          // Streaming callback - notify background image is ready
+          if (context.onProgress) {
+            context.onProgress({
+              type: 'background',
+              response: { ...response },
+            });
+          }
 
           // Clear memory after background generation
           await clearGenerationMemory();
@@ -2203,52 +2423,100 @@ Respond with JSON:
       }
 
       // Generate voice response using Qwen3-TTS persona (high quality voice design + cloning)
+      // If quotes are present, only narrate quoted dialogue
+      // If no quotes, narrate the full response (companion is speaking directly)
       if (includeAudio && response.response) {
-        context.updateStatus?.(`${companion.name} is speaking...`);
-        try {
-          // Use Qwen3-TTS persona for high-quality companion voice
-          const audioResult = await generateNarration(response.response, {
-            companion, // Pass full companion object for persona voice design
-          });
-          response.audio = audioResult.audio_path || audioResult.audio;
+        // Extract quoted dialogue from the response
+        const quoteMatches = response.response.match(/"([^"]+)"/g) || [];
+        const dialogueOnly = quoteMatches
+          .map(q => q.replace(/"/g, '').trim())
+          .filter(q => q.length > 0)
+          .join(' ');
 
-          // Streaming callback - notify audio is ready
-          if (context.onProgress) {
-            context.onProgress({
-              type: 'audio',
-              response: { ...response },
+        // Use quoted dialogue if present, otherwise use full response
+        const textToSpeak = dialogueOnly.length > 0
+          ? dialogueOnly
+          : response.response.replace(/\*[^*]+\*/g, '').trim(); // Remove action text in asterisks
+
+        if (textToSpeak.length > 0) {
+          context.updateStatus?.(`${companion.name} is speaking...`);
+          try {
+            // Use Qwen3-TTS persona for high-quality companion voice
+            const audioResult = await generateNarration(textToSpeak, {
+              companion, // Pass full companion object for persona voice design
+              emotion: response.emotion, // Pass emotion for voice tone/pace
+              action: response.action, // Pass action for additional context
             });
-          }
+            response.audio = audioResult.audio_path || audioResult.audio;
 
-          // Clear memory after audio generation
-          await clearGenerationMemory();
-        } catch (e) {
-          console.warn('[Roleplay] Audio generation failed:', e.message);
-          response.audio = null;
+            // Streaming callback - notify audio is ready
+            if (context.onProgress) {
+              context.onProgress({
+                type: 'audio',
+                response: { ...response },
+              });
+            }
+
+            // Clear memory after audio generation
+            await clearGenerationMemory();
+          } catch (e) {
+            console.warn('[Roleplay] Audio generation failed:', e.message);
+            response.audio = null;
+          }
         }
       }
 
       // ═══════════════════════════════════════════════════════════════════════════
       // VIDEO GENERATION FOR PEAK EMOTIONS (LTX-2 I2V)
       // ═══════════════════════════════════════════════════════════════════════════
-      const peakEmotions = ['excited', 'aroused', 'passionate', 'ecstatic', 'overwhelmed', 'climax', 'orgasmic'];
+      const peakEmotions = ['aroused', 'passionate', 'ecstatic', 'overwhelmed', 'climax', 'orgasmic', 'breathless', 'longing', 'lustful'];
       const emotionLower = (response.emotion || '').toLowerCase();
       const isPeakEmotion = peakEmotions.some(e => emotionLower.includes(e));
 
+      console.log(`[Roleplay] Video check: includeVideo=${includeVideo}, hasImage=${!!response.image}, emotion=${emotionLower}, isPeakEmotion=${isPeakEmotion}`);
+
       if (includeVideo && response.image && isPeakEmotion) {
-        context.updateStatus?.(`Creating cinematic moment...`);
+        context.updateStatus?.(`Preparing for video generation...`);
         try {
-          // Extract dialogue from response (remove actions/scenic descriptions)
-          const dialogueOnly = response.response
-            .replace(/\*[^*]+\*/g, '') // Remove *actions*
-            .replace(/\([^)]+\)/g, '') // Remove (descriptions)
-            .replace(/\[[^\]]+\]/g, '') // Remove [notes]
-            .trim();
+          // Aggressively clear memory BEFORE video generation
+          await clearGenerationMemory(true); // Use aggressive mode
+          await new Promise(r => setTimeout(r, 1000)); // Wait 1s for memory to fully free
 
-          // Build video prompt from image prompt + emotion
-          const videoPrompt = `${response.imagePrompt || companion.appearance}, ${response.emotion} expression, subtle movement, breathing, cinematic, smooth motion, high quality`;
+          // Check memory status
+          const memStatus = await getMemoryStatus();
+          if (memStatus) {
+            console.log(`[Roleplay] Memory before video: ${memStatus.rss_gb}GB RSS, cached: ${memStatus.cached_models?.join(', ') || 'none'}`);
+          }
 
-          console.log(`[Roleplay] Generating peak emotion video: ${videoPrompt.substring(0, 100)}...`);
+          context.updateStatus?.(`Creating cinematic moment...`);
+
+          // Build motion-focused video prompt for LTX-2
+          // LTX-2 needs explicit motion/action descriptions to generate movement
+          const emotionMotions = {
+            aroused: 'slow sensual movements, arching back, running hands through hair',
+            passionate: 'intense embracing motion, pulling closer, deep breathing',
+            ecstatic: 'throwing head back, trembling with pleasure, gripping tightly',
+            overwhelmed: 'shuddering, gasping, waves of motion through body',
+            climax: 'intense rhythmic motion, body tensing and releasing, trembling',
+            orgasmic: 'full body convulsions, arching spine, waves of pleasure',
+            breathless: 'chest heaving, lips parted, trembling with anticipation',
+            longing: 'reaching out slowly, yearning gaze, subtle leaning forward',
+            lustful: 'hungry gaze, biting lip, slow deliberate movements toward camera',
+          };
+
+          // Find matching motion based on emotion
+          const emotionKey = Object.keys(emotionMotions).find(e => emotionLower.includes(e));
+          const motionDesc = emotionMotions[emotionKey] || 'gentle swaying, natural breathing, subtle head movements';
+
+          // Extract action from response if available
+          const actionDesc = response.action
+            ? response.action.replace(/\*+/g, '').trim()
+            : '';
+
+          // Build comprehensive video prompt with motion focus
+          const videoPrompt = `Cinematic video of ${companion.name}, ${companion.appearance.split(',').slice(0, 3).join(',')}, ${response.emotion} expression. ACTION: ${motionDesc}${actionDesc ? `, ${actionDesc}` : ''}. Smooth camera movement, professional cinematography, film grain, shallow depth of field, 24fps cinematic motion.`;
+
+          console.log(`[Roleplay] Video prompt with motion: ${videoPrompt}`);
 
           const port = window.BONZAI_SERVER_PORT || 65000;
           const authHeaders = getAuthHeaders();
@@ -2269,10 +2537,10 @@ Respond with JSON:
               prompt: videoPrompt,
               negative_prompt: 'static, frozen, low quality, blurry, distorted face',
               image_base64: response.image,  // Use generated image as starting frame
-              height: 640,   // Portrait orientation (448x640)
-              width: 448,
-              frames: 121,   // 5 seconds at 24fps (8n+1 = 121)
-              frame_rate: 24,
+              height: 448,   // 480p landscape
+              width: 640,
+              frames: 61,    // 5 seconds at 12fps (must be 8n+1)
+              frame_rate: 12,
               steps: 8,
               guidance_scale: 1.0,
               auto_download: true,
@@ -2286,8 +2554,9 @@ Respond with JSON:
               console.log('[Roleplay] Video generated successfully');
 
               // If we have audio, the frontend can combine them
-              // Store dialogue for potential TTS overlay
-              response.videoDialogue = dialogueOnly;
+              // Store dialogue for potential TTS overlay (extract from response if not already available)
+              const videoDialogue = response.response ? (response.response.match(/"([^"]+)"/g) || []).map(q => q.replace(/"/g, '')).join(' ') : '';
+              response.videoDialogue = videoDialogue;
 
               // Streaming callback - notify video is ready
               if (context.onProgress) {
@@ -2301,12 +2570,17 @@ Respond with JSON:
               await clearGenerationMemory();
             }
           } else {
-            console.warn('[Roleplay] Video generation failed:', await videoResponse.text());
+            const errorText = await videoResponse.text();
+            console.warn(`[Roleplay] Video generation failed (${videoResponse.status}):`, errorText);
           }
         } catch (e) {
-          console.warn('[Roleplay] Video generation error:', e.message);
+          console.warn('[Roleplay] Video generation error:', e.message, e.stack);
           response.video = null;
         }
+      } else if (includeVideo && !response.image) {
+        console.log('[Roleplay] Video skipped: no image available as starting frame');
+      } else if (includeVideo && !isPeakEmotion) {
+        console.log(`[Roleplay] Video skipped: emotion "${emotionLower}" not in peak emotions list`);
       }
 
       // Return updated scene state for the UI to track
@@ -2395,25 +2669,28 @@ Respond with JSON:
      */
     async generateCompanion({ description, style = 'romantic' }, context) {
       context.updateStatus?.('Generating companion...');
-      await ensureLLMLoaded(ROLEPLAY_LLM);
 
       const prompt = `Create a unique roleplay companion character.
 
 User wants: ${description}
 Style: ${style}
 
-Output JSON with:
-- "name": Unique character name
-- "description": 1-2 sentence hook
-- "personality": Personality traits (comma-separated)
-- "appearance": Detailed physical appearance
-- "background": Character backstory (2-3 sentences)
-- "voiceStyle": How they speak (tone, mannerisms)
-- "avatar": One of: woman, man, android, demon, soldier, fantasy
+Output JSON with these exact fields:
+{
+  "name": "Character name",
+  "description": "1-2 sentence hook",
+  "personality": "trait1, trait2, trait3",
+  "appearance": "Detailed physical appearance",
+  "background": "Character backstory (2-3 sentences)",
+  "voiceStyle": "How they speak",
+  "avatar": "woman"
+}
 
-Return ONLY valid JSON.`;
+avatar must be one of: woman, man, android, demon, soldier, fantasy
 
-      const response = await generateText(prompt);
+Return ONLY the JSON object, no other text.`;
+
+      const response = await generateTextWithModel(prompt, '', ROLEPLAY_LLM);
       const companion = extractJSON(response);
       companion.id = `custom_${Date.now()}`;
       companion.isCustom = true;
@@ -2427,22 +2704,23 @@ Return ONLY valid JSON.`;
      */
     async generateScenario({ description, mood = 'romantic' }, context) {
       context.updateStatus?.('Generating scenario...');
-      await ensureLLMLoaded(ROLEPLAY_LLM);
 
       const prompt = `Create a unique roleplay scenario.
 
 User wants: ${description}
 Mood: ${mood}
 
-Output JSON with:
-- "name": Scenario title
-- "description": 1 sentence summary
-- "setting": Detailed setting description (environment, atmosphere, sensory details)
-- "mood": Overall mood/tone
+Output JSON with these exact fields:
+{
+  "name": "Scenario title",
+  "description": "1 sentence summary",
+  "setting": "Detailed setting description",
+  "mood": "${mood}"
+}
 
-Return ONLY valid JSON.`;
+Return ONLY the JSON object, no other text.`;
 
-      const response = await generateText(prompt);
+      const response = await generateTextWithModel(prompt, '', ROLEPLAY_LLM);
       const scenario = extractJSON(response);
       scenario.id = `custom_${Date.now()}`;
       scenario.isCustom = true;
@@ -2463,6 +2741,10 @@ export const flagshipSkills = [
   dslaSmartMarket,          // Prediction Market Maker
   roleplayCompanion,        // Roleplay Companion
   tcgPredictionMarket,      // Trading Card Game Insurance
+  meditationForge,          // Meditation Forge
 ];
+
+// Export memory management functions for use by components
+export { clearAllMemory, getMemoryStatus, clearGenerationMemory };
 
 export default flagshipSkills;

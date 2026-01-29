@@ -41,6 +41,9 @@ export const useSkillStore = defineStore('skill', () => {
   // Search query
   const searchQuery = ref('');
 
+  // Pending skill navigation (set when navigating from outside SmartAgent)
+  const pendingSkillId = ref(null);
+
   // ═══════════════════════════════════════════════════════════════════════════
   // AUTONOMOUS COMPANION MODE (Global State)
   // Persists across views - companion continues generating while user navigates
@@ -54,9 +57,23 @@ export const useSkillStore = defineStore('skill', () => {
   const idleCheckInterval = ref(null);
   const autonomousInterval = ref(null);
   const isGeneratingAutonomous = ref(false);
+  const autonomousMessageCount = ref(0); // Track how many autonomous messages generated
   const IDLE_TIMEOUT = 300000; // 5 minutes of inactivity to consider idle
-  const AUTONOMOUS_MESSAGE_INTERVAL = 60000; // 1 minute between autonomous messages
+  const AUTONOMOUS_MESSAGE_INTERVAL = 900000; // 15 minutes between autonomous messages
+  const MAX_AUTONOMOUS_MESSAGES = 12; // Max messages before stopping (3 hours at 15min intervals)
   const STORAGE_KEY = 'roleplaySessions';
+
+  // Variety prompts for autonomous mode - cycles through different activities
+  const AUTONOMOUS_ACTIVITIES = [
+    { type: 'routine', prompt: 'doing something from their daily routine' },
+    { type: 'explore', prompt: 'exploring a new area or discovering something interesting' },
+    { type: 'hobby', prompt: 'engaging in one of their hobbies or interests' },
+    { type: 'reflect', prompt: 'having a quiet moment of reflection or daydreaming' },
+    { type: 'social', prompt: 'interacting with the environment or other characters in passing' },
+    { type: 'adventure', prompt: 'getting into a small adventure or unexpected situation' },
+    { type: 'creative', prompt: 'doing something creative or expressive' },
+    { type: 'relax', prompt: 'relaxing or taking care of themselves' },
+  ];
 
   // Full autonomous session state (persists across views)
   const autonomousSession = ref({
@@ -73,6 +90,7 @@ export const useSkillStore = defineStore('skill', () => {
       lastOpeningPhrase: '',
     },
     backgroundImage: null,
+    backgroundHistory: [], // Array of { messageIndex, image } for scroll-based background switching
   });
 
   // ═══════════════════════════════════════════════════════════════════════════
@@ -633,6 +651,13 @@ export const useSkillStore = defineStore('skill', () => {
       return;
     }
 
+    // Check if we've reached the max autonomous messages
+    if (autonomousMessageCount.value >= MAX_AUTONOMOUS_MESSAGES) {
+      console.log('[SkillStore] Reached max autonomous messages, stopping');
+      stopAutonomousMode();
+      return;
+    }
+
     // Check if user came back
     if (document.hasFocus() && Date.now() - lastActiveTime.value < IDLE_TIMEOUT) {
       console.log('[SkillStore] Skipping autonomous generation - user came back');
@@ -646,26 +671,40 @@ export const useSkillStore = defineStore('skill', () => {
     }
 
     isGeneratingAutonomous.value = true;
-    console.log(`[SkillStore] Generating autonomous message for ${session.companion.name}...`);
+    const msgNum = autonomousMessageCount.value + 1;
+    console.log(`[SkillStore] Generating autonomous message #${msgNum} for ${session.companion.name}...`);
 
     try {
-      // Create autonomous prompt
-      const autonomousPrompt = `*${session.companion.name} notices you haven't responded in a while. They continue with their day, doing something within the scenario context, and update you about what they're doing.*`;
+      // Pick a varied activity based on message count to ensure variety
+      const activityIndex = autonomousMessageCount.value % AUTONOMOUS_ACTIVITIES.length;
+      const activity = AUTONOMOUS_ACTIVITIES[activityIndex];
 
-      // Add user message to history
-      const userMsg = {
-        role: 'user',
-        content: autonomousPrompt,
-        timestamp: Date.now(),
-        isAutonomous: true,
-      };
-      session.history.push(userMsg);
+      // Force location change every 3-4 messages
+      const shouldChangeLocation = autonomousMessageCount.value > 0 && autonomousMessageCount.value % 3 === 0;
+
+      // Build a rich autonomous prompt that encourages story progression
+      // This prompt is NOT added to the visible history
+      const autonomousPrompt = `[AUTONOMOUS MODE - Time has passed since the user last interacted]
+
+${session.companion.name} is ${activity.prompt}.
+${shouldChangeLocation ? `IMPORTANT: ${session.companion.name} has moved to a NEW LOCATION different from "${session.sceneState.currentLocation}". Describe where they are now.` : ''}
+
+REQUIREMENTS:
+- Write what ${session.companion.name} is doing RIGHT NOW as if sending a message to catch up
+- Be specific about actions, not generic
+- Include sensory details (what they see, hear, feel)
+- Show personality through their activity
+- ${shouldChangeLocation ? 'MUST describe the new location they are in' : 'Can mention a different spot within the current area'}
+- Avoid repeating previous activities: ${session.sceneState.recentActions?.slice(-3).join(', ') || 'none yet'}
+- Keep it natural, like a text message update
+- Set "shouldVisualize" to true to show what they're doing`;
 
       // Build responseMode from settings
       const responseMode = ['text'];
       if (session.settings.enableImage) responseMode.push('image');
       if (session.settings.enableAudio) responseMode.push('audio');
-      if (session.settings.enableVideo) responseMode.push('video');
+      // Skip video in autonomous mode to save resources
+      // if (session.settings.enableVideo) responseMode.push('video');
 
       // Create execution context
       const context = {
@@ -676,17 +715,21 @@ export const useSkillStore = defineStore('skill', () => {
       };
 
       // Call roleplayCompanion.execution.executeMessage
+      // NOTE: We pass the prompt but DON'T add it to session.history (invisible prompt)
       const result = await roleplayCompanion.execution.executeMessage(
         {
           userMessage: autonomousPrompt,
           session: {
             companion: session.companion,
             scenario: session.scenario,
-            history: session.history.slice(0, -1), // Exclude the message we just added
+            history: session.history, // Full history without the autonomous prompt
           },
           settings: {
             contentLevel: session.settings.contentLevel,
             responseMode: responseMode.join('+'),
+            autonomousMode: true, // Flag for special handling
+            forceVisualize: true, // Always generate image in autonomous mode
+            forceLocationChange: shouldChangeLocation,
           },
           sceneState: session.sceneState,
         },
@@ -696,10 +739,9 @@ export const useSkillStore = defineStore('skill', () => {
       console.log('[SkillStore] Autonomous generation result:', result);
 
       // The result structure is: { success, character, response: {...}, sceneState, meta }
-      // The actual response data is in result.response
       const responseData = result.response || {};
 
-      // Extract response text - it's in result.response.response
+      // Extract response text
       const responseText = typeof responseData.response === 'string'
         ? responseData.response
         : (responseData.text || responseData.content || result.text || '');
@@ -709,7 +751,7 @@ export const useSkillStore = defineStore('skill', () => {
         throw new Error('No response text generated');
       }
 
-      // Update scene state from result.sceneState or responseData
+      // Update scene state
       const newSceneState = result.sceneState || {};
       if (newSceneState.currentLocation || responseData.newLocation) {
         session.sceneState.currentLocation = newSceneState.currentLocation || responseData.newLocation;
@@ -725,7 +767,7 @@ export const useSkillStore = defineStore('skill', () => {
       }
       if (responseData.action) {
         session.sceneState.recentActions = [
-          ...session.sceneState.recentActions.slice(-1),
+          ...session.sceneState.recentActions.slice(-3),
           responseData.action,
         ];
       }
@@ -737,30 +779,43 @@ export const useSkillStore = defineStore('skill', () => {
         session.sceneState.lastImageAt = session.history.length;
       }
 
-      // Create assistant message
+      // Handle background image updates (from location changes)
+      if (responseData.backgroundImage) {
+        session.backgroundImage = responseData.backgroundImage;
+        session.backgroundHistory = session.backgroundHistory || [];
+        session.backgroundHistory.push({
+          messageIndex: session.history.length,
+          image: responseData.backgroundImage,
+          location: responseData.newLocation || session.sceneState.currentLocation,
+        });
+        console.log(`[SkillStore] Background updated for location: ${responseData.newLocation || 'unknown'}`);
+      }
+
+      // Create assistant message (only the response, no fake user message)
       const assistantMsg = {
         role: 'assistant',
         content: responseText,
         emotion: responseData.emotion,
         action: responseData.action,
         image: responseData.image || null,
+        images: responseData.images || null, // Support for batch images
         audio: responseData.audio || null,
         video: responseData.video || null,
         timestamp: Date.now(),
         isAutonomous: true,
+        autonomousActivity: activity.type,
       };
 
       session.history.push(assistantMsg);
       missedMessages.value++;
+      autonomousMessageCount.value++;
 
       // Save session to storage
       await saveAutonomousSession();
 
-      console.log(`[SkillStore] Autonomous message generated: "${responseText?.substring(0, 50)}..."`);
+      console.log(`[SkillStore] Autonomous message #${msgNum} generated: "${responseText?.substring(0, 50)}..." (activity: ${activity.type})`);
     } catch (e) {
       console.error('[SkillStore] Autonomous message generation failed:', e);
-      // Remove the user message we added
-      session.history.pop();
     } finally {
       isGeneratingAutonomous.value = false;
       runningStatus.value = '';
@@ -780,6 +835,7 @@ export const useSkillStore = defineStore('skill', () => {
       history: [...sessionData.history],
       sceneState: { ...sessionData.sceneState },
       backgroundImage: sessionData.backgroundImage,
+      backgroundHistory: sessionData.backgroundHistory ? [...sessionData.backgroundHistory] : [],
     };
     console.log(`[SkillStore] Autonomous session started: ${sessionData.companion?.name} in ${sessionData.scenario?.name}`);
   };
@@ -804,6 +860,8 @@ export const useSkillStore = defineStore('skill', () => {
       sessionKey: autonomousSession.value.sessionKey,
       history: [...autonomousSession.value.history],
       sceneState: { ...autonomousSession.value.sceneState },
+      backgroundImage: autonomousSession.value.backgroundImage,
+      backgroundHistory: autonomousSession.value.backgroundHistory ? [...autonomousSession.value.backgroundHistory] : [],
     };
   };
 
@@ -835,6 +893,9 @@ export const useSkillStore = defineStore('skill', () => {
     autonomousMode.value = enabled;
 
     if (enabled) {
+      // Reset message counter when starting
+      autonomousMessageCount.value = 0;
+
       // Start idle checking
       idleCheckInterval.value = setInterval(checkIdle, 5000);
 
@@ -847,7 +908,7 @@ export const useSkillStore = defineStore('skill', () => {
       document.addEventListener('click', updateActivity);
       window.addEventListener('focus', updateActivity);
 
-      console.log('[SkillStore] Autonomous mode enabled');
+      console.log(`[SkillStore] Autonomous mode enabled (interval: ${AUTONOMOUS_MESSAGE_INTERVAL / 60000} min, max: ${MAX_AUTONOMOUS_MESSAGES} msgs)`);
     } else {
       // Clean up intervals
       if (idleCheckInterval.value) {
@@ -884,6 +945,20 @@ export const useSkillStore = defineStore('skill', () => {
    */
   const clearMissedMessages = () => {
     missedMessages.value = 0;
+  };
+
+  /**
+   * Request navigation to a specific skill (consumed by SmartAgent)
+   */
+  const requestSkillNavigation = (skillId) => {
+    pendingSkillId.value = skillId;
+  };
+
+  /**
+   * Clear pending skill navigation (called by SmartAgent after consuming)
+   */
+  const clearPendingSkillId = () => {
+    pendingSkillId.value = null;
   };
 
   // ═══════════════════════════════════════════════════════════════════════════
@@ -939,6 +1014,13 @@ export const useSkillStore = defineStore('skill', () => {
     stopAutonomousMode,
     clearMissedMessages,
     updateActivity,
+    autonomousMessageCount,
+    MAX_AUTONOMOUS_MESSAGES,
+
+    // Navigation
+    pendingSkillId,
+    requestSkillNavigation,
+    clearPendingSkillId,
   };
 });
 

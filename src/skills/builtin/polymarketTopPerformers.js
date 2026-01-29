@@ -41,7 +41,7 @@ export const skill = {
   // ═══════════════════════════════════════════════════════════════════════════
 
   requirements: {
-    minLevel: 6,
+    minLevel: 1,
     requiredApis: ['polymarket'],
     requiredPermissions: ['network:read'],
   },

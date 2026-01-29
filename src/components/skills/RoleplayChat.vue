@@ -7,15 +7,18 @@
         <h3
           class="fira-sans-condensed-black-italic has-text-white has-text-left is-size-3 mb-4"
         >
+          <span class="material-symbols-outlined mr-2 is-size-1">
+            person_pin
+          </span>
           Select Companion
         </h3>
-
+        <hr />
         <!-- Predefined Companions -->
-        <div class="companion-grid">
+        <div class="companion-grid mt-5 pt-5">
           <div
             v-for="companion in predefinedCompanions"
             :key="companion.id"
-            class="companion-card"
+            class="companion-card has-text-left"
             :class="{
               'is-selected': selectedCompanion?.id === companion.id,
               'has-session': getSessionInfo(companion),
@@ -41,10 +44,22 @@
               </span>
             </div>
             <div class="companion-info">
-              <h4 class="companion-name fira-sans-condensed-black-italic">
+              <h4
+                class="companion-name fira-sans-condensed-black-italic is-size-4 has-text-brand"
+              >
                 {{ companion.name }}
               </h4>
-              <p class="companion-desc">{{ companion.description }}</p>
+              <hr />
+              <p class="companion-desc" style="min-height: 100px">
+                {{ companion.description }}
+              </p>
+              <hr />
+              <p
+                class="has-text-white mt-5 is-size-7"
+                style="text-transform: uppercase; word-wrap: break-word"
+              >
+                {{ companion.personality }}
+              </p>
             </div>
           </div>
 
@@ -52,7 +67,7 @@
           <div
             v-for="companion in savedCustomCompanions"
             :key="companion.id"
-            class="companion-card is-saved-custom"
+            class="companion-card is-saved-custom has-text-left"
             :class="{
               'is-selected': selectedCompanion?.id === companion.id,
               'has-session': getSessionInfo(companion),
@@ -78,14 +93,28 @@
               </span>
               <!-- Custom badge -->
               <span class="custom-badge" title="Custom character">
-                <span class="material-symbols-outlined" style="font-size: 10px">auto_awesome</span>
+                <span class="material-symbols-outlined" style="font-size: 10px">
+                  auto_awesome
+                </span>
               </span>
             </div>
             <div class="companion-info">
-              <h4 class="companion-name fira-sans-condensed-black-italic">
+              <h4
+                class="companion-name fira-sans-condensed-black-italic is-size-4 has-text-brand"
+              >
                 {{ companion.name }}
               </h4>
-              <p class="companion-desc">{{ companion.description }}</p>
+              <hr />
+              <p class="companion-desc" style="min-height: 100px">
+                {{ companion.description }}
+              </p>
+              <hr />
+              <p
+                class="has-text-white mt-5 is-size-7"
+                style="text-transform: uppercase; word-wrap: break-word"
+              >
+                {{ companion.personality }}
+              </p>
             </div>
             <!-- Delete button -->
             <button
@@ -93,13 +122,13 @@
               @click.stop="deleteCustomCompanion(companion.id)"
               title="Delete character"
             >
-              <span class="material-symbols-outlined" style="font-size: 14px">close</span>
+              <span class="material-symbols-outlined">close</span>
             </button>
           </div>
 
           <!-- Custom Companion Card -->
           <div
-            class="companion-card is-custom"
+            class="companion-card is-custom has-text-left"
             :class="{ 'is-selected': selectedCompanion?.isCustom }"
             @click="openCustomCompanion"
           >
@@ -107,7 +136,9 @@
               <span class="material-symbols-outlined">add</span>
             </div>
             <div class="companion-info">
-              <h4 class="companion-name fira-sans-condensed-black-italic">
+              <h4
+                class="companion-name fira-sans-condensed-black-italic is-size-4"
+              >
                 Create Custom
               </h4>
               <p class="companion-desc">Design your own companion</p>
@@ -116,38 +147,29 @@
         </div>
 
         <!-- Custom Companion Generator -->
-        <div v-if="showCustomCompanion" class="custom-companion-form mt-5 p-4">
-          <h4 class="fira-sans-condensed-black-italic has-text-white mb-3">
-            <span class="material-symbols-outlined mr-2">auto_awesome</span>
-            Generate Custom Companion
-          </h4>
+        <div v-if="showCustomCompanion" class="custom-companion-form mt-5 p-5">
           <div class="field">
             <div class="control">
               <textarea
                 v-model="customCompanionPrompt"
-                class="textarea"
-                placeholder="Describe your ideal companion (e.g., 'A mysterious vampire prince with a brooding personality')"
-                rows="2"
+                class="textarea is-large"
+                placeholder="Describe your ideal companion..."
+                rows="3"
               ></textarea>
             </div>
           </div>
-          <div class="field">
-            <label class="label has-text-white is-size-7">Style</label>
-            <div class="control">
-              <div class="select is-small">
-                <select v-model="customCompanionStyle">
-                  <option value="romantic">Romantic</option>
-                  <option value="adventurous">Adventurous</option>
-                  <option value="mysterious">Mysterious</option>
-                  <option value="wholesome">Wholesome</option>
-                  <option value="dark">Dark</option>
-                </select>
-              </div>
+          <div class="buttons">
+            <div class="select is-medium mr-2">
+              <select v-model="customCompanionStyle">
+                <option value="romantic">Romantic</option>
+                <option value="adventurous">Adventurous</option>
+                <option value="mysterious">Mysterious</option>
+                <option value="wholesome">Wholesome</option>
+                <option value="dark">Dark</option>
+              </select>
             </div>
-          </div>
-          <div class="buttons mt-3">
             <button
-              class="button is-info"
+              class="button is-info is-medium mt-2"
               @click="generateCustomCompanion"
               :disabled="!customCompanionPrompt || isGenerating"
             >
@@ -162,50 +184,53 @@
               </span>
               {{ isGenerating ? "Generating..." : "Generate" }}
             </button>
-            <button class="button" @click="showCustomCompanion = false">
+            <button
+              class="button is-danger is-medium mt-2"
+              @click="showCustomCompanion = false"
+            >
               Cancel
             </button>
           </div>
-
-          <pre>{{  customCompanion }}</pre>
           <!-- Generated Custom Companion Preview -->
-          <div v-if="customCompanion" class="custom-companion-preview mt-4 p-3">
-            <h5 class="fira-sans-condensed-black-italic has-text-success">
+          <div
+            v-if="customCompanion"
+            class="custom-companion-preview mt-4 p-6 has-text-left"
+          >
+            <h5
+              class="fira-sans-condensed-black-italic has-text-success is-size-4"
+            >
               {{ customCompanion.name }}
             </h5>
-            <p class="is-size-7 has-text-grey-light">
+            <p class="is-size-6 has-text-grey-light mt-2">
               {{ customCompanion.description }}
             </p>
-            <div class="tags mt-2">
-              <span class="tag is-dark is-small">
+            <div class="tags mt-4">
+              <span
+                class="tag is-warning is-small"
+                style="text-transform: uppercase"
+              >
                 {{ customCompanion.personality }}
               </span>
             </div>
             <div class="buttons mt-2">
               <button
-                class="button is-success is-small"
+                class="button is-success is-medium mr-5"
                 @click="useCustomCompanion"
               >
-                <span
-                  class="material-symbols-outlined mr-1"
-                  style="font-size: 14px"
-                >
-                  check
-                </span>
-                Use This Companion
+                <span class="material-symbols-outlined mr-2">check</span>
+                Pick
               </button>
               <button
-                class="button is-info is-small"
+                class="button is-info is-medium"
                 @click="saveCustomCompanionToStore"
                 :disabled="isCompanionAlreadySaved(customCompanion)"
               >
-                <span
-                  class="material-symbols-outlined mr-1"
-                  style="font-size: 14px"
-                >
-                  save
-                </span>
-                {{ isCompanionAlreadySaved(customCompanion) ? 'Saved' : 'Save Character' }}
+                <span class="material-symbols-outlined mr-2">save</span>
+                {{
+                  isCompanionAlreadySaved(customCompanion)
+                    ? "Saved"
+                    : "Save Character"
+                }}
               </button>
             </div>
           </div>
@@ -220,9 +245,9 @@
           <span class="material-symbols-outlined mr-2 is-size-1">
             landscape
           </span>
-          Choose Scenario
+          Select Scenario
         </h3>
-
+        <hr />
         <div class="scenario-grid">
           <div
             v-for="scenario in predefinedScenarios"
@@ -234,17 +259,28 @@
             <h4 class="scenario-name fira-sans-condensed-black-italic">
               {{ scenario.name }}
             </h4>
-            <p class="scenario-desc">{{ scenario.description }}</p>
-            <span class="tag is-dark is-small">{{ scenario.mood }}</span>
+            <hr />
+            <p class="scenario-desc" style="min-height: 50px">
+              {{ scenario.description }}
+            </p>
+            <hr />
+            <p
+              class="has-text-white mt-5 is-size-7"
+              style="text-transform: uppercase; word-wrap: break-word"
+            >
+              {{ scenario.mood }}
+            </p>
           </div>
 
           <!-- Custom Scenario Card -->
           <div
-            class="scenario-card is-custom"
+            class="scenario-card is-custom has-text-left"
             :class="{ 'is-selected': selectedScenario?.isCustom }"
             @click="openCustomScenario"
           >
-            <h4 class="scenario-name fira-sans-condensed-black-italic">
+            <h4
+              class="scenario-name fira-sans-condensed-black-italic is-size-4"
+            >
               <span class="material-symbols-outlined mr-1">add</span>
               Custom
             </h4>
@@ -253,24 +289,20 @@
         </div>
 
         <!-- Custom Scenario Generator -->
-        <div v-if="showCustomScenario" class="custom-scenario-form mt-5 p-4">
-          <h4 class="fira-sans-condensed-black-italic has-text-white mb-3">
-            <span class="material-symbols-outlined mr-2">auto_awesome</span>
-            Generate Custom Scenario
-          </h4>
+        <div v-if="showCustomScenario" class="custom-scenario-form mt-5 p-5">
           <div class="field">
             <div class="control">
               <textarea
                 v-model="customScenarioPrompt"
-                class="textarea"
-                placeholder="Describe the scenario (e.g., 'A rainy night in a cozy bookshop')"
-                rows="2"
+                class="textarea is-large"
+                placeholder="Describe the scenario..."
+                rows="3"
               ></textarea>
             </div>
           </div>
-          <div class="buttons mt-3">
+          <div class="buttons mt-2">
             <button
-              class="button is-info"
+              class="button is-info is-medium"
               @click="generateCustomScenario"
               :disabled="!customScenarioPrompt || isGenerating"
             >
@@ -285,29 +317,33 @@
               </span>
               Generate
             </button>
-            <button class="button" @click="showCustomScenario = false">
+            <button
+              class="button is-danger is-medium"
+              @click="showCustomScenario = false"
+            >
               Cancel
             </button>
           </div>
 
-          <div v-if="customScenario" class="custom-scenario-preview mt-4 p-3">
-            <h5 class="fira-sans-condensed-black-italic has-text-success">
+          <div
+            v-if="customScenario"
+            class="custom-scenario-preview mt-4 p-6 has-text-left"
+          >
+            <h5
+              class="fira-sans-condensed-black-italic has-text-success is-size-4"
+            >
               {{ customScenario.name }}
             </h5>
-            <p class="is-size-7 has-text-grey-light">
-              {{ customScenario.setting }}
+            <p class="is-size-6 has-text-grey-light mt-2">
+              {{ customScenario.setting.environment }}
+              {{ customScenario.setting.atmosphere }}
             </p>
             <button
-              class="button is-success is-small mt-2"
+              class="button is-success is-medium mt-5"
               @click="useCustomScenario"
             >
-              <span
-                class="material-symbols-outlined mr-1"
-                style="font-size: 14px"
-              >
-                check
-              </span>
-              Use This Scenario
+              <span class="material-symbols-outlined mr-1">check</span>
+              Pick
             </button>
           </div>
         </div>
@@ -315,21 +351,18 @@
 
       <!-- Settings -->
       <div class="models__activity--payouts mb-5">
-        <h3
-          class="fira-sans-condensed-black-italic has-text-white has-text-left is-size-3 mb-4"
-        >
-          <span class="material-symbols-outlined mr-2 is-size-1">settings</span>
-          Settings
-        </h3>
-
         <div class="columns">
           <div class="column is-6">
-            <div class="field">
+            <div class="field has-text-left">
               <label
-                class="label has-text-white fira-sans-condensed-black-italic"
+                class="label has-text-white fira-sans-condensed-black-italic is-size-3"
               >
-                Content Level
+                <span class="material-symbols-outlined mr-2 is-size-1">
+                  mode_heat
+                </span>
+                Content Rating
               </label>
+              <hr />
               <div class="control content-level-selector">
                 <div
                   v-for="(config, level) in contentLevels"
@@ -346,110 +379,150 @@
           </div>
 
           <div class="column is-6">
-            <div class="field">
+            <div class="field has-text-left">
               <label
-                class="label has-text-white fira-sans-condensed-black-italic"
+                class="label has-text-white fira-sans-condensed-black-italic is-size-3"
               >
-                Media Options
+                <span class="material-symbols-outlined mr-2 is-size-1">
+                  chat
+                </span>
+                Media Support
               </label>
-              <div class="media-checkboxes">
-                <label
-                  class="checkbox media-option"
+              <hr />
+              <div class="control media-selector">
+                <div
+                  class="media-option"
                   :class="{
+                    'is-selected': settings.enableImage,
                     'is-unavailable': !isModelAvailable('image_turbo'),
                   }"
+                  @click="toggleMediaOption('enableImage', 'image_turbo')"
                 >
-                  <input
-                    type="checkbox"
-                    v-model="settings.enableImage"
-                    :disabled="!isModelAvailable('image_turbo')"
-                  />
-                  <span class="material-symbols-outlined">image</span>
-                  <span>Image</span>
+                  <div class="media-option-content">
+                    <strong>Image</strong>
+                    <p class="is-size-7">Generate scene illustrations</p>
+                  </div>
                   <span
                     v-if="!isModelAvailable('image_turbo')"
-                    class="tag is-small is-warning ml-1"
+                    class="tag is-small is-warning"
                   >
                     Download
                   </span>
-                </label>
-                <label
-                  class="checkbox media-option"
+                </div>
+                <div
+                  class="media-option"
                   :class="{
+                    'is-selected': settings.enableAudio,
                     'is-unavailable': !isModelAvailable('audio_quality'),
                   }"
+                  @click="toggleMediaOption('enableAudio', 'audio_quality')"
                 >
-                  <input
-                    type="checkbox"
-                    v-model="settings.enableAudio"
-                    :disabled="!isModelAvailable('audio_quality')"
-                  />
-                  <span class="material-symbols-outlined">volume_up</span>
-                  <span>Voice</span>
+                  <div class="media-option-content">
+                    <strong>Voice</strong>
+                    <p class="is-size-7">Companion speaks responses</p>
+                  </div>
                   <span
                     v-if="!isModelAvailable('audio_quality')"
-                    class="tag is-small is-warning ml-1"
+                    class="tag is-small is-warning"
                   >
                     Download
                   </span>
-                </label>
-                <label
-                  class="checkbox media-option"
-                  :class="{ 'is-unavailable': !isModelAvailable('video_fast') }"
+                </div>
+                <div
+                  class="media-option"
+                  :class="{
+                    'is-selected': settings.enableVideo,
+                    'is-unavailable': !isModelAvailable('video_fast'),
+                  }"
+                  @click="toggleMediaOption('enableVideo', 'video_fast')"
                 >
-                  <input
-                    type="checkbox"
-                    v-model="settings.enableVideo"
-                    :disabled="!isModelAvailable('video_fast')"
-                  />
-                  <span class="material-symbols-outlined">movie</span>
-                  <span>Video</span>
+                  <div class="media-option-content">
+                    <strong>Video</strong>
+                    <p class="is-size-7">Animate peak emotions</p>
+                  </div>
                   <span
                     v-if="!isModelAvailable('video_fast')"
-                    class="tag is-small is-warning ml-1"
+                    class="tag is-small is-warning"
                   >
                     Download
                   </span>
-                </label>
-                <label
-                  class="checkbox media-option"
-                  :class="{ 'is-unavailable': !isModelAvailable('vision') }"
+                </div>
+                <div
+                  class="media-option"
+                  :class="{
+                    'is-selected': settings.enableVision,
+                    'is-unavailable': !isModelAvailable('vision'),
+                  }"
+                  @click="toggleMediaOption('enableVision', 'vision')"
                 >
-                  <input
-                    type="checkbox"
-                    v-model="settings.enableVision"
-                    :disabled="!isModelAvailable('vision')"
-                  />
-                  <span class="material-symbols-outlined">visibility</span>
-                  <span>Vision</span>
+                  <div class="media-option-content">
+                    <strong>Vision</strong>
+                    <p class="is-size-7">Upload images for context</p>
+                  </div>
                   <span
                     v-if="!isModelAvailable('vision')"
-                    class="tag is-small is-warning ml-1"
+                    class="tag is-small is-warning"
                   >
                     Download
                   </span>
-                </label>
+                </div>
               </div>
-              <p class="help has-text-grey-light mt-2">
-                Video generates on peak emotions. Vision allows image uploads.
-              </p>
             </div>
           </div>
         </div>
       </div>
 
-      <!-- Saved Sessions for Selected Companion -->
-      <div
-        v-if="selectedCompanion && companionSessions.length > 0"
-        class="models__activity--payouts mb-5"
-      >
-        <h3
-          class="fira-sans-condensed-black-italic has-text-white has-text-left is-size-3 mb-4"
+      <!-- Saved Sessions & Import/Export -->
+      <div v-if="selectedCompanion" class="models__activity--payouts mb-5">
+        <div class="sessions-header">
+          <h3
+            class="fira-sans-condensed-black-italic has-text-white has-text-left is-size-3"
+          >
+            <span class="material-symbols-outlined mr-2 is-size-1">
+              history
+            </span>
+            Roleplay Sessions
+          </h3>
+          <div class="sessions-actions">
+            <button
+              class="button is-info is-small mr-5"
+              @click="triggerImportSession"
+            >
+              <span
+                class="material-symbols-outlined mr-2"
+                style="font-size: 14px"
+              >
+                upload
+              </span>
+              Import
+            </button>
+            <button
+              class="button is-warning is-small"
+              @click="exportAllSessions"
+              :disabled="Object.keys(savedSessions).length === 0"
+            >
+              <span
+                class="material-symbols-outlined mr-2"
+                style="font-size: 14px"
+              >
+                download
+              </span>
+              Export
+            </button>
+          </div>
+        </div>
+        <input
+          ref="importInput"
+          type="file"
+          accept=".json"
+          style="display: none"
+          @change="handleImportSession"
+        />
+        <hr />
+        <div
+          v-if="companionSessions.length > 0"
+          class="saved-sessions-list mt-4"
         >
-          <span class="material-symbols-outlined mr-2 is-size-1">history</span>
-          Saved Sessions with {{ selectedCompanion.name }}
-        </h3>
-        <div class="saved-sessions-list">
           <div
             v-for="session in companionSessions"
             :key="session.key"
@@ -457,14 +530,18 @@
           >
             <div class="session-info">
               <div class="session-header">
-                <span class="scenario-name fira-sans-condensed-black-italic">
+                <span
+                  class="scenario-name fira-sans-condensed-black-italic mt-2"
+                >
                   {{ session.scenario?.name || "Unknown Scenario" }}
                 </span>
                 <span class="tag is-small is-info ml-2">
                   {{ session.messageCount }} msgs
                 </span>
               </div>
-              <p class="session-meta is-size-7 has-text-grey-light">
+              <p
+                class="session-meta is-size-7 has-text-grey-light has-text-left"
+              >
                 {{
                   contentLevels[session.settings?.contentLevel]?.label ||
                   session.settings?.contentLevel
@@ -477,70 +554,31 @@
             </div>
             <div class="session-actions">
               <button
-                class="button is-info is-small"
+                class="button is-info is-medium mr-5"
                 @click="resumeSession(session.key)"
               >
-                <span
-                  class="material-symbols-outlined mr-1"
-                  style="font-size: 14px"
-                >
-                  play_arrow
-                </span>
+                <span class="material-symbols-outlined mr-1">play_arrow</span>
                 Resume
               </button>
               <button
-                class="button is-warning is-small is-outlined"
+                class="button is-warning is-medium mr-5"
                 @click="exportSession(session.key)"
                 title="Export session"
               >
-                <span class="material-symbols-outlined" style="font-size: 14px">
-                  download
-                </span>
+                <span class="material-symbols-outlined">download</span>
               </button>
               <button
-                class="button is-danger is-small is-outlined"
+                class="button is-danger is-medium"
                 @click="deleteSession(session.key)"
               >
-                <span class="material-symbols-outlined" style="font-size: 14px">
-                  delete
-                </span>
+                <span class="material-symbols-outlined">delete</span>
               </button>
             </div>
           </div>
         </div>
-      </div>
-
-      <!-- Import/Export Sessions -->
-      <div class="models__activity--payouts mb-5">
-        <h3
-          class="fira-sans-condensed-black-italic has-text-white has-text-left is-size-3 mb-4"
-        >
-          <span class="material-symbols-outlined mr-2 is-size-1">folder</span>
-          Import / Export Sessions
-        </h3>
-        <div class="buttons">
-          <button class="button is-info" @click="triggerImportSession">
-            <span class="material-symbols-outlined mr-1">upload</span>
-            Import Session
-          </button>
-          <button
-            class="button is-warning"
-            @click="exportAllSessions"
-            :disabled="Object.keys(savedSessions).length === 0"
-          >
-            <span class="material-symbols-outlined mr-1">download</span>
-            Export All Sessions
-          </button>
-        </div>
-        <input
-          ref="importInput"
-          type="file"
-          accept=".json"
-          style="display: none"
-          @change="handleImportSession"
-        />
-        <p class="help has-text-grey-light">
-          Export your chat sessions to backup or share, or import previously exported sessions.
+        <p v-else class="notification is-info has-text-white mt-3">
+          No saved session with {{ selectedCompanion.name }} yet. Start a
+          roleplay or import one.
         </p>
       </div>
 
@@ -663,7 +701,12 @@
           <div class="column">
             <div class="companion-header has-text-left">
               <span class="material-symbols-outlined mr-2">
-                {{ getAvatarIcon(selectedCompanion?.avatar, selectedCompanion?.gender) }}
+                {{
+                  getAvatarIcon(
+                    selectedCompanion?.avatar,
+                    selectedCompanion?.gender,
+                  )
+                }}
               </span>
               <div>
                 <h3 class="fira-sans-condensed-black-italic has-text-white">
@@ -676,21 +719,21 @@
             </div>
           </div>
           <div class="column is-narrow">
-            <div class="tags">
-              <span class="tag is-info is-medium">
-                {{ contentLevels[settings.contentLevel]?.label }}
-              </span>
-              <span class="tag is-dark is-medium">
-                {{ formatResponseMode(responseMode) }}
-              </span>
-            </div>
-          </div>
-          <div class="column is-narrow">
             <!-- Autonomous Mode Toggle -->
-            <label class="checkbox autonomous-toggle mr-3" :class="{ active: autonomousMode }">
-              <input type="checkbox" :checked="autonomousMode" @change="toggleAutonomousMode($event.target.checked)">
-              <span class="material-symbols-outlined mr-1" style="font-size: 16px">
-                {{ autonomousMode ? 'self_improvement' : 'person_off' }}
+            <label
+              class="checkbox autonomous-toggle mr-3"
+              :class="{ active: autonomousMode }"
+            >
+              <input
+                type="checkbox"
+                :checked="autonomousMode"
+                @change="toggleAutonomousMode($event.target.checked)"
+              />
+              <span
+                class="material-symbols-outlined mr-1"
+                style="font-size: 16px"
+              >
+                {{ autonomousMode ? "self_improvement" : "person_off" }}
               </span>
               <span class="is-size-7">Auto</span>
             </label>
@@ -708,16 +751,24 @@
       </div>
 
       <!-- Missed Messages Notification -->
-      <div v-if="missedMessages > 0" class="missed-messages-banner notification is-info is-light mb-3">
-        <div class="level is-mobile">
+      <div
+        v-if="missedMessages > 0"
+        class="missed-messages-banner notification is-info is-light mb-3"
+      >
+        <div class="level is-mobile p-3">
           <div class="level-left">
             <span class="material-symbols-outlined mr-2">notifications</span>
             <span class="fira-sans-condensed-black-italic">
-              {{ missedMessages }} message{{ missedMessages > 1 ? 's' : '' }} while you were away
+              {{ missedMessages }} message{{ missedMessages > 1 ? "s" : "" }}
+              while you were away
             </span>
           </div>
           <div class="level-right">
-            <button class="button is-small is-info" @click="clearMissedMessages">
+            <span class="material-symbols-outlined mr-2" @click="clearMissedMessages">cancel</span>
+            <button
+              class="button is-small is-info"
+              @click="clearMissedMessages"
+            >
               Dismiss
             </button>
           </div>
@@ -725,29 +776,35 @@
       </div>
 
       <!-- Chat Messages -->
-      <div class="chat-messages" ref="messagesContainer">
-        <!-- Initial Scene Description with Generated Image -->
-        <div v-if="selectedScenario" class="scene-description mb-4">
-          <div class="notification is-dark scene-backdrop" :style="scenarioBackgroundStyle">
-            <div class="scene-overlay">
-              <p class="is-italic">{{ selectedScenario.setting }}</p>
-            </div>
-          </div>
-        </div>
-
-        <!-- Messages -->
-        <div
-          v-for="(msg, idx) in chatHistory"
-          :key="idx"
-          class="chat-message"
-          :class="msg.role"
-        >
+      <div
+        class="chat-messages"
+        ref="messagesContainer"
+        @scroll="onMessagesScroll"
+      >
+        <!-- Background layer with fade-in transition -->
+        <transition name="bg-fade" mode="out-in">
+          <div
+            v-if="scenarioBackgroundImage"
+            :key="scenarioBackgroundImage"
+            class="chat-background"
+            :style="scenarioBackgroundStyle"
+          ></div>
+        </transition>
+          <div
+            v-for="(msg, idx) in chatHistory"
+            :key="msg.timestamp || idx"
+            class="chat-message"
+            :class="[msg.role, { 'is-new': isNewMessage(msg) }]"
+          >
           <div class="message-avatar">
             <span class="material-symbols-outlined">
               {{
                 msg.role === "user"
                   ? "person"
-                  : getAvatarIcon(selectedCompanion?.avatar, selectedCompanion?.gender)
+                  : getAvatarIcon(
+                      selectedCompanion?.avatar,
+                      selectedCompanion?.gender,
+                    )
               }}
             </span>
           </div>
@@ -765,13 +822,19 @@
             </div>
             <div class="message-text">
               <!-- Loading placeholder when waiting for text -->
-              <div v-if="msg.isGenerating && !msg.content" class="typing-placeholder">
+              <div
+                v-if="msg.generatingText && !msg.content"
+                class="typing-placeholder"
+              >
                 <div class="typing-indicator inline">
                   <span></span>
                   <span></span>
                   <span></span>
                 </div>
-                <p v-if="typingStatus" class="typing-status is-size-7 has-text-grey-light mt-2">
+                <p
+                  v-if="typingStatus"
+                  class="typing-status is-size-7 has-text-grey-light mt-2"
+                >
                   {{ typingStatus }}
                 </p>
               </div>
@@ -784,16 +847,75 @@
                 </p>
                 <p>{{ msg.content }}</p>
               </template>
+              <!-- Delete text button (on hover) -->
+              <button
+                v-if="msg.content && !msg.generatingText"
+                class="text-delete-btn"
+                @click="deleteMessageMedia(idx, 'text')"
+                title="Delete text"
+              >
+                <span class="material-symbols-outlined">delete</span>
+              </button>
+            </div>
+
+            <!-- Media Generation Loader (single loader for all media) -->
+            <div
+              v-if="
+                msg.isGenerating &&
+                msg.content &&
+                (msg.generatingImage ||
+                  msg.generatingAudio ||
+                  msg.generatingVideo)
+              "
+              class="media-generating mt-3"
+            >
+              <div class="typing-indicator inline">
+                <span></span>
+                <span></span>
+                <span></span>
+              </div>
             </div>
 
             <!-- Image -->
             <div v-if="msg.image" class="message-image mt-3">
               <img :src="getImageSrc(msg.image)" alt="Scene" />
+              <div class="image-actions">
+                <button
+                  class="image-action-btn"
+                  @click="downloadImage(msg.image, idx)"
+                  title="Download image"
+                >
+                  <span class="material-symbols-outlined">download</span>
+                </button>
+                <button
+                  class="image-action-btn"
+                  @click="sendToVideoGenerator(msg.image)"
+                  title="Create video from image"
+                >
+                  <span class="material-symbols-outlined">movie</span>
+                </button>
+                <button
+                  class="image-action-btn delete-btn"
+                  @click="deleteMessageMedia(idx, 'image')"
+                  title="Delete image"
+                >
+                  <span class="material-symbols-outlined">delete</span>
+                </button>
+              </div>
             </div>
 
             <!-- Audio -->
             <div v-if="msg.audio" class="message-audio mt-3">
               <audio controls :src="getAudioSrc(msg.audio)"></audio>
+              <div class="audio-actions">
+                <button
+                  class="media-action-btn delete-btn"
+                  @click="deleteMessageMedia(idx, 'audio')"
+                  title="Delete audio"
+                >
+                  <span class="material-symbols-outlined">delete</span>
+                </button>
+              </div>
             </div>
 
             <!-- Video (for peak emotion scenes) -->
@@ -803,15 +925,32 @@
                 :src="getVideoSrc(msg.video)"
                 :poster="msg.image ? getImageSrc(msg.image) : undefined"
               ></video>
+              <div class="video-actions">
+                <button
+                  class="media-action-btn delete-btn"
+                  @click="deleteMessageMedia(idx, 'video')"
+                  title="Delete video"
+                >
+                  <span class="material-symbols-outlined">delete</span>
+                </button>
+              </div>
             </div>
           </div>
         </div>
 
         <!-- Typing Indicator - only show if no message is currently being generated inline -->
-        <div v-if="isTyping && !chatHistory.some(m => m.isGenerating)" class="chat-message assistant typing">
+        <div
+          v-if="isTyping && !chatHistory.some((m) => m.isGenerating)"
+          class="chat-message assistant typing"
+        >
           <div class="message-avatar">
             <span class="material-symbols-outlined">
-              {{ getAvatarIcon(selectedCompanion?.avatar, selectedCompanion?.gender) }}
+              {{
+                getAvatarIcon(
+                  selectedCompanion?.avatar,
+                  selectedCompanion?.gender,
+                )
+              }}
             </span>
           </div>
           <div class="message-content">
@@ -833,13 +972,14 @@
       <!-- Suggested Responses -->
       <div
         v-if="suggestedResponses.length > 0 && !isTyping"
-        class="suggested-responses mb-3"
+        class="suggested-responses mb-3 p-0"
       >
         <button
           v-for="(suggestion, idx) in suggestedResponses"
           :key="idx"
-          class="button is-small is-info is-outlined m-5"
+          class="button is-info is-outlined is-fullwidth mb-5 mt-5 is-size-7 p-5"
           @click="sendMessage(suggestion)"
+          style="box-shadow: none;"
         >
           {{ suggestion }}
         </button>
@@ -885,12 +1025,12 @@
           <!-- Image Upload Button -->
           <div class="control">
             <button
-              class="button is-medium is-outlined"
+              class="button is-large is-success"
               @click="triggerImageUpload"
-              :disabled="isTyping || isAnalyzingImage"
+              :disabled="isAnalyzingImage"
               :class="{ 'is-info': uploadedImage }"
               title="Upload an image for vision analysis"
-              style="box-shadow: none;"
+              style="box-shadow: none"
             >
               <span class="material-symbols-outlined">add_photo_alternate</span>
             </button>
@@ -906,25 +1046,35 @@
             <input
               ref="chatInput"
               v-model="userMessage"
-              class="input is-medium"
+              class="input is-large send"
               type="text"
               :placeholder="
-                uploadedImage
-                  ? `Describe what you see or ask about the image...`
-                  : `What do you say to ${selectedCompanion?.name}?`
+                isProcessingMessage
+                  ? `Type your next message (will be queued)...`
+                  : uploadedImage
+                    ? `Describe what you see or ask about the image...`
+                    : `What do you say to ${selectedCompanion?.name}?`
               "
               @keyup.enter="sendMessage()"
-              :disabled="isTyping"
             />
           </div>
           <div class="control">
             <button
-              class="button is-success is-medium"
+              class="button is-success is-large"
               @click="sendMessage()"
-              :disabled="(!userMessage.trim() && !uploadedImage) || isTyping"
-              style="box-shadow: none;"
+              :disabled="!userMessage.trim() && !uploadedImage"
+              :class="{ 'is-loading': isProcessingMessage && pendingMessage }"
+              style="box-shadow: none"
+              :title="
+                isProcessingMessage ? 'Message will be queued' : 'Send message'
+              "
             >
-              <span class="material-symbols-outlined">send</span>
+              <span
+                v-if="!(isProcessingMessage && pendingMessage)"
+                class="material-symbols-outlined"
+              >
+                send
+              </span>
             </button>
           </div>
         </div>
@@ -934,13 +1084,23 @@
 </template>
 
 <script>
-import { ref, computed, reactive, nextTick, onMounted, onUnmounted, toRaw, watch } from "vue";
+import {
+  ref,
+  computed,
+  reactive,
+  nextTick,
+  onMounted,
+  onUnmounted,
+  toRaw,
+  watch,
+} from "vue";
 import {
   PREDEFINED_COMPANIONS,
   PREDEFINED_SCENARIOS,
   CONTENT_LEVELS,
   MODEL_REQUIREMENTS,
   roleplayCompanion,
+  clearAllMemory,
 } from "../../skills/flagship.js";
 import { useSkillStore } from "../../stores/skillStore.js";
 
@@ -980,6 +1140,10 @@ export default {
       enableVideo: false,
       enableVision: false,
     });
+
+    // Message queue for handling messages during generation
+    const pendingMessage = ref(null); // Stores the latest pending message (only keeps one)
+    const isProcessingMessage = ref(false); // True while generating response
 
     // Build responseMode string from checkbox settings (for backward compatibility)
     const responseMode = computed(() => {
@@ -1135,6 +1299,7 @@ export default {
 
     // Scenario background image state
     const scenarioBackgroundImage = ref(null);
+    const backgroundHistory = ref([]); // Array of { messageIndex, image, location }
     const isInitializingSession = ref(false);
 
     // Autonomous companion mode - uses global store (skillStore)
@@ -1370,7 +1535,10 @@ export default {
     const loadCustomCompanions = async () => {
       try {
         if (window.electronAPI?.store?.get) {
-          const stored = await window.electronAPI.store.get(CUSTOM_COMPANIONS_KEY, []);
+          const stored = await window.electronAPI.store.get(
+            CUSTOM_COMPANIONS_KEY,
+            [],
+          );
           savedCustomCompanions.value = stored || [];
           console.log(
             `[Roleplay] Loaded ${savedCustomCompanions.value.length} custom companions`,
@@ -1417,7 +1585,10 @@ export default {
           const plainCompanions = JSON.parse(
             JSON.stringify(toRaw(savedCustomCompanions.value)),
           );
-          await window.electronAPI.store.set(CUSTOM_COMPANIONS_KEY, plainCompanions);
+          await window.electronAPI.store.set(
+            CUSTOM_COMPANIONS_KEY,
+            plainCompanions,
+          );
           console.log(
             `[Roleplay] Custom companion saved: ${companionToSave.name}`,
           );
@@ -1431,7 +1602,9 @@ export default {
     const deleteCustomCompanion = async (companionId) => {
       if (!companionId) return;
 
-      const idx = savedCustomCompanions.value.findIndex((c) => c.id === companionId);
+      const idx = savedCustomCompanions.value.findIndex(
+        (c) => c.id === companionId,
+      );
       if (idx < 0) return;
 
       const companionName = savedCustomCompanions.value[idx].name;
@@ -1442,7 +1615,10 @@ export default {
           const plainCompanions = JSON.parse(
             JSON.stringify(toRaw(savedCustomCompanions.value)),
           );
-          await window.electronAPI.store.set(CUSTOM_COMPANIONS_KEY, plainCompanions);
+          await window.electronAPI.store.set(
+            CUSTOM_COMPANIONS_KEY,
+            plainCompanions,
+          );
           console.log(`[Roleplay] Custom companion deleted: ${companionName}`);
         }
       } catch (e) {
@@ -1471,10 +1647,26 @@ export default {
     /**
      * Toggle autonomous mode via the store
      * When enabled, starts an autonomous session that persists across views
+     * Waits for any current generation to complete before starting
      */
-    const toggleAutonomousMode = (enabled) => {
+    const toggleAutonomousMode = async (enabled) => {
       if (enabled) {
-        console.log('[Roleplay] Enabling autonomous mode with session:', {
+        // Wait for current generation to finish before starting autonomous mode
+        if (isProcessingMessage.value || isTyping.value) {
+          console.log("[Roleplay] Waiting for current generation to finish before enabling autonomous mode...");
+          // Poll until generation is complete
+          await new Promise((resolve) => {
+            const checkInterval = setInterval(() => {
+              if (!isProcessingMessage.value && !isTyping.value) {
+                clearInterval(checkInterval);
+                resolve();
+              }
+            }, 500);
+          });
+          console.log("[Roleplay] Current generation finished, now enabling autonomous mode");
+        }
+
+        console.log("[Roleplay] Enabling autonomous mode with session:", {
           sessionKey: currentSessionKey.value,
           companion: selectedCompanion.value?.name,
           scenario: selectedScenario.value?.name,
@@ -1489,10 +1681,11 @@ export default {
           history: chatHistory.value,
           sceneState: sceneState.value,
           backgroundImage: scenarioBackgroundImage.value,
+          backgroundHistory: backgroundHistory.value,
         });
         skillStore.toggleAutonomousMode(true);
       } else {
-        console.log('[Roleplay] Disabling autonomous mode');
+        console.log("[Roleplay] Disabling autonomous mode");
         // Stop autonomous mode completely
         skillStore.stopAutonomousMode();
       }
@@ -1503,7 +1696,10 @@ export default {
      * This keeps the store in sync when user is actively chatting
      */
     const syncHistoryWithStore = () => {
-      if (skillStore.autonomousMode && skillStore.autonomousSession.sessionKey === currentSessionKey.value) {
+      if (
+        skillStore.autonomousMode &&
+        skillStore.autonomousSession.sessionKey === currentSessionKey.value
+      ) {
         skillStore.syncAutonomousHistory(chatHistory.value, sceneState.value);
       }
     };
@@ -1513,12 +1709,24 @@ export default {
      */
     const syncFromStore = () => {
       const storeData = skillStore.getAutonomousSessionData();
-      if (storeData.sessionKey && storeData.sessionKey === currentSessionKey.value) {
+      if (
+        storeData.sessionKey &&
+        storeData.sessionKey === currentSessionKey.value
+      ) {
         // Store has messages for this session - merge them
         if (storeData.history.length > chatHistory.value.length) {
-          console.log(`[Roleplay] Syncing ${storeData.history.length - chatHistory.value.length} messages from store`);
+          console.log(
+            `[Roleplay] Syncing ${storeData.history.length - chatHistory.value.length} messages from store`,
+          );
           chatHistory.value = [...storeData.history];
           sceneState.value = { ...storeData.sceneState };
+          // Sync background image and history from store
+          if (storeData.backgroundImage) {
+            scenarioBackgroundImage.value = storeData.backgroundImage;
+          }
+          if (storeData.backgroundHistory?.length) {
+            backgroundHistory.value = [...storeData.backgroundHistory];
+          }
           scrollToBottom();
         }
       }
@@ -1537,13 +1745,13 @@ export default {
       (newLen, oldLen) => {
         // If store has new messages and we're viewing this session
         if (
-          phase.value === 'chat' &&
+          phase.value === "chat" &&
           skillStore.autonomousSession.sessionKey === currentSessionKey.value &&
           newLen > chatHistory.value.length
         ) {
           syncFromStore();
         }
-      }
+      },
     );
 
     // ═══════════════════════════════════════════════════════════════════════════
@@ -1576,7 +1784,10 @@ export default {
           }
 
           // Also import custom companions if present
-          if (importedData.customCompanions && Array.isArray(importedData.customCompanions)) {
+          if (
+            importedData.customCompanions &&
+            Array.isArray(importedData.customCompanions)
+          ) {
             for (const companion of importedData.customCompanions) {
               const existingIdx = savedCustomCompanions.value.findIndex(
                 (c) => c.name.toLowerCase() === companion.name.toLowerCase(),
@@ -1589,46 +1800,56 @@ export default {
 
           // Save to store
           if (window.electronAPI?.store?.set) {
-            const plainSessions = JSON.parse(JSON.stringify(toRaw(savedSessions.value)));
+            const plainSessions = JSON.parse(
+              JSON.stringify(toRaw(savedSessions.value)),
+            );
             await window.electronAPI.store.set(STORAGE_KEY, plainSessions);
 
-            const plainCompanions = JSON.parse(JSON.stringify(toRaw(savedCustomCompanions.value)));
-            await window.electronAPI.store.set(CUSTOM_COMPANIONS_KEY, plainCompanions);
+            const plainCompanions = JSON.parse(
+              JSON.stringify(toRaw(savedCustomCompanions.value)),
+            );
+            await window.electronAPI.store.set(
+              CUSTOM_COMPANIONS_KEY,
+              plainCompanions,
+            );
           }
 
           console.log(`[Roleplay] Imported ${importedCount} sessions`);
           alert(`Successfully imported ${importedCount} session(s)`);
-
         } else if (importedData.companion && importedData.scenario) {
           // Single session format
           const key = getSessionKey(
             importedData.companion,
             importedData.scenario,
-            importedData.settings?.contentLevel || 'pg13',
-            importedData.settings?.responseMode || 'text+image',
+            importedData.settings?.contentLevel || "pg13",
+            importedData.settings?.responseMode || "text+image",
           );
 
           if (key) {
             savedSessions.value[key] = importedData;
 
             if (window.electronAPI?.store?.set) {
-              const plainSessions = JSON.parse(JSON.stringify(toRaw(savedSessions.value)));
+              const plainSessions = JSON.parse(
+                JSON.stringify(toRaw(savedSessions.value)),
+              );
               await window.electronAPI.store.set(STORAGE_KEY, plainSessions);
             }
 
             console.log(`[Roleplay] Imported session: ${key}`);
-            alert(`Successfully imported session with ${importedData.companion.name}`);
+            alert(
+              `Successfully imported session with ${importedData.companion.name}`,
+            );
           }
         } else {
-          alert('Invalid session file format');
+          alert("Invalid session file format");
         }
       } catch (e) {
-        console.error('[Roleplay] Import failed:', e);
+        console.error("[Roleplay] Import failed:", e);
         alert(`Import failed: ${e.message}`);
       }
 
       // Reset input
-      event.target.value = '';
+      event.target.value = "";
     };
 
     const exportSession = (key) => {
@@ -1638,14 +1859,16 @@ export default {
       const exportData = {
         ...session,
         exportedAt: new Date().toISOString(),
-        version: '1.0',
+        version: "1.0",
       };
 
-      const blob = new Blob([JSON.stringify(exportData, null, 2)], { type: 'application/json' });
+      const blob = new Blob([JSON.stringify(exportData, null, 2)], {
+        type: "application/json",
+      });
       const url = URL.createObjectURL(blob);
-      const a = document.createElement('a');
+      const a = document.createElement("a");
       a.href = url;
-      a.download = `roleplay-${session.companion?.name?.toLowerCase().replace(/\s+/g, '-') || 'session'}-${Date.now()}.json`;
+      a.download = `roleplay-${session.companion?.name?.toLowerCase().replace(/\s+/g, "-") || "session"}-${Date.now()}.json`;
       document.body.appendChild(a);
       a.click();
       document.body.removeChild(a);
@@ -1657,14 +1880,18 @@ export default {
     const exportAllSessions = () => {
       const exportData = {
         sessions: JSON.parse(JSON.stringify(toRaw(savedSessions.value))),
-        customCompanions: JSON.parse(JSON.stringify(toRaw(savedCustomCompanions.value))),
+        customCompanions: JSON.parse(
+          JSON.stringify(toRaw(savedCustomCompanions.value)),
+        ),
         exportedAt: new Date().toISOString(),
-        version: '1.0',
+        version: "1.0",
       };
 
-      const blob = new Blob([JSON.stringify(exportData, null, 2)], { type: 'application/json' });
+      const blob = new Blob([JSON.stringify(exportData, null, 2)], {
+        type: "application/json",
+      });
       const url = URL.createObjectURL(blob);
-      const a = document.createElement('a');
+      const a = document.createElement("a");
       a.href = url;
       a.download = `roleplay-all-sessions-${Date.now()}.json`;
       document.body.appendChild(a);
@@ -1723,17 +1950,74 @@ export default {
     });
 
     // Scenario background style computed
+    // Track visible message index for scroll-based background
+    const visibleMessageIndex = ref(0);
+
+    // Get the appropriate background for the current scroll position
+    const getBackgroundForIndex = (index) => {
+      if (!backgroundHistory.value.length) return scenarioBackgroundImage.value;
+      // Find the most recent background at or before the given index
+      let bg = null;
+      for (const entry of backgroundHistory.value) {
+        if (entry.messageIndex <= index) {
+          bg = entry.image;
+        } else {
+          break;
+        }
+      }
+      return bg || scenarioBackgroundImage.value;
+    };
+
+    // Handle scroll to update visible background (debounced)
+    let scrollTimeout = null;
+    const onMessagesScroll = (event) => {
+      // Debounce scroll handler to prevent excessive updates
+      if (scrollTimeout) clearTimeout(scrollTimeout);
+      scrollTimeout = setTimeout(() => {
+        const container = event.target;
+        const messages = container.querySelectorAll(".chat-message");
+        if (!messages.length) return;
+
+        // Find the message closest to the top of the visible area
+        const containerTop = container.scrollTop;
+        let closestIndex = 0;
+        let closestDistance = Infinity;
+
+        messages.forEach((msg, idx) => {
+          const distance = Math.abs(msg.offsetTop - containerTop);
+          if (distance < closestDistance) {
+            closestDistance = distance;
+            closestIndex = idx;
+          }
+        });
+
+        if (closestIndex !== visibleMessageIndex.value) {
+          visibleMessageIndex.value = closestIndex;
+          // Update background if needed
+          const bgForIndex = getBackgroundForIndex(closestIndex);
+          if (bgForIndex && bgForIndex !== scenarioBackgroundImage.value) {
+            scenarioBackgroundImage.value = bgForIndex;
+          }
+        }
+      }, 100); // 100ms debounce
+    };
+
     const scenarioBackgroundStyle = computed(() => {
       if (!scenarioBackgroundImage.value) return {};
       const imageSrc = getImageSrc(scenarioBackgroundImage.value);
       return {
         backgroundImage: `linear-gradient(rgba(0,0,0,0.4), rgba(0,0,0,0.6)), url(${imageSrc})`,
-        backgroundSize: 'cover',
-        backgroundPosition: 'center',
+        backgroundSize: "cover",
+        backgroundPosition: "center",
       };
     });
 
     // Methods
+    const toggleMediaOption = (option, modelKey) => {
+      if (!isModelAvailable(modelKey)) return;
+      settings.value[option] = !settings.value[option];
+    };
+
     const getAvatarIcon = (avatar, gender) => {
       // Robot/android companions use agender icon
       if (avatar === "android" || avatar === "smart_toy") {
@@ -1743,7 +2027,12 @@ export default {
       if (gender === "female" || avatar === "woman") {
         return "female";
       }
-      if (gender === "male" || avatar === "man" || avatar === "soldier" || avatar === "demon") {
+      if (
+        gender === "male" ||
+        avatar === "man" ||
+        avatar === "soldier" ||
+        avatar === "demon"
+      ) {
         return "male";
       }
       // Fallback
@@ -1863,9 +2152,13 @@ export default {
       });
 
       // Initialize session with background image generation
-      if (selectedCompanion.value && selectedScenario.value && settings.value.enableImage) {
+      if (
+        selectedCompanion.value &&
+        selectedScenario.value &&
+        settings.value.enableImage
+      ) {
         isInitializingSession.value = true;
-        typingStatus.value = 'Setting the scene...';
+        typingStatus.value = "Setting the scene...";
         isTyping.value = true;
 
         try {
@@ -1894,11 +2187,11 @@ export default {
             sceneState.value = { ...result.sceneState };
           }
         } catch (e) {
-          console.error('[Roleplay] Session init failed:', e);
+          console.error("[Roleplay] Session init failed:", e);
         } finally {
           isInitializingSession.value = false;
           isTyping.value = false;
-          typingStatus.value = '';
+          typingStatus.value = "";
         }
       }
     };
@@ -1930,9 +2223,13 @@ export default {
       });
 
       // Initialize session with background image generation
-      if (selectedCompanion.value && selectedScenario.value && settings.value.enableImage) {
+      if (
+        selectedCompanion.value &&
+        selectedScenario.value &&
+        settings.value.enableImage
+      ) {
         isInitializingSession.value = true;
-        typingStatus.value = 'Setting the scene...';
+        typingStatus.value = "Setting the scene...";
         isTyping.value = true;
 
         try {
@@ -1960,11 +2257,11 @@ export default {
             sceneState.value = { ...result.sceneState };
           }
         } catch (e) {
-          console.error('[Roleplay] Session init failed:', e);
+          console.error("[Roleplay] Session init failed:", e);
         } finally {
           isInitializingSession.value = false;
           isTyping.value = false;
-          typingStatus.value = '';
+          typingStatus.value = "";
         }
       }
     };
@@ -2034,6 +2331,20 @@ export default {
       chatHistory.value = [];
       suggestedResponses.value = [];
       showSessionManager.value = false;
+
+      // Clear ALL memory (LLM + Flask server models)
+      try {
+        await clearAllMemory();
+        console.log('[RoleplayChat] All memory cleared on chat end');
+      } catch (e) {
+        console.warn('[RoleplayChat] Failed to clear memory:', e);
+      }
+    };
+
+    // Check if a message was added recently (for animation)
+    const isNewMessage = (msg) => {
+      if (!msg.timestamp) return false;
+      return Date.now() - msg.timestamp < 2000; // Animate messages less than 2 seconds old
     };
 
     const scrollToBottom = () => {
@@ -2079,6 +2390,91 @@ export default {
         return `http://localhost:${port}/media/stream?path=${encodeURIComponent(video)}`;
       }
       return video;
+    };
+
+    // Download image to user's device
+    const downloadImage = async (image, idx) => {
+      try {
+        const imageSrc = getImageSrc(image);
+        const response = await fetch(imageSrc);
+        const blob = await response.blob();
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = `${selectedCompanion.value?.name || 'companion'}_${idx}_${Date.now()}.png`;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        URL.revokeObjectURL(url);
+      } catch (e) {
+        console.error('[RoleplayChat] Failed to download image:', e);
+      }
+    };
+
+    // Send image to GenerativeVideo for image-to-video generation
+    const sendToVideoGenerator = async (image) => {
+      try {
+        const imageSrc = getImageSrc(image);
+        // Store the image in sessionStorage for GenerativeVideo to pick up
+        if (image.startsWith('data:')) {
+          sessionStorage.setItem('pendingI2VImage', image);
+        } else {
+          // Fetch and convert to base64
+          const response = await fetch(imageSrc);
+          const blob = await response.blob();
+          const reader = new FileReader();
+          reader.onload = () => {
+            sessionStorage.setItem('pendingI2VImage', reader.result);
+            // Navigate to GenerativeVideo tab
+            window.dispatchEvent(new CustomEvent('navigate-to-tab', { detail: { tab: 'video' } }));
+          };
+          reader.readAsDataURL(blob);
+          return;
+        }
+        // Navigate to GenerativeVideo tab
+        window.dispatchEvent(new CustomEvent('navigate-to-tab', { detail: { tab: 'video' } }));
+      } catch (e) {
+        console.error('[RoleplayChat] Failed to send image to video generator:', e);
+      }
+    };
+
+    // Delete specific media type from a message (or the whole message if only text)
+    const deleteMessageMedia = async (messageIdx, mediaType) => {
+      const msg = chatHistory.value[messageIdx];
+      if (!msg) return;
+
+      if (mediaType === 'text') {
+        // If message only has text (no media), remove the entire message
+        const hasMedia = msg.image || msg.audio || msg.video;
+        if (!hasMedia) {
+          chatHistory.value.splice(messageIdx, 1);
+          console.log(`[RoleplayChat] Deleted entire message at index ${messageIdx}`);
+        } else {
+          // Clear just the text content and action
+          msg.content = '';
+          msg.action = '';
+          console.log(`[RoleplayChat] Cleared text from message at index ${messageIdx}`);
+        }
+      } else if (mediaType === 'image') {
+        delete msg.image;
+        console.log(`[RoleplayChat] Deleted image from message at index ${messageIdx}`);
+      } else if (mediaType === 'audio') {
+        delete msg.audio;
+        console.log(`[RoleplayChat] Deleted audio from message at index ${messageIdx}`);
+      } else if (mediaType === 'video') {
+        delete msg.video;
+        console.log(`[RoleplayChat] Deleted video from message at index ${messageIdx}`);
+      }
+
+      // Check if message is now empty (no content and no media)
+      const updatedMsg = chatHistory.value[messageIdx];
+      if (updatedMsg && !updatedMsg.content && !updatedMsg.image && !updatedMsg.audio && !updatedMsg.video) {
+        chatHistory.value.splice(messageIdx, 1);
+        console.log(`[RoleplayChat] Removed empty message at index ${messageIdx}`);
+      }
+
+      // Save updated session
+      await saveSession();
     };
 
     // ═══════════════════════════════════════════════════════════════════════════
@@ -2162,37 +2558,9 @@ export default {
 
     // ═══════════════════════════════════════════════════════════════════════════
 
-    const sendMessage = async (message = null) => {
-      const msg = message || userMessage.value.trim();
-      const hasImage = !!uploadedImage.value;
-
-      // Need either text or image
-      if ((!msg && !hasImage) || isTyping.value) return;
-
-      // Capture image data before clearing
-      const visionData = hasImage
-        ? {
-            imageBase64: uploadedImageBase64.value,
-            imageAnalysis: imageAnalysis.value,
-            imageDataUrl: uploadedImage.value,
-          }
-        : null;
-
-      // Build user message content
-      const messageContent = msg || (hasImage ? "*shares an image*" : "");
-
-      // Add user message (include image if present)
-      chatHistory.value.push({
-        role: "user",
-        content: messageContent,
-        image: visionData?.imageDataUrl || null, // Show uploaded image in chat
-      });
-      userMessage.value = "";
-      suggestedResponses.value = [];
-      clearUploadedImage(); // Clear after capturing
-      scrollToBottom();
-
-      // No fee - chatting is free with access level
+    // Process a single message (internal function)
+    const processMessage = async (messageData) => {
+      const { messageContent, visionData } = messageData;
 
       // Generate response
       isTyping.value = true;
@@ -2215,6 +2583,10 @@ export default {
         audio: null,
         video: null,
         isGenerating: true, // Flag to show loading state
+        generatingText: true,
+        generatingImage: settings.value.enableImage,
+        generatingAudio: settings.value.enableAudio,
+        generatingVideo: settings.value.enableVideo,
       });
       scrollToBottom();
 
@@ -2241,20 +2613,54 @@ export default {
               if (!msg) return;
 
               // Update the message with new content
-              if (progress.type === 'text') {
+              if (progress.type === "text") {
                 msg.content = progress.response.response;
                 msg.emotion = progress.response.emotion;
                 msg.action = progress.response.action;
-                msg.isGenerating = true; // Still generating media
+                msg.generatingText = false;
+                msg.isGenerating =
+                  msg.generatingImage ||
+                  msg.generatingAudio ||
+                  msg.generatingVideo;
                 scrollToBottom();
-              } else if (progress.type === 'image') {
+              } else if (progress.type === "image") {
                 msg.image = progress.response.image;
+                msg.generatingImage = false;
+                msg.isGenerating =
+                  msg.generatingText ||
+                  msg.generatingAudio ||
+                  msg.generatingVideo;
                 scrollToBottom();
-              } else if (progress.type === 'audio') {
+              } else if (progress.type === "audio") {
                 msg.audio = progress.response.audio;
-              } else if (progress.type === 'video') {
+                msg.generatingAudio = false;
+                msg.isGenerating =
+                  msg.generatingText ||
+                  msg.generatingImage ||
+                  msg.generatingVideo;
+              } else if (progress.type === "video") {
                 msg.video = progress.response.video;
+                msg.generatingVideo = false;
+                msg.isGenerating =
+                  msg.generatingText ||
+                  msg.generatingImage ||
+                  msg.generatingAudio;
                 scrollToBottom();
+              } else if (progress.type === "background") {
+                // Update scenario background image when location changes
+                if (progress.response.backgroundImage) {
+                  scenarioBackgroundImage.value =
+                    progress.response.backgroundImage;
+                  // Add to background history for scroll-based switching
+                  backgroundHistory.value.push({
+                    messageIndex: chatHistory.value.length - 1,
+                    image: progress.response.backgroundImage,
+                    location: progress.response.newLocation || "unknown",
+                  });
+                  console.log(
+                    "[RoleplayChat] Background image updated from location change",
+                  );
+                }
               }
             },
           },
@@ -2271,11 +2677,21 @@ export default {
             msg.audio = result.response.audio;
             msg.video = result.response.video;
             msg.isGenerating = false;
+            msg.generatingText = false;
+            msg.generatingImage = false;
+            msg.generatingAudio = false;
+            msg.generatingVideo = false;
           }
 
           // Update scene state from response
           if (result.sceneState) {
             sceneState.value = { ...result.sceneState };
+          }
+
+          // Update background image if a new one was generated (location change)
+          if (result.response?.backgroundImage) {
+            scenarioBackgroundImage.value = result.response.backgroundImage;
+            console.log("[RoleplayChat] Background image updated from result");
           }
 
           // Update suggested responses
@@ -2299,16 +2715,17 @@ export default {
         const msg = chatHistory.value[assistantMessageIndex];
         if (msg) {
           msg.content = `*${selectedCompanion.value?.name} seems distracted for a moment* I'm sorry, could you repeat that?`;
-          msg.emotion = "confused";
+          msg.emotion = "Confused";
           msg.isGenerating = false;
+          msg.generatingText = false;
+          msg.generatingImage = false;
+          msg.generatingAudio = false;
+          msg.generatingVideo = false;
         }
       } finally {
         isTyping.value = false;
         typingStatus.value = "";
         scrollToBottom();
-        nextTick(() => {
-          chatInput.value?.focus();
-        });
 
         // Auto-save session after each message
         await saveSession();
@@ -2316,6 +2733,74 @@ export default {
         // Sync with store if autonomous mode is active
         syncHistoryWithStore();
       }
+    };
+
+    // Process the message queue
+    const processMessageQueue = async () => {
+      if (isProcessingMessage.value) return;
+
+      while (pendingMessage.value) {
+        isProcessingMessage.value = true;
+        const messageToProcess = pendingMessage.value;
+        pendingMessage.value = null; // Clear the pending message
+
+        await processMessage(messageToProcess);
+
+        isProcessingMessage.value = false;
+      }
+
+      // Focus input after all messages processed
+      nextTick(() => {
+        chatInput.value?.focus();
+      });
+    };
+
+    const sendMessage = async (message = null) => {
+      const msg = message || userMessage.value.trim();
+      const hasImage = !!uploadedImage.value;
+
+      // Need either text or image
+      if (!msg && !hasImage) return;
+
+      // Capture image data before clearing
+      const visionData = hasImage
+        ? {
+            imageBase64: uploadedImageBase64.value,
+            imageAnalysis: imageAnalysis.value,
+            imageDataUrl: uploadedImage.value,
+          }
+        : null;
+
+      // Build user message content
+      const messageContent = msg || (hasImage ? "*shares an image*" : "");
+
+      // Add user message to chat immediately (include image if present)
+      chatHistory.value.push({
+        role: "user",
+        content: messageContent,
+        image: visionData?.imageDataUrl || null, // Show uploaded image in chat
+      });
+      userMessage.value = "";
+      suggestedResponses.value = [];
+      clearUploadedImage(); // Clear after capturing
+      scrollToBottom();
+
+      // Create message data object
+      const messageData = { messageContent, visionData };
+
+      // If currently processing, queue this message (replaces any existing pending)
+      if (isProcessingMessage.value) {
+        console.log(
+          "[Roleplay] Message queued while generating:",
+          messageContent.substring(0, 50),
+        );
+        pendingMessage.value = messageData;
+        return;
+      }
+
+      // Process immediately
+      pendingMessage.value = messageData;
+      await processMessageQueue();
     };
 
     // Load sessions, custom companions, and check model availability on mount
@@ -2329,7 +2814,7 @@ export default {
       // Check if there's an active autonomous session for this companion
       // If so, restore to chat phase and sync history
       const storeData = skillStore.getAutonomousSessionData();
-      console.log('[Roleplay] Checking for autonomous session:', {
+      console.log("[Roleplay] Checking for autonomous session:", {
         sessionKey: storeData.sessionKey,
         autonomousMode: skillStore.autonomousMode,
         historyLength: storeData.history?.length || 0,
@@ -2338,32 +2823,46 @@ export default {
 
       if (storeData.sessionKey && skillStore.autonomousMode) {
         // Parse session key to find companion/scenario
-        const parts = storeData.sessionKey.split('__');
+        const parts = storeData.sessionKey.split("__");
         if (parts.length >= 4) {
           const [companionId, scenarioId, contentLevel, respMode] = parts;
-          console.log('[Roleplay] Looking for companion with ID:', companionId, 'scenario:', scenarioId);
+          console.log(
+            "[Roleplay] Looking for companion with ID:",
+            companionId,
+            "scenario:",
+            scenarioId,
+          );
 
           // Find matching companion - check predefined first, then custom companions
-          let companion = predefinedCompanions.find(c => c.id === companionId);
-          let companionSource = companion ? 'predefined' : null;
+          let companion = predefinedCompanions.find(
+            (c) => c.id === companionId,
+          );
+          let companionSource = companion ? "predefined" : null;
 
           if (!companion) {
             // Try savedCustomCompanions by ID or name-based ID
-            companion = savedCustomCompanions.value.find(c =>
-              c.id === companionId ||
-              `custom_${c.name?.toLowerCase().replace(/\s+/g, "_")}` === companionId
+            companion = savedCustomCompanions.value.find(
+              (c) =>
+                c.id === companionId ||
+                `custom_${c.name?.toLowerCase().replace(/\s+/g, "_")}` ===
+                  companionId,
             );
-            if (companion) companionSource = 'savedCustom';
+            if (companion) companionSource = "savedCustom";
           }
 
           if (!companion) {
             // Fallback: Try getting companion directly from the store session
             const storeCompanion = skillStore.autonomousSession?.companion;
             if (storeCompanion) {
-              const storeCompanionId = storeCompanion.id || `custom_${storeCompanion.name?.toLowerCase().replace(/\s+/g, "_")}`;
-              if (storeCompanionId === companionId || storeCompanion.id === companionId) {
+              const storeCompanionId =
+                storeCompanion.id ||
+                `custom_${storeCompanion.name?.toLowerCase().replace(/\s+/g, "_")}`;
+              if (
+                storeCompanionId === companionId ||
+                storeCompanion.id === companionId
+              ) {
                 companion = storeCompanion;
-                companionSource = 'storeSession';
+                companionSource = "storeSession";
               }
             }
           }
@@ -2373,44 +2872,56 @@ export default {
             const savedSession = savedSessions.value[storeData.sessionKey];
             if (savedSession?.companion) {
               companion = savedSession.companion;
-              companionSource = 'savedSession';
+              companionSource = "savedSession";
             }
           }
 
           // Find matching scenario
-          let scenario = predefinedScenarios.find(s => s.id === scenarioId);
+          let scenario = predefinedScenarios.find((s) => s.id === scenarioId);
           if (!scenario) {
             // Try store session
-            scenario = skillStore.autonomousSession?.scenario?.id === scenarioId
-              ? skillStore.autonomousSession.scenario
-              : null;
+            scenario =
+              skillStore.autonomousSession?.scenario?.id === scenarioId
+                ? skillStore.autonomousSession.scenario
+                : null;
           }
           if (!scenario) {
             // Try savedSessions
             const savedSession = savedSessions.value[storeData.sessionKey];
-            scenario = savedSession?.scenario || { id: scenarioId, name: scenarioId };
+            scenario = savedSession?.scenario || {
+              id: scenarioId,
+              name: scenarioId,
+            };
           }
 
-          console.log('[Roleplay] Found companion:', companion?.name, `(source: ${companionSource})`, 'scenario:', scenario?.name);
+          console.log(
+            "[Roleplay] Found companion:",
+            companion?.name,
+            `(source: ${companionSource})`,
+            "scenario:",
+            scenario?.name,
+          );
 
           if (companion && scenario) {
-            console.log(`[Roleplay] Restoring autonomous session: ${companion.name} in ${scenario.name} with ${storeData.history.length} messages`);
+            console.log(
+              `[Roleplay] Restoring autonomous session: ${companion.name} in ${scenario.name} with ${storeData.history.length} messages`,
+            );
             selectedCompanion.value = companion;
             selectedScenario.value = scenario;
             settings.value.contentLevel = contentLevel;
 
             // Parse responseMode
-            settings.value.enableImage = respMode.includes('image');
-            settings.value.enableAudio = respMode.includes('audio');
-            settings.value.enableVideo = respMode.includes('video');
-            settings.value.enableVision = respMode.includes('vision');
+            settings.value.enableImage = respMode.includes("image");
+            settings.value.enableAudio = respMode.includes("audio");
+            settings.value.enableVideo = respMode.includes("video");
+            settings.value.enableVision = respMode.includes("vision");
 
             // Sync history and scene state
             chatHistory.value = [...storeData.history];
             sceneState.value = { ...storeData.sceneState };
 
             // Enter chat phase
-            phase.value = 'chat';
+            phase.value = "chat";
 
             // Clear missed messages since we're viewing them now
             skillStore.clearMissedMessages();
@@ -2418,7 +2929,10 @@ export default {
             // Scroll to see new messages
             nextTick(() => scrollToBottom());
           } else {
-            console.warn('[Roleplay] Could not find companion or scenario for session key:', storeData.sessionKey);
+            console.warn(
+              "[Roleplay] Could not find companion or scenario for session key:",
+              storeData.sessionKey,
+            );
           }
         }
       }
@@ -2427,10 +2941,15 @@ export default {
     // Cleanup on unmount - DO NOT stop autonomous mode, let it continue
     onUnmounted(() => {
       // Just sync the current state to store if autonomous mode is active
-      if (skillStore.autonomousMode && phase.value === 'chat') {
+      if (skillStore.autonomousMode && phase.value === "chat") {
         skillStore.syncAutonomousHistory(chatHistory.value, sceneState.value);
+        // Autonomous mode continues running - companion keeps generating messages
+      } else {
+        // Clear ALL memory when leaving the skill (if not in autonomous mode)
+        clearAllMemory()
+          .then(() => console.log('[RoleplayChat] All memory cleared on unmount'))
+          .catch(() => {});
       }
-      // Autonomous mode continues running - companion keeps generating messages
     });
 
     // Get session info for a companion (aggregated across all scenarios/settings)
@@ -2478,6 +2997,8 @@ export default {
       userMessage,
       isTyping,
       typingStatus,
+      isProcessingMessage,
+      pendingMessage,
       suggestedResponses,
       messagesContainer,
       chatInput,
@@ -2519,6 +3040,8 @@ export default {
       // Scenario background
       scenarioBackgroundImage,
       scenarioBackgroundStyle,
+      backgroundHistory,
+      onMessagesScroll,
       isInitializingSession,
       // Autonomous companion mode (uses global skillStore)
       autonomousMode,
@@ -2541,6 +3064,10 @@ export default {
       getAudioSrc,
       getVideoSrc,
       sendMessage,
+      isNewMessage,
+      downloadImage,
+      sendToVideoGenerator,
+      deleteMessageMedia,
       // Vision/Image upload
       imageInput,
       uploadedImage,
@@ -2553,6 +3080,7 @@ export default {
       modelAvailability,
       modelAvailabilityChecked,
       isModelAvailable,
+      toggleMediaOption,
       canStartChat,
       requiredLLMName,
       requiredModelsForSelection,
@@ -2575,17 +3103,19 @@ export default {
 .scenario-grid {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
-  gap: 1rem;
+  gap: 2rem;
+  justify-content: start;
 }
 
 .companion-card,
 .scenario-card {
   background: rgba(0, 0, 0, 0.3);
-  border: 1px solid rgba(255, 255, 255, 0.1);
+  border: 1px solid rgba(255, 255, 255, 0.2);
   border-radius: 8px;
   padding: 1rem;
   cursor: pointer;
   transition: all 0.2s;
+  position: relative;
 }
 
 .companion-card:hover,
@@ -2625,13 +3155,16 @@ export default {
 
 .companion-avatar {
   position: relative;
+  position: absolute;
+  top: -24px;
+  right: -24px;
 }
 
 .session-badge {
   position: absolute;
   top: -4px;
   right: -4px;
-  background: rgba(97, 55, 142, 0.9);
+  background: rgba(57, 213, 130, 0.5);
   color: #fff;
   font-size: 10px;
   font-weight: bold;
@@ -2646,13 +3179,15 @@ export default {
 }
 
 .companion-card.has-session {
-  border-color: rgba(97, 55, 142, 0.6);
+  /* border-color: rgba(57, 213, 130, 0.5) !important; */
+  box-shadow: 0 8px 24px rgba(57, 213, 130, 0.2);
 }
 
 /* Saved custom companions */
 .companion-card.is-saved-custom {
   position: relative;
-  border-color: rgba(50, 115, 220, 0.4);
+  border-color: rgba(255, 255, 255, 0.3);
+  border-style: dashed;
 }
 
 .companion-card.is-saved-custom:hover {
@@ -2661,8 +3196,8 @@ export default {
 
 .custom-badge {
   position: absolute;
-  bottom: -4px;
-  right: -4px;
+  bottom: -3px;
+  right: -3px;
   background: rgba(50, 115, 220, 0.9);
   color: #fff;
   min-width: 16px;
@@ -2677,13 +3212,13 @@ export default {
 
 .delete-custom-btn {
   position: absolute;
-  top: 4px;
-  right: 4px;
-  background: rgba(255, 56, 96, 0.8);
+  top: -24px;
+  right: -24px;
+  background: rgba(255, 56, 96, 1);
   border: none;
   border-radius: 50%;
-  width: 20px;
-  height: 20px;
+  width: 48px;
+  height: 48px;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -2713,16 +3248,22 @@ export default {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  background: rgba(0, 0, 0, 0.3);
-  border: 1px solid rgba(97, 55, 142, 0.4);
   border-radius: 8px;
-  padding: 0.75rem 1rem;
+  padding: 0.75rem 0;
   transition: all 0.2s;
 }
 
-.saved-session-card:hover {
-  background: rgba(97, 55, 142, 0.2);
-  border-color: rgba(97, 55, 142, 0.6);
+hr {
+  margin: 12px 0;
+  width: 100%;
+  border: none;
+  height: 1px;
+  background: linear-gradient(
+    to right,
+    transparent,
+    rgba(255, 255, 255, 1),
+    transparent
+  );
 }
 
 .saved-session-card .session-info {
@@ -2876,9 +3417,49 @@ export default {
   flex: 1;
   overflow-y: auto;
   padding: 1rem;
-  background: rgba(0, 0, 0, 0.2);
+  background-color: rgba(0, 0, 0, 0.2);
   border-radius: 8px;
   margin-bottom: 1rem;
+  position: relative;
+  transform: rotate3d(0, 0, 0);
+}
+
+/* Background layer for fade transitions */
+.chat-background {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background-size: cover;
+  background-position: center;
+  background-repeat: no-repeat;
+  border-radius: 8px;
+  z-index: 0;
+  pointer-events: none;
+}
+
+/* Background fade transition */
+.bg-fade-enter-active {
+  transition: opacity 0.8s ease-in;
+}
+
+.bg-fade-leave-active {
+  transition: opacity 0.3s ease-out;
+}
+
+.bg-fade-enter-from {
+  opacity: 0;
+}
+
+.bg-fade-leave-to {
+  opacity: 0;
+}
+
+/* Ensure chat content appears above background */
+.chat-messages .chat-message {
+  position: relative;
+  z-index: 1;
 }
 
 .scene-description .notification {
@@ -2917,6 +3498,22 @@ export default {
   margin-bottom: 1rem;
 }
 
+/* Only animate newly added messages */
+.chat-message.is-new {
+  animation: messageSlideIn 0.4s ease-out;
+}
+
+@keyframes messageSlideIn {
+  from {
+    opacity: 0;
+    transform: translateY(20px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
 .chat-message.user {
   flex-direction: row-reverse;
 }
@@ -2926,7 +3523,8 @@ export default {
 }
 
 .chat-message.user .message-text {
-  background: rgba(97, 55, 142, 0.9);
+  background: rgba(97, 55, 142, 0.5);
+  backdrop-filter: blur(32px);
 }
 
 .message-avatar {
@@ -2969,7 +3567,7 @@ export default {
   padding: 0.75rem 1rem;
   border-radius: 12px;
   color: #fff;
-   backdrop-filter: blur(32px);
+  backdrop-filter: blur(32px);
 }
 
 .action-text {
@@ -2983,6 +3581,55 @@ export default {
   max-width: 300px;
   border-radius: 8px;
   overflow: hidden;
+  animation: mediaFadeIn 0.5s ease-out forwards;
+  opacity: 0;
+  position: relative;
+}
+
+.message-image .image-actions {
+  position: absolute;
+  bottom: 8px;
+  right: 8px;
+  display: flex;
+  gap: 4px;
+  opacity: 0;
+  transition: opacity 0.2s ease;
+}
+
+.message-image:hover .image-actions {
+  opacity: 1;
+}
+
+.image-action-btn {
+  background: rgba(0, 0, 0, 0.7);
+  border: none;
+  border-radius: 4px;
+  padding: 6px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: background 0.2s ease;
+}
+
+.image-action-btn:hover {
+  background: rgba(97, 55, 142, 0.9);
+}
+
+.image-action-btn .material-symbols-outlined {
+  font-size: 18px;
+  color: #fff;
+}
+
+@keyframes mediaFadeIn {
+  from {
+    opacity: 0;
+    transform: scale(0.95);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
 }
 
 .message-image img {
@@ -2990,13 +3637,195 @@ export default {
   display: block;
 }
 
+/* Delete button red tint on hover */
+.image-action-btn.delete-btn:hover,
+.media-action-btn.delete-btn:hover {
+  background: rgba(200, 50, 50, 0.9);
+}
+
+/* Audio actions overlay */
 .message-audio {
+  position: relative;
   width: 100% !important;
+  animation: mediaFadeIn 0.5s ease-out forwards;
+  opacity: 0;
+}
+
+.audio-actions {
+  position: absolute;
+  top: 50%;
+  right: 8px;
+  transform: translateY(-50%);
+  display: flex;
+  gap: 4px;
+  opacity: 0;
+  transition: opacity 0.2s ease;
+}
+
+.message-audio:hover .audio-actions {
+  opacity: 1;
+}
+
+/* Video actions overlay */
+.message-video {
+  position: relative;
+  animation: mediaFadeIn 0.5s ease-out forwards;
+  opacity: 0;
+}
+
+.video-actions {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  display: flex;
+  gap: 4px;
+  opacity: 0;
+  transition: opacity 0.2s ease;
+}
+
+.message-video:hover .video-actions {
+  opacity: 1;
+}
+
+/* Shared media action button */
+.media-action-btn {
+  background: rgba(0, 0, 0, 0.7);
+  border: none;
+  border-radius: 4px;
+  padding: 6px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: background 0.2s ease;
+}
+
+.media-action-btn:hover {
+  background: rgba(97, 55, 142, 0.9);
+}
+
+.media-action-btn .material-symbols-outlined {
+  font-size: 18px;
+  color: #fff;
+}
+
+/* Text delete button */
+.message-text {
+  position: relative;
+}
+
+.text-delete-btn {
+  position: absolute;
+  top: 0;
+  right: -30px;
+  background: rgba(0, 0, 0, 0.5);
+  border: none;
+  border-radius: 4px;
+  padding: 4px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  opacity: 0;
+  transition: opacity 0.2s ease, background 0.2s ease;
+}
+
+.message-text:hover .text-delete-btn {
+  opacity: 1;
+}
+
+.text-delete-btn:hover {
+  background: rgba(200, 50, 50, 0.9);
+}
+
+.text-delete-btn .material-symbols-outlined {
+  font-size: 16px;
+  color: #fff;
 }
 
 .message-audio audio {
   width: 100%;
   color-scheme: dark;
+}
+
+/* Generation Progress */
+.generation-progress {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.generation-items {
+  display: flex;
+  gap: 1rem;
+  flex-wrap: wrap;
+}
+
+.generation-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+  padding: 0.25rem 0.5rem;
+  background: rgba(97, 55, 142, 0.3);
+  border-radius: 4px;
+  color: rgba(255, 255, 255, 0.8);
+}
+
+.generation-item .material-symbols-outlined {
+  font-size: 16px;
+}
+
+/* Media Placeholders */
+.message-image-placeholder,
+.message-audio-placeholder,
+.message-video-placeholder {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(0, 0, 0, 0.3);
+  border: 1px dashed rgba(255, 255, 255, 0.2);
+  border-radius: 8px;
+  padding: 1.5rem;
+}
+
+.message-image-placeholder {
+  max-width: 300px;
+  min-height: 150px;
+}
+
+.message-audio-placeholder {
+  min-height: 50px;
+}
+
+.message-video-placeholder {
+  max-width: 300px;
+  min-height: 150px;
+}
+
+.placeholder-content {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.5rem;
+  color: rgba(255, 255, 255, 0.5);
+}
+
+.placeholder-content .material-symbols-outlined {
+  font-size: 32px;
+}
+
+/* Spinning animation for loading icons */
+.spinning {
+  animation: spin 1.5s linear infinite;
+}
+
+@keyframes spin {
+  from {
+    transform:;
+  }
+  to {
+    transform: rotate(360deg);
+  }
 }
 
 /* Typing Indicator */
@@ -3027,7 +3856,7 @@ export default {
   display: inline-flex;
   align-items: center;
   padding: 6px 12px;
-  border-radius: 20px;
+  border-radius: 4px;
   background: rgba(255, 255, 255, 0.1);
   border: 1px solid rgba(255, 255, 255, 0.2);
   cursor: pointer;
@@ -3086,6 +3915,12 @@ export default {
   animation-delay: -0.16s;
 }
 
+.has-text-brand {
+  -webkit-text-fill-color: transparent;
+  background: linear-gradient(135deg, rgb(155, 109, 200), rgb(255, 153, 51))
+    text;
+}
+
 @keyframes typing {
   0%,
   80%,
@@ -3111,6 +3946,16 @@ export default {
 /* Chat Input */
 .chat-input {
   padding: 0;
+}
+
+.chat-input .input.send,
+.chat-input .input.send:focus,
+.chat-input .input.send:active {
+  box-shadow: none;
+  outline: none;
+  outline-offset: 0px;
+  border: none;
+  border-bottom: 2px solid rgba(0,0,0,0.3) !important;
 }
 
 .rotating {
@@ -3193,35 +4038,47 @@ export default {
   border-radius: 8px;
 }
 
-/* Media Options Checkboxes */
-.media-checkboxes {
+/* Media Options Selector - matches content-level-selector */
+.media-selector {
   display: flex;
-  flex-wrap: wrap;
-  gap: 0.75rem;
+  flex-direction: column;
+  gap: 0.5rem;
 }
 
 .media-option {
-  display: inline-flex;
+  display: flex;
   align-items: center;
-  gap: 0.25rem;
-  padding: 0.5rem 0.75rem;
-  background: rgba(255, 255, 255, 0.1);
-  border-radius: 8px;
+  justify-content: space-between;
+  background: rgba(0, 0, 0, 0.3);
+  padding: 0.75rem;
+  border-radius: 6px;
   cursor: pointer;
+  border: 1px solid rgba(255, 255, 255, 0.1);
   transition: all 0.2s;
-  color: #fff;
 }
 
 .media-option:hover {
-  background: rgba(255, 255, 255, 0.2);
+  background: rgba(97, 55, 142, 0.2);
+  border-color: rgba(255, 255, 255, 0.3);
 }
 
-.media-option input[type="checkbox"] {
-  margin-right: 0.25rem;
+.media-option.is-selected {
+  border-color: rgba(255, 255, 255, 1);
+  background: rgba(97, 55, 142, 0.33);
+  backdrop-filter: blur(64px);
 }
 
-.media-option .material-symbols-outlined {
-  font-size: 18px;
+.media-option-content {
+  flex: 1;
+}
+
+.media-option strong {
+  color: #fff;
+}
+
+.media-option p {
+  color: rgba(255, 255, 255, 0.6);
+  margin-top: 0.25rem;
 }
 
 .media-option.is-unavailable {
@@ -3230,7 +4087,25 @@ export default {
 }
 
 .media-option.is-unavailable:hover {
-  background: rgba(255, 255, 255, 0.1);
+  background: rgba(0, 0, 0, 0.3);
+  border-color: rgba(255, 255, 255, 0.1);
+}
+
+/* Sessions header with import/export */
+.sessions-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 0.5rem;
+}
+
+.sessions-header h3 {
+  margin: 0;
+}
+
+.sessions-actions {
+  display: flex;
+  gap: 0.5rem;
 }
 
 /* Model Requirements Section */

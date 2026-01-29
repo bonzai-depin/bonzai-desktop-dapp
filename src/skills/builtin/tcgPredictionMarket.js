@@ -36,7 +36,7 @@ export const skill = {
   id: 'tcg-insurance-v1.0.0',
   name: 'Trading Card Game Insurance',
   description:
-    'Build your trading card portfolio and create or join prediction markets on card prices. Uses real-time pricing from JustTCG.com for Pokemon, MTG, Yu-Gi-Oh!, One Piece, and Lorcana.',
+    'Build your trading card portfolio and create or join prediction markets on card prices. Uses real-time pricing for Pokemon, Magic: The Gathering, Yu-Gi-Oh!, One Piece, and Lorcana.',
   version: '1.0.0',
 
   // ═══════════════════════════════════════════════════════════════════════════

@@ -50,7 +50,7 @@ export const CONFIG = {
       name: "Text Generation",
       description: "Local chat with 20+ models.",
       icon: "chat",
-      holdingRequired: 20, // BONZAI tokens required (divided by 5)
+      holdingRequired: 1000,
       features: ["Unlimited Text Generation", "Unlimited Character Roleplay", "Unlimited Vibe Coding"],
     },
     LVL2: {
@@ -58,15 +58,15 @@ export const CONFIG = {
       name: "Audio Generation",
       description: "Text-to-Speech and more.",
       icon: "headphones",
-      holdingRequired: 100, // (divided by 5)
+      holdingRequired: 5000,
       features: ["Unlimited Audio Generation", "Voice Cloning", "Text-to-Speech"],
     },
     LVL3: {
       id: 3,
       name: "Image Generation",
-      description: "Turn text into images",
+      description: "Turn text into images.",
       icon: "image",
-      holdingRequired: 400, // (divided by 5)
+      holdingRequired: 10000,
       features: ["Unlimited Image Generation", "Uncensored Images", "Style Transfer"],
     },
     LVL4: {
@@ -74,23 +74,23 @@ export const CONFIG = {
       name: "Video Generation",
       description: "Turn text and images into videos.",
       icon: "movie",
-      holdingRequired: 2000, // (divided by 5)
-      features: ["Unlimited Video Generation", "Image-to-Video", "Text-to-video"],
+      holdingRequired: 25000,
+      features: ["Unlimited Video Generation", "Image-to-Video", "Text-to-Video"],
     },
     LVL5: {
       id: 5,
       name: "Game Generation",
       description: "Turn text into 3D assets.",
       icon: "3d_rotation",
-      holdingRequired: 10000, // (divided by 5)
-      features: ["Unlimited Game Generation", "3D assets", "Virtual Effects"],
+      holdingRequired: 33000,
+      features: ["Unlimited Game Generation", "3D Assets", "Virtual Effects"],
     },
     LVL6: {
       id: 6,
       name: "Model Training",
       description: "Train models and robots.",
       icon: "exercise",
-      holdingRequired: 40000, // (divided by 5)
+      holdingRequired: 50000,
       features: ["Robotics Neural Networks", "Consistent Characters", "Custom Large Language Models"],
     },
   },
