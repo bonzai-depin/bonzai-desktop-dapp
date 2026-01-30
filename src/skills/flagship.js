@@ -512,6 +512,57 @@ async function generateTextWithModel(prompt, systemPrompt = '', llmConfig = DEFA
   return response;
 }
 
+/**
+ * Infer emotion from text content when not explicitly provided
+ * @param {string} text - The response text to analyze
+ * @returns {string} Inferred emotion
+ */
+function inferEmotionFromText(text) {
+  if (!text) return 'neutral';
+  const lower = text.toLowerCase();
+
+  // Check for explicit emotions in order of intensity
+  const emotionKeywords = {
+    // High intensity intimate
+    ecstatic: ['ecstasy', 'ecstatic', 'orgasm', 'climax', 'convuls', 'waves of pleasure'],
+    overwhelmed: ['overwhelm', 'can\'t take', 'too much', 'sobbing', 'trembl'],
+    passionate: ['passion', 'fervent', 'intense desire', 'burning'],
+    aroused: ['aroused', 'arousal', 'turned on', 'wet', 'hard', 'throb', 'aching'],
+    breathless: ['breathless', 'gasping', 'panting', 'can\'t breathe', 'catching breath'],
+    // Medium intensity
+    lustful: ['lust', 'hunger', 'want you', 'need you', 'crave'],
+    longing: ['longing', 'yearning', 'missing', 'wish you were'],
+    loving: ['love you', 'adore', 'cherish', 'heart swells'],
+    flirty: ['wink', 'tease', 'playful smile', 'smirk', 'bite lip'],
+    teasing: ['teasing', 'mischiev', 'playful'],
+    // Low intensity
+    happy: ['happy', 'joy', 'delighted', 'wonderful', 'amazing', 'smile', 'laugh', 'grin'],
+    content: ['content', 'peaceful', 'serene', 'calm', 'relaxed', 'comfortable'],
+    curious: ['curious', 'wonder', 'intrigued', 'fascinated', 'interested'],
+    shy: ['shy', 'blush', 'embarrass', 'bashful', 'timid'],
+    nervous: ['nervous', 'anxious', 'worried', 'uneasy'],
+    surprised: ['surprised', 'shocked', 'astonished', 'amazed', 'didn\'t expect'],
+    sad: ['sad', 'tear', 'cry', 'sorrow', 'heartbroken', 'miss you'],
+    angry: ['angry', 'furious', 'rage', 'annoyed', 'frustrated'],
+    confident: ['confident', 'bold', 'assured', 'certain'],
+    playful: ['playful', 'giggle', 'bouncing', 'excited', 'fun'],
+  };
+
+  for (const [emotion, keywords] of Object.entries(emotionKeywords)) {
+    if (keywords.some(k => lower.includes(k))) {
+      return emotion;
+    }
+  }
+
+  // Check for action-based emotions
+  if (lower.includes('moan') || lower.includes('groan') || lower.includes('gasp')) return 'aroused';
+  if (lower.includes('kiss') || lower.includes('embrace') || lower.includes('hold')) return 'loving';
+  if (lower.includes('smile') || lower.includes('laugh')) return 'happy';
+  if (lower.includes('sigh')) return 'content';
+
+  return 'neutral';
+}
+
 function extractJSON(response) {
   if (!response || typeof response !== 'string') {
     throw new Error('Empty or invalid LLM response');
@@ -654,12 +705,22 @@ function extractJSON(response) {
   const responseValue = extractField('response', true);
   if (responseValue) {
     result.response = responseValue;
+    console.log(`[Flagship] Extracted response field, length: ${responseValue.length}`);
+  } else {
+    console.warn('[Flagship] Failed to extract response field from content');
   }
 
-  // Extract emotion field
+  // Extract emotion field - try explicit field first, then infer from response
   const emotionValue = extractField('emotion');
-  if (emotionValue) {
+  if (emotionValue && emotionValue !== 'neutral') {
     result.emotion = emotionValue;
+  } else if (result.response) {
+    // Infer emotion from response text if not explicitly provided
+    const inferredEmotion = inferEmotionFromText(result.response);
+    if (inferredEmotion !== 'neutral') {
+      result.emotion = inferredEmotion;
+      console.log(`[Flagship] Inferred emotion from response: ${inferredEmotion}`);
+    }
   }
 
   // Extract action field (multiline)
@@ -719,6 +780,38 @@ function extractJSON(response) {
     }
   }
 
+  // Fallback: if no response but we have action or content looks like narrative, try harder
+  if (!result.response && content.length > 50) {
+    console.warn('[Flagship] No response extracted, attempting fallback extraction');
+
+    // Try to find any quoted text that looks like dialogue/narration (longer than 50 chars)
+    const quotedMatches = content.match(/"([^"]{50,})"/g);
+    if (quotedMatches && quotedMatches.length > 0) {
+      // Use the longest quoted text as the response
+      const longest = quotedMatches
+        .map(m => m.slice(1, -1))
+        .sort((a, b) => b.length - a.length)[0];
+      result.response = longest;
+      console.log(`[Flagship] Fallback: extracted from quoted text, length: ${longest.length}`);
+    } else {
+      // Try to find text between common delimiters
+      const textMatch = content.match(/(?:response|narrator|says|speaks)[\s:]*["\s]*([^"]{50,}?)(?:"|$|\n\s*[a-z]+:)/i);
+      if (textMatch && textMatch[1]) {
+        result.response = textMatch[1].trim();
+        console.log(`[Flagship] Fallback: extracted near keyword, length: ${result.response.length}`);
+      }
+    }
+
+    // Infer emotion from fallback response
+    if (result.response && result.emotion === 'neutral') {
+      const inferred = inferEmotionFromText(result.response);
+      if (inferred !== 'neutral') {
+        result.emotion = inferred;
+        console.log(`[Flagship] Inferred emotion from fallback: ${inferred}`);
+      }
+    }
+  }
+
   // If we got a response, clean it from any embedded metadata fields
   if (result.response) {
     // Remove any metadata fields that got embedded in the response text
@@ -770,10 +863,18 @@ function extractJSON(response) {
     cleanResponse = cleanResponse.replace(/  +/g, ' ');
     cleanResponse = cleanResponse.replace(/\n{3,}/g, '\n\n').trim();
 
+    // If cleaning removed too much content, use the original extracted response
+    if (cleanResponse.length < 10 && result.response.length >= 10) {
+      console.warn('[Flagship] Cleaning removed too much content, using original');
+      cleanResponse = result.response.trim();
+    }
+
     result.response = cleanResponse;
 
     console.log('[Flagship] Extracted fields:', {
       hasResponse: !!result.response,
+      responseLength: result.response?.length || 0,
+      responsePreview: result.response?.substring(0, 100) || 'EMPTY',
       emotion: result.emotion,
       hasAction: !!result.action,
       shouldVisualize: result.shouldVisualize,
@@ -804,9 +905,11 @@ function extractJSON(response) {
   const cleanedContent = content.trim();
   if (cleanedContent.length > 50 && !cleanedContent.startsWith('{') && !cleanedContent.includes('"response"') && !cleanedContent.match(/^response:/i)) {
     console.warn('[Flagship] Using plain text as response');
+    const inferredEmotion = inferEmotionFromText(cleanedContent);
+    console.log(`[Flagship] Inferred emotion from text: ${inferredEmotion}`);
     return {
       response: cleanedContent,
-      emotion: 'neutral',
+      emotion: inferredEmotion,
       action: null,
       shouldVisualize: false,
       suggestedResponses: ['Continue...', 'Tell me more', 'What happens next?'],
@@ -1029,7 +1132,7 @@ async function generateVideo(imageBase64OrNull, prompt, options = {}) {
     width: options.width || 352,
     frames: options.frames || 37,  // ~3 seconds at 12fps
     frame_rate: options.frameRate || 12,
-    steps: options.steps || 8,
+    steps: options.steps || 10,
     guidance_scale: options.guidanceScale || 1.0,
   }, true); // Enable demo mode fallback
 }
@@ -1106,6 +1209,147 @@ function detectResponseLoop(newResponse, history, threshold = 0.5) {
 function extractOpeningPhrase(text) {
   if (!text) return '';
   return text.split(/\s+/).slice(0, 5).join(' ');
+}
+
+/**
+ * Relationship levels for tracking intimacy progression
+ */
+const RELATIONSHIP_LEVELS = {
+  strangers: { order: 0, label: 'Just met', description: 'Initial encounter, getting to know each other' },
+  acquaintances: { order: 1, label: 'Acquaintances', description: 'Familiar with each other, casual rapport' },
+  friends: { order: 2, label: 'Friends', description: 'Comfortable friendship, trust established' },
+  close_friends: { order: 3, label: 'Close friends', description: 'Deep friendship, emotional bond, possible attraction' },
+  romantic: { order: 4, label: 'Romantic', description: 'Romantic relationship, dating, in love' },
+  intimate: { order: 5, label: 'Intimate partners', description: 'Deep romantic and physical intimacy, committed relationship' },
+};
+
+/**
+ * Determine relationship level based on history and emotions
+ * @param {Array} history - Chat history
+ * @param {Object} currentState - Current relationship state
+ * @param {Object} newResponse - Latest response with emotion/action
+ * @returns {Object} Updated relationship state
+ */
+function updateRelationshipState(history, currentState = {}, newResponse = {}) {
+  const {
+    level = 'strangers',
+    milestones = [],
+    intimacyScore = 0,
+  } = currentState;
+
+  let newLevel = level;
+  let newScore = intimacyScore;
+  const newMilestones = [...milestones];
+
+  const emotion = (newResponse.emotion || '').toLowerCase();
+  const action = (newResponse.action || '').toLowerCase();
+  const response = (newResponse.response || '').toLowerCase();
+  const combined = `${emotion} ${action} ${response}`;
+
+  // Intimacy indicators that increase relationship score
+  const intimacyKeywords = {
+    light: ['flirt', 'blush', 'shy', 'nervous', 'attracted', 'cute', 'handsome', 'beautiful'],
+    medium: ['kiss', 'hold hands', 'hug', 'embrace', 'caress', 'cuddle', 'affection', 'love', 'adore'],
+    heavy: ['passionate', 'desire', 'want you', 'need you', 'aroused', 'intimate', 'make love'],
+    intense: ['sex', 'fuck', 'orgasm', 'climax', 'thrust', 'moan', 'ecstasy', 'pleasure'],
+  };
+
+  // Score adjustments
+  if (intimacyKeywords.light.some(k => combined.includes(k))) newScore += 1;
+  if (intimacyKeywords.medium.some(k => combined.includes(k))) newScore += 3;
+  if (intimacyKeywords.heavy.some(k => combined.includes(k))) newScore += 5;
+  if (intimacyKeywords.intense.some(k => combined.includes(k))) newScore += 10;
+
+  // Romantic emotions boost score
+  const romanticEmotions = ['loving', 'flirty', 'longing', 'passionate', 'aroused', 'breathless'];
+  if (romanticEmotions.includes(emotion)) newScore += 2;
+
+  // Track milestones
+  if (combined.includes('kiss') && !milestones.includes('first_kiss')) {
+    newMilestones.push('first_kiss');
+  }
+  if (combined.includes('love') && combined.includes('you') && !milestones.includes('love_confession')) {
+    newMilestones.push('love_confession');
+  }
+  if (intimacyKeywords.intense.some(k => combined.includes(k)) && !milestones.includes('physical_intimacy')) {
+    newMilestones.push('physical_intimacy');
+  }
+
+  // Determine level based on score thresholds
+  if (newScore >= 50 || newMilestones.includes('physical_intimacy')) {
+    newLevel = 'intimate';
+  } else if (newScore >= 30 || newMilestones.includes('love_confession')) {
+    newLevel = 'romantic';
+  } else if (newScore >= 15 || newMilestones.includes('first_kiss')) {
+    newLevel = 'close_friends';
+  } else if (newScore >= 5) {
+    newLevel = 'friends';
+  } else if (newScore >= 2 || history.length > 10) {
+    newLevel = 'acquaintances';
+  }
+
+  return {
+    level: newLevel,
+    milestones: newMilestones,
+    intimacyScore: newScore,
+    levelInfo: RELATIONSHIP_LEVELS[newLevel],
+  };
+}
+
+/**
+ * Rebuild relationship state from chat history (for older sessions without saved state)
+ * @param {Array} history - Full chat history
+ * @returns {Object} Rebuilt relationship state
+ */
+function rebuildRelationshipFromHistory(history) {
+  let state = { level: 'strangers', milestones: [], intimacyScore: 0 };
+
+  for (const msg of history) {
+    if (msg.role === 'assistant') {
+      state = updateRelationshipState(history, state, {
+        emotion: msg.emotion || '',
+        action: msg.action || '',
+        response: msg.content || '',
+      });
+    }
+  }
+
+  console.log(`[Roleplay] Rebuilt relationship state from ${history.length} messages: ${state.level} (score: ${state.intimacyScore})`);
+  return state;
+}
+
+/**
+ * Build relationship context string for LLM prompt
+ * @param {Object} relationshipState - Current relationship state
+ * @param {number} historyLength - Total messages in history
+ * @returns {string} Relationship context for prompt
+ */
+function buildRelationshipContext(relationshipState, historyLength) {
+  const { level, milestones = [], levelInfo } = relationshipState || {};
+
+  if (!level || level === 'strangers') {
+    return '';
+  }
+
+  const milestoneDescriptions = {
+    first_kiss: 'You have shared your first kiss',
+    love_confession: 'You have confessed your love for each other',
+    physical_intimacy: 'You have been physically intimate together',
+  };
+
+  const milestonesStr = milestones
+    .map(m => milestoneDescriptions[m])
+    .filter(Boolean)
+    .join('. ');
+
+  return `
+RELATIONSHIP STATUS (CRITICAL - MAINTAIN THIS):
+- Current relationship: ${levelInfo?.label || level} (${levelInfo?.description || ''})
+- Conversation history: ${historyLength} messages exchanged
+${milestonesStr ? `- Key moments: ${milestonesStr}` : ''}
+- IMPORTANT: You and the user have an established relationship. Do NOT act like strangers.
+- Continue the emotional intimacy level that has been built. Reference shared experiences naturally.
+`;
 }
 
 /**
@@ -2038,6 +2282,8 @@ export const roleplayCompanion = createSkillDefinition({
       const isAdult = contentLevel === 'adult';
       const contentConfig = CONTENT_LEVELS[contentLevel];
 
+      console.log(`[Roleplay] executeMessage settings: contentLevel="${contentLevel}", isAdult=${isAdult}`);
+
       // Scene state defaults
       const {
         lastImageAt = -IMAGE_GENERATION_CONFIG.MIN_MESSAGES_BETWEEN_IMAGES,
@@ -2045,9 +2291,19 @@ export const roleplayCompanion = createSkillDefinition({
         recentEmotions = [],
         recentActions = [],
         lastOpeningPhrase = '',
+        relationshipState: savedRelationshipState,
       } = sceneState;
 
       const messageIndex = history.length;
+
+      // Rebuild relationship state if missing or outdated (for older saved sessions)
+      let relationshipState = savedRelationshipState;
+      if (!relationshipState || (relationshipState.level === 'strangers' && history.length > 5)) {
+        relationshipState = rebuildRelationshipFromHistory(history);
+      }
+
+      // Build relationship context for the prompt
+      const relationshipContext = buildRelationshipContext(relationshipState, messageIndex);
       const messagesSinceLastImage = messageIndex - lastImageAt;
 
       // Build character description
@@ -2156,7 +2412,7 @@ ${characterDesc}
 
 SCENARIO:
 ${scenarioContext}
-${visionContext}
+${relationshipContext}${visionContext}
 CONTENT GUIDELINES:
 ${contentConfig.guidelines}
 ${antiRepetitionInstructions}
@@ -2191,7 +2447,28 @@ CRITICAL: Output ONLY the JSON object above. No other text.`;
         throw new Error(`Failed to parse response: ${e.message}`);
       }
 
+      // Clean up response content - remove "Companion:", "User:", character name prefixes, etc.
+      if (response.response) {
+        response.response = response.response
+          .replace(/^(Companion|User|Assistant|\w+):\s*/gi, '') // Remove prefix at start
+          .replace(/\n(Companion|User|Assistant):\s*/gi, '\n') // Remove prefixes after newlines
+          .replace(new RegExp(`^${companion.name}:\\s*`, 'i'), '') // Remove character name prefix
+          .trim();
+      }
+
+      // Clean up suggested responses - remove "User:", "Companion:", numbers, etc.
+      if (response.suggestedResponses && Array.isArray(response.suggestedResponses)) {
+        response.suggestedResponses = response.suggestedResponses.map(s => {
+          return s
+            .replace(/^(User|Companion|Assistant|\d+[\.\)]\s*):\s*/gi, '') // Remove role prefixes
+            .replace(/^["']|["']$/g, '') // Remove surrounding quotes
+            .replace(/^\d+[\.\)]\s*/, '') // Remove numbered list prefixes like "1." or "1)"
+            .trim();
+        }).filter(s => s.length > 0);
+      }
+
       // Streaming callback - notify text is ready
+      console.log(`[Roleplay] Text ready, response.response length: ${response.response?.length || 0}, preview: "${response.response?.substring(0, 50) || 'EMPTY'}"`);
       if (context.onProgress) {
         context.onProgress({
           type: 'text',
@@ -2277,10 +2554,11 @@ Respond with JSON:
 
       console.log(`[Roleplay] Image decision: includeImage=${includeImage}, forceVisualize=${forceVisualize}, isFirstMessage=${isFirstMessage}, passesMinimumGate=${passesMinimumGate} (${messagesSinceLastImage} msgs since last), llmWantsImage=${llmWantsImage}, forceImageDueToGap=${forceImageDueToGap}, RESULT=${shouldGenerateImage}`);
 
-      // If forcing image due to gap but no imagePrompt, create a default one
-      if (shouldGenerateImage && !response.imagePrompt && forceImageDueToGap) {
-        response.imagePrompt = `${companion.name}, ${companion.appearance}, ${response.emotion || 'neutral'} expression, ${response.action || 'in a dramatic pose'}, ${scenario?.setting || 'beautiful background'}, highly detailed, cinematic lighting`;
-        console.log('[Roleplay] Generated default imagePrompt for forced image');
+      // If we should generate an image but no imagePrompt exists, create a default one
+      // This happens with forceVisualize (autonomous mode) or forceImageDueToGap
+      if (shouldGenerateImage && !response.imagePrompt) {
+        response.imagePrompt = `${companion.name}, ${companion.appearance}, ${response.emotion || 'neutral'} expression, ${response.action || 'in a dramatic pose'}, ${currentLocation || scenario?.setting || 'beautiful background'}, highly detailed, cinematic lighting`;
+        console.log('[Roleplay] Generated default imagePrompt for forced/autonomous image');
       }
 
       // Generate character image based on content level (only if warranted)
@@ -2289,25 +2567,26 @@ Respond with JSON:
         try {
           let imageResult;
 
-          // Detect explicit/sexual scenes based on emotion, action, and context (moved up for model selection)
+          // Detect explicit/sexual scenes based on emotion, action, and context
+          // Only triggers SDXL when content level is set to "adult"
           const explicitEmotions = ['aroused', 'lustful', 'passionate', 'breathless', 'overwhelmed', 'ecstatic'];
-          const explicitKeywords = ['sex', 'fuck', 'thrust', 'moan', 'orgasm', 'cum', 'naked', 'undress', 'intimate', 'penetrat', 'riding', 'sucking', 'licking'];
+          const explicitKeywords = ['sex', 'fuck', 'thrust', 'moan', 'orgasm', 'cum', 'naked', 'undress', 'intimate', 'penetrat', 'riding', 'sucking', 'licking', 'cock', 'pussy', 'nipple', 'breast'];
           const actionLower = (response.action || '').toLowerCase();
           const emotionLower = (response.emotion || '').toLowerCase();
           const responseLower = (response.response || '').toLowerCase();
 
-          const isExplicitScene = isAdult && (
-            explicitEmotions.includes(emotionLower) ||
-            explicitKeywords.some(k => actionLower.includes(k)) ||
-            explicitKeywords.some(k => responseLower.includes(k))
-          );
+          // Explicit scene detection requires adult content level
+          const hasExplicitKeywords = explicitKeywords.some(k => actionLower.includes(k)) ||
+                                      explicitKeywords.some(k => responseLower.includes(k));
+          const hasExplicitEmotion = explicitEmotions.some(e => emotionLower.includes(e));
+          const isExplicitScene = isAdult && (hasExplicitKeywords || hasExplicitEmotion);
 
           // Model selection:
-          // - image_standard (SDXL): Only for explicit/NSFW scenes in adult mode
-          // - image_advanced (Z Turbo): Default for all other content including adult non-explicit
-          // - image_quality (FLUX Krea): For mature content
+          // - image_standard (SDXL): Only for adult content level with explicit content
+          // - image_advanced (Z Turbo): Default for all other content
+          // - image_quality (FLUX Krea): For mature content (if configured)
           const imageModel = isExplicitScene ? 'image_standard' : (contentConfig?.imageModel || 'image_advanced');
-          console.log(`[Roleplay] Image generation: contentLevel=${contentLevel}, isAdult=${isAdult}, isExplicitScene=${isExplicitScene}, imageModel=${imageModel}`);
+          console.log(`[Roleplay] Image generation: contentLevel=${contentLevel}, isAdult=${isAdult}, hasExplicitKeywords=${hasExplicitKeywords}, hasExplicitEmotion=${hasExplicitEmotion}, isExplicitScene=${isExplicitScene}, imageModel=${imageModel}`);
 
           // ═══════════════════════════════════════════════════════════════════
           // CHARACTER CONSISTENCY: Always use companion's full appearance as base
@@ -2389,9 +2668,9 @@ Respond with JSON:
           console.warn('[Roleplay] Image generation failed:', e.message);
           response.image = null;
         }
-      } else if (includeImage) {
+      } else if (includeImage && !shouldGenerateImage) {
         // Log why we skipped image generation
-        console.log(`[Roleplay] Skipped image: shouldVisualize=${response.shouldVisualize}, messagesSinceLastImage=${messagesSinceLastImage}`);
+        console.log(`[Roleplay] Skipped image: shouldGenerateImage=false (llmWants=${response.shouldVisualize}, forceVisualize=${forceVisualize}, passesGate=${passesMinimumGate}, forceGap=${forceImageDueToGap})`);
         response.image = null;
       }
 
@@ -2434,9 +2713,18 @@ Respond with JSON:
           .join(' ');
 
         // Use quoted dialogue if present, otherwise use full response
-        const textToSpeak = dialogueOnly.length > 0
+        let textToSpeak = dialogueOnly.length > 0
           ? dialogueOnly
-          : response.response.replace(/\*[^*]+\*/g, '').trim(); // Remove action text in asterisks
+          : response.response
+              .replace(/\*[^*]+\*/g, '') // Remove action text in asterisks
+              .replace(/^(Companion|User|Assistant|\w+):\s*/gi, '') // Remove role prefixes
+              .trim();
+
+        // Additional cleanup for TTS - remove any remaining asterisks or formatting
+        textToSpeak = textToSpeak
+          .replace(/\*+/g, '') // Remove any remaining asterisks
+          .replace(/\s+/g, ' ') // Normalize whitespace
+          .trim();
 
         if (textToSpeak.length > 0) {
           context.updateStatus?.(`${companion.name} is speaking...`);
@@ -2469,14 +2757,46 @@ Respond with JSON:
       // ═══════════════════════════════════════════════════════════════════════════
       // VIDEO GENERATION FOR PEAK EMOTIONS (LTX-2 I2V)
       // ═══════════════════════════════════════════════════════════════════════════
-      const peakEmotions = ['aroused', 'passionate', 'ecstatic', 'overwhelmed', 'climax', 'orgasmic', 'breathless', 'longing', 'lustful'];
-      const emotionLower = (response.emotion || '').toLowerCase();
-      const isPeakEmotion = peakEmotions.some(e => emotionLower.includes(e));
+      const peakEmotions = ['excited', 'aroused', 'passionate', 'ecstatic', 'overwhelmed', 'climax', 'orgasmic', 'breathless', 'longing', 'lustful'];
+      const videoEmotionLower = (response.emotion || '').toLowerCase();
+      const isPeakEmotion = peakEmotions.some(e => videoEmotionLower.includes(e));
 
-      console.log(`[Roleplay] Video check: includeVideo=${includeVideo}, hasImage=${!!response.image}, emotion=${emotionLower}, isPeakEmotion=${isPeakEmotion}`);
+      console.log(`[Roleplay] Video check: includeVideo=${includeVideo}, hasImage=${!!response.image}, emotion=${videoEmotionLower}, isPeakEmotion=${isPeakEmotion}`);
+
+      // If video is enabled but no image exists, generate one for the video
+      if (includeVideo && !response.image && isPeakEmotion) {
+        console.log('[Roleplay] Video needs image - generating image first for video input');
+        context.updateStatus?.(`Preparing visual for video...`);
+        try {
+          // Generate image prompt if not available
+          const videoImagePrompt = response.imagePrompt ||
+            `${companion.name}, ${companion.appearance}, ${response.emotion || 'expressive'} expression, ${response.action || 'dramatic pose'}, cinematic lighting, high quality`;
+
+          // Use SDXL for video frames (better quality for animation)
+          const videoImageResult = await generateImageSDXL(
+            `${companion.name}, ${companion.appearance}, ${videoImagePrompt}, cinematic, film still, high quality`,
+            { width: 1024, height: 768 }
+          );
+          response.image = videoImageResult.image_base64 || videoImageResult.image;
+          console.log('[Roleplay] Generated image for video input');
+
+          // Notify UI of image
+          if (context.onProgress) {
+            context.onProgress({
+              type: 'image',
+              response: { ...response },
+            });
+          }
+
+          // Clear memory after image generation
+          await clearGenerationMemory();
+        } catch (e) {
+          console.warn('[Roleplay] Failed to generate image for video:', e.message);
+        }
+      }
 
       if (includeVideo && response.image && isPeakEmotion) {
-        context.updateStatus?.(`Preparing for video generation...`);
+        context.updateStatus?.(`Preparing cinematic video...`);
         try {
           // Aggressively clear memory BEFORE video generation
           await clearGenerationMemory(true); // Use aggressive mode
@@ -2488,35 +2808,47 @@ Respond with JSON:
             console.log(`[Roleplay] Memory before video: ${memStatus.rss_gb}GB RSS, cached: ${memStatus.cached_models?.join(', ') || 'none'}`);
           }
 
-          context.updateStatus?.(`Creating cinematic moment...`);
+          context.updateStatus?.(`Writing cinematographic script...`);
 
-          // Build motion-focused video prompt for LTX-2
-          // LTX-2 needs explicit motion/action descriptions to generate movement
-          const emotionMotions = {
-            aroused: 'slow sensual movements, arching back, running hands through hair',
-            passionate: 'intense embracing motion, pulling closer, deep breathing',
-            ecstatic: 'throwing head back, trembling with pleasure, gripping tightly',
-            overwhelmed: 'shuddering, gasping, waves of motion through body',
-            climax: 'intense rhythmic motion, body tensing and releasing, trembling',
-            orgasmic: 'full body convulsions, arching spine, waves of pleasure',
-            breathless: 'chest heaving, lips parted, trembling with anticipation',
-            longing: 'reaching out slowly, yearning gaze, subtle leaning forward',
-            lustful: 'hungry gaze, biting lip, slow deliberate movements toward camera',
-          };
+          // Use LLM to create a detailed cinematographic video prompt
+          // LTX-2 needs highly detailed, chronological descriptions
+          const videoPromptInstruction = `You are a cinematographer writing a shot description for a 5-second video clip.
 
-          // Find matching motion based on emotion
-          const emotionKey = Object.keys(emotionMotions).find(e => emotionLower.includes(e));
-          const motionDesc = emotionMotions[emotionKey] || 'gentle swaying, natural breathing, subtle head movements';
+CHARACTER: ${companion.name}
+APPEARANCE: ${companion.appearance}
+CURRENT EMOTION: ${response.emotion || 'neutral'}
+CURRENT ACTION: ${response.action || 'idle'}
+SCENE CONTEXT: ${response.response?.substring(0, 300) || 'A quiet moment'}
+IMAGE PROMPT (starting frame): ${response.imagePrompt || 'character portrait'}
+SETTING: ${currentLocation || scenario?.setting || 'indoor scene'}
 
-          // Extract action from response if available
-          const actionDesc = response.action
-            ? response.action.replace(/\*+/g, '').trim()
-            : '';
+Write a single flowing paragraph (under 200 words) describing what happens in this 5-second video clip. Follow this structure:
+1. Start with the main action in one sentence
+2. Add specific details about movements and gestures
+3. Describe the character's appearance precisely (hair, skin, clothing, expression)
+4. Include background and environment details
+5. Specify camera angle and any camera movement
+6. Describe lighting and colors
+7. Note any changes during the clip
 
-          // Build comprehensive video prompt with motion focus
-          const videoPrompt = `Cinematic video of ${companion.name}, ${companion.appearance.split(',').slice(0, 3).join(',')}, ${response.emotion} expression. ACTION: ${motionDesc}${actionDesc ? `, ${actionDesc}` : ''}. Smooth camera movement, professional cinematography, film grain, shallow depth of field, 24fps cinematic motion.`;
+Be literal and precise. Think like a cinematographer describing a shot list. Start directly with the action.
 
-          console.log(`[Roleplay] Video prompt with motion: ${videoPrompt}`);
+Example: "A woman with long red hair and tan skin slowly tilts her head back, her emerald eyes half-closed with pleasure. She runs her fingers through her flowing hair, her full lips parted in a soft gasp. She wears a sheer silk robe that drapes off one shoulder. The camera holds a medium close-up, slowly pushing in. Warm golden light from nearby candles casts soft shadows across her features. The background shows a dimly lit bedroom with silk curtains. Her breathing causes subtle movement in her chest as she exhales slowly."
+
+Write ONLY the video description paragraph, nothing else:`;
+
+          await ensureLLMLoaded(ROLEPLAY_LLM);
+          const videoPromptRaw = await generateTextWithModel(videoPromptInstruction, '', ROLEPLAY_LLM);
+          await unloadLLM();
+
+          // Clean up the prompt - remove any quotes or prefixes
+          const videoPrompt = videoPromptRaw
+            .replace(/^["']|["']$/g, '')
+            .replace(/^(Video description|Shot description|Paragraph):\s*/i, '')
+            .trim()
+            .substring(0, 500); // Keep under 500 chars for LTX-2
+
+          console.log(`[Roleplay] Video prompt (LLM generated): ${videoPrompt}`);
 
           const port = window.BONZAI_SERVER_PORT || 65000;
           const authHeaders = getAuthHeaders();
@@ -2541,7 +2873,7 @@ Respond with JSON:
               width: 640,
               frames: 61,    // 5 seconds at 12fps (must be 8n+1)
               frame_rate: 12,
-              steps: 8,
+              steps: 10,
               guidance_scale: 1.0,
               auto_download: true,
             }),
@@ -2580,8 +2912,11 @@ Respond with JSON:
       } else if (includeVideo && !response.image) {
         console.log('[Roleplay] Video skipped: no image available as starting frame');
       } else if (includeVideo && !isPeakEmotion) {
-        console.log(`[Roleplay] Video skipped: emotion "${emotionLower}" not in peak emotions list`);
+        console.log(`[Roleplay] Video skipped: emotion "${response.emotion || 'unknown'}" not in peak emotions list`);
       }
+
+      // Update relationship state based on the response
+      const updatedRelationshipState = updateRelationshipState(history, relationshipState, response);
 
       // Return updated scene state for the UI to track
       const updatedSceneState = {
@@ -2590,6 +2925,7 @@ Respond with JSON:
         recentEmotions: [...recentEmotions.slice(-2), response.emotion].filter(Boolean),
         recentActions: [...recentActions.slice(-1), response.action].filter(Boolean),
         lastOpeningPhrase: extractOpeningPhrase(response.response),
+        relationshipState: updatedRelationshipState,
       };
 
       return {

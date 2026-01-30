@@ -237,6 +237,116 @@
         </div>
       </div>
 
+            <!-- Saved Sessions & Import/Export -->
+      <div v-if="selectedCompanion" class="models__activity--payouts mb-5">
+        <div class="sessions-header">
+          <h3
+            class="fira-sans-condensed-black-italic has-text-white has-text-left is-size-3"
+          >
+            <span class="material-symbols-outlined mr-2 is-size-1">
+              history
+            </span>
+            Roleplay Sessions with <span class="has-text-brand"> {{ selectedCompanion.name }}</span>
+          </h3>
+          <div class="sessions-actions">
+            <button
+              class="button is-info is-small mr-5"
+              @click="triggerImportSession"
+            >
+              <span
+                class="material-symbols-outlined mr-2"
+                style="font-size: 14px"
+              >
+                upload
+              </span>
+              Import
+            </button>
+            <button
+              class="button is-warning is-small"
+              @click="exportAllSessions"
+              :disabled="Object.keys(savedSessions).length === 0"
+            >
+              <span
+                class="material-symbols-outlined mr-2"
+                style="font-size: 14px"
+              >
+                download
+              </span>
+              Export
+            </button>
+          </div>
+        </div>
+        <input
+          ref="importInput"
+          type="file"
+          accept=".json"
+          style="display: none"
+          @change="handleImportSession"
+        />
+        <hr />
+        <div
+          v-if="companionSessions.length > 0"
+          class="saved-sessions-list mt-4"
+        >
+          <div
+            v-for="session in companionSessions"
+            :key="session.key"
+            class="saved-session-card"
+          >
+            <div class="session-info">
+              <div class="session-header">
+                <span
+                  class="scenario-name fira-sans-condensed-black-italic mt-2"
+                >
+                  {{ session.scenario?.name || "Unknown Scenario" }}
+                </span>
+                <span class="tag is-small is-info ml-2">
+                  {{ session.messageCount }} msgs
+                </span>
+              </div>
+              <p
+                class="session-meta is-size-7 has-text-grey-light has-text-left"
+              >
+                {{
+                  contentLevels[session.settings?.contentLevel]?.label ||
+                  session.settings?.contentLevel
+                }}
+                • {{ formatResponseMode(session.settings?.responseMode) }}
+                <span v-if="session.updatedAt">
+                  • {{ formatSessionDate(session.updatedAt) }}
+                </span>
+              </p>
+            </div>
+            <div class="session-actions">
+              <button
+                class="button is-info is-medium mr-5"
+                @click="resumeSession(session.key)"
+              >
+                <span class="material-symbols-outlined mr-1">play_arrow</span>
+                Resume
+              </button>
+              <button
+                class="button is-warning is-medium mr-5"
+                @click="exportSession(session.key)"
+                title="Export session"
+              >
+                <span class="material-symbols-outlined">download</span>
+              </button>
+              <button
+                class="button is-danger is-medium"
+                @click="deleteSession(session.key)"
+              >
+                <span class="material-symbols-outlined">delete</span>
+              </button>
+            </div>
+          </div>
+        </div>
+        <p v-else class="notification is-info has-text-white mt-3">
+          No saved session with {{ selectedCompanion.name }} yet. Start a
+          roleplay or import one.
+        </p>
+      </div>
+
       <!-- Scenario Selection -->
       <div class="models__activity--payouts mb-5">
         <h3
@@ -472,116 +582,6 @@
         </div>
       </div>
 
-      <!-- Saved Sessions & Import/Export -->
-      <div v-if="selectedCompanion" class="models__activity--payouts mb-5">
-        <div class="sessions-header">
-          <h3
-            class="fira-sans-condensed-black-italic has-text-white has-text-left is-size-3"
-          >
-            <span class="material-symbols-outlined mr-2 is-size-1">
-              history
-            </span>
-            Roleplay Sessions
-          </h3>
-          <div class="sessions-actions">
-            <button
-              class="button is-info is-small mr-5"
-              @click="triggerImportSession"
-            >
-              <span
-                class="material-symbols-outlined mr-2"
-                style="font-size: 14px"
-              >
-                upload
-              </span>
-              Import
-            </button>
-            <button
-              class="button is-warning is-small"
-              @click="exportAllSessions"
-              :disabled="Object.keys(savedSessions).length === 0"
-            >
-              <span
-                class="material-symbols-outlined mr-2"
-                style="font-size: 14px"
-              >
-                download
-              </span>
-              Export
-            </button>
-          </div>
-        </div>
-        <input
-          ref="importInput"
-          type="file"
-          accept=".json"
-          style="display: none"
-          @change="handleImportSession"
-        />
-        <hr />
-        <div
-          v-if="companionSessions.length > 0"
-          class="saved-sessions-list mt-4"
-        >
-          <div
-            v-for="session in companionSessions"
-            :key="session.key"
-            class="saved-session-card"
-          >
-            <div class="session-info">
-              <div class="session-header">
-                <span
-                  class="scenario-name fira-sans-condensed-black-italic mt-2"
-                >
-                  {{ session.scenario?.name || "Unknown Scenario" }}
-                </span>
-                <span class="tag is-small is-info ml-2">
-                  {{ session.messageCount }} msgs
-                </span>
-              </div>
-              <p
-                class="session-meta is-size-7 has-text-grey-light has-text-left"
-              >
-                {{
-                  contentLevels[session.settings?.contentLevel]?.label ||
-                  session.settings?.contentLevel
-                }}
-                • {{ formatResponseMode(session.settings?.responseMode) }}
-                <span v-if="session.updatedAt">
-                  • {{ formatSessionDate(session.updatedAt) }}
-                </span>
-              </p>
-            </div>
-            <div class="session-actions">
-              <button
-                class="button is-info is-medium mr-5"
-                @click="resumeSession(session.key)"
-              >
-                <span class="material-symbols-outlined mr-1">play_arrow</span>
-                Resume
-              </button>
-              <button
-                class="button is-warning is-medium mr-5"
-                @click="exportSession(session.key)"
-                title="Export session"
-              >
-                <span class="material-symbols-outlined">download</span>
-              </button>
-              <button
-                class="button is-danger is-medium"
-                @click="deleteSession(session.key)"
-              >
-                <span class="material-symbols-outlined">delete</span>
-              </button>
-            </div>
-          </div>
-        </div>
-        <p v-else class="notification is-info has-text-white mt-3">
-          No saved session with {{ selectedCompanion.name }} yet. Start a
-          roleplay or import one.
-        </p>
-      </div>
-
       <!-- Dynamic Download Requirements -->
       <div class="model-requirements mt-4">
         <!-- Missing Models (Red) -->
@@ -722,20 +722,20 @@
             <!-- Autonomous Mode Toggle -->
             <label
               class="checkbox autonomous-toggle mr-3"
-              :class="{ active: autonomousMode }"
+              :class="{ active: autonomousModeDisplay }"
             >
               <input
                 type="checkbox"
-                :checked="autonomousMode"
+                :checked="autonomousModeDisplay"
                 @change="toggleAutonomousMode($event.target.checked)"
               />
               <span
                 class="material-symbols-outlined mr-1"
                 style="font-size: 16px"
               >
-                {{ autonomousMode ? "self_improvement" : "person_off" }}
+                {{ autonomousModeDisplay ? "self_improvement" : "person_off" }}
               </span>
-              <span class="is-size-7">Auto</span>
+              <span class="is-size-7">{{ autonomousPending ? "Starting..." : "Auto" }}</span>
             </label>
             <button class="button is-danger is-small" @click="endChat">
               <span
@@ -775,12 +775,8 @@
         </div>
       </div>
 
-      <!-- Chat Messages -->
-      <div
-        class="chat-messages"
-        ref="messagesContainer"
-        @scroll="onMessagesScroll"
-      >
+      <!-- Chat Messages Container -->
+      <div class="chat-messages-container">
         <!-- Background layer with fade-in transition -->
         <transition name="bg-fade" mode="out-in">
           <div
@@ -790,6 +786,12 @@
             :style="scenarioBackgroundStyle"
           ></div>
         </transition>
+        <!-- Scrollable Messages -->
+        <div
+          class="chat-messages"
+          ref="messagesContainer"
+          @scroll="onMessagesScroll"
+        >
           <div
             v-for="(msg, idx) in chatHistory"
             :key="msg.timestamp || idx"
@@ -845,7 +847,10 @@
                 >
                   *{{ msg.action }}*
                 </p>
-                <p>{{ msg.content }}</p>
+                <p v-if="msg.content">{{ msg.content }}</p>
+                <p v-else class="has-text-grey-light is-italic">
+                  *{{ selectedCompanion?.name || 'Companion' }} pauses thoughtfully*
+                </p>
               </template>
               <!-- Delete text button (on hover) -->
               <button
@@ -966,6 +971,7 @@
               {{ typingStatus }}
             </p>
           </div>
+        </div>
         </div>
       </div>
 
@@ -1305,6 +1311,8 @@ export default {
     // Autonomous companion mode - uses global store (skillStore)
     // Local computed refs for template convenience
     const autonomousMode = computed(() => skillStore.autonomousMode);
+    const autonomousPending = ref(false); // Local pending state for immediate UI feedback
+    const autonomousModeDisplay = computed(() => autonomousMode.value || autonomousPending.value);
     const missedMessages = computed(() => skillStore.missedMessages);
 
     // Scene state for smart image generation and anti-repetition
@@ -1467,6 +1475,8 @@ export default {
 
       // Handle both old (responseMode string) and new (checkbox) settings formats
       const savedSettings = session.settings || {};
+      console.log(`[Roleplay] Restoring session settings:`, savedSettings);
+
       if (
         savedSettings.responseMode &&
         typeof savedSettings.responseMode === "string"
@@ -1493,6 +1503,8 @@ export default {
           enableVision: false,
         };
       }
+
+      console.log(`[Roleplay] Restored contentLevel: ${settings.value.contentLevel}`);
 
       chatHistory.value = session.history || [];
 
@@ -1651,6 +1663,9 @@ export default {
      */
     const toggleAutonomousMode = async (enabled) => {
       if (enabled) {
+        // Immediately update the display state for instant UI feedback
+        autonomousPending.value = true;
+
         // Wait for current generation to finish before starting autonomous mode
         if (isProcessingMessage.value || isTyping.value) {
           console.log("[Roleplay] Waiting for current generation to finish before enabling autonomous mode...");
@@ -1684,8 +1699,10 @@ export default {
           backgroundHistory: backgroundHistory.value,
         });
         skillStore.toggleAutonomousMode(true);
+        autonomousPending.value = false; // Clear pending once actually enabled
       } else {
         console.log("[Roleplay] Disabling autonomous mode");
+        autonomousPending.value = false;
         // Stop autonomous mode completely
         skillStore.stopAutonomousMode();
       }
@@ -2517,7 +2534,10 @@ export default {
           `http://localhost:${port}/vision/analyze`,
           {
             method: "POST",
-            headers: { "Content-Type": "application/json" },
+            headers: {
+              "Content-Type": "application/json",
+              "X-Demo-Mode": "true",
+            },
             body: JSON.stringify({
               image_base64: uploadedImageBase64.value,
               prompt: `Describe this image in detail for a roleplay companion interaction. Focus on:
@@ -2614,7 +2634,9 @@ export default {
 
               // Update the message with new content
               if (progress.type === "text") {
-                msg.content = progress.response.response;
+                const responseText = progress.response?.response;
+                console.log(`[RoleplayChat] Text progress received, content length: ${responseText?.length || 0}, preview: "${responseText?.substring(0, 50) || 'EMPTY'}"`);
+                msg.content = responseText;
                 msg.emotion = progress.response.emotion;
                 msg.action = progress.response.action;
                 msg.generatingText = false;
@@ -2670,7 +2692,9 @@ export default {
           // Final update - ensure all content is present and remove generating flag
           const msg = chatHistory.value[assistantMessageIndex];
           if (msg) {
-            msg.content = result.response.response;
+            const finalContent = result.response?.response;
+            console.log(`[RoleplayChat] Final update, content length: ${finalContent?.length || 0}, preview: "${finalContent?.substring(0, 50) || 'EMPTY'}"`);
+            msg.content = finalContent;
             msg.emotion = result.response.emotion;
             msg.action = result.response.action;
             msg.image = result.response.image;
@@ -3045,6 +3069,8 @@ export default {
       isInitializingSession,
       // Autonomous companion mode (uses global skillStore)
       autonomousMode,
+      autonomousModeDisplay,
+      autonomousPending,
       missedMessages,
       toggleAutonomousMode,
       clearMissedMessages,
@@ -3413,15 +3439,24 @@ hr {
   min-height: 400px;
 }
 
-.chat-messages {
+/* Container for chat messages with background */
+.chat-messages-container {
   flex: 1;
+  position: relative;
+  margin-bottom: 1rem;
+  border-radius: 8px;
+  overflow: hidden;
+  min-height: 0; /* Allow flex child to shrink */
+}
+
+.chat-messages {
+  position: relative;
+  z-index: 1;
+  height: 100%;
   overflow-y: auto;
   padding: 1rem;
   background-color: rgba(0, 0, 0, 0.2);
   border-radius: 8px;
-  margin-bottom: 1rem;
-  position: relative;
-  transform: rotate3d(0, 0, 0);
 }
 
 /* Background layer for fade transitions */
@@ -3578,7 +3613,8 @@ hr {
 }
 
 .message-image {
-  max-width: 300px;
+  width: 100%;
+  max-width: 100%;
   border-radius: 8px;
   overflow: hidden;
   animation: mediaFadeIn 0.5s ease-out forwards;
@@ -3789,7 +3825,8 @@ hr {
 }
 
 .message-image-placeholder {
-  max-width: 300px;
+  width: 100%;
+  max-width: 100%;
   min-height: 150px;
 }
 
@@ -3798,7 +3835,8 @@ hr {
 }
 
 .message-video-placeholder {
-  max-width: 300px;
+  width: 100%;
+  max-width: 100%;
   min-height: 150px;
 }
 
@@ -4017,7 +4055,8 @@ hr {
 
 /* Video in messages */
 .message-video {
-  max-width: 400px;
+  width: 100%;
+  max-width: 100%;
   border-radius: 8px;
   overflow: hidden;
   margin-top: 0.5rem;

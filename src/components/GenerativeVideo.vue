@@ -1363,7 +1363,7 @@ export default {
         width: w,
         frames: frames,
         frame_rate: frameRate,
-        steps: 8,  // Distilled model: 8-10 steps optimal
+        steps: 10,  // Distilled model: 10 steps for quality
         guidance_scale: 1,  // Distilled model: CFG=1
         auto_download: true,
       };

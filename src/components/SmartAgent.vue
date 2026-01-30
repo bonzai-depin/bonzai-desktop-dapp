@@ -314,7 +314,7 @@
               <!-- DOWNLOAD PROGRESS (like GenerativeImage.vue) -->
               <div
                 v-if="downloads && downloads.active"
-                class="notification is-info p-6 mb-6 mt-4"
+                class="notification is-info p-6 mb-6 mt-4 has-text-left"
               >
                 <p class="mb-2">
                   <span class="fira-sans-condensed-black-italic is-size-4">

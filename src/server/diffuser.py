@@ -237,6 +237,10 @@ LTX2_GGUF_REPO = "vantagewithai/LTX-2-GGUF"
 LTX2_GGUF_NAME = "ltx-2-19b-distilled-q3_k_s.gguf"
 LTX2_GGUF_URL = "https://huggingface.co/vantagewithai/LTX-2-GGUF/resolve/main/distilled/ltx-2-19b-distilled-Q3_K_S.gguf"
 
+# LTX-2 Image2Video Adapter LoRA - improves I2V quality
+LTX2_I2V_LORA_REPO = "MachineDelusions/LTX-2_Image2Video_Adapter_LoRa"
+LTX2_I2V_LORA_FILENAME = "LTX-2-Image2Vid-Adapter.safetensors"
+
 CHATTERBOX_REPO = "ResembleAI/chatterbox"
 
 CHATTERBOX_MULTILINGUAL_MODEL_ID = "onnx-community/chatterbox-multilingual-ONNX"
@@ -799,17 +803,11 @@ def _get_wallet_level(address: str) -> Tuple[str, int]:
 
 
 def _check_demo_rate_limit(ip: str) -> bool:
-    """Allow 3 demos per IP per day."""
-    today = datetime.now().strftime("%Y-%m-%d")
-    key = f"{ip}:{today}"
-
-    if key not in DEMO_RATE_LIMITS:
-        DEMO_RATE_LIMITS[key] = 0
-
-    if DEMO_RATE_LIMITS[key] >= 3:
-        return False
-
-    DEMO_RATE_LIMITS[key] += 1
+    """
+    Rate limiting disabled for desktop app.
+    Previously limited to 3 demos per IP per day.
+    """
+    # Desktop app - no rate limiting needed
     return True
 
 
@@ -1762,6 +1760,7 @@ def _plan_for(pipeline: str) -> Dict[str, Any]:
     # Video pipelines
     if pipeline in ("video_fast", "ltx2_video_gguf"):
         # LTX-2 (19B DiT) with Q4_0 GGUF quantization
+        # Note: I2V Adapter LoRA is downloaded on-demand by load_lora_weights()
         return {
             "repos_to_fetch": [LTX2_REPO],
             "single_files": [_sf(LTX2_GGUF_NAME, LTX2_GGUF_URL)],
@@ -4141,6 +4140,17 @@ def ltx2_gguf_video():
                 transformer=transformer,
                 torch_dtype=model_dtype,
             )
+
+            # Load I2V Adapter LoRA for better image-to-video quality
+            try:
+                logger.info("[LTX-2 GGUF] Loading I2V Adapter LoRA...")
+                pipe.load_lora_weights(
+                    LTX2_I2V_LORA_REPO,
+                    weight_name=LTX2_I2V_LORA_FILENAME,
+                )
+                logger.info("[LTX-2 GGUF] I2V Adapter LoRA loaded successfully")
+            except Exception as e:
+                logger.warning(f"[LTX-2 GGUF] Failed to load I2V LoRA (continuing without it): {e}")
 
         # Enable memory optimizations
         pipe.enable_model_cpu_offload()
