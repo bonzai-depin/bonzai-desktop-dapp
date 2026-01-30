@@ -121,6 +121,7 @@ export const SKILL_CATEGORIES = [
   'housing',
   'personal-care',
   'reading',
+  'social',
   'transportation',
 ];
 
@@ -135,6 +136,7 @@ export const SKILL_CATEGORY_META = {
   'housing': { label: 'Housing', icon: 'home' },
   'personal-care': { label: 'Personal Care', icon: 'spa' },
   'reading': { label: 'Reading', icon: 'menu_book' },
+  'social': { label: 'Social', icon: 'groups' },
   'transportation': { label: 'Transportation', icon: 'directions_car' },
 };
 

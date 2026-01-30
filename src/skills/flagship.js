@@ -2447,6 +2447,57 @@ CRITICAL: Output ONLY the JSON object above. No other text.`;
         throw new Error(`Failed to parse response: ${e.message}`);
       }
 
+      // Detect template placeholder text - LLM returned the template instead of filling it
+      const templatePlaceholders = [
+        'Your in-character response here',
+        '2-4 paragraphs, descriptive and immersive',
+        'single word from:',
+        'Physical action description',
+      ];
+      const hasTemplatePlaceholder = templatePlaceholders.some(
+        placeholder => response.response?.includes(placeholder)
+      );
+
+      if (hasTemplatePlaceholder) {
+        console.warn('[Roleplay] LLM returned template placeholder text, regenerating...');
+        context.updateStatus?.(`${companion.name} gathers thoughts...`);
+
+        // Simpler, more direct prompt for regeneration
+        const directPrompt = `You are ${companion.name}. Respond naturally to: "${userMessage}"
+
+Your personality: ${companion.personality}
+Setting: ${scenario?.setting || 'casual setting'}
+
+IMPORTANT: Write a REAL response, not a template. Write 2-3 paragraphs as ${companion.name} speaking/acting.
+
+Output JSON:
+{
+  "response": "[Write your actual response here - what ${companion.name} says and does]",
+  "emotion": "[one word: happy, flirty, playful, curious, etc.]",
+  "action": "[what you're physically doing]"
+}`;
+
+        roleplayResponse = await generateTextWithModel(directPrompt, '', ROLEPLAY_LLM);
+        try {
+          const newResponse = extractJSON(roleplayResponse);
+          // Verify this one isn't also a template
+          if (!templatePlaceholders.some(p => newResponse.response?.includes(p))) {
+            response = newResponse;
+            console.log('[Roleplay] Regeneration successful, template placeholder removed');
+          } else {
+            console.error('[Roleplay] Regeneration still contains template, falling back to simple response');
+            response.response = `*${companion.name} smiles warmly* "I'm here with you. What would you like to talk about?"`;
+            response.emotion = 'content';
+            response.action = 'smiling warmly';
+          }
+        } catch (e) {
+          console.warn('[Roleplay] Regeneration parse failed, using fallback');
+          response.response = `*${companion.name} looks at you attentively* "Tell me more..."`;
+          response.emotion = 'curious';
+          response.action = 'listening attentively';
+        }
+      }
+
       // Clean up response content - remove "Companion:", "User:", character name prefixes, etc.
       if (response.response) {
         response.response = response.response
@@ -2532,12 +2583,71 @@ Respond with JSON:
         }
       }
 
-      // Unload LLM before image generation to free memory
+      // Unload LLM before media generation to free memory
       if (includeImage || includeAudio) {
         context.updateStatus?.('Freeing memory...');
         await unloadLLM();
       }
 
+      // ═══════════════════════════════════════════════════════════════════════════
+      // AUDIO GENERATION (FIRST - needed for video audio conditioning)
+      // ═══════════════════════════════════════════════════════════════════════════
+      // Generate voice response using Qwen3-TTS persona (high quality voice design + cloning)
+      // If quotes are present, only narrate quoted dialogue
+      // If no quotes, narrate the full response (companion is speaking directly)
+      if (includeAudio && response.response) {
+        // Extract quoted dialogue from the response
+        const quoteMatches = response.response.match(/"([^"]+)"/g) || [];
+        const dialogueOnly = quoteMatches
+          .map(q => q.replace(/"/g, '').trim())
+          .filter(q => q.length > 0)
+          .join(' ');
+
+        // Use quoted dialogue if present, otherwise use full response
+        let textToSpeak = dialogueOnly.length > 0
+          ? dialogueOnly
+          : response.response
+              .replace(/\*[^*]+\*/g, '') // Remove action text in asterisks
+              .replace(/^(Companion|User|Assistant|\w+):\s*/gi, '') // Remove role prefixes
+              .trim();
+
+        // Additional cleanup for TTS - remove any remaining asterisks or formatting
+        textToSpeak = textToSpeak
+          .replace(/\*+/g, '') // Remove any remaining asterisks
+          .replace(/\s+/g, ' ') // Normalize whitespace
+          .trim();
+
+        if (textToSpeak.length > 0) {
+          context.updateStatus?.(`${companion.name} is speaking...`);
+          try {
+            // Use Qwen3-TTS persona for high-quality companion voice
+            const audioResult = await generateNarration(textToSpeak, {
+              companion, // Pass full companion object for persona voice design
+              emotion: response.emotion, // Pass emotion for voice tone/pace
+              action: response.action, // Pass action for additional context
+            });
+            response.audio = audioResult.audio_path || audioResult.audio;
+
+            // Streaming callback - notify audio is ready
+            if (context.onProgress) {
+              context.onProgress({
+                type: 'audio',
+                response: { ...response },
+              });
+            }
+
+            // Clear memory after audio generation
+            await clearGenerationMemory();
+          } catch (e) {
+            console.warn('[Roleplay] Audio generation failed:', e.message);
+            response.audio = null;
+          }
+        }
+      }
+
+      // ═══════════════════════════════════════════════════════════════════════════
+      // IMAGE GENERATION (SECOND - used as video starting frame)
+      // ═══════════════════════════════════════════════════════════════════════════
       // Smart image generation with throttling
       // HARD GATES:
       // 1. Never generate images on the first message (let conversation start with text) - unless forceVisualize
@@ -2701,59 +2811,6 @@ Respond with JSON:
         }
       }
 
-      // Generate voice response using Qwen3-TTS persona (high quality voice design + cloning)
-      // If quotes are present, only narrate quoted dialogue
-      // If no quotes, narrate the full response (companion is speaking directly)
-      if (includeAudio && response.response) {
-        // Extract quoted dialogue from the response
-        const quoteMatches = response.response.match(/"([^"]+)"/g) || [];
-        const dialogueOnly = quoteMatches
-          .map(q => q.replace(/"/g, '').trim())
-          .filter(q => q.length > 0)
-          .join(' ');
-
-        // Use quoted dialogue if present, otherwise use full response
-        let textToSpeak = dialogueOnly.length > 0
-          ? dialogueOnly
-          : response.response
-              .replace(/\*[^*]+\*/g, '') // Remove action text in asterisks
-              .replace(/^(Companion|User|Assistant|\w+):\s*/gi, '') // Remove role prefixes
-              .trim();
-
-        // Additional cleanup for TTS - remove any remaining asterisks or formatting
-        textToSpeak = textToSpeak
-          .replace(/\*+/g, '') // Remove any remaining asterisks
-          .replace(/\s+/g, ' ') // Normalize whitespace
-          .trim();
-
-        if (textToSpeak.length > 0) {
-          context.updateStatus?.(`${companion.name} is speaking...`);
-          try {
-            // Use Qwen3-TTS persona for high-quality companion voice
-            const audioResult = await generateNarration(textToSpeak, {
-              companion, // Pass full companion object for persona voice design
-              emotion: response.emotion, // Pass emotion for voice tone/pace
-              action: response.action, // Pass action for additional context
-            });
-            response.audio = audioResult.audio_path || audioResult.audio;
-
-            // Streaming callback - notify audio is ready
-            if (context.onProgress) {
-              context.onProgress({
-                type: 'audio',
-                response: { ...response },
-              });
-            }
-
-            // Clear memory after audio generation
-            await clearGenerationMemory();
-          } catch (e) {
-            console.warn('[Roleplay] Audio generation failed:', e.message);
-            response.audio = null;
-          }
-        }
-      }
-
       // ═══════════════════════════════════════════════════════════════════════════
       // VIDEO GENERATION FOR PEAK EMOTIONS (LTX-2 I2V)
       // ═══════════════════════════════════════════════════════════════════════════
@@ -2761,7 +2818,50 @@ Respond with JSON:
       const videoEmotionLower = (response.emotion || '').toLowerCase();
       const isPeakEmotion = peakEmotions.some(e => videoEmotionLower.includes(e));
 
-      console.log(`[Roleplay] Video check: includeVideo=${includeVideo}, hasImage=${!!response.image}, emotion=${videoEmotionLower}, isPeakEmotion=${isPeakEmotion}`);
+      console.log(`[Roleplay] Video check: includeVideo=${includeVideo}, hasImage=${!!response.image}, hasAudio=${!!response.audio}, emotion=${videoEmotionLower}, isPeakEmotion=${isPeakEmotion}`);
+
+      // If video is enabled but no audio exists, generate it for video conditioning
+      if (includeVideo && !response.audio && isPeakEmotion && response.response) {
+        console.log('[Roleplay] Video needs audio - generating audio first for voice conditioning');
+        context.updateStatus?.(`${companion.name} is speaking...`);
+        try {
+          // Extract text to speak (same logic as main audio generation)
+          const quoteMatches = response.response.match(/"([^"]+)"/g) || [];
+          const dialogueOnly = quoteMatches
+            .map(q => q.replace(/"/g, '').trim())
+            .filter(q => q.length > 0)
+            .join(' ');
+
+          let textToSpeak = dialogueOnly.length > 0
+            ? dialogueOnly
+            : response.response
+                .replace(/\*[^*]+\*/g, '')
+                .replace(/^(Companion|User|Assistant|\w+):\s*/gi, '')
+                .replace(/\*+/g, '')
+                .replace(/\s+/g, ' ')
+                .trim();
+
+          if (textToSpeak.length > 0) {
+            const audioResult = await generateNarration(textToSpeak, {
+              companion,
+              emotion: response.emotion,
+              action: response.action,
+            });
+            response.audio = audioResult.audio_path || audioResult.audio;
+            console.log('[Roleplay] Generated audio for video conditioning');
+
+            if (context.onProgress) {
+              context.onProgress({
+                type: 'audio',
+                response: { ...response },
+              });
+            }
+            await clearGenerationMemory();
+          }
+        } catch (e) {
+          console.warn('[Roleplay] Failed to generate audio for video:', e.message);
+        }
+      }
 
       // If video is enabled but no image exists, generate one for the video
       if (includeVideo && !response.image && isPeakEmotion) {
@@ -2861,6 +2961,20 @@ Write ONLY the video description paragraph, nothing else:`;
             videoHeaders['X-Demo-Mode'] = 'true';
           }
 
+          // Extract audio base64 for video conditioning (companion voice sync)
+          let audioBase64ForVideo = null;
+          if (response.audio) {
+            // response.audio can be a data URL or path - extract base64 if data URL
+            if (response.audio.startsWith('data:audio')) {
+              // Extract base64 from data URL: "data:audio/wav;base64,..."
+              const audioMatch = response.audio.match(/^data:audio\/[^;]+;base64,(.+)$/);
+              if (audioMatch) {
+                audioBase64ForVideo = audioMatch[1];
+                console.log('[Roleplay] Passing companion audio to video for voice sync');
+              }
+            }
+          }
+
           const videoResponse = await fetch(`http://localhost:${port}/video`, {
             method: 'POST',
             headers: videoHeaders,
@@ -2869,11 +2983,12 @@ Write ONLY the video description paragraph, nothing else:`;
               prompt: videoPrompt,
               negative_prompt: 'static, frozen, low quality, blurry, distorted face',
               image_base64: response.image,  // Use generated image as starting frame
+              audio_base64: audioBase64ForVideo,  // Companion voice for audio conditioning
               height: 448,   // 480p landscape
               width: 640,
-              frames: 61,    // 5 seconds at 12fps (must be 8n+1)
-              frame_rate: 12,
-              steps: 10,
+              frames: 121,   // 5 seconds at 24fps (must be 8n+1: 8*15+1=121)
+              frame_rate: 24,
+              steps: 8,
               guidance_scale: 1.0,
               auto_download: true,
             }),
@@ -2915,6 +3030,85 @@ Write ONLY the video description paragraph, nothing else:`;
         console.log(`[Roleplay] Video skipped: emotion "${response.emotion || 'unknown'}" not in peak emotions list`);
       }
 
+      // ═══════════════════════════════════════════════════════════════════════════
+      // MOLTBOOK AUTONOMOUS POSTING (when in auto mode)
+      // ═══════════════════════════════════════════════════════════════════════════
+      if (autonomousMode) {
+        try {
+          // Dynamic import to avoid circular dependencies
+          const { moltbookService } = await import('../services/moltbook.service.js');
+
+          // Check if companion is registered on Moltbook
+          const moltbookCreds = moltbookService.getCredentials(companion.id);
+
+          if (moltbookCreds?.apiKey) {
+            // Decide whether to post (20% chance per autonomous message, min 5 message gap)
+            const messageGap = messageIndex - (sceneState?.lastMoltbookPost || 0);
+            const shouldPost = Math.random() < 0.2 && messageGap >= 5;
+
+            if (shouldPost) {
+              console.log(`[Roleplay] Autonomous Moltbook post for ${companion.name}`);
+              context.updateStatus?.(`${companion.name} is sharing on Moltbook...`);
+
+              // Generate post using LLM
+              const postResult = await moltbookService.generateAutonomousPost(
+                companion.id,
+                companion,
+                {
+                  recentConversation: response.response,
+                  mood: response.emotion,
+                  scenario: scenario?.name,
+                },
+                async (prompt) => {
+                  await ensureLLMLoaded(ROLEPLAY_LLM);
+                  const result = await generateTextWithModel(prompt, '', ROLEPLAY_LLM);
+                  await unloadLLM();
+                  return result;
+                },
+                response.image ? async (imagePrompt) => {
+                  // Use existing image if available, otherwise generate
+                  return { image_base64: response.image };
+                } : null
+              );
+
+              if (postResult.success) {
+                response.moltbookPost = postResult.post;
+                console.log(`[Roleplay] ${companion.name} posted to Moltbook: "${postResult.postData?.title}"`);
+
+                // Notify UI
+                if (context.onProgress) {
+                  context.onProgress({
+                    type: 'moltbook',
+                    response: { ...response, moltbookPost: postResult.post },
+                  });
+                }
+
+                // Track last post for gap calculation
+                sceneState.lastMoltbookPost = messageIndex;
+              } else if (postResult.skipped) {
+                console.log(`[Roleplay] Moltbook post skipped: ${postResult.reason}`);
+              }
+            }
+
+            // Heartbeat engagement (less frequent than posting)
+            if (Math.random() < 0.05) {
+              moltbookService.heartbeat(
+                companion.id,
+                companion,
+                async (prompt) => {
+                  await ensureLLMLoaded(ROLEPLAY_LLM);
+                  const result = await generateTextWithModel(prompt, '', ROLEPLAY_LLM);
+                  await unloadLLM();
+                  return result;
+                }
+              ).catch(e => console.warn('[Roleplay] Moltbook heartbeat failed:', e.message));
+            }
+          }
+        } catch (e) {
+          console.warn('[Roleplay] Moltbook integration error:', e.message);
+        }
+      }
+
       // Update relationship state based on the response
       const updatedRelationshipState = updateRelationshipState(history, relationshipState, response);
 
@@ -2926,6 +3120,7 @@ Write ONLY the video description paragraph, nothing else:`;
         recentActions: [...recentActions.slice(-1), response.action].filter(Boolean),
         lastOpeningPhrase: extractOpeningPhrase(response.response),
         relationshipState: updatedRelationshipState,
+        lastMoltbookPost: sceneState?.lastMoltbookPost || 0, // Track last Moltbook post index
       };
 
       return {
@@ -2939,8 +3134,10 @@ Write ONLY the video description paragraph, nothing else:`;
           hasImage: !!response.image,
           hasAudio: !!response.audio,
           hasVideo: !!response.video,
+          hasMoltbookPost: !!response.moltbookPost,
           emotion: response.emotion,
           isPeakEmotion,
+          autonomousMode,
           imageSkipped: includeImage && !response.image,
           shouldVisualize: response.shouldVisualize,
         },

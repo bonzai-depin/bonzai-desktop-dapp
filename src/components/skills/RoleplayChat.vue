@@ -927,6 +927,10 @@
             <div v-if="msg.video" class="message-video mt-3">
               <video
                 controls
+                autoplay
+                muted
+                loop
+                playsinline
                 :src="getVideoSrc(msg.video)"
                 :poster="msg.image ? getImageSrc(msg.image) : undefined"
               ></video>

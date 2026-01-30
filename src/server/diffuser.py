@@ -323,21 +323,129 @@ _cangjie_data = None
 def _load_audio_sf(path, target_sr: int = 24000):
     """Load audio using soundfile (no torchcodec dependency)."""
     import soundfile as sf
-    
+
     audio, sr = sf.read(str(path), dtype='float32')
-    
+
     # Convert to mono
     if audio.ndim > 1:
         audio = audio.mean(axis=1)
-    
+
     # Resample if needed
     if sr != target_sr:
         import torchaudio.functional as F
         audio_tensor = torch.from_numpy(audio).unsqueeze(0)
         audio_tensor = F.resample(audio_tensor, orig_freq=sr, new_freq=target_sr)
         audio = audio_tensor.squeeze(0).numpy()
-    
+
     return audio.astype(np.float32)
+
+
+def _encode_audio_to_latents(audio_data: bytes, pipe, target_duration: float, device, dtype):
+    """
+    Encode audio (WAV bytes) to LTX-2 audio latents for conditioning.
+
+    Args:
+        audio_data: Raw audio bytes (WAV format)
+        pipe: LTX2 pipeline with audio_vae component
+        target_duration: Target duration in seconds (should match video duration)
+        device: torch device
+        dtype: torch dtype
+
+    Returns:
+        torch.Tensor: Audio latents ready for conditioning
+    """
+    import soundfile as sf
+    import torchaudio.functional as F
+
+    # LTX-2 audio VAE expects 24kHz audio
+    target_sr = 24000
+
+    # Load audio from bytes
+    audio_buffer = io.BytesIO(audio_data)
+    audio, sr = sf.read(audio_buffer, dtype='float32')
+
+    # Convert to mono if stereo
+    if audio.ndim > 1:
+        audio = audio.mean(axis=1)
+
+    # Resample to 24kHz if needed
+    if sr != target_sr:
+        audio_tensor = torch.from_numpy(audio).unsqueeze(0)
+        audio_tensor = F.resample(audio_tensor, orig_freq=sr, new_freq=target_sr)
+        audio = audio_tensor.squeeze(0).numpy()
+
+    # Calculate target samples based on video duration
+    target_samples = int(target_duration * target_sr)
+
+    # Pad or trim audio to match target duration
+    if len(audio) < target_samples:
+        # Pad with silence
+        padding = np.zeros(target_samples - len(audio), dtype=np.float32)
+        audio = np.concatenate([audio, padding])
+    elif len(audio) > target_samples:
+        # Trim to target duration
+        audio = audio[:target_samples]
+
+    # Convert to mel spectrogram
+    # LTX-2 audio VAE uses specific mel parameters
+    n_fft = 1024
+    hop_length = 256
+    n_mels = 128
+
+    # Use torchaudio for mel spectrogram
+    import torchaudio.transforms as T
+
+    audio_tensor = torch.from_numpy(audio).unsqueeze(0)  # (1, samples)
+
+    mel_transform = T.MelSpectrogram(
+        sample_rate=target_sr,
+        n_fft=n_fft,
+        hop_length=hop_length,
+        n_mels=n_mels,
+        power=1.0,  # Magnitude spectrogram
+    )
+
+    mel = mel_transform(audio_tensor)  # (1, n_mels, time)
+
+    # Convert to log scale (similar to what audio VAE expects)
+    mel = torch.log(torch.clamp(mel, min=1e-5))
+
+    # Normalize to roughly [-1, 1] range
+    mel = (mel + 5) / 5  # Shift and scale (log values typically in [-10, 0] range)
+    mel = mel.clamp(-1, 1)
+
+    # Add batch and channel dimensions: (batch, channels, mels, time)
+    mel = mel.unsqueeze(0).to(device=device, dtype=dtype)
+
+    logger.info(f"[LTX-2] Audio mel spectrogram shape: {mel.shape}")
+
+    # Check if pipe has audio_vae
+    if not hasattr(pipe, 'audio_vae') or pipe.audio_vae is None:
+        logger.warning("[LTX-2] Pipeline does not have audio_vae, loading separately...")
+        # Load audio VAE separately
+        audio_vae = AutoencoderKLLTX2Audio.from_pretrained(
+            LTX2_REPO,
+            subfolder="audio_vae",
+            torch_dtype=dtype,
+        ).to(device)
+    else:
+        audio_vae = pipe.audio_vae
+
+    # Encode to latent space
+    with torch.no_grad():
+        # The audio VAE expects input of shape (batch, channels, mels, time)
+        latent_dist = audio_vae.encode(mel).latent_dist
+        audio_latents = latent_dist.sample()
+
+    logger.info(f"[LTX-2] Audio latents shape: {audio_latents.shape}")
+
+    # Add noise for diffusion (audio_latents parameter expects noisy latents)
+    # Use a moderate noise level to allow model flexibility while maintaining voice character
+    noise = torch.randn_like(audio_latents)
+    noise_scale = 0.5  # Moderate noise - allows model to refine while keeping voice character
+    noisy_audio_latents = audio_latents * (1 - noise_scale) + noise * noise_scale
+
+    return noisy_audio_latents
 
 
 class ChineseCangjieConverter:
@@ -3985,6 +4093,13 @@ def ltx2_gguf_video():
     - "t2v" (text-to-video): Generate video from text prompt only
     - "i2v" (image-to-video): Generate video from image + text prompt
 
+    Audio Conditioning (Companion Voice Sync):
+    - Optionally provide "audio_base64" (WAV format) for voice-synced video
+    - Audio is encoded to latents for bidirectional cross-attention (motion/lip sync hints)
+    - The ORIGINAL audio is muxed into the final video (preserves companion's TTS voice)
+    - LTX-2's generated audio is discarded when custom audio is provided
+    - Audio will be resampled to 24kHz and trimmed/padded to match video duration
+
     Uses from_single_file to load the GGUF-quantized transformer directly.
     Distilled model works best with 8-10 steps and CFG=1.
     """
@@ -4003,6 +4118,8 @@ def ltx2_gguf_video():
     auto_dl = bool(data.get("auto_download", False))
     image_b64 = (data.get("image_base64") or "").strip()
     image_url = (data.get("image_url") or "").strip()
+    # Audio conditioning - provide custom audio to sync with generated video
+    audio_b64 = (data.get("audio_base64") or "").strip()
 
     _mps_clear_memory()
 
@@ -4173,6 +4290,25 @@ def ltx2_gguf_video():
         else:
             generator = None
 
+        # Encode custom audio to latents if provided
+        audio_latents = None
+        if audio_b64:
+            try:
+                logger.info("[LTX-2 GGUF] Encoding custom audio for conditioning...")
+                audio_data = base64.b64decode(audio_b64)
+                target_duration = frames_count / frame_rate
+                audio_latents = _encode_audio_to_latents(
+                    audio_data=audio_data,
+                    pipe=pipe,
+                    target_duration=target_duration,
+                    device=device,
+                    dtype=model_dtype,
+                )
+                logger.info(f"[LTX-2 GGUF] Custom audio encoded, latents shape: {audio_latents.shape}")
+            except Exception as e:
+                logger.warning(f"[LTX-2 GGUF] Failed to encode custom audio (continuing without it): {e}")
+                audio_latents = None
+
         # Generate video with audio
         if mode == "t2v":
             # Text-to-Video: no image input
@@ -4186,6 +4322,7 @@ def ltx2_gguf_video():
                 num_inference_steps=steps,
                 guidance_scale=guidance,
                 generator=generator,
+                audio_latents=audio_latents,  # Custom audio conditioning
                 decode_timestep=0.05,
                 output_type="np",
                 return_dict=False,
@@ -4203,6 +4340,7 @@ def ltx2_gguf_video():
                 num_inference_steps=steps,
                 guidance_scale=guidance,
                 generator=generator,
+                audio_latents=audio_latents,  # Custom audio conditioning
                 decode_timestep=0.05,  # Motion fix: lower decode_timestep improves motion
                 output_type="np",
                 return_dict=False,
@@ -4223,16 +4361,45 @@ def ltx2_gguf_video():
         files_dir.mkdir(parents=True, exist_ok=True)
         out_path = str(files_dir / f"ltx2_{mode}_{gen_id}.mp4")
 
-        # Get audio sample rate from vocoder if available
-        audio_sr = 24000
-        if hasattr(pipe, 'vocoder') and hasattr(pipe.vocoder, 'config'):
-            audio_sr = getattr(pipe.vocoder.config, 'output_sampling_rate', 24000)
+        # Determine which audio to use:
+        # - If custom audio was provided (audio_b64), use it instead of LTX-2's generated audio
+        # - This allows the companion's TTS voice to be in the final video
+        final_audio = None
+        final_audio_sr = 24000
+
+        if audio_b64:
+            # Use the original custom audio (companion's TTS voice)
+            logger.info("[LTX-2 GGUF] Using custom TTS audio instead of generated audio")
+            try:
+                import soundfile as sf
+                audio_data = base64.b64decode(audio_b64)
+                audio_buffer = io.BytesIO(audio_data)
+                custom_audio, custom_sr = sf.read(audio_buffer, dtype='float32')
+
+                # Convert to mono if stereo
+                if custom_audio.ndim > 1:
+                    custom_audio = custom_audio.mean(axis=1)
+
+                # Convert to tensor
+                final_audio = torch.from_numpy(custom_audio).unsqueeze(0)
+                final_audio_sr = custom_sr
+                logger.info(f"[LTX-2 GGUF] Custom audio: {len(custom_audio)} samples @ {custom_sr}Hz")
+            except Exception as e:
+                logger.warning(f"[LTX-2 GGUF] Failed to load custom audio, using generated: {e}")
+                final_audio = audio[0].float().cpu() if audio is not None else None
+                if hasattr(pipe, 'vocoder') and hasattr(pipe.vocoder, 'config'):
+                    final_audio_sr = getattr(pipe.vocoder.config, 'output_sampling_rate', 24000)
+        else:
+            # Use LTX-2's generated audio
+            final_audio = audio[0].float().cpu() if audio is not None else None
+            if hasattr(pipe, 'vocoder') and hasattr(pipe.vocoder, 'config'):
+                final_audio_sr = getattr(pipe.vocoder.config, 'output_sampling_rate', 24000)
 
         encode_video(
             video[0],
             fps=frame_rate,
-            audio=audio[0].float().cpu() if audio is not None else None,
-            audio_sample_rate=audio_sr,
+            audio=final_audio,
+            audio_sample_rate=final_audio_sr,
             output_path=out_path,
         )
 
@@ -4249,6 +4416,8 @@ def ltx2_gguf_video():
             "fps": frame_rate,
             "width": W,
             "height": H,
+            "audio_conditioned": audio_latents is not None,
+            "custom_audio_used": bool(audio_b64),  # True if companion's TTS voice is in the video
         })
 
     except Exception as e:
