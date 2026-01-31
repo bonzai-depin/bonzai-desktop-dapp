@@ -1,0 +1,13 @@
+{
+  "name": "bonzai-openclaw-bridge",
+  "version": "1.0.0",
+  "description": "Bridge between OpenClaw gateway and BonzAI companion/skill system",
+  "main": "bridge.js",
+  "scripts": {
+    "start": "node bridge.js",
+    "dev": "node --watch bridge.js"
+  },
+  "keywords": ["bonzai", "openclaw", "moltbook", "ai-companions"],
+  "author": "BonzAI",
+  "license": "MIT"
+}

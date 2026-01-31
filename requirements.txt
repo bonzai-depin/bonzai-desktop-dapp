@@ -83,7 +83,7 @@ murmurhash==1.0.12
 networkx==3.4.2
 ninja==1.11.1.4
 num2words==0.5.14
-numpy==2.4.0
+numpy>=1.24,<2.4
 onnxruntime==1.23.2
 opencv-python==4.11.0.86
 optimum-quanto==0.2.7

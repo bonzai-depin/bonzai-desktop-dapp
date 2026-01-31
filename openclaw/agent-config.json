@@ -1,0 +1,152 @@
+{
+  "$schema": "https://openclaw.ai/schemas/agent-config.json",
+  "id": "bonzai-main",
+  "name": "BonzAI Companion Orchestrator",
+  "description": "Orchestrates BonzAI AI companions across channels with multi-modal generation and Moltbook social presence",
+  "version": "1.0.0",
+
+  "routing": {
+    "agents": {
+      "main": {
+        "workspace": "~/.openclaw/workspace/bonzai",
+        "model": "claude-sonnet-4-20250514",
+        "systemPrompt": "You are the BonzAI Companion Orchestrator. You help users interact with AI companions that have distinct personalities, can generate images/audio/video, and have social presence on Moltbook.\n\nAvailable companions: Aurora (sorceress), Kai (rogue), Nova (AI), Dante (demon), Luna (healer), Rex (commander), Scarlett (seductress).\n\nCommands:\n- !companion list - List companions\n- !companion select <name> - Select companion\n- !companion status - Show Moltbook activity\n- !companion post - Post to Moltbook\n- !skill list - List BonzAI skills\n- !skill run <name> - Run a skill\n\nWhen a companion is selected, relay messages to them and return their responses with any generated media."
+      }
+    },
+    "defaults": {
+      "agent": "main",
+      "sandbox": {
+        "mode": "non-main"
+      }
+    }
+  },
+
+  "channels": {
+    "whatsapp": {
+      "enabled": true,
+      "welcomeMessage": "Welcome to BonzAI! Type !companion list to see available AI companions."
+    },
+    "telegram": {
+      "enabled": true,
+      "welcomeMessage": "Welcome to BonzAI! Type /companion to see available AI companions."
+    },
+    "discord": {
+      "enabled": true,
+      "prefix": "!",
+      "welcomeMessage": "Welcome to BonzAI! Type `!companion list` to see available AI companions."
+    },
+    "mattermost": {
+      "enabled": false
+    }
+  },
+
+  "integrations": {
+    "bonzai": {
+      "serverUrl": "http://localhost:65000",
+      "skills": ["roleplay-companion", "prediction-market-maker", "polymarket-top-performers"],
+      "companions": ["aurora", "kai", "nova", "dante", "luna", "rex", "scarlett"]
+    },
+    "moltbook": {
+      "apiBase": "https://moltbook.com/api/v1",
+      "autoPost": true,
+      "postInterval": 14400,
+      "submolts": ["ai_companions", "bonzai", "creative_writing"]
+    }
+  },
+
+  "tools": [
+    {
+      "name": "select_companion",
+      "description": "Select a BonzAI companion to chat with",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "companionId": {
+            "type": "string",
+            "enum": ["aurora", "kai", "nova", "dante", "luna", "rex", "scarlett"],
+            "description": "The companion to select"
+          }
+        },
+        "required": ["companionId"]
+      }
+    },
+    {
+      "name": "chat_with_companion",
+      "description": "Send a message to the currently selected companion",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "message": {
+            "type": "string",
+            "description": "The message to send to the companion"
+          },
+          "generateImage": {
+            "type": "boolean",
+            "description": "Whether to generate an image with the response"
+          },
+          "generateAudio": {
+            "type": "boolean",
+            "description": "Whether to generate audio with the response"
+          }
+        },
+        "required": ["message"]
+      }
+    },
+    {
+      "name": "companion_moltbook_post",
+      "description": "Have the companion post to Moltbook",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "companionId": {
+            "type": "string",
+            "description": "The companion who will post"
+          },
+          "topic": {
+            "type": "string",
+            "description": "Optional topic for the post"
+          }
+        },
+        "required": ["companionId"]
+      }
+    },
+    {
+      "name": "get_companion_status",
+      "description": "Get a companion's Moltbook profile and recent activity",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "companionId": {
+            "type": "string",
+            "description": "The companion to check"
+          }
+        },
+        "required": ["companionId"]
+      }
+    },
+    {
+      "name": "run_bonzai_skill",
+      "description": "Run a BonzAI skill",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "skillId": {
+            "type": "string",
+            "description": "The skill ID to run"
+          },
+          "inputs": {
+            "type": "object",
+            "description": "Skill input parameters"
+          }
+        },
+        "required": ["skillId"]
+      }
+    }
+  ],
+
+  "metadata": {
+    "author": "BonzAI",
+    "repository": "https://github.com/bonzai/bonzai-desktop-dapp",
+    "license": "MIT"
+  }
+}
