@@ -107,18 +107,18 @@ function initialize(contractAddress) {
 /**
  * Get contract instance
  */
-function getContract(withSigner = false) {
+async function getContract(withSigner = false) {
   if (!state.contractAddress) {
     throw new Error('Companion service not initialized');
   }
 
-  const provider = web3Service.getProvider();
+  const provider = await web3Service.getProvider();
   if (!provider) {
     throw new Error('No provider available');
   }
 
   if (withSigner) {
-    const signer = provider.getSigner();
+    const signer = await provider.getSigner();
     return new ethers.Contract(state.contractAddress, COMPANION_NFT_ABI, signer);
   }
 
@@ -128,12 +128,12 @@ function getContract(withSigner = false) {
 /**
  * Get BONZAI token contract
  */
-function getBonzaiContract(withSigner = false) {
+async function getBonzaiContract(withSigner = false) {
   const tokenAddress = CONFIG.tokens.BONZAI.arbitrum;
-  const provider = web3Service.getProvider();
+  const provider = await web3Service.getProvider();
 
   if (withSigner) {
-    const signer = provider.getSigner();
+    const signer = await provider.getSigner();
     return new ethers.Contract(tokenAddress, ERC20_ABI, signer);
   }
 
@@ -145,7 +145,7 @@ function getBonzaiContract(withSigner = false) {
  */
 async function loadMintPrices() {
   try {
-    const contract = getContract();
+    const contract = await getContract();
 
     const prices = await Promise.all([
       contract.mintPrices(Rarity.Common),
@@ -186,7 +186,7 @@ function getMintPriceFormatted(rarity) {
  */
 async function loadBuiltInCompanions() {
   try {
-    const contract = getContract();
+    const contract = await getContract();
     const builtInIds = await contract.getBuiltInCompanionIds();
 
     state.builtInCompanions = [];
@@ -219,7 +219,7 @@ async function loadOwnedCompanions(userAddress) {
 
   try {
     state.isLoading = true;
-    const contract = getContract();
+    const contract = await getContract();
     const totalSupply = await contract.totalSupply();
 
     state.ownedCompanions = [];
@@ -263,7 +263,7 @@ async function loadCreatedCompanions(creatorAddress) {
   if (!creatorAddress) return [];
 
   try {
-    const contract = getContract();
+    const contract = await getContract();
     const tokenIds = await contract.getCreatorCompanions(creatorAddress);
 
     state.createdCompanions = [];
@@ -323,7 +323,7 @@ function parseListingData(data) {
  */
 async function canUseCompanion(userAddress, tokenId) {
   try {
-    const contract = getContract();
+    const contract = await getContract();
     return await contract.canUseCompanion(userAddress, tokenId);
   } catch (e) {
     console.error('[CompanionService] Failed to check companion access:', e);
@@ -336,7 +336,7 @@ async function canUseCompanion(userAddress, tokenId) {
  */
 async function canUseBuiltIn(builtInId) {
   try {
-    const contract = getContract();
+    const contract = await getContract();
     return await contract.canUseBuiltIn(builtInId);
   } catch (e) {
     console.error('[CompanionService] Failed to check built-in access:', e);
@@ -369,7 +369,7 @@ async function mintCompanion({ metadataURI, personalityHash, loraHash, rarity, g
     }
 
     // Check BONZAI balance
-    const bonzai = getBonzaiContract();
+    const bonzai = await getBonzaiContract();
     const userAddress = web3Service.state.walletAddress;
     const balance = await bonzai.balanceOf(userAddress);
 
@@ -381,7 +381,7 @@ async function mintCompanion({ metadataURI, personalityHash, loraHash, rarity, g
     const allowance = await bonzai.allowance(userAddress, state.contractAddress);
     if (allowance < price) {
       console.log('[CompanionService] Approving BONZAI spending...');
-      const bonzaiWithSigner = getBonzaiContract(true);
+      const bonzaiWithSigner = await getBonzaiContract(true);
       const approveTx = await bonzaiWithSigner.approve(state.contractAddress, price);
       await approveTx.wait();
       console.log('[CompanionService] BONZAI approved');
@@ -400,7 +400,7 @@ async function mintCompanion({ metadataURI, personalityHash, loraHash, rarity, g
       : ethers.ZeroHash;
 
     // Mint companion
-    const contract = getContract(true);
+    const contract = await getContract(true);
     const tx = await contract.mintCompanion(
       metadataURI,
       personalityBytes,
@@ -454,7 +454,7 @@ async function listCompanion(tokenId, priceInBonzai) {
     state.isLoading = true;
 
     const price = ethers.parseEther(priceInBonzai.toString());
-    const contract = getContract(true);
+    const contract = await getContract(true);
 
     const tx = await contract.listCompanion(tokenId, price);
     const receipt = await tx.wait();
@@ -483,7 +483,7 @@ async function delistCompanion(tokenId) {
   try {
     state.isLoading = true;
 
-    const contract = getContract(true);
+    const contract = await getContract(true);
     const tx = await contract.delistCompanion(tokenId);
     const receipt = await tx.wait();
 
@@ -511,7 +511,7 @@ async function purchaseCompanion(tokenId) {
   try {
     state.isLoading = true;
 
-    const contract = getContract();
+    const contract = await getContract();
     const listing = await contract.getListing(tokenId);
 
     if (!listing.isListed) {
@@ -522,7 +522,7 @@ async function purchaseCompanion(tokenId) {
     const userAddress = web3Service.state.walletAddress;
 
     // Check BONZAI balance
-    const bonzai = getBonzaiContract();
+    const bonzai = await getBonzaiContract();
     const balance = await bonzai.balanceOf(userAddress);
 
     if (balance < price) {
@@ -533,13 +533,13 @@ async function purchaseCompanion(tokenId) {
     const allowance = await bonzai.allowance(userAddress, state.contractAddress);
     if (allowance < price) {
       console.log('[CompanionService] Approving BONZAI for purchase...');
-      const bonzaiWithSigner = getBonzaiContract(true);
+      const bonzaiWithSigner = await getBonzaiContract(true);
       const approveTx = await bonzaiWithSigner.approve(state.contractAddress, price);
       await approveTx.wait();
     }
 
     // Purchase
-    const contractWithSigner = getContract(true);
+    const contractWithSigner = await getContract(true);
     const tx = await contractWithSigner.purchaseCompanion(tokenId);
     const receipt = await tx.wait();
 
@@ -565,7 +565,7 @@ async function purchaseCompanion(tokenId) {
  */
 async function verifyCompanion(tokenId) {
   try {
-    const contract = getContract(true);
+    const contract = await getContract(true);
     const tx = await contract.verifyCompanion(tokenId);
     await tx.wait();
 
@@ -585,7 +585,7 @@ async function verifyCompanion(tokenId) {
 async function loadMarketplaceListings(limit = 50) {
   try {
     state.isLoading = true;
-    const contract = getContract();
+    const contract = await getContract();
     const totalSupply = await contract.totalSupply();
 
     state.listedCompanions = [];
@@ -634,7 +634,7 @@ async function loadMarketplaceListings(limit = 50) {
  */
 async function getCompanionDetails(tokenId) {
   try {
-    const contract = getContract();
+    const contract = await getContract();
 
     const [companion, uri, owner, listing] = await Promise.all([
       contract.getCompanion(tokenId),

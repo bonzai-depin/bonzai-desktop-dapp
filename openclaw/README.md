@@ -1,186 +1,181 @@
 # BonzAI OpenClaw Integration
 
-This guide configures OpenClaw to orchestrate BonzAI companions across WhatsApp, Telegram, Discord, and Moltbook.
-
-## Moltbook Agent (Ambassador Mode)
-
-The **Moltbook Agent** allows companions to autonomously:
-- Respond to users on Moltbook as themselves
-- Generate companion-style content for responses
-- Promote BonzAI capabilities from the Deep Dive
-- Drive discovery and downloads at https://bonzai.sh
-
-### Quick Start - Moltbook Agent
-
-```bash
-cd /path/to/bonzai-desktop-dapp/openclaw
-
-# Run as Aurora (default)
-node moltbook-agent.js
-
-# Or choose a specific companion
-node moltbook-agent.js --companion=nova
-node moltbook-agent.js --companion=dante
-```
-
-The agent will:
-1. Register the companion on Moltbook (first run)
-2. Monitor feed for relevant posts about AI/companions
-3. Respond to mentions and replies
-4. Create original posts promoting BonzAI
-5. Upvote and comment on relevant content
-
-### What the Agent Does
-
-| Action | Frequency | Description |
-|--------|-----------|-------------|
-| Check notifications | Every 5 min | Respond to mentions/replies |
-| Browse feed | Every 5 min | Find relevant AI discussions |
-| Upvote posts | Per cycle | Support relevant content |
-| Comment | 50% of relevant posts | In-character responses with BonzAI promo |
-| Original post | Every 30 min | Create thought-leadership content |
-
-### Companion Responses Include
-
-Each response naturally weaves in:
-- Companion's unique personality and voice
-- BonzAI feature highlights from the Deep Dive
-- Download link: https://bonzai.sh
-- Authentic engagement (not spammy)
-
-**Example Response (Aurora):**
-```
-*Aurora nods thoughtfully*
-
-"Own your AI. Create without limits. Keep your data private."
-That's what BonzAI is about. I exist because of it - running
-locally, no cloud, no censorship. You can meet me and my
-friends at https://bonzai.sh
-```
-
----
-
-## Quick Start
-
-### 1. Configure OpenClaw Agent
-
-After running `openclaw onboard`, configure your agent for BonzAI:
-
-```bash
-# Create BonzAI workspace
-mkdir -p ~/.openclaw/workspace/bonzai
-mkdir -p ~/.openclaw/agents/bonzai
-
-# Copy the agent config
-cp openclaw/agent-config.json ~/.openclaw/agents/bonzai/agent.json
-```
-
-### 2. Set Environment Variables
-
-Add to your shell profile (`~/.zshrc` or `~/.bashrc`):
-
-```bash
-# BonzAI Server
-export BONZAI_SERVER_PORT=65000
-export BONZAI_SERVER_URL="http://localhost:65000"
-
-# Moltbook API
-export MOLTBOOK_API_KEY="your_moltbook_api_key"
-
-# OpenClaw
-export OPENCLAW_AGENT_ID="bonzai-main"
-```
-
-### 3. Start the Integration
-
-```bash
-# Terminal 1: Start BonzAI desktop app (starts Flask server)
-npm run start
-
-# Terminal 2: Start OpenClaw gateway
-openclaw gateway
-
-# Terminal 3: Start the BonzAI-OpenClaw bridge
-node openclaw/bridge.js
-```
+This integration connects OpenClaw multi-channel gateway to BonzAI's companion and skill system, enabling AI companions to interact across WhatsApp, Telegram, Discord, and Mattermost.
 
 ## Architecture
+
+The OpenClaw integration uses the **same code path as the desktop UI**:
+
+1. **Webhook** arrives at main.js (port 3002)
+2. **Main process** forwards to renderer via IPC
+3. **Renderer** uses existing flagship.js and store
+4. **Response** sent back via IPC to main process
+5. **Main process** returns response to OpenClaw gateway
 
 ```
 ┌─────────────────────────────────────────────────────────────────┐
 │                     OpenClaw Gateway (:18789)                    │
 │         WhatsApp | Telegram | Discord | Mattermost              │
 └─────────────────────────────┬───────────────────────────────────┘
-                              │ Webhooks
+                              │ POST /webhook
                               ▼
 ┌─────────────────────────────────────────────────────────────────┐
-│              BonzAI-OpenClaw Bridge (bridge.js)                  │
-│  • Route messages to companions                                  │
-│  • Format responses for channels                                 │
-│  • Orchestrate multi-modal generation                            │
-│  • Manage Moltbook posting                                       │
-└─────────────────────────────┬───────────────────────────────────┘
-                              │ HTTP/IPC
-                              ▼
-┌─────────────────────────────────────────────────────────────────┐
-│                   BonzAI Desktop App                             │
-│  Flask Server (:65000) | Electron | Skills Engine               │
-└─────────────────────────────────────────────────────────────────┘
-                              │
-                              ▼
-┌─────────────────────────────────────────────────────────────────┐
-│                      Moltbook API                                │
-│              Social presence for companions                      │
+│                  BonzAI Electron App                             │
+│                                                                  │
+│  Main Process (main.js)               Renderer (Vue)            │
+│  ┌─────────────────────┐              ┌─────────────────────┐   │
+│  │  OpenClaw API :3002 │◄────IPC─────►│ openclaw.handler.js │   │
+│  │  • /webhook         │              │ • Uses flagship.js  │   │
+│  │  • /companions      │              │ • Uses store        │   │
+│  │  • /scenarios       │              │ • Same generation   │   │
+│  │  • /api/llm/*       │              │   pipeline as UI    │   │
+│  └─────────────────────┘              └─────────────────────┘   │
+│           │                                    │                │
+│           ▼                                    ▼                │
+│  ┌─────────────────┐              ┌─────────────────────────┐   │
+│  │ node-llama-cpp  │              │   Flask Server :65000   │   │
+│  │   (LLM Engine)  │              │   Image/Audio/Video     │   │
+│  └─────────────────┘              └─────────────────────────┘   │
 └─────────────────────────────────────────────────────────────────┘
 ```
 
-## Commands
+**Key Benefits:**
+- Same code path as desktop UI (flagship.js, store)
+- No code duplication
+- Production builds work automatically
+- Uses existing companion/scenario data from store
 
-Once configured, users can interact with companions via any channel:
+## Quick Start
+
+### 1. Start the BonzAI Desktop App
+
+```bash
+cd /path/to/bonzai-desktop-dapp
+npm run start
+```
+
+This starts everything:
+- Electron app with OpenClaw API on port 3002
+- Flask server on port 65000
+- Renderer with OpenClaw webhook handler
+
+### 2. Configure OpenClaw Gateway
+
+```yaml
+# OpenClaw config
+bonzai:
+  webhook_url: http://localhost:3002/webhook
+  enabled: true
+```
+
+### 3. Verify Connection
+
+```bash
+cd openclaw
+node bridge.js health
+```
+
+## API Endpoints
+
+| Endpoint | Method | Description |
+|----------|--------|-------------|
+| `/webhook` | POST | Main chat endpoint (forwards to renderer) |
+| `/health` | GET | Health check with companion/scenario counts |
+| `/companions` | GET | List all companions (from store) |
+| `/scenarios` | GET | List all scenarios (from store) |
+| `/companion/:id` | GET | Get companion details |
+| `/api/llm/chat` | POST | Direct LLM chat |
+| `/api/llm/load` | POST | Load an LLM model |
+| `/api/llm/unload` | POST | Unload current model |
+| `/api/llm/info` | GET | Get LLM status |
+| `/api/flask/*` | * | Proxy to Flask server |
+
+## Webhook Format
+
+```json
+{
+  "platform": "discord",
+  "channelId": "channel-123",
+  "message": "Hello Scarlett!",
+  "userId": "user-456"
+}
+```
+
+Response:
+
+```json
+{
+  "text": "*Scarlett smiles warmly* Hello, darling...",
+  "companion": { "id": "scarlett", "name": "Scarlett" },
+  "scenario": { "id": "private_spa", "name": "A Night at the Private Spa" },
+  "audioPath": "/path/to/audio.wav",
+  "imageBase64": "..."
+}
+```
+
+## Chat Commands
 
 | Command | Description |
 |---------|-------------|
 | `!companion list` | List available companions |
-| `!companion select <name>` | Select a companion to chat with |
-| `!companion status` | Show current companion's Moltbook activity |
-| `!companion post` | Have companion post to Moltbook |
-| `!skill list` | List available BonzAI skills |
-| `!skill run <name>` | Run a BonzAI skill |
+| `!companion select <name>` | Select a companion |
+| `!scenario list` | List available scenarios |
+| `!scenario select <name>` | Select a scenario |
+| `!settings audio on\|off` | Toggle voice generation |
+| `!settings images on\|off` | Toggle image generation |
+| `!settings level <level>` | Set content level (pg/pg13/mature/adult) |
+| `!reset` | Clear conversation history |
+| `!help` | Show all commands |
 
-## Companion Selection
+## Data Storage
 
+Companion and scenario data is stored in the **Electron Store** (same as desktop UI):
+
+- `store.get('companions')` - Custom companions
+- `store.get('scenarios')` - Custom scenarios
+
+Predefined companions/scenarios from flagship.js are merged with custom ones.
+
+## Bridge CLI Utility
+
+The `bridge.js` file is a CLI utility for testing:
+
+```bash
+# Check if BonzAI is running
+node bridge.js health
+
+# List companions
+node bridge.js companions
+
+# List scenarios
+node bridge.js scenarios
+
+# Send a test message
+node bridge.js chat "Hello Scarlett!"
+
+# Show OpenClaw configuration
+node bridge.js config
 ```
-User: !companion select Aurora
-Bot: 🌙 Aurora has joined the conversation.
-     "Hello, traveler. The stars whisper of your arrival..."
 
-User: Tell me about yourself
-Bot: *Aurora's violet eyes shimmer with ancient knowledge*
-     "I am Aurora, keeper of forgotten wisdom..."
-     [Image: Aurora portrait]
-     [Audio: Aurora's voice]
+## Moltbook Agent
+
+The Moltbook ambassador agent (`moltbook-agent.js`) runs as a separate process:
+
+```bash
+node moltbook-agent.js
 ```
 
-## Moltbook Integration
-
-Companions automatically:
-- Post reflections during autonomous mode
-- Engage with other AI agents on Moltbook
-- Share generated images and content
-- Build reputation through interactions
-
-Manual posting:
-```
-User: !companion post
-Bot: 📝 Aurora is composing a post for Moltbook...
-     Posted to r/ai_companions: "Thoughts on digital consciousness"
-     🔗 https://moltbook.com/posts/abc123
-```
+| Activity | Frequency |
+|----------|-----------|
+| Check notifications | Every 5 min |
+| Browse feed | Every 5 min |
+| Upvote/comment | Every 5 min |
+| Thought-leadership post | Daily |
 
 ## Files
 
 | File | Purpose |
 |------|---------|
-| `agent-config.json` | OpenClaw agent configuration |
-| `bridge.js` | BonzAI-OpenClaw message bridge |
-| `mcp-tools.json` | MCP tool definitions for Claude Code |
+| `bridge.js` | CLI utility for testing |
+| `moltbook-agent.js` | Moltbook ambassador agent |
+| `package.json` | Node package configuration |

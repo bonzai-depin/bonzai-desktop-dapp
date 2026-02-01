@@ -21,6 +21,8 @@ import { fileURLToPath, pathToFileURL } from "url";
 import { download } from "electron-dl";
 import { unlink } from "node:fs";
 import child_process from "child_process";
+import http from "http";
+import { pipeline } from "stream/promises";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Globals / paths
@@ -177,9 +179,17 @@ const scheduleServerRestart = () => {
     backoffMs: restartBackoffMs,
   });
 
-  setTimeout(() => {
+  setTimeout(async () => {
     console.log(`[Self-Healing] Attempting restart...`);
     startPythonSubprocess();
+    // Wait for server to be ready and send "ready" notification
+    try {
+      await checkPythonServer(`http://127.0.0.1:${PY_SERVER_PORT}`);
+      console.log(`[Self-Healing] Server recovered successfully`);
+    } catch (e) {
+      console.error(`[Self-Healing] Server failed to recover: ${e.message}`);
+      // The crash handler will be triggered again if the process exits
+    }
   }, restartBackoffMs);
 
   // Exponential backoff with cap
@@ -525,6 +535,111 @@ ipcMain.handle("file-exists", (_event, filePath) => {
   }
 });
 
+// ─────────────────────────────────────────────────────────────────────────────
+// OpenClaw Integration Config
+// ─────────────────────────────────────────────────────────────────────────────
+const OPENCLAW_MODELS_PATH = path.join(os.homedir(), ".openclaw", "agents", "main", "agent", "models.json");
+const OPENCLAW_CONFIG_PATH = path.join(os.homedir(), ".openclaw", "openclaw.json");
+
+ipcMain.handle("openclaw-get-enabled", async () => {
+  try {
+    if (fs.existsSync(OPENCLAW_CONFIG_PATH)) {
+      const content = fs.readFileSync(OPENCLAW_CONFIG_PATH, "utf8");
+      const config = JSON.parse(content);
+      // Check if bonzai provider exists
+      return !!config.models?.providers?.bonzai;
+    }
+    return false;
+  } catch {
+    return false;
+  }
+});
+
+ipcMain.handle("openclaw-set-enabled", async (_event, enabled) => {
+  try {
+    // 1. Update models.json with provider definition (where OpenClaw reads providers)
+    const modelsDir = path.dirname(OPENCLAW_MODELS_PATH);
+    if (!fs.existsSync(modelsDir)) {
+      fs.mkdirSync(modelsDir, { recursive: true });
+    }
+
+    let modelsConfig = { providers: {} };
+    if (fs.existsSync(OPENCLAW_MODELS_PATH)) {
+      try {
+        const content = fs.readFileSync(OPENCLAW_MODELS_PATH, "utf8");
+        modelsConfig = JSON.parse(content);
+        if (!modelsConfig.providers) modelsConfig.providers = {};
+      } catch {
+        modelsConfig = { providers: {} };
+      }
+    }
+
+    if (enabled) {
+      // Add bonzai provider with full model configuration
+      modelsConfig.providers.bonzai = {
+        baseUrl: `http://127.0.0.1:${OPENCLAW_API_PORT}/v1`,
+        apiKey: "bonzai-local",
+        api: "openai-completions",
+        models: [
+          {
+            id: "bonzai-sovereign",
+            name: "Decentralized AI by BonzAI",
+            reasoning: false,
+            input: ["text"],
+            cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+            contextWindow: 32768,
+            maxTokens: 4096
+          }
+        ]
+      };
+    } else {
+      delete modelsConfig.providers.bonzai;
+    }
+    fs.writeFileSync(OPENCLAW_MODELS_PATH, JSON.stringify(modelsConfig, null, 2));
+
+    // 2. Update openclaw.json with default model setting
+    let mainConfig = {};
+    if (fs.existsSync(OPENCLAW_CONFIG_PATH)) {
+      try {
+        const content = fs.readFileSync(OPENCLAW_CONFIG_PATH, "utf8");
+        mainConfig = JSON.parse(content);
+      } catch {
+        mainConfig = {};
+      }
+    }
+
+    if (enabled) {
+      // Ensure nested structures exist
+      if (!mainConfig.agents) mainConfig.agents = {};
+      if (!mainConfig.agents.defaults) mainConfig.agents.defaults = {};
+      if (!mainConfig.agents.defaults.model) mainConfig.agents.defaults.model = {};
+
+      // Set BonzAI as primary model with Claude as fallback
+      mainConfig.agents.defaults.model.primary = "bonzai/bonzai-sovereign";
+      mainConfig.agents.defaults.model.fallbacks = ["anthropic/claude-sonnet-4-5"];
+    } else {
+      // Restore default to Claude if bonzai was primary
+      if (mainConfig.agents?.defaults?.model?.primary === "bonzai/bonzai-sovereign") {
+        mainConfig.agents.defaults.model.primary = "anthropic/claude-sonnet-4-5";
+        delete mainConfig.agents.defaults.model.fallbacks;
+      }
+    }
+    fs.writeFileSync(OPENCLAW_CONFIG_PATH, JSON.stringify(mainConfig, null, 2));
+
+    console.log(`[OpenClaw] Integration ${enabled ? "enabled" : "disabled"}`);
+    return { success: true };
+  } catch (error) {
+    console.error("[OpenClaw] Failed to update config:", error);
+    return { success: false, error: error.message };
+  }
+});
+
+ipcMain.handle("openclaw-is-installed", async () => {
+  // Check if OpenClaw is installed by looking for the config directory
+  const openclawDir = path.join(os.homedir(), ".openclaw");
+  return fs.existsSync(openclawDir);
+});
+
 // Open URL in default browser
 ipcMain.handle("open-external", async (_event, url) => {
   if (typeof url === "string" && url.startsWith("https://")) {
@@ -766,6 +881,28 @@ ipcMain.handle("model-download-mmproj", downloadMmproj);
 // ─────────────────────────────────────────────────────────────────────────────
 // Window creation
 // ─────────────────────────────────────────────────────────────────────────────
+/**
+ * Wait for Vite dev server to be ready (with retry/backoff)
+ */
+async function waitForViteServer(url, maxRetries = 30, initialDelayMs = 200) {
+  let delay = initialDelayMs;
+  for (let i = 0; i < maxRetries; i++) {
+    try {
+      const response = await fetch(url, { method: "HEAD" });
+      if (response.ok) {
+        console.log(`[Vite] Server ready after ${i + 1} attempts`);
+        return true;
+      }
+    } catch {
+      // Server not ready yet
+    }
+    console.log(`[Vite] Waiting for dev server... (attempt ${i + 1}/${maxRetries})`);
+    await new Promise((r) => setTimeout(r, delay));
+    delay = Math.min(delay * 1.5, 2000); // Exponential backoff, max 2s
+  }
+  throw new Error(`Vite dev server at ${url} did not become ready`);
+}
+
 const createWindow = async () => {
   // Get screen dimensions for full-size window
   const { width, height } = screen.getPrimaryDisplay().workAreaSize;
@@ -805,6 +942,8 @@ const createWindow = async () => {
   });
 
   if (VITE_DEV_SERVER_URL) {
+    // Wait for Vite dev server to be ready before loading
+    await waitForViteServer(VITE_DEV_SERVER_URL);
     await mainWindow.loadURL(VITE_DEV_SERVER_URL);
   } else {
     await mainWindow.loadFile(
@@ -1024,28 +1163,25 @@ async function downloadModel(_event, url, filename) {
  * @param {Function} onProgress - Progress callback (0-1)
  */
 async function mergeGGUFParts(partPaths, outputPath, onProgress) {
-  const { createReadStream, createWriteStream, statSync } = require("fs");
-  const { pipeline } = require("stream/promises");
-
   // Calculate total size for progress
   let totalSize = 0;
   for (const partPath of partPaths) {
-    totalSize += statSync(partPath).size;
+    totalSize += fs.statSync(partPath).size;
   }
 
   let bytesWritten = 0;
-  const outputStream = createWriteStream(outputPath);
+  const outputStream = fs.createWriteStream(outputPath);
 
   console.log(`[GGUF Merge] Merging ${partPaths.length} parts (${(totalSize / 1024 / 1024 / 1024).toFixed(2)} GB) -> ${path.basename(outputPath)}`);
 
   for (let i = 0; i < partPaths.length; i++) {
     const partPath = partPaths[i];
-    const partSize = statSync(partPath).size;
+    const partSize = fs.statSync(partPath).size;
 
     console.log(`[GGUF Merge] Processing part ${i + 1}/${partPaths.length}: ${path.basename(partPath)}`);
 
     await new Promise((resolve, reject) => {
-      const readStream = createReadStream(partPath);
+      const readStream = fs.createReadStream(partPath);
 
       readStream.on("data", (chunk) => {
         bytesWritten += chunk.length;
@@ -1552,3 +1688,495 @@ async function downloadMmproj(event, { url, filename }) {
   }
   return downloadModel(event, url, targetFilename);
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// OpenClaw API Server
+// Forwards webhook requests to the renderer which uses the existing flagship.js
+// generation logic. This ensures the same code path for both UI and external chat.
+// ─────────────────────────────────────────────────────────────────────────────
+const OPENCLAW_API_PORT = parseInt(process.env.OPENCLAW_API_PORT || "3002");
+let openclawServer = null;
+
+// Pending webhook requests waiting for renderer response
+const pendingWebhookRequests = new Map();
+let webhookRequestId = 0;
+
+// IPC handler for renderer to respond to webhook requests
+ipcMain.handle("openclaw-webhook-response", (_event, { requestId, result }) => {
+  const pending = pendingWebhookRequests.get(requestId);
+  if (pending) {
+    pending.resolve(result);
+    pendingWebhookRequests.delete(requestId);
+  }
+});
+
+/**
+ * Forward webhook to renderer and wait for response
+ */
+function forwardToRenderer(data) {
+  return new Promise((resolve, reject) => {
+    if (!mainWindow || mainWindow.isDestroyed()) {
+      reject(new Error("Renderer not available"));
+      return;
+    }
+
+    const requestId = ++webhookRequestId;
+    const timeout = setTimeout(() => {
+      pendingWebhookRequests.delete(requestId);
+      reject(new Error("Webhook request timed out"));
+    }, 120000); // 2 minute timeout for generation
+
+    pendingWebhookRequests.set(requestId, {
+      resolve: (result) => {
+        clearTimeout(timeout);
+        resolve(result);
+      },
+      reject: (error) => {
+        clearTimeout(timeout);
+        reject(error);
+      },
+    });
+
+    // Send to renderer
+    mainWindow.webContents.send("openclaw-webhook", { requestId, ...data });
+  });
+}
+
+function startOpenClawAPIServer() {
+  openclawServer = http.createServer(async (req, res) => {
+    // CORS headers
+    res.setHeader("Access-Control-Allow-Origin", "*");
+    res.setHeader("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
+    res.setHeader("Access-Control-Allow-Headers", "Content-Type");
+
+    if (req.method === "OPTIONS") {
+      res.writeHead(204);
+      res.end();
+      return;
+    }
+
+    const url = new URL(req.url, `http://localhost:${OPENCLAW_API_PORT}`);
+
+    // Health check
+    if (url.pathname === "/health") {
+      const companions = store.get("companions", []);
+      const scenarios = store.get("scenarios", []);
+      res.writeHead(200, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({
+        status: "ok",
+        llmLoaded: !!loadedModel,
+        modelName: currentLoadedModel?.filename || null,
+        flaskPort: PY_SERVER_PORT,
+        companions: companions.length,
+        scenarios: scenarios.length,
+        rendererReady: mainWindow && !mainWindow.isDestroyed(),
+      }));
+      return;
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════
+    // OpenClaw Gateway Webhook - Forwards to renderer for processing
+    // ═══════════════════════════════════════════════════════════════════════
+    if (req.method === "POST" && url.pathname === "/webhook") {
+      let body = "";
+      req.on("data", (chunk) => (body += chunk));
+      req.on("end", async () => {
+        try {
+          const data = JSON.parse(body);
+          console.log(`[OpenClaw Webhook] ${data.platform}/${data.channelId}: ${data.message}`);
+
+          // Forward to renderer and wait for response
+          const result = await forwardToRenderer(data);
+
+          res.writeHead(200, { "Content-Type": "application/json" });
+          res.end(JSON.stringify(result));
+        } catch (error) {
+          console.error("[OpenClaw Webhook] Error:", error);
+          res.writeHead(500, { "Content-Type": "application/json" });
+          res.end(JSON.stringify({ error: error.message }));
+        }
+      });
+      return;
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════
+    // Companion & Scenario REST API (forwards to renderer for dynamic data)
+    // ═══════════════════════════════════════════════════════════════════════
+    if (req.method === "GET" && url.pathname === "/companions") {
+      try {
+        const result = await forwardToRenderer({ type: "get-companions" });
+        res.writeHead(200, { "Content-Type": "application/json" });
+        res.end(JSON.stringify(result));
+      } catch (error) {
+        res.writeHead(503, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ error: "Renderer not available", companions: [] }));
+      }
+      return;
+    }
+
+    if (req.method === "GET" && url.pathname === "/scenarios") {
+      try {
+        const result = await forwardToRenderer({ type: "get-scenarios" });
+        res.writeHead(200, { "Content-Type": "application/json" });
+        res.end(JSON.stringify(result));
+      } catch (error) {
+        res.writeHead(503, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ error: "Renderer not available", scenarios: [] }));
+      }
+      return;
+    }
+
+    if (req.method === "GET" && url.pathname.startsWith("/companion/")) {
+      const id = url.pathname.split("/")[2];
+      try {
+        const result = await forwardToRenderer({ type: "get-companion", id });
+        if (result) {
+          res.writeHead(200, { "Content-Type": "application/json" });
+          res.end(JSON.stringify(result));
+        } else {
+          res.writeHead(404, { "Content-Type": "application/json" });
+          res.end(JSON.stringify({ error: "Companion not found" }));
+        }
+      } catch (error) {
+        res.writeHead(503, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ error: "Renderer not available" }));
+      }
+      return;
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════
+    // OpenAI-Compatible API (for OpenClaw and other clients)
+    // ═══════════════════════════════════════════════════════════════════════
+
+    // GET /v1/models - List available models
+    if (req.method === "GET" && url.pathname === "/v1/models") {
+      const modelName = currentLoadedModel?.filename || "bonzai-sovereign";
+      res.writeHead(200, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({
+        object: "list",
+        data: [
+          {
+            id: "bonzai-sovereign",
+            object: "model",
+            created: Date.now(),
+            owned_by: "bonzai",
+          },
+          {
+            id: modelName,
+            object: "model",
+            created: Date.now(),
+            owned_by: "bonzai",
+          }
+        ],
+      }));
+      return;
+    }
+
+    // POST /v1/chat/completions - OpenAI-compatible chat endpoint
+    if (req.method === "POST" && url.pathname === "/v1/chat/completions") {
+      console.log(`[OpenAI API] Incoming request headers:`, JSON.stringify(req.headers));
+      let body = "";
+      req.on("data", (chunk) => (body += chunk));
+      req.on("end", async () => {
+        console.log(`[OpenAI API] req.on(end) triggered, body length: ${body.length}`);
+        try {
+          console.log(`[OpenAI API] Request body preview:`, body.substring(0, 500));
+
+          let parsed;
+          try {
+            parsed = JSON.parse(body);
+            console.log(`[OpenAI API] JSON parsed successfully, keys:`, Object.keys(parsed));
+          } catch (parseErr) {
+            console.error(`[OpenAI API] JSON parse error:`, parseErr.message);
+            res.writeHead(400, { "Content-Type": "application/json" });
+            res.end(JSON.stringify({ error: { message: "Invalid JSON", type: "invalid_request_error" } }));
+            return;
+          }
+
+          const { messages, model, temperature, max_tokens, stream } = parsed;
+          console.log(`[OpenAI API] Extracted: model=${model}, messages=${messages?.length}, stream=${stream}`);
+
+          if (!messages || !Array.isArray(messages)) {
+            console.log(`[OpenAI API] Invalid messages, returning 400`);
+            res.writeHead(400, { "Content-Type": "application/json" });
+            res.end(JSON.stringify({
+              error: { message: "messages array is required", type: "invalid_request_error" }
+            }));
+            return;
+          }
+
+          console.log(`[OpenAI API] modelSession exists: ${!!modelSession}`);
+          if (!modelSession) {
+            console.log(`[OpenAI API] No model session, returning 503`);
+            res.writeHead(503, { "Content-Type": "application/json" });
+            res.end(JSON.stringify({
+              error: { message: "No model loaded. Please load a model in BonzAI first.", type: "server_error" }
+            }));
+            return;
+          }
+
+          // Map any model name (bonzai-sovereign, local, etc.) to the currently loaded model
+          const actualModel = currentLoadedModel?.filename || "unknown";
+          console.log(`[OpenAI API] Request for model "${model}" -> using loaded model "${actualModel}"`);
+
+          // Convert OpenAI messages format to a single prompt
+          // Format: system message as context, then conversation history
+          let prompt = "";
+          for (const msg of messages) {
+            if (msg.role === "system") {
+              prompt += `${msg.content}\n\n`;
+            } else if (msg.role === "user") {
+              prompt += `User: ${msg.content}\n`;
+            } else if (msg.role === "assistant") {
+              prompt += `Assistant: ${msg.content}\n`;
+            }
+          }
+          prompt += "Assistant:";
+
+          const responseId = `chatcmpl-${Date.now()}`;
+          console.log(`[OpenAI API] Processing ${messages.length} messages, stream=${!!stream}`);
+
+          if (stream) {
+            // Streaming response using Server-Sent Events
+            res.writeHead(200, {
+              "Content-Type": "text/event-stream",
+              "Cache-Control": "no-cache",
+              "Connection": "keep-alive",
+            });
+
+            // Send immediate initial chunk to establish the stream
+            const initialChunk = {
+              id: responseId,
+              object: "chat.completion.chunk",
+              created: Math.floor(Date.now() / 1000),
+              model: actualModel,
+              choices: [{
+                index: 0,
+                delta: { role: "assistant", content: "" },
+                finish_reason: null,
+              }],
+            };
+            res.write(`data: ${JSON.stringify(initialChunk)}\n\n`);
+
+            // Use true token-by-token streaming from node-llama-cpp
+            console.log(`[OpenAI API] Starting streaming response for ${prompt.length} char prompt...`);
+
+            let tokenCount = 0;
+            try {
+              // Use the prompt method with onTextChunk for true streaming
+              await modelSession.prompt(prompt, {
+                onTextChunk: (chunk) => {
+                  tokenCount++;
+                  if (tokenCount === 1) {
+                    console.log(`[OpenAI API] First token received, streaming started`);
+                  }
+                  const chunkData = {
+                    id: responseId,
+                    object: "chat.completion.chunk",
+                    created: Math.floor(Date.now() / 1000),
+                    model: actualModel,
+                    choices: [{
+                      index: 0,
+                      delta: { content: chunk },
+                      finish_reason: null,
+                    }],
+                  };
+                  res.write(`data: ${JSON.stringify(chunkData)}\n\n`);
+                }
+              });
+
+              console.log(`[OpenAI API] Streaming complete, ${tokenCount} chunks sent`);
+
+              // Send final chunk
+              const finalChunk = {
+                id: responseId,
+                object: "chat.completion.chunk",
+                created: Math.floor(Date.now() / 1000),
+                model: actualModel,
+                choices: [{
+                  index: 0,
+                  delta: {},
+                  finish_reason: "stop",
+                }],
+              };
+              res.write(`data: ${JSON.stringify(finalChunk)}\n\n`);
+              res.write("data: [DONE]\n\n");
+              res.end();
+            } catch (streamError) {
+              console.error(`[OpenAI API] Streaming error:`, streamError);
+              if (!res.writableEnded) {
+                res.end();
+              }
+            }
+          } else {
+            // Non-streaming response
+            const response = await modelSession.prompt(prompt);
+
+            res.writeHead(200, { "Content-Type": "application/json" });
+            res.end(JSON.stringify({
+              id: responseId,
+              object: "chat.completion",
+              created: Math.floor(Date.now() / 1000),
+              model: actualModel,
+              choices: [
+                {
+                  index: 0,
+                  message: {
+                    role: "assistant",
+                    content: response,
+                  },
+                  finish_reason: "stop",
+                },
+              ],
+              usage: {
+                prompt_tokens: prompt.length,
+                completion_tokens: response.length,
+                total_tokens: prompt.length + response.length,
+              },
+            }));
+          }
+        } catch (error) {
+          console.error("[OpenAI API] Chat completions error:", error);
+          res.writeHead(500, { "Content-Type": "application/json" });
+          res.end(JSON.stringify({
+            error: { message: error.message, type: "server_error" }
+          }));
+        }
+      });
+      return;
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════
+    // LLM API (for direct access without roleplay context)
+    // ═══════════════════════════════════════════════════════════════════════
+    if (req.method === "POST" && url.pathname === "/api/llm/chat") {
+      let body = "";
+      req.on("data", (chunk) => (body += chunk));
+      req.on("end", async () => {
+        try {
+          const { prompt } = JSON.parse(body);
+
+          if (!prompt) {
+            res.writeHead(400, { "Content-Type": "application/json" });
+            res.end(JSON.stringify({ error: "prompt is required" }));
+            return;
+          }
+
+          if (!modelSession) {
+            res.writeHead(503, { "Content-Type": "application/json" });
+            res.end(JSON.stringify({ error: "LLM not loaded. Load a model first." }));
+            return;
+          }
+
+          const response = await modelSession.prompt(prompt);
+
+          res.writeHead(200, { "Content-Type": "application/json" });
+          res.end(JSON.stringify({ success: true, response }));
+        } catch (error) {
+          console.error("[OpenClaw API] LLM chat error:", error);
+          res.writeHead(500, { "Content-Type": "application/json" });
+          res.end(JSON.stringify({ error: error.message }));
+        }
+      });
+      return;
+    }
+
+    if (req.method === "POST" && url.pathname === "/api/llm/load") {
+      let body = "";
+      req.on("data", (chunk) => (body += chunk));
+      req.on("end", async () => {
+        try {
+          const { modelname, filename, url: modelUrl } = JSON.parse(body);
+          await loadModel(null, { modelname, filename, url: modelUrl });
+          res.writeHead(200, { "Content-Type": "application/json" });
+          res.end(JSON.stringify({ success: true, modelName: modelname || filename }));
+        } catch (error) {
+          res.writeHead(500, { "Content-Type": "application/json" });
+          res.end(JSON.stringify({ error: error.message }));
+        }
+      });
+      return;
+    }
+
+    if (req.method === "POST" && url.pathname === "/api/llm/unload") {
+      try {
+        await unloadModel();
+        res.writeHead(200, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ success: true }));
+      } catch (error) {
+        res.writeHead(500, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ error: error.message }));
+      }
+      return;
+    }
+
+    if (req.method === "GET" && url.pathname === "/api/llm/info") {
+      res.writeHead(200, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({
+        loaded: !!loadedModel,
+        modelName: currentLoadedModel?.filename || null,
+        hasSession: !!modelSession,
+      }));
+      return;
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════
+    // Flask Proxy (for direct media generation access)
+    // ═══════════════════════════════════════════════════════════════════════
+    if (url.pathname.startsWith("/api/flask/")) {
+      const flaskPath = url.pathname.replace("/api/flask", "");
+      const flaskUrl = `http://localhost:${PY_SERVER_PORT}${flaskPath}`;
+
+      try {
+        if (req.method === "POST") {
+          let body = "";
+          req.on("data", (chunk) => (body += chunk));
+          req.on("end", async () => {
+            const response = await fetch(flaskUrl, {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: body,
+            });
+            const data = await response.json();
+            res.writeHead(response.status, { "Content-Type": "application/json" });
+            res.end(JSON.stringify(data));
+          });
+        } else {
+          const response = await fetch(flaskUrl);
+          const data = await response.json();
+          res.writeHead(response.status, { "Content-Type": "application/json" });
+          res.end(JSON.stringify(data));
+        }
+      } catch (error) {
+        res.writeHead(502, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ error: `Flask proxy error: ${error.message}` }));
+      }
+      return;
+    }
+
+    // Not found
+    res.writeHead(404, { "Content-Type": "application/json" });
+    res.end(JSON.stringify({ error: "Not found" }));
+  });
+
+  openclawServer.listen(OPENCLAW_API_PORT, () => {
+    console.log(`[OpenClaw API] Server running on http://localhost:${OPENCLAW_API_PORT}`);
+    console.log(`[OpenClaw API] Endpoints:`);
+    console.log(`  GET  /v1/models            - List models (OpenAI-compatible)`);
+    console.log(`  POST /v1/chat/completions  - Chat completions (OpenAI-compatible)`);
+    console.log(`  POST /webhook              - OpenClaw gateway webhook (forwards to renderer)`);
+    console.log(`  GET  /companions           - List all companions (from store)`);
+    console.log(`  GET  /scenarios            - List all scenarios (from store)`);
+    console.log(`  GET  /companion/:id        - Get companion details`);
+    console.log(`  POST /api/llm/chat         - Direct LLM chat`);
+    console.log(`  POST /api/llm/load         - Load an LLM model`);
+    console.log(`  POST /api/llm/unload       - Unload current model`);
+    console.log(`  GET  /api/llm/info         - Get LLM status`);
+    console.log(`  *    /api/flask/*          - Proxy to Flask server`);
+  });
+}
+
+// Start OpenClaw API when app is ready
+app.on("ready", () => {
+  startOpenClawAPIServer();
+});

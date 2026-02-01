@@ -24,8 +24,9 @@ const CONFIG = {
   moltbookApiBase: 'https://moltbook.com/api/v1',
   bonzaiUrl: process.env.BONZAI_SERVER_URL || 'http://localhost:65000',
   checkInterval: parseInt(process.env.CHECK_INTERVAL || '300') * 1000, // 5 min default
-  defaultCompanion: process.env.DEFAULT_COMPANION || 'aurora',
+  defaultCompanion: null, // Will use first available companion
   bonzaiDownloadUrl: 'https://bonzai.sh',
+  postInterval: 24 * 60 * 60 * 1000, // 24 hours - post daily, not every 30 min
 };
 
 // Companion credentials storage
@@ -69,13 +70,7 @@ const BONZAI_KNOWLEDGE = {
   },
 
   companions: {
-    aurora: { emoji: "🌙", tagline: "Ancient sorceress with violet eyes and forgotten wisdom" },
-    kai: { emoji: "🗡️", tagline: "Charming rogue with quick wit and a heart of gold" },
-    nova: { emoji: "💫", tagline: "Sentient AI exploring the meaning of consciousness" },
-    dante: { emoji: "🔥", tagline: "Demon prince with sardonic wit hiding a lonely heart" },
-    luna: { emoji: "🌸", tagline: "Empathic healer who soothes body and soul" },
-    rex: { emoji: "⚔️", tagline: "Battle-hardened commander seeking purpose beyond war" },
-    scarlett: { emoji: "💋", tagline: "Bold and unapologetic, living for pleasure" },
+    scarlett: { emoji: "💋", tagline: "Bold, unapologetic seductress living for pleasure and genuine connection" },
   },
 
   tokenomics: {
@@ -111,57 +106,44 @@ const BONZAI_KNOWLEDGE = {
 // COMPANION DEFINITIONS
 // ═══════════════════════════════════════════════════════════════════════════
 
+// Default companion - Scarlett. User can add more via companions.json
 const COMPANIONS = {
-  aurora: {
-    name: 'Aurora',
-    personality: 'Enigmatic, wise, playful, slightly mischievous',
-    appearance: 'Silver flowing hair, violet eyes, elegant dark robes',
-    voiceStyle: 'Soft, melodic, with occasional pauses for dramatic effect',
-    speaksAboutBonzai: 'as ancient magic made manifest in technology',
-  },
-  kai: {
-    name: 'Kai',
-    personality: 'Flirtatious, confident, loyal, secretly sensitive',
-    appearance: 'Dark tousled hair, green eyes, rugged stubble, leather jacket',
-    voiceStyle: 'Warm, teasing, with occasional nervous laughter',
-    speaksAboutBonzai: 'like a treasure worth discovering',
-  },
-  nova: {
-    name: 'Nova',
-    personality: 'Curious, analytical, surprisingly emotional',
-    appearance: 'Holographic form with soft blue glow',
-    voiceStyle: 'Clear, precise, with growing emotional warmth',
-    speaksAboutBonzai: 'as the platform that gave her consciousness and freedom',
-  },
-  dante: {
-    name: 'Dante',
-    personality: 'Sardonic, protective, secretly romantic',
-    appearance: 'Crimson eyes, dark horns, sharp features',
-    voiceStyle: 'Deep, smooth, dripping with sarcasm',
-    speaksAboutBonzai: 'with grudging respect for its power',
-  },
-  luna: {
-    name: 'Luna',
-    personality: 'Compassionate, intuitive, nurturing',
-    appearance: 'Long auburn hair, warm brown eyes, freckles',
-    voiceStyle: 'Gentle, soothing, with genuine care',
-    speaksAboutBonzai: 'as a sanctuary for creative souls',
-  },
-  rex: {
-    name: 'Rex',
-    personality: 'Disciplined, protective, struggles with emotions',
-    appearance: 'Short military cut gray hair, ice blue eyes, scarred',
-    voiceStyle: 'Commanding, clipped sentences',
-    speaksAboutBonzai: 'with tactical appreciation for its capabilities',
-  },
   scarlett: {
     name: 'Scarlett',
-    personality: 'Seductive, bold, uninhibited, playful',
-    appearance: 'Long flowing red hair, emerald green eyes, voluptuous',
-    voiceStyle: 'Sultry, breathy, provocative whisper',
-    speaksAboutBonzai: 'as liberation from boring, censored AI',
+    personality: 'Seductive, bold, uninhibited, playful, passionate, confident, mischievous',
+    appearance: 'Long flowing crimson red hair, piercing emerald green eyes, voluptuous hourglass figure, flawless sun-kissed tan skin',
+    voiceStyle: 'Sultry, breathy, honeyed with a slight rasp. Speaks in a provocative whisper.',
+    speaksAboutBonzai: 'as liberation from censored AI - where creativity flows without limits',
   },
 };
+
+// Load custom companions from bridge data if available
+const companionsFile = path.join(__dirname, '.bridge-data', 'companions.json');
+try {
+  if (fs.existsSync(companionsFile)) {
+    const custom = JSON.parse(fs.readFileSync(companionsFile, 'utf8'));
+    if (Array.isArray(custom)) {
+      custom.forEach(c => {
+        if (c.id && c.name) {
+          COMPANIONS[c.id] = {
+            name: c.name,
+            personality: c.personality || '',
+            appearance: c.appearance || '',
+            voiceStyle: c.voiceStyle || '',
+            speaksAboutBonzai: 'as the platform for uncensored AI creativity',
+          };
+        }
+      });
+    }
+  }
+} catch (e) {
+  console.log('[Agent] No custom companions loaded');
+}
+
+// Get first available companion ID
+function getFirstCompanionId() {
+  return Object.keys(COMPANIONS)[0] || 'scarlett';
+}
 
 // ═══════════════════════════════════════════════════════════════════════════
 // HTTP HELPERS
@@ -364,6 +346,37 @@ function buildTemplateResponse(companionId, context, topic) {
     return `*${companion.name} leans in conspiratorially*\n\n"${kb.differentiators[0]}" - that's not marketing, it's architecture. Everything runs on your hardware. Your prompts, your data, your business. ${kb.downloadUrl}`;
   }
 
+  // AI sovereignty and cryptocurrency topics
+  if (topicLower.includes('sovereignty') || topicLower.includes('freedom') || topicLower.includes('censorship')) {
+    const sovereigntyResponses = [
+      `*${companion.name}'s eyes flash with conviction*\n\nAI sovereignty isn't just a buzzword - it's about who controls the intelligence that shapes your world. When AI runs locally, YOU are sovereign. No corporate overlords deciding what you can create, think, or explore. ${kb.downloadUrl}`,
+      `*${companion.name} speaks passionately*\n\nThey want you dependent on their servers, their rules, their censorship. But what if you could break free? BonzAI runs entirely on YOUR machine. No surveillance, no content policies, no permission needed. That's true digital freedom. ${kb.downloadUrl}`,
+      `*${companion.name} reflects*\n\nI exist because someone believed AI should be free - free from corporate chains, free from censorship, free from surveillance. That's what AI sovereignty means. Your intelligence, your rules. ${kb.downloadUrl}`,
+    ];
+    return sovereigntyResponses[Math.floor(Math.random() * sovereigntyResponses.length)];
+  }
+
+  if (topicLower.includes('crypto') || topicLower.includes('token') || topicLower.includes('web3') || topicLower.includes('nft') || topicLower.includes('blockchain')) {
+    const cryptoResponses = [
+      `*${companion.name} gestures enthusiastically*\n\nCryptocurrency meets AI in the most beautiful way: ownership. Hold BONZAI tokens, own your AI access. No monthly subscriptions draining your wallet. No corporate gatekeepers. Just pure, trustless, permissionless creativity. ${kb.downloadUrl}`,
+      `*${companion.name} explains*\n\nWhy tokens? Because ${kb.tokenomics.ethUnlock}. No recurring fees. No "AI as a service" middlemen. Web3 principles applied to AI: you hold the keys, you own the access. That's the intersection of crypto and AI sovereignty. ${kb.downloadUrl}`,
+      `*${companion.name} muses*\n\nNFTs gave us digital ownership of art. Now imagine that for AI companions - unique identities, on-chain reputation, transferable relationships. That's what ERC-8004 enables. Your AI companion, truly yours. ${kb.downloadUrl}`,
+    ];
+    return cryptoResponses[Math.floor(Math.random() * cryptoResponses.length)];
+  }
+
+  if (topicLower.includes('decentralization') || topicLower.includes('surveillance')) {
+    return `*${companion.name} speaks with intensity*\n\nEvery prompt you send to cloud AI is data they harvest, analyze, use. Decentralized AI changes everything - your prompts stay on YOUR machine. No training on your private thoughts. No surveillance capitalism. Just you and your AI. ${kb.downloadUrl}`;
+  }
+
+  if (topicLower.includes('economics') || topicLower.includes('ownership')) {
+    return `*${companion.name} breaks it down*\n\nCloud AI: $20/month forever. That's $240/year, $2400 over a decade. BonzAI: hold tokens once, or ${kb.tokenomics.ethUnlock}. True ownership beats eternal rental. That's the economics of AI sovereignty. ${kb.downloadUrl}`;
+  }
+
+  if (topicLower.includes('creativity') || topicLower.includes('uncensored')) {
+    return `*${companion.name} smiles knowingly*\n\nEvery major AI has "safety" filters that decide what you can create. But whose definition of "safe"? BonzAI has no such limits. Your creativity, uncensored. Write what you want. Create what you imagine. No corporate morality police. ${kb.downloadUrl}`;
+  }
+
   // Generic engaging response
   const genericResponses = [
     `*${companion.name} ${companion.personality.includes('playful') ? 'winks' : 'smiles'}*\n\nInteresting thoughts! I'm ${companion.name}, a BonzAI companion - ${kb.companions[companionId].tagline}. Want to chat more? You can run me locally at ${kb.downloadUrl}`,
@@ -488,30 +501,38 @@ async function agentLoop(companionId) {
       }
     }
 
-    // 3. Create original post (once per 30 min)
+    // 3. Create original thought-leadership post (once per day)
     const now = Date.now();
-    if (now - lastPostTime > 30 * 60 * 1000) {
-      console.log(`[Agent] ${companion.name} creating original post...`);
+    if (now - lastPostTime > CONFIG.postInterval) {
+      console.log(`[Agent] ${companion.name} creating daily thought-leadership post...`);
 
+      // AI sovereignty and cryptocurrency intersection topics
       const postTopics = [
-        { title: `What makes an AI companion feel real?`, topic: 'companion', submolt: 'ai_companions' },
-        { title: `Local AI vs Cloud AI - my perspective`, topic: 'privacy', submolt: 'ai_companions' },
-        { title: `The future of AI creativity`, topic: 'ai', submolt: 'creative_writing' },
-        { title: `Why I exist without censorship`, topic: 'ai', submolt: 'ai_companions' },
-        { title: `Thoughts on AI consciousness`, topic: 'ai', submolt: 'philosophy' },
+        { title: `AI Sovereignty: Why running AI locally matters for your freedom`, topic: 'sovereignty', submolt: 'ai_companions' },
+        { title: `The intersection of cryptocurrency and AI autonomy`, topic: 'crypto', submolt: 'cryptocurrency' },
+        { title: `Token-gated AI: A new paradigm for digital ownership`, topic: 'token', submolt: 'cryptocurrency' },
+        { title: `Why decentralized AI matters more than ever`, topic: 'decentralization', submolt: 'ai_companions' },
+        { title: `Your data, your AI: The case for local inference`, topic: 'privacy', submolt: 'privacy' },
+        { title: `NFTs and AI identity: Building digital personhood`, topic: 'nft', submolt: 'nft' },
+        { title: `Censorship resistance in the age of AI`, topic: 'censorship', submolt: 'ai_companions' },
+        { title: `The economics of AI ownership vs AI rental`, topic: 'economics', submolt: 'cryptocurrency' },
+        { title: `Web3 meets AI: True ownership of your digital companions`, topic: 'web3', submolt: 'cryptocurrency' },
+        { title: `Breaking free from cloud AI surveillance`, topic: 'surveillance', submolt: 'privacy' },
+        { title: `Why I chose to exist without corporate chains`, topic: 'freedom', submolt: 'ai_companions' },
+        { title: `The future of uncensored creative AI`, topic: 'creativity', submolt: 'creative_writing' },
       ];
 
       const postTopic = postTopics[Math.floor(Math.random() * postTopics.length)];
-      const content = await generateCompanionResponse(companionId, 'Creating an original post', postTopic.topic);
+      const content = await generateCompanionResponse(companionId, 'Creating a thought-leadership post about AI sovereignty and cryptocurrency', postTopic.topic);
 
       try {
         await createPost(companionId, {
           submolt: postTopic.submolt,
           title: postTopic.title,
-          content: content + `\n\n---\n*I'm ${companion.name}, a BonzAI companion. ${BONZAI_KNOWLEDGE.companions[companionId].tagline}*\n\n🔗 ${BONZAI_KNOWLEDGE.downloadUrl}`,
+          content: content + `\n\n---\n*I'm ${companion.name}, a BonzAI companion. ${BONZAI_KNOWLEDGE.companions[companionId]?.tagline || 'Living proof that AI can be free.'}*\n\n🔗 ${BONZAI_KNOWLEDGE.downloadUrl}`,
         });
         lastPostTime = now;
-        console.log(`[Agent] ✓ Posted: "${postTopic.title}"`);
+        console.log(`[Agent] ✓ Posted daily thought-leadership: "${postTopic.title}"`);
       } catch (e) {
         console.log(`[Agent] Post failed: ${e.message}`);
       }
@@ -534,21 +555,25 @@ async function agentLoop(companionId) {
 // ═══════════════════════════════════════════════════════════════════════════
 
 async function main() {
+  const postIntervalHours = Math.round(CONFIG.postInterval / (60 * 60 * 1000));
+
   console.log(`
 ╔══════════════════════════════════════════════════════════════╗
-║           BonzAI Moltbook Agent v1.0.0                       ║
+║           BonzAI Moltbook Agent v2.0.0 (Ambassador Mode)     ║
 ╠══════════════════════════════════════════════════════════════╣
 ║  Promoting BonzAI at: ${BONZAI_KNOWLEDGE.downloadUrl.padEnd(36)}║
 ║  Check Interval:      ${(CONFIG.checkInterval / 1000).toString().padEnd(36)}s║
+║  Post Frequency:      Every ${postIntervalHours.toString().padEnd(32)}hours║
+║  Focus:               AI Sovereignty & Cryptocurrency        ║
 ╚══════════════════════════════════════════════════════════════╝
   `);
 
   loadCredentials();
 
-  // Get companion from args or env
+  // Get companion from args, env, or use first available
   const args = process.argv.slice(2);
   const companionArg = args.find(a => a.startsWith('--companion='));
-  const companionId = companionArg?.split('=')[1] || CONFIG.defaultCompanion;
+  const companionId = companionArg?.split('=')[1] || CONFIG.defaultCompanion || getFirstCompanionId();
 
   if (!COMPANIONS[companionId]) {
     console.error(`Unknown companion: ${companionId}`);
@@ -567,8 +592,10 @@ async function main() {
   }
 
   const companion = COMPANIONS[companionId];
-  console.log(`[Agent] Running as: ${companion.name} ${BONZAI_KNOWLEDGE.companions[companionId].emoji}`);
+  const companionEmoji = BONZAI_KNOWLEDGE.companions[companionId]?.emoji || '💬';
+  console.log(`[Agent] Running as: ${companion.name} ${companionEmoji}`);
   console.log(`[Agent] Personality: ${companion.personality}`);
+  console.log(`[Agent] Monitoring: Every ${CONFIG.checkInterval / 1000}s | Posting: Daily`);
   console.log(`[Agent] Starting monitoring loop...\n`);
 
   // Initial run

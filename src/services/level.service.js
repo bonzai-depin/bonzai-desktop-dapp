@@ -36,17 +36,20 @@ const BONZAI_UNLOCK_ABI = [
   'function unlockPrice() view returns (uint256)',
   'function hasUnlocked(address) view returns (bool)',
   'function isUnlocked(address user) view returns (bool)',
-  'function totalUnlocks() view returns (uint256)',
+  'function totalPaidUnlocks() view returns (uint256)',
+  'function totalGiftedUnlocks() view returns (uint256)',
   'function totalCollected() view returns (uint256)',
-  'function getStats() view returns (uint256 totalUnlocks, uint256 totalCollected, uint256 currentBalance)',
+  'function getStats() view returns (uint256 totalPaidUnlocks, uint256 totalGiftedUnlocks, uint256 totalUnlocks, uint256 totalCollected, uint256 currentBalance, uint256 currentPrice)',
   'function paused() view returns (bool)',
   'function owner() view returns (address)',
+  'function getBalance() view returns (uint256)',
   // State-changing functions
   'function unlock() payable',
+  'function unlockFor(address recipient) payable',
   // Events
-  'event Unlocked(address indexed user, uint256 amount)',
-  'event PriceUpdated(uint256 oldPrice, uint256 newPrice)',
-  'event Withdrawn(address indexed to, uint256 amount)',
+  'event Unlocked(address indexed user, address indexed paidBy, uint256 amount, uint256 timestamp)',
+  'event UnlockPriceUpdated(uint256 oldPrice, uint256 newPrice, uint256 timestamp)',
+  'event ProceedsWithdrawn(address indexed foundationWallet, uint256 foundationAmount, address indexed liquidityWallet, uint256 liquidityAmount, uint256 timestamp)',
 ];
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -101,15 +104,24 @@ const getUnlockContract = async (withSigner = false) => {
   const registryAddress = CONFIG.levelUnlock?.registryAddress;
 
   if (!registryAddress || registryAddress === ethers.ZeroAddress) {
+    console.error('[Level] No registry address configured');
     return null;
   }
 
   if (withSigner) {
-    const signer = await web3Service.getSigner();
+    // Get fresh browser provider and signer to ensure we're on the right network
+    const browserProvider = await web3Service.getBrowserProvider();
+    if (!browserProvider) {
+      throw new Error('No wallet connected. Please connect your wallet first.');
+    }
+
+    const signer = await browserProvider.getSigner();
+    console.log('[Level] Got signer for unlock contract:', await signer.getAddress());
+
     return new ethers.Contract(registryAddress, BONZAI_UNLOCK_ABI, signer);
   }
 
-  const provider = web3Service.getProvider('arbitrum');
+  const provider = await web3Service.getProvider('arbitrum');
   return new ethers.Contract(registryAddress, BONZAI_UNLOCK_ABI, provider);
 };
 
@@ -227,8 +239,9 @@ const fetchContractInfo = async () => {
     ]);
 
     state.unlockPrice = parseFloat(ethers.formatEther(unlockPrice));
-    state.contractStats.totalUnlocks = Number(stats._totalUnlocks);
-    state.contractStats.totalCollected = parseFloat(ethers.formatEther(stats._totalCollected));
+    // getStats() returns: totalPaidUnlocks, totalGiftedUnlocks, totalUnlocks, totalCollected, currentBalance, currentPrice
+    state.contractStats.totalUnlocks = Number(stats[2]); // totalUnlocks (index 2)
+    state.contractStats.totalCollected = parseFloat(ethers.formatEther(stats[3])); // totalCollected (index 3)
     state.contractStats.isPaused = isPaused;
   } catch (e) {
     console.warn('[Level] Failed to fetch contract info:', e.message);
@@ -271,27 +284,73 @@ export const unlockAllWithEth = async (onStatusChange) => {
   state.isUnlocking = true;
 
   try {
+    // The unlock contract is on Arbitrum - must switch to Arbitrum first
+    const targetChainId = CONFIG.levelUnlock?.chainId || 42161; // Arbitrum
+    const currentChainId = web3Service.state.currentChainId;
+
+    if (currentChainId !== targetChainId) {
+      console.log('[Level] Switching to Arbitrum for unlock transaction...');
+      if (onStatusChange) {
+        onStatusChange('switching_network');
+      }
+
+      // Switch to Arbitrum with timeout
+      const switchPromise = web3Service.switchToArbitrum();
+      const timeoutPromise = new Promise((_, reject) =>
+        setTimeout(() => reject(new Error('Network switch timed out. Please switch to Arbitrum manually in your wallet.')), 30000)
+      );
+
+      try {
+        await Promise.race([switchPromise, timeoutPromise]);
+      } catch (switchError) {
+        throw new Error(`Please switch to Arbitrum network in your wallet. ${switchError.message}`);
+      }
+
+      // Wait a moment for chain change event to be processed
+      await new Promise(resolve => setTimeout(resolve, 500));
+
+      // Verify we're now on Arbitrum
+      if (web3Service.state.currentChainId !== targetChainId) {
+        throw new Error('Failed to switch to Arbitrum. Please switch manually in your wallet and try again.');
+      }
+
+      console.log('[Level] Successfully switched to Arbitrum');
+    }
+
+    console.log('[Level] Getting unlock contract with signer...');
     const contract = await getUnlockContract(true);
     if (!contract) {
       throw new Error('BonzaiUnlock contract not configured');
     }
 
     // Get price from contract (should be 1 ETH)
+    console.log('[Level] Fetching unlock price from contract...');
     const price = await contract.unlockPrice();
+    console.log(`[Level] Unlock price: ${ethers.formatEther(price)} ETH`);
 
     // Notify that we're about to request payment
     if (onStatusChange) {
       onStatusChange('awaiting_payment');
     }
 
-    // Call unlock function with exact payment
-    const tx = await contract.unlock({ value: price });
+    console.log(`[Level] Sending unlock transaction for ${ethers.formatEther(price)} ETH...`);
+    console.log('[Level] Please check your wallet for the transaction approval popup');
+
+    // Call unlock function with exact payment - add timeout for user approval
+    const txPromise = contract.unlock({ value: price });
+    const txTimeoutPromise = new Promise((_, reject) =>
+      setTimeout(() => reject(new Error('Transaction request timed out (60s). Please check your wallet for a pending approval.')), 60000)
+    );
+
+    const tx = await Promise.race([txPromise, txTimeoutPromise]);
+    console.log('[Level] Transaction sent:', tx.hash);
 
     // Notify that payment was submitted, waiting for confirmation
     if (onStatusChange) {
       onStatusChange('confirming');
     }
 
+    console.log('[Level] Transaction submitted, waiting for confirmation...');
     const receipt = await tx.wait();
 
     console.log('[Level] All levels unlocked via ETH payment:', receipt.hash);

@@ -257,6 +257,7 @@ import SmartAgent from "./components/SmartAgent.vue";
 import BonzaiBottomBar from "./components/BonzaiBottomBar.vue";
 import { authService } from "./services/auth.service.js";
 import { useSkillStore } from "./stores/skillStore.js";
+import { initOpenClawHandler } from "./services/openclaw.handler.js";
 
 export default {
   name: "App",
@@ -338,6 +339,9 @@ export default {
       const mySystemValues = await window.electronAPI.systemInformation();
       systemValues.value = mySystemValues;
       console.log("Ready to start, sir.", systemValues.value);
+
+      // Initialize OpenClaw webhook handler
+      initOpenClawHandler();
 
       // Subscribe to server status events
       unsubscribeServerStatus = window.electronAPI.onServerStatus((data) => {

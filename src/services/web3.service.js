@@ -39,6 +39,7 @@ const state = reactive({
   // Connection
   isConnected: false,
   isConnecting: false,
+  _connectStartTime: null, // For detecting stuck connection state
   walletAddress: null,
   currentChainId: null,
 
@@ -76,18 +77,50 @@ let eip1193Provider = null; // injected or WalletConnect provider
 let wcProvider = null; // WalletConnect provider instance (if used)
 
 /**
+ * Create a provider that tries the primary RPC, then fallbacks
+ */
+const createProviderWithFallback = async (network) => {
+  const config = CONFIG.networks[network];
+  const allRpcs = [config.rpc, ...(config.rpcFallbacks || [])];
+
+  for (const rpcUrl of allRpcs) {
+    try {
+      const provider = new ethers.JsonRpcProvider(rpcUrl);
+      // Quick check to verify the RPC works
+      await provider.getBlockNumber();
+      console.log(`[Web3] Connected to ${network} via ${rpcUrl}`);
+      return provider;
+    } catch (e) {
+      console.warn(`[Web3] RPC ${rpcUrl} failed: ${e.message}`);
+    }
+  }
+
+  // If all fail, try the primary anyway (it might work later)
+  console.error(`[Web3] All ${network} RPCs failed, using primary`);
+  return new ethers.JsonRpcProvider(config.rpc);
+};
+
+/**
  * Initialize RPC providers for balance checking on multiple chains
  */
-const initRpcProviders = () => {
+const initRpcProviders = async () => {
   try {
+    // Try to connect with fallback support
+    const [ethProvider, arbProvider] = await Promise.all([
+      createProviderWithFallback("ethereum"),
+      createProviderWithFallback("arbitrum"),
+    ]);
+    rpcProviders.ethereum = ethProvider;
+    rpcProviders.arbitrum = arbProvider;
+  } catch (e) {
+    console.error("[Web3] Failed to initialize RPC providers:", e);
+    // Fallback to simple initialization
     rpcProviders.ethereum = new ethers.JsonRpcProvider(
       CONFIG.networks.ethereum.rpc
     );
     rpcProviders.arbitrum = new ethers.JsonRpcProvider(
       CONFIG.networks.arbitrum.rpc
     );
-  } catch (e) {
-    console.error("[Web3] Failed to initialize RPC providers:", e);
   }
 };
 
@@ -188,7 +221,21 @@ export const ensureWalletProvider = async (opts = {}) => {
     .request({ method: "eth_accounts" })
     .catch(() => []);
   if ((!accounts || accounts.length === 0) && !auto) {
-    await wcProvider.connect();
+    try {
+      await wcProvider.connect();
+    } catch (connectError) {
+      // User cancelled or connection failed - reset the provider for next attempt
+      console.warn('[Web3] WalletConnect connection failed/cancelled:', connectError.message);
+
+      // Disconnect and reset the provider so next attempt creates a fresh instance
+      try {
+        await wcProvider.disconnect().catch(() => {});
+      } catch {}
+      wcProvider = null;
+      eip1193Provider = null;
+
+      throw new Error('Wallet connection cancelled');
+    }
   }
 
   // Expose for codepaths that expect window.ethereum
@@ -232,17 +279,24 @@ const initBrowserProvider = async () => {
  * 3. Server issues JWT tokens
  */
 export const connectWallet = async () => {
+  // Reset connecting state if it's been stuck for more than 60 seconds
+  if (state.isConnecting && state._connectStartTime && Date.now() - state._connectStartTime > 60000) {
+    console.warn('[Web3] Connection was stuck, resetting state...');
+    state.isConnecting = false;
+  }
+
   if (state.isConnecting)
     return { success: false, error: "Connection in progress" };
 
   state.isConnecting = true;
+  state._connectStartTime = Date.now();
   state.error = null;
 
   try {
     // Ensure wallet provider is present (WalletConnect in Electron)
     await ensureWalletProvider({ auto: false });
     await initBrowserProvider();
-    initRpcProviders();
+    await initRpcProviders();
 
     // Request account access
     const accounts = await eip1193Provider.request({
@@ -329,6 +383,7 @@ export const connectWallet = async () => {
     return { success: false, error: e.message };
   } finally {
     state.isConnecting = false;
+    state._connectStartTime = null;
   }
 };
 
@@ -501,6 +556,14 @@ const handleAccountsChanged = async (accounts) => {
 
 const handleChainChanged = async (chainIdHex) => {
   state.currentChainId = parseInt(chainIdHex, 16);
+  console.log(`[Web3] Chain changed to ${state.currentChainId}`);
+
+  // Recreate browser provider for the new chain to ensure signer works correctly
+  if (eip1193Provider) {
+    browserProvider = new ethers.BrowserProvider(eip1193Provider);
+    console.log('[Web3] Browser provider recreated for new chain');
+  }
+
   // Refresh balances when chain changes
   await fetchAllBalances();
 };
@@ -573,8 +636,8 @@ export const getBrowserProvider = async () => {
 /**
  * Get RPC provider for a specific chain
  */
-export const getProvider = (chain = "arbitrum") => {
-  if (!rpcProviders[chain]) initRpcProviders();
+export const getProvider = async (chain = "arbitrum") => {
+  if (!rpcProviders[chain]) await initRpcProviders();
   return rpcProviders[chain];
 };
 

@@ -6,18 +6,27 @@
       <div class="wallet-section">
         <!-- Show connect button when not connected OR still connecting (prevents flash) -->
         <Transition name="wallet-fade" mode="out-in">
-          <button
-            v-if="!isConnected || isConnecting"
-            key="connect-btn"
-            class="button is-success is-medium"
-            @click="connect"
-            :disabled="isConnecting"
-          >
-            <span class="material-symbols-outlined mr-2">wallet</span>
-            <span class="btn-text">
-              {{ isConnecting ? "Connecting..." : "Connect Wallet" }}
-            </span>
-          </button>
+          <div v-if="!isConnected || isConnecting" key="connect-btns" class="connect-buttons">
+            <button
+              class="button is-success is-medium"
+              @click="connect"
+              :disabled="isConnecting"
+            >
+              <span class="material-symbols-outlined mr-2">wallet</span>
+              <span class="btn-text">
+                {{ isConnecting ? "Connecting..." : "Connect Wallet" }}
+              </span>
+            </button>
+            <!-- Cancel/Reset button when stuck connecting -->
+            <button
+              v-if="isConnecting"
+              class="button is-danger is-medium ml-2"
+              @click="cancelConnection"
+              title="Cancel connection"
+            >
+              <span class="material-symbols-outlined">close</span>
+            </button>
+          </div>
 
           <!-- Only show wallet info when fully connected with a valid address -->
           <div v-else-if="isConnected && walletAddress" key="wallet-info" class="wallet-info">
@@ -283,9 +292,16 @@ const {
   highestLevel,
   connect: doConnect,
   disconnect: doDisconnect,
+  cancelConnection: doCancelConnection,
   refresh: doRefresh,
   store,
 } = useBonzaiWeb3();
+
+// Cancel connection and reset state
+const cancelConnection = async () => {
+  console.log("[BonzaiBottomBar] Cancelling connection...");
+  await doCancelConnection();
+};
 
 const isRefreshing = ref(false);
 const isUnlocking = ref(false);
@@ -551,6 +567,11 @@ watch(
 .wallet-section {
   flex: 0 0 auto;
   min-width: 180px;
+}
+
+.connect-buttons {
+  display: flex;
+  align-items: center;
 }
 
 .wallet-info {

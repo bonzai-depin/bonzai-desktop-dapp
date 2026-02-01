@@ -251,6 +251,7 @@ export function useBonzaiWeb3(options = {}) {
     // Wallet methods
     connect,
     disconnect,
+    cancelConnection: () => store.cancelConnection(),
     refresh,
     switchToArbitrum,
 

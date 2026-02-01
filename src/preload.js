@@ -53,6 +53,19 @@ contextBridge.exposeInMainWorld("electronAPI", {
     // Return unsubscribe function
     return () => ipcRenderer.removeListener("server-log", handler);
   },
+  // OpenClaw webhook events (main process forwards webhooks to renderer)
+  onOpenClawWebhook: (callback) => {
+    const handler = (_event, data) => callback(data);
+    ipcRenderer.on("openclaw-webhook", handler);
+    return () => ipcRenderer.removeListener("openclaw-webhook", handler);
+  },
+  // Send response back to main process for OpenClaw webhook
+  sendOpenClawResponse: (requestId, result) =>
+    ipcRenderer.invoke("openclaw-webhook-response", { requestId, result }),
+  // OpenClaw integration toggle
+  openclawGetEnabled: () => ipcRenderer.invoke("openclaw-get-enabled"),
+  openclawSetEnabled: (enabled) => ipcRenderer.invoke("openclaw-set-enabled", enabled),
+  openclawIsInstalled: () => ipcRenderer.invoke("openclaw-is-installed"),
 });
 
 // ─────────────────────────────────────────────────────────────────────────────

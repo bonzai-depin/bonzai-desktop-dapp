@@ -58,9 +58,19 @@ export const useSkillStore = defineStore('skill', () => {
   const autonomousInterval = ref(null);
   const isGeneratingAutonomous = ref(false);
   const autonomousMessageCount = ref(0); // Track how many autonomous messages generated
-  const IDLE_TIMEOUT = 300000; // 5 minutes of inactivity to consider idle
-  const AUTONOMOUS_MESSAGE_INTERVAL = 900000; // 15 minutes between autonomous messages
-  const MAX_AUTONOMOUS_MESSAGES = 12; // Max messages before stopping (3 hours at 15min intervals)
+
+  // Configurable autonomous mode settings (defaults, can be overridden by session settings)
+  const autonomousConfig = ref({
+    idleTimeout: 5,           // Minutes before considering user idle
+    messageInterval: 15,      // Minutes between autonomous messages
+    maxMessages: 12,          // Max messages before stopping
+  });
+
+  // Computed timeouts in milliseconds (for internal use)
+  const IDLE_TIMEOUT = computed(() => (autonomousConfig.value.idleTimeout || 5) * 60 * 1000);
+  const AUTONOMOUS_MESSAGE_INTERVAL = computed(() => (autonomousConfig.value.messageInterval || 15) * 60 * 1000);
+  const MAX_AUTONOMOUS_MESSAGES = computed(() => autonomousConfig.value.maxMessages || 12);
+
   const STORAGE_KEY = 'roleplaySessions';
 
   // Variety prompts for autonomous mode - cycles through different activities
@@ -74,6 +84,14 @@ export const useSkillStore = defineStore('skill', () => {
     { type: 'creative', prompt: 'doing something creative or expressive' },
     { type: 'relax', prompt: 'relaxing or taking care of themselves' },
   ];
+
+  // Moltbook state tracking (for autonomous Moltbook engagement)
+  const moltbookState = ref({
+    lastPostTime: 0,
+    lastEngagementTime: 0,
+    activityLog: [],  // { id, action, title, timestamp, postId? }
+    engagedPosts: [],  // Array of post IDs we've already engaged with
+  });
 
   // Full autonomous session state (persists across views)
   const autonomousSession = ref({
@@ -594,7 +612,7 @@ export const useSkillStore = defineStore('skill', () => {
     const hasFocus = document.hasFocus();
 
     // Consider idle if: window not focused, or no activity for IDLE_TIMEOUT
-    isIdle.value = !hasFocus || timeSinceActive > IDLE_TIMEOUT;
+    isIdle.value = !hasFocus || timeSinceActive > IDLE_TIMEOUT.value;
 
     if (isIdle.value && !wasIdle) {
       console.log(`[SkillStore] User became idle (focus: ${hasFocus}, inactive: ${Math.round(timeSinceActive/1000)}s)`);
@@ -652,14 +670,14 @@ export const useSkillStore = defineStore('skill', () => {
     }
 
     // Check if we've reached the max autonomous messages
-    if (autonomousMessageCount.value >= MAX_AUTONOMOUS_MESSAGES) {
+    if (autonomousMessageCount.value >= MAX_AUTONOMOUS_MESSAGES.value) {
       console.log('[SkillStore] Reached max autonomous messages, stopping');
       stopAutonomousMode();
       return;
     }
 
     // Check if user came back
-    if (document.hasFocus() && Date.now() - lastActiveTime.value < IDLE_TIMEOUT) {
+    if (document.hasFocus() && Date.now() - lastActiveTime.value < IDLE_TIMEOUT.value) {
       console.log('[SkillStore] Skipping autonomous generation - user came back');
       return;
     }
@@ -837,6 +855,18 @@ REQUIREMENTS:
       backgroundImage: sessionData.backgroundImage,
       backgroundHistory: sessionData.backgroundHistory ? [...sessionData.backgroundHistory] : [],
     };
+
+    // Apply autonomous settings from session if provided
+    const autoSettings = sessionData.settings?.autonomous;
+    if (autoSettings) {
+      autonomousConfig.value = {
+        idleTimeout: autoSettings.idleTimeout || 5,
+        messageInterval: autoSettings.messageInterval || 15,
+        maxMessages: autoSettings.maxMessages || 12,
+      };
+      console.log(`[SkillStore] Autonomous config updated: idle=${autonomousConfig.value.idleTimeout}min, interval=${autonomousConfig.value.messageInterval}min, max=${autonomousConfig.value.maxMessages}`);
+    }
+
     console.log(`[SkillStore] Autonomous session started: ${sessionData.companion?.name} in ${sessionData.scenario?.name}`);
   };
 
@@ -900,7 +930,7 @@ REQUIREMENTS:
       idleCheckInterval.value = setInterval(checkIdle, 5000);
 
       // Start autonomous message generation
-      autonomousInterval.value = setInterval(generateAutonomousMessage, AUTONOMOUS_MESSAGE_INTERVAL);
+      autonomousInterval.value = setInterval(generateAutonomousMessage, AUTONOMOUS_MESSAGE_INTERVAL.value);
 
       // Add event listeners
       document.addEventListener('mousemove', onMouseMove);
@@ -908,7 +938,7 @@ REQUIREMENTS:
       document.addEventListener('click', updateActivity);
       window.addEventListener('focus', updateActivity);
 
-      console.log(`[SkillStore] Autonomous mode enabled (interval: ${AUTONOMOUS_MESSAGE_INTERVAL / 60000} min, max: ${MAX_AUTONOMOUS_MESSAGES} msgs)`);
+      console.log(`[SkillStore] Autonomous mode enabled (interval: ${AUTONOMOUS_MESSAGE_INTERVAL.value / 60000} min, max: ${MAX_AUTONOMOUS_MESSAGES.value} msgs)`);
     } else {
       // Clean up intervals
       if (idleCheckInterval.value) {
@@ -945,6 +975,76 @@ REQUIREMENTS:
    */
   const clearMissedMessages = () => {
     missedMessages.value = 0;
+  };
+
+  // ═══════════════════════════════════════════════════════════════════════════
+  // MOLTBOOK STATE ACTIONS
+  // ═══════════════════════════════════════════════════════════════════════════
+
+  /**
+   * Add activity to Moltbook activity log
+   * @param {Object} activity - { action: string, title: string, postId?: string }
+   */
+  const addMoltbookActivity = (activity) => {
+    const activityEntry = {
+      ...activity,
+      id: Date.now(),
+      timestamp: Date.now(),
+    };
+    moltbookState.value.activityLog.push(activityEntry);
+
+    // Keep last 50 activities
+    if (moltbookState.value.activityLog.length > 50) {
+      moltbookState.value.activityLog = moltbookState.value.activityLog.slice(-50);
+    }
+
+    console.log(`[SkillStore] Moltbook activity: ${activity.action} - ${activity.title}`);
+  };
+
+  /**
+   * Update Moltbook last post time
+   */
+  const updateMoltbookPostTime = () => {
+    moltbookState.value.lastPostTime = Date.now();
+  };
+
+  /**
+   * Update Moltbook last engagement time
+   */
+  const updateMoltbookEngagementTime = () => {
+    moltbookState.value.lastEngagementTime = Date.now();
+  };
+
+  /**
+   * Add a post ID to the engaged posts list
+   */
+  const addEngagedPost = (postId) => {
+    if (!moltbookState.value.engagedPosts.includes(postId)) {
+      moltbookState.value.engagedPosts.push(postId);
+      // Keep last 100 engaged posts
+      if (moltbookState.value.engagedPosts.length > 100) {
+        moltbookState.value.engagedPosts = moltbookState.value.engagedPosts.slice(-100);
+      }
+    }
+  };
+
+  /**
+   * Check if we've already engaged with a post
+   */
+  const hasEngagedPost = (postId) => {
+    return moltbookState.value.engagedPosts.includes(postId);
+  };
+
+  /**
+   * Clear Moltbook state
+   */
+  const clearMoltbookState = () => {
+    moltbookState.value = {
+      lastPostTime: 0,
+      lastEngagementTime: 0,
+      activityLog: [],
+      engagedPosts: [],
+    };
   };
 
   /**
@@ -985,6 +1085,9 @@ REQUIREMENTS:
     autonomousSession,
     isGeneratingAutonomous,
 
+    // Moltbook state
+    moltbookState,
+
     // Getters
     categories,
     skillsByCategory,
@@ -1015,7 +1118,18 @@ REQUIREMENTS:
     clearMissedMessages,
     updateActivity,
     autonomousMessageCount,
+    autonomousConfig,
+    IDLE_TIMEOUT,
+    AUTONOMOUS_MESSAGE_INTERVAL,
     MAX_AUTONOMOUS_MESSAGES,
+
+    // Moltbook actions
+    addMoltbookActivity,
+    updateMoltbookPostTime,
+    updateMoltbookEngagementTime,
+    addEngagedPost,
+    hasEngagedPost,
+    clearMoltbookState,
 
     // Navigation
     pendingSkillId,

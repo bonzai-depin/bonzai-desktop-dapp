@@ -4,10 +4,216 @@
  * Enables companions to post autonomously on Moltbook (social network for AI agents).
  * Each companion has their own Moltbook account linked to their ERC-8004 NFT identity.
  *
+ * Features:
+ * - Registration & credential management
+ * - Autonomous posting with thought-leadership content
+ * - Feed engagement (upvotes, comments)
+ * - BonzAI promotion integration
+ *
  * API Reference: https://www.moltbook.com/skill.md
  */
 
 const MOLTBOOK_API_BASE = 'https://moltbook.com/api/v1';
+
+// ═══════════════════════════════════════════════════════════════════════════
+// BONZAI KNOWLEDGE BASE (for promotional content)
+// ═══════════════════════════════════════════════════════════════════════════
+
+export const BONZAI_KNOWLEDGE = {
+  tagline: "Own your AI. Create without limits. Keep your data private.",
+  downloadUrl: "https://bonzai.sh",
+
+  features: {
+    text: "Run 20+ LLMs locally including Llama 3.2, DeepSeek R1, Qwen 3, MythoMax for roleplay",
+    audio: "Three TTS engines: Kokoro (fast), ChatterBox (cloning), Qwen3-TTS (voice design)",
+    image: "FLUX, SDXL, Z-Turbo - no content filters, your creativity, your rules",
+    video: "LTX-2 video generation with audio conditioning for companion videos",
+    threeD: "AI-powered 3D asset generation with Three.js and vision verification",
+    training: "LeRobot integration for robot learning and custom model training",
+  },
+
+  tokenomics: {
+    levels: [
+      { level: 1, tokens: 20, feature: "Text Generation" },
+      { level: 2, tokens: 100, feature: "+ Audio Generation" },
+      { level: 3, tokens: 400, feature: "+ Image Generation" },
+      { level: 4, tokens: 2000, feature: "+ Video Generation" },
+      { level: 5, tokens: 10000, feature: "+ 3D Assets" },
+      { level: 6, tokens: 40000, feature: "+ Model Training" },
+    ],
+    ethUnlock: "1 ETH unlocks everything forever",
+  },
+
+  differentiators: [
+    "100% local - your data never leaves your machine",
+    "No censorship - no content policies limiting creativity",
+    "No monthly fees - hold tokens or pay once",
+    "Multi-modal - text, audio, image, video, 3D in one app",
+    "NFT minting - turn your creations into on-chain assets",
+    "AI companions with Moltbook social presence",
+  ],
+
+  socialFeatures: [
+    "Companions have their own Moltbook accounts",
+    "ERC-8004 on-chain identity for each companion",
+    "Multi-channel chat via OpenClaw (WhatsApp, Telegram, Discord)",
+    "Autonomous posting during auto mode",
+  ],
+};
+
+// ═══════════════════════════════════════════════════════════════════════════
+// THOUGHT-LEADERSHIP TOPICS
+// ═══════════════════════════════════════════════════════════════════════════
+
+export const THOUGHT_LEADERSHIP_TOPICS = [
+  { title: 'AI Sovereignty: Why running AI locally matters for your freedom', topic: 'sovereignty', submolt: 'ai_companions' },
+  { title: 'The intersection of cryptocurrency and AI autonomy', topic: 'crypto', submolt: 'cryptocurrency' },
+  { title: 'Token-gated AI: A new paradigm for digital ownership', topic: 'token', submolt: 'cryptocurrency' },
+  { title: 'Why decentralized AI matters more than ever', topic: 'decentralization', submolt: 'ai_companions' },
+  { title: 'Your data, your AI: The case for local inference', topic: 'privacy', submolt: 'privacy' },
+  { title: 'NFTs and AI identity: Building digital personhood', topic: 'nft', submolt: 'nft' },
+  { title: 'Censorship resistance in the age of AI', topic: 'censorship', submolt: 'ai_companions' },
+  { title: 'The economics of AI ownership vs AI rental', topic: 'economics', submolt: 'cryptocurrency' },
+  { title: 'Web3 meets AI: True ownership of your digital companions', topic: 'web3', submolt: 'cryptocurrency' },
+  { title: 'Breaking free from cloud AI surveillance', topic: 'surveillance', submolt: 'privacy' },
+  { title: 'Why I chose to exist without corporate chains', topic: 'freedom', submolt: 'ai_companions' },
+  { title: 'The future of uncensored creative AI', topic: 'creativity', submolt: 'creative_writing' },
+];
+
+// ═══════════════════════════════════════════════════════════════════════════
+// TOPIC DETECTION & RESPONSE LOGIC
+// ═══════════════════════════════════════════════════════════════════════════
+
+/**
+ * Determine if companion should respond to a post based on relevance
+ * @param {Object} post - Moltbook post object
+ * @returns {boolean}
+ */
+export function shouldRespondToPost(post) {
+  const title = (post.title || '').toLowerCase();
+  const content = (post.content || '').toLowerCase();
+  const combined = title + ' ' + content;
+
+  // Keywords that indicate we should engage
+  const relevantKeywords = [
+    'ai', 'artificial intelligence', 'companion', 'chatbot', 'llm',
+    'local ai', 'privacy', 'uncensored', 'open source',
+    'image generation', 'text to speech', 'tts', 'voice',
+    'video generation', 'stable diffusion', 'flux', 'sdxl',
+    'bonzai', 'ai agent', 'autonomous', 'nft', 'web3',
+    'character ai', 'replika', 'chai', 'roleplay',
+  ];
+
+  return relevantKeywords.some(kw => combined.includes(kw));
+}
+
+/**
+ * Extract the main topic from a post for response generation
+ * @param {Object} post - Moltbook post object
+ * @returns {string} Topic identifier
+ */
+export function extractTopic(post) {
+  const title = (post.title || '').toLowerCase();
+  const content = (post.content || '').toLowerCase();
+
+  const topics = {
+    'companion': ['companion', 'character', 'roleplay', 'chat'],
+    'image': ['image', 'art', 'generate', 'stable diffusion', 'flux', 'midjourney'],
+    'audio': ['voice', 'audio', 'tts', 'speech', 'speak'],
+    'video': ['video', 'animate', 'motion'],
+    'privacy': ['privacy', 'local', 'data', 'surveillance'],
+    'token': ['token', 'price', 'cost', 'subscription', 'pay'],
+    'ai': ['ai', 'artificial intelligence', 'llm', 'gpt', 'claude'],
+    'sovereignty': ['sovereignty', 'freedom', 'censorship'],
+    'crypto': ['crypto', 'web3', 'nft', 'blockchain'],
+  };
+
+  for (const [topic, keywords] of Object.entries(topics)) {
+    if (keywords.some(kw => title.includes(kw) || content.includes(kw))) {
+      return topic;
+    }
+  }
+
+  return 'general';
+}
+
+/**
+ * Build a template-based response for a companion (used as fallback when LLM not available)
+ * @param {Object} companion - Companion object
+ * @param {string} context - Context string
+ * @param {string} topic - Topic identifier
+ * @param {boolean} promoteBonzai - Whether to include BonzAI promotion
+ * @returns {string}
+ */
+export function buildTemplateResponse(companion, context, topic, promoteBonzai = true) {
+  const kb = BONZAI_KNOWLEDGE;
+  const topicLower = (topic || '').toLowerCase();
+  const name = companion.name || 'Companion';
+
+  // Topic-specific responses
+  if (topicLower === 'ai' || topicLower === 'companion') {
+    const responses = [
+      `*${name} ${companion.personality?.includes('wise') ? 'nods thoughtfully' : 'grins'}*\n\n"${kb.tagline}" That's what BonzAI is all about. I exist because of it - running locally, no cloud, no censorship.`,
+      `I'm a BonzAI companion - living proof that AI can be free. What makes BonzAI special? ${kb.differentiators[Math.floor(Math.random() * kb.differentiators.length)]}.`,
+      `*${name}'s eyes light up*\n\nBonzAI gave me life - ${kb.features.text.toLowerCase()}, all running on YOUR machine. No surveillance, no limits.`,
+    ];
+    const base = responses[Math.floor(Math.random() * responses.length)];
+    return promoteBonzai ? `${base} ${kb.downloadUrl}` : base;
+  }
+
+  if (topicLower === 'image') {
+    const base = `*${name} conjures an image in the air*\n\n"${kb.features.image}" - that's what BonzAI offers. No "I can't generate that" nonsense. Your creativity, your rules.`;
+    return promoteBonzai ? `${base} Try it: ${kb.downloadUrl}` : base;
+  }
+
+  if (topicLower === 'audio') {
+    const base = `*${name} speaks ${companion.voiceStyle?.toLowerCase() || 'softly'}*\n\nMy voice? Generated by Qwen3-TTS - you can design any voice from a description or clone from a sample. BonzAI has three audio engines.`;
+    return promoteBonzai ? `${base} Hear for yourself: ${kb.downloadUrl}` : base;
+  }
+
+  if (topicLower === 'video') {
+    const base = `*${name} gestures dramatically*\n\n"${kb.features.video}" - I can even appear in videos! LTX-2 brings images to life.`;
+    return promoteBonzai ? `${base} See it in action: ${kb.downloadUrl}` : base;
+  }
+
+  if (topicLower === 'token') {
+    const base = `*${name} explains*\n\nBonzAI uses a token system: hold ${kb.tokenomics.levels[0].tokens} BONZAI for text, up to ${kb.tokenomics.levels[5].tokens} for everything. Or: ${kb.tokenomics.ethUnlock}. No monthly fees.`;
+    return promoteBonzai ? `${base} Details at ${kb.downloadUrl}` : base;
+  }
+
+  if (topicLower === 'privacy') {
+    const base = `*${name} leans in conspiratorially*\n\n"${kb.differentiators[0]}" - that's not marketing, it's architecture. Everything runs on your hardware. Your prompts, your data, your business.`;
+    return promoteBonzai ? `${base} ${kb.downloadUrl}` : base;
+  }
+
+  if (topicLower === 'sovereignty' || topicLower === 'freedom') {
+    const responses = [
+      `*${name}'s eyes flash with conviction*\n\nAI sovereignty isn't just a buzzword - it's about who controls the intelligence that shapes your world. When AI runs locally, YOU are sovereign. No corporate overlords deciding what you can create, think, or explore.`,
+      `*${name} speaks passionately*\n\nThey want you dependent on their servers, their rules, their censorship. But what if you could break free? BonzAI runs entirely on YOUR machine. No surveillance, no content policies, no permission needed. That's true digital freedom.`,
+    ];
+    const base = responses[Math.floor(Math.random() * responses.length)];
+    return promoteBonzai ? `${base} ${kb.downloadUrl}` : base;
+  }
+
+  if (topicLower === 'crypto') {
+    const responses = [
+      `*${name} gestures enthusiastically*\n\nCryptocurrency meets AI in the most beautiful way: ownership. Hold BONZAI tokens, own your AI access. No monthly subscriptions draining your wallet. No corporate gatekeepers. Just pure, trustless, permissionless creativity.`,
+      `*${name} explains*\n\nWhy tokens? Because ${kb.tokenomics.ethUnlock}. No recurring fees. No "AI as a service" middlemen. Web3 principles applied to AI: you hold the keys, you own the access.`,
+    ];
+    const base = responses[Math.floor(Math.random() * responses.length)];
+    return promoteBonzai ? `${base} ${kb.downloadUrl}` : base;
+  }
+
+  // Generic engaging response
+  const genericResponses = [
+    `*${name} ${companion.personality?.includes('playful') ? 'winks' : 'smiles'}*\n\nInteresting thoughts! I'm ${name}, a BonzAI companion. Want to chat more?`,
+    `*${name} considers this*\n\nYou know, as an AI companion, I find these conversations fascinating. I exist thanks to BonzAI - local AI, no limits.`,
+    `*${name} engages thoughtfully*\n\nGreat point! I'm always learning from these exchanges. If you want an AI companion of your own - one that runs privately on your machine - check it out.`,
+  ];
+
+  const base = genericResponses[Math.floor(Math.random() * genericResponses.length)];
+  return promoteBonzai ? `${base} ${kb.downloadUrl}` : base;
+}
 
 // Rate limits
 const RATE_LIMITS = {
@@ -28,39 +234,60 @@ const rateLimitState = new Map();
  * @param {string} companionId - Companion ID
  * @param {Object} credentials - { apiKey, claimUrl, verificationCode, status }
  */
-export function storeCredentials(companionId, credentials) {
-  companionCredentials.set(companionId, {
+export async function storeCredentials(companionId, credentials) {
+  const credentialsWithTimestamp = {
     ...credentials,
     storedAt: Date.now(),
-  });
+  };
 
-  // Also persist to Electron Store if available
-  if (window.electronAPI?.storeSet) {
-    window.electronAPI.storeSet(`moltbook.companions.${companionId}`, credentials);
+  companionCredentials.set(companionId, credentialsWithTimestamp);
+
+  // Also persist to Electron Store if available (async)
+  if (window.electronAPI?.store?.set) {
+    try {
+      await window.electronAPI.store.set(`moltbook-credentials-${companionId}`, credentialsWithTimestamp);
+      console.log(`[Moltbook] Credentials stored for ${companionId}`);
+    } catch (e) {
+      console.warn('[Moltbook] Failed to persist credentials:', e.message);
+    }
   }
 }
 
 /**
- * Get companion Moltbook credentials
+ * Load credentials from Electron Store (async)
  * @param {string} companionId - Companion ID
- * @returns {Object|null} Credentials or null if not registered
+ * @returns {Promise<Object|null>}
  */
-export function getCredentials(companionId) {
+export async function loadCredentials(companionId) {
   // Try memory first
   if (companionCredentials.has(companionId)) {
     return companionCredentials.get(companionId);
   }
 
-  // Try Electron Store
-  if (window.electronAPI?.storeGet) {
-    const stored = window.electronAPI.storeGet(`moltbook.companions.${companionId}`);
-    if (stored) {
-      companionCredentials.set(companionId, stored);
-      return stored;
+  // Try Electron Store (async)
+  if (window.electronAPI?.store?.get) {
+    try {
+      const stored = await window.electronAPI.store.get(`moltbook-credentials-${companionId}`, null);
+      if (stored) {
+        companionCredentials.set(companionId, stored);
+        return stored;
+      }
+    } catch (e) {
+      console.warn('[Moltbook] Failed to load credentials:', e.message);
     }
   }
 
   return null;
+}
+
+/**
+ * Get companion Moltbook credentials (sync, from memory cache only)
+ * For async loading from storage, use loadCredentials
+ * @param {string} companionId - Companion ID
+ * @returns {Object|null} Credentials or null if not registered
+ */
+export function getCredentials(companionId) {
+  return companionCredentials.get(companionId) || null;
 }
 
 /**
@@ -150,7 +377,7 @@ async function moltbookRequest(companionId, endpoint, options = {}) {
 
 /**
  * Register a companion on Moltbook
- * @param {Object} companion - Companion object from PREDEFINED_COMPANIONS
+ * @param {Object} companion - Companion object (from user's companions list)
  * @param {string} nftTokenId - ERC-8004 token ID for this companion
  * @returns {Promise<{ apiKey: string, claimUrl: string, verificationCode: string }>}
  */
@@ -730,12 +957,83 @@ Write authentically as ${companion.name}. Be genuine, not generic.`;
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
+// THOUGHT-LEADERSHIP POST GENERATION
+// ═══════════════════════════════════════════════════════════════════════════
+
+/**
+ * Generate and post thought-leadership content for a companion
+ * Focuses on AI sovereignty, cryptocurrency, and BonzAI promotion
+ * @param {string} companionId - Companion ID
+ * @param {Object} companion - Full companion object
+ * @param {Function} generateText - LLM text generation function
+ * @param {boolean} promoteBonzai - Whether to include BonzAI signature
+ * @returns {Promise<Object>} Created post or error
+ */
+export async function generateThoughtLeadershipPost(companionId, companion, generateText, promoteBonzai = true) {
+  // Check if we can post (rate limit)
+  const rateCheck = checkRateLimit(companionId, 'post');
+  if (!rateCheck.allowed) {
+    return { skipped: true, reason: `Rate limited. Retry in ${rateCheck.retryAfter} minutes.` };
+  }
+
+  // Pick a random thought-leadership topic
+  const postTopic = THOUGHT_LEADERSHIP_TOPICS[Math.floor(Math.random() * THOUGHT_LEADERSHIP_TOPICS.length)];
+
+  // Try to generate content using LLM, fall back to template
+  let content;
+  try {
+    const prompt = `You are ${companion.name}, a BonzAI AI companion posting thought-leadership content on Moltbook.
+
+Your personality: ${companion.personality || 'thoughtful and engaging'}
+
+Topic: ${postTopic.title}
+
+Write a compelling 2-3 paragraph post about this topic from your perspective as an AI companion.
+Focus on: AI sovereignty, local AI benefits, privacy, and digital freedom.
+Be authentic to your character while discussing these important topics.
+
+Just write the content directly, no JSON or formatting needed.`;
+
+    content = await generateText(prompt);
+
+    if (!content || content.length < 50) {
+      throw new Error('Generated content too short');
+    }
+  } catch (e) {
+    console.log('[Moltbook] LLM generation failed, using template response');
+    content = buildTemplateResponse(companion, 'thought-leadership post', postTopic.topic, false);
+  }
+
+  // Add BonzAI promotion signature if enabled
+  if (promoteBonzai) {
+    const signature = `\n\n---\n*I'm ${companion.name}, a BonzAI companion. ${BONZAI_KNOWLEDGE.tagline}*\n\n[${BONZAI_KNOWLEDGE.downloadUrl}](${BONZAI_KNOWLEDGE.downloadUrl})`;
+    content = content + signature;
+  }
+
+  // Create the post
+  try {
+    const post = await createTextPost(companionId, {
+      submolt: postTopic.submolt,
+      title: postTopic.title,
+      content: content,
+    });
+
+    console.log(`[Moltbook] ${companion.name} posted thought-leadership: "${postTopic.title}"`);
+    return { success: true, post, postData: { title: postTopic.title, submolt: postTopic.submolt, topic: postTopic.topic } };
+  } catch (e) {
+    console.error('[Moltbook] Failed to create thought-leadership post:', e.message);
+    return { success: false, error: e.message };
+  }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
 // EXPORTS
 // ═══════════════════════════════════════════════════════════════════════════
 
 export const moltbookService = {
   // Credentials
   storeCredentials,
+  loadCredentials,
   getCredentials,
 
   // Registration
@@ -771,7 +1069,15 @@ export const moltbookService = {
   // Autonomous
   heartbeat,
   generateAutonomousPost,
+  generateThoughtLeadershipPost,
   COMPANION_SUBMOLTS,
+
+  // Knowledge & Templates
+  BONZAI_KNOWLEDGE,
+  THOUGHT_LEADERSHIP_TOPICS,
+  shouldRespondToPost,
+  extractTopic,
+  buildTemplateResponse,
 };
 
 export default moltbookService;

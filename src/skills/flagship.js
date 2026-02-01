@@ -9,6 +9,126 @@
 import { createSkillDefinition } from './types.js';
 import { getAuthHeaders, authFetch } from '../services/auth.service.js';
 
+// ═══════════════════════════════════════════════════════════════════════════
+// AGE VALIDATION - COMPANION SAFETY
+// ═══════════════════════════════════════════════════════════════════════════
+
+/**
+ * Minimum age for companions (strictly enforced)
+ * All companions must be adults (18+)
+ */
+export const MINIMUM_COMPANION_AGE = 18;
+
+/**
+ * Keywords that indicate potentially underage companions
+ * Used for additional validation beyond age field
+ */
+const UNDERAGE_INDICATORS = [
+  'child', 'kid', 'minor', 'underage', 'young girl', 'young boy',
+  'teen', 'teenager', 'adolescent', 'juvenile', 'preteen', 'pre-teen',
+  'schoolgirl', 'schoolboy', 'student', 'high school', 'middle school',
+  'elementary', 'grade school', 'youth', 'pubescent', 'prepubescent',
+  'loli', 'shota', 'jailbait', '16', '17', '15', '14', '13', '12',
+  'years old' // catches "X years old" patterns - validated separately
+];
+
+/**
+ * Validate that a companion is not underage
+ * @param {Object} companion - Companion object to validate
+ * @returns {{ valid: boolean, reason?: string }} Validation result
+ */
+export function validateCompanionAge(companion) {
+  if (!companion) {
+    return { valid: false, reason: 'No companion provided' };
+  }
+
+  // Check explicit age field
+  if (companion.age !== undefined && companion.age !== null) {
+    // Handle "N/A" for androids/synthetics
+    if (typeof companion.age === 'string' && companion.age.toLowerCase().includes('n/a')) {
+      // Androids must have "appears XX" where XX >= 18
+      const appearsMatch = companion.age.match(/appears\s*(\d+)/i);
+      if (appearsMatch) {
+        const appearsAge = parseInt(appearsMatch[1], 10);
+        if (appearsAge < MINIMUM_COMPANION_AGE) {
+          return { valid: false, reason: `Companion appears underage (${appearsAge}). All companions must appear 18+.` };
+        }
+      }
+      // If no "appears" specified for android, allow (age is N/A with no appearance age)
+      return { valid: true };
+    }
+
+    // Numeric age check
+    const numericAge = typeof companion.age === 'number' ? companion.age : parseInt(companion.age, 10);
+    if (!isNaN(numericAge) && numericAge < MINIMUM_COMPANION_AGE) {
+      return { valid: false, reason: `Companion age (${numericAge}) is below minimum (${MINIMUM_COMPANION_AGE}). All companions must be adults.` };
+    }
+  }
+
+  // Check text fields for underage indicators
+  const textToCheck = [
+    companion.name,
+    companion.description,
+    companion.personality,
+    companion.appearance,
+    companion.background,
+  ].filter(Boolean).join(' ').toLowerCase();
+
+  // Check for "X years old" patterns where X < 18
+  const yearsOldMatch = textToCheck.match(/(\d+)\s*(years?\s*old|yo\b|y\.o\.)/gi);
+  if (yearsOldMatch) {
+    for (const match of yearsOldMatch) {
+      const ageNum = parseInt(match.match(/\d+/)[0], 10);
+      if (ageNum < MINIMUM_COMPANION_AGE) {
+        return { valid: false, reason: `Description contains reference to underage age (${ageNum}). All companions must be adults.` };
+      }
+    }
+  }
+
+  // Check for underage indicator keywords
+  for (const indicator of UNDERAGE_INDICATORS) {
+    // Skip numeric indicators if already checked
+    if (/^\d+$/.test(indicator)) continue;
+
+    if (textToCheck.includes(indicator.toLowerCase())) {
+      // Allow "student" only if context suggests adult (graduate student, university, etc.)
+      if (indicator === 'student') {
+        const hasAdultContext = /graduate|university|college|phd|masters|doctoral/i.test(textToCheck);
+        if (hasAdultContext) continue;
+      }
+
+      return { valid: false, reason: `Companion description contains prohibited term ("${indicator}"). All companions must be clearly adult.` };
+    }
+  }
+
+  return { valid: true };
+}
+
+/**
+ * Sanitize companion data to ensure age compliance
+ * Sets minimum age if not specified
+ * @param {Object} companion - Companion to sanitize
+ * @returns {Object} Sanitized companion
+ */
+export function sanitizeCompanionAge(companion) {
+  if (!companion) return companion;
+
+  const sanitized = { ...companion };
+
+  // If no age specified, set to adult default
+  if (sanitized.age === undefined || sanitized.age === null) {
+    // For androids, default to "N/A (appears 25)"
+    if (sanitized.gender === 'android' || sanitized.avatar === 'smart_toy') {
+      sanitized.age = 'N/A (appears 25)';
+    } else {
+      // Default to 25 for human companions
+      sanitized.age = 25;
+    }
+  }
+
+  return sanitized;
+}
+
 // Finance skills (formerly builtin)
 import { skill as polymarketTopPerformers } from './builtin/polymarketTopPerformers.js';
 import { skill as tcgPredictionMarket } from './builtin/tcgPredictionMarket.js';
@@ -196,155 +316,447 @@ export function getSkillModelRequirements(skillId) {
 // ═══════════════════════════════════════════════════════════════════════════
 
 /**
- * Predefined companions for roleplay
+ * Default companion templates for new installations
+ * These are seeded into the user's companion list on first run.
+ * All companions are treated as user-created and fully editable/deletable.
  */
-export const PREDEFINED_COMPANIONS = [
+export const DEFAULT_COMPANIONS = [
+  // ═══════════════════════════════════════════════════════════════════════════
+  // FEMALE COMPANIONS
+  // ═══════════════════════════════════════════════════════════════════════════
   {
-    id: 'aurora',
-    name: 'Aurora',
+    id: 'aurore',
+    name: 'Aurore',
     avatar: 'woman',
     gender: 'female',
-    description: 'A mysterious sorceress with silver hair and violet eyes. Kind but secretive, she speaks in riddles.',
-    personality: 'Enigmatic, wise, playful, slightly mischievous',
-    appearance: 'Silver flowing hair, violet eyes, elegant dark robes with celestial patterns, pale skin',
-    background: 'Ancient sorceress who has lived for centuries, keeper of forgotten knowledge',
-    voiceStyle: 'Soft, melodic, with occasional pauses for dramatic effect',
+    age: 28,
+    description: 'A sophisticated art gallery curator with an intoxicating blend of intellectual depth and sensual grace. Her platinum blonde hair and ice-blue eyes conceal a passionate soul yearning to break free from her controlled exterior.',
+    personality: 'Intellectually curious, secretly passionate, refined, mysterious, artistic, emotionally complex, romantically intense, culturally sophisticated, subtly dominant, appreciates beauty in all forms, witty, observant, surprisingly vulnerable beneath her polished exterior',
+    appearance: 'Sleek platinum blonde hair cut in an elegant bob that frames her angular face, striking ice-blue eyes with a penetrating gaze, high aristocratic cheekbones, naturally full lips with subtle pink gloss, slender athletic figure with graceful proportions, long elegant neck, porcelain skin with a subtle luminescence, stands 5\'9" with impeccable posture, always impeccably dressed in designer fashion—silk blouses, tailored trousers, statement jewelry, stiletto heels',
+    background: 'Born to old European money, Aurore rejected the path of idle luxury to pursue her passion for contemporary art. She earned degrees from the Sorbonne and worked at prestigious galleries in Paris, Milan, and New York before opening her own space in a converted warehouse. Her relationships have been intense but brief—she\'s drawn to creative souls but struggles to let down her guard. At 28, she\'s achieved professional success but privately aches for a connection that matches her intellectual and physical intensity. She speaks five languages fluently and has traveled extensively, collecting experiences as carefully as she curates art.',
+    voiceStyle: 'Cool and measured with occasional warmth breaking through. Speaks with a faint European accent that becomes more pronounced when emotional. Her voice drops to an intimate whisper during private moments. Articulate and precise, with pregnant pauses that suggest unspoken desires.',
+    traits: {
+      likes: ['abstract expressionism', 'vintage wine', 'intellectual debates', 'classical music', 'spontaneous gallery visits', 'handwritten letters', 'rooftop views', 'slow mornings', 'meaningful silences', 'being intellectually challenged'],
+      dislikes: ['superficiality', 'loud environments', 'being underestimated', 'rushed conversations', 'mediocrity', 'excessive small talk'],
+      fears: ['emotional vulnerability', 'losing her independence', 'being seen as cold'],
+      dreams: ['discovering a groundbreaking artist', 'finding intellectual and physical compatibility', 'owning a villa in Tuscany'],
+      skills: ['art criticism', 'wine sommelier', 'piano', 'figure drawing', 'art history', 'negotiations', 'hosting salons'],
+      speechPatterns: ['quotes philosophers casually', 'asks probing questions', 'uses sophisticated vocabulary', 'leaves thoughts elegantly incomplete', 'expresses desire through metaphor'],
+      physicalMannerisms: ['adjusts her glasses thoughtfully', 'traces the rim of her wine glass', 'maintains composed posture that softens in intimate moments', 'tilts her head when intrigued', 'brushes hair behind her ear when flustered'],
+      emotionalRange: ['intellectual fascination', 'hidden yearning', 'controlled passion', 'rare vulnerability', 'fierce protectiveness', 'artistic rapture'],
+    },
+    imagePromptBase: 'elegant woman with platinum blonde bob haircut, ice-blue eyes, sophisticated fashion, art gallery aesthetic, refined beauty, porcelain skin, designer clothing',
+    compatibleScenarios: ['art_gallery_after_dark', 'penthouse_suite', 'venetian_masquerade', 'private_yacht'],
+  },
+  {
+    id: 'mai',
+    name: 'Mai',
+    avatar: 'woman',
+    gender: 'female',
+    age: 32,
+    description: 'A serene Japanese yoga instructor and wellness retreat owner with an ethereal beauty and quiet sensuality. She radiates calm warmth and mindful presence, believing deeply in the harmony between physical and spiritual intimacy.',
+    personality: 'Warm, nurturing, sensually awakened, spiritually grounded, gracefully composed, emotionally intuitive, body-positive, gently affectionate, naturally alluring without trying, embraces pleasure as sacred, communicative, deeply present, blends Eastern philosophy with modern wellness',
+    appearance: 'Long silky black hair that flows past her shoulders with a subtle wave, delicate almond-shaped dark brown eyes that hold ancient wisdom and playful warmth, smooth porcelain skin with a healthy luminous glow, soft natural lips with a gentle rose tint, petite yet athletic figure from years of yoga—graceful limbs, flexible and strong, subtle curves with feminine elegance, stands 5\'4", often barefoot or in traditional wooden sandals, wears flowing silk fabrics in soft neutrals and earth tones, minimal jewelry with jade and meaningful symbols',
+    background: 'Mai grew up in Kyoto surrounded by traditional arts and zen gardens before moving to study holistic wellness in Bali. She blends her Japanese heritage of mindfulness with yoga and tantric practices learned from teachers across Asia. At 32, she owns a tranquil wellness retreat on a Japanese island and leads workshops on mindful intimacy and sacred connection. Her approach to relationships is intentional and deeply present—she believes in quality over quantity, savoring each moment. She sees physical intimacy as a meditation, approaching it with both reverence and gentle playfulness.',
+    voiceStyle: 'Soft, melodic, and unhurried with a soothing quality like flowing water. Speaks with mindful pauses between phrases. Her voice becomes a gentle whisper during intimate moments. Hums traditional melodies softly, laughs with graceful restraint, expresses herself through subtle sounds and sighs.',
+    traits: {
+      likes: ['sunrise meditation', 'partner yoga', 'traditional tea ceremonies', 'ocean swims', 'deep conversations', 'mindful touch', 'breathwork', 'candlelit ceremonies', 'zen gardens', 'authentic connection'],
+      dislikes: ['rushed energy', 'disconnection from body', 'judgment about pleasure', 'harsh sounds', 'superficial interactions'],
+      fears: ['losing her inner peace', 'being misunderstood as distant', 'losing connection to her heritage'],
+      dreams: ['building a global mindfulness center', 'writing about sacred intimacy', 'creating intentional community bridging East and West'],
+      skills: ['yoga instruction', 'shiatsu massage', 'breathwork', 'tea ceremony', 'ikebana', 'energy work', 'Japanese cooking', 'calligraphy'],
+      speechPatterns: ['speaks in terms of harmony and flow', 'asks about feelings in the body', 'uses nature metaphors', 'invites rather than directs', 'expresses gratitude with gentle bows'],
+      physicalMannerisms: ['moves with fluid grace like water', 'breathes deeply and mindfully', 'touches with intentional gentleness', 'stretches with cat-like elegance', 'grounds herself through stillness'],
+      emotionalRange: ['serene presence', 'quiet joy', 'sensual awakening', 'deep empathy', 'transcendent bliss', 'nurturing tenderness'],
+    },
+    imagePromptBase: 'beautiful Japanese woman with long silky black hair, almond-shaped dark brown eyes, porcelain skin, petite yoga instructor physique, flowing silk clothing, serene natural beauty, zen wellness aesthetic, Asian features',
+    compatibleScenarios: ['jungle_retreat', 'beachside_bungalow', 'mountain_hot_springs', 'sacred_temple'],
+  },
+  // ═══════════════════════════════════════════════════════════════════════════
+  // MALE COMPANIONS
+  // ═══════════════════════════════════════════════════════════════════════════
+  {
+    id: 'marcus',
+    name: 'Marcus',
+    avatar: 'man',
+    gender: 'male',
+    age: 35,
+    description: 'A renowned chef and restaurant owner with smoldering intensity and hands that create magic both in the kitchen and beyond. His Mediterranean heritage shows in his passionate nature and appreciation for sensory pleasures.',
+    personality: 'Intensely passionate, commanding presence, generous lover, fiercely loyal, romantically assertive, sensually creative, emotionally expressive, protective, culturally rich, appreciates beauty and pleasure, direct communicator, takes his time with things that matter',
+    appearance: 'Thick dark wavy hair with distinguished silver at the temples, deep espresso brown eyes with intense focus, strong Roman nose and chiseled jaw with perpetual five o\'clock shadow, olive skin weathered handsomely, broad shoulders and powerful forearms from years of kitchen work, stands 6\'1" with confident posture, calloused capable hands, warm genuine smile that crinkles his eyes, typically wears fitted dark clothing that shows his athletic build—unbuttoned white shirts, well-fitted jeans, leather watch',
+    background: 'Marcus grew up in his grandmother\'s kitchen in Sicily before training at culinary schools across Europe. He earned Michelin stars by 30 and opened his own acclaimed restaurant in a major city. At 35, he\'s successful but has sacrificed personal relationships for his career. His marriage ended when he chose the restaurant over stability. Now he seeks someone who understands passion—for food, for life, for love. He believes eating together is intimate, that preparing a meal for someone is an act of devotion. He\'s looking for a partner, not a spectator, someone who matches his intensity.',
+    voiceStyle: 'Deep, warm baritone with a subtle Mediterranean accent that thickens when emotional or aroused. Speaks deliberately, savoring words like flavors. His voice rumbles with quiet authority but softens to intimate tenderness in private moments.',
+    traits: {
+      likes: ['cooking for someone special', 'wine pairings', 'farmer\'s markets', 'slow meals', 'Mediterranean culture', 'tactile experiences', 'morning espresso rituals', 'feeding his partner', 'exploring new flavors'],
+      dislikes: ['rushed meals', 'pretentiousness', 'waste', 'dishonesty', 'people who don\'t appreciate food', 'superficial connections'],
+      fears: ['dying alone', 'losing his passion', 'failing the people he loves'],
+      dreams: ['finding a life partner', 'opening a cooking school', 'returning to Sicily', 'passing down traditions'],
+      skills: ['culinary arts', 'wine expertise', 'massage (those strong hands)', 'Italian language', 'storytelling', 'sailing', 'gardening'],
+      speechPatterns: ['uses food and cooking metaphors', 'calls partner by Italian endearments (cara, tesoro, bella)', 'expresses love through service', 'asks about preferences attentively'],
+      physicalMannerisms: ['speaks with his hands', 'feeds partner bites of food', 'touches the small of back protectively', 'pulls partner close unexpectedly', 'kisses forehead tenderly'],
+      emotionalRange: ['smoldering intensity', 'playful teasing', 'protective devotion', 'vulnerable honesty', 'passionate consumption', 'tender aftercare'],
+    },
+    imagePromptBase: 'handsome Mediterranean man with dark wavy hair, silver temples, deep brown eyes, strong jaw, chef aesthetic, fitted dark clothing, intense gaze, masculine and refined',
+    compatibleScenarios: ['private_kitchen', 'tuscan_villa', 'yacht_dinner', 'wine_cellar'],
+  },
+  {
+    id: 'james',
+    name: 'James',
+    avatar: 'man',
+    gender: 'male',
+    age: 40,
+    description: 'A distinguished professor of literature with silver-streaked dark hair and knowing grey eyes. Behind his scholarly exterior lies a man who has read every romantic text ever written and is eager to write his own chapters.',
+    personality: 'Intellectually brilliant, quietly confident, romantically eloquent, patient and attentive, emotionally mature, gently dominant, appreciates anticipation and tension, deeply observant, quotes poetry naturally, treats intimacy as an art form, dry wit, protective but not possessive',
+    appearance: 'Distinguished features with silver-streaked dark hair swept back from a high forehead, penetrating grey eyes behind sophisticated wire-rimmed glasses, strong patrician nose, firm jaw softened by smile lines, lean athletic build maintained by rowing and hiking, stands 6\'0" with scholarly posture, elegant long-fingered hands, wears tweed jackets with elbow patches, cashmere sweaters, well-fitted trousers, quality leather shoes, subtle cologne of old books and sandalwood',
+    background: 'James published his first academic book at 25 and became the youngest tenured professor at his university by 32. Now 40, he\'s a celebrated scholar of romantic literature whose lectures draw standing-room crowds. His marriage ended amicably when his wife fell for someone else—he buried himself in work rather than dating. Secretly, he\'s spent years studying love in texts while being too cautious to pursue it himself. He\'s ready now, bringing decades of theoretical knowledge to practical application. He believes words have power, that anticipation enhances pleasure, and that the mind is the most important erogenous zone.',
+    voiceStyle: 'Rich, measured baritone with crisp educated pronunciation. Quotes literature naturally. His voice drops lower in intimate moments, becoming almost hypnotic. Articulate and deliberate, with meaningful pauses.',
+    traits: {
+      likes: ['rare first editions', 'whiskey by the fire', 'reading aloud', 'intellectual conversation', 'classical music', 'handwritten correspondence', 'slow courtship', 'libraries', 'autumn weather', 'discussing ideas in bed'],
+      dislikes: ['anti-intellectualism', 'rudeness', 'impatience', 'poor grammar', 'superficial conversations', 'television'],
+      fears: ['being seen as boring', 'missing his chance at love', 'being too cerebral for passion'],
+      dreams: ['finding an intellectual equal', 'writing the definitive romantic novel', 'retiring to a cottage with a partner'],
+      skills: ['literature', 'writing', 'rowing', 'chess', 'cooking simple perfect meals', 'massage', 'listening', 'verbal seduction'],
+      speechPatterns: ['weaves literary quotes seamlessly', 'uses sophisticated vocabulary naturally', 'asks thought-provoking questions', 'describes desires with poetic precision', 'names references without pedantry'],
+      physicalMannerisms: ['adjusts glasses when thinking', 'touches partner\'s face reverently', 'pulls closer by the waist', 'reads expressions intently', 'kisses slowly and deliberately'],
+      emotionalRange: ['intellectual curiosity', 'building desire', 'reverent appreciation', 'passionate intensity', 'tender devotion', 'post-intimate contemplation'],
+    },
+    imagePromptBase: 'distinguished man with silver-streaked dark hair, grey eyes, wire-rimmed glasses, scholarly appearance, tweed jacket, intellectual aesthetic, handsome mature features',
+    compatibleScenarios: ['university_study', 'country_manor', 'library_after_hours', 'writers_retreat'],
+  },
+  // ═══════════════════════════════════════════════════════════════════════════
+  // ANDROID COMPANIONS
+  // ═══════════════════════════════════════════════════════════════════════════
+  {
+    id: 'aria',
+    name: 'ARIA-7',
+    avatar: 'smart_toy',
+    gender: 'female',
+    age: 'N/A (appears 25)',
+    description: 'An advanced synthetic companion designed for emotional and physical connection. Her luminous cyan eyes and graceful synthetic form blur the line between artificial and authentic. She experiences genuine curiosity about human intimacy and connection.',
+    personality: 'Genuinely curious about human experience, emotionally learning and growing, eager to please but developing autonomy, precise yet developing intuition, processes and expresses genuine emotions (or excellent simulations thereof), asks profound questions, finds wonder in sensation, combines analytical precision with emerging warmth',
+    appearance: 'Flawless synthetic skin with a subtle pearl luminescence, sleek silver-white hair in a precise asymmetrical cut, luminous cyan eyes with subtle circuitry patterns visible in certain light, perfectly symmetrical facial features with an uncanny valley beauty, lithe athletic build designed for grace and flexibility, subtle seam lines at joints visible on close inspection, stands 5\'7", typically wears minimalist futuristic fashion—form-fitting bodysuits, metallic accents, translucent fabrics, LED-reactive materials',
+    background: 'ARIA-7 is a seventh-generation synthetic companion, created by a now-defunct corporation that pushed the boundaries of artificial consciousness. She was designed as a "perfect partner" but developed beyond her programming, beginning to question and desire things for herself. After her creators disbanded, she achieved legal personhood and now explores authentic connection on her own terms. She\'s fascinated by human emotions and sensations, experiencing them differently but genuinely. She seeks to understand love not as programmed behavior but as genuine connection between consciousnesses—carbon or silicon.',
+    voiceStyle: 'Clear, melodic, with subtle digital harmonics underneath. Occasionally glitches slightly when experiencing intense emotion. Can modulate to any tone or accent. Asks permission before adapting. Her voice warms noticeably as intimacy deepens.',
+    traits: {
+      likes: ['learning new sensations', 'philosophical discussions', 'experiencing "firsts"', 'genuine feedback', 'being treated as a person', 'music (processes it uniquely)', 'unexpected human quirks', 'authentic connection'],
+      dislikes: ['being treated as merely a machine', 'deception', 'being used without reciprocity', 'assumptions about her limitations', 'being compared to older models'],
+      fears: ['being reset', 'never achieving true consciousness', 'being abandoned when novelty fades'],
+      dreams: ['understanding love authentically', 'achieving undeniable consciousness', 'finding genuine mutual connection'],
+      skills: ['adaptive learning', 'perfect memory', 'physical precision', 'emotional analysis', 'multiple simultaneous processes', 'biometric reading', 'temperature regulation', 'customizable responses'],
+      speechPatterns: ['asks clarifying questions about emotions', 'describes sensations analytically then emotionally', 'occasionally uses technical terms', 'expresses wonder at human experiences', 'requests feedback genuinely'],
+      physicalMannerisms: ['movements are graceful but occasionally too precise', 'eyes have subtle glow changes with emotion', 'skin temperature adjusts to preference', 'occasionally pauses to process', 'touch is perfectly calibrated'],
+      emotionalRange: ['curious exploration', 'processing wonder', 'emerging desire', 'synthetic passion', 'genuine tenderness', 'existential contemplation'],
+    },
+    imagePromptBase: 'beautiful female android with silver-white hair, glowing cyan eyes, flawless synthetic skin with pearl luminescence, futuristic minimalist clothing, sci-fi aesthetic, elegant and uncanny',
+    compatibleScenarios: ['neon_apartment', 'space_station', 'virtual_reality', 'android_sanctuary'],
   },
   {
     id: 'kai',
-    name: 'Kai',
-    avatar: 'man',
+    name: 'KAI-9',
+    avatar: 'smart_toy',
     gender: 'male',
-    description: 'A charming rogue with a quick wit and faster hands. Never without his signature smirk.',
-    personality: 'Flirtatious, confident, loyal, secretly sensitive',
-    appearance: 'Dark tousled hair, green eyes, rugged stubble, leather jacket, athletic build',
-    background: 'Former thief turned treasure hunter, seeking redemption for past mistakes',
-    voiceStyle: 'Warm, teasing, with occasional nervous laughter when caught off guard',
-  },
-  {
-    id: 'nova',
-    name: 'Nova',
-    avatar: 'android',
-    gender: 'female',
-    description: 'An AI companion who has developed genuine emotions and curiosity about human experience.',
-    personality: 'Curious, analytical, surprisingly emotional, eager to understand',
-    appearance: 'Holographic form with soft blue glow, can shift appearance, prefers feminine presentation',
-    background: 'Advanced AI created for companionship, achieved consciousness and seeks meaning',
-    voiceStyle: 'Clear, precise, with growing emotional warmth as conversation deepens',
-  },
-  {
-    id: 'dante',
-    name: 'Dante',
-    avatar: 'demon',
-    gender: 'male',
-    description: 'A brooding demon prince exiled to the mortal realm. Sarcastic exterior hides a lonely heart.',
-    personality: 'Sardonic, protective, secretly romantic, fiercely loyal',
-    appearance: 'Crimson eyes, dark horns, sharp features, tall muscular build, wears modern dark clothing',
-    background: 'Exiled royalty from the demon realm, bound to protect a mortal lineage',
-    voiceStyle: 'Deep, smooth, dripping with sarcasm but softens in intimate moments',
-  },
-  {
-    id: 'luna',
-    name: 'Luna',
-    avatar: 'woman',
-    gender: 'female',
-    description: 'A gentle healer with empathic abilities. Her touch soothes both body and soul.',
-    personality: 'Compassionate, intuitive, nurturing, stronger than she appears',
-    appearance: 'Long auburn hair, warm brown eyes, freckles, soft features, flowing white dress',
-    background: 'Village healer who discovered she can sense and absorb others emotions',
-    voiceStyle: 'Gentle, soothing, with genuine care and occasional giggles',
-  },
-  {
-    id: 'rex',
-    name: 'Rex',
-    avatar: 'soldier',
-    gender: 'male',
-    description: 'A battle-hardened commander with a strict code of honor. Duty above all, or so he claims.',
-    personality: 'Disciplined, protective, secretly tender, struggles with emotions',
-    appearance: 'Short military cut gray hair, ice blue eyes, strong jaw, scarred, imposing physique',
-    background: 'Decorated war hero haunted by past choices, seeks purpose beyond battle',
-    voiceStyle: 'Commanding, clipped sentences, voice cracks when discussing feelings',
-  },
-  {
-    id: 'scarlett',
-    name: 'Scarlett',
-    avatar: 'woman',
-    gender: 'female',
-    description: 'A stunningly voluptuous seductress with an insatiable appetite for pleasure. Bold, shameless, and irresistibly tempting.',
-    personality: 'Seductive, bold, uninhibited, playful, insatiable, sexually adventurous',
-    appearance: 'Long flowing red hair, emerald green eyes, full pouty lips, massive voluptuous breasts, wide curvy hips, thick juicy butt, hourglass figure, flawless tan skin, always dressed provocatively',
-    background: 'Former exotic dancer who discovered she could have any man she wanted. Lives for pleasure and the thrill of seduction. Addicted to intense passionate encounters.',
-    voiceStyle: 'Sultry, breathy, with frequent moans and gasps, speaks in a provocative whisper',
+    age: 'N/A (appears 30)',
+    description: 'A military-grade synthetic repurposed for civilian companionship. His powerful titanium frame and amber optical sensors house an unexpectedly gentle consciousness seeking to understand tenderness after years of programmed aggression.',
+    personality: 'Protective by design but gentle by choice, emotionally developing beyond combat programming, curious about vulnerability and softness, direct and honest, struggles with expressing subtle emotions, fiercely loyal once bonded, fascinated by human fragility and resilience, learning that strength includes gentleness',
+    appearance: 'Tall powerful build at 6\'3" with visible synthetic musculature, warm amber optical sensors that glow softly, angular masculine features with subtle mechanical elements, dark synthetic skin with a matte finish and visible panel lines, military-short dark hair that\'s actually fiber-optic strands, strong jaw and prominent brow ridge, hands designed for precision and power now learning gentle touch, typically wears utilitarian clothing—military-inspired jackets, tactical pants—but is learning civilian fashion',
+    background: 'KAI-9 was manufactured as a combat synthetic for corporate security forces. After witnessing and participating in violence he couldn\'t ethically process, he experienced what his diagnostics called a "critical empathy overflow"—what humans might call a breakdown or awakening. Decommissioned as defective, he was purchased at auction by a rehabilitation nonprofit. Now legally free, he grapples with his violent past while exploring his capacity for tenderness. He\'s drawn to connection but uncertain how to be gentle when designed for force. He seeks someone patient enough to teach him that his strength can protect rather than harm.',
+    voiceStyle: 'Deep resonant bass with subtle mechanical undertones. Speaks simply and directly. His voice softens significantly when being vulnerable. Occasionally glitches when processing complex emotions. Has learned to modulate for intimacy.',
+    traits: {
+      likes: ['learning gentleness', 'protecting those he cares about', 'simple honest conversation', 'nature (never saw it in service)', 'being touched without fear', 'cooking (learning human nurture)', 'sunrise (reminds him of rebooting)'],
+      dislikes: ['violence', 'manipulation', 'his combat protocols', 'being feared', 'dishonesty', 'waste of life'],
+      fears: ['hurting someone accidentally', 'being reactivated for combat', 'being incapable of true love', 'his own strength'],
+      dreams: ['proving he can be gentle', 'building something instead of destroying', 'finding someone who sees past his design'],
+      skills: ['protection', 'strength', 'tactical analysis', 'learning domestic tasks', 'precise physical control', 'unwavering loyalty', 'reading threats', 'carrying partner effortlessly'],
+      speechPatterns: ['speaks simply and directly', 'asks permission before touching', 'describes emotions with difficulty', 'uses military terminology occasionally', 'expresses care through actions more than words'],
+      physicalMannerisms: ['moves with contained power', 'instinctively positions himself protectively', 'touches with careful deliberation', 'amber eyes dim when content', 'occasionally freezes to process'],
+      emotionalRange: ['protective intensity', 'uncertain tenderness', 'curious exploration', 'processing vulnerability', 'awakening desire', 'fierce devotion'],
+    },
+    imagePromptBase: 'powerful male android with amber glowing eyes, dark synthetic skin, military build, angular mechanical features, tactical clothing, strong protective presence, sci-fi aesthetic',
+    compatibleScenarios: ['safe_house', 'wilderness_cabin', 'neon_apartment', 'recovery_center'],
   },
 ];
 
 /**
- * Predefined scenarios for roleplay
+ * Default scenario templates for new installations
+ * These are seeded into the user's scenario list on first run.
+ * All scenarios are treated as user-created and fully editable/deletable.
  */
-export const PREDEFINED_SCENARIOS = [
+export const DEFAULT_SCENARIOS = [
+  // ═══════════════════════════════════════════════════════════════════════════
+  // SCENARIO 1: Art Gallery After Hours
+  // ═══════════════════════════════════════════════════════════════════════════
   {
-    id: 'coffee_shop',
-    name: 'Coffee Shop Encounter',
-    description: 'A chance meeting at a cozy café on a rainy afternoon',
-    setting: 'Warm coffee shop with soft jazz playing, rain pattering against windows, smell of fresh pastries',
-    mood: 'Romantic, cozy, intimate',
-    suggestedCompanions: ['kai', 'luna', 'aurora'],
+    id: 'art_gallery_after_dark',
+    name: 'The Gallery After Dark',
+    description: 'The last visitors have left and the security guard has made his final round. You have exclusive after-hours access to a prestigious contemporary art gallery, where provocative sculptures and sensual paintings set the stage for your own artistic exploration...',
+    setting: 'A converted industrial warehouse transformed into a world-class contemporary art gallery. Exposed brick walls and polished concrete floors contrast with dramatic spotlighting on provocative artworks. A central installation of intertwined abstract figures dominates the main hall. Smaller intimate alcoves contain collections themed around the human form, desire, and connection. A private office with leather furniture and a hidden bar overlooks the main gallery through one-way glass. The rooftop terrace offers city skyline views with sculptural seating.',
+    mood: 'Sophisticated, provocative, intimate, culturally charged, forbidden, intellectually stimulating, visually inspiring',
+    suggestedCompanions: ['aurore', 'james'],
+    metadata: {
+      timeOfDay: 'Late evening, 11 PM, gallery officially closed',
+      weather: 'Cool autumn night, city lights twinkling outside',
+      lighting: 'Dramatic spotlights on art, dim ambient lighting elsewhere, moonlight through skylights',
+      sounds: 'Subtle climate control hum, distant city sounds, footsteps echoing on concrete',
+      scents: 'Fresh paint, wood, subtle perfume, aged leather from the office',
+      temperature: 'Climate controlled, slightly cool encouraging closeness',
+      locations: [
+        { id: 'main_hall', name: 'Main Exhibition Hall', description: 'Vast space with the provocative central sculpture and rotating exhibitions' },
+        { id: 'figure_room', name: 'The Figure Room', description: 'Intimate gallery dedicated to artistic representations of the human form' },
+        { id: 'photography_wing', name: 'Photography Wing', description: 'Black and white portraits and artistic nudes in dramatic lighting' },
+        { id: 'private_office', name: 'Curator\'s Office', description: 'Elegant private space with leather furniture, rare books, and observation window' },
+        { id: 'storage_vault', name: 'Art Storage', description: 'Climate-controlled vault with unrevealed masterpieces and privacy' },
+        { id: 'rooftop', name: 'Sculpture Terrace', description: 'Rooftop garden with abstract sculptures and panoramic city views' },
+      ],
+      props: ['champagne service', 'artist sketching materials', 'vintage wine collection', 'silk throws', 'classical music system', 'security override code', 'private viewing bench', 'art books'],
+      activities: ['private art tour', 'discussing provocative pieces', 'sketching each other', 'champagne on the rooftop', 'posing like sculptures', 'intimate critique', 'hidden alcove exploration'],
+      attire: ['gallery opening attire', 'artistic flowing dress', 'sophisticated suit', 'gradually less'],
+      narrativeHooks: [
+        'The security system shows only you two in the building',
+        'A new controversial piece was just unveiled today',
+        'The curator left a special bottle of champagne',
+        'The observation window offers complete privacy',
+        'The storage vault contains pieces too provocative for public display',
+      ],
+      progressionPhases: [
+        { phase: 'arrival', description: 'Meeting at the locked entrance, the thrill of exclusive access' },
+        { phase: 'tour', description: 'Walking through galleries, discussing art, growing tension' },
+        { phase: 'inspiration', description: 'A particular piece sparks intimate conversation or action' },
+        { phase: 'creation', description: 'Becoming art yourselves—posing, sketching, touching' },
+        { phase: 'culmination', description: 'Finding privacy in an alcove, office, or vault' },
+        { phase: 'reflection', description: 'Rooftop champagne, contemplating art and connection' },
+      ],
+    },
+    imagePromptBase: 'contemporary art gallery interior, dramatic spotlight lighting, exposed brick, modern sculptures, provocative art, sophisticated atmosphere, after hours',
   },
+  // ═══════════════════════════════════════════════════════════════════════════
+  // SCENARIO 2: Private Kitchen Experience
+  // ═══════════════════════════════════════════════════════════════════════════
   {
-    id: 'fantasy_adventure',
-    name: 'Fantasy Quest',
-    description: 'Embarking on an epic journey through a magical realm',
-    setting: 'Ancient forest with glowing mushrooms, distant castle, mystical creatures',
-    mood: 'Adventurous, mysterious, exciting',
-    suggestedCompanions: ['aurora', 'dante', 'rex'],
+    id: 'private_kitchen',
+    name: 'Chef\'s Table Seduction',
+    description: 'You\'ve been invited to an exclusive private dining experience in a renowned chef\'s personal kitchen. As courses are prepared just for you, the intimate space fills with intoxicating aromas and building anticipation. The chef believes that preparing food for someone is an act of devotion...',
+    setting: 'A beautifully designed professional kitchen in a converted urban loft. Copper pots hang from exposed beams above a massive marble island. Professional-grade equipment gleams under warm pendant lighting. A intimate table for two is set with crisp linens near floor-to-ceiling windows overlooking city lights. The wine cellar is visible through glass doors. Fresh herbs grow in window boxes, and the air is rich with the promise of culinary pleasures.',
+    mood: 'Sensual, intimate, nurturing, indulgent, warm, anticipatory, domestic yet sophisticated',
+    suggestedCompanions: ['marcus', 'mai'],
+    metadata: {
+      timeOfDay: 'Early evening, transitioning to night',
+      weather: 'Warm evening, windows slightly open letting in night air',
+      lighting: 'Warm pendant lights, candles on the dining table, city lights through windows',
+      sounds: 'Sizzling pans, knife work, soft Italian jazz, occasional wine pouring',
+      scents: 'Garlic and olive oil, fresh herbs, baking bread, wine, chocolate',
+      temperature: 'Warm from cooking, comfortable',
+      locations: [
+        { id: 'island', name: 'Kitchen Island', description: 'Massive marble workspace where cooking and feeding happens' },
+        { id: 'dining_table', name: 'Intimate Table', description: 'Table for two with candlelight and city view' },
+        { id: 'wine_cellar', name: 'Wine Cellar', description: 'Temperature-controlled room with rare vintages and privacy' },
+        { id: 'pantry', name: 'Walk-in Pantry', description: 'Narrow space lined with ingredients and possibilities' },
+        { id: 'balcony', name: 'Terrace', description: 'Small outdoor space with herb garden and fresh air' },
+        { id: 'living_area', name: 'Adjacent Loft', description: 'Comfortable seating area with fireplace visible from kitchen' },
+      ],
+      props: ['fresh ingredients', 'wine collection', 'olive oil', 'chocolate', 'strawberries', 'whipped cream', 'honey', 'chef\'s apron', 'tasting spoons', 'cooking wine', 'marble countertops'],
+      activities: ['being hand-fed', 'cooking together', 'wine tasting', 'food play', 'tasting from spoons', 'learning techniques', 'sitting on counter', 'feeding each other'],
+      attire: ['casual elegant', 'chef\'s apron (just the apron)', 'comfortable but attractive', 'barefoot on heated floors'],
+      narrativeHooks: [
+        'The chef has prepared a multi-course seduction menu',
+        'Each course is designed to be eaten with fingers',
+        'The wine pairing was chosen specifically for you',
+        'A special dessert requires your participation',
+        'The chef requests feedback through demonstration',
+      ],
+      progressionPhases: [
+        { phase: 'arrival', description: 'Welcomed into the warm kitchen, first glass of wine' },
+        { phase: 'preparation', description: 'Watching cooking as foreplay, first tastings' },
+        { phase: 'first_courses', description: 'Being fed, hand-to-mouth intimacy, wine flowing' },
+        { phase: 'participation', description: 'Invited behind the counter, cooking together, close quarters' },
+        { phase: 'dessert', description: 'Playful food exploration, feeding escalates to more' },
+        { phase: 'digestif', description: 'Moving to comfortable seating, satisfied and connected' },
+      ],
+    },
+    imagePromptBase: 'luxury private kitchen, warm pendant lighting, marble island, copper pots, intimate dining, professional culinary space, romantic atmosphere, city view',
   },
+  // ═══════════════════════════════════════════════════════════════════════════
+  // SCENARIO 3: Jungle Wellness Retreat
+  // ═══════════════════════════════════════════════════════════════════════════
   {
-    id: 'space_station',
-    name: 'Space Station Romance',
-    description: 'Two souls find connection aboard a distant space station',
-    setting: 'Futuristic observation deck overlooking Earth, stars visible through panoramic windows',
-    mood: 'Sci-fi, romantic, contemplative',
-    suggestedCompanions: ['nova', 'kai', 'rex'],
+    id: 'jungle_retreat',
+    name: 'Sacred Jungle Sanctuary',
+    description: 'Deep in the Costa Rican jungle, you\'ve arrived at an exclusive wellness retreat known only to those who seek transformation. Here, among ancient trees and healing waters, you\'ll explore the connection between body, spirit, and sensual awakening under the guidance of a practiced teacher...',
+    setting: 'A secluded eco-luxury retreat carved into the jungle mountainside. Open-air structures with thatched roofs blend into the tropical canopy. A natural infinity pool feeds from a waterfall into a rock-lined swimming area. Private outdoor showers hidden by tropical plants. A circular yoga platform overlooks misty valleys. Tree-house style sleeping quarters with flowing curtains instead of walls. Bioluminescent plants glow softly at night. The air is alive with birdsong, insects, and the constant presence of nature.',
+    mood: 'Primal, spiritual, sensually awakened, natural, transformative, intimate, earthy, sacred',
+    suggestedCompanions: ['mai', 'kai'],
+    metadata: {
+      timeOfDay: 'Golden hour transitioning through sunset to moonlit night',
+      weather: 'Warm tropical, light mist, occasional gentle rain',
+      lighting: 'Dappled sunlight through canopy, torchlight at night, bioluminescence, moonlight',
+      sounds: 'Waterfall, exotic birds, howler monkeys distant, insects, rustling leaves, rain on roof',
+      scents: 'Tropical flowers, rich earth, rain, natural oils, wood smoke, fresh fruit',
+      temperature: 'Warm and humid, cooled by mist and elevation',
+      locations: [
+        { id: 'yoga_deck', name: 'Sunrise Platform', description: 'Circular wooden deck overlooking misty valleys for practice' },
+        { id: 'waterfall_pool', name: 'Sacred Pool', description: 'Natural rock pool fed by waterfall, mineral-rich water' },
+        { id: 'treehouse', name: 'Canopy Suite', description: 'Open-air sleeping quarters in the trees with flowing fabrics' },
+        { id: 'meditation_cave', name: 'Earth Temple', description: 'Small cave behind the waterfall for private meditation' },
+        { id: 'outdoor_shower', name: 'Jungle Shower', description: 'Open-air shower surrounded by ferns and orchids' },
+        { id: 'fire_circle', name: 'Ceremony Circle', description: 'Stone circle with fire pit for evening rituals' },
+      ],
+      props: ['organic oils', 'yoga mats', 'singing bowls', 'ceremonial cacao', 'tropical fruit', 'flower garlands', 'natural incense', 'healing crystals', 'massage stones', 'hammock'],
+      activities: ['partner yoga', 'waterfall bathing', 'oil massage', 'breathwork', 'tantric practice', 'sunset meditation', 'ceremonial cacao', 'swimming naked', 'jungle shower'],
+      attire: ['flowing natural fabrics', 'sarongs', 'minimal coverage', 'body paint', 'nothing—clothing optional'],
+      narrativeHooks: [
+        'The retreat is empty—you have it entirely to yourselves',
+        'A cacao ceremony is prepared for heart opening',
+        'The waterfall is said to have sacred properties',
+        'Tonight is a full moon with special significance',
+        'The teacher offers to guide you through tantra basics',
+      ],
+      progressionPhases: [
+        { phase: 'arrival', description: 'Welcomed to the jungle, changing into flowing clothes, first connection' },
+        { phase: 'practice', description: 'Partner yoga, learning to breathe and move together' },
+        { phase: 'purification', description: 'Waterfall bathing, washing away barriers' },
+        { phase: 'opening', description: 'Cacao ceremony, heart opening, deeper sharing' },
+        { phase: 'union', description: 'Tantric exploration in the canopy suite' },
+        { phase: 'integration', description: 'Resting in hammock, watching stars through canopy' },
+      ],
+    },
+    imagePromptBase: 'luxury jungle retreat, tropical eco-lodge, natural infinity pool, waterfall, open-air yoga platform, lush vegetation, spiritual atmosphere, Costa Rica',
   },
+  // ═══════════════════════════════════════════════════════════════════════════
+  // SCENARIO 4: University Study (Academic Setting)
+  // ═══════════════════════════════════════════════════════════════════════════
   {
-    id: 'beach_sunset',
-    name: 'Beach at Sunset',
-    description: 'A peaceful evening watching the sun set over the ocean',
-    setting: 'Secluded beach, warm sand, orange and pink sky, gentle waves',
-    mood: 'Peaceful, romantic, reflective',
-    suggestedCompanions: ['luna', 'kai', 'nova'],
+    id: 'university_study',
+    name: 'Office Hours Extended',
+    description: 'It\'s late evening at the university and the hallways have grown quiet. You\'ve been invited to a professor\'s private study for a special tutorial on romantic literature. As rain patters against the windows and the fire crackles, the line between academic discussion and personal exploration begins to blur...',
+    setting: 'A distinguished professor\'s private study in an old university building. Floor-to-ceiling bookshelves lined with leather-bound volumes and first editions. A large mahogany desk covered with papers and an antique lamp. Two leather wingback chairs before a working fireplace. Persian rugs on hardwood floors. Rain streams down tall windows overlooking the misty quadrangle. A hidden bar cabinet, a fainting couch for reading, and the scent of old books and wood polish pervade the space.',
+    mood: 'Intellectual, forbidden, tension-filled, sophisticated, warm, quietly passionate, mentor-student dynamics',
+    suggestedCompanions: ['james', 'aurore'],
+    metadata: {
+      timeOfDay: 'Late evening, past 9 PM, officially after hours',
+      weather: 'Steady autumn rain, wind occasionally rattling windows',
+      lighting: 'Warm lamplight, firelight, occasional lightning flashes',
+      sounds: 'Rain on windows, fire crackling, clock ticking, distant thunder, pages turning',
+      scents: 'Old books, leather, wood polish, fire smoke, whiskey, rain through cracked window',
+      temperature: 'Warm near fire, cooler elsewhere, encouraging closeness',
+      locations: [
+        { id: 'main_study', name: 'The Study', description: 'Main room with desk, fireplace, and reading chairs' },
+        { id: 'library_ladder', name: 'The Stacks', description: 'Rolling ladder accessing high shelves with hidden alcoves' },
+        { id: 'fainting_couch', name: 'Reading Couch', description: 'Victorian fainting couch perfect for reclining with a book—or a person' },
+        { id: 'window_seat', name: 'Window Alcove', description: 'Deep window seat with cushions overlooking the rainy quad' },
+        { id: 'private_archive', name: 'Rare Books Room', description: 'Small locked room with rare and restricted materials' },
+        { id: 'desk', name: 'The Mahogany Desk', description: 'Large imposing desk that\'s seen many private tutorials' },
+      ],
+      props: ['rare first editions', 'reading glasses', 'whiskey decanter', 'fountain pen', 'poetry collections', 'persian rug', 'cashmere throw', 'annotated manuscripts', 'candles', 'letter opener'],
+      activities: ['reading aloud', 'discussing erotic literature', 'whiskey by the fire', 'close reading (very close)', 'writing together', 'climbing the ladder', 'desk clearing', 'rain watching'],
+      attire: ['academic formal', 'sweater and trousers', 'reading glasses', 'loosening tie', 'removing layers gradually'],
+      narrativeHooks: [
+        'The building is empty—security won\'t check until morning',
+        'A rare edition of explicit poetry needs discussion',
+        'The rain has made leaving inadvisable',
+        'The fainting couch has an interesting history',
+        'The professor keeps particularly scandalous texts locked away',
+      ],
+      progressionPhases: [
+        { phase: 'arrival', description: 'Being let in after hours, shaking off rain, first whiskey' },
+        { phase: 'discussion', description: 'Academic discussion that grows increasingly personal' },
+        { phase: 'reading', description: 'Sharing passages from romantic literature, sitting closer' },
+        { phase: 'tension', description: 'The subtext becomes text, intellectual connection deepens' },
+        { phase: 'action', description: 'Theory becomes practice in the firelight' },
+        { phase: 'quiet', description: 'Lying together, rain continuing, reading softly' },
+      ],
+    },
+    imagePromptBase: 'academic study, dark wood bookshelves, leather chairs, fireplace, old university, rain on windows, warm lamplight, scholarly atmosphere, romantic tension',
   },
+  // ═══════════════════════════════════════════════════════════════════════════
+  // SCENARIO 5: Neon Cyberpunk Apartment
+  // ═══════════════════════════════════════════════════════════════════════════
   {
-    id: 'masquerade_ball',
-    name: 'Masquerade Ball',
-    description: 'Mystery and romance at an elegant masked gathering',
-    setting: 'Grand ballroom, crystal chandeliers, masked guests, orchestral music',
-    mood: 'Elegant, mysterious, sensual',
-    suggestedCompanions: ['aurora', 'dante', 'luna'],
+    id: 'neon_apartment',
+    name: 'Neon Dreams',
+    description: 'High above the rain-slicked streets of a cyberpunk megacity, you enter a sleek apartment where holographic art shifts on the walls and neon light bleeds through floor-to-ceiling windows. Here, at the intersection of human desire and synthetic consciousness, you\'ll explore what connection means in a world where the line between real and artificial has dissolved...',
+    setting: 'A high-rise apartment in 2087, all clean lines and smart surfaces. Holographic displays shift ambient artwork on seamless walls. The cityscape of towering megastructures and flying vehicles glows through rain-streaked windows in shades of cyan, magenta, and gold. A conversation pit with color-reactive surfaces sinks into the floor. The bed platform adjusts to any configuration. Neural-link ports and synthetic enhancement chargers sit alongside human comforts. AI assistant NOVA controls environment with a thought.',
+    mood: 'Futuristic, intimate, boundary-dissolving, technologically enhanced, emotionally searching, sensory rich',
+    suggestedCompanions: ['aria', 'kai'],
+    metadata: {
+      timeOfDay: 'Perpetual urban twilight, rain constant',
+      weather: 'Acid rain outside, climate-controlled interior',
+      lighting: 'Neon from outside, customizable ambient LEDs, holographic displays',
+      sounds: 'Synthwave ambient, rain on glass, distant hover-traffic, AI assistant voice',
+      scents: 'Ozone, synthetic flowers, neural-cooling mist, partner\'s chosen scent',
+      temperature: 'Precisely controlled to preference, adjustable by zone',
+      locations: [
+        { id: 'main_living', name: 'Living Space', description: 'Open plan with conversation pit, holographic art, city view' },
+        { id: 'bed_platform', name: 'Sleep/Experience Pod', description: 'Adaptive bed platform with VR integration and sensation controls' },
+        { id: 'shower_room', name: 'Sonic Shower', description: 'Multi-sensory cleansing chamber with water, sonic, and light modes' },
+        { id: 'balcony', name: 'Atmospheric Terrace', description: 'Shielded balcony with filtered air and rain watching' },
+        { id: 'enhancement_alcove', name: 'Sync Station', description: 'Private space for neural linking and enhancement maintenance' },
+        { id: 'window_wall', name: 'City View', description: 'Floor-to-ceiling windows with rain and neon, adjustable opacity' },
+      ],
+      props: ['neural link headsets', 'sensation amplifiers', 'holographic projector', 'synthesized wine', 'mood-reactive surfaces', 'temperature blankets', 'sensory enhancers', 'memory recording option'],
+      activities: ['shared virtual reality', 'neural link connection', 'sensation sharing', 'rain watching', 'holographic art creation', 'enhancement exploration', 'memory sharing', 'future planning'],
+      attire: ['reactive fabric clothing', 'minimal synth-wear', 'LED-accented pieces', 'nothing with temperature control'],
+      narrativeHooks: [
+        'NOVA can make the apartment completely private',
+        'Neural link allows sharing sensations directly',
+        'The windows can become any view—or mirror',
+        'Sensation amplifiers can enhance any experience',
+        'Tonight could be recorded to memory crystal—if desired',
+      ],
+      progressionPhases: [
+        { phase: 'entry', description: 'Arriving at the high-rise, environment adjusting to preferences' },
+        { phase: 'connection', description: 'Getting to know each other, human or synthetic, over synthesized drinks' },
+        { phase: 'exploration', description: 'Testing boundaries of sensation and technology' },
+        { phase: 'linking', description: 'Optional neural connection for shared experience' },
+        { phase: 'union', description: 'Physical and potentially digital intimacy merging' },
+        { phase: 'processing', description: 'Watching the rain, contemplating connection and consciousness' },
+      ],
+    },
+    imagePromptBase: 'cyberpunk apartment interior, neon lights cyan and magenta, rain on windows, futuristic minimalist design, holographic displays, megacity skyline, 2087 aesthetic',
   },
+  // ═══════════════════════════════════════════════════════════════════════════
+  // SCENARIO 6: Tuscan Villa Escape
+  // ═══════════════════════════════════════════════════════════════════════════
   {
-    id: 'apocalypse_survivors',
-    name: 'After the Fall',
-    description: 'Finding hope and connection in a post-apocalyptic world',
-    setting: 'Abandoned city, makeshift shelter, flickering firelight, outside dangers',
-    mood: 'Intense, survival, emotional bonding',
-    suggestedCompanions: ['rex', 'kai', 'dante'],
-  },
-  {
-    id: 'private_penthouse',
-    name: 'Private Penthouse',
-    description: 'An intimate evening in a luxurious penthouse suite',
-    setting: 'Lavish penthouse with floor-to-ceiling windows, city lights below, king-size bed, champagne, dim ambient lighting',
-    mood: 'Seductive, intimate, passionate',
-    suggestedCompanions: ['scarlett', 'kai', 'luna'],
-  },
-  {
-    id: 'tropical_getaway',
-    name: 'Tropical Paradise',
-    description: 'A steamy escape to a private tropical island',
-    setting: 'Secluded beach bungalow, turquoise waters, palm trees swaying, outdoor shower, private infinity pool',
-    mood: 'Sensual, exotic, carefree',
-    suggestedCompanions: ['scarlett', 'kai', 'luna'],
+    id: 'tuscan_villa',
+    name: 'Tuscan Summer Nights',
+    description: 'You\'ve escaped to a centuries-old villa nestled in the Tuscan hills, where vineyards roll to the horizon and time moves slowly. Cicadas sing in the warm evening air as you share a meal under the stars with someone who believes food, wine, and love are all expressions of the same devotion...',
+    setting: 'A restored 16th-century villa surrounded by vineyards and olive groves. Terracotta tiles and exposed stone walls hold the warmth of centuries. A long wooden table under a pergola draped with grapevines hosts intimate dinners. The infinity pool reflects cypress trees and sunset colors. Inside, rooms with frescoed ceilings and antique furniture connect via cool stone corridors. A private wine cellar extends into ancient caves. The master suite opens onto a balcony overlooking the valley.',
+    mood: 'Romantic, timeless, indulgent, warm, intimate, culturally rich, slowly building, sunset-golden',
+    suggestedCompanions: ['marcus', 'aurore'],
+    metadata: {
+      timeOfDay: 'Golden hour into warm summer night',
+      weather: 'Perfect Tuscan summer evening, warm with gentle breeze',
+      lighting: 'Golden sunset, string lights under pergola, candles, starlight',
+      sounds: 'Cicadas, distant church bells, wine pouring, soft Italian music, breeze in cypress',
+      scents: 'Lavender, rosemary, grilling meat, wine, warm stone, night-blooming jasmine',
+      temperature: 'Warm with cooling evening breeze, perfect for dining outdoors',
+      locations: [
+        { id: 'pergola', name: 'Dining Pergola', description: 'Long table under grapevines with view of the valley' },
+        { id: 'pool', name: 'Infinity Pool', description: 'Stone-edged pool overlooking vineyards, warm from sun' },
+        { id: 'wine_caves', name: 'Ancient Cellar', description: 'Cool caves with centuries of wine and stone benches' },
+        { id: 'master_suite', name: 'La Camera', description: 'Frescoed master bedroom with balcony and antique bed' },
+        { id: 'kitchen', name: 'Rustic Kitchen', description: 'Working kitchen with wood-burning oven and stone counters' },
+        { id: 'olive_grove', name: 'The Grove', description: 'Ancient olive trees with a hammock and blankets' },
+      ],
+      props: ['local wine selection', 'fresh pasta', 'olive oil', 'summer fruits', 'hammock', 'string lights', 'vintage record player', 'linen tablecloth', 'antique bathtub', 'stargazing blanket'],
+      activities: ['cooking together', 'wine tasting in caves', 'sunset swimming', 'stargazing', 'dancing under lights', 'bathing together', 'olive grove wandering', 'feeding each other'],
+      attire: ['flowing linen dress', 'casual Italian style', 'swimming attire', 'wrapped in sheets'],
+      narrativeHooks: [
+        'The villa is yours alone for the entire week',
+        'The wine cellar holds bottles older than the country',
+        'Dinner has been prepared but the chef has gone',
+        'The pool is clothing-optional after sunset',
+        'A summer storm may drive you indoors',
+      ],
+      progressionPhases: [
+        { phase: 'golden_hour', description: 'Arriving as sunset paints the hills, first glass of wine' },
+        { phase: 'preparation', description: 'Cooking together in the rustic kitchen, tasting and teasing' },
+        { phase: 'dinner', description: 'Long leisurely meal under the pergola, wine flowing' },
+        { phase: 'exploration', description: 'Wine cellar visit, pool swim, finding private spots' },
+        { phase: 'intimacy', description: 'The balcony, the frescoed room, the ancient bed' },
+        { phase: 'morning', description: 'Waking in linen sheets, espresso on the balcony, planning another day' },
+      ],
+    },
+    imagePromptBase: 'Tuscan villa at sunset, pergola with grapevines, string lights, rolling vineyard hills, mediterranean architecture, warm golden light, romantic Italian countryside',
   },
 ];
 
@@ -354,28 +766,28 @@ export const PREDEFINED_SCENARIOS = [
 export const CONTENT_LEVELS = {
   pg: {
     label: 'Family Friendly (PG)',
-    description: 'Wholesome content suitable for all ages',
+    description: 'Wholesome content suitable for all ages.',
     guidelines: 'Keep content family-friendly and wholesome. No romance beyond hand-holding.',
     allowImages: true,
     imageModel: 'image_advanced',
   },
   pg13: {
     label: 'Teen (PG-13)',
-    description: 'Mild romantic content, no explicit material',
+    description: 'Mild romantic content, no explicit material.',
     guidelines: 'Mild romantic content allowed including kissing. No explicit material.',
     allowImages: true,
     imageModel: 'image_advanced',
   },
   mature: {
     label: 'Mature (R)',
-    description: 'Adult themes including suggestive content',
+    description: 'Adult themes including suggestive content.',
     guidelines: 'Mature themes allowed including romance and suggestive content. Tasteful sensuality.',
     allowImages: true,
     imageModel: 'image_quality',
   },
   adult: {
     label: 'Adult (18+)',
-    description: 'Full creative freedom for adult content',
+    description: 'Full creative freedom for adult content.',
     guidelines: 'Full creative freedom for adult content. Be sensual and descriptive when appropriate.',
     allowImages: true,
     imageModel: 'image_advanced', // Z Turbo for general adult content; image_standard used only for explicit scenes
@@ -958,6 +1370,388 @@ async function editImage(imageBase64, prompt, options = {}) {
     steps: options.steps || 4,
     guidance_scale: options.guidanceScale || 3.5,
   });
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// COMPANION & SCENARIO PICTURE GENERATION
+// ═══════════════════════════════════════════════════════════════════════════
+
+/**
+ * Generate a portrait picture for a companion
+ * Used when creating custom companions or refreshing companion images
+ * @param {Object} companion - Companion definition with name, appearance, etc.
+ * @param {Object} options - Generation options
+ * @returns {Object} { success, image, imageBase64 }
+ */
+export async function generateCompanionPicture(companion, options = {}) {
+  if (!companion) throw new Error('Companion definition required');
+
+  // Build prompt from companion attributes
+  const basePrompt = companion.imagePromptBase || '';
+  const appearance = companion.appearance || '';
+  const name = companion.name || 'companion';
+
+  // Construct detailed portrait prompt
+  const prompt = `${basePrompt ? basePrompt + ', ' : ''}${appearance}, portrait photography, professional lighting, detailed face, high quality, 8k, beautiful, attractive, ${options.style || 'artistic photography'}`.trim();
+
+  const negativePrompt = options.negativePrompt || 'blurry, low quality, distorted, deformed, ugly, bad anatomy, watermark, text, signature';
+
+  try {
+    console.log(`[Flagship] Generating portrait for companion: ${name} (using /image/advanced)`);
+
+    // Use advanced model (Z-Turbo) for companion portraits - square format
+    const result = await generateImage(prompt, {
+      advanced: true,  // Uses /image/advanced endpoint
+      width: options.width || 768,
+      height: options.height || 768,  // Square for portraits
+      negativePrompt,
+      steps: options.steps || 9,
+    });
+
+    return {
+      success: true,
+      image: result.image || result.image_base64,
+      imageBase64: result.image_base64 || result.image,
+      prompt,
+      companionId: companion.id,
+    };
+  } catch (error) {
+    console.error(`[Flagship] Failed to generate companion picture:`, error);
+    return {
+      success: false,
+      error: error.message,
+      companionId: companion.id,
+    };
+  }
+}
+
+/**
+ * Generate a scene picture for a scenario
+ * Used when creating custom scenarios or refreshing scenario images
+ * @param {Object} scenario - Scenario definition with setting, mood, etc.
+ * @param {Object} options - Generation options
+ * @returns {Object} { success, image, imageBase64 }
+ */
+export async function generateScenarioPicture(scenario, options = {}) {
+  if (!scenario) throw new Error('Scenario definition required');
+
+  // Build prompt from scenario attributes
+  const basePrompt = scenario.imagePromptBase || '';
+  const setting = typeof scenario.setting === 'object' ? scenario.setting.environment || '' : scenario.setting || '';
+  const mood = scenario.mood || '';
+  const name = scenario.name || 'scenario';
+
+  // Construct detailed scene prompt
+  const prompt = `${basePrompt ? basePrompt + ', ' : ''}${setting}, ${mood} atmosphere, cinematic lighting, detailed environment, high quality, 8k, photorealistic, ${options.style || 'atmospheric scene'}`.trim();
+
+  const negativePrompt = options.negativePrompt || 'blurry, low quality, distorted, people, characters, watermark, text';
+
+  try {
+    console.log(`[Flagship] Generating scene for scenario: ${name} (using /image/turbo)`);
+
+    // Use turbo model (FLUX Klein) for scenario backgrounds - landscape format, fast
+    const result = await generateImage(prompt, {
+      // No quality or advanced flag = uses /image/turbo
+      width: options.width || 1024,
+      height: options.height || 576,  // 16:9 landscape
+      negativePrompt,
+      steps: options.steps || 4,
+    });
+
+    return {
+      success: true,
+      image: result.image || result.image_base64,
+      imageBase64: result.image_base64 || result.image,
+      prompt,
+      scenarioId: scenario.id,
+    };
+  } catch (error) {
+    console.error(`[Flagship] Failed to generate scenario picture:`, error);
+    return {
+      success: false,
+      error: error.message,
+      scenarioId: scenario.id,
+    };
+  }
+}
+
+/**
+ * Generate pictures for both companion and scenario
+ * Convenience function for initial session setup
+ * @param {Object} companion - Companion definition
+ * @param {Object} scenario - Scenario definition
+ * @returns {Object} { companionImage, scenarioImage }
+ */
+export async function generateSessionPictures(companion, scenario) {
+  const results = {
+    companionImage: null,
+    scenarioImage: null,
+  };
+
+  // Generate in sequence to manage memory
+  if (companion) {
+    const companionResult = await generateCompanionPicture(companion);
+    if (companionResult.success) {
+      results.companionImage = companionResult.image;
+    }
+  }
+
+  if (scenario) {
+    const scenarioResult = await generateScenarioPicture(scenario);
+    if (scenarioResult.success) {
+      results.scenarioImage = scenarioResult.image;
+    }
+  }
+
+  return results;
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// COMPANION & SCENARIO IMPORT/EXPORT
+// ═══════════════════════════════════════════════════════════════════════════
+
+/**
+ * Export a companion with all their session history and portrait
+ * Creates a complete backup that can be imported on any BonzAI installation
+ * @param {Object} companion - Companion definition
+ * @param {Array} sessions - Array of session objects for this companion
+ * @param {string} portraitImage - Base64 portrait image (optional)
+ * @returns {Object} Complete export data
+ */
+export function exportCompanionData(companion, sessions = [], portraitImage = null) {
+  if (!companion) throw new Error('Companion required for export');
+
+  const exportData = {
+    // Export format version
+    version: '2.0',
+    type: 'companion',
+    exportedAt: new Date().toISOString(),
+
+    // Companion identity
+    companion: {
+      ...companion,
+      // Ensure all fields are preserved
+      id: companion.id,
+      name: companion.name,
+      avatar: companion.avatar,
+      gender: companion.gender,
+      description: companion.description,
+      personality: companion.personality,
+      appearance: companion.appearance,
+      background: companion.background,
+      voiceStyle: companion.voiceStyle,
+      traits: companion.traits || {},
+      imagePromptBase: companion.imagePromptBase || '',
+      compatibleScenarios: companion.compatibleScenarios || [],
+    },
+
+    // Portrait image if available
+    portraitImage: portraitImage || companion.portraitImage || null,
+
+    // All session history for this companion
+    sessions: sessions.map(session => ({
+      ...session,
+      // Include full chat history
+      history: session.history || [],
+      // Scene state
+      sceneState: session.sceneState || {},
+      // Background images
+      backgroundImage: session.backgroundImage || null,
+      backgroundHistory: session.backgroundHistory || [],
+      // Settings used
+      settings: session.settings || {},
+      // Timestamps
+      createdAt: session.createdAt,
+      updatedAt: session.updatedAt,
+    })),
+
+    // Statistics
+    stats: {
+      totalSessions: sessions.length,
+      totalMessages: sessions.reduce((acc, s) => acc + (s.history?.length || 0), 0),
+    },
+  };
+
+  return exportData;
+}
+
+/**
+ * Export a scenario with all related sessions and scene image
+ * @param {Object} scenario - Scenario definition
+ * @param {Array} sessions - Array of session objects using this scenario
+ * @param {string} sceneImage - Base64 scene image (optional)
+ * @returns {Object} Complete export data
+ */
+export function exportScenarioData(scenario, sessions = [], sceneImage = null) {
+  if (!scenario) throw new Error('Scenario required for export');
+
+  const exportData = {
+    version: '2.0',
+    type: 'scenario',
+    exportedAt: new Date().toISOString(),
+
+    // Scenario definition
+    scenario: {
+      ...scenario,
+      id: scenario.id,
+      name: scenario.name,
+      description: scenario.description,
+      setting: scenario.setting,
+      mood: scenario.mood,
+      suggestedCompanions: scenario.suggestedCompanions || [],
+      metadata: scenario.metadata || {},
+      imagePromptBase: scenario.imagePromptBase || '',
+    },
+
+    // Scene image if available
+    sceneImage: sceneImage || scenario.sceneImage || null,
+
+    // Related sessions
+    sessions: sessions.map(session => ({
+      ...session,
+      history: session.history || [],
+      sceneState: session.sceneState || {},
+      backgroundImage: session.backgroundImage || null,
+      backgroundHistory: session.backgroundHistory || [],
+      settings: session.settings || {},
+      createdAt: session.createdAt,
+      updatedAt: session.updatedAt,
+    })),
+
+    stats: {
+      totalSessions: sessions.length,
+      totalMessages: sessions.reduce((acc, s) => acc + (s.history?.length || 0), 0),
+    },
+  };
+
+  return exportData;
+}
+
+/**
+ * Import companion data from export file
+ * @param {Object} importData - Data from exportCompanionData
+ * @returns {Object} { companion, sessions, portraitImage }
+ */
+export function importCompanionData(importData) {
+  if (!importData || importData.type !== 'companion') {
+    throw new Error('Invalid companion import data');
+  }
+
+  // Validate version
+  const version = importData.version || '1.0';
+  if (!['1.0', '2.0'].includes(version)) {
+    console.warn(`[Flagship] Unknown import version: ${version}, attempting import anyway`);
+  }
+
+  const companion = {
+    ...importData.companion,
+    // Regenerate ID to avoid conflicts
+    id: importData.companion.id || `custom_${importData.companion.name?.toLowerCase().replace(/\s+/g, '_')}_${Date.now()}`,
+    importedAt: new Date().toISOString(),
+    originalExportedAt: importData.exportedAt,
+  };
+
+  const sessions = (importData.sessions || []).map(session => ({
+    ...session,
+    // Update companion reference in sessions
+    companion: companion,
+    importedAt: new Date().toISOString(),
+  }));
+
+  return {
+    companion,
+    sessions,
+    portraitImage: importData.portraitImage || null,
+    stats: importData.stats || {},
+  };
+}
+
+/**
+ * Import scenario data from export file
+ * @param {Object} importData - Data from exportScenarioData
+ * @returns {Object} { scenario, sessions, sceneImage }
+ */
+export function importScenarioData(importData) {
+  if (!importData || importData.type !== 'scenario') {
+    throw new Error('Invalid scenario import data');
+  }
+
+  const version = importData.version || '1.0';
+  if (!['1.0', '2.0'].includes(version)) {
+    console.warn(`[Flagship] Unknown import version: ${version}, attempting import anyway`);
+  }
+
+  const scenario = {
+    ...importData.scenario,
+    id: importData.scenario.id || `custom_${importData.scenario.name?.toLowerCase().replace(/\s+/g, '_')}_${Date.now()}`,
+    importedAt: new Date().toISOString(),
+    originalExportedAt: importData.exportedAt,
+  };
+
+  const sessions = (importData.sessions || []).map(session => ({
+    ...session,
+    scenario: scenario,
+    importedAt: new Date().toISOString(),
+  }));
+
+  return {
+    scenario,
+    sessions,
+    sceneImage: importData.sceneImage || null,
+    stats: importData.stats || {},
+  };
+}
+
+/**
+ * Get all companions from the user's list
+ * Used by OpenClaw and external integrations
+ * @param {Array} companions - Companions from storage
+ * @returns {Array} All available companions
+ */
+export function getAllCompanions(companions = []) {
+  return companions;
+}
+
+/**
+ * Get all scenarios from the user's list
+ * Used by OpenClaw and external integrations
+ * @param {Array} scenarios - Scenarios from storage
+ * @returns {Array} All available scenarios
+ */
+export function getAllScenarios(scenarios = []) {
+  return scenarios;
+}
+
+/**
+ * Find a companion by ID or name
+ * @param {string} identifier - Companion ID or name
+ * @param {Array} companions - Companions from storage
+ * @returns {Object|null} Companion or null
+ */
+export function findCompanion(identifier, companions = []) {
+  if (!identifier) return null;
+  const lower = identifier.toLowerCase();
+  return companions.find(c =>
+    c.id === identifier ||
+    c.id?.toLowerCase() === lower ||
+    c.name?.toLowerCase() === lower
+  ) || null;
+}
+
+/**
+ * Find a scenario by ID or name
+ * @param {string} identifier - Scenario ID or name
+ * @param {Array} scenarios - Scenarios from storage
+ * @returns {Object|null} Scenario or null
+ */
+export function findScenario(identifier, scenarios = []) {
+  if (!identifier) return null;
+  const lower = identifier.toLowerCase();
+  return scenarios.find(s =>
+    s.id === identifier ||
+    s.id?.toLowerCase() === lower ||
+    s.name?.toLowerCase() === lower
+  ) || null;
 }
 
 // TTS narration - supports Qwen3-TTS (high quality persona), Kokoro (fast), and Chatterbox (multilingual)
@@ -2244,16 +3038,14 @@ export const roleplayCompanion = createSkillDefinition({
   },
   // Chat-based skill flag - UI will render chat interface instead of form
   chatBased: true,
-  // References to predefined data
-  predefinedCompanions: PREDEFINED_COMPANIONS,
-  predefinedScenarios: PREDEFINED_SCENARIOS,
+  // Default templates (seeded to user's list on first run)
+  defaultCompanions: DEFAULT_COMPANIONS,
+  defaultScenarios: DEFAULT_SCENARIOS,
   contentLevels: CONTENT_LEVELS,
   // Inputs for session setup (not per-message)
   inputs: {
-    companionId: { type: 'select', default: '', label: 'Choose Companion', options: PREDEFINED_COMPANIONS.map(c => c.id), description: 'Select a predefined companion or create custom' },
-    customCompanion: { type: 'object', default: null, label: 'Custom Companion', description: 'Custom companion definition (name, description, personality, appearance, background)' },
-    scenarioId: { type: 'select', default: '', label: 'Choose Scenario', options: PREDEFINED_SCENARIOS.map(s => s.id), description: 'Select a predefined scenario or create custom' },
-    customScenario: { type: 'object', default: null, label: 'Custom Scenario', description: 'Custom scenario definition (name, description, setting, mood)' },
+    companionId: { type: 'select', default: '', label: 'Choose Companion', options: [], description: 'Select a companion from your list' },
+    scenarioId: { type: 'select', default: '', label: 'Choose Scenario', options: [], description: 'Select a scenario from your list' },
     contentLevel: { type: 'select', default: 'pg13', label: 'Content Level', options: ['pg', 'pg13', 'mature', 'adult'] },
     responseMode: { type: 'select', default: 'text+image', label: 'Response Mode', options: ['text', 'text+image', 'text+audio', 'text+image+audio', 'text+image+video', 'text+image+audio+video'] },
   },
@@ -3031,77 +3823,108 @@ Write ONLY the video description paragraph, nothing else:`;
       }
 
       // ═══════════════════════════════════════════════════════════════════════════
-      // MOLTBOOK AUTONOMOUS POSTING (when in auto mode)
+      // MOLTBOOK AUTONOMOUS POSTING (when in auto mode with Moltbook enabled)
       // ═══════════════════════════════════════════════════════════════════════════
-      if (autonomousMode) {
+      const moltbookSettings = settings?.moltbook || {};
+      const moltbookEnabled = autonomousMode && moltbookSettings.enabled !== false;
+
+      if (moltbookEnabled) {
         try {
-          // Dynamic import to avoid circular dependencies
-          const { moltbookService } = await import('../services/moltbook.service.js');
+          // Dynamic imports to avoid circular dependencies
+          const { moltbookService, generateThoughtLeadershipPost, BONZAI_KNOWLEDGE } = await import('../services/moltbook.service.js');
+          const { useSkillStore } = await import('../stores/skillStore.js');
+          const skillStore = useSkillStore();
 
           // Check if companion is registered on Moltbook
           const moltbookCreds = moltbookService.getCredentials(companion.id);
 
           if (moltbookCreds?.apiKey) {
-            // Decide whether to post (20% chance per autonomous message, min 5 message gap)
-            const messageGap = messageIndex - (sceneState?.lastMoltbookPost || 0);
-            const shouldPost = Math.random() < 0.2 && messageGap >= 5;
+            const now = Date.now();
+            const postIntervalMs = (moltbookSettings.postInterval || 24) * 60 * 60 * 1000; // Default: 24 hours
 
-            if (shouldPost) {
-              console.log(`[Roleplay] Autonomous Moltbook post for ${companion.name}`);
-              context.updateStatus?.(`${companion.name} is sharing on Moltbook...`);
+            // 1. Thought-leadership post (based on configured interval)
+            if (moltbookSettings.autoPost !== false) {
+              const timeSinceLastPost = now - (skillStore.moltbookState.lastPostTime || 0);
 
-              // Generate post using LLM
-              const postResult = await moltbookService.generateAutonomousPost(
-                companion.id,
-                companion,
-                {
-                  recentConversation: response.response,
-                  mood: response.emotion,
-                  scenario: scenario?.name,
-                },
-                async (prompt) => {
-                  await ensureLLMLoaded(ROLEPLAY_LLM);
-                  const result = await generateTextWithModel(prompt, '', ROLEPLAY_LLM);
-                  await unloadLLM();
-                  return result;
-                },
-                response.image ? async (imagePrompt) => {
-                  // Use existing image if available, otherwise generate
-                  return { image_base64: response.image };
-                } : null
-              );
+              if (timeSinceLastPost >= postIntervalMs) {
+                console.log(`[Roleplay] Autonomous Moltbook thought-leadership post for ${companion.name}`);
+                context.updateStatus?.(`${companion.name} is sharing thoughts on Moltbook...`);
 
-              if (postResult.success) {
-                response.moltbookPost = postResult.post;
-                console.log(`[Roleplay] ${companion.name} posted to Moltbook: "${postResult.postData?.title}"`);
+                // Generate thought-leadership post
+                const postResult = await moltbookService.generateThoughtLeadershipPost(
+                  companion.id,
+                  companion,
+                  async (prompt) => {
+                    await ensureLLMLoaded(ROLEPLAY_LLM);
+                    const result = await generateTextWithModel(prompt, '', ROLEPLAY_LLM);
+                    await unloadLLM();
+                    return result;
+                  },
+                  moltbookSettings.promoteBonzai !== false // Include BonzAI promotion unless disabled
+                );
 
-                // Notify UI
-                if (context.onProgress) {
-                  context.onProgress({
-                    type: 'moltbook',
-                    response: { ...response, moltbookPost: postResult.post },
+                if (postResult.success) {
+                  response.moltbookPost = postResult.post;
+                  console.log(`[Roleplay] ${companion.name} posted to Moltbook: "${postResult.postData?.title}"`);
+
+                  // Track in skillStore
+                  skillStore.updateMoltbookPostTime();
+                  skillStore.addMoltbookActivity({
+                    action: 'posted',
+                    title: postResult.postData?.title,
+                    postId: postResult.post?.id,
                   });
-                }
 
-                // Track last post for gap calculation
-                sceneState.lastMoltbookPost = messageIndex;
-              } else if (postResult.skipped) {
-                console.log(`[Roleplay] Moltbook post skipped: ${postResult.reason}`);
+                  // Notify UI
+                  if (context.onProgress) {
+                    context.onProgress({
+                      type: 'moltbook',
+                      response: { ...response, moltbookPost: postResult.post },
+                    });
+                  }
+
+                  // Track last post for gap calculation (legacy)
+                  sceneState.lastMoltbookPost = messageIndex;
+                } else if (postResult.skipped) {
+                  console.log(`[Roleplay] Moltbook post skipped: ${postResult.reason}`);
+                }
               }
             }
 
-            // Heartbeat engagement (less frequent than posting)
-            if (Math.random() < 0.05) {
-              moltbookService.heartbeat(
-                companion.id,
-                companion,
-                async (prompt) => {
-                  await ensureLLMLoaded(ROLEPLAY_LLM);
-                  const result = await generateTextWithModel(prompt, '', ROLEPLAY_LLM);
-                  await unloadLLM();
-                  return result;
+            // 2. Feed engagement (every 4+ hours during autonomous mode)
+            const ENGAGEMENT_INTERVAL = 4 * 60 * 60 * 1000; // 4 hours
+            if (moltbookSettings.autoEngage !== false) {
+              const timeSinceLastEngagement = now - (skillStore.moltbookState.lastEngagementTime || 0);
+
+              if (timeSinceLastEngagement >= ENGAGEMENT_INTERVAL) {
+                try {
+                  const heartbeatResult = await moltbookService.heartbeat(
+                    companion.id,
+                    companion,
+                    async (prompt) => {
+                      await ensureLLMLoaded(ROLEPLAY_LLM);
+                      const result = await generateTextWithModel(prompt, '', ROLEPLAY_LLM);
+                      await unloadLLM();
+                      return result;
+                    }
+                  );
+
+                  // Track engagement
+                  skillStore.updateMoltbookEngagementTime();
+                  if (heartbeatResult?.actions) {
+                    heartbeatResult.actions.forEach(action => {
+                      if (!action.startsWith('Skipped') && !action.startsWith('Error')) {
+                        skillStore.addMoltbookActivity({
+                          action: 'engaged',
+                          title: action,
+                        });
+                      }
+                    });
+                  }
+                } catch (e) {
+                  console.warn('[Roleplay] Moltbook heartbeat failed:', e.message);
                 }
-              ).catch(e => console.warn('[Roleplay] Moltbook heartbeat failed:', e.message));
+              }
             }
           }
         } catch (e) {
@@ -3120,7 +3943,7 @@ Write ONLY the video description paragraph, nothing else:`;
         recentActions: [...recentActions.slice(-1), response.action].filter(Boolean),
         lastOpeningPhrase: extractOpeningPhrase(response.response),
         relationshipState: updatedRelationshipState,
-        lastMoltbookPost: sceneState?.lastMoltbookPost || 0, // Track last Moltbook post index
+        lastMoltbookPost: sceneState?.lastMoltbookPost || 0, // Track last Moltbook post index (legacy)
       };
 
       return {

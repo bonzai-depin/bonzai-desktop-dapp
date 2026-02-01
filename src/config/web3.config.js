@@ -13,7 +13,12 @@ export const CONFIG = {
       chainId: 1,
       chainIdHex: "0x1",
       name: "Ethereum Mainnet",
-      rpc: "https://eth.llamarpc.com",
+      rpc: "https://ethereum.publicnode.com",
+      rpcFallbacks: [
+        "https://rpc.ankr.com/eth",
+        "https://cloudflare-eth.com",
+        "https://eth.drpc.org",
+      ],
       explorer: "https://etherscan.io",
       currency: { name: "Ether", symbol: "ETH", decimals: 18 },
     },
@@ -21,7 +26,11 @@ export const CONFIG = {
       chainId: 42161,
       chainIdHex: "0xa4b1",
       name: "Arbitrum One",
-      rpc: "https://arb1.arbitrum.io/rpc",
+      rpc: "https://arbitrum.publicnode.com",
+      rpcFallbacks: [
+        "https://rpc.ankr.com/arbitrum",
+        "https://arb1.arbitrum.io/rpc",
+      ],
       explorer: "https://arbiscan.io",
       currency: { name: "Ether", symbol: "ETH", decimals: 18 },
     },
@@ -32,8 +41,8 @@ export const CONFIG = {
   // ═══════════════════════════════════════════════════════════════════════════
   tokens: {
     BONZAI: {
-      // Same token address deployed on both chains (update if different)
-      ethereum: "0xdda9ff241c7160be8295ef9eca2e782361467666",
+      // Token addresses with proper checksum format
+      ethereum: "0xDdA9Ff241C7160be8295EF9Eca2e782361467666",
       arbitrum: "0x0a84edf70f30325151631ce7a61307d1f4d619a3",
       decimals: 18,
       symbol: "BONZAI",

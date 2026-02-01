@@ -21,11 +21,24 @@
             </div>
             <div class="level-right">
               <div class="level-item">
+                <!-- OpenClaw Integration Toggle -->
                 <button
-                  class="button is-outlined is-info is-large fira-sans-condensed-black-italic ml-5"
+                  v-if="openclawInstalled"
+                  class="button is-medium fira-sans-condensed-black-italic mr-5 mt-4"
+                  :class="openclawEnabled ? 'is-success' : 'is-warning'"
+                  @click="toggleOpenClaw"
+                  :title="openclawEnabled ? 'OpenClaw integration enabled - click to disable' : 'Enable OpenClaw integration'"
+                >
+                  <span class="material-symbols-outlined is-size-3">
+                    {{ openclawEnabled ? 'check' : 'link_off' }}
+                  </span>
+                  <span class="openclaw-label">{{ openclawEnabled ? 'OpenClaw ON' : 'OpenClaw OFF' }}</span>
+                </button>
+                <button
+                  class="button is-outlined is-info is-medium fira-sans-condensed-black-italic ml-2 mt-4"
                   @click="openModel = true"
                 >
-                  <span class="material-symbols-outlined is-size-1">
+                  <span class="material-symbols-outlined is-size-3">
                     folder_open
                   </span>
                 </button>
@@ -145,10 +158,7 @@
             <button
               class="button is-success is-large fira-sans-condensed-black-italic ml-5 mr-5"
               v-if="!isLoading && isModel && (!currentModel.isMultimodal || isMmprojAvailable)"
-              @click="
-                openChat = true;
-                loadModel(currentModel);
-              "
+              @click="openChat = true"
             >
               <span class="material-symbols-outlined is-size-3 mr-2">
                 forum
@@ -697,6 +707,38 @@ export default {
     const openModel = ref(false);
     const openChat = ref(false);
 
+    // OpenClaw integration state
+    const openclawInstalled = ref(false);
+    const openclawEnabled = ref(false);
+
+    const checkOpenClawStatus = async () => {
+      try {
+        openclawInstalled.value = await window.electronAPI.openclawIsInstalled();
+        console.log("[OpenClaw] Installed:", openclawInstalled.value);
+        if (openclawInstalled.value) {
+          openclawEnabled.value = await window.electronAPI.openclawGetEnabled();
+          console.log("[OpenClaw] Enabled:", openclawEnabled.value);
+        }
+      } catch (e) {
+        console.error("Failed to check OpenClaw status:", e);
+      }
+    };
+
+    const toggleOpenClaw = async () => {
+      try {
+        const newState = !openclawEnabled.value;
+        const result = await window.electronAPI.openclawSetEnabled(newState);
+        if (result.success) {
+          openclawEnabled.value = newState;
+          console.log(`OpenClaw integration ${newState ? "enabled" : "disabled"}`);
+        } else {
+          console.error("Failed to toggle OpenClaw:", result.error);
+        }
+      } catch (e) {
+        console.error("Failed to toggle OpenClaw:", e);
+      }
+    };
+
     // ------------ access control -----------
     const accessRef = ref(null);
     const hasAccess = ref(false);
@@ -957,14 +999,22 @@ export default {
 
     const pickModel = async (model) => {
       currentModel.value = { ...model };
-      await isModelAvailable(model.filename);
+      const available = await isModelAvailable(model.filename);
       await checkMmprojAvailability(model);
+
+      // Load model immediately if it's available (and mmproj is available for multimodal models)
+      if (available) {
+        const canLoad = !model.isMultimodal || isMmprojAvailable.value;
+        if (canLoad) {
+          await loadModel(model);
+        }
+      }
     };
 
     const isModelAvailable = async (filename) => {
-      const isModelAvailable = await window.electronAPI.checkModel(filename);
-      isModel.value = isModelAvailable;
-      return isModel;
+      const available = await window.electronAPI.checkModel(filename);
+      isModel.value = available;
+      return available;
     };
 
     const downloadModel = async (url, filename) => {
@@ -1391,6 +1441,11 @@ export default {
       isMmprojAvailable,
       mmprojDownloadProgress,
       downloadMmproj,
+      // OpenClaw integration
+      openclawInstalled,
+      openclawEnabled,
+      checkOpenClawStatus,
+      toggleOpenClaw,
     };
   },
   async mounted() {
@@ -1398,6 +1453,25 @@ export default {
       this.currentModel.filename
     );
     console.log("Ready to prompt, sir.", readyToPrompt);
+
+    // Load default model immediately if available
+    if (readyToPrompt) {
+      // Check mmproj availability for multimodal models
+      if (this.currentModel.isMultimodal && this.currentModel.mmproj) {
+        this.isMmprojAvailable = await window.electronAPI.checkMmproj(this.currentModel.mmproj);
+      }
+      const canLoad = !this.currentModel.isMultimodal || this.isMmprojAvailable;
+      if (canLoad) {
+        try {
+          await this.loadModel(this.currentModel);
+        } catch (e) {
+          console.error("Failed to load default model:", e);
+        }
+      }
+    }
+
+    // Check OpenClaw installation status
+    await this.checkOpenClawStatus();
 
     // Load persisted chat history
     try {
@@ -1862,5 +1936,21 @@ ol.chat li {
     transform: scale(1.1);
     transform-origin: bottom left;
   }
+}
+
+/* OpenClaw toggle button */
+.openclaw-label {
+  font-size: 14px;
+  margin-left: 8px;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.button.is-success .openclaw-label {
+  color: #fff;
+}
+
+.button.is-outlined.is-warning .openclaw-label {
+  color: #ffdd57;
 }
 </style>

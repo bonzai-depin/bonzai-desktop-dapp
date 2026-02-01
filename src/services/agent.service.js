@@ -215,8 +215,8 @@ const getBonzaiContract = async (withSigner = false) => {
     const signer = await web3Service.getSigner();
     return new ethers.Contract(bonzaiAddress, ERC20_ABI, signer);
   }
-  
-  const provider = web3Service.getProvider('arbitrum');
+
+  const provider = await web3Service.getProvider('arbitrum');
   return new ethers.Contract(bonzaiAddress, ERC20_ABI, provider);
 };
 

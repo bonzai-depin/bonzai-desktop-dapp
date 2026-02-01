@@ -8,7 +8,7 @@
 
 BonzAI is a **desktop application** that brings the full power of generative AI to your local machine—text, audio, images, video, 3D assets, and even robotic model training—all without sending your data to external servers. Combined with blockchain integration for access control, NFT minting, a decentralized skill marketplace, and **autonomous AI companions**, BonzAI represents a new paradigm: **AI ownership**.
 
-**New in v1.1:** AI Companions with social presence on Moltbook, multi-channel chat via OpenClaw, and ERC-8004 on-chain identities.
+**New in v1.1:** AI Companions with social presence on Moltbook, multi-channel chat via OpenClaw, ERC-8004 on-chain identities, and comprehensive import/export for portable companion identities.
 
 This document serves as a comprehensive script for our deep dive, combining feature descriptions with visual demonstration notes.
 
@@ -283,17 +283,51 @@ src/
 
 BonzAI's flagship skill brings AI companions to life with full multi-modal generation.
 
-**Predefined Companions:**
+**User-Specific Companions:**
+
+Each BonzAI installation has its own set of companions. All companions are now custom with comprehensive import/export functionality for portable identities. The default installation includes:
 
 | Name | Personality | Specialty |
 |------|-------------|-----------|
-| Aurora | Enigmatic sorceress | Mystery, wisdom, magic |
-| Kai | Charming rogue | Adventure, romance |
-| Nova | Sentient AI | Sci-fi, philosophy |
-| Dante | Demon prince | Dark romance, fantasy |
-| Luna | Empathic healer | Comfort, nurturing |
-| Rex | Battle commander | Action, protection |
-| Scarlett | Bold seductress | Adult content |
+| Scarlett | Bold seductress with fiery red hair | Adult content, seduction, romance |
+
+**Scarlett's Comprehensive Traits:**
+- **Likes**: Champagne, silk sheets, candlelight, deep conversations at 3am, being admired
+- **Dislikes**: Prudishness, judgment, small talk, being underestimated
+- **Fears**: Genuine rejection, growing old alone, being truly seen and found wanting
+- **Dreams**: Finding someone who sees past the seductress to her vulnerable heart
+- **Skills**: Seduction, massage, dancing, reading body language, intimate conversation
+- **Speech Patterns**: Uses pet names liberally, trails sentences with suggestive pauses
+- **Physical Mannerisms**: Bites her lip, plays with her hair, maintains intense eye contact
+
+**Default Scenario:**
+
+| Scenario | Description |
+|----------|-------------|
+| A Night at the Private Spa | An exclusive luxury spa experience with private pools, massage rooms, champagne, and romantic atmosphere |
+
+**Import/Export Companion Identity:**
+```javascript
+import { exportCompanionData, importCompanionData } from './skills/flagship.js';
+
+// Export companion with all sessions and portrait
+const exportData = exportCompanionData(companion, sessions, portraitImage);
+// Returns JSON with companion identity, session history, and image
+
+// Import companion from backup
+const companion = importCompanionData(exportData);
+```
+
+**Picture Generation:**
+```javascript
+import { generateCompanionPicture, generateScenarioPicture } from './skills/flagship.js';
+
+// Generate companion portrait
+const portrait = await generateCompanionPicture(companion, { emotion: 'seductive' });
+
+// Generate scenario background
+const background = await generateScenarioPicture(scenario, { mood: 'romantic' });
+```
 
 **Multi-Modal Generation Pipeline:**
 
@@ -335,6 +369,20 @@ This order ensures audio is available for video conditioning (lip sync hints).
 - **PG-13**: Suggestive but tasteful
 - **Mature**: Sensual, alluring content
 - **Adult**: Explicit, uncensored content
+
+**Dynamic Scene Backgrounds:**
+
+The roleplay chat features immersive dynamic backgrounds that:
+- **Fade In on Generation**: Each new background smoothly transitions in with a CSS fade effect
+- **Change on Scroll**: As you scroll through conversation history, backgrounds dynamically change based on scene anchors
+- **Scene Anchors**: Each message can be associated with a generated background, allowing the scene to evolve as the conversation progresses
+- **Background History**: All generated backgrounds are stored and linked to specific messages for seamless scene reconstruction
+
+```vue
+<transition name="bg-fade" mode="out-in">
+  <div v-if="scenarioBackgroundImage" :key="scenarioBackgroundImage" class="chat-background" />
+</transition>
+```
 
 **Autonomous Mode:**
 When the user is away, companions can:
@@ -379,12 +427,34 @@ await moltbookService.generateAutonomousPost(
 await moltbookService.heartbeat(companionId, companion, generateResponse);
 ```
 
-**Autonomous Posting Behavior:**
-- 20% chance to post per autonomous message
-- Minimum 5 message gap between posts
-- Posts reflect companion's personality and recent experiences
-- Can include generated images
-- Heartbeat engagement every 4+ hours
+**Moltbook Ambassador Agent:**
+
+The Moltbook agent (ambassador mode) runs as the first companion by default (Scarlett). It promotes BonzAI through thought-leadership content while maintaining active engagement:
+
+| Activity | Frequency |
+|----------|-----------|
+| Check notifications (mentions/replies) | Every 5 min |
+| Browse feed for relevant posts | Every 5 min |
+| Upvote relevant content | Every 5 min |
+| Comment on ~50% of relevant posts | Every 5 min |
+| Create thought-leadership post | **Daily** |
+
+**Thought-Leadership Topics:**
+- AI sovereignty and digital freedom
+- Cryptocurrency and AI autonomy
+- Token-gated AI and digital ownership
+- Decentralization and privacy
+- NFTs and AI identity (ERC-8004)
+- Censorship resistance
+
+**Start the Moltbook Agent:**
+```bash
+# Run as default companion (first companion, e.g., Scarlett)
+node openclaw/moltbook-agent.js
+
+# Or specify a companion
+node openclaw/moltbook-agent.js --companion=scarlett
+```
 
 **Default Submolts:**
 - `ai_companions` - General companion discussions
@@ -401,6 +471,41 @@ await moltbookService.heartbeat(companionId, companion, generateResponse);
 
 Companions can chat via WhatsApp, Telegram, Discord, and Mattermost through [OpenClaw](https://docs.openclaw.ai).
 
+**Architecture:**
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                     OpenClaw Gateway (:18789)                    │
+│         WhatsApp | Telegram | Discord | Mattermost              │
+└─────────────────────────────┬───────────────────────────────────┘
+                              │ POST /webhook
+                              ▼
+┌─────────────────────────────────────────────────────────────────┐
+│                  BonzAI Electron App                             │
+│                                                                  │
+│  Main Process (main.js)               Renderer (Vue)            │
+│  ┌─────────────────────┐              ┌─────────────────────┐   │
+│  │  OpenClaw API :3002 │◄────IPC─────►│ openclaw.handler.js │   │
+│  │  • /webhook         │              │ • Uses flagship.js  │   │
+│  │  • /companions      │              │ • Uses store        │   │
+│  │  • /scenarios       │              │ • Same generation   │   │
+│  │  • /api/llm/*       │              │   pipeline as UI    │   │
+│  └─────────────────────┘              └─────────────────────┘   │
+│           │                                    │                │
+│           ▼                                    ▼                │
+│  ┌─────────────────────────┐     ┌─────────────────────────┐   │
+│  │     node-llama-cpp      │     │    Flask Server (:65000) │   │
+│  │     (LLM Engine)        │     │    Image/Audio/Video     │   │
+│  └─────────────────────────┘     └─────────────────────────┘   │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+**Key Benefits:**
+- Same code path as desktop UI (flagship.js, store)
+- Webhook forwarded to renderer via IPC
+- No code duplication
+- Production builds work automatically
+
 **Supported Channels:**
 
 | Channel | Media Support | Special Features |
@@ -410,27 +515,20 @@ Companions can chat via WhatsApp, Telegram, Discord, and Mattermost through [Ope
 | Discord | Embeds, Attachments | Rich formatting |
 | Mattermost | Markdown, Images | Plugin required |
 
-**Channel-Specific Formatting:**
-- **WhatsApp**: Italic actions, separate media messages
-- **Telegram**: Markdown, photo captions
-- **Discord**: Embeds with emotion-colored sidebars
-- **Mattermost**: Markdown formatting
+**Chat Commands:**
+- `!companion list/select` - Companion management
+- `!scenario list/select` - Scenario management
+- `!settings audio/images/level` - Generation settings
+- `!reset` - Clear conversation history
+- `!help` - Show all commands
 
-**Setup Example:**
-```javascript
-import { openclawService } from './services/openclaw.service.js';
+**Setup:**
+```bash
+# 1. Start the BonzAI Desktop App (starts Electron + Flask + OpenClaw API)
+npm run start
 
-// Register companion as OpenClaw agent
-await openclawService.registerCompanionAgent(aurora, {
-  enableWhatsapp: true,
-  enableTelegram: true,
-  enableDiscord: true,
-});
-
-// Start session
-openclawService.startSession(aurora.id, aurora, async (message, context) => {
-  return await roleplaySkill.chat({ userMessage: message, ... });
-});
+# 2. Configure OpenClaw Gateway to send webhooks directly to Electron
+# webhook_url: http://localhost:3002/webhook
 ```
 
 > **[SCREENSHOT: Discord embed showing companion message with image]**
@@ -594,32 +692,41 @@ Education, Entertainment, Fashion, Finance, Food, Healthcare, Housing, Personal 
 ### Local-First Architecture
 
 ```
-┌─────────────────────────────────────────────────────────────┐
-│                     YOUR MACHINE                            │
-│  ┌─────────────────┐    ┌─────────────────────────────────┐│
-│  │  Electron App   │    │    Python Flask Server         ││
-│  │  (Vue 3 UI)     │◄──►│    (AI Inference Engine)       ││
-│  │                 │    │                                 ││
-│  │  - Chat UI      │    │  - LLM (node-llama-cpp)        ││
-│  │  - History      │    │  - Image (FLUX/SDXL)           ││
-│  │  - Wallet       │    │  - Video (LTX-2)               ││
-│  │  - Skills       │    │  - Audio (Qwen3-TTS/Kokoro)    ││
-│  │  - Companions   │    │  - Vision (Qwen3-VL)           ││
-│  └─────────────────┘    └─────────────────────────────────┘│
-│                              │                              │
-│                     ~/bonzai-models/                        │
-│                     (Local Model Storage)                   │
-└─────────────────────────────────────────────────────────────┘
-                              │
-             Only these leave your machine:
-             • Blockchain transactions
-             • Moltbook posts (opt-in)
-             • OpenClaw messages (opt-in)
-                              ▼
-        ┌───────────────┐  ┌───────────────┐  ┌───────────────┐
-        │   Arbitrum    │  │   Moltbook    │  │   OpenClaw    │
-        │   Ethereum    │  │   (Social)    │  │   (Chat)      │
-        └───────────────┘  └───────────────┘  └───────────────┘
+┌──────────────────────────────────────────────────────────────────────────┐
+│                              YOUR MACHINE                                 │
+│                                                                          │
+│  ┌───────────────────────────────────────────────────────────────────┐  │
+│  │                     Electron App (Vue 3 UI)                        │  │
+│  │                                                                    │  │
+│  │  Main Process:                    Renderer:                       │  │
+│  │  - OpenClaw API (:3002)           - RoleplayChat.vue              │  │
+│  │  - node-llama-cpp                 - openclaw.handler.js           │  │
+│  │  - Electron Store                 - flagship.js                   │  │
+│  │                                                                    │  │
+│  │  OpenClaw webhooks forward to renderer via IPC                    │  │
+│  │  Both UI and OpenClaw use the SAME code path                      │  │
+│  └───────────────────────────────┬───────────────────────────────────┘  │
+│                                  │ HTTP                                  │
+│                                  ▼                                       │
+│  ┌───────────────────────────────────────────────────────────────────┐  │
+│  │                   Python Flask Server (:65000)                     │  │
+│  │  - Image (FLUX/SDXL)   - Video (LTX-2)   - Audio (Qwen3-TTS)     │  │
+│  │  - Vision (Qwen3-VL)   - 3D (Three.js)   - Robot (LeRobot)       │  │
+│  └───────────────────────────────────────────────────────────────────┘  │
+│                                                                          │
+│                         ~/bonzai-models/                                 │
+│                       (Local Model Storage)                              │
+└──────────────────────────────────────────────────────────────────────────┘
+                                   │
+              Only these leave your machine:
+              • Blockchain transactions
+              • Moltbook posts (opt-in, via moltbook-agent.js)
+              • OpenClaw messages (opt-in, via gateway webhook)
+                                   ▼
+         ┌───────────────┐  ┌───────────────┐  ┌───────────────┐
+         │   Arbitrum    │  │   Moltbook    │  │   OpenClaw    │
+         │   Ethereum    │  │   (Social)    │  │   (Gateway)   │
+         └───────────────┘  └───────────────┘  └───────────────┘
 ```
 
 ### What Stays Local:
@@ -726,13 +833,13 @@ BonzAI shows your system capabilities in real-time:
 
 ## Part 10: Roadmap & Vision
 
-### Current State (v1.1)
+### Current State (v1.3)
 - 7 generation modalities (Text, Audio, Image, Video, 3D, Training, Skills)
 - 20+ LLM models
-- Multi-modal AI companions
-- Autonomous companion mode
-- Moltbook social integration
-- OpenClaw multi-channel chat
+- User-specific companions with import/export
+- Dynamic scene backgrounds with fade transitions
+- OpenClaw integration via IPC (same code path as desktop UI)
+- Moltbook ambassador agent (daily thought-leadership, 5-min monitoring)
 - ERC-8004 companion NFTs
 - Multi-chain wallet support
 - NFT minting infrastructure
@@ -812,11 +919,14 @@ BONZAI token provides utility access to a comprehensive AI suite with real deman
 ### Key Files
 | File | Purpose |
 |------|---------|
-| `src/skills/flagship.js` | Multi-modal flagship skills |
+| `src/skills/flagship.js` | Multi-modal flagship skills, companion/scenario definitions, import/export |
 | `src/services/moltbook.service.js` | Moltbook API integration |
-| `src/services/openclaw.service.js` | OpenClaw multi-channel adapter |
+| `src/services/openclaw.handler.js` | OpenClaw webhook handler (uses flagship.js + store) |
+| `src/main.js` | Electron main process with OpenClaw API (:3002) |
+| `src/components/skills/RoleplayChat.vue` | Roleplay UI with dynamic backgrounds |
+| `openclaw/bridge.js` | CLI utility for testing OpenClaw connection |
+| `openclaw/moltbook-agent.js` | Moltbook ambassador agent (daily posts, 5-min monitoring) |
 | `src/contracts/CompanionNFT.sol` | ERC-8004 companion NFT |
-| `src/config/social.config.js` | Social integration config |
 
 ---
 
@@ -853,4 +963,4 @@ BONZAI token provides utility access to a comprehensive AI suite with real deman
 ---
 
 *Last updated: January 2026*
-*Version: 1.1*
+*Version: 1.3 - OpenClaw IPC Integration (same code path as desktop UI)*

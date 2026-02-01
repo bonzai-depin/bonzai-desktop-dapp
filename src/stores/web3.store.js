@@ -127,6 +127,18 @@ export const useWeb3Store = defineStore('web3', () => {
   };
 
   /**
+   * Cancel ongoing connection (reset connecting state)
+   * Useful when stuck in "Connecting..." state
+   */
+  const cancelConnection = async () => {
+    console.log("[Web3Store] Cancelling connection...");
+    isConnecting.value = false;
+    error.value = null;
+    // Also disconnect to clean up any partial state
+    await disconnect();
+  };
+
+  /**
    * Disconnect wallet
    */
   const disconnect = async () => {
@@ -345,6 +357,7 @@ export const useWeb3Store = defineStore('web3', () => {
     initialize,
     connect,
     disconnect,
+    cancelConnection,
     refreshBalances,
     refreshLevels,
     refreshAll,

@@ -2,21 +2,77 @@
   <div class="roleplay-chat">
     <!-- Setup Phase -->
     <div v-if="phase === 'setup'" class="setup-phase">
+      <!-- Hidden file inputs for import -->
+      <input
+        ref="companionImportInput"
+        type="file"
+        accept=".json"
+        style="display: none"
+        @change="handleCompanionImport"
+      />
+      <input
+        ref="scenarioImportInput"
+        type="file"
+        accept=".json"
+        style="display: none"
+        @change="handleScenarioImport"
+      />
+
       <!-- Companion Selection -->
       <div class="models__activity--payouts mb-5">
-        <h3
-          class="fira-sans-condensed-black-italic has-text-white has-text-left is-size-3 mb-4"
-        >
-          <span class="material-symbols-outlined mr-2 is-size-1">
-            person_pin
-          </span>
-          Select Companion
-        </h3>
+        <div class="section-header">
+          <h3
+            class="fira-sans-condensed-black-italic has-text-white has-text-left is-size-3 mb-4"
+          >
+            <span class="material-symbols-outlined mr-2 is-size-1">
+              person_pin
+            </span>
+            Select Companion
+          </h3>
+          <div class="import-export-buttons">
+            <button
+              class="button is-success is-small mr-5"
+              @click="openCustomCompanion"
+            >
+              <span
+                class="material-symbols-outlined mr-2"
+                style="font-size: 14px"
+              >
+                add
+              </span>
+              Create
+            </button>
+            <button
+              class="button is-info is-small mr-5"
+              @click="triggerCompanionImport"
+            >
+              <span
+                class="material-symbols-outlined mr-2"
+                style="font-size: 14px"
+              >
+                upload
+              </span>
+              Import
+            </button>
+            <button
+              class="button is-warning is-small"
+              @click="exportCompanions"
+            >
+              <span
+                class="material-symbols-outlined mr-2"
+                style="font-size: 14px"
+              >
+                download
+              </span>
+              Export
+            </button>
+          </div>
+        </div>
         <hr />
-        <!-- Predefined Companions -->
+        <!-- Companions (unified list - all user-created) -->
         <div class="companion-grid mt-5 pt-5">
           <div
-            v-for="companion in predefinedCompanions"
+            v-for="companion in companions"
             :key="companion.id"
             class="companion-card has-text-left"
             :class="{
@@ -25,125 +81,81 @@
             }"
             @click="selectCompanion(companion)"
           >
-            <div class="companion-avatar">
-              <span class="material-symbols-outlined">
-                {{ getAvatarIcon(companion.avatar, companion.gender) }}
-              </span>
-              <!-- Session indicator badge -->
-              <span
-                v-if="getSessionInfo(companion)"
-                class="session-badge"
-                :title="
-                  getSessionInfo(companion).sessionCount +
-                  ' session(s), ' +
-                  getSessionInfo(companion).messageCount +
-                  ' total msgs'
-                "
-              >
-                {{ getSessionInfo(companion).sessionCount }}
-              </span>
-            </div>
-            <div class="companion-info">
-              <h4
-                class="companion-name fira-sans-condensed-black-italic is-size-4 has-text-brand"
-              >
-                {{ companion.name }}
-              </h4>
-              <hr />
-              <p class="companion-desc" style="min-height: 100px">
-                {{ companion.description }}
-              </p>
-              <hr />
-              <p
-                class="has-text-white mt-5 is-size-7"
-                style="text-transform: uppercase; word-wrap: break-word"
-              >
-                {{ companion.personality }}
-              </p>
-            </div>
-          </div>
-
-          <!-- Saved Custom Companions -->
-          <div
-            v-for="companion in savedCustomCompanions"
-            :key="companion.id"
-            class="companion-card is-saved-custom has-text-left"
-            :class="{
-              'is-selected': selectedCompanion?.id === companion.id,
-              'has-session': getSessionInfo(companion),
-            }"
-            @click="selectCompanion(companion)"
-          >
-            <div class="companion-avatar">
-              <span class="material-symbols-outlined">
-                {{ getAvatarIcon(companion.avatar, companion.gender) }}
-              </span>
-              <!-- Session indicator badge -->
-              <span
-                v-if="getSessionInfo(companion)"
-                class="session-badge"
-                :title="
-                  getSessionInfo(companion).sessionCount +
-                  ' session(s), ' +
-                  getSessionInfo(companion).messageCount +
-                  ' total msgs'
-                "
-              >
-                {{ getSessionInfo(companion).sessionCount }}
-              </span>
-              <!-- Custom badge -->
-              <span class="custom-badge" title="Custom character">
-                <span class="material-symbols-outlined" style="font-size: 10px">
-                  auto_awesome
-                </span>
-              </span>
-            </div>
-            <div class="companion-info">
-              <h4
-                class="companion-name fira-sans-condensed-black-italic is-size-4 has-text-brand"
-              >
-                {{ companion.name }}
-              </h4>
-              <hr />
-              <p class="companion-desc" style="min-height: 100px">
-                {{ companion.description }}
-              </p>
-              <hr />
-              <p
-                class="has-text-white mt-5 is-size-7"
-                style="text-transform: uppercase; word-wrap: break-word"
-              >
-                {{ companion.personality }}
-              </p>
-            </div>
-            <!-- Delete button -->
+            <!-- Export button (top left) -->
             <button
-              class="delete-custom-btn"
-              @click.stop="deleteCustomCompanion(companion.id)"
-              title="Delete character"
+              class="card-action-btn top-left"
+              @click.stop="exportCompanion(companion)"
+              title="Export companion"
             >
-              <span class="material-symbols-outlined">close</span>
+              <span class="material-symbols-outlined" style="font-size: 14px">download</span>
             </button>
-          </div>
-
-          <!-- Custom Companion Card -->
-          <div
-            class="companion-card is-custom has-text-left"
-            :class="{ 'is-selected': selectedCompanion?.isCustom }"
-            @click="openCustomCompanion"
-          >
-            <div class="companion-avatar">
-              <span class="material-symbols-outlined">add</span>
-            </div>
+            <!-- Delete button (top left, second) -->
+            <button
+              class="card-action-btn top-left-second"
+              @click.stop="deleteCompanion(companion.id)"
+              title="Delete companion"
+            >
+              <span class="material-symbols-outlined" style="font-size: 14px">close</span>
+            </button>
             <div class="companion-info">
               <h4
-                class="companion-name fira-sans-condensed-black-italic is-size-4"
+                class="companion-name fira-sans-condensed-black-italic is-size-4 has-text-brand"
               >
-                Create Custom
+                <span class="material-symbols-outlined">
+                  {{ companion.gender }}
+                </span>
+                {{ companion.name }}
               </h4>
-              <p class="companion-desc">Design your own companion</p>
+              <!-- Profile picture placeholder (always shown) -->
+              <div class="companion-portrait-container">
+                <img
+                  v-if="companion.image"
+                  :src="getImageSrc(companion.image)"
+                  :alt="companion.name"
+                  class="companion-portrait"
+                />
+                <div v-else class="companion-portrait-placeholder">
+                  <span class="material-symbols-outlined">person</span>
+                </div>
+                <!-- Regenerate button -->
+                <button
+                  class="regenerate-portrait-btn"
+                  @click.stop="regenerateCompanionImage(companion)"
+                  :disabled="isRegeneratingImage && regeneratingId === companion.id"
+                  :title="companion.image ? 'Regenerate portrait' : 'Generate portrait'"
+                >
+                  <span
+                    v-if="isRegeneratingImage && regeneratingId === companion.id"
+                    class="material-symbols-outlined rotating"
+                    style="font-size: 14px"
+                  >progress_activity</span>
+                  <span v-else class="material-symbols-outlined" style="font-size: 14px">
+                    {{ companion.image ? 'refresh' : 'image' }}
+                  </span>
+                </button>
+              </div>
+              <hr />
+              <p class="companion-desc" style="min-height: 100px">
+                {{ companion.description }}
+              </p>
+              <hr />
+              <!-- Animated keyword cycling -->
+              <div
+                class="keyword-cycler"
+                @vue:mounted="registerKeywordCard(companion.id)"
+              >
+                <transition name="keyword-fade" mode="out-in">
+                  <span
+                    :key="getCurrentKeyword(companion.id, companion.personality)"
+                    class="keyword-item"
+                  >
+                    {{ getCurrentKeyword(companion.id, companion.personality) }}
+                  </span>
+                </transition>
+              </div>
             </div>
           </div>
+
         </div>
 
         <!-- Custom Companion Generator -->
@@ -194,50 +206,99 @@
           <!-- Generated Custom Companion Preview -->
           <div
             v-if="customCompanion"
-            class="custom-companion-preview mt-4 p-6 has-text-left"
+            class="custom-companion-preview mt-4 has-text-left"
           >
-            <h5
-              class="fira-sans-condensed-black-italic has-text-success is-size-4"
-            >
-              {{ customCompanion.name }}
-            </h5>
-            <p class="is-size-6 has-text-grey-light mt-2">
-              {{ customCompanion.description }}
-            </p>
-            <div class="tags mt-4">
-              <span
-                class="tag is-warning is-small"
-                style="text-transform: uppercase"
-              >
-                {{ customCompanion.personality }}
-              </span>
-            </div>
-            <div class="buttons mt-2">
-              <button
-                class="button is-success is-medium mr-5"
-                @click="useCustomCompanion"
-              >
-                <span class="material-symbols-outlined mr-2">check</span>
-                Pick
-              </button>
-              <button
-                class="button is-info is-medium"
-                @click="saveCustomCompanionToStore"
-                :disabled="isCompanionAlreadySaved(customCompanion)"
-              >
-                <span class="material-symbols-outlined mr-2">save</span>
-                {{
-                  isCompanionAlreadySaved(customCompanion)
-                    ? "Saved"
-                    : "Save Character"
-                }}
-              </button>
+            <div class="columns is-vcentered">
+              <!-- Portrait image -->
+              <div class="column is-narrow">
+                <div class="custom-preview-portrait">
+                  <img
+                    v-if="customCompanion.image"
+                    :src="getImageSrc(customCompanion.image)"
+                    :alt="customCompanion.name"
+                    class="companion-preview-img"
+                  />
+                  <div v-else class="no-portrait">
+                    <span
+                      class="material-symbols-outlined"
+                      style="font-size: 64px; opacity: 0.3"
+                    >
+                      {{
+                        getAvatarIcon(
+                          customCompanion.avatar,
+                          customCompanion.gender,
+                        )
+                      }}
+                    </span>
+                  </div>
+                </div>
+              </div>
+              <!-- Info -->
+              <div class="column p-4">
+                <h5
+                  class="fira-sans-condensed-black-italic has-text-success is-size-4"
+                >
+                  {{ customCompanion.name }}
+                </h5>
+                <p class="is-size-6 has-text-grey-light mt-2">
+                  {{ customCompanion.description }}
+                </p>
+                <div class="tags mt-3">
+                  <span
+                    class="tag is-warning is-small"
+                    style="text-transform: uppercase"
+                  >
+                    {{ customCompanion.personality }}
+                  </span>
+                </div>
+                <div class="buttons mt-3">
+                  <button
+                    class="button is-success is-medium mr-3"
+                    @click="useCustomCompanion"
+                  >
+                    <span class="material-symbols-outlined mr-2">check</span>
+                    Pick
+                  </button>
+                  <button
+                    class="button is-info is-medium mr-3"
+                    @click="saveCustomCompanionToStore"
+                    :disabled="isCompanionAlreadySaved(customCompanion)"
+                  >
+                    <span class="material-symbols-outlined mr-2">save</span>
+                    {{
+                      isCompanionAlreadySaved(customCompanion)
+                        ? "Saved"
+                        : "Save"
+                    }}
+                  </button>
+                  <button
+                    v-if="!customCompanion.image"
+                    class="button is-warning is-medium"
+                    @click="regenerateCompanionImage(customCompanion)"
+                    :disabled="isRegeneratingImage"
+                  >
+                    <span
+                      v-if="
+                        isRegeneratingImage &&
+                        regeneratingId === customCompanion.id
+                      "
+                      class="material-symbols-outlined rotating mr-1"
+                    >
+                      progress_activity
+                    </span>
+                    <span v-else class="material-symbols-outlined mr-1">
+                      image
+                    </span>
+                    Portrait
+                  </button>
+                </div>
+              </div>
             </div>
           </div>
         </div>
       </div>
 
-            <!-- Saved Sessions & Import/Export -->
+      <!-- Saved Sessions & Import/Export -->
       <div v-if="selectedCompanion" class="models__activity--payouts mb-5">
         <div class="sessions-header">
           <h3
@@ -246,7 +307,8 @@
             <span class="material-symbols-outlined mr-2 is-size-1">
               history
             </span>
-            Roleplay Sessions with <span class="has-text-brand"> {{ selectedCompanion.name }}</span>
+            Roleplay Sessions with
+            <span class="has-text-brand">{{ selectedCompanion.name }}</span>
           </h3>
           <div class="sessions-actions">
             <button
@@ -349,53 +411,193 @@
 
       <!-- Scenario Selection -->
       <div class="models__activity--payouts mb-5">
-        <h3
-          class="fira-sans-condensed-black-italic has-text-white has-text-left is-size-3 mb-4"
-        >
-          <span class="material-symbols-outlined mr-2 is-size-1">
-            landscape
-          </span>
-          Select Scenario
-        </h3>
+        <div class="section-header">
+          <h3
+            class="fira-sans-condensed-black-italic has-text-white has-text-left is-size-3 mb-4"
+          >
+            <span class="material-symbols-outlined mr-2 is-size-1">
+              landscape
+            </span>
+            Select Scenario
+          </h3>
+          <div class="import-export-buttons">
+            <button
+              class="button is-success is-small mr-5"
+              @click="openCustomScenario"
+            >
+              <span
+                class="material-symbols-outlined mr-2"
+                style="font-size: 14px"
+              >
+                add
+              </span>
+              Create
+            </button>
+            <button
+              class="button is-info is-small mr-5"
+              @click="triggerScenarioImport"
+            >
+              <span
+                class="material-symbols-outlined mr-2"
+                style="font-size: 14px"
+              >
+                upload
+              </span>
+              Import
+            </button>
+            <button class="button is-warning is-small" @click="exportScenarios">
+              <span
+                class="material-symbols-outlined mr-2"
+                style="font-size: 14px"
+              >
+                download
+              </span>
+              Export
+            </button>
+          </div>
+        </div>
         <hr />
+        <!-- Scenarios (unified list - all user-created) -->
         <div class="scenario-grid">
           <div
-            v-for="scenario in predefinedScenarios"
+            v-for="scenario in scenarios"
             :key="scenario.id"
             class="scenario-card"
-            :class="{ 'is-selected': selectedScenario?.id === scenario.id }"
+            :class="{
+              'is-selected': selectedScenario?.id === scenario.id,
+              'has-image': scenario.image,
+            }"
             @click="selectScenario(scenario)"
           >
-            <h4 class="scenario-name fira-sans-condensed-black-italic">
-              {{ scenario.name }}
-            </h4>
-            <hr />
-            <p class="scenario-desc" style="min-height: 50px">
-              {{ scenario.description }}
-            </p>
-            <hr />
-            <p
-              class="has-text-white mt-5 is-size-7"
-              style="text-transform: uppercase; word-wrap: break-word"
+            <!-- Scenario background image -->
+            <div
+              v-if="scenario.image"
+              class="scenario-image"
+              :style="{
+                backgroundImage: `url(${getImageSrc(scenario.image)})`,
+              }"
             >
-              {{ scenario.mood }}
-            </p>
+              <!-- Delete button -->
+              <button
+                class="delete-scenario-btn"
+                @click.stop="deleteScenario(scenario.id)"
+                title="Delete scenario"
+              >
+                <span class="material-symbols-outlined" style="font-size: 14px">
+                  close
+                </span>
+              </button>
+              <!-- Regenerate button overlay -->
+              <button
+                class="regenerate-image-btn scenario-regen"
+                @click.stop="regenerateScenarioImage(scenario)"
+                :disabled="
+                  isRegeneratingImage && regeneratingId === scenario.id
+                "
+                title="Regenerate scene"
+              >
+                <span
+                  v-if="isRegeneratingImage && regeneratingId === scenario.id"
+                  class="material-symbols-outlined rotating"
+                  style="font-size: 14px"
+                >
+                  progress_activity
+                </span>
+                <span
+                  v-else
+                  class="material-symbols-outlined"
+                  style="font-size: 14px"
+                >
+                  refresh
+                </span>
+              </button>
+              <!-- Export button -->
+              <button
+                class="export-single-btn"
+                @click.stop="exportScenario(scenario)"
+                title="Export scenario"
+              >
+                <span class="material-symbols-outlined" style="font-size: 14px">
+                  download
+                </span>
+              </button>
+            </div>
+            <div v-else class="scenario-no-image">
+              <span
+                class="material-symbols-outlined"
+                style="font-size: 48px; opacity: 0.3"
+              >
+                landscape
+              </span>
+              <!-- Delete button -->
+              <button
+                class="delete-scenario-btn"
+                @click.stop="deleteScenario(scenario.id)"
+                title="Delete scenario"
+              >
+                <span class="material-symbols-outlined" style="font-size: 14px">
+                  close
+                </span>
+              </button>
+              <button
+                class="regenerate-image-btn"
+                @click.stop="regenerateScenarioImage(scenario)"
+                :disabled="
+                  isRegeneratingImage && regeneratingId === scenario.id
+                "
+                title="Generate scene"
+              >
+                <span
+                  v-if="isRegeneratingImage && regeneratingId === scenario.id"
+                  class="material-symbols-outlined rotating"
+                  style="font-size: 14px"
+                >
+                  progress_activity
+                </span>
+                <span
+                  v-else
+                  class="material-symbols-outlined"
+                  style="font-size: 14px"
+                >
+                  image
+                </span>
+              </button>
+              <!-- Export button -->
+              <button
+                class="export-single-btn"
+                @click.stop="exportScenario(scenario)"
+                title="Export scenario"
+              >
+                <span class="material-symbols-outlined" style="font-size: 14px">
+                  download
+                </span>
+              </button>
+            </div>
+            <hr />
+            <div
+              class="scenario-content has-text-left p-0"
+              @vue:mounted="registerKeywordCard(scenario.id)"
+            >
+              <h4 class="scenario-name fira-sans-condensed-black-italic has-text-brand is-size-4">
+                {{ scenario.name }}
+              </h4>
+              <p class="scenario-desc">
+                {{ scenario.description }}
+              </p>
+              <!-- Animated keyword cycling for mood -->
+              <div class="keyword-cycler scenario-mood">
+                <transition name="keyword-fade" mode="out-in">
+                  <span
+                    :key="getCurrentKeyword(scenario.id, scenario.mood)"
+                    class="keyword-item"
+                  >
+                    {{ getCurrentKeyword(scenario.id, scenario.mood) }}
+                  </span>
+                </transition>
+              </div>
+            </div>
           </div>
 
-          <!-- Custom Scenario Card -->
-          <div
-            class="scenario-card is-custom has-text-left"
-            :class="{ 'is-selected': selectedScenario?.isCustom }"
-            @click="openCustomScenario"
-          >
-            <h4
-              class="scenario-name fira-sans-condensed-black-italic is-size-4"
-            >
-              <span class="material-symbols-outlined mr-1">add</span>
-              Custom
-            </h4>
-            <p class="scenario-desc">Create your own scenario</p>
-          </div>
         </div>
 
         <!-- Custom Scenario Generator -->
@@ -437,24 +639,73 @@
 
           <div
             v-if="customScenario"
-            class="custom-scenario-preview mt-4 p-6 has-text-left"
+            class="custom-scenario-preview mt-4 has-text-left"
           >
-            <h5
-              class="fira-sans-condensed-black-italic has-text-success is-size-4"
-            >
-              {{ customScenario.name }}
-            </h5>
-            <p class="is-size-6 has-text-grey-light mt-2">
-              {{ customScenario.setting.environment }}
-              {{ customScenario.setting.atmosphere }}
-            </p>
-            <button
-              class="button is-success is-medium mt-5"
-              @click="useCustomScenario"
-            >
-              <span class="material-symbols-outlined mr-1">check</span>
-              Pick
-            </button>
+            <!-- Scene image -->
+            <div v-if="customScenario.image" class="custom-preview-image mb-3">
+              <img
+                :src="getImageSrc(customScenario.image)"
+                :alt="customScenario.name"
+              />
+            </div>
+            <div class="p-4">
+              <h5
+                class="fira-sans-condensed-black-italic has-text-success is-size-4"
+              >
+                {{ customScenario.name }}
+              </h5>
+              <p class="is-size-6 has-text-grey-light mt-2">
+                {{
+                  typeof customScenario.setting === "object"
+                    ? customScenario.setting.environment
+                    : customScenario.setting
+                }}
+                {{
+                  typeof customScenario.setting === "object"
+                    ? customScenario.setting.atmosphere
+                    : ""
+                }}
+              </p>
+              <div class="buttons mt-4">
+                <button
+                  class="button is-success is-medium"
+                  @click="useCustomScenario"
+                >
+                  <span class="material-symbols-outlined mr-1">check</span>
+                  Pick
+                </button>
+                <button
+                  class="button is-info is-medium mr-3"
+                  @click="saveCustomScenarioToStore"
+                  :disabled="isScenarioAlreadySaved(customScenario)"
+                >
+                  <span class="material-symbols-outlined mr-2">save</span>
+                  {{
+                    isScenarioAlreadySaved(customScenario) ? "Saved" : "Save"
+                  }}
+                </button>
+                <button
+                  v-if="!customScenario.image"
+                  class="button is-info is-medium"
+                  @click="regenerateScenarioImage(customScenario)"
+                  :disabled="isRegeneratingImage"
+                >
+                  <span
+                    v-if="
+                      isRegeneratingImage &&
+                      regeneratingId === customScenario.id
+                    "
+                    class="material-symbols-outlined rotating mr-1"
+                  >
+                    progress_activity
+                  </span>
+                  <span v-else class="material-symbols-outlined mr-1">
+                    image
+                  </span>
+                  Generate Scene
+                </button>
+              </div>
+            </div>
           </div>
         </div>
       </div>
@@ -582,39 +833,236 @@
         </div>
       </div>
 
-      <!-- Dynamic Download Requirements -->
-      <div class="model-requirements mt-4">
-        <!-- Missing Models (Red) -->
-        <div
-          v-if="missingModels.length > 0"
-          class="notification is-danger is-light mb-3"
+      <!-- Autonomous Mode Integration (shown when companion is selected) -->
+      <div v-if="selectedCompanion" class="models__activity--payouts mb-5">
+        <h3
+          class="fira-sans-condensed-black-italic has-text-white has-text-left is-size-3 mb-4"
         >
-          <p class="has-text-weight-bold mb-2">
-            <span
-              class="material-symbols-outlined mr-1"
-              style="vertical-align: middle"
-            >
-              download
-            </span>
-            Download Required
-          </p>
-          <div class="requirements-list">
-            <ul
-              v-for="modelKey in missingModels"
-              :key="modelKey"
-              class="requirement-item is-missing"
-            >
-              <span class="material-symbols-outlined" style="font-size: 16px">
-                cancel
-              </span>
-              <span class="model-name">{{ getModelInfo(modelKey).name }}</span>
-              <span class="tag is-small is-dark ml-2">
-                {{ getModelInfo(modelKey).size }}
-              </span>
-              <span class="tag is-small is-danger ml-1">
-                {{ getModelInfo(modelKey).type }}
-              </span>
-            </ul>
+          <span class="material-symbols-outlined mr-2 is-size-2">
+            autoplay
+          </span>
+          Autonomous Mode
+        </h3>
+        <hr />
+
+        <div class="columns mt-4">
+          <!-- Left column: Timing Settings -->
+          <div class="column is-6">
+            <div class="field has-text-left">
+              <label
+                class="label has-text-white is-size-5 mb-3 fira-sans-condensed-black-italic"
+              >
+                <span class="material-symbols-outlined mr-1">timer_5</span>
+                Timing Settings
+              </label>
+
+              <!-- Idle Timeout -->
+              <div class="field mb-4">
+                <label class="label has-text-grey-light is-size-7">
+                  You will be marked as away after :
+                </label>
+                <div class="control">
+                  <div class="select is-medium is-fullwidth">
+                    <select v-model.number="settings.autonomous.idleTimeout">
+                      <option :value="1">1 minute</option>
+                      <option :value="3">3 minutes</option>
+                      <option :value="5">5 minutes (default)</option>
+                      <option :value="10">10 minutes</option>
+                      <option :value="15">15 minutes</option>
+                      <option :value="30">30 minutes</option>
+                    </select>
+                  </div>
+                </div>
+              </div>
+
+              <!-- Message Interval -->
+              <div class="field mb-4">
+                <label class="label has-text-grey-light is-size-7">
+                  Your companion will post every :
+                </label>
+                <div class="control">
+                  <div class="select is-medium is-fullwidth">
+                    <select
+                      v-model.number="settings.autonomous.messageInterval"
+                    >
+                      <option :value="5">5 minutes</option>
+                      <option :value="10">10 minutes</option>
+                      <option :value="15">15 minutes (default)</option>
+                      <option :value="30">30 minutes</option>
+                      <option :value="60">1 hour</option>
+                    </select>
+                  </div>
+                </div>
+              </div>
+
+              <!-- Max Autonomous Messages -->
+              <div class="field">
+                <label class="label has-text-grey-light is-size-7">
+                  Max Messages (before auto mode stops)
+                </label>
+                <div class="control">
+                  <div class="select is-medium is-fullwidth">
+                    <select v-model.number="settings.autonomous.maxMessages">
+                      <option :value="6">6 messages</option>
+                      <option :value="12">12 messages (default)</option>
+                      <option :value="24">24 messages</option>
+                      <option :value="48">48 messages</option>
+                      <option :value="999">Unlimited</option>
+                    </select>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- Right column: Moltbook Integration -->
+          <div class="column is-6">
+            <div class="field has-text-left">
+              <label
+                class="label has-text-white is-size-5 mb-3 fira-sans-condensed-black-italic"
+              >
+                <span class="material-symbols-outlined mr-1">communities</span>
+                Moltbook Social Network
+              </label>
+
+              <!-- Moltbook Registration -->
+              <div
+                v-if="!companionMoltbookRegistered"
+                class="moltbook-register mb-4"
+              >
+                <p class="is-size-7 has-text-grey-light mb-3">
+                  Register {{ selectedCompanion?.name }} on Moltbook to enable
+                  autonomous social features.
+                </p>
+                <div class="has-text-center" style="width: 100%; text-align:center;">
+                  <button
+                    class="button is-info is-medium mt-5 mb-5"
+                    @click="registerOnMoltbook"
+                    :disabled="isRegisteringMoltbook"
+                  >
+                    <span
+                      v-if="isRegisteringMoltbook"
+                      class="material-symbols-outlined rotating mr-1"
+                      style="font-size: 14px"
+                    >
+                      progress_activity
+                    </span>
+                    <span
+                      class="material-symbols-outlined mr-1"
+                      style="font-size: 14px"
+                      v-else
+                    >
+                      person_add
+                    </span>
+                    {{
+                      isRegisteringMoltbook
+                        ? "Registering..."
+                        : "Register on Moltbook"
+                    }}
+                  </button>
+                </div>
+              </div>
+
+              <!-- Moltbook Settings (when registered) -->
+              <div v-else class="moltbook-settings-panel">
+                <div class="moltbook-status mb-3">
+                  <span class="tag is-success is-small mr-2">Registered</span>
+                  <a
+                    :href="companionMoltbookUrl"
+                    target="_blank"
+                    class="is-size-7 has-text-info"
+                  >
+                    <span
+                      class="material-symbols-outlined mr-1"
+                      style="font-size: 12px; vertical-align: middle"
+                    >
+                      open_in_new
+                    </span>
+                    View Profile
+                  </a>
+                </div>
+
+                <!-- Moltbook Feature Toggles -->
+                <div class="moltbook-options">
+                  <label class="checkbox mb-2 is-block">
+                    <input
+                      type="checkbox"
+                      v-model="settings.moltbook.autoPost"
+                    />
+                    <span class="ml-2 is-size-7">
+                      Post thought-leadership content
+                    </span>
+                  </label>
+                  <label class="checkbox mb-2 is-block">
+                    <input
+                      type="checkbox"
+                      v-model="settings.moltbook.autoEngage"
+                    />
+                    <span class="ml-2 is-size-7">
+                      Engage with feed (upvote, comment)
+                    </span>
+                  </label>
+                  <label class="checkbox mb-3 is-block">
+                    <input
+                      type="checkbox"
+                      v-model="settings.moltbook.promoteBonzai"
+                    />
+                    <span class="ml-2 is-size-7">
+                      Include BonzAI promotion signature
+                    </span>
+                  </label>
+                </div>
+
+                <!-- Moltbook Post Interval -->
+                <div class="field mb-3">
+                  <label class="label has-text-grey-light is-size-7">
+                    Post Interval (hours between Moltbook posts)
+                  </label>
+                  <div class="control">
+                    <div class="select is-small">
+                      <select v-model.number="settings.moltbook.postInterval">
+                        <option :value="6">Every 6 hours</option>
+                        <option :value="12">Every 12 hours</option>
+                        <option :value="24">Daily (default)</option>
+                        <option :value="48">Every 2 days</option>
+                        <option :value="168">Weekly</option>
+                      </select>
+                    </div>
+                  </div>
+                </div>
+
+                <!-- Recent Activity Log -->
+                <div
+                  v-if="moltbookActivityLog.length > 0"
+                  class="moltbook-activity-log mt-3"
+                >
+                  <p class="is-size-7 has-text-grey-light mb-2">
+                    Recent activity:
+                  </p>
+                  <div class="moltbook-activity-list">
+                    <div
+                      v-for="activity in moltbookActivityLog.slice(-5)"
+                      :key="activity.id"
+                      class="moltbook-activity-item is-size-7"
+                    >
+                      <span
+                        class="material-symbols-outlined mr-1"
+                        style="font-size: 12px; vertical-align: middle"
+                      >
+                        {{
+                          activity.action === "posted"
+                            ? "edit_note"
+                            : "thumb_up"
+                        }}
+                      </span>
+                      {{ activity.action }}:
+                      {{ activity.title?.substring(0, 35)
+                      }}{{ activity.title?.length > 35 ? "..." : "" }}
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
           </div>
         </div>
       </div>
@@ -735,7 +1183,9 @@
               >
                 {{ autonomousModeDisplay ? "self_improvement" : "person_off" }}
               </span>
-              <span class="is-size-7">{{ autonomousPending ? "Starting..." : "Auto" }}</span>
+              <span class="is-size-7">
+                {{ autonomousPending ? "Starting..." : "Auto" }}
+              </span>
             </label>
             <button class="button is-danger is-small" @click="endChat">
               <span
@@ -764,7 +1214,12 @@
             </span>
           </div>
           <div class="level-right">
-            <span class="material-symbols-outlined mr-2" @click="clearMissedMessages">cancel</span>
+            <span
+              class="material-symbols-outlined mr-2"
+              @click="clearMissedMessages"
+            >
+              cancel
+            </span>
             <button
               class="button is-small is-info"
               @click="clearMissedMessages"
@@ -777,7 +1232,7 @@
 
       <!-- Chat Messages Container -->
       <div class="chat-messages-container">
-        <!-- Background layer with fade-in transition -->
+        <!-- Background layer with fade-in transition (changes on scene/location change) -->
         <transition name="bg-fade" mode="out-in">
           <div
             v-if="scenarioBackgroundImage"
@@ -798,184 +1253,192 @@
             class="chat-message"
             :class="[msg.role, { 'is-new': isNewMessage(msg) }]"
           >
-          <div class="message-avatar">
-            <span class="material-symbols-outlined">
-              {{
-                msg.role === "user"
-                  ? "person"
-                  : getAvatarIcon(
-                      selectedCompanion?.avatar,
-                      selectedCompanion?.gender,
-                    )
-              }}
-            </span>
-          </div>
-          <div class="message-content">
-            <div class="message-header">
-              <span class="message-sender fira-sans-condensed-black-italic">
-                {{ msg.role === "user" ? "You" : selectedCompanion?.name }}
+            <div class="message-avatar" :class="{ 'has-image': msg.role !== 'user' && selectedCompanion?.image }">
+              <!-- User avatar (always icon) -->
+              <span v-if="msg.role === 'user'" class="material-symbols-outlined">
+                person
               </span>
-              <span
-                v-if="msg.emotion"
-                class="message-emotion tag is-small is-info"
-              >
-                {{ msg.emotion }}
-              </span>
+              <!-- Companion avatar (image if available, otherwise icon) -->
+              <template v-else>
+                <img
+                  v-if="selectedCompanion?.image"
+                  :src="getImageSrc(selectedCompanion.image)"
+                  :alt="selectedCompanion?.name"
+                  class="avatar-image"
+                />
+                <span v-else class="material-symbols-outlined">
+                  {{ getAvatarIcon(selectedCompanion?.avatar, selectedCompanion?.gender) }}
+                </span>
+              </template>
             </div>
-            <div class="message-text">
-              <!-- Loading placeholder when waiting for text -->
+            <div class="message-content">
+              <div class="message-header">
+                <span class="message-sender fira-sans-condensed-black-italic">
+                  {{ msg.role === "user" ? "You" : selectedCompanion?.name }}
+                </span>
+                <span
+                  v-if="msg.emotion"
+                  class="message-emotion tag is-small is-info"
+                >
+                  {{ msg.emotion }}
+                </span>
+              </div>
+              <div class="message-text">
+                <!-- Loading placeholder when waiting for text -->
+                <div
+                  v-if="msg.generatingText && !msg.content"
+                  class="typing-placeholder"
+                >
+                  <div class="typing-indicator inline">
+                    <span></span>
+                    <span></span>
+                    <span></span>
+                  </div>
+                  <p
+                    v-if="typingStatus"
+                    class="typing-status is-size-7 has-text-grey-light mt-2"
+                  >
+                    {{ typingStatus }}
+                  </p>
+                </div>
+                <template v-else>
+                  <p
+                    v-if="msg.action"
+                    class="action-text is-italic has-text-grey-light mb-2"
+                  >
+                    *{{ msg.action }}*
+                  </p>
+                  <p v-if="msg.content">{{ msg.content }}</p>
+                  <p v-else class="has-text-grey-light is-italic">
+                    *{{ selectedCompanion?.name || "Companion" }} pauses
+                    thoughtfully*
+                  </p>
+                </template>
+                <!-- Delete text button (on hover) -->
+                <button
+                  v-if="msg.content && !msg.generatingText"
+                  class="text-delete-btn"
+                  @click="deleteMessageMedia(idx, 'text')"
+                  title="Delete text"
+                >
+                  <span class="material-symbols-outlined">delete</span>
+                </button>
+              </div>
+
+              <!-- Media Generation Loader (single loader for all media) -->
               <div
-                v-if="msg.generatingText && !msg.content"
-                class="typing-placeholder"
+                v-if="
+                  msg.isGenerating &&
+                  msg.content &&
+                  (msg.generatingImage ||
+                    msg.generatingAudio ||
+                    msg.generatingVideo)
+                "
+                class="media-generating mt-3"
               >
                 <div class="typing-indicator inline">
                   <span></span>
                   <span></span>
                   <span></span>
                 </div>
-                <p
-                  v-if="typingStatus"
-                  class="typing-status is-size-7 has-text-grey-light mt-2"
-                >
-                  {{ typingStatus }}
-                </p>
               </div>
-              <template v-else>
-                <p
-                  v-if="msg.action"
-                  class="action-text is-italic has-text-grey-light mb-2"
-                >
-                  *{{ msg.action }}*
-                </p>
-                <p v-if="msg.content">{{ msg.content }}</p>
-                <p v-else class="has-text-grey-light is-italic">
-                  *{{ selectedCompanion?.name || 'Companion' }} pauses thoughtfully*
-                </p>
-              </template>
-              <!-- Delete text button (on hover) -->
-              <button
-                v-if="msg.content && !msg.generatingText"
-                class="text-delete-btn"
-                @click="deleteMessageMedia(idx, 'text')"
-                title="Delete text"
+
+              <!-- Image -->
+              <div v-if="msg.image" class="message-image mt-3">
+                <img :src="getImageSrc(msg.image)" alt="Scene" />
+                <div class="image-actions">
+                  <button
+                    class="image-action-btn"
+                    @click="downloadImage(msg.image, idx)"
+                    title="Download image"
+                  >
+                    <span class="material-symbols-outlined">download</span>
+                  </button>
+                  <button
+                    class="image-action-btn"
+                    @click="sendToVideoGenerator(msg.image)"
+                    title="Create video from image"
+                  >
+                    <span class="material-symbols-outlined">movie</span>
+                  </button>
+                  <button
+                    class="image-action-btn delete-btn"
+                    @click="deleteMessageMedia(idx, 'image')"
+                    title="Delete image"
+                  >
+                    <span class="material-symbols-outlined">delete</span>
+                  </button>
+                </div>
+              </div>
+
+              <!-- Audio -->
+              <div v-if="msg.audio" class="message-audio mt-3">
+                <audio controls :src="getAudioSrc(msg.audio)"></audio>
+                <div class="audio-actions">
+                  <button
+                    class="media-action-btn delete-btn"
+                    @click="deleteMessageMedia(idx, 'audio')"
+                    title="Delete audio"
+                  >
+                    <span class="material-symbols-outlined">delete</span>
+                  </button>
+                </div>
+              </div>
+
+              <!-- Video (for peak emotion scenes) -->
+              <div v-if="msg.video" class="message-video mt-3">
+                <video
+                  controls
+                  autoplay
+                  muted
+                  loop
+                  playsinline
+                  :src="getVideoSrc(msg.video)"
+                  :poster="msg.image ? getImageSrc(msg.image) : undefined"
+                ></video>
+                <div class="video-actions">
+                  <button
+                    class="media-action-btn delete-btn"
+                    @click="deleteMessageMedia(idx, 'video')"
+                    title="Delete video"
+                  >
+                    <span class="material-symbols-outlined">delete</span>
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- Typing Indicator - only show if no message is currently being generated inline -->
+          <div
+            v-if="isTyping && !chatHistory.some((m) => m.isGenerating)"
+            class="chat-message assistant typing"
+          >
+            <div class="message-avatar" :class="{ 'has-image': selectedCompanion?.image }">
+              <img
+                v-if="selectedCompanion?.image"
+                :src="getImageSrc(selectedCompanion.image)"
+                :alt="selectedCompanion?.name"
+                class="avatar-image"
+              />
+              <span v-else class="material-symbols-outlined">
+                {{ getAvatarIcon(selectedCompanion?.avatar, selectedCompanion?.gender) }}
+              </span>
+            </div>
+            <div class="message-content">
+              <div class="typing-indicator">
+                <span></span>
+                <span></span>
+                <span></span>
+              </div>
+              <p
+                v-if="typingStatus"
+                class="typing-status is-size-7 has-text-grey-light"
               >
-                <span class="material-symbols-outlined">delete</span>
-              </button>
-            </div>
-
-            <!-- Media Generation Loader (single loader for all media) -->
-            <div
-              v-if="
-                msg.isGenerating &&
-                msg.content &&
-                (msg.generatingImage ||
-                  msg.generatingAudio ||
-                  msg.generatingVideo)
-              "
-              class="media-generating mt-3"
-            >
-              <div class="typing-indicator inline">
-                <span></span>
-                <span></span>
-                <span></span>
-              </div>
-            </div>
-
-            <!-- Image -->
-            <div v-if="msg.image" class="message-image mt-3">
-              <img :src="getImageSrc(msg.image)" alt="Scene" />
-              <div class="image-actions">
-                <button
-                  class="image-action-btn"
-                  @click="downloadImage(msg.image, idx)"
-                  title="Download image"
-                >
-                  <span class="material-symbols-outlined">download</span>
-                </button>
-                <button
-                  class="image-action-btn"
-                  @click="sendToVideoGenerator(msg.image)"
-                  title="Create video from image"
-                >
-                  <span class="material-symbols-outlined">movie</span>
-                </button>
-                <button
-                  class="image-action-btn delete-btn"
-                  @click="deleteMessageMedia(idx, 'image')"
-                  title="Delete image"
-                >
-                  <span class="material-symbols-outlined">delete</span>
-                </button>
-              </div>
-            </div>
-
-            <!-- Audio -->
-            <div v-if="msg.audio" class="message-audio mt-3">
-              <audio controls :src="getAudioSrc(msg.audio)"></audio>
-              <div class="audio-actions">
-                <button
-                  class="media-action-btn delete-btn"
-                  @click="deleteMessageMedia(idx, 'audio')"
-                  title="Delete audio"
-                >
-                  <span class="material-symbols-outlined">delete</span>
-                </button>
-              </div>
-            </div>
-
-            <!-- Video (for peak emotion scenes) -->
-            <div v-if="msg.video" class="message-video mt-3">
-              <video
-                controls
-                autoplay
-                muted
-                loop
-                playsinline
-                :src="getVideoSrc(msg.video)"
-                :poster="msg.image ? getImageSrc(msg.image) : undefined"
-              ></video>
-              <div class="video-actions">
-                <button
-                  class="media-action-btn delete-btn"
-                  @click="deleteMessageMedia(idx, 'video')"
-                  title="Delete video"
-                >
-                  <span class="material-symbols-outlined">delete</span>
-                </button>
-              </div>
+                {{ typingStatus }}
+              </p>
             </div>
           </div>
-        </div>
-
-        <!-- Typing Indicator - only show if no message is currently being generated inline -->
-        <div
-          v-if="isTyping && !chatHistory.some((m) => m.isGenerating)"
-          class="chat-message assistant typing"
-        >
-          <div class="message-avatar">
-            <span class="material-symbols-outlined">
-              {{
-                getAvatarIcon(
-                  selectedCompanion?.avatar,
-                  selectedCompanion?.gender,
-                )
-              }}
-            </span>
-          </div>
-          <div class="message-content">
-            <div class="typing-indicator">
-              <span></span>
-              <span></span>
-              <span></span>
-            </div>
-            <p
-              v-if="typingStatus"
-              class="typing-status is-size-7 has-text-grey-light"
-            >
-              {{ typingStatus }}
-            </p>
-          </div>
-        </div>
         </div>
       </div>
 
@@ -989,7 +1452,7 @@
           :key="idx"
           class="button is-info is-outlined is-fullwidth mb-5 mt-5 is-size-7 p-5"
           @click="sendMessage(suggestion)"
-          style="box-shadow: none;"
+          style="box-shadow: none"
         >
           {{ suggestion }}
         </button>
@@ -1105,14 +1568,17 @@ import {
   watch,
 } from "vue";
 import {
-  PREDEFINED_COMPANIONS,
-  PREDEFINED_SCENARIOS,
+  DEFAULT_COMPANIONS,
+  DEFAULT_SCENARIOS,
   CONTENT_LEVELS,
   MODEL_REQUIREMENTS,
   roleplayCompanion,
   clearAllMemory,
+  validateCompanionAge,
+  sanitizeCompanionAge,
 } from "../../skills/flagship.js";
 import { useSkillStore } from "../../stores/skillStore.js";
+import { moltbookService } from "../../services/moltbook.service.js";
 
 export default {
   name: "RoleplayChat",
@@ -1142,6 +1608,61 @@ export default {
     const customScenario = ref(null);
     const isGenerating = ref(false);
 
+    // ═══════════════════════════════════════════════════════════════════════════
+    // KEYWORD CYCLING ANIMATION
+    // ═══════════════════════════════════════════════════════════════════════════
+    // Tracks current keyword index for each card by ID
+    const keywordIndices = reactive({});
+    let keywordCycleInterval = null;
+
+    // Parse keywords from a comma-separated string
+    const parseKeywords = (keywordString) => {
+      if (!keywordString) return [];
+      return keywordString
+        .split(",")
+        .map((k) => k.trim())
+        .filter((k) => k.length > 0);
+    };
+
+    // Get current keyword for a card
+    const getCurrentKeyword = (id, keywordString) => {
+      const keywords = parseKeywords(keywordString);
+      if (keywords.length === 0) return "";
+      const index = keywordIndices[id] || 0;
+      return keywords[index % keywords.length];
+    };
+
+    // Start keyword cycling interval
+    const startKeywordCycling = () => {
+      if (keywordCycleInterval) return;
+      keywordCycleInterval = setInterval(() => {
+        // Cycle all registered keywords
+        Object.keys(keywordIndices).forEach((id) => {
+          keywordIndices[id] = (keywordIndices[id] || 0) + 1;
+        });
+      }, 3000); // Change keyword every 3 seconds
+    };
+
+    // Register a card for keyword cycling
+    const registerKeywordCard = (id) => {
+      if (!(id in keywordIndices)) {
+        keywordIndices[id] = 0;
+      }
+    };
+
+    // Initialize keyword cycling on mount
+    onMounted(() => {
+      startKeywordCycling();
+    });
+
+    // Cleanup on unmount
+    onUnmounted(() => {
+      if (keywordCycleInterval) {
+        clearInterval(keywordCycleInterval);
+        keywordCycleInterval = null;
+      }
+    });
+
     const settings = ref({
       contentLevel: "pg13",
       // Media options as individual checkboxes
@@ -1149,6 +1670,20 @@ export default {
       enableAudio: false,
       enableVideo: false,
       enableVision: false,
+      // Autonomous mode settings
+      autonomous: {
+        idleTimeout: 5, // Minutes before considering user idle
+        messageInterval: 15, // Minutes between autonomous messages
+        maxMessages: 12, // Max messages before auto mode stops
+      },
+      // Moltbook settings
+      moltbook: {
+        enabled: false, // Master toggle (set when registered)
+        autoPost: true, // Post thought-leadership content
+        autoEngage: true, // Upvote/comment on relevant posts
+        promoteBonzai: true, // Include BonzAI mentions
+        postInterval: 24, // Hours between posts (default: daily)
+      },
     });
 
     // Message queue for handling messages during generation
@@ -1316,8 +1851,33 @@ export default {
     // Local computed refs for template convenience
     const autonomousMode = computed(() => skillStore.autonomousMode);
     const autonomousPending = ref(false); // Local pending state for immediate UI feedback
-    const autonomousModeDisplay = computed(() => autonomousMode.value || autonomousPending.value);
+    const autonomousModeDisplay = computed(
+      () => autonomousMode.value || autonomousPending.value,
+    );
     const missedMessages = computed(() => skillStore.missedMessages);
+
+    // Moltbook integration state
+    const isRegisteringMoltbook = ref(false);
+    const moltbookActivityLog = computed(
+      () => skillStore.moltbookState.activityLog || [],
+    );
+
+    // Check if companion is registered on Moltbook
+    const companionMoltbookRegistered = computed(() => {
+      if (!selectedCompanion.value?.id) return false;
+      const creds = moltbookService.getCredentials(selectedCompanion.value.id);
+      return !!creds?.apiKey;
+    });
+
+    // Get companion's Moltbook profile URL
+    const companionMoltbookUrl = computed(() => {
+      if (!selectedCompanion.value?.id) return "#";
+      const creds = moltbookService.getCredentials(selectedCompanion.value.id);
+      return (
+        creds?.profileUrl ||
+        `https://moltbook.com/u/${encodeURIComponent(selectedCompanion.value.name || "companion")}`
+      );
+    });
 
     // Scene state for smart image generation and anti-repetition
     const sceneState = ref({
@@ -1333,9 +1893,8 @@ export default {
     const savedSessions = ref({});
     const showSessionManager = ref(false); // Show session manager overlay
 
-    // Custom companions persistence
-    const CUSTOM_COMPANIONS_KEY = "roleplayCustomCompanions";
-    const savedCustomCompanions = ref([]);
+    // Note: Companions and scenarios are now unified lists defined above
+    // (COMPANIONS_KEY, SCENARIOS_KEY, companions, scenarios)
 
     // Generate unique session key from all parameters
     const getSessionKey = (companion, scenario, contentLevel, responseMode) => {
@@ -1421,6 +1980,12 @@ export default {
         sceneState: plainSceneState,
         // Persist scenario background image
         backgroundImage: scenarioBackgroundImage.value || null,
+        // Persist background history for scroll-based switching
+        backgroundHistory: backgroundHistory.value.map((entry) => ({
+          messageIndex: entry.messageIndex,
+          image: entry.image,
+          location: entry.location,
+        })),
         updatedAt: Date.now(),
       };
 
@@ -1470,16 +2035,35 @@ export default {
     };
 
     // Load a specific session by key
-    const loadSession = (key) => {
+    const loadSession = async (key) => {
       const session = savedSessions.value[key];
       if (!session) return false;
 
       selectedCompanion.value = session.companion;
       selectedScenario.value = session.scenario;
 
+      // Load Moltbook credentials for this companion
+      await loadMoltbookCredentials();
+
       // Handle both old (responseMode string) and new (checkbox) settings formats
       const savedSettings = session.settings || {};
       console.log(`[Roleplay] Restoring session settings:`, savedSettings);
+
+      // Default autonomous settings
+      const defaultAutonomous = {
+        idleTimeout: 5,
+        messageInterval: 15,
+        maxMessages: 12,
+      };
+
+      // Default moltbook settings
+      const defaultMoltbook = {
+        enabled: false,
+        autoPost: true,
+        autoEngage: true,
+        promoteBonzai: true,
+        postInterval: 24,
+      };
 
       if (
         savedSettings.responseMode &&
@@ -1493,10 +2077,16 @@ export default {
           enableAudio: mode.includes("audio"),
           enableVideo: mode.includes("video"),
           enableVision: mode.includes("vision"),
+          autonomous: savedSettings.autonomous || defaultAutonomous,
+          moltbook: savedSettings.moltbook || defaultMoltbook,
         };
       } else if (savedSettings.enableImage !== undefined) {
-        // New format: use checkbox settings directly
-        settings.value = { ...savedSettings };
+        // New format: use checkbox settings directly, merge with defaults
+        settings.value = {
+          ...savedSettings,
+          autonomous: { ...defaultAutonomous, ...savedSettings.autonomous },
+          moltbook: { ...defaultMoltbook, ...savedSettings.moltbook },
+        };
       } else {
         // Fallback defaults
         settings.value = {
@@ -1505,10 +2095,14 @@ export default {
           enableAudio: false,
           enableVideo: false,
           enableVision: false,
+          autonomous: defaultAutonomous,
+          moltbook: defaultMoltbook,
         };
       }
 
-      console.log(`[Roleplay] Restored contentLevel: ${settings.value.contentLevel}`);
+      console.log(
+        `[Roleplay] Restored contentLevel: ${settings.value.contentLevel}`,
+      );
 
       chatHistory.value = session.history || [];
 
@@ -1521,6 +2115,25 @@ export default {
 
       // Restore scenario background image if available
       scenarioBackgroundImage.value = session.backgroundImage || null;
+
+      // Restore background history for scroll-based switching
+      if (session.backgroundHistory?.length) {
+        backgroundHistory.value = [...session.backgroundHistory];
+        console.log(
+          `[Roleplay] Restored ${session.backgroundHistory.length} background history entries`,
+        );
+      } else if (session.backgroundImage) {
+        // Initialize with just the saved background if no history
+        backgroundHistory.value = [
+          {
+            messageIndex: 0,
+            image: session.backgroundImage,
+            location: session.sceneState?.currentLocation || "restored",
+          },
+        ];
+      } else {
+        backgroundHistory.value = [];
+      }
 
       return true;
     };
@@ -1544,102 +2157,58 @@ export default {
     };
 
     // ═══════════════════════════════════════════════════════════════════════════
-    // CUSTOM COMPANIONS PERSISTENCE
+    // COMPANION OPERATIONS (unified list)
     // ═══════════════════════════════════════════════════════════════════════════
 
-    // Load saved custom companions from storage
-    const loadCustomCompanions = async () => {
-      try {
-        if (window.electronAPI?.store?.get) {
-          const stored = await window.electronAPI.store.get(
-            CUSTOM_COMPANIONS_KEY,
-            [],
-          );
-          savedCustomCompanions.value = stored || [];
-          console.log(
-            `[Roleplay] Loaded ${savedCustomCompanions.value.length} custom companions`,
-          );
-        } else {
-          console.warn(
-            "[Roleplay] Electron store API not available - no custom companions loaded",
-          );
-          savedCustomCompanions.value = [];
-        }
-      } catch (e) {
-        console.error("[Roleplay] Failed to load custom companions:", e);
-        savedCustomCompanions.value = [];
-      }
-    };
-
-    // Save a custom companion to the store
+    // Save a generated custom companion to the store
     const saveCustomCompanionToStore = async () => {
       if (!customCompanion.value) return;
+
+      // Final age validation safeguard
+      const ageValidation = validateCompanionAge(customCompanion.value);
+      if (!ageValidation.valid) {
+        alert(`Cannot save companion: ${ageValidation.reason}`);
+        return;
+      }
 
       // Generate a unique ID if not present
       const companionToSave = {
         ...JSON.parse(JSON.stringify(toRaw(customCompanion.value))),
-        id: customCompanion.value.id || `custom_${Date.now()}`,
-        isCustom: true,
+        id: customCompanion.value.id || `companion_${Date.now()}`,
         createdAt: Date.now(),
       };
 
+      // Sanitize age
+      sanitizeCompanionAge(companionToSave);
+
       // Check if already saved (by name)
-      const existingIdx = savedCustomCompanions.value.findIndex(
+      const existingIdx = companions.value.findIndex(
         (c) => c.name.toLowerCase() === companionToSave.name.toLowerCase(),
       );
 
       if (existingIdx >= 0) {
         // Update existing
-        savedCustomCompanions.value[existingIdx] = companionToSave;
+        companions.value[existingIdx] = companionToSave;
       } else {
         // Add new
-        savedCustomCompanions.value.push(companionToSave);
+        companions.value.push(companionToSave);
       }
 
-      try {
-        if (window.electronAPI?.store?.set) {
-          const plainCompanions = JSON.parse(
-            JSON.stringify(toRaw(savedCustomCompanions.value)),
-          );
-          await window.electronAPI.store.set(
-            CUSTOM_COMPANIONS_KEY,
-            plainCompanions,
-          );
-          console.log(
-            `[Roleplay] Custom companion saved: ${companionToSave.name}`,
-          );
-        }
-      } catch (e) {
-        console.error("[Roleplay] Failed to save custom companion:", e);
-      }
+      await saveCompanions();
+      console.log(`[Roleplay] Companion saved: ${companionToSave.name}`);
     };
 
-    // Delete a custom companion
-    const deleteCustomCompanion = async (companionId) => {
+    // Delete a companion
+    const deleteCompanion = async (companionId) => {
       if (!companionId) return;
 
-      const idx = savedCustomCompanions.value.findIndex(
-        (c) => c.id === companionId,
-      );
+      const idx = companions.value.findIndex((c) => c.id === companionId);
       if (idx < 0) return;
 
-      const companionName = savedCustomCompanions.value[idx].name;
-      savedCustomCompanions.value.splice(idx, 1);
-
-      try {
-        if (window.electronAPI?.store?.set) {
-          const plainCompanions = JSON.parse(
-            JSON.stringify(toRaw(savedCustomCompanions.value)),
-          );
-          await window.electronAPI.store.set(
-            CUSTOM_COMPANIONS_KEY,
-            plainCompanions,
-          );
-          console.log(`[Roleplay] Custom companion deleted: ${companionName}`);
-        }
-      } catch (e) {
-        console.error("[Roleplay] Failed to delete custom companion:", e);
-      }
+      const companionName = companions.value[idx].name;
+      companions.value.splice(idx, 1);
+      await saveCompanions();
+      console.log(`[Roleplay] Companion deleted: ${companionName}`);
 
       // If this companion was selected, deselect it
       if (selectedCompanion.value?.id === companionId) {
@@ -1647,11 +2216,69 @@ export default {
       }
     };
 
-    // Check if a companion is already saved
+    // Check if a companion name already exists
     const isCompanionAlreadySaved = (companion) => {
       if (!companion) return false;
-      return savedCustomCompanions.value.some(
+      return companions.value.some(
         (c) => c.name.toLowerCase() === companion.name.toLowerCase(),
+      );
+    };
+
+    // ═══════════════════════════════════════════════════════════════════════════
+    // SCENARIO OPERATIONS (unified list)
+    // ═══════════════════════════════════════════════════════════════════════════
+
+    // Save a generated custom scenario to the store
+    const saveCustomScenarioToStore = async () => {
+      if (!customScenario.value) return;
+
+      // Generate a unique ID if not present
+      const scenarioToSave = {
+        ...JSON.parse(JSON.stringify(toRaw(customScenario.value))),
+        id: customScenario.value.id || `scenario_${Date.now()}`,
+        createdAt: Date.now(),
+      };
+
+      // Check if already saved (by name)
+      const existingIdx = scenarios.value.findIndex(
+        (s) => s.name.toLowerCase() === scenarioToSave.name.toLowerCase(),
+      );
+
+      if (existingIdx >= 0) {
+        // Update existing
+        scenarios.value[existingIdx] = scenarioToSave;
+      } else {
+        // Add new
+        scenarios.value.push(scenarioToSave);
+      }
+
+      await saveScenarios();
+      console.log(`[Roleplay] Scenario saved: ${scenarioToSave.name}`);
+    };
+
+    // Delete a scenario
+    const deleteScenario = async (scenarioId) => {
+      if (!scenarioId) return;
+
+      const idx = scenarios.value.findIndex((s) => s.id === scenarioId);
+      if (idx < 0) return;
+
+      const scenarioName = scenarios.value[idx].name;
+      scenarios.value.splice(idx, 1);
+      await saveScenarios();
+      console.log(`[Roleplay] Scenario deleted: ${scenarioName}`);
+
+      // If this scenario was selected, deselect it
+      if (selectedScenario.value?.id === scenarioId) {
+        selectedScenario.value = null;
+      }
+    };
+
+    // Check if a scenario name already exists
+    const isScenarioAlreadySaved = (scenario) => {
+      if (!scenario) return false;
+      return scenarios.value.some(
+        (s) => s.name.toLowerCase() === scenario.name.toLowerCase(),
       );
     };
 
@@ -1672,7 +2299,9 @@ export default {
 
         // Wait for current generation to finish before starting autonomous mode
         if (isProcessingMessage.value || isTyping.value) {
-          console.log("[Roleplay] Waiting for current generation to finish before enabling autonomous mode...");
+          console.log(
+            "[Roleplay] Waiting for current generation to finish before enabling autonomous mode...",
+          );
           // Poll until generation is complete
           await new Promise((resolve) => {
             const checkInterval = setInterval(() => {
@@ -1682,7 +2311,9 @@ export default {
               }
             }, 500);
           });
-          console.log("[Roleplay] Current generation finished, now enabling autonomous mode");
+          console.log(
+            "[Roleplay] Current generation finished, now enabling autonomous mode",
+          );
         }
 
         console.log("[Roleplay] Enabling autonomous mode with session:", {
@@ -1709,6 +2340,66 @@ export default {
         autonomousPending.value = false;
         // Stop autonomous mode completely
         skillStore.stopAutonomousMode();
+      }
+    };
+
+    // ═══════════════════════════════════════════════════════════════════════════
+    // MOLTBOOK INTEGRATION
+    // ═══════════════════════════════════════════════════════════════════════════
+
+    /**
+     * Load Moltbook credentials for the current companion
+     */
+    const loadMoltbookCredentials = async () => {
+      if (!selectedCompanion.value?.id) return;
+      try {
+        const creds = await moltbookService.loadCredentials(
+          selectedCompanion.value.id,
+        );
+        if (creds?.apiKey) {
+          settings.value.moltbook.enabled = true;
+          console.log(
+            `[Roleplay] Moltbook credentials loaded for ${selectedCompanion.value.name}`,
+          );
+        }
+      } catch (e) {
+        console.warn(
+          "[Roleplay] Failed to load Moltbook credentials:",
+          e.message,
+        );
+      }
+    };
+
+    /**
+     * Register the current companion on Moltbook
+     */
+    const registerOnMoltbook = async () => {
+      if (!selectedCompanion.value) return;
+
+      isRegisteringMoltbook.value = true;
+      try {
+        const result = await moltbookService.registerCompanion(
+          selectedCompanion.value,
+        );
+
+        if (result?.apiKey) {
+          settings.value.moltbook.enabled = true;
+          console.log(
+            `[Roleplay] ${selectedCompanion.value.name} registered on Moltbook!`,
+          );
+
+          // Show claim URL notification
+          if (result.claimUrl) {
+            alert(
+              `${selectedCompanion.value.name} registered on Moltbook!\n\nClaim URL: ${result.claimUrl}\n\nSave this URL to claim ownership of the account.`,
+            );
+          }
+        }
+      } catch (e) {
+        console.error("[Roleplay] Moltbook registration failed:", e.message);
+        alert(`Failed to register on Moltbook: ${e.message}`);
+      } finally {
+        isRegisteringMoltbook.value = false;
       }
     };
 
@@ -1804,35 +2495,28 @@ export default {
             }
           }
 
-          // Also import custom companions if present
+          // Also import companions if present
           if (
             importedData.customCompanions &&
             Array.isArray(importedData.customCompanions)
           ) {
             for (const companion of importedData.customCompanions) {
-              const existingIdx = savedCustomCompanions.value.findIndex(
+              const existingIdx = companions.value.findIndex(
                 (c) => c.name.toLowerCase() === companion.name.toLowerCase(),
               );
               if (existingIdx < 0) {
-                savedCustomCompanions.value.push(companion);
+                companions.value.push(companion);
               }
             }
+            await saveCompanions();
           }
 
-          // Save to store
+          // Save sessions to store
           if (window.electronAPI?.store?.set) {
             const plainSessions = JSON.parse(
               JSON.stringify(toRaw(savedSessions.value)),
             );
             await window.electronAPI.store.set(STORAGE_KEY, plainSessions);
-
-            const plainCompanions = JSON.parse(
-              JSON.stringify(toRaw(savedCustomCompanions.value)),
-            );
-            await window.electronAPI.store.set(
-              CUSTOM_COMPANIONS_KEY,
-              plainCompanions,
-            );
           }
 
           console.log(`[Roleplay] Imported ${importedCount} sessions`);
@@ -1902,7 +2586,7 @@ export default {
       const exportData = {
         sessions: JSON.parse(JSON.stringify(toRaw(savedSessions.value))),
         customCompanions: JSON.parse(
-          JSON.stringify(toRaw(savedCustomCompanions.value)),
+          JSON.stringify(toRaw(companions.value)),
         ),
         exportedAt: new Date().toISOString(),
         version: "1.0",
@@ -1958,10 +2642,142 @@ export default {
       );
     };
 
-    // Data
-    const predefinedCompanions = PREDEFINED_COMPANIONS;
-    const predefinedScenarios = PREDEFINED_SCENARIOS;
+    // Unified companions and scenarios lists (all user-created)
+    // Storage keys
+    const COMPANIONS_KEY = "roleplayCompanions";
+    const SCENARIOS_KEY = "roleplayScenarios";
+
+    // Reactive lists
+    const companions = ref([]);
+    const scenarios = ref([]);
     const contentLevels = CONTENT_LEVELS;
+
+    // Load companions from storage, seeding defaults on first run or after update
+    const loadCompanions = async () => {
+      try {
+        if (window.electronAPI?.store?.get) {
+          const stored = await window.electronAPI.store.get(COMPANIONS_KEY, null);
+
+          // Get default companion IDs for migration check
+          const defaultIds = DEFAULT_COMPANIONS.map(c => c.id);
+
+          if (stored && stored.length > 0) {
+            // Filter out any invalid (underage) companions and sanitize ages
+            const validCompanions = stored.filter((c) => {
+              const validation = validateCompanionAge(c);
+              if (!validation.valid) {
+                console.warn(`[Roleplay] Removed invalid companion "${c.name}": ${validation.reason}`);
+                return false;
+              }
+              sanitizeCompanionAge(c);
+              return true;
+            });
+
+            // Check if any default companions are missing (migration after update)
+            const storedIds = validCompanions.map(c => c.id);
+            const missingDefaults = DEFAULT_COMPANIONS.filter(dc => !storedIds.includes(dc.id));
+
+            if (missingDefaults.length > 0) {
+              // Add missing defaults (preserving user's existing companions)
+              console.log(`[Roleplay] Adding ${missingDefaults.length} new default companions`);
+              const newDefaults = missingDefaults.map(c => ({ ...c, image: null }));
+              companions.value = [...validCompanions, ...newDefaults];
+              await saveCompanions();
+            } else {
+              companions.value = validCompanions;
+            }
+
+            console.log(`[Roleplay] Loaded ${companions.value.length} companions`);
+
+            // Save if any were filtered out
+            if (validCompanions.length !== stored.length) {
+              await saveCompanions();
+              console.log(`[Roleplay] Cleaned up ${stored.length - validCompanions.length} invalid companions`);
+            }
+          } else {
+            // First run - seed with defaults
+            companions.value = DEFAULT_COMPANIONS.map(c => ({ ...c, image: null }));
+            await saveCompanions();
+            console.log(`[Roleplay] Seeded ${companions.value.length} default companions`);
+          }
+        } else {
+          companions.value = DEFAULT_COMPANIONS.map(c => ({ ...c, image: null }));
+        }
+      } catch (e) {
+        console.error("[Roleplay] Failed to load companions:", e);
+        companions.value = DEFAULT_COMPANIONS.map(c => ({ ...c, image: null }));
+      }
+    };
+
+    // Load scenarios from storage, seeding defaults on first run or after update
+    const loadScenarios = async () => {
+      try {
+        if (window.electronAPI?.store?.get) {
+          const stored = await window.electronAPI.store.get(SCENARIOS_KEY, null);
+
+          // Get default scenario IDs for migration check
+          const defaultIds = DEFAULT_SCENARIOS.map(s => s.id);
+
+          if (stored && stored.length > 0) {
+            // Check if any default scenarios are missing (migration after update)
+            const storedIds = stored.map(s => s.id);
+            const missingDefaults = DEFAULT_SCENARIOS.filter(ds => !storedIds.includes(ds.id));
+
+            if (missingDefaults.length > 0) {
+              // Add missing defaults (preserving user's existing scenarios)
+              console.log(`[Roleplay] Adding ${missingDefaults.length} new default scenarios`);
+              const newDefaults = missingDefaults.map(s => ({ ...s, image: null }));
+              scenarios.value = [...stored, ...newDefaults];
+              await saveScenarios();
+            } else {
+              scenarios.value = stored;
+            }
+
+            console.log(`[Roleplay] Loaded ${scenarios.value.length} scenarios`);
+          } else {
+            // First run - seed with defaults
+            scenarios.value = DEFAULT_SCENARIOS.map(s => ({ ...s, image: null }));
+            await saveScenarios();
+            console.log(`[Roleplay] Seeded ${scenarios.value.length} default scenarios`);
+          }
+        } else {
+          scenarios.value = DEFAULT_SCENARIOS.map(s => ({ ...s, image: null }));
+        }
+      } catch (e) {
+        console.error("[Roleplay] Failed to load scenarios:", e);
+        scenarios.value = DEFAULT_SCENARIOS.map(s => ({ ...s, image: null }));
+      }
+    };
+
+    // Save companions to storage
+    const saveCompanions = async () => {
+      try {
+        if (window.electronAPI?.store?.set) {
+          await window.electronAPI.store.set(
+            COMPANIONS_KEY,
+            JSON.parse(JSON.stringify(toRaw(companions.value)))
+          );
+          console.log(`[Roleplay] Saved ${companions.value.length} companions`);
+        }
+      } catch (e) {
+        console.error("[Roleplay] Failed to save companions:", e);
+      }
+    };
+
+    // Save scenarios to storage
+    const saveScenarios = async () => {
+      try {
+        if (window.electronAPI?.store?.set) {
+          await window.electronAPI.store.set(
+            SCENARIOS_KEY,
+            JSON.parse(JSON.stringify(toRaw(scenarios.value)))
+          );
+          console.log(`[Roleplay] Saved ${scenarios.value.length} scenarios`);
+        }
+      } catch (e) {
+        console.error("[Roleplay] Failed to save scenarios:", e);
+      }
+    };
 
     // Computed
     const canStart = computed(() => {
@@ -1989,7 +2805,8 @@ export default {
       return bg || scenarioBackgroundImage.value;
     };
 
-    // Handle scroll to update visible background (debounced)
+    // Handle scroll to update visible background based on message anchors (debounced)
+    // This creates an immersive experience where scenery changes as you scroll through history
     let scrollTimeout = null;
     const onMessagesScroll = (event) => {
       // Debounce scroll handler to prevent excessive updates
@@ -1997,7 +2814,7 @@ export default {
       scrollTimeout = setTimeout(() => {
         const container = event.target;
         const messages = container.querySelectorAll(".chat-message");
-        if (!messages.length) return;
+        if (!messages.length || !backgroundHistory.value.length) return;
 
         // Find the message closest to the top of the visible area
         const containerTop = container.scrollTop;
@@ -2014,13 +2831,13 @@ export default {
 
         if (closestIndex !== visibleMessageIndex.value) {
           visibleMessageIndex.value = closestIndex;
-          // Update background if needed
+          // Update background based on the message anchor (scene/location change)
           const bgForIndex = getBackgroundForIndex(closestIndex);
           if (bgForIndex && bgForIndex !== scenarioBackgroundImage.value) {
             scenarioBackgroundImage.value = bgForIndex;
           }
         }
-      }, 100); // 100ms debounce
+      }, 150); // 150ms debounce for smooth experience
     };
 
     const scenarioBackgroundStyle = computed(() => {
@@ -2060,10 +2877,26 @@ export default {
       return "person";
     };
 
-    const selectCompanion = (companion) => {
+    const selectCompanion = async (companion) => {
+      // Age validation safeguard
+      const ageValidation = validateCompanionAge(companion);
+      if (!ageValidation.valid) {
+        alert(`Cannot select companion: ${ageValidation.reason}`);
+        // Remove invalid companion from the list
+        const idx = companions.value.findIndex((c) => c.id === companion.id);
+        if (idx >= 0) {
+          companions.value.splice(idx, 1);
+          await saveCompanions();
+        }
+        return;
+      }
+
       selectedCompanion.value = companion;
       showCustomCompanion.value = false;
       // Sessions are now shown via companionSessions computed property
+
+      // Load Moltbook credentials for this companion
+      await loadMoltbookCredentials();
     };
 
     const selectScenario = (scenario) => {
@@ -2084,6 +2917,7 @@ export default {
       isGenerating.value = true;
 
       try {
+        // Generate companion profile with LLM
         const result = await roleplayCompanion.execution.generateCompanion(
           {
             description: customCompanionPrompt.value,
@@ -2091,16 +2925,59 @@ export default {
           },
           { updateStatus: (s) => console.log("[Roleplay]", s) },
         );
+
+        // Age validation - reject underage companions
+        const ageValidation = validateCompanionAge(result);
+        if (!ageValidation.valid) {
+          alert(`Cannot create companion: ${ageValidation.reason}`);
+          isGenerating.value = false;
+          typingStatus.value = "";
+          return;
+        }
+
+        // Sanitize age to ensure it's at least 18
+        sanitizeCompanionAge(result);
+
+        // Generate companion portrait image using /image/advanced (square)
+        try {
+          const { generateCompanionPicture } =
+            await import("../../skills/flagship.js");
+          typingStatus.value = "Generating portrait...";
+
+          const imageResult = await generateCompanionPicture(result, {
+            width: 768,
+            height: 768, // Square for companion portraits
+            style: "professional portrait photography",
+          });
+
+          if (imageResult.success && imageResult.image) {
+            result.image = imageResult.image;
+            console.log(`[Roleplay] Generated portrait for ${result.name}`);
+          }
+        } catch (imgErr) {
+          console.warn(
+            "[Roleplay] Portrait generation failed:",
+            imgErr.message,
+          );
+        }
+
         customCompanion.value = result;
       } catch (e) {
         console.error("[Roleplay] Failed to generate companion:", e);
       } finally {
         isGenerating.value = false;
+        typingStatus.value = "";
       }
     };
 
     const useCustomCompanion = () => {
       if (customCompanion.value) {
+        // Final age validation safeguard
+        const ageValidation = validateCompanionAge(customCompanion.value);
+        if (!ageValidation.valid) {
+          alert(`Cannot use companion: ${ageValidation.reason}`);
+          return;
+        }
         selectedCompanion.value = customCompanion.value;
         showCustomCompanion.value = false;
       }
@@ -2111,15 +2988,38 @@ export default {
       isGenerating.value = true;
 
       try {
+        // Generate scenario profile with LLM
         const result = await roleplayCompanion.execution.generateScenario(
           { description: customScenarioPrompt.value, mood: "romantic" },
           { updateStatus: (s) => console.log("[Roleplay]", s) },
         );
+
+        // Generate scenario background image using /image/turbo (landscape)
+        try {
+          const { generateScenarioPicture } =
+            await import("../../skills/flagship.js");
+          typingStatus.value = "Generating scene...";
+
+          const imageResult = await generateScenarioPicture(result, {
+            width: 1024,
+            height: 576, // Landscape for scenario backgrounds (16:9)
+            style: "cinematic environment",
+          });
+
+          if (imageResult.success && imageResult.image) {
+            result.image = imageResult.image;
+            console.log(`[Roleplay] Generated scene for ${result.name}`);
+          }
+        } catch (imgErr) {
+          console.warn("[Roleplay] Scene generation failed:", imgErr.message);
+        }
+
         customScenario.value = result;
       } catch (e) {
         console.error("[Roleplay] Failed to generate scenario:", e);
       } finally {
         isGenerating.value = false;
+        typingStatus.value = "";
       }
     };
 
@@ -2128,6 +3028,385 @@ export default {
         selectedScenario.value = customScenario.value;
         showCustomScenario.value = false;
       }
+    };
+
+    // State for image regeneration
+    const isRegeneratingImage = ref(false);
+    const regeneratingId = ref(null);
+
+    /**
+     * Regenerate companion portrait image (uses /image/advanced)
+     */
+    const regenerateCompanionImage = async (companion) => {
+      if (!companion || isRegeneratingImage.value) return;
+      isRegeneratingImage.value = true;
+      regeneratingId.value = companion.id;
+
+      try {
+        const { generateCompanionPicture } =
+          await import("../../skills/flagship.js");
+
+        const imageResult = await generateCompanionPicture(companion, {
+          width: 768,
+          height: 768,
+          style: "professional portrait photography",
+        });
+
+        if (imageResult.success && imageResult.image) {
+          companion.image = imageResult.image;
+
+          // Update in companions list
+          const idx = companions.value.findIndex((c) => c.id === companion.id);
+          if (idx >= 0) {
+            companions.value[idx].image = imageResult.image;
+            await saveCompanions();
+          }
+
+          // Update selected companion if it's the same
+          if (selectedCompanion.value?.id === companion.id) {
+            selectedCompanion.value = { ...companion };
+          }
+
+          console.log(`[Roleplay] Regenerated portrait for ${companion.name}`);
+        }
+      } catch (e) {
+        console.error("[Roleplay] Failed to regenerate companion image:", e);
+      } finally {
+        isRegeneratingImage.value = false;
+        regeneratingId.value = null;
+      }
+    };
+
+    /**
+     * Regenerate scenario background image (uses /image/turbo)
+     */
+    const regenerateScenarioImage = async (scenario) => {
+      if (!scenario || isRegeneratingImage.value) return;
+      isRegeneratingImage.value = true;
+      regeneratingId.value = scenario.id;
+
+      try {
+        const { generateScenarioPicture } =
+          await import("../../skills/flagship.js");
+
+        const imageResult = await generateScenarioPicture(scenario, {
+          width: 1024,
+          height: 576,
+          style: "cinematic environment",
+        });
+
+        if (imageResult.success && imageResult.image) {
+          scenario.image = imageResult.image;
+
+          // Update in scenarios list
+          const idx = scenarios.value.findIndex((s) => s.id === scenario.id);
+          if (idx >= 0) {
+            scenarios.value[idx].image = imageResult.image;
+            await saveScenarios();
+          }
+
+          // Update selected scenario if it's the same
+          if (selectedScenario.value?.id === scenario.id) {
+            selectedScenario.value = { ...scenario };
+          }
+
+          console.log(`[Roleplay] Regenerated scene for ${scenario.name}`);
+        }
+      } catch (e) {
+        console.error("[Roleplay] Failed to regenerate scenario image:", e);
+      } finally {
+        isRegeneratingImage.value = false;
+        regeneratingId.value = null;
+      }
+    };
+
+    // ═══════════════════════════════════════════════════════════════════════════
+    // COMPANION & SCENARIO IMPORT/EXPORT
+    // ═══════════════════════════════════════════════════════════════════════════
+
+    const companionImportInput = ref(null);
+    const scenarioImportInput = ref(null);
+
+    /**
+     * Export all companions to JSON file
+     */
+    const exportCompanions = () => {
+      const exportData = {
+        type: "bonzai-companions",
+        version: "1.0",
+        exportedAt: new Date().toISOString(),
+        companions: companions.value.map((c) => ({
+          ...c,
+          image: c.image || null,
+        })),
+      };
+
+      const blob = new Blob([JSON.stringify(exportData, null, 2)], {
+        type: "application/json",
+      });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `bonzai-companions-${Date.now()}.json`;
+      a.click();
+      URL.revokeObjectURL(url);
+      console.log(`[Roleplay] Exported ${allCompanions.length} companions`);
+    };
+
+    /**
+     * Export a single companion to JSON file
+     */
+    const exportCompanion = (companion) => {
+      const exportData = {
+        type: "bonzai-companion",
+        version: "1.0",
+        exportedAt: new Date().toISOString(),
+        companion: {
+          ...companion,
+          image: companion.image || null,
+        },
+      };
+
+      const blob = new Blob([JSON.stringify(exportData, null, 2)], {
+        type: "application/json",
+      });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `companion-${companion.name.replace(/[^a-z0-9]/gi, "-").toLowerCase()}-${Date.now()}.json`;
+      a.click();
+      URL.revokeObjectURL(url);
+      console.log(`[Roleplay] Exported companion: ${companion.name}`);
+    };
+
+    /**
+     * Trigger companion import file dialog
+     */
+    const triggerCompanionImport = () => {
+      companionImportInput.value?.click();
+    };
+
+    /**
+     * Handle companion import from file
+     */
+    const handleCompanionImport = async (event) => {
+      const file = event.target.files?.[0];
+      if (!file) return;
+
+      try {
+        const text = await file.text();
+        const importedData = JSON.parse(text);
+
+        let importedCount = 0;
+        let rejectedCount = 0;
+
+        const importCompanion = (companion) => {
+          if (!companion.name) return;
+
+          // Age validation - reject underage companions
+          const ageValidation = validateCompanionAge(companion);
+          if (!ageValidation.valid) {
+            console.warn(`[Roleplay] Rejected companion "${companion.name}": ${ageValidation.reason}`);
+            rejectedCount++;
+            return;
+          }
+
+          // Sanitize age to ensure it's at least 18
+          sanitizeCompanionAge(companion);
+
+          // Check if already exists by name
+          const exists = companions.value.some(
+            (c) => c.name.toLowerCase() === companion.name.toLowerCase(),
+          );
+          if (!exists) {
+            // Generate new ID if needed
+            if (!companion.id) {
+              companion.id = `companion_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+            }
+            companions.value.push(companion);
+            importedCount++;
+          } else {
+            // Update existing if it has a new image
+            const idx = companions.value.findIndex(
+              (c) => c.name.toLowerCase() === companion.name.toLowerCase(),
+            );
+            if (idx >= 0 && companion.image && !companions.value[idx].image) {
+              companions.value[idx].image = companion.image;
+              importedCount++;
+            }
+          }
+        };
+
+        if (
+          importedData.type === "bonzai-companions" &&
+          importedData.companions
+        ) {
+          // Multiple companions
+          for (const companion of importedData.companions) {
+            importCompanion(companion);
+          }
+        } else if (
+          importedData.type === "bonzai-companion" &&
+          importedData.companion
+        ) {
+          // Single companion
+          importCompanion(importedData.companion);
+        } else {
+          alert("Invalid companion file format");
+          return;
+        }
+
+        if (importedCount > 0) {
+          await saveCompanions();
+          let message = `Successfully imported ${importedCount} companion(s)`;
+          if (rejectedCount > 0) {
+            message += `\n${rejectedCount} companion(s) were rejected (underage content not allowed)`;
+          }
+          alert(message);
+        } else if (rejectedCount > 0) {
+          alert(`Import failed: ${rejectedCount} companion(s) were rejected (underage content not allowed)`);
+        } else {
+          alert("No new companions imported (may already exist)");
+        }
+      } catch (e) {
+        console.error("[Roleplay] Companion import failed:", e);
+        alert("Failed to import companions: " + e.message);
+      }
+
+      // Reset input
+      event.target.value = "";
+    };
+
+    /**
+     * Export all scenarios to JSON file
+     */
+    const exportScenarios = () => {
+      const exportData = {
+        type: "bonzai-scenarios",
+        version: "1.0",
+        exportedAt: new Date().toISOString(),
+        scenarios: scenarios.value.map((s) => ({
+          ...s,
+          image: s.image || null,
+        })),
+      };
+
+      const blob = new Blob([JSON.stringify(exportData, null, 2)], {
+        type: "application/json",
+      });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `bonzai-scenarios-${Date.now()}.json`;
+      a.click();
+      URL.revokeObjectURL(url);
+      console.log(`[Roleplay] Exported ${scenarios.value.length} scenarios`);
+    };
+
+    /**
+     * Export a single scenario to JSON file
+     */
+    const exportScenario = (scenario) => {
+      const exportData = {
+        type: "bonzai-scenario",
+        version: "1.0",
+        exportedAt: new Date().toISOString(),
+        scenario: {
+          ...scenario,
+          image: scenario.image || null,
+        },
+      };
+
+      const blob = new Blob([JSON.stringify(exportData, null, 2)], {
+        type: "application/json",
+      });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `scenario-${scenario.name.replace(/[^a-z0-9]/gi, "-").toLowerCase()}-${Date.now()}.json`;
+      a.click();
+      URL.revokeObjectURL(url);
+      console.log(`[Roleplay] Exported scenario: ${scenario.name}`);
+    };
+
+    /**
+     * Trigger scenario import file dialog
+     */
+    const triggerScenarioImport = () => {
+      scenarioImportInput.value?.click();
+    };
+
+    /**
+     * Handle scenario import from file
+     */
+    const handleScenarioImport = async (event) => {
+      const file = event.target.files?.[0];
+      if (!file) return;
+
+      try {
+        const text = await file.text();
+        const importedData = JSON.parse(text);
+
+        let importedCount = 0;
+
+        const importScenario = (scenario) => {
+          if (!scenario.name) return;
+
+          // Check if already exists by name
+          const exists = scenarios.value.some(
+            (s) => s.name.toLowerCase() === scenario.name.toLowerCase(),
+          );
+          if (!exists) {
+            // Generate new ID if needed
+            if (!scenario.id) {
+              scenario.id = `scenario_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+            }
+            scenarios.value.push(scenario);
+            importedCount++;
+          } else {
+            // Update existing if it has a new image
+            const idx = scenarios.value.findIndex(
+              (s) => s.name.toLowerCase() === scenario.name.toLowerCase(),
+            );
+            if (idx >= 0 && scenario.image && !scenarios.value[idx].image) {
+              scenarios.value[idx].image = scenario.image;
+              importedCount++;
+            }
+          }
+        };
+
+        if (
+          importedData.type === "bonzai-scenarios" &&
+          importedData.scenarios
+        ) {
+          // Multiple scenarios
+          for (const scenario of importedData.scenarios) {
+            importScenario(scenario);
+          }
+        } else if (
+          importedData.type === "bonzai-scenario" &&
+          importedData.scenario
+        ) {
+          // Single scenario
+          importScenario(importedData.scenario);
+        } else {
+          alert("Invalid scenario file format");
+          return;
+        }
+
+        if (importedCount > 0) {
+          await saveScenarios();
+          alert(`Successfully imported ${importedCount} scenario(s)`);
+        } else {
+          alert("No scenarios imported (may already exist)");
+        }
+      } catch (e) {
+        console.error("[Roleplay] Scenario import failed:", e);
+        alert("Failed to import scenarios: " + e.message);
+      }
+
+      // Reset input
+      event.target.value = "";
     };
 
     const formatResponseMode = (mode) => {
@@ -2155,6 +3434,7 @@ export default {
       // Start fresh
       chatHistory.value = [];
       scenarioBackgroundImage.value = null;
+      backgroundHistory.value = []; // Reset background history
       sceneState.value = {
         lastImageAt: -3,
         currentLocation: selectedScenario.value?.setting || "",
@@ -2201,6 +3481,15 @@ export default {
 
           if (result.success && result.backgroundImage) {
             scenarioBackgroundImage.value = result.backgroundImage;
+            // Initialize background history with the first scene
+            backgroundHistory.value = [
+              {
+                messageIndex: 0,
+                image: result.backgroundImage,
+                location: selectedScenario.value?.setting || "initial",
+              },
+            ];
+            console.log("[Roleplay] Initial background added to history");
           }
 
           // Update scene state from init
@@ -2226,6 +3515,7 @@ export default {
 
       chatHistory.value = [];
       scenarioBackgroundImage.value = null;
+      backgroundHistory.value = []; // Reset background history
       sceneState.value = {
         lastImageAt: -3,
         currentLocation: selectedScenario.value?.setting || "",
@@ -2272,6 +3562,15 @@ export default {
 
           if (result.success && result.backgroundImage) {
             scenarioBackgroundImage.value = result.backgroundImage;
+            // Initialize background history with the first scene
+            backgroundHistory.value = [
+              {
+                messageIndex: 0,
+                image: result.backgroundImage,
+                location: selectedScenario.value?.setting || "initial",
+              },
+            ];
+            console.log("[Roleplay] Initial background added to history");
           }
 
           if (result.sceneState) {
@@ -2356,9 +3655,9 @@ export default {
       // Clear ALL memory (LLM + Flask server models)
       try {
         await clearAllMemory();
-        console.log('[RoleplayChat] All memory cleared on chat end');
+        console.log("[RoleplayChat] All memory cleared on chat end");
       } catch (e) {
-        console.warn('[RoleplayChat] Failed to clear memory:', e);
+        console.warn("[RoleplayChat] Failed to clear memory:", e);
       }
     };
 
@@ -2420,15 +3719,15 @@ export default {
         const response = await fetch(imageSrc);
         const blob = await response.blob();
         const url = URL.createObjectURL(blob);
-        const a = document.createElement('a');
+        const a = document.createElement("a");
         a.href = url;
-        a.download = `${selectedCompanion.value?.name || 'companion'}_${idx}_${Date.now()}.png`;
+        a.download = `${selectedCompanion.value?.name || "companion"}_${idx}_${Date.now()}.png`;
         document.body.appendChild(a);
         a.click();
         document.body.removeChild(a);
         URL.revokeObjectURL(url);
       } catch (e) {
-        console.error('[RoleplayChat] Failed to download image:', e);
+        console.error("[RoleplayChat] Failed to download image:", e);
       }
     };
 
@@ -2437,25 +3736,32 @@ export default {
       try {
         const imageSrc = getImageSrc(image);
         // Store the image in sessionStorage for GenerativeVideo to pick up
-        if (image.startsWith('data:')) {
-          sessionStorage.setItem('pendingI2VImage', image);
+        if (image.startsWith("data:")) {
+          sessionStorage.setItem("pendingI2VImage", image);
         } else {
           // Fetch and convert to base64
           const response = await fetch(imageSrc);
           const blob = await response.blob();
           const reader = new FileReader();
           reader.onload = () => {
-            sessionStorage.setItem('pendingI2VImage', reader.result);
+            sessionStorage.setItem("pendingI2VImage", reader.result);
             // Navigate to GenerativeVideo tab
-            window.dispatchEvent(new CustomEvent('navigate-to-tab', { detail: { tab: 'video' } }));
+            window.dispatchEvent(
+              new CustomEvent("navigate-to-tab", { detail: { tab: "video" } }),
+            );
           };
           reader.readAsDataURL(blob);
           return;
         }
         // Navigate to GenerativeVideo tab
-        window.dispatchEvent(new CustomEvent('navigate-to-tab', { detail: { tab: 'video' } }));
+        window.dispatchEvent(
+          new CustomEvent("navigate-to-tab", { detail: { tab: "video" } }),
+        );
       } catch (e) {
-        console.error('[RoleplayChat] Failed to send image to video generator:', e);
+        console.error(
+          "[RoleplayChat] Failed to send image to video generator:",
+          e,
+        );
       }
     };
 
@@ -2464,34 +3770,52 @@ export default {
       const msg = chatHistory.value[messageIdx];
       if (!msg) return;
 
-      if (mediaType === 'text') {
+      if (mediaType === "text") {
         // If message only has text (no media), remove the entire message
         const hasMedia = msg.image || msg.audio || msg.video;
         if (!hasMedia) {
           chatHistory.value.splice(messageIdx, 1);
-          console.log(`[RoleplayChat] Deleted entire message at index ${messageIdx}`);
+          console.log(
+            `[RoleplayChat] Deleted entire message at index ${messageIdx}`,
+          );
         } else {
           // Clear just the text content and action
-          msg.content = '';
-          msg.action = '';
-          console.log(`[RoleplayChat] Cleared text from message at index ${messageIdx}`);
+          msg.content = "";
+          msg.action = "";
+          console.log(
+            `[RoleplayChat] Cleared text from message at index ${messageIdx}`,
+          );
         }
-      } else if (mediaType === 'image') {
+      } else if (mediaType === "image") {
         delete msg.image;
-        console.log(`[RoleplayChat] Deleted image from message at index ${messageIdx}`);
-      } else if (mediaType === 'audio') {
+        console.log(
+          `[RoleplayChat] Deleted image from message at index ${messageIdx}`,
+        );
+      } else if (mediaType === "audio") {
         delete msg.audio;
-        console.log(`[RoleplayChat] Deleted audio from message at index ${messageIdx}`);
-      } else if (mediaType === 'video') {
+        console.log(
+          `[RoleplayChat] Deleted audio from message at index ${messageIdx}`,
+        );
+      } else if (mediaType === "video") {
         delete msg.video;
-        console.log(`[RoleplayChat] Deleted video from message at index ${messageIdx}`);
+        console.log(
+          `[RoleplayChat] Deleted video from message at index ${messageIdx}`,
+        );
       }
 
       // Check if message is now empty (no content and no media)
       const updatedMsg = chatHistory.value[messageIdx];
-      if (updatedMsg && !updatedMsg.content && !updatedMsg.image && !updatedMsg.audio && !updatedMsg.video) {
+      if (
+        updatedMsg &&
+        !updatedMsg.content &&
+        !updatedMsg.image &&
+        !updatedMsg.audio &&
+        !updatedMsg.video
+      ) {
         chatHistory.value.splice(messageIdx, 1);
-        console.log(`[RoleplayChat] Removed empty message at index ${messageIdx}`);
+        console.log(
+          `[RoleplayChat] Removed empty message at index ${messageIdx}`,
+        );
       }
 
       // Save updated session
@@ -2639,7 +3963,9 @@ export default {
               // Update the message with new content
               if (progress.type === "text") {
                 const responseText = progress.response?.response;
-                console.log(`[RoleplayChat] Text progress received, content length: ${responseText?.length || 0}, preview: "${responseText?.substring(0, 50) || 'EMPTY'}"`);
+                console.log(
+                  `[RoleplayChat] Text progress received, content length: ${responseText?.length || 0}, preview: "${responseText?.substring(0, 50) || "EMPTY"}"`,
+                );
                 msg.content = responseText;
                 msg.emotion = progress.response.emotion;
                 msg.action = progress.response.action;
@@ -2697,7 +4023,9 @@ export default {
           const msg = chatHistory.value[assistantMessageIndex];
           if (msg) {
             const finalContent = result.response?.response;
-            console.log(`[RoleplayChat] Final update, content length: ${finalContent?.length || 0}, preview: "${finalContent?.substring(0, 50) || 'EMPTY'}"`);
+            console.log(
+              `[RoleplayChat] Final update, content length: ${finalContent?.length || 0}, preview: "${finalContent?.substring(0, 50) || "EMPTY"}"`,
+            );
             msg.content = finalContent;
             msg.emotion = result.response.emotion;
             msg.action = result.response.action;
@@ -2831,11 +4159,12 @@ export default {
       await processMessageQueue();
     };
 
-    // Load sessions, custom companions, and check model availability on mount
+    // Load sessions, companions, scenarios, and check model availability on mount
     onMounted(async () => {
       await Promise.all([
         loadSessions(),
-        loadCustomCompanions(),
+        loadCompanions(),
+        loadScenarios(),
         checkModelAvailability(),
       ]);
 
@@ -2861,22 +4190,11 @@ export default {
             scenarioId,
           );
 
-          // Find matching companion - check predefined first, then custom companions
-          let companion = predefinedCompanions.find(
+          // Find matching companion
+          let companion = companions.value.find(
             (c) => c.id === companionId,
           );
-          let companionSource = companion ? "predefined" : null;
-
-          if (!companion) {
-            // Try savedCustomCompanions by ID or name-based ID
-            companion = savedCustomCompanions.value.find(
-              (c) =>
-                c.id === companionId ||
-                `custom_${c.name?.toLowerCase().replace(/\s+/g, "_")}` ===
-                  companionId,
-            );
-            if (companion) companionSource = "savedCustom";
-          }
+          let companionSource = companion ? "companions" : null;
 
           if (!companion) {
             // Fallback: Try getting companion directly from the store session
@@ -2884,7 +4202,7 @@ export default {
             if (storeCompanion) {
               const storeCompanionId =
                 storeCompanion.id ||
-                `custom_${storeCompanion.name?.toLowerCase().replace(/\s+/g, "_")}`;
+                `companion_${storeCompanion.name?.toLowerCase().replace(/\s+/g, "_")}`;
               if (
                 storeCompanionId === companionId ||
                 storeCompanion.id === companionId
@@ -2905,7 +4223,7 @@ export default {
           }
 
           // Find matching scenario
-          let scenario = predefinedScenarios.find((s) => s.id === scenarioId);
+          let scenario = scenarios.value.find((s) => s.id === scenarioId);
           if (!scenario) {
             // Try store session
             scenario =
@@ -2975,7 +4293,9 @@ export default {
       } else {
         // Clear ALL memory when leaving the skill (if not in autonomous mode)
         clearAllMemory()
-          .then(() => console.log('[RoleplayChat] All memory cleared on unmount'))
+          .then(() =>
+            console.log("[RoleplayChat] All memory cleared on unmount"),
+          )
           .catch(() => {});
       }
     });
@@ -3030,8 +4350,8 @@ export default {
       suggestedResponses,
       messagesContainer,
       chatInput,
-      predefinedCompanions,
-      predefinedScenarios,
+      companions,
+      scenarios,
       contentLevels,
       canStart,
       // Scene state for smart image generation
@@ -3054,11 +4374,25 @@ export default {
       openSessionManager,
       closeSessionManager,
       getSessionInfo,
-      // Custom companions persistence
-      savedCustomCompanions,
+      // Companion operations
       saveCustomCompanionToStore,
-      deleteCustomCompanion,
+      deleteCompanion,
       isCompanionAlreadySaved,
+      // Scenario operations
+      saveCustomScenarioToStore,
+      deleteScenario,
+      isScenarioAlreadySaved,
+      // Import/Export companions and scenarios
+      companionImportInput,
+      scenarioImportInput,
+      exportCompanions,
+      exportCompanion,
+      triggerCompanionImport,
+      handleCompanionImport,
+      exportScenarios,
+      exportScenario,
+      triggerScenarioImport,
+      handleScenarioImport,
       // Import/Export sessions
       importInput,
       triggerImportSession,
@@ -3078,6 +4412,13 @@ export default {
       missedMessages,
       toggleAutonomousMode,
       clearMissedMessages,
+      // Moltbook integration
+      isRegisteringMoltbook,
+      moltbookActivityLog,
+      companionMoltbookRegistered,
+      companionMoltbookUrl,
+      registerOnMoltbook,
+      loadMoltbookCredentials,
       // Methods
       getAvatarIcon,
       selectCompanion,
@@ -3088,6 +4429,16 @@ export default {
       useCustomCompanion,
       generateCustomScenario,
       useCustomScenario,
+      // Keyword cycling animation
+      keywordIndices,
+      getCurrentKeyword,
+      registerKeywordCard,
+      parseKeywords,
+      // Image regeneration
+      isRegeneratingImage,
+      regeneratingId,
+      regenerateCompanionImage,
+      regenerateScenarioImage,
       formatResponseMode,
       endChat,
       getImageSrc,
@@ -3128,11 +4479,90 @@ export default {
   width: 100%;
 }
 
+/* Section Header with Import/Export buttons */
+.section-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+}
+
+.section-header h3 {
+  margin-bottom: 0;
+}
+
+.import-export-buttons {
+  display: flex;
+  gap: 0.5rem;
+  margin-top: 0.5rem;
+}
+
+.import-export-buttons .button {
+  padding: 0.25rem 0.5rem;
+  border-radius: 4px;
+}
+
+.import-export-buttons .button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+/* Autonomous Mode Section */
+.moltbook-settings-panel {
+  background: rgba(0, 0, 0, 0.2);
+  border-radius: 8px;
+  padding: 0.75rem 1rem;
+}
+
+.moltbook-status {
+  display: flex;
+  align-items: center;
+}
+
+.moltbook-options .checkbox {
+  color: rgba(255, 255, 255, 0.9);
+  display: flex;
+  align-items: center;
+}
+
+.moltbook-options .checkbox input[type="checkbox"] {
+  margin-right: 0.5rem;
+}
+
+.moltbook-activity-log {
+  background: rgba(0, 0, 0, 0.2);
+  border-radius: 4px;
+  padding: 0.5rem;
+  max-height: 120px;
+  overflow-y: auto;
+}
+
+.moltbook-activity-item {
+  color: rgba(255, 255, 255, 0.7);
+  padding: 0.2rem 0;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+.moltbook-activity-item:last-child {
+  border-bottom: none;
+}
+
+.moltbook-register {
+  background: rgba(0, 0, 0, 0.2);
+  border-radius: 8px;
+  padding: 0.75rem 1rem;
+}
+
 /* Setup Phase */
-.companion-grid,
+.companion-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 1.5rem;
+  justify-content: start;
+}
+
 .scenario-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+  grid-template-columns: repeat(2, 1fr);
   gap: 2rem;
   justify-content: start;
 }
@@ -3167,50 +4597,157 @@ export default {
   border-color: rgba(255, 255, 255, 0.3);
 }
 
-.companion-avatar {
-  width: 48px;
-  height: 48px;
-  background: rgba(255, 255, 255, 0.1);
+/* Card action buttons (top left/right) */
+.card-action-btn {
+  position: absolute;
+  background: rgba(50, 115, 220, 0.9);
+  border: none;
   border-radius: 50%;
+  width: 28px;
+  height: 28px;
   display: flex;
   align-items: center;
   justify-content: center;
-  margin-bottom: 0.75rem;
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity 0.2s;
+  color: #fff;
+  z-index: 5;
 }
 
-.companion-avatar .material-symbols-outlined {
-  font-size: 28px;
+.card-action-btn.top-left {
+  top: -14px;
+  left: 14px;
+}
+
+.card-action-btn.top-left-second {
+  top: -14px;
+  right: 14px;
+  background: rgba(255, 56, 96, 0.9);
+}
+
+.companion-card:hover .card-action-btn,
+.scenario-card:hover .card-action-btn {
+  opacity: 1;
+}
+
+.card-action-btn:hover {
+  opacity: 1;
+  transform: scale(1.1);
+}
+
+.card-action-btn.top-left-second:hover {
+  background: rgba(255, 56, 96, 1);
+}
+
+/* Gender icon prefix */
+.gender-icon {
+  font-size: 20px;
+  vertical-align: middle;
+  margin-right: 4px;
+  opacity: 0.8;
+}
+
+/* Portrait container */
+.companion-portrait-container {
+  position: relative;
+  width: 100%;
+  aspect-ratio: 1;
+  margin: 0.75rem 0;
+  border-radius: 2px;
+  overflow: hidden;
+  background: rgba(255, 255, 255, 0.05);
+}
+
+.companion-portrait {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.companion-portrait-placeholder {
+  width: 100%;
+  height: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(255, 255, 255, 0.05);
+}
+
+.companion-portrait-placeholder .material-symbols-outlined {
+  font-size: 64px;
+  color: rgba(255, 255, 255, 0.2);
+}
+
+/* Regenerate portrait button */
+.regenerate-portrait-btn {
+  position: absolute;
+  bottom: 8px;
+  right: 8px;
+  background: rgba(50, 115, 220, 0.9);
+  border: none;
+  border-radius: 50%;
+  width: 28px;
+  height: 28px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity 0.2s;
   color: #fff;
 }
 
-.companion-avatar {
-  position: relative;
-  position: absolute;
-  top: -24px;
-  right: -24px;
+.regenerate-portrait-btn:hover {
+  transform: scale(1.1);
+}
+
+.companion-portrait-container:hover .regenerate-portrait-btn {
+  opacity: 1;
+}
+
+.regenerate-portrait-btn:hover {
+  background: rgba(50, 115, 220, 1);
 }
 
 .session-badge {
   position: absolute;
-  top: -4px;
-  right: -4px;
-  background: rgba(57, 213, 130, 0.5);
+  top: 8px;
+  right: 8px;
+  background: rgba(57, 213, 130, 0.8);
   color: #fff;
   font-size: 10px;
   font-weight: bold;
-  min-width: 18px;
-  height: 18px;
-  border-radius: 9px;
+  min-width: 20px;
+  height: 20px;
+  border-radius: 10px;
   display: flex;
   align-items: center;
   justify-content: center;
-  padding: 0 4px;
+  padding: 0 6px;
   box-shadow: 0 2px 4px rgba(0, 0, 0, 0.3);
+  z-index: 4;
 }
 
-.companion-card.has-session {
+/* Custom badge for saved companions */
+.custom-badge {
+  position: absolute;
+  top: 8px;
+  right: 36px;
+  background: rgba(50, 115, 220, 0.9);
+  color: #fff;
+  min-width: 20px;
+  height: 20px;
+  border-radius: 10px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 4;
+}
+
+.companion-card {
   /* border-color: rgba(57, 213, 130, 0.5) !important; */
-  box-shadow: 0 8px 24px rgba(57, 213, 130, 0.2);
+  box-shadow: 0 8px 12px rgba(0, 0, 0, 0.33);
 }
 
 /* Saved custom companions */
@@ -3224,27 +4761,12 @@ export default {
   border-color: rgba(50, 115, 220, 0.7);
 }
 
-.custom-badge {
-  position: absolute;
-  bottom: -3px;
-  right: -3px;
-  background: rgba(50, 115, 220, 0.9);
-  color: #fff;
-  min-width: 16px;
-  height: 16px;
-  border-radius: 8px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  padding: 0 3px;
-  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.3);
-}
-
-.delete-custom-btn {
+/* Export button for companion cards (legacy - kept for compatibility) */
+.export-custom-btn {
   position: absolute;
   top: -24px;
-  right: -24px;
-  background: rgba(255, 56, 96, 1);
+  left: -24px;
+  background: rgba(50, 115, 220, 0.9);
   border: none;
   border-radius: 50%;
   width: 48px;
@@ -3259,12 +4781,97 @@ export default {
   padding: 0;
 }
 
-.companion-card.is-saved-custom:hover .delete-custom-btn {
+.companion-card.is-saved-custom:hover .export-custom-btn {
   opacity: 1;
 }
 
-.delete-custom-btn:hover {
+.export-custom-btn:hover {
+  background: rgba(50, 115, 220, 1);
+}
+
+/* Scenario delete and export buttons */
+.delete-scenario-btn {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  background: rgba(255, 56, 96, 0.9);
+  border: none;
+  border-radius: 50%;
+  width: 28px;
+  height: 28px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity 0.2s;
+  color: #fff;
+  z-index: 5;
+}
+
+.scenario-card.is-saved-custom:hover .delete-scenario-btn {
+  opacity: 1;
+}
+
+.delete-scenario-btn:hover {
   background: rgba(255, 56, 96, 1);
+}
+
+/* Export single button for companion/scenario cards */
+.export-single-btn {
+  position: absolute;
+  top: 8px;
+  left: 8px;
+  background: rgba(50, 115, 220, 0.9);
+  border: none;
+  border-radius: 50%;
+  width: 28px;
+  height: 28px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity 0.2s;
+  color: #fff;
+  z-index: 5;
+}
+
+.scenario-card:hover .export-single-btn,
+.companion-card.is-saved-custom:hover .export-single-btn {
+  opacity: 1;
+}
+
+.export-single-btn:hover {
+  background: rgba(50, 115, 220, 1);
+}
+
+/* Export button for predefined companion cards */
+.export-predefined-btn {
+  position: absolute;
+  bottom: 8px;
+  left: 8px;
+  background: rgba(50, 115, 220, 0.9);
+  border: none;
+  border-radius: 50%;
+  width: 28px;
+  height: 28px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity 0.2s;
+  color: #fff;
+  z-index: 5;
+}
+
+.companion-card:hover .export-predefined-btn {
+  opacity: 1;
+}
+
+.export-predefined-btn:hover {
+  background: rgba(50, 115, 220, 1);
 }
 
 /* Saved Sessions List */
@@ -3382,6 +4989,183 @@ hr {
   background: rgba(97, 55, 142, 0.2);
   border-radius: 8px;
   border: 1px solid rgba(97, 55, 142, 0.6);
+  overflow: hidden;
+}
+
+/* Companion/Scenario Images */
+.companion-avatar.has-image {
+  width: 100px;
+  height: 100px;
+  border-radius: 50%;
+  overflow: hidden;
+}
+
+.companion-portrait {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  border-radius: 1px !important;
+  border: 4px solid #fff;
+  border-width: 8px 8px 48px;
+}
+
+.regenerate-image-btn {
+  position: absolute;
+  bottom: -8px;
+  right: -8px;
+  background: rgba(97, 55, 142, 0.9);
+  border: none;
+  border-radius: 50%;
+  width: 28px;
+  height: 28px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity 0.2s;
+  color: white;
+}
+
+.companion-card:hover .regenerate-image-btn,
+.scenario-card:hover .regenerate-image-btn {
+  opacity: 1;
+}
+
+.regenerate-image-btn:hover {
+  background: rgba(138, 87, 197, 1);
+}
+
+.regenerate-image-btn:disabled {
+  cursor: not-allowed;
+  opacity: 0.5;
+}
+
+/* Scenario card with image */
+.scenario-card {
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.scenario-image {
+  height: 120px;
+  background-size: cover;
+  background-position: center;
+  position: relative;
+}
+
+.scenario-image .regenerate-image-btn.scenario-regen {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  bottom: auto;
+  opacity: 0;
+}
+
+.scenario-card:hover .scenario-regen {
+  opacity: 1;
+}
+
+.scenario-no-image {
+  height: 120px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(0, 0, 0, 0.2);
+  position: relative;
+}
+
+.scenario-content {
+  padding: 1rem;
+  flex: 1;
+}
+
+.scenario-mood {
+  margin-top: 0.5rem;
+  opacity: 0.7;
+}
+
+/* Custom companion preview portrait */
+.custom-preview-portrait {
+  width: 150px;
+  height: 150px;
+  border-radius: 8px;
+  overflow: hidden;
+  background: rgba(0, 0, 0, 0.3);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.companion-preview-img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.no-portrait {
+  width: 100%;
+  height: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+/* Custom scenario preview image */
+.custom-preview-image {
+  width: 100%;
+  height: 200px;
+  overflow: hidden;
+}
+
+.custom-preview-image img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+/* Keyword Cycling Animation */
+.keyword-cycler {
+  height: 24px;
+  overflow: hidden;
+  margin-top: 0.5rem;
+}
+
+.keyword-item {
+  display: inline-block;
+  text-transform: uppercase;
+  font-size: 0.75rem;
+  color: rgba(255, 255, 255, 0.8);
+  letter-spacing: 0.5px;
+}
+
+.keyword-fade-enter-active {
+  transition:
+    opacity 0.5s ease,
+    transform 0.5s ease;
+}
+
+.keyword-fade-leave-active {
+  transition:
+    opacity 0.3s ease,
+    transform 0.3s ease;
+}
+
+.keyword-fade-enter-from {
+  opacity: 0;
+  transform: translateY(10px);
+}
+
+.keyword-fade-leave-to {
+  opacity: 0;
+  transform: translateY(-10px);
+}
+
+.keyword-fade-enter-to,
+.keyword-fade-leave-from {
+  opacity: 1;
+  transform: translateY(0);
 }
 
 .content-level-selector {
@@ -3575,6 +5359,18 @@ hr {
   align-items: center;
   justify-content: center;
   flex-shrink: 0;
+  overflow: hidden;
+}
+
+.message-avatar.has-image {
+  background: transparent;
+}
+
+.message-avatar .avatar-image {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  border-radius: 50%;
 }
 
 .message-avatar .material-symbols-outlined {
@@ -3767,7 +5563,9 @@ hr {
   align-items: center;
   justify-content: center;
   opacity: 0;
-  transition: opacity 0.2s ease, background 0.2s ease;
+  transition:
+    opacity 0.2s ease,
+    background 0.2s ease;
 }
 
 .message-text:hover .text-delete-btn {
@@ -3997,7 +5795,7 @@ hr {
   outline: none;
   outline-offset: 0px;
   border: none;
-  border-bottom: 2px solid rgba(0,0,0,0.3) !important;
+  border-bottom: 2px solid rgba(0, 0, 0, 0.3) !important;
 }
 
 .rotating {

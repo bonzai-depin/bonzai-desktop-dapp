@@ -65,12 +65,12 @@
           class="button is-warning unlock mr-5"
           :disabled="isUnlocking"
           @click="unlockAllLevels"
-          :title="`Pay ${unlockPrice} ETH to unlock all 6 levels permanently`"
+          :title="`Pay ${unlockPrice} ETH on Arbitrum to unlock all 6 levels permanently`"
         >
           <span class="material-symbols-outlined mr-2">
             {{ isUnlocking ? "hourglass_empty" : "lock_open" }}
           </span>
-          {{ isUnlocking ? "Unlocking..." : `Unlock Everything` }}
+          {{ isUnlocking ? (unlockStatus || "Unlocking...") : `Unlock Everything` }}
         </button>
 
         <!-- Generate Demo - directly triggers generation -->
@@ -174,23 +174,47 @@ const generateDemo = () => {
   }
 };
 
+// Unlock status message
+const unlockStatus = ref('');
+
 // Unlock all levels with ETH payment
 const unlockAllLevels = async () => {
   if (isUnlocking.value) return;
 
   isUnlocking.value = true;
+  unlockStatus.value = '';
+
   try {
-    const result = await unlockAllWithEth();
+    const result = await unlockAllWithEth((status) => {
+      // Update status based on unlock flow
+      switch (status) {
+        case 'switching_network':
+          unlockStatus.value = 'Switching to Arbitrum...';
+          break;
+        case 'awaiting_payment':
+          unlockStatus.value = 'Please confirm in your wallet...';
+          break;
+        case 'confirming':
+          unlockStatus.value = 'Transaction submitted, waiting for confirmation...';
+          break;
+        default:
+          unlockStatus.value = status;
+      }
+    });
+
     if (result.success) {
       console.log("[AccessRequirements] All levels unlocked!", result.txHash);
+      unlockStatus.value = 'Success! All levels unlocked.';
       // Refresh level status
       await checkAllLevels();
     } else {
       console.error("[AccessRequirements] Unlock failed:", result.error);
+      unlockStatus.value = '';
       alert(`Unlock failed: ${result.error}`);
     }
   } catch (e) {
     console.error("[AccessRequirements] Unlock error:", e);
+    unlockStatus.value = '';
     alert(`Unlock error: ${e.message}`);
   } finally {
     isUnlocking.value = false;
