@@ -525,7 +525,7 @@
                       <button
                         class="button is-medium is-success copy is-pulled-left p-0 pl-1 pr-1"
                         @click="
-                          copy(inference.prompt);
+                          copy(inference.question);
                           setCopied(inference._originalIndex);
                           scrollToTop();
                         "
@@ -816,6 +816,7 @@ export default {
     // ------------ readiness ---------------
     const readiness = reactive({
       ok: true,
+      checking: true, // Indicates initial check is in progress
       missingRepos: [],
       repoDetails: [],
       missingGguf: false,
@@ -828,11 +829,13 @@ export default {
 
     const showUpdateCTA = computed(
       () =>
-        readiness.authRequired ||
-        generation.blocked ||
-        !readiness.ok ||
-        readiness.missingRepos.length > 0 ||
-        readiness.missingGguf
+        !readiness.checking && (
+          readiness.authRequired ||
+          generation.blocked ||
+          !readiness.ok ||
+          readiness.missingRepos.length > 0 ||
+          readiness.missingGguf
+        )
     );
 
     const canGenerate = computed(
@@ -995,9 +998,16 @@ export default {
         downloads.status = "completed";
       }
 
+      const wasActive = downloads.active;
       downloads.active = !["completed", "failed", "cancelled"].includes(
         downloads.status
       );
+
+      // Immediately refresh readiness when download completes
+      if (wasActive && !downloads.active && downloads.status === "completed") {
+        console.log("[Downloads] Download completed, refreshing readiness");
+        probeCurrentMode();
+      }
     };
 
     const ensureDownloadsSocket = (base = WS_DL) => {
@@ -1161,6 +1171,7 @@ export default {
         !readiness.authRequired &&
         readiness.missingRepos.length === 0 &&
         !readiness.missingGguf;
+      readiness.checking = false;
 
       // If files are still missing after a "completed" download, reset download state
       if (!readiness.ok && downloads.status === "completed") {
@@ -1175,6 +1186,7 @@ export default {
     const apply403ToReadiness = (res) => {
       readiness.authRequired = true;
       readiness.ok = false;
+      readiness.checking = false;
       readiness.notes = [];
       readiness.authRepos = [];
       if (Array.isArray(res?.data?.repos)) {
@@ -1190,6 +1202,7 @@ export default {
 
     const apply409ToReadiness = (res) => {
       readiness.ok = false;
+      readiness.checking = false;
       setBlocked("image", true);
       const rs = res?.data?.repo_status;
       if (rs?.repo) {
@@ -1245,7 +1258,7 @@ export default {
     };
 
     const probeCurrentMode = async () => {
-      readiness.ok = true;
+      readiness.checking = true;
       readiness.missingRepos = [];
       readiness.repoDetails = [];
       readiness.missingGguf = false;
@@ -1285,6 +1298,7 @@ export default {
           await savePlanToCache(pipeline, data);
         } else {
           readiness.ok = false;
+          readiness.checking = false;
           readiness.notes = [`Planner returned HTTP ${status}.`];
         }
       } catch (e) {
@@ -1300,6 +1314,7 @@ export default {
             readiness.notes.push("Using cached status (offline mode)");
           } else {
             readiness.ok = false;
+            readiness.checking = false;
             readiness.notes = [e?.message || "Network error while planning"];
           }
         }

@@ -3038,7 +3038,7 @@ export const roleplayCompanion = createSkillDefinition({
   featured: true,
   requirements: {
     minLevel: 4,
-    requiredApis: ['llm', 'image', 'audio'],
+    requiredApis: ['llm', 'image', 'audio', 'video', 'vision'],
     requiredPermissions: [],
   },
   // Chat-based skill flag - UI will render chat interface instead of form
@@ -3296,12 +3296,46 @@ Output JSON:
       }
 
       // Clean up response content - remove "Companion:", "User:", character name prefixes, etc.
+      // Also handles multi-section responses where the LLM outputs multiple "CompanionName:" blocks
+      // with inline "Emotion:" and "Action:" metadata
       if (response.response) {
-        response.response = response.response
-          .replace(/^(Companion|User|Assistant|\w+):\s*/gi, '') // Remove prefix at start
-          .replace(/\n(Companion|User|Assistant):\s*/gi, '\n') // Remove prefixes after newlines
-          .replace(new RegExp(`^${companion.name}:\\s*`, 'i'), '') // Remove character name prefix
-          .trim();
+        const lines = response.response.split('\n');
+        const cleanedParts = [];
+        const companionPrefixRegex = new RegExp(`^${companion.name}:\\s*`, 'i');
+
+        for (const line of lines) {
+          const trimmedLine = line.trim();
+
+          // Skip empty lines (but preserve paragraph breaks)
+          if (!trimmedLine) {
+            if (cleanedParts.length > 0 && cleanedParts[cleanedParts.length - 1] !== '') {
+              cleanedParts.push('');
+            }
+            continue;
+          }
+
+          // Skip lines that are purely metadata (Emotion: or Action:)
+          if (/^Emotion:\s*/i.test(trimmedLine) || /^Action:\s*/i.test(trimmedLine)) {
+            continue;
+          }
+
+          // Remove companion name prefix if present
+          let cleanedLine = trimmedLine
+            .replace(companionPrefixRegex, '')
+            .replace(/^(Companion|User|Assistant):\s*/gi, '');
+
+          // Only add non-empty lines after cleaning
+          if (cleanedLine.trim()) {
+            cleanedParts.push(cleanedLine);
+          }
+        }
+
+        // Remove trailing empty strings and join with proper paragraph breaks
+        while (cleanedParts.length > 0 && cleanedParts[cleanedParts.length - 1] === '') {
+          cleanedParts.pop();
+        }
+
+        response.response = cleanedParts.join('\n\n').replace(/\n{3,}/g, '\n\n').trim();
       }
 
       // Clean up suggested responses - remove "User:", "Companion:", numbers, etc.

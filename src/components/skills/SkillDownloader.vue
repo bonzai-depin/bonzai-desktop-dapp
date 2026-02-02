@@ -1,8 +1,8 @@
 <template>
   <div class="skill-downloader">
-    <!-- DOWNLOAD REQUIRED (when not actively downloading) -->
+    <!-- DOWNLOAD REQUIRED (when not actively downloading and check is complete) -->
     <div
-      v-if="hasRequirements && hasMissingModels && !downloads.active"
+      v-if="modelAvailabilityChecked && hasRequirements && hasMissingModels && !downloads.active"
       class="notification is-danger mb-6 mt-4 p-6 has-text-left"
     >
       <div class="mb-2">
@@ -467,6 +467,7 @@ export default {
       modelReadinessDetails,
       downloadAllMissingModels,
       modelAvailability,
+      modelAvailabilityChecked,
       isModelReady,
       checkModelAvailability,
     };

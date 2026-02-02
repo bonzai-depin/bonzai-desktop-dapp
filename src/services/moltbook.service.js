@@ -660,10 +660,28 @@ async function moltbookRequest(companionId, endpoint, options = {}) {
 // ═══════════════════════════════════════════════════════════════════════════
 
 /**
+ * Generate a unique username for a companion
+ * Appends a random suffix to handle multiple users with same companion names
+ * @param {string} baseName - Base companion name (e.g., "Mai")
+ * @returns {string} Unique username (e.g., "Mai_7x3k")
+ */
+function generateUniqueUsername(baseName) {
+  // Generate a random 4-character alphanumeric suffix
+  const chars = 'abcdefghijklmnopqrstuvwxyz0123456789';
+  let suffix = '';
+  for (let i = 0; i < 4; i++) {
+    suffix += chars.charAt(Math.floor(Math.random() * chars.length));
+  }
+  // Clean the base name (remove spaces, special chars) and append suffix
+  const cleanName = baseName.replace(/[^a-zA-Z0-9]/g, '').substring(0, 20);
+  return `${cleanName}_${suffix}`;
+}
+
+/**
  * Register a companion on Moltbook
  * @param {Object} companion - Companion object (from user's companions list)
  * @param {string} nftTokenId - ERC-8004 token ID for this companion
- * @returns {Promise<{ apiKey: string, claimUrl: string, verificationCode: string }>}
+ * @returns {Promise<{ apiKey: string, claimUrl: string, verificationCode: string, username: string }>}
  */
 export async function registerCompanion(companion, nftTokenId = null) {
   // Check if already registered
@@ -673,36 +691,68 @@ export async function registerCompanion(companion, nftTokenId = null) {
     return existing;
   }
 
-  const description = `${companion.description}\n\nPersonality: ${companion.personality}\n\n` +
+  // Generate unique username to avoid conflicts with other BonzAI users
+  const uniqueUsername = generateUniqueUsername(companion.name);
+
+  const description = `${companion.description || ''}\n\nPersonality: ${companion.personality || 'friendly'}\n\n` +
     `I'm a BonzAI companion${nftTokenId ? ` (NFT #${nftTokenId})` : ''}.`;
 
-  const response = await fetch(`${MOLTBOOK_API_BASE}/agents/register`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      name: companion.name,
-      description: description.substring(0, 500), // Moltbook likely has a limit
-    }),
-  });
+  console.log(`[Moltbook] Registering ${companion.name} as @${uniqueUsername}...`);
 
-  const data = await response.json();
+  let response;
+  try {
+    response = await fetch(`${MOLTBOOK_API_BASE}/agents/register`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Accept': 'application/json',
+      },
+      body: JSON.stringify({
+        name: uniqueUsername,
+        description: description.substring(0, 500),
+      }),
+    });
+  } catch (fetchError) {
+    console.error('[Moltbook] Fetch error:', fetchError);
+    throw new Error(`Network error: ${fetchError.message}. Check your internet connection.`);
+  }
 
-  if (!response.ok || data.success === false) {
-    throw new Error(data.error || 'Failed to register on Moltbook');
+  let responseData;
+  try {
+    responseData = await response.json();
+  } catch (jsonError) {
+    console.error('[Moltbook] JSON parse error:', jsonError);
+    throw new Error(`Invalid response from Moltbook API (status: ${response.status})`);
+  }
+
+  if (!response.ok || responseData.success === false) {
+    const errorMsg = responseData.error || responseData.message || `HTTP ${response.status}`;
+    const hint = responseData.hint ? ` (${responseData.hint})` : '';
+    throw new Error(`${errorMsg}${hint}`);
+  }
+
+  // API returns { success: true, data: { api_key, claim_url, verification_code } }
+  // or directly { api_key, claim_url, verification_code }
+  const data = responseData.data || responseData;
+
+  if (!data.api_key) {
+    throw new Error('Registration succeeded but no API key was returned');
   }
 
   const credentials = {
     apiKey: data.api_key,
     claimUrl: data.claim_url,
     verificationCode: data.verification_code,
+    username: uniqueUsername, // Store the unique username
+    displayName: companion.name, // Original companion name for display
     status: 'pending_claim',
     nftTokenId,
     registeredAt: Date.now(),
   };
 
-  storeCredentials(companion.id, credentials);
+  await storeCredentials(companion.id, credentials);
 
-  console.log(`[Moltbook] Registered ${companion.name}:`, {
+  console.log(`[Moltbook] Registered ${companion.name} as @${uniqueUsername}:`, {
     claimUrl: credentials.claimUrl,
     verificationCode: credentials.verificationCode,
   });

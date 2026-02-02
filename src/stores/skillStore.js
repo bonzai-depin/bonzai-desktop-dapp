@@ -12,6 +12,7 @@ import { defineStore } from 'pinia';
 import { ref, computed, toRaw } from 'vue';
 import { skillService } from '../services/skill.service.js';
 import { levelService } from '../services/level.service.js';
+import { authService, isAuthenticated, refreshToken, reAuthenticate } from '../services/auth.service.js';
 import { SKILL_CATEGORIES, SKILL_CATEGORY_META } from '../skills/types.js';
 import { roleplayCompanion } from '../skills/flagship.js';
 
@@ -142,11 +143,13 @@ export const useSkillStore = defineStore('skill', () => {
       );
     }
 
-    // Sort featured skills to the top
+    // Sort: featured skills first, then alphabetically by name
     return [...result].sort((a, b) => {
+      // Featured skills always come first
       if (a.featured && !b.featured) return -1;
       if (!a.featured && b.featured) return 1;
-      return 0;
+      // Then sort alphabetically by name
+      return a.name.localeCompare(b.name);
     });
   });
 
@@ -175,6 +178,12 @@ export const useSkillStore = defineStore('skill', () => {
    * - training → LVL6
    */
   const getRequiredLevel = (skill) => {
+    // Use explicit minLevel if specified
+    if (skill.requirements?.minLevel) {
+      return `LVL${skill.requirements.minLevel}`;
+    }
+
+    // Fall back to inferring from requiredApis
     const apis = skill.requirements?.requiredApis || [];
 
     // Check from highest to lowest
@@ -185,8 +194,7 @@ export const useSkillStore = defineStore('skill', () => {
     if (apis.includes('audio') || apis.includes('tts')) return 'LVL2';
     if (apis.includes('llm') || apis.includes('text')) return 'LVL1';
 
-    // Default to highest required API from skill definition
-    return `LVL${skill.requirements?.minLevel || 1}`;
+    return 'LVL1';
   };
 
   /**
@@ -581,6 +589,61 @@ export const useSkillStore = defineStore('skill', () => {
   // ═══════════════════════════════════════════════════════════════════════════
 
   /**
+   * Clean roleplay response by removing metadata labels and companion name prefixes.
+   * Extracts only the narrative text, removing "Emotion:", "Action:", and "CompanionName:" prefixes.
+   *
+   * @param {string} text - Raw response text from LLM
+   * @param {string} companionName - Name of the companion to strip as prefix
+   * @returns {string} Cleaned narrative text
+   */
+  const cleanRoleplayResponse = (text, companionName) => {
+    if (!text) return '';
+
+    const lines = text.split('\n');
+    const cleanedParts = [];
+
+    for (const line of lines) {
+      const trimmedLine = line.trim();
+
+      // Skip empty lines
+      if (!trimmedLine) {
+        // Preserve paragraph breaks
+        if (cleanedParts.length > 0 && cleanedParts[cleanedParts.length - 1] !== '') {
+          cleanedParts.push('');
+        }
+        continue;
+      }
+
+      // Skip lines that are purely metadata (Emotion: or Action:)
+      if (/^Emotion:\s*/i.test(trimmedLine) || /^Action:\s*/i.test(trimmedLine)) {
+        continue;
+      }
+
+      // Remove companion name prefix if present (e.g., "Mai: " or "CompanionName: ")
+      let cleanedLine = trimmedLine;
+      if (companionName) {
+        const companionPrefixRegex = new RegExp(`^${companionName}:\\s*`, 'i');
+        cleanedLine = cleanedLine.replace(companionPrefixRegex, '');
+      }
+
+      // Also handle generic "Companion:" prefix
+      cleanedLine = cleanedLine.replace(/^Companion:\s*/i, '');
+
+      // Only add non-empty lines after cleaning
+      if (cleanedLine.trim()) {
+        cleanedParts.push(cleanedLine);
+      }
+    }
+
+    // Remove trailing empty strings and join
+    while (cleanedParts.length > 0 && cleanedParts[cleanedParts.length - 1] === '') {
+      cleanedParts.pop();
+    }
+
+    return cleanedParts.join('\n\n').replace(/\n{3,}/g, '\n\n').trim();
+  };
+
+  /**
    * Update last active time (called on user activity)
    */
   const updateActivity = () => {
@@ -640,6 +703,12 @@ export const useSkillStore = defineStore('skill', () => {
           history: session.history.map(msg => JSON.parse(JSON.stringify(toRaw(msg)))),
           sceneState: JSON.parse(JSON.stringify(toRaw(session.sceneState))),
           backgroundImage: session.backgroundImage,
+          // Save background history for scroll-based switching
+          backgroundHistory: session.backgroundHistory ? session.backgroundHistory.map(entry => ({
+            messageIndex: entry.messageIndex,
+            image: entry.image,
+            location: entry.location,
+          })) : [],
           updatedAt: Date.now(),
         };
 
@@ -686,6 +755,25 @@ export const useSkillStore = defineStore('skill', () => {
     if (!session.companion || !session.scenario) {
       console.log('[SkillStore] No active autonomous session - companion:', !!session.companion, 'scenario:', !!session.scenario);
       return;
+    }
+
+    // Ensure authentication is valid before generating (tokens may have expired during idle)
+    // This is critical because setTimeout can be unreliable when system is idle/sleeping
+    if (!isAuthenticated()) {
+      console.log('[SkillStore] Token expired during idle, attempting refresh...');
+      try {
+        await refreshToken();
+        console.log('[SkillStore] Token refreshed successfully');
+      } catch (refreshError) {
+        console.log('[SkillStore] Token refresh failed, attempting re-authentication...');
+        const reAuthSuccess = await reAuthenticate();
+        if (!reAuthSuccess) {
+          console.error('[SkillStore] Re-authentication failed, stopping autonomous mode');
+          stopAutonomousMode();
+          return;
+        }
+        console.log('[SkillStore] Re-authentication successful');
+      }
     }
 
     isGeneratingAutonomous.value = true;
@@ -759,15 +847,19 @@ REQUIREMENTS:
       // The result structure is: { success, character, response: {...}, sceneState, meta }
       const responseData = result.response || {};
 
-      // Extract response text
-      const responseText = typeof responseData.response === 'string'
+      // Extract raw response text
+      const rawResponseText = typeof responseData.response === 'string'
         ? responseData.response
         : (responseData.text || responseData.content || result.text || '');
 
-      if (!responseText) {
+      if (!rawResponseText) {
         console.warn('[SkillStore] No response text in result. responseData:', responseData);
         throw new Error('No response text generated');
       }
+
+      // Clean the response to remove metadata labels and companion name prefixes
+      const responseText = cleanRoleplayResponse(rawResponseText, session.companion?.name);
+      console.log('[SkillStore] Cleaned response text:', responseText.substring(0, 100) + '...');
 
       // Update scene state
       const newSceneState = result.sceneState || {};
@@ -872,12 +964,22 @@ REQUIREMENTS:
 
   /**
    * Sync history from RoleplayChat (when user sends a message while on the view)
+   * @param {Array} history - Chat history
+   * @param {Object} sceneState - Scene state
+   * @param {string} backgroundImage - Current background image
+   * @param {Array} backgroundHistory - Background history for scroll-based switching
    */
-  const syncAutonomousHistory = (history, sceneState) => {
+  const syncAutonomousHistory = (history, sceneState, backgroundImage = null, backgroundHistory = null) => {
     if (autonomousSession.value.sessionKey) {
       autonomousSession.value.history = [...history];
       if (sceneState) {
         autonomousSession.value.sceneState = { ...sceneState };
+      }
+      if (backgroundImage !== null) {
+        autonomousSession.value.backgroundImage = backgroundImage;
+      }
+      if (backgroundHistory !== null) {
+        autonomousSession.value.backgroundHistory = [...backgroundHistory];
       }
     }
   };

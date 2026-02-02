@@ -1280,9 +1280,16 @@ export default {
         downloads.status = "completed";
       }
 
+      const wasActive = downloads.active;
       downloads.active = !["completed", "failed", "cancelled"].includes(
         downloads.status
       );
+
+      // Immediately refresh readiness when download completes
+      if (wasActive && !downloads.active && downloads.status === "completed") {
+        console.log("[Downloads] Download completed, refreshing readiness");
+        checkVisionModel();
+      }
     };
 
     // Ensure WebSocket connection

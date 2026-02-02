@@ -220,9 +220,10 @@
             </div>
 
             <div v-else>
-              <!-- DOWNLOAD REQUIRED (only when not actively downloading) -->
+              <!-- DOWNLOAD REQUIRED (only when not actively downloading and check is complete) -->
               <div
                 v-if="
+                  modelAvailabilityChecked &&
                   skillModelRequirements.length > 0 &&
                   hasMissingModels &&
                   !downloads.active
@@ -1470,9 +1471,16 @@ export default {
         downloads.status = "completed";
       }
 
+      const wasActive = downloads.active;
       downloads.active = !["completed", "failed", "cancelled"].includes(
         downloads.status,
       );
+
+      // Immediately refresh model availability when download completes
+      if (wasActive && !downloads.active && downloads.status === "completed") {
+        console.log("[Downloads] Download completed, refreshing model availability");
+        checkModelAvailability();
+      }
     };
 
     const ensureDownloadsSocket = (base = WS_DL) => {

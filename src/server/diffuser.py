@@ -133,36 +133,18 @@ from diffusers import (
     StableDiffusionXLImg2ImgPipeline,
     GGUFQuantizationConfig,
     FluxPipeline,
-    FluxImg2ImgPipeline,
     FluxTransformer2DModel,
     Flux2KleinPipeline,
-    FlowMatchEulerDiscreteScheduler,
-    AutoencoderKL,
     ZImagePipeline,
-    ZImageTransformer2DModel,
     LTX2Pipeline,
     LTX2ImageToVideoPipeline,
     LTX2VideoTransformer3DModel,
-    AutoencoderKLLTX2Video,
     AutoencoderKLLTX2Audio,
 )
 from diffusers.utils import load_image, export_to_video
 from diffusers.hooks import apply_group_offloading
 
-from transformers import (
-    UMT5EncoderModel,
-    AutoTokenizer,
-    CLIPVisionModel,
-    CLIPImageProcessor,
-    T5EncoderModel,
-    T5TokenizerFast,
-    Gemma3ForConditionalGeneration,
-    GemmaTokenizer,
-)
-
-# LTX-2 additional components
-from diffusers.pipelines.ltx2.connectors import LTX2TextConnectors
-from diffusers.pipelines.ltx2.vocoder import LTX2Vocoder
+from transformers import AutoTokenizer
 
 import wave
 
@@ -2739,7 +2721,7 @@ def image_standard_sdxl():
     height = int(data.get("height", 1024))
     width  = int(data.get("width", 1024))
 
-    ckpt_filename = (data.get("ckpt") or "").strip()
+    ckpt_filename = (data.get("ckpt") or "sdxl-lora.safetensors").strip()
     lora_filename = (data.get("lora") or "sdxl-lora.safetensors").strip()
     lora_strength = float(data.get("lora_strength", 1.0))
 

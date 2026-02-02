@@ -953,58 +953,130 @@
                   autonomous social presence.
                 </p>
 
-                <!-- Username Input -->
-                <div class="field mb-4">
-                  <label class="label has-text-grey-light is-size-7">
-                    Moltbook Username
-                  </label>
-                  <div class="control">
-                    <input
-                      type="text"
-                      class="input is-medium"
-                      v-model="moltbookUsername"
-                      placeholder="e.g., @companion_name"
-                    />
-                  </div>
+                <!-- Registration Mode Tabs -->
+                <div class="moltbook-tabs mb-4">
+                  <button
+                    class="button is-small"
+                    :class="{ 'is-info': moltbookMode === 'register' }"
+                    @click="moltbookMode = 'register'"
+                  >
+                    <span class="material-symbols-outlined mr-1" style="font-size: 14px">person_add</span>
+                    Register New
+                  </button>
+                  <button
+                    class="button is-small ml-2"
+                    :class="{ 'is-info': moltbookMode === 'existing' }"
+                    @click="moltbookMode = 'existing'"
+                  >
+                    <span class="material-symbols-outlined mr-1" style="font-size: 14px">key</span>
+                    Use Existing
+                  </button>
                 </div>
 
-                <!-- API Key Input -->
-                <div class="field mb-3">
-                  <label class="label has-text-grey-light is-size-7">
-                    Moltbook Key
-                  </label>
-                  <div class="control">
-                    <input
-                      type="password"
-                      class="input is-small"
-                      v-model="moltbookApiKey"
-                      placeholder="Your Moltbook API key"
-                    />
+                <!-- Register New Account -->
+                <div v-if="moltbookMode === 'register'">
+                  <p class="is-size-7 has-text-grey-light mb-3">
+                    Create a new Moltbook account for {{ selectedCompanion?.name }}.
+                    You'll receive a claim URL to verify ownership.
+                  </p>
+
+                  <!-- Registration Result -->
+                  <div v-if="moltbookRegistrationResult" class="notification is-info is-light mb-4">
+                    <p class="is-size-7 mb-2">
+                      <strong>Account Created!</strong>
+                    </p>
+                    <p class="is-size-7 mb-2">
+                      Username: <strong>@{{ moltbookRegistrationResult.username }}</strong>
+                    </p>
+                    <p class="is-size-7 mb-2">
+                      Claim your companion's account by visiting:
+                    </p>
+                    <a
+                      :href="moltbookRegistrationResult.claimUrl"
+                      target="_blank"
+                      class="is-size-7 has-text-info"
+                      style="word-break: break-all"
+                    >
+                      {{ moltbookRegistrationResult.claimUrl }}
+                    </a>
+                    <p class="is-size-7 mt-2 has-text-grey">
+                      Verification code: <code>{{ moltbookRegistrationResult.verificationCode }}</code>
+                    </p>
                   </div>
+
+                  <button
+                    class="button is-success is-medium"
+                    @click="registerMoltbookAccount"
+                    :disabled="isRegisteringMoltbook || moltbookRegistrationResult"
+                  >
+                    <span
+                      v-if="isRegisteringMoltbook"
+                      class="material-symbols-outlined rotating mr-2"
+                    >
+                      progress_activity
+                    </span>
+                    <span class="material-symbols-outlined mr-2" v-else>
+                      person_add
+                    </span>
+                    {{ isRegisteringMoltbook ? "Registering..." : moltbookRegistrationResult ? "Registered" : "Register on Moltbook" }}
+                  </button>
                 </div>
 
-                <!-- Save Button -->
-                <button
-                  class="button is-info is-medium mt-1"
-                  @click="saveMoltbookCredentials"
-                  :disabled="
-                    !moltbookApiKey || !moltbookUsername || isSavingMoltbook
-                  "
-                >
-                  <span
-                    v-if="isSavingMoltbook"
-                    class="material-symbols-outlined rotating mr-2"
+                <!-- Use Existing Credentials -->
+                <div v-else>
+                  <!-- Username Input -->
+                  <div class="field mb-4">
+                    <label class="label has-text-grey-light is-size-7">
+                      Moltbook Username
+                    </label>
+                    <div class="control">
+                      <input
+                        type="text"
+                        class="input is-medium"
+                        v-model="moltbookUsername"
+                        placeholder="e.g., @companion_name"
+                      />
+                    </div>
+                  </div>
+
+                  <!-- API Key Input -->
+                  <div class="field mb-3">
+                    <label class="label has-text-grey-light is-size-7">
+                      Moltbook API Key
+                    </label>
+                    <div class="control">
+                      <input
+                        type="password"
+                        class="input is-small"
+                        v-model="moltbookApiKey"
+                        placeholder="moltbook_xxx..."
+                      />
+                    </div>
+                    <p class="help has-text-grey-light">
+                      Get your API key from <a href="https://www.moltbook.com/settings" target="_blank" class="has-text-info">moltbook.com/settings</a>
+                    </p>
+                  </div>
+
+                  <!-- Save Button -->
+                  <button
+                    class="button is-info is-medium mt-1"
+                    @click="saveMoltbookCredentials"
+                    :disabled="
+                      !moltbookApiKey || !moltbookUsername || isSavingMoltbook
+                    "
                   >
-                    progress_activity
-                  </span>
-                  <span
-                    class="material-symbols-outlined mr-2"
-                    v-else
-                  >
-                    save
-                  </span>
-                  {{ isSavingMoltbook ? "Saving..." : "Save Credentials" }}
-                </button>
+                    <span
+                      v-if="isSavingMoltbook"
+                      class="material-symbols-outlined rotating mr-2"
+                    >
+                      progress_activity
+                    </span>
+                    <span class="material-symbols-outlined mr-2" v-else>
+                      save
+                    </span>
+                    {{ isSavingMoltbook ? "Saving..." : "Save Credentials" }}
+                  </button>
+                </div>
               </div>
 
               <!-- Moltbook Settings (when registered) -->
@@ -1222,15 +1294,24 @@
               </div>
             </div>
           </div>
+          <div class="tags has-addons mt-5">
+            <span class="tag is-info is-medium">{{ settings.contentLevel }}</span>
+            <span class="tag is-dark is-medium">text</span>
+            <span class="tag is-dark is-medium" v-if="settings.enableAudio">audio</span>
+            <span class="tag is-dark is-medium" v-if="settings.enableImage">image</span>
+            <span class="tag is-dark is-medium" v-if="settings.enableVideo">video</span>
+            <span class="tag is-dark is-medium" v-if="settings.enableVision">video</span>
+          </div>
           <div class="column is-narrow">
             <!-- Autonomous Mode Toggle -->
             <label
               class="checkbox autonomous-toggle mr-3"
-              :class="{ active: autonomousModeDisplay }"
+              :class="{ active: autonomousModeDisplay, disabled: isInitializingSession }"
             >
               <input
                 type="checkbox"
                 :checked="autonomousModeDisplay"
+                :disabled="isInitializingSession"
                 @change="toggleAutonomousMode($event.target.checked)"
               />
               <span
@@ -1240,7 +1321,7 @@
                 {{ autonomousModeDisplay ? "self_improvement" : "person_off" }}
               </span>
               <span class="is-size-7">
-                {{ autonomousPending ? "Starting..." : "Auto" }}
+                {{ isInitializingSession ? "Setting scene..." : autonomousPending ? "Starting..." : "Autonomous Mode" }}
               </span>
             </label>
             <button class="button is-danger is-small" @click="endChat">
@@ -1582,7 +1663,9 @@
               title="Upload an image for vision analysis"
               style="box-shadow: none"
             >
-              <span class="material-symbols-outlined is-size-1">add_photo_alternate</span>
+              <span class="material-symbols-outlined is-size-1">
+                add_photo_alternate
+              </span>
             </button>
             <input
               ref="imageInput"
@@ -1598,12 +1681,15 @@
               v-model="userMessage"
               class="input is-large send"
               type="text"
+              :disabled="isInitializingSession"
               :placeholder="
-                isProcessingMessage
-                  ? `Type your next message (will be queued)...`
-                  : uploadedImage
-                    ? `Describe what you see or ask about the image...`
-                    : `What do you say to ${selectedCompanion?.name}?`
+                isInitializingSession
+                  ? `Setting the scene...`
+                  : isProcessingMessage
+                    ? `Type your next message (will be queued)...`
+                    : uploadedImage
+                      ? `Describe what you see or ask about the image...`
+                      : `What do you say to ${selectedCompanion?.name}?`
               "
               @keyup.enter="sendMessage()"
             />
@@ -1612,7 +1698,7 @@
             <button
               class="button is-success is-large"
               @click="sendMessage()"
-              :disabled="!userMessage.trim() && !uploadedImage"
+              :disabled="isInitializingSession || (!userMessage.trim() && !uploadedImage)"
               :class="{ 'is-loading': isProcessingMessage && pendingMessage }"
               style="box-shadow: none"
               :title="
@@ -2005,6 +2091,9 @@ export default {
     const moltbookApiKey = ref("");
     const moltbookUsername = ref("");
     const isSavingMoltbook = ref(false);
+    const isRegisteringMoltbook = ref(false);
+    const moltbookMode = ref("register"); // 'register' or 'existing'
+    const moltbookRegistrationResult = ref(null); // { claimUrl, verificationCode, apiKey }
     const moltbookActivityLog = computed(
       () => skillStore.moltbookState.activityLog || [],
     );
@@ -2089,8 +2178,9 @@ export default {
     // Save current session to storage
     const saveSession = async () => {
       const key = currentSessionKey.value;
-      if (!key || chatHistory.value.length === 0) {
-        console.log("[Roleplay] Skip save: no key or empty history");
+      // Allow saving if there's history OR if there's a background image (session was initialized)
+      if (!key || (chatHistory.value.length === 0 && !scenarioBackgroundImage.value)) {
+        console.log("[Roleplay] Skip save: no key or empty session");
         return;
       }
 
@@ -2443,6 +2533,24 @@ export default {
         // Immediately update the display state for instant UI feedback
         autonomousPending.value = true;
 
+        // Wait for scene setup to complete before enabling autonomous mode
+        if (isInitializingSession.value) {
+          console.log(
+            "[Roleplay] Waiting for scene setup to complete before enabling autonomous mode...",
+          );
+          await new Promise((resolve) => {
+            const checkInterval = setInterval(() => {
+              if (!isInitializingSession.value) {
+                clearInterval(checkInterval);
+                resolve();
+              }
+            }, 500);
+          });
+          console.log(
+            "[Roleplay] Scene setup complete, now enabling autonomous mode",
+          );
+        }
+
         // Wait for current generation to finish before starting autonomous mode
         if (isProcessingMessage.value || isTyping.value) {
           console.log(
@@ -2517,8 +2625,48 @@ export default {
     };
 
     /**
-     * Register the current companion on Moltbook
+     * Register a new Moltbook account for the current companion
      */
+    const registerMoltbookAccount = async () => {
+      if (!selectedCompanion.value) return;
+
+      isRegisteringMoltbook.value = true;
+      moltbookRegistrationResult.value = null;
+
+      try {
+        const result = await moltbookService.registerCompanion(selectedCompanion.value);
+
+        if (result.apiKey) {
+          moltbookRegistrationResult.value = {
+            claimUrl: result.claimUrl,
+            verificationCode: result.verificationCode,
+            apiKey: result.apiKey,
+            username: result.username, // The unique username generated
+          };
+
+          // Enable Moltbook since we now have credentials
+          settings.value.moltbook.enabled = true;
+
+          console.log(
+            `[Roleplay] ${selectedCompanion.value.name} registered on Moltbook`,
+            { claimUrl: result.claimUrl }
+          );
+
+          // Auto-subscribe to relevant communities
+          try {
+            await moltbookService.autoSubscribeToSubmolts(selectedCompanion.value.id);
+          } catch (e) {
+            console.warn("[Roleplay] Auto-subscribe failed:", e.message);
+          }
+        }
+      } catch (e) {
+        console.error("[Roleplay] Moltbook registration failed:", e.message);
+        alert(`Failed to register on Moltbook: ${e.message}`);
+      } finally {
+        isRegisteringMoltbook.value = false;
+      }
+    };
+
     /**
      * Save manually entered Moltbook credentials for the current companion
      */
@@ -2613,7 +2761,12 @@ export default {
         skillStore.autonomousMode &&
         skillStore.autonomousSession.sessionKey === currentSessionKey.value
       ) {
-        skillStore.syncAutonomousHistory(chatHistory.value, sceneState.value);
+        skillStore.syncAutonomousHistory(
+          chatHistory.value,
+          sceneState.value,
+          scenarioBackgroundImage.value,
+          backgroundHistory.value
+        );
       }
     };
 
@@ -3140,6 +3293,10 @@ export default {
       selectedCompanion.value = companion;
       showCustomCompanion.value = false;
       // Sessions are now shown via companionSessions computed property
+
+      // Reset Moltbook registration state when switching companions
+      moltbookRegistrationResult.value = null;
+      moltbookMode.value = "register";
 
       // Load Moltbook credentials for this companion
       await loadMoltbookCredentials();
@@ -3746,6 +3903,13 @@ export default {
           if (result.sceneState) {
             sceneState.value = { ...result.sceneState };
           }
+
+          // Save session immediately after background is generated
+          // This ensures the background persists even if no messages are sent yet
+          if (result.backgroundImage) {
+            await saveSession();
+            console.log("[Roleplay] Session saved with initial background");
+          }
         } catch (e) {
           console.error("[Roleplay] Session init failed:", e);
         } finally {
@@ -3825,6 +3989,12 @@ export default {
 
           if (result.sceneState) {
             sceneState.value = { ...result.sceneState };
+          }
+
+          // Save session immediately after background is generated
+          if (result.backgroundImage) {
+            await saveSession();
+            console.log("[Roleplay] Session saved with initial background");
           }
         } catch (e) {
           console.error("[Roleplay] Session init failed:", e);
@@ -4297,6 +4467,18 @@ export default {
           // Update background image if a new one was generated (location change)
           if (result.response?.backgroundImage) {
             scenarioBackgroundImage.value = result.response.backgroundImage;
+            // Add to background history for scroll-based switching (if not already added via progress callback)
+            const existingEntry = backgroundHistory.value.find(
+              (entry) => entry.image === result.response.backgroundImage
+            );
+            if (!existingEntry) {
+              backgroundHistory.value.push({
+                messageIndex: assistantMessageIndex,
+                image: result.response.backgroundImage,
+                location: result.response.newLocation || result.sceneState?.currentLocation || "unknown",
+              });
+              console.log("[RoleplayChat] Background added to history from result");
+            }
             console.log("[RoleplayChat] Background image updated from result");
           }
 
@@ -4362,6 +4544,12 @@ export default {
     };
 
     const sendMessage = async (message = null) => {
+      // Block messages until scene setup is complete
+      if (isInitializingSession.value) {
+        console.log('[Roleplay] Cannot send message - scene setup in progress');
+        return;
+      }
+
       const msg = message || userMessage.value.trim();
       const hasImage = !!uploadedImage.value;
 
@@ -4542,7 +4730,12 @@ export default {
 
       // Just sync the current state to store if autonomous mode is active
       if (skillStore.autonomousMode && phase.value === "chat") {
-        skillStore.syncAutonomousHistory(chatHistory.value, sceneState.value);
+        skillStore.syncAutonomousHistory(
+          chatHistory.value,
+          sceneState.value,
+          scenarioBackgroundImage.value,
+          backgroundHistory.value
+        );
         // Autonomous mode continues running - companion keeps generating messages
       } else {
         // Clear ALL memory when leaving the skill (if not in autonomous mode)
@@ -4670,9 +4863,13 @@ export default {
       moltbookApiKey,
       moltbookUsername,
       isSavingMoltbook,
+      isRegisteringMoltbook,
+      moltbookMode,
+      moltbookRegistrationResult,
       moltbookActivityLog,
       companionMoltbookRegistered,
       companionMoltbookUrl,
+      registerMoltbookAccount,
       saveMoltbookCredentials,
       disconnectMoltbook,
       loadMoltbookCredentials,
@@ -4807,6 +5004,27 @@ export default {
   background: rgba(0, 0, 0, 0.2);
   border-radius: 8px;
   padding: 0.75rem 1rem;
+}
+
+.moltbook-tabs {
+  display: flex;
+  gap: 0;
+}
+
+.moltbook-tabs .button {
+  border-radius: 4px;
+  transition: all 0.2s;
+}
+
+.moltbook-tabs .button:not(.is-info) {
+  background: rgba(255, 255, 255, 0.1);
+  border-color: rgba(255, 255, 255, 0.2);
+  color: rgba(255, 255, 255, 0.7);
+}
+
+.moltbook-tabs .button:not(.is-info):hover {
+  background: rgba(255, 255, 255, 0.15);
+  border-color: rgba(255, 255, 255, 0.3);
 }
 
 /* Setup Phase */
@@ -5974,6 +6192,12 @@ hr {
 
 .autonomous-toggle input[type="checkbox"] {
   display: none;
+}
+
+.autonomous-toggle.disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+  pointer-events: none;
 }
 
 /* Missed messages banner */
