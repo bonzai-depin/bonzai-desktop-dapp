@@ -117,12 +117,15 @@ export function useBonzaiWeb3(options = {}) {
 
   /**
    * Check if user has access to the required level/feature
+   * Uses reactive levels.value directly to ensure Vue tracks dependencies properly
    */
   const hasAccess = computed(() => {
     if (!isConnected.value) return false;
 
     if (requiredLevel) {
-      return store.isLevelActive(requiredLevel);
+      // Access levels.value directly for proper Vue reactivity tracking
+      const levelStatus = levels.value?.[requiredLevel];
+      return levelStatus?.active ?? false;
     }
 
     if (feature) {

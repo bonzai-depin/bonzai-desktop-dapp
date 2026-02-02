@@ -941,6 +941,11 @@ const createWindow = async () => {
     mainWindow.show();
   });
 
+  // Clear reference when window is closed (important for macOS dock click handling)
+  mainWindow.on("closed", () => {
+    mainWindow = null;
+  });
+
   if (VITE_DEV_SERVER_URL) {
     // Wait for Vite dev server to be ready before loading
     await waitForViteServer(VITE_DEV_SERVER_URL);
@@ -1019,7 +1024,8 @@ app.on("window-all-closed", () => {
 app.on("activate", () => {
   if (subpy == null) startPythonSubprocess();
   // Show existing window or create new one if none exists
-  if (mainWindow) {
+  // Check both that mainWindow exists AND is not destroyed (belt and suspenders)
+  if (mainWindow && !mainWindow.isDestroyed()) {
     mainWindow.show();
   } else if (BrowserWindow.getAllWindows().length === 0) {
     createWindow();

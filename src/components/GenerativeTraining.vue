@@ -65,7 +65,9 @@
                   ref="accessRef"
                   level="LVL6"
                   :is-generating="training.active"
+                  :demo-prompt="DEMO_PROMPT"
                   @access-changed="onAccessChanged"
+                  @demo-generate="onDemoGenerate"
                 />
 
                 <!-- TRAINING TYPE SELECTION -->
@@ -679,6 +681,9 @@ const API_BASE =
 
 const WS_TRAINING = `${API_BASE}/training`;
 
+// Demo prompt for unauthenticated users
+const DEMO_PROMPT = "Train a custom LoRA model on your own data";
+
 export default {
   name: "GenerativeTraining",
   components: { AccessRequirements },
@@ -978,6 +983,49 @@ export default {
       );
     };
 
+    // Demo generation handler - simulates training progress
+    const onDemoGenerate = async () => {
+      training.active = true;
+      training.type = trainingType.value;
+      training.error = null;
+      training.pct = 0;
+      training.stage = "initializing";
+      training.epoch = 0;
+      training.total_epochs = 3;
+      training.loss = null;
+
+      // Simulate training stages
+      const stages = [
+        { stage: "loading model", pct: 5, delay: 800 },
+        { stage: "preparing dataset", pct: 15, delay: 600 },
+        { stage: "training", pct: 25, epoch: 1, loss: 2.45, delay: 1000 },
+        { stage: "training", pct: 50, epoch: 2, loss: 1.82, delay: 1000 },
+        { stage: "training", pct: 75, epoch: 3, loss: 1.24, delay: 1000 },
+        { stage: "saving model", pct: 90, loss: 0.89, delay: 600 },
+        { stage: "complete", pct: 100, delay: 400 },
+      ];
+
+      for (const step of stages) {
+        await new Promise((r) => setTimeout(r, step.delay));
+        training.stage = step.stage;
+        training.pct = step.pct;
+        if (step.epoch) training.epoch = step.epoch;
+        if (step.loss) training.loss = step.loss;
+      }
+
+      training.active = false;
+
+      // Add a demo trained model to the list
+      trainedModels.value.unshift({
+        id: `demo-${trainingType.value}-${Date.now()}`,
+        type: trainingType.value === "llm" ? "llm_lora" : "sdxl_lora",
+        base_model: trainingType.value === "llm" ? "llama-3.2-1b" : "sdxl",
+        final_loss: 0.89,
+        created_at: new Date().toISOString(),
+        isDemo: true,
+      });
+    };
+
     // Watch training type to update dataset type for new datasets
     watch(trainingType, (newType) => {
       newDataset.type = newType === "llm" ? "text" : "image";
@@ -1023,6 +1071,9 @@ export default {
       hasAccess,
       onAccessChanged,
       canStartTraining,
+      // Demo
+      DEMO_PROMPT,
+      onDemoGenerate,
     };
   },
 };

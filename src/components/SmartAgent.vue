@@ -2767,6 +2767,12 @@ Provide a concise analysis covering:
       await checkModelAvailability();
       await checkPolymarketModelAvailability(); // Legacy check for Polymarket default model
       tokenService.initialize();
+
+      // Auto-select the featured Roleplay Companion skill by default
+      const roleplaySkillId = 'roleplay-companion-v1.0.0';
+      if (skillStore.getSkillById(roleplaySkillId)) {
+        selectSkillById(roleplaySkillId);
+      }
     });
 
     // Watch for store status updates

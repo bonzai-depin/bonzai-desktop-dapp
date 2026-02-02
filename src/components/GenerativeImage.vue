@@ -1710,9 +1710,12 @@ export default {
       downloadTaskList,
       downloadMatchesMode,
       // access control
+      accessRef,
       hasAccess,
       canGenerateWithAccess,
       DEMO_PROMPT,
+      onAccessChanged,
+      onDemoGenerate,
       // actions
       sendMessage,
       copy,

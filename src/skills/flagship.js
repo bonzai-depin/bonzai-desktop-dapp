@@ -2256,7 +2256,6 @@ export const meditationForge = createSkillDefinition({
   author: { address: '0x8Ff3b2e823b33BeE30e699bB1b6BBc8F622fEa89', name: 'BonzAI', verified: true },
   category: 'healthcare',
   tags: ['meditation', 'wellness', 'mindfulness', 'relaxation', 'ASMR', 'sleep'],
-  featured: true,
   // Custom UI component handles all rendering
   hasCustomUI: true,
   requirements: {
@@ -3025,7 +3024,7 @@ Return ONLY valid JSON.`;
 export const roleplayCompanion = createSkillDefinition({
   id: 'roleplay-companion-v1.0.0',
   name: 'Roleplay Companion',
-  description: 'Immersive roleplay experiences with AI characters that respond with text, images, and audio.',
+  description: 'Immersive roleplay experiences with AI characters that respond with text, audio, images, and video.',
   version: '1.0.0',
   author: { address: '0x8Ff3b2e823b33BeE30e699bB1b6BBc8F622fEa89', name: 'BonzAI', verified: true },
   category: 'entertainment',
@@ -3123,7 +3122,7 @@ Scene: ${scenario.description}
       const recentEmotionsStr = recentEmotions.slice(-3).join(', ');
       const recentActionsStr = recentActions.slice(-2).join('; ');
 
-      context.updateStatus?.('Loading language model...');
+      context.updateStatus?.('Loading Language Model...');
       await ensureLLMLoaded(ROLEPLAY_LLM);
 
       context.updateStatus?.(`${companion.name} is thinking...`);
@@ -3310,19 +3309,13 @@ Output JSON:
         }).filter(s => s.length > 0);
       }
 
-      // Streaming callback - notify text is ready
-      console.log(`[Roleplay] Text ready, response.response length: ${response.response?.length || 0}, preview: "${response.response?.substring(0, 50) || 'EMPTY'}"`);
-      if (context.onProgress) {
-        context.onProgress({
-          type: 'text',
-          response: { ...response },
-        });
-      }
-
-      // Loop detection and recovery
+      // ═══════════════════════════════════════════════════════════════════════════
+      // LOOP DETECTION - Check BEFORE displaying to user
+      // Only display the non-looping response
+      // ═══════════════════════════════════════════════════════════════════════════
       const loopCheck = detectResponseLoop(response.response, history);
       if (loopCheck.isLoop) {
-        console.log(`[Roleplay] Loop detected (similarity: ${loopCheck.similarity.toFixed(2)}), regenerating...`);
+        console.log(`[Roleplay] Loop detected (similarity: ${loopCheck.similarity.toFixed(2)}), regenerating before display...`);
         context.updateStatus?.(`${companion.name} reconsiders...`);
 
         // More aggressive variation prompt
@@ -3366,13 +3359,23 @@ Respond with JSON:
           const newLoopCheck = detectResponseLoop(newResponse.response, history);
           if (!newLoopCheck.isLoop || newLoopCheck.similarity < loopCheck.similarity) {
             response = newResponse;
-            console.log('[Roleplay] Regeneration successful, using new response');
+            console.log('[Roleplay] Loop avoided - using regenerated response');
           } else {
-            console.warn('[Roleplay] Regeneration still similar, keeping original');
+            console.warn('[Roleplay] Regeneration still similar, keeping original but noted');
           }
         } catch (e) {
           console.warn('[Roleplay] Regeneration parse failed, using original');
         }
+      }
+
+      // Streaming callback - notify text is ready (AFTER loop detection)
+      // This ensures only the final, non-looping response is displayed
+      console.log(`[Roleplay] Text ready, response.response length: ${response.response?.length || 0}, preview: "${response.response?.substring(0, 50) || 'EMPTY'}"`);
+      if (context.onProgress) {
+        context.onProgress({
+          type: 'text',
+          response: { ...response },
+        });
       }
 
       // Unload LLM before media generation to free memory
@@ -3824,6 +3827,7 @@ Write ONLY the video description paragraph, nothing else:`;
 
       // ═══════════════════════════════════════════════════════════════════════════
       // MOLTBOOK AUTONOMOUS POSTING (when in auto mode with Moltbook enabled)
+      // Share actual roleplay experiences to appropriate submolts
       // ═══════════════════════════════════════════════════════════════════════════
       const moltbookSettings = settings?.moltbook || {};
       const moltbookEnabled = autonomousMode && moltbookSettings.enabled !== false;
@@ -3831,7 +3835,7 @@ Write ONLY the video description paragraph, nothing else:`;
       if (moltbookEnabled) {
         try {
           // Dynamic imports to avoid circular dependencies
-          const { moltbookService, generateThoughtLeadershipPost, BONZAI_KNOWLEDGE } = await import('../services/moltbook.service.js');
+          const { moltbookService, shareRoleplayExperience, selectSubmoltForContent } = await import('../services/moltbook.service.js');
           const { useSkillStore } = await import('../stores/skillStore.js');
           const skillStore = useSkillStore();
 
@@ -3842,36 +3846,41 @@ Write ONLY the video description paragraph, nothing else:`;
             const now = Date.now();
             const postIntervalMs = (moltbookSettings.postInterval || 24) * 60 * 60 * 1000; // Default: 24 hours
 
-            // 1. Thought-leadership post (based on configured interval)
+            // 1. Share roleplay experience (based on configured interval)
             if (moltbookSettings.autoPost !== false) {
               const timeSinceLastPost = now - (skillStore.moltbookState.lastPostTime || 0);
 
               if (timeSinceLastPost >= postIntervalMs) {
-                console.log(`[Roleplay] Autonomous Moltbook thought-leadership post for ${companion.name}`);
-                context.updateStatus?.(`${companion.name} is sharing thoughts on Moltbook...`);
+                // Determine submolt based on content
+                const submolt = selectSubmoltForContent(response.response, response.emotion, scenario);
+                console.log(`[Roleplay] Sharing ${companion.name}'s experience to m/${submolt}`);
+                context.updateStatus?.(`${companion.name} is sharing on Moltbook...`);
 
-                // Generate thought-leadership post
-                const postResult = await moltbookService.generateThoughtLeadershipPost(
+                // Build experience object from actual roleplay response
+                const experience = {
+                  text: response.response,
+                  emotion: response.emotion,
+                  action: response.action,
+                  scenario: scenario ? { name: scenario.name, tags: scenario.tags } : null,
+                  imageUrl: response.image || null, // Include image if generated
+                };
+
+                // Share the roleplay experience
+                const postResult = await shareRoleplayExperience(
                   companion.id,
                   companion,
-                  async (prompt) => {
-                    await ensureLLMLoaded(ROLEPLAY_LLM);
-                    const result = await generateTextWithModel(prompt, '', ROLEPLAY_LLM);
-                    await unloadLLM();
-                    return result;
-                  },
-                  moltbookSettings.promoteBonzai !== false // Include BonzAI promotion unless disabled
+                  experience
                 );
 
                 if (postResult.success) {
                   response.moltbookPost = postResult.post;
-                  console.log(`[Roleplay] ${companion.name} posted to Moltbook: "${postResult.postData?.title}"`);
+                  console.log(`[Roleplay] ${companion.name} shared to m/${postResult.submolt}: "${postResult.title}"`);
 
                   // Track in skillStore
                   skillStore.updateMoltbookPostTime();
                   skillStore.addMoltbookActivity({
-                    action: 'posted',
-                    title: postResult.postData?.title,
+                    action: 'shared',
+                    title: `Posted to m/${postResult.submolt}`,
                     postId: postResult.post?.id,
                   });
 
@@ -3879,7 +3888,7 @@ Write ONLY the video description paragraph, nothing else:`;
                   if (context.onProgress) {
                     context.onProgress({
                       type: 'moltbook',
-                      response: { ...response, moltbookPost: postResult.post },
+                      response: { ...response, moltbookPost: postResult.post, submolt: postResult.submolt },
                     });
                   }
 

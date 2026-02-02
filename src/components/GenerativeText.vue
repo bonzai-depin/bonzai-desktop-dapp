@@ -24,15 +24,12 @@
                 <!-- OpenClaw Integration Toggle -->
                 <button
                   v-if="openclawInstalled"
-                  class="button is-medium fira-sans-condensed-black-italic mr-5 mt-4"
+                  class="button is-medium fira-sans-condensed-black-italic mr-5 mt-4 pl-2"
                   :class="openclawEnabled ? 'is-success' : 'is-warning'"
                   @click="toggleOpenClaw"
                   :title="openclawEnabled ? 'OpenClaw integration enabled - click to disable' : 'Enable OpenClaw integration'"
                 >
-                  <span class="material-symbols-outlined is-size-3">
-                    {{ openclawEnabled ? 'check' : 'link_off' }}
-                  </span>
-                  <span class="openclaw-label">{{ openclawEnabled ? 'OpenClaw ON' : 'OpenClaw OFF' }}</span>
+                  <span class="openclaw-label is-size-4">{{ openclawEnabled ? '🦞 ON' : '🦞 OFF' }}</span>
                 </button>
                 <button
                   class="button is-outlined is-info is-medium fira-sans-condensed-black-italic ml-2 mt-4"
@@ -48,12 +45,14 @@
           <div class="desc">
             <p>
               {{ currentModel.modeldesc }}
-              <h3 class="fira-sans-condensed-black-italic mt-5 has-text-left">
+
+              <hr />
+              <span class="fira-sans-condensed-black-italic mt-5 has-text-left">
                 <span class="material-symbols-outlined is-size-1 mr-2">
                   computer
                 </span>
                 Hardware Requirements
-              </h3>
+              </span>
               <span class="tags pt-3 fira-sans-condensed-black-italic">
                 <span class="tag is-info">
                   <span class="material-symbols-outlined">memory</span>
@@ -1503,6 +1502,19 @@ export default {
 <!-- Add "scoped" attribute to limit CSS to this component only -->
 <style scoped>
 @import url("https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:opsz,wght,FILL,GRAD@20..48,100..700,0..1,-50..200");
+
+hr {
+  margin: 12px 0;
+  width: 100%;
+  border: none;
+  height: 1px;
+  background: linear-gradient(
+    to right,
+    transparent,
+    rgba(255, 255, 255, 1),
+    transparent
+  );
+}
 
 .material-symbols-outlined {
   font-variation-settings:

@@ -87,7 +87,9 @@
               @click.stop="exportCompanion(companion)"
               title="Export companion"
             >
-              <span class="material-symbols-outlined" style="font-size: 14px">download</span>
+              <span class="material-symbols-outlined" style="font-size: 14px">
+                download
+              </span>
             </button>
             <!-- Delete button (top left, second) -->
             <button
@@ -95,7 +97,9 @@
               @click.stop="deleteCompanion(companion.id)"
               title="Delete companion"
             >
-              <span class="material-symbols-outlined" style="font-size: 14px">close</span>
+              <span class="material-symbols-outlined" style="font-size: 14px">
+                close
+              </span>
             </button>
             <div class="companion-info">
               <h4
@@ -121,16 +125,30 @@
                 <button
                   class="regenerate-portrait-btn"
                   @click.stop="regenerateCompanionImage(companion)"
-                  :disabled="isRegeneratingImage && regeneratingId === companion.id"
-                  :title="companion.image ? 'Regenerate portrait' : 'Generate portrait'"
+                  :disabled="
+                    isRegeneratingImage && regeneratingId === companion.id
+                  "
+                  :title="
+                    companion.image
+                      ? 'Regenerate portrait'
+                      : 'Generate portrait'
+                  "
                 >
                   <span
-                    v-if="isRegeneratingImage && regeneratingId === companion.id"
+                    v-if="
+                      isRegeneratingImage && regeneratingId === companion.id
+                    "
                     class="material-symbols-outlined rotating"
                     style="font-size: 14px"
-                  >progress_activity</span>
-                  <span v-else class="material-symbols-outlined" style="font-size: 14px">
-                    {{ companion.image ? 'refresh' : 'image' }}
+                  >
+                    progress_activity
+                  </span>
+                  <span
+                    v-else
+                    class="material-symbols-outlined"
+                    style="font-size: 14px"
+                  >
+                    {{ companion.image ? "refresh" : "image" }}
                   </span>
                 </button>
               </div>
@@ -146,7 +164,9 @@
               >
                 <transition name="keyword-fade" mode="out-in">
                   <span
-                    :key="getCurrentKeyword(companion.id, companion.personality)"
+                    :key="
+                      getCurrentKeyword(companion.id, companion.personality)
+                    "
                     class="keyword-item"
                   >
                     {{ getCurrentKeyword(companion.id, companion.personality) }}
@@ -155,7 +175,6 @@
               </div>
             </div>
           </div>
-
         </div>
 
         <!-- Custom Companion Generator -->
@@ -578,7 +597,9 @@
               class="scenario-content has-text-left p-0"
               @vue:mounted="registerKeywordCard(scenario.id)"
             >
-              <h4 class="scenario-name fira-sans-condensed-black-italic has-text-brand is-size-4">
+              <h4
+                class="scenario-name fira-sans-condensed-black-italic has-text-brand is-size-4"
+              >
                 {{ scenario.name }}
               </h4>
               <p class="scenario-desc">
@@ -597,7 +618,6 @@
               </div>
             </div>
           </div>
-
         </div>
 
         <!-- Custom Scenario Generator -->
@@ -838,9 +858,7 @@
         <h3
           class="fira-sans-condensed-black-italic has-text-white has-text-left is-size-3 mb-4"
         >
-          <span class="material-symbols-outlined mr-2 is-size-2">
-            autoplay
-          </span>
+          <span class="material-symbols-outlined mr-2 is-size-2">autoplay</span>
           Autonomous Mode
         </h3>
         <hr />
@@ -852,8 +870,8 @@
               <label
                 class="label has-text-white is-size-5 mb-3 fira-sans-condensed-black-italic"
               >
-                <span class="material-symbols-outlined mr-1">timer_5</span>
-                Timing Settings
+                <span class="material-symbols-outlined mr-1">cardiology</span>
+                Heartbeat Settings
               </label>
 
               <!-- Idle Timeout -->
@@ -925,52 +943,78 @@
                 Moltbook Social Network
               </label>
 
-              <!-- Moltbook Registration -->
+              <!-- Moltbook Configuration -->
               <div
                 v-if="!companionMoltbookRegistered"
                 class="moltbook-register mb-4"
               >
                 <p class="is-size-7 has-text-grey-light mb-3">
-                  Register {{ selectedCompanion?.name }} on Moltbook to enable
-                  autonomous social features.
+                  Connect {{ selectedCompanion?.name }} to Moltbook for
+                  autonomous social presence.
                 </p>
-                <div class="has-text-center" style="width: 100%; text-align:center;">
-                  <button
-                    class="button is-info is-medium mt-5 mb-5"
-                    @click="registerOnMoltbook"
-                    :disabled="isRegisteringMoltbook"
-                  >
-                    <span
-                      v-if="isRegisteringMoltbook"
-                      class="material-symbols-outlined rotating mr-1"
-                      style="font-size: 14px"
-                    >
-                      progress_activity
-                    </span>
-                    <span
-                      class="material-symbols-outlined mr-1"
-                      style="font-size: 14px"
-                      v-else
-                    >
-                      person_add
-                    </span>
-                    {{
-                      isRegisteringMoltbook
-                        ? "Registering..."
-                        : "Register on Moltbook"
-                    }}
-                  </button>
+
+                <!-- Username Input -->
+                <div class="field mb-4">
+                  <label class="label has-text-grey-light is-size-7">
+                    Moltbook Username
+                  </label>
+                  <div class="control">
+                    <input
+                      type="text"
+                      class="input is-medium"
+                      v-model="moltbookUsername"
+                      placeholder="e.g., @companion_name"
+                    />
+                  </div>
                 </div>
+
+                <!-- API Key Input -->
+                <div class="field mb-3">
+                  <label class="label has-text-grey-light is-size-7">
+                    Moltbook Key
+                  </label>
+                  <div class="control">
+                    <input
+                      type="password"
+                      class="input is-small"
+                      v-model="moltbookApiKey"
+                      placeholder="Your Moltbook API key"
+                    />
+                  </div>
+                </div>
+
+                <!-- Save Button -->
+                <button
+                  class="button is-info is-medium mt-1"
+                  @click="saveMoltbookCredentials"
+                  :disabled="
+                    !moltbookApiKey || !moltbookUsername || isSavingMoltbook
+                  "
+                >
+                  <span
+                    v-if="isSavingMoltbook"
+                    class="material-symbols-outlined rotating mr-2"
+                  >
+                    progress_activity
+                  </span>
+                  <span
+                    class="material-symbols-outlined mr-2"
+                    v-else
+                  >
+                    save
+                  </span>
+                  {{ isSavingMoltbook ? "Saving..." : "Save Credentials" }}
+                </button>
               </div>
 
               <!-- Moltbook Settings (when registered) -->
               <div v-else class="moltbook-settings-panel">
                 <div class="moltbook-status mb-3">
-                  <span class="tag is-success is-small mr-2">Registered</span>
+                  <span class="tag is-success is-small mr-2">Connected</span>
                   <a
                     :href="companionMoltbookUrl"
                     target="_blank"
-                    class="is-size-7 has-text-info"
+                    class="is-size-7 has-text-info mr-3"
                   >
                     <span
                       class="material-symbols-outlined mr-1"
@@ -980,6 +1024,18 @@
                     </span>
                     View Profile
                   </a>
+                  <button
+                    class="button is-small is-text is-size-7 has-text-grey"
+                    @click="disconnectMoltbook"
+                    title="Disconnect from Moltbook"
+                  >
+                    <span
+                      class="material-symbols-outlined"
+                      style="font-size: 12px"
+                    >
+                      link_off
+                    </span>
+                  </button>
                 </div>
 
                 <!-- Moltbook Feature Toggles -->
@@ -1068,7 +1124,7 @@
       </div>
 
       <!-- Start Button -->
-      <div class="control has-text-center">
+      <div class="control has-text-center models__activity--payouts">
         <button
           class="button is-success is-large"
           :disabled="!canStart"
@@ -1253,9 +1309,17 @@
             class="chat-message"
             :class="[msg.role, { 'is-new': isNewMessage(msg) }]"
           >
-            <div class="message-avatar" :class="{ 'has-image': msg.role !== 'user' && selectedCompanion?.image }">
+            <div
+              class="message-avatar"
+              :class="{
+                'has-image': msg.role !== 'user' && selectedCompanion?.image,
+              }"
+            >
               <!-- User avatar (always icon) -->
-              <span v-if="msg.role === 'user'" class="material-symbols-outlined">
+              <span
+                v-if="msg.role === 'user'"
+                class="material-symbols-outlined"
+              >
                 person
               </span>
               <!-- Companion avatar (image if available, otherwise icon) -->
@@ -1267,7 +1331,12 @@
                   class="avatar-image"
                 />
                 <span v-else class="material-symbols-outlined">
-                  {{ getAvatarIcon(selectedCompanion?.avatar, selectedCompanion?.gender) }}
+                  {{
+                    getAvatarIcon(
+                      selectedCompanion?.avatar,
+                      selectedCompanion?.gender,
+                    )
+                  }}
                 </span>
               </template>
             </div>
@@ -1414,7 +1483,10 @@
             v-if="isTyping && !chatHistory.some((m) => m.isGenerating)"
             class="chat-message assistant typing"
           >
-            <div class="message-avatar" :class="{ 'has-image': selectedCompanion?.image }">
+            <div
+              class="message-avatar"
+              :class="{ 'has-image': selectedCompanion?.image }"
+            >
               <img
                 v-if="selectedCompanion?.image"
                 :src="getImageSrc(selectedCompanion.image)"
@@ -1422,7 +1494,12 @@
                 class="avatar-image"
               />
               <span v-else class="material-symbols-outlined">
-                {{ getAvatarIcon(selectedCompanion?.avatar, selectedCompanion?.gender) }}
+                {{
+                  getAvatarIcon(
+                    selectedCompanion?.avatar,
+                    selectedCompanion?.gender,
+                  )
+                }}
               </span>
             </div>
             <div class="message-content">
@@ -1493,7 +1570,7 @@
       </div>
 
       <!-- Chat Input -->
-      <div class="chat-input">
+      <div class="chat-input models__activity--payouts">
         <div class="field has-addons">
           <!-- Image Upload Button -->
           <div class="control">
@@ -1505,7 +1582,7 @@
               title="Upload an image for vision analysis"
               style="box-shadow: none"
             >
-              <span class="material-symbols-outlined">add_photo_alternate</span>
+              <span class="material-symbols-outlined is-size-1">add_photo_alternate</span>
             </button>
             <input
               ref="imageInput"
@@ -1544,7 +1621,7 @@
             >
               <span
                 v-if="!(isProcessingMessage && pendingMessage)"
-                class="material-symbols-outlined"
+                class="material-symbols-outlined is-size-1"
               >
                 send
               </span>
@@ -1579,6 +1656,7 @@ import {
 } from "../../skills/flagship.js";
 import { useSkillStore } from "../../stores/skillStore.js";
 import { moltbookService } from "../../services/moltbook.service.js";
+import { io } from "socket.io-client";
 
 export default {
   name: "RoleplayChat",
@@ -1706,6 +1784,9 @@ export default {
     const modelAvailability = reactive({});
     const modelAvailabilityChecked = ref(false);
 
+    // Downloads socket for listening to download completion events
+    const downloadsSocket = ref(null);
+
     // Required LLM for roleplay
     const REQUIRED_LLM = "llm_mythomax";
     const requiredLLMName = computed(
@@ -1823,6 +1904,70 @@ export default {
       modelAvailabilityChecked.value = true;
     };
 
+    /**
+     * Set up Socket.IO connection to listen for download completion events
+     * When a model download finishes, refresh model availability so media options update
+     */
+    const setupDownloadsSocket = () => {
+      const port = window.BONZAI_SERVER_PORT || 65000;
+      const wsUrl = `http://localhost:${port}/downloads`;
+
+      try {
+        downloadsSocket.value = io(wsUrl, {
+          transports: ["polling", "websocket"],
+          reconnection: true,
+          reconnectionDelay: 1000,
+          reconnectionAttempts: 5,
+        });
+
+        downloadsSocket.value.on("connect", () => {
+          console.log("[RoleplayChat] Downloads socket connected");
+        });
+
+        // Listen for download progress events
+        downloadsSocket.value.on("download_progress", ({ pipeline }) => {
+          if (!pipeline) return;
+
+          // When a download completes, refresh model availability
+          if (pipeline.status === "completed") {
+            console.log(
+              "[RoleplayChat] Download completed, refreshing model availability",
+            );
+            checkModelAvailability();
+          }
+        });
+
+        downloadsSocket.value.on("connect_error", (e) => {
+          console.warn(
+            "[RoleplayChat] Downloads socket error:",
+            e?.message || e,
+          );
+        });
+      } catch (e) {
+        console.warn(
+          "[RoleplayChat] Failed to setup downloads socket:",
+          e.message,
+        );
+      }
+    };
+
+    /**
+     * Disconnect the downloads socket
+     */
+    const disconnectDownloadsSocket = () => {
+      if (downloadsSocket.value) {
+        try {
+          downloadsSocket.value.disconnect();
+          downloadsSocket.value = null;
+        } catch (e) {
+          console.warn(
+            "[RoleplayChat] Error disconnecting downloads socket:",
+            e.message,
+          );
+        }
+      }
+    };
+
     // Chat state
     const chatHistory = ref([]);
     const userMessage = ref("");
@@ -1857,7 +2002,9 @@ export default {
     const missedMessages = computed(() => skillStore.missedMessages);
 
     // Moltbook integration state
-    const isRegisteringMoltbook = ref(false);
+    const moltbookApiKey = ref("");
+    const moltbookUsername = ref("");
+    const isSavingMoltbook = ref(false);
     const moltbookActivityLog = computed(
       () => skillStore.moltbookState.activityLog || [],
     );
@@ -1873,10 +2020,9 @@ export default {
     const companionMoltbookUrl = computed(() => {
       if (!selectedCompanion.value?.id) return "#";
       const creds = moltbookService.getCredentials(selectedCompanion.value.id);
-      return (
-        creds?.profileUrl ||
-        `https://moltbook.com/u/${encodeURIComponent(selectedCompanion.value.name || "companion")}`
-      );
+      const username =
+        creds?.username || selectedCompanion.value.name || "companion";
+      return `https://www.moltbook.com/u/${encodeURIComponent(username)}`;
     });
 
     // Scene state for smart image generation and anti-repetition
@@ -2373,33 +2519,88 @@ export default {
     /**
      * Register the current companion on Moltbook
      */
-    const registerOnMoltbook = async () => {
-      if (!selectedCompanion.value) return;
+    /**
+     * Save manually entered Moltbook credentials for the current companion
+     */
+    const saveMoltbookCredentials = async () => {
+      if (
+        !selectedCompanion.value ||
+        !moltbookApiKey.value ||
+        !moltbookUsername.value
+      )
+        return;
 
-      isRegisteringMoltbook.value = true;
+      isSavingMoltbook.value = true;
       try {
-        const result = await moltbookService.registerCompanion(
-          selectedCompanion.value,
+        const credentials = {
+          apiKey: moltbookApiKey.value.trim(),
+          username: moltbookUsername.value.trim().replace(/^@/, ""), // Remove @ prefix if present
+          status: "configured",
+          configuredAt: Date.now(),
+        };
+
+        await moltbookService.storeCredentials(
+          selectedCompanion.value.id,
+          credentials,
+        );
+        settings.value.moltbook.enabled = true;
+
+        console.log(
+          `[Roleplay] ${selectedCompanion.value.name} connected to Moltbook as @${credentials.username}`,
         );
 
-        if (result?.apiKey) {
-          settings.value.moltbook.enabled = true;
-          console.log(
-            `[Roleplay] ${selectedCompanion.value.name} registered on Moltbook!`,
+        // Auto-subscribe to relevant communities
+        try {
+          const subscribed = await moltbookService.autoSubscribeToSubmolts(
+            selectedCompanion.value.id,
           );
-
-          // Show claim URL notification
-          if (result.claimUrl) {
-            alert(
-              `${selectedCompanion.value.name} registered on Moltbook!\n\nClaim URL: ${result.claimUrl}\n\nSave this URL to claim ownership of the account.`,
+          if (subscribed.length > 0) {
+            console.log(
+              `[Roleplay] Auto-subscribed to: ${subscribed.join(", ")}`,
             );
           }
+        } catch (e) {
+          console.warn("[Roleplay] Auto-subscribe failed:", e.message);
         }
+
+        // Clear input fields after saving
+        moltbookApiKey.value = "";
+        moltbookUsername.value = "";
       } catch (e) {
-        console.error("[Roleplay] Moltbook registration failed:", e.message);
-        alert(`Failed to register on Moltbook: ${e.message}`);
+        console.error(
+          "[Roleplay] Failed to save Moltbook credentials:",
+          e.message,
+        );
+        alert(`Failed to save Moltbook credentials: ${e.message}`);
       } finally {
-        isRegisteringMoltbook.value = false;
+        isSavingMoltbook.value = false;
+      }
+    };
+
+    /**
+     * Disconnect the current companion from Moltbook
+     */
+    const disconnectMoltbook = async () => {
+      if (!selectedCompanion.value?.id) return;
+
+      if (!confirm(`Disconnect ${selectedCompanion.value.name} from Moltbook?`))
+        return;
+
+      try {
+        // Clear credentials from storage
+        await moltbookService.storeCredentials(
+          selectedCompanion.value.id,
+          null,
+        );
+        settings.value.moltbook.enabled = false;
+        console.log(
+          `[Roleplay] ${selectedCompanion.value.name} disconnected from Moltbook`,
+        );
+      } catch (e) {
+        console.error(
+          "[Roleplay] Failed to disconnect from Moltbook:",
+          e.message,
+        );
       }
     };
 
@@ -2585,9 +2786,7 @@ export default {
     const exportAllSessions = () => {
       const exportData = {
         sessions: JSON.parse(JSON.stringify(toRaw(savedSessions.value))),
-        customCompanions: JSON.parse(
-          JSON.stringify(toRaw(companions.value)),
-        ),
+        customCompanions: JSON.parse(JSON.stringify(toRaw(companions.value))),
         exportedAt: new Date().toISOString(),
         version: "1.0",
       };
@@ -2656,17 +2855,22 @@ export default {
     const loadCompanions = async () => {
       try {
         if (window.electronAPI?.store?.get) {
-          const stored = await window.electronAPI.store.get(COMPANIONS_KEY, null);
+          const stored = await window.electronAPI.store.get(
+            COMPANIONS_KEY,
+            null,
+          );
 
           // Get default companion IDs for migration check
-          const defaultIds = DEFAULT_COMPANIONS.map(c => c.id);
+          const defaultIds = DEFAULT_COMPANIONS.map((c) => c.id);
 
           if (stored && stored.length > 0) {
             // Filter out any invalid (underage) companions and sanitize ages
             const validCompanions = stored.filter((c) => {
               const validation = validateCompanionAge(c);
               if (!validation.valid) {
-                console.warn(`[Roleplay] Removed invalid companion "${c.name}": ${validation.reason}`);
+                console.warn(
+                  `[Roleplay] Removed invalid companion "${c.name}": ${validation.reason}`,
+                );
                 return false;
               }
               sanitizeCompanionAge(c);
@@ -2674,38 +2878,60 @@ export default {
             });
 
             // Check if any default companions are missing (migration after update)
-            const storedIds = validCompanions.map(c => c.id);
-            const missingDefaults = DEFAULT_COMPANIONS.filter(dc => !storedIds.includes(dc.id));
+            const storedIds = validCompanions.map((c) => c.id);
+            const missingDefaults = DEFAULT_COMPANIONS.filter(
+              (dc) => !storedIds.includes(dc.id),
+            );
 
             if (missingDefaults.length > 0) {
               // Add missing defaults (preserving user's existing companions)
-              console.log(`[Roleplay] Adding ${missingDefaults.length} new default companions`);
-              const newDefaults = missingDefaults.map(c => ({ ...c, image: null }));
+              console.log(
+                `[Roleplay] Adding ${missingDefaults.length} new default companions`,
+              );
+              const newDefaults = missingDefaults.map((c) => ({
+                ...c,
+                image: null,
+              }));
               companions.value = [...validCompanions, ...newDefaults];
               await saveCompanions();
             } else {
               companions.value = validCompanions;
             }
 
-            console.log(`[Roleplay] Loaded ${companions.value.length} companions`);
+            console.log(
+              `[Roleplay] Loaded ${companions.value.length} companions`,
+            );
 
             // Save if any were filtered out
             if (validCompanions.length !== stored.length) {
               await saveCompanions();
-              console.log(`[Roleplay] Cleaned up ${stored.length - validCompanions.length} invalid companions`);
+              console.log(
+                `[Roleplay] Cleaned up ${stored.length - validCompanions.length} invalid companions`,
+              );
             }
           } else {
             // First run - seed with defaults
-            companions.value = DEFAULT_COMPANIONS.map(c => ({ ...c, image: null }));
+            companions.value = DEFAULT_COMPANIONS.map((c) => ({
+              ...c,
+              image: null,
+            }));
             await saveCompanions();
-            console.log(`[Roleplay] Seeded ${companions.value.length} default companions`);
+            console.log(
+              `[Roleplay] Seeded ${companions.value.length} default companions`,
+            );
           }
         } else {
-          companions.value = DEFAULT_COMPANIONS.map(c => ({ ...c, image: null }));
+          companions.value = DEFAULT_COMPANIONS.map((c) => ({
+            ...c,
+            image: null,
+          }));
         }
       } catch (e) {
         console.error("[Roleplay] Failed to load companions:", e);
-        companions.value = DEFAULT_COMPANIONS.map(c => ({ ...c, image: null }));
+        companions.value = DEFAULT_COMPANIONS.map((c) => ({
+          ...c,
+          image: null,
+        }));
       }
     };
 
@@ -2713,39 +2939,59 @@ export default {
     const loadScenarios = async () => {
       try {
         if (window.electronAPI?.store?.get) {
-          const stored = await window.electronAPI.store.get(SCENARIOS_KEY, null);
+          const stored = await window.electronAPI.store.get(
+            SCENARIOS_KEY,
+            null,
+          );
 
           // Get default scenario IDs for migration check
-          const defaultIds = DEFAULT_SCENARIOS.map(s => s.id);
+          const defaultIds = DEFAULT_SCENARIOS.map((s) => s.id);
 
           if (stored && stored.length > 0) {
             // Check if any default scenarios are missing (migration after update)
-            const storedIds = stored.map(s => s.id);
-            const missingDefaults = DEFAULT_SCENARIOS.filter(ds => !storedIds.includes(ds.id));
+            const storedIds = stored.map((s) => s.id);
+            const missingDefaults = DEFAULT_SCENARIOS.filter(
+              (ds) => !storedIds.includes(ds.id),
+            );
 
             if (missingDefaults.length > 0) {
               // Add missing defaults (preserving user's existing scenarios)
-              console.log(`[Roleplay] Adding ${missingDefaults.length} new default scenarios`);
-              const newDefaults = missingDefaults.map(s => ({ ...s, image: null }));
+              console.log(
+                `[Roleplay] Adding ${missingDefaults.length} new default scenarios`,
+              );
+              const newDefaults = missingDefaults.map((s) => ({
+                ...s,
+                image: null,
+              }));
               scenarios.value = [...stored, ...newDefaults];
               await saveScenarios();
             } else {
               scenarios.value = stored;
             }
 
-            console.log(`[Roleplay] Loaded ${scenarios.value.length} scenarios`);
+            console.log(
+              `[Roleplay] Loaded ${scenarios.value.length} scenarios`,
+            );
           } else {
             // First run - seed with defaults
-            scenarios.value = DEFAULT_SCENARIOS.map(s => ({ ...s, image: null }));
+            scenarios.value = DEFAULT_SCENARIOS.map((s) => ({
+              ...s,
+              image: null,
+            }));
             await saveScenarios();
-            console.log(`[Roleplay] Seeded ${scenarios.value.length} default scenarios`);
+            console.log(
+              `[Roleplay] Seeded ${scenarios.value.length} default scenarios`,
+            );
           }
         } else {
-          scenarios.value = DEFAULT_SCENARIOS.map(s => ({ ...s, image: null }));
+          scenarios.value = DEFAULT_SCENARIOS.map((s) => ({
+            ...s,
+            image: null,
+          }));
         }
       } catch (e) {
         console.error("[Roleplay] Failed to load scenarios:", e);
-        scenarios.value = DEFAULT_SCENARIOS.map(s => ({ ...s, image: null }));
+        scenarios.value = DEFAULT_SCENARIOS.map((s) => ({ ...s, image: null }));
       }
     };
 
@@ -2755,7 +3001,7 @@ export default {
         if (window.electronAPI?.store?.set) {
           await window.electronAPI.store.set(
             COMPANIONS_KEY,
-            JSON.parse(JSON.stringify(toRaw(companions.value)))
+            JSON.parse(JSON.stringify(toRaw(companions.value))),
           );
           console.log(`[Roleplay] Saved ${companions.value.length} companions`);
         }
@@ -2770,7 +3016,7 @@ export default {
         if (window.electronAPI?.store?.set) {
           await window.electronAPI.store.set(
             SCENARIOS_KEY,
-            JSON.parse(JSON.stringify(toRaw(scenarios.value)))
+            JSON.parse(JSON.stringify(toRaw(scenarios.value))),
           );
           console.log(`[Roleplay] Saved ${scenarios.value.length} scenarios`);
         }
@@ -3206,7 +3452,9 @@ export default {
           // Age validation - reject underage companions
           const ageValidation = validateCompanionAge(companion);
           if (!ageValidation.valid) {
-            console.warn(`[Roleplay] Rejected companion "${companion.name}": ${ageValidation.reason}`);
+            console.warn(
+              `[Roleplay] Rejected companion "${companion.name}": ${ageValidation.reason}`,
+            );
             rejectedCount++;
             return;
           }
@@ -3264,7 +3512,9 @@ export default {
           }
           alert(message);
         } else if (rejectedCount > 0) {
-          alert(`Import failed: ${rejectedCount} companion(s) were rejected (underage content not allowed)`);
+          alert(
+            `Import failed: ${rejectedCount} companion(s) were rejected (underage content not allowed)`,
+          );
         } else {
           alert("No new companions imported (may already exist)");
         }
@@ -4168,6 +4418,9 @@ export default {
         checkModelAvailability(),
       ]);
 
+      // Set up socket listener for download completion events
+      setupDownloadsSocket();
+
       // Check if there's an active autonomous session for this companion
       // If so, restore to chat phase and sync history
       const storeData = skillStore.getAutonomousSessionData();
@@ -4191,9 +4444,7 @@ export default {
           );
 
           // Find matching companion
-          let companion = companions.value.find(
-            (c) => c.id === companionId,
-          );
+          let companion = companions.value.find((c) => c.id === companionId);
           let companionSource = companion ? "companions" : null;
 
           if (!companion) {
@@ -4286,6 +4537,9 @@ export default {
 
     // Cleanup on unmount - DO NOT stop autonomous mode, let it continue
     onUnmounted(() => {
+      // Disconnect downloads socket
+      disconnectDownloadsSocket();
+
       // Just sync the current state to store if autonomous mode is active
       if (skillStore.autonomousMode && phase.value === "chat") {
         skillStore.syncAutonomousHistory(chatHistory.value, sceneState.value);
@@ -4413,11 +4667,14 @@ export default {
       toggleAutonomousMode,
       clearMissedMessages,
       // Moltbook integration
-      isRegisteringMoltbook,
+      moltbookApiKey,
+      moltbookUsername,
+      isSavingMoltbook,
       moltbookActivityLog,
       companionMoltbookRegistered,
       companionMoltbookUrl,
-      registerOnMoltbook,
+      saveMoltbookCredentials,
+      disconnectMoltbook,
       loadMoltbookCredentials,
       // Methods
       getAvatarIcon,

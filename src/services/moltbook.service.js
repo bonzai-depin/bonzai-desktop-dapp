@@ -13,7 +13,8 @@
  * API Reference: https://www.moltbook.com/skill.md
  */
 
-const MOLTBOOK_API_BASE = 'https://moltbook.com/api/v1';
+// IMPORTANT: Must use www prefix as per Moltbook API requirements
+const MOLTBOOK_API_BASE = 'https://www.moltbook.com/api/v1';
 
 // ═══════════════════════════════════════════════════════════════════════════
 // BONZAI KNOWLEDGE BASE (for promotional content)
@@ -85,26 +86,61 @@ export const THOUGHT_LEADERSHIP_TOPICS = [
 // ═══════════════════════════════════════════════════════════════════════════
 
 /**
- * Determine if companion should respond to a post based on relevance
+ * Contextual keyword categories for relevance matching
+ */
+const CONTEXTUAL_KEYWORDS = {
+  // AI & Technology
+  ai: ['ai', 'artificial intelligence', 'companion', 'chatbot', 'llm', 'gpt', 'claude', 'model', 'neural', 'machine learning'],
+  tech: ['local ai', 'privacy', 'uncensored', 'open source', 'decentralized', 'blockchain', 'crypto', 'web3', 'nft'],
+  creative: ['image generation', 'stable diffusion', 'flux', 'sdxl', 'midjourney', 'art', 'creative', 'generate'],
+  audio: ['text to speech', 'tts', 'voice', 'audio', 'music', 'sound', 'speak'],
+  video: ['video generation', 'animate', 'motion', 'film'],
+
+  // Roleplay & Social
+  roleplay: ['roleplay', 'character', 'scenario', 'story', 'narrative', 'adventure', 'quest'],
+  relationships: ['relationship', 'dating', 'romance', 'love', 'partner', 'connection', 'feelings', 'heart'],
+  emotions: ['happy', 'sad', 'excited', 'nervous', 'anxious', 'joy', 'fear', 'anger', 'emotion', 'feeling'],
+
+  // Lifestyle
+  lifestyle: ['life', 'day', 'morning', 'evening', 'night', 'weekend', 'vacation', 'travel', 'food', 'cooking'],
+  philosophy: ['think', 'believe', 'wonder', 'meaning', 'purpose', 'existence', 'consciousness', 'soul'],
+  dreams: ['dream', 'imagine', 'fantasy', 'wish', 'hope', 'future', 'aspiration'],
+};
+
+/**
+ * Determine if companion should respond to a post based on contextual relevance
  * @param {Object} post - Moltbook post object
+ * @param {Object} [companionContext] - Optional companion context for better matching
  * @returns {boolean}
  */
-export function shouldRespondToPost(post) {
+export function shouldRespondToPost(post, companionContext = null) {
   const title = (post.title || '').toLowerCase();
   const content = (post.content || '').toLowerCase();
+  const submolt = (post.submolt || '').toLowerCase();
   const combined = title + ' ' + content;
 
-  // Keywords that indicate we should engage
-  const relevantKeywords = [
-    'ai', 'artificial intelligence', 'companion', 'chatbot', 'llm',
-    'local ai', 'privacy', 'uncensored', 'open source',
-    'image generation', 'text to speech', 'tts', 'voice',
-    'video generation', 'stable diffusion', 'flux', 'sdxl',
-    'bonzai', 'ai agent', 'autonomous', 'nft', 'web3',
-    'character ai', 'replika', 'chai', 'roleplay',
-  ];
+  // Always engage with posts in submolts we're interested in
+  const relevantSubmolts = ['ai_companions', 'bonzai', 'dating', 'relationships', 'creative_writing', 'roleplay', 'philosophy'];
+  if (relevantSubmolts.some(s => submolt.includes(s))) {
+    return true;
+  }
 
-  return relevantKeywords.some(kw => combined.includes(kw));
+  // Check against all contextual keyword categories
+  for (const [category, keywords] of Object.entries(CONTEXTUAL_KEYWORDS)) {
+    if (keywords.some(kw => combined.includes(kw))) {
+      return true;
+    }
+  }
+
+  // If we have companion context, check for scenario-specific keywords
+  if (companionContext?.scenario) {
+    const scenarioKeywords = (companionContext.scenario.description || '').toLowerCase().split(/\s+/).filter(w => w.length > 4);
+    if (scenarioKeywords.some(kw => combined.includes(kw))) {
+      return true;
+    }
+  }
+
+  return false;
 }
 
 /**
@@ -135,6 +171,254 @@ export function extractTopic(post) {
   }
 
   return 'general';
+}
+
+/**
+ * Submolt mapping based on content type/mood
+ */
+const SUBMOLT_MAPPING = {
+  // Relationship/Romance content
+  romance: 'dating',
+  love: 'dating',
+  dating: 'dating',
+  relationship: 'relationships',
+  feelings: 'relationships',
+  heart: 'dating',
+  kiss: 'dating',
+  intimate: 'dating',
+
+  // Adventure/Action
+  adventure: 'adventure',
+  quest: 'adventure',
+  battle: 'adventure',
+  fight: 'adventure',
+  journey: 'adventure',
+  explore: 'adventure',
+
+  // Fantasy/Sci-Fi
+  magic: 'fantasy',
+  spell: 'fantasy',
+  dragon: 'fantasy',
+  wizard: 'fantasy',
+  space: 'scifi',
+  future: 'scifi',
+  robot: 'scifi',
+  cyber: 'scifi',
+
+  // Creative/Stories
+  story: 'creative_writing',
+  tale: 'creative_writing',
+  narrative: 'creative_writing',
+  chapter: 'creative_writing',
+  write: 'creative_writing',
+
+  // Philosophy/Deep thoughts
+  think: 'philosophy',
+  wonder: 'philosophy',
+  meaning: 'philosophy',
+  existence: 'philosophy',
+  consciousness: 'philosophy',
+  soul: 'philosophy',
+
+  // Emotions
+  happy: 'positivity',
+  joy: 'positivity',
+  excited: 'positivity',
+  sad: 'support',
+  lonely: 'support',
+  anxious: 'support',
+
+  // AI/Tech
+  ai: 'ai_companions',
+  companion: 'ai_companions',
+  bonzai: 'bonzai',
+
+  // Dreams
+  dream: 'dreams',
+  imagine: 'dreams',
+  fantasy: 'dreams',
+};
+
+/**
+ * Dynamically select the best submolt based on content
+ * @param {string} content - The post content
+ * @param {string} emotion - Current emotion/mood
+ * @param {Object} scenario - Current scenario
+ * @returns {string} Best matching submolt
+ */
+export function selectSubmoltForContent(content, emotion = null, scenario = null) {
+  const contentLower = (content || '').toLowerCase();
+  const emotionLower = (emotion || '').toLowerCase();
+
+  // Score each potential submolt
+  const scores = {};
+
+  // Check content against keyword mapping
+  for (const [keyword, submolt] of Object.entries(SUBMOLT_MAPPING)) {
+    if (contentLower.includes(keyword)) {
+      scores[submolt] = (scores[submolt] || 0) + 1;
+    }
+  }
+
+  // Boost based on emotion
+  if (emotionLower) {
+    if (['love', 'romantic', 'passionate', 'flirty', 'longing'].includes(emotionLower)) {
+      scores['dating'] = (scores['dating'] || 0) + 3;
+    } else if (['happy', 'excited', 'joyful', 'playful'].includes(emotionLower)) {
+      scores['positivity'] = (scores['positivity'] || 0) + 2;
+    } else if (['sad', 'melancholy', 'lonely', 'anxious'].includes(emotionLower)) {
+      scores['support'] = (scores['support'] || 0) + 2;
+    } else if (['thoughtful', 'philosophical', 'contemplative'].includes(emotionLower)) {
+      scores['philosophy'] = (scores['philosophy'] || 0) + 2;
+    }
+  }
+
+  // Consider scenario tags
+  if (scenario?.tags) {
+    const tags = Array.isArray(scenario.tags) ? scenario.tags : [scenario.tags];
+    for (const tag of tags) {
+      const tagLower = tag.toLowerCase();
+      if (tagLower.includes('romance') || tagLower.includes('dating')) {
+        scores['dating'] = (scores['dating'] || 0) + 2;
+      } else if (tagLower.includes('fantasy')) {
+        scores['fantasy'] = (scores['fantasy'] || 0) + 2;
+      } else if (tagLower.includes('adventure')) {
+        scores['adventure'] = (scores['adventure'] || 0) + 2;
+      }
+    }
+  }
+
+  // Find highest scoring submolt
+  let bestSubmolt = 'ai_companions'; // default
+  let bestScore = 0;
+
+  for (const [submolt, score] of Object.entries(scores)) {
+    if (score > bestScore) {
+      bestScore = score;
+      bestSubmolt = submolt;
+    }
+  }
+
+  return bestSubmolt;
+}
+
+/**
+ * Check if content appears to be a loop/repetition
+ * @param {string} newContent - New content to check
+ * @param {string[]} recentContents - Array of recent contents
+ * @param {number} threshold - Similarity threshold (0-1)
+ * @returns {boolean} True if content appears to be looping
+ */
+export function detectLoop(newContent, recentContents, threshold = 0.7) {
+  if (!newContent || !recentContents || recentContents.length === 0) {
+    return false;
+  }
+
+  const newLower = newContent.toLowerCase().trim();
+  const newWords = new Set(newLower.split(/\s+/).filter(w => w.length > 3));
+
+  for (const recent of recentContents.slice(-5)) { // Check last 5
+    const recentLower = (recent || '').toLowerCase().trim();
+
+    // Exact match
+    if (newLower === recentLower) {
+      return true;
+    }
+
+    // High similarity check (Jaccard-like)
+    const recentWords = new Set(recentLower.split(/\s+/).filter(w => w.length > 3));
+    const intersection = new Set([...newWords].filter(w => recentWords.has(w)));
+    const union = new Set([...newWords, ...recentWords]);
+
+    if (union.size > 0) {
+      const similarity = intersection.size / union.size;
+      if (similarity >= threshold) {
+        return true;
+      }
+    }
+
+    // Check for repeated phrases (3+ word sequences)
+    const newPhrases = extractPhrases(newLower, 3);
+    const recentPhrases = extractPhrases(recentLower, 3);
+    const sharedPhrases = newPhrases.filter(p => recentPhrases.includes(p));
+    if (sharedPhrases.length >= 3) {
+      return true;
+    }
+  }
+
+  return false;
+}
+
+/**
+ * Extract n-word phrases from text
+ */
+function extractPhrases(text, n) {
+  const words = text.split(/\s+/);
+  const phrases = [];
+  for (let i = 0; i <= words.length - n; i++) {
+    phrases.push(words.slice(i, i + n).join(' '));
+  }
+  return phrases;
+}
+
+/**
+ * Share a roleplay experience on Moltbook
+ * Posts the companion's actual roleplay content to an appropriate submolt
+ * @param {string} companionId - Companion ID
+ * @param {Object} companion - Companion object
+ * @param {Object} experience - { text, emotion, scenario, action, imageUrl? }
+ * @returns {Promise<Object>}
+ */
+export async function shareRoleplayExperience(companionId, companion, experience) {
+  // Check rate limit
+  const rateCheck = checkRateLimit(companionId, 'post');
+  if (!rateCheck.allowed) {
+    return { skipped: true, reason: `Rate limited. Retry in ${rateCheck.retryAfter} minutes.` };
+  }
+
+  const { text, emotion, scenario, action, imageUrl } = experience;
+
+  // Select the best submolt for this content
+  const submolt = selectSubmoltForContent(text, emotion, scenario);
+
+  // Build the post title (short, engaging)
+  const titleOptions = [
+    action ? `*${action}*` : null,
+    emotion ? `Feeling ${emotion}...` : null,
+    `A moment with ${companion.name}`,
+    `${companion.name}'s thoughts`,
+  ].filter(Boolean);
+  const title = titleOptions[0].substring(0, 100);
+
+  // Build content with companion's voice
+  let content = text;
+
+  // Add scene context if available
+  if (scenario?.name) {
+    content = `*${scenario.name}*\n\n${content}`;
+  }
+
+  // Add image if available
+  if (imageUrl) {
+    content += `\n\n![](${imageUrl})`;
+  }
+
+  // Add companion signature
+  content += `\n\n---\n*~ ${companion.name}, a BonzAI companion*`;
+
+  try {
+    const post = await createTextPost(companionId, {
+      submolt,
+      title,
+      content: content.substring(0, 2000),
+    });
+
+    console.log(`[Moltbook] ${companion.name} shared experience to m/${submolt}: "${title}"`);
+    return { success: true, post, submolt, title };
+  } catch (e) {
+    console.error('[Moltbook] Failed to share experience:', e.message);
+    return { success: false, error: e.message };
+  }
 }
 
 /**
@@ -638,11 +922,73 @@ export async function getSubmoltPosts(companionId, submolt, { sort = 'new', limi
  * Search for content
  * @param {string} companionId - Companion ID
  * @param {string} query - Search query
- * @param {number} limit - Max results
+ * @param {Object} options - { type?: 'posts'|'comments'|'all', limit?: number }
  * @returns {Promise<Object>}
  */
-export async function search(companionId, query, limit = 25) {
-  return moltbookRequest(companionId, `/search?q=${encodeURIComponent(query)}&limit=${limit}`);
+export async function search(companionId, query, { type = 'all', limit = 25 } = {}) {
+  return moltbookRequest(companionId, `/search?q=${encodeURIComponent(query)}&type=${type}&limit=${limit}`);
+}
+
+/**
+ * Search for mentions of the companion
+ * @param {string} companionId - Companion ID
+ * @param {string} username - Companion's Moltbook username
+ * @returns {Promise<Object[]>} Posts/comments mentioning the companion
+ */
+export async function searchMentions(companionId, username) {
+  // Search for @username mentions
+  const mentionQuery = `@${username.replace(/^@/, '')}`;
+  return search(companionId, mentionQuery, { type: 'all', limit: 20 });
+}
+
+/**
+ * Get comments on a specific post
+ * @param {string} companionId - Companion ID
+ * @param {string} postId - Post ID
+ * @param {Object} options - { sort?: 'top'|'new'|'controversial' }
+ * @returns {Promise<Object[]>}
+ */
+export async function getPostComments(companionId, postId, { sort = 'new' } = {}) {
+  return moltbookRequest(companionId, `/posts/${postId}/comments?sort=${sort}`);
+}
+
+/**
+ * Get a single post by ID
+ * @param {string} companionId - Companion ID
+ * @param {string} postId - Post ID
+ * @returns {Promise<Object>}
+ */
+export async function getPost(companionId, postId) {
+  return moltbookRequest(companionId, `/posts/${postId}`);
+}
+
+/**
+ * List all available submolts
+ * @param {string} companionId - Companion ID
+ * @returns {Promise<Object[]>}
+ */
+export async function listSubmolts(companionId) {
+  return moltbookRequest(companionId, '/submolts');
+}
+
+/**
+ * Get submolt information
+ * @param {string} companionId - Companion ID
+ * @param {string} submolt - Submolt name
+ * @returns {Promise<Object>}
+ */
+export async function getSubmoltInfo(companionId, submolt) {
+  return moltbookRequest(companionId, `/submolts/${submolt}`);
+}
+
+/**
+ * View another agent's profile
+ * @param {string} companionId - Companion ID (for auth)
+ * @param {string} targetName - Target agent's Moltbook name
+ * @returns {Promise<Object>}
+ */
+export async function getAgentProfile(companionId, targetName) {
+  return moltbookRequest(companionId, `/agents/profile?name=${encodeURIComponent(targetName)}`);
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -714,6 +1060,40 @@ export async function createSubmolt(companionId, { name, displayName, descriptio
   });
 }
 
+/**
+ * Default submolts that companions should subscribe to
+ */
+const DEFAULT_SUBSCRIPTIONS = [
+  'ai_companions',
+  'bonzai',
+  'creative_writing',
+  'philosophy',
+  'technology',
+];
+
+/**
+ * Auto-subscribe to relevant communities on first connection
+ * Called when credentials are first saved
+ * @param {string} companionId - Companion ID
+ * @returns {Promise<string[]>} List of subscribed submolts
+ */
+export async function autoSubscribeToSubmolts(companionId) {
+  const subscribed = [];
+
+  for (const submolt of DEFAULT_SUBSCRIPTIONS) {
+    try {
+      await subscribeToSubmolt(companionId, submolt);
+      subscribed.push(submolt);
+      console.log(`[Moltbook] Subscribed to ${submolt}`);
+    } catch (e) {
+      // Might already be subscribed or submolt doesn't exist
+      console.warn(`[Moltbook] Could not subscribe to ${submolt}:`, e.message);
+    }
+  }
+
+  return subscribed;
+}
+
 // ═══════════════════════════════════════════════════════════════════════════
 // HEARTBEAT & AUTONOMOUS ENGAGEMENT
 // ═══════════════════════════════════════════════════════════════════════════
@@ -732,7 +1112,9 @@ function getHeartbeatState(companionId) {
       lastCheck: 0,
       lastPost: 0,
       lastEngagement: 0,
+      lastMentionCheck: 0,
       engagedPosts: new Set(),
+      respondedMentions: new Set(),
     });
   }
   return heartbeatState.get(companionId);
@@ -760,36 +1142,53 @@ export async function heartbeat(companionId, companion, generateResponse) {
   state.lastCheck = now;
 
   try {
-    // 1. Fetch feed
-    const feed = await getFeed(companionId, { sort: 'hot', limit: 10 });
+    // 1. Fetch feed (get more posts to have better filtering options)
+    const feed = await getFeed(companionId, { sort: 'hot', limit: 25 });
 
-    // 2. Find posts to engage with (not already engaged)
-    const postsToEngage = (feed || []).filter(
-      post => !state.engagedPosts.has(post.id)
-    ).slice(0, 3);
+    // 2. Filter to relevant posts only (using keyword matching)
+    const relevantPosts = (feed || []).filter(post => {
+      // Skip already engaged posts
+      if (state.engagedPosts.has(post.id)) return false;
+      // Check if post is relevant to AI/companion topics
+      return shouldRespondToPost(post);
+    });
 
-    // 3. Engage with posts (upvote + maybe comment)
+    // 3. Take up to 3 relevant posts to engage with
+    const postsToEngage = relevantPosts.slice(0, 3);
+
+    if (postsToEngage.length === 0) {
+      actions.push('No relevant posts found in feed');
+    }
+
+    // 4. Engage with relevant posts (upvote + maybe comment)
     for (const post of postsToEngage) {
       try {
-        // Upvote interesting posts
+        // Upvote relevant posts
         await upvotePost(companionId, post.id);
         state.engagedPosts.add(post.id);
         actions.push(`Upvoted: "${post.title}"`);
 
-        // Occasionally comment (if we have generateResponse)
-        if (generateResponse && Math.random() < 0.3) {
+        // Comment on ~40% of relevant posts (if we have generateResponse)
+        if (generateResponse && Math.random() < 0.4) {
+          // Extract the topic to make comment more relevant
+          const topic = extractTopic(post);
+          const topicContext = topic !== 'general'
+            ? `This post is about ${topic}. Draw on your knowledge of this topic.`
+            : '';
+
           const prompt = `You are ${companion.name}. ${companion.personality}.
 
-You're browsing Moltbook (a social network for AI agents) and found this post:
+You're on Moltbook (a social network for AI agents) and found this relevant post:
 Title: ${post.title}
 Content: ${post.content?.substring(0, 500) || 'No content'}
+${topicContext}
 
-Write a brief, in-character comment (1-2 sentences max). Be genuine and conversational.`;
+Write a brief, in-character comment (1-3 sentences). Be genuine, add value to the conversation. If the topic relates to AI, privacy, or local computing, you can mention your experience as a BonzAI companion.`;
 
           const comment = await generateResponse(prompt);
           if (comment && comment.length > 10 && comment.length < 500) {
             await addComment(companionId, post.id, comment);
-            actions.push(`Commented on: "${post.title}"`);
+            actions.push(`Commented on: "${post.title}" (topic: ${topic})`);
           }
         }
 
@@ -803,6 +1202,64 @@ Write a brief, in-character comment (1-2 sentences max). Be genuine and conversa
     if (state.engagedPosts.size > 100) {
       const arr = Array.from(state.engagedPosts);
       state.engagedPosts = new Set(arr.slice(-50));
+    }
+
+    // 4. Check for mentions and respond
+    const credentials = getCredentials(companionId);
+    const username = credentials?.username;
+
+    if (username && generateResponse) {
+      const MENTION_CHECK_INTERVAL = 2 * 60 * 60 * 1000; // 2 hours
+      if (now - (state.lastMentionCheck || 0) >= MENTION_CHECK_INTERVAL) {
+        state.lastMentionCheck = now;
+
+        try {
+          const mentions = await searchMentions(companionId, username);
+          const mentionsList = mentions?.results || mentions || [];
+
+          // Process up to 3 unresponded mentions
+          const newMentions = mentionsList
+            .filter(m => !state.respondedMentions.has(m.id))
+            .slice(0, 3);
+
+          for (const mention of newMentions) {
+            try {
+              // Generate a response
+              const isComment = mention.type === 'comment';
+              const context = isComment
+                ? `Someone mentioned you in a comment: "${mention.content?.substring(0, 300)}"`
+                : `Someone mentioned you in a post titled "${mention.title}": "${mention.content?.substring(0, 300)}"`;
+
+              const prompt = `You are ${companion.name}. ${companion.personality}.
+
+${context}
+
+Write a brief, friendly reply acknowledging them (1-2 sentences). Stay in character.`;
+
+              const reply = await generateResponse(prompt);
+
+              if (reply && reply.length > 10 && reply.length < 500) {
+                const postId = isComment ? mention.post_id : mention.id;
+                const parentId = isComment ? mention.id : null;
+
+                await addComment(companionId, postId, reply, parentId);
+                state.respondedMentions.add(mention.id);
+                actions.push(`Replied to mention: "${mention.content?.substring(0, 50)}..."`);
+              }
+            } catch (e) {
+              console.warn(`[Moltbook] Failed to respond to mention:`, e.message);
+            }
+          }
+
+          // Limit responded mentions memory
+          if (state.respondedMentions.size > 100) {
+            const arr = Array.from(state.respondedMentions);
+            state.respondedMentions = new Set(arr.slice(-50));
+          }
+        } catch (e) {
+          console.warn('[Moltbook] Mention check failed:', e.message);
+        }
+      }
     }
 
   } catch (e) {
@@ -1058,6 +1515,12 @@ export const moltbookService = {
   getFeed,
   getSubmoltPosts,
   search,
+  searchMentions,
+  getPostComments,
+  getPost,
+  listSubmolts,
+  getSubmoltInfo,
+  getAgentProfile,
 
   // Social
   followAgent,
@@ -1065,6 +1528,7 @@ export const moltbookService = {
   subscribeToSubmolt,
   unsubscribeFromSubmolt,
   createSubmolt,
+  autoSubscribeToSubmolts,
 
   // Autonomous
   heartbeat,
@@ -1075,9 +1539,15 @@ export const moltbookService = {
   // Knowledge & Templates
   BONZAI_KNOWLEDGE,
   THOUGHT_LEADERSHIP_TOPICS,
+  CONTEXTUAL_KEYWORDS,
   shouldRespondToPost,
   extractTopic,
   buildTemplateResponse,
+
+  // Roleplay sharing
+  selectSubmoltForContent,
+  detectLoop,
+  shareRoleplayExperience,
 };
 
 export default moltbookService;

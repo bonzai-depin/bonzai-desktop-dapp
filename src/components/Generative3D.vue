@@ -469,9 +469,9 @@
                     </div>
                     <div
                       v-if="item.visionVerified"
-                      class="vision-verified-badge"
+                      class="vision-verified-badge fira-sans-condensed-black-italic is-size-4"
                     >
-                      <span class="material-symbols-outlined">verified</span>
+                      <span class="material-symbols-outlined is-size-3">verified</span>
                       Vision Verified
                     </div>
                   </div>
@@ -482,7 +482,7 @@
                   </div>
                   <hr />
                   <button
-                    class="button is-medium is-success copy is-pulled-left p-0 pl-1 pr-1"
+                    class="button is-medium is-success copy is-pulled-left p-0 pl-1 pr-1 mr-3"
                     @click="copyPrompt(item.prompt, item._originalIndex)"
                   >
                     <span
@@ -496,8 +496,16 @@
                     </span>
                   </button>
                   <button
+                    disabled
+                    class="button is-medium is-warning ml-2 is-pulled-left"
+                    title="Mint as NFT (coming soon)"
+                  >
+                    <span class="material-symbols-outlined mr-1">token</span>
+                    Mint
+                  </button>
+                  <button
                     v-if="item.success"
-                    class="button is-medium is-warning ml-5 is-pulled-left"
+                    class="button is-medium is-warning ml-3 is-pulled-left mr-3"
                     @click="applyInference(item)"
                     title="Load this scene"
                   >
@@ -507,7 +515,7 @@
                     Load
                   </button>
                   <button
-                    class="button is-medium is-info ml-2 is-pulled-left"
+                    class="button is-medium is-warning ml-2 is-pulled-left mr-3"
                     @click="regenerateFromInference(item)"
                     :disabled="isLoading"
                     title="Regenerate with same prompt"
@@ -516,14 +524,6 @@
                       autorenew
                     </span>
                     Retry
-                  </button>
-                  <button
-                    disabled
-                    class="button is-medium is-warning ml-2 is-pulled-left"
-                    title="Mint as NFT (coming soon)"
-                  >
-                    <span class="material-symbols-outlined mr-1">token</span>
-                    Mint
                   </button>
                   <button
                     class="button is-medium is-danger is-pulled-right p-0 pl-1 pr-1"

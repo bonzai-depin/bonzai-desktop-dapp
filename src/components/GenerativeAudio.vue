@@ -108,7 +108,6 @@
 
                 <!-- VOICE GENDER SELECTOR (TTS mode only) -->
                 <div v-if="mode === 'tts'" class="control mb-4 has-text-left">
-                  <span class="has-text-grey mr-3">Voice:</span>
                   <input
                     v-model="voiceGender"
                     value="female"
@@ -121,7 +120,7 @@
                       class="material-symbols-outlined"
                       style="font-size: 24px !important"
                     >
-                      face_3
+                      female
                     </span>
                     Female
                   </label>
@@ -138,7 +137,7 @@
                       class="material-symbols-outlined"
                       style="font-size: 24px !important"
                     >
-                      face_6
+                      male
                     </span>
                     Male
                   </label>

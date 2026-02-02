@@ -868,18 +868,29 @@ Output ONLY the meditation script text, nothing else.`;
           createdAt: new Date().toISOString(),
         };
 
-        // Add to history (include audio and image URLs)
+        // Add to history (store metadata only, not large base64 data)
+        // Audio/image would need to be regenerated when loading a session
         const sessionId = `meditation-${Date.now()}`;
         sessionHistory.value.unshift({
           id: sessionId,
-          ...meditationData.value,
-          audioSrc: audioSrc.value,
-          imageSrc: imageSrc.value,
+          title: meditationData.value.title,
+          scenarioId: meditationData.value.scenarioId,
+          scenarioName: meditationData.value.scenarioName,
+          duration: meditationData.value.duration,
+          voice: meditationData.value.voice,
+          createdAt: meditationData.value.createdAt,
+          // Don't store large base64 data - store indicator that media exists
+          hasAudio: !!audioSrc.value,
+          hasImage: !!imageSrc.value,
         });
 
+        // Keep only last 10 sessions
         if (sessionHistory.value.length > 10) {
           sessionHistory.value = sessionHistory.value.slice(0, 10);
         }
+
+        // Save immediately after adding
+        await saveSessionHistory();
 
         emit('meditation-created', meditationData.value);
 
@@ -1008,11 +1019,15 @@ Output ONLY the meditation script text, nothing else.`;
       const scenario = scenarios.find(s => s.id === session.scenarioId);
       if (scenario) {
         selectedScenario.value = scenario;
-        meditationData.value = session;
-        // Restore audio and image from session
-        audioSrc.value = session.audioSrc || '';
-        imageSrc.value = session.imageSrc || '';
+        meditationData.value = {
+          ...session,
+          // Note: Audio and image are not stored to save space
+        };
+        // Clear media - user would need to regenerate the meditation
+        audioSrc.value = '';
+        imageSrc.value = '';
         audioEnded.value = false;
+        console.log('[MeditationForge] Loaded session metadata. Click "Begin Session" to regenerate.');
       }
     };
 
@@ -1031,9 +1046,24 @@ Output ONLY the meditation script text, nothing else.`;
     // Persist session history to storage
     const saveSessionHistory = async () => {
       try {
-        await window.electronAPI?.store?.set(STORAGE_KEY, sessionHistory.value);
+        if (window.electronAPI?.store?.set) {
+          // Only store metadata, not large media data
+          const dataToStore = sessionHistory.value.map(session => ({
+            id: session.id,
+            title: session.title,
+            scenarioId: session.scenarioId,
+            scenarioName: session.scenarioName,
+            duration: session.duration,
+            voice: session.voice,
+            createdAt: session.createdAt,
+            hasAudio: session.hasAudio,
+            hasImage: session.hasImage,
+          }));
+          await window.electronAPI.store.set(STORAGE_KEY, dataToStore);
+          console.log(`[MeditationForge] Saved ${dataToStore.length} sessions`);
+        }
       } catch (e) {
-        console.warn('[MeditationForge] Failed to save session history:', e);
+        console.error('[MeditationForge] Failed to save session history:', e);
       }
     };
 
