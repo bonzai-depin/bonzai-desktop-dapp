@@ -1385,7 +1385,7 @@ export default {
         payload.steps = 4;
       } else if (mode.value === "standard") {
         // SDXL standard mode
-        payload.lora = "cyberrealistic-xl-v6.safetensors";
+        payload.lora = "sdxl-lora.safetensors";
       } else if (mode.value === "turbo") {
         // Flux Klein turbo mode - optimized for speed
         payload.steps = 4;

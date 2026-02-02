@@ -212,6 +212,8 @@ def normalize_model_filename(filename: str) -> str:
 # Model repositories
 SDXL_BASE_REPO = "stabilityai/stable-diffusion-xl-base-1.0"
 SDXL_REFINER_REPO = "stabilityai/stable-diffusion-xl-refiner-1.0"
+SDXL_LORA_NAME = "sdxl-lora.safetensors"
+SDXL_LORA_URL = "https://pub-c63241af101045fb837462e5c4c67e33.r2.dev/sdxl-lora.safetensors"
 
 FLUX_KREA_REPO = "black-forest-labs/FLUX.1-Krea-dev"
 FLUX_KREA_GGUF_NAME = normalize_model_filename(os.getenv("FLUX_GGUF_FILENAME", "flux1-krea-dev-q5_k_m.gguf").strip())
@@ -1843,7 +1845,7 @@ def _plan_for(pipeline: str) -> Dict[str, Any]:
 
     # Image pipelines
     if pipeline in ("image_standard", "sdxl"):
-        return {"repos_to_fetch": [SDXL_BASE_REPO, SDXL_REFINER_REPO], "single_files": []}
+        return {"repos_to_fetch": [SDXL_BASE_REPO, SDXL_REFINER_REPO], "single_files": [_sf(SDXL_LORA_NAME, SDXL_LORA_URL)]}
     if pipeline in ("image_turbo", "flux_klein"):
         return {"repos_to_fetch": [FLUX_KLEIN_REPO], "single_files": []}
     if pipeline in ("image_quality", "flux_krea"):
@@ -2737,8 +2739,8 @@ def image_standard_sdxl():
     height = int(data.get("height", 1024))
     width  = int(data.get("width", 1024))
 
-    ckpt_filename = (data.get("ckpt") or "cyberrealistic.safetensors").strip()
-    lora_filename = (data.get("lora") or "cyberrealistic.safetensors").strip()
+    ckpt_filename = (data.get("ckpt") or "").strip()
+    lora_filename = (data.get("lora") or "sdxl-lora.safetensors").strip()
     lora_strength = float(data.get("lora_strength", 1.0))
 
     steps_base = int(data.get("steps_base", 40))

@@ -202,6 +202,12 @@ export const MODEL_REQUIREMENTS = {
     size: '~7 GB',
     vram: '8 GB',
     description: 'Standard SDXL image generation (uncensored)',
+    additionalFiles: [{
+      name: 'sdxl-lora.safetensors',
+      url: 'https://pub-c63241af101045fb837462e5c4c67e33.r2.dev/sdxl-lora.safetensors',
+      size: '13.9 GB',
+      description: 'SDXL LoRA for enhanced generation',
+    }],
   },
   image_advanced: {
     name: 'Z Turbo',
