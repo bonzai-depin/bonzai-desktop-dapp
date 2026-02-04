@@ -92,8 +92,25 @@
                     Voice Clone
                   </label>
 
-                  <!-- LANGUAGE SELECTOR -->
-                  <div class="select is-dark is-pulled-right">
+                  <input
+                    v-model="mode"
+                    :value="'music'"
+                    id="mode_music"
+                    type="radio"
+                    name="mode"
+                  />
+                  <label for="mode_music" class="radio mr-2">
+                    <span
+                      class="material-symbols-outlined"
+                      style="font-size: 32px !important"
+                    >
+                      music_note
+                    </span>
+                    Music
+                  </label>
+
+                  <!-- LANGUAGE SELECTOR (hidden for music mode) -->
+                  <div v-if="mode !== 'music'" class="select is-dark is-pulled-right">
                     <select v-model="language">
                       <option
                         v-for="(name, code) in languages"
@@ -141,6 +158,49 @@
                     </span>
                     Male
                   </label>
+                </div>
+
+                <!-- MUSIC MODE INPUTS -->
+                <div v-if="mode === 'music'" class="mb-4">
+                  <div class="field">
+                    <label class="label has-text-white has-text-left is-size-6">
+                      <span class="material-symbols-outlined mr-1" style="font-size: 18px; vertical-align: middle;">
+                        lyrics
+                      </span>
+                      Lyrics
+                      <span class="has-text-grey-light is-size-7 ml-2">(optional)</span>
+                    </label>
+                    <div class="control">
+                      <textarea
+                        class="textarea"
+                        v-model="musicLyrics"
+                        placeholder="[verse]&#10;Walking through the city lights&#10;Everything feels so alive tonight&#10;&#10;[chorus]&#10;We're on fire, burning bright&#10;Dancing through the neon night"
+                        rows="5"
+                      ></textarea>
+                    </div>
+                  </div>
+                  <div class="field mt-3">
+                    <label class="label has-text-white has-text-left is-size-6">
+                      <span class="material-symbols-outlined mr-1" style="font-size: 18px; vertical-align: middle;">
+                        timer
+                      </span>
+                      Duration: {{ musicDuration }}s
+                    </label>
+                    <div class="control">
+                      <input
+                        type="range"
+                        v-model.number="musicDuration"
+                        min="10"
+                        max="600"
+                        step="10"
+                        class="slider is-fullwidth"
+                        style="width: 100%"
+                      />
+                    </div>
+                    <p class="help has-text-grey-light">
+                      10s to 600s. Longer durations require more VRAM and generation time.
+                    </p>
+                  </div>
                 </div>
 
                 <!-- VOICE CLONE FILE INPUT -->
@@ -418,13 +478,11 @@
                         </span>
                       </div>
                       <!-- Audio Player -->
-                      <div class="audio-container">
-                        <audio
-                          v-if="inference?.answer?.data?.audio_path"
-                          :src="fileUrl(inference.answer.data.audio_path)"
-                          controls
-                          class="audio-player"
-                        ></audio>
+                      <div class="audio-container" v-if="inference?.answer?.data?.audio_path">
+                        <VueSound
+                          :file="fileUrl(inference.answer.data.audio_path)"
+                          :title="inference.question ? inference.question.substring(0, 40) : 'Audio'"
+                        />
                       </div>
                       <hr />
                       <p class="prompt-text mt-3">
@@ -537,6 +595,8 @@ import {
   clearError,
 } from "../stores/generationStore";
 import AccessRequirements from "./AccessRequirements.vue";
+import { VueSound } from "vue-sound";
+import "vue-sound/style.css";
 
 const DEMO_PROMPT = "Hello, welcome to sovereign AI.";
 
@@ -552,13 +612,18 @@ export default {
   name: "GenerativeAudio",
   components: {
     AccessRequirements,
+    VueSound,
   },
   setup() {
     // ------------ basic state -------------
     const selectedModel = ref("multilingual");
-    const mode = ref("tts"); // 'tts' or 'clone'
+    const mode = ref("tts"); // 'tts', 'clone', or 'music'
     const language = ref("en");
     const exaggerationPct = ref(50); // 0-100 -> maps to 0.0-1.0
+
+    // Music mode refs
+    const musicLyrics = ref("");
+    const musicDuration = ref(60);
     const isLoading = ref(false);
     const form = reactive({ prompt: "" });
     const inferences = reactive([]);
@@ -757,6 +822,9 @@ export default {
     });
 
     const promptPlaceholder = computed(() => {
+      if (mode.value === "music") {
+        return "Enter genre/style tags (e.g. pop rock, energetic, electric guitar, 120bpm)...";
+      }
       if (mode.value === "clone") {
         if (!synthesisBase64.value) {
           return "Upload a reference audio file first...";
@@ -775,8 +843,16 @@ export default {
 
     // ------------ pipeline/endpoint maps --
     // Use Qwen TTS for both modes (design for TTS, clone for voice cloning)
-    const endpointForMode = () => mode.value === 'clone' ? "/audio/quality/clone" : "/audio/quality/design";
-    const pipelineForMode = () => mode.value === 'clone' ? "audio_quality_clone" : "audio_quality_design";
+    const endpointForMode = () => {
+      if (mode.value === 'music') return "/audio/music";
+      if (mode.value === 'clone') return "/audio/quality/clone";
+      return "/audio/quality/design";
+    };
+    const pipelineForMode = () => {
+      if (mode.value === 'music') return "music";
+      if (mode.value === 'clone') return "audio_quality_clone";
+      return "audio_quality_design";
+    };
     const currentPipeline = computed(() => pipelineForMode());
 
     // ------------ downloads state/socket --
@@ -1303,7 +1379,20 @@ export default {
 
       let payload;
 
-      if (mode.value === "clone" && synthesisBase64.value) {
+      if (mode.value === "music") {
+        // Music mode: use ACE-Step v1.5 music generation endpoint
+        payload = {
+          prompt: prompt,
+          lyrics: musicLyrics.value.trim() || undefined,
+          duration: musicDuration.value,
+          steps: 8,
+          guidance_scale: 7.0,
+          seed: -1,
+          instrumental: !musicLyrics.value.trim(),
+          vocal_language: language.value || "en",
+          auto_download: true,
+        };
+      } else if (mode.value === "clone" && synthesisBase64.value) {
         // Clone mode: use reference audio with Qwen TTS clone endpoint
         payload = {
           text: prompt,
@@ -1351,8 +1440,9 @@ export default {
             },
             id: uuid(),
             language: language.value,
-            model: "qwen3-tts",
+            model: mode.value === "music" ? "ace-step-v1.5" : "qwen3-tts",
             hasClone: mode.value === "clone",
+            isMusic: mode.value === "music",
             voiceGender: voiceGender.value,
           };
 
@@ -1640,6 +1730,9 @@ export default {
       fileUrl,
       // Voice gender for TTS
       voiceGender,
+      // Music mode
+      musicLyrics,
+      musicDuration,
       // Access control
       accessRef,
       hasAccess,
@@ -1734,11 +1827,15 @@ div.question {
   display: flex;
   flex-direction: column;
   gap: 0.5rem;
-}
-.audio-player {
-  width: 100%;
-  height: 48px;
-  border-radius: 4px;
+  --player-background: #61378e;
+  --player-text-color: #fff;
+  --player-icon-color: #fff;
+  --player-progress-color: #8b5fbf;
+  --player-buffered-color: rgba(255, 255, 255, 0.15);
+  --player-seeker-color: #8b5fbf;
+  --player-input-range-color: #8b5fbf;
+  --player-link-color: rgba(255, 255, 255, 0.7);
+  --player-font-family: "Fira Sans Condensed", sans-serif;
 }
 .audio-meta {
   top: -12px;

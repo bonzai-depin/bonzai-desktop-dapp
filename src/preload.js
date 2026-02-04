@@ -62,6 +62,15 @@ contextBridge.exposeInMainWorld("electronAPI", {
   // Send response back to main process for OpenClaw webhook
   sendOpenClawResponse: (requestId, result) =>
     ipcRenderer.invoke("openclaw-webhook-response", { requestId, result }),
+  // Model directory management
+  getModelDir: () => ipcRenderer.invoke("get-model-dir"),
+  selectModelDir: () => ipcRenderer.invoke("select-model-dir"),
+  // Migration progress events (for MODEL_DIR file migration)
+  onMigrationProgress: (callback) => {
+    const handler = (_event, data) => callback(data);
+    ipcRenderer.on("migration-progress", handler);
+    return () => ipcRenderer.removeListener("migration-progress", handler);
+  },
   // OpenClaw integration toggle
   openclawGetEnabled: () => ipcRenderer.invoke("openclaw-get-enabled"),
   openclawSetEnabled: (enabled) => ipcRenderer.invoke("openclaw-set-enabled", enabled),

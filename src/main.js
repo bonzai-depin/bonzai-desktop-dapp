@@ -39,7 +39,8 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 // Unified model directory (same as diffuser.py uses for diffusion models)
-const MODEL_DIR = path.join(os.homedir(), "bonzai-models");
+// Can be overridden by user via settings
+let MODEL_DIR = path.join(os.homedir(), "bonzai-models");
 // Ensure directory exists
 fs.mkdirSync(MODEL_DIR, { recursive: true });
 
@@ -282,6 +283,8 @@ const startPythonSubprocess = () => {
     // Locale settings (prevents some encoding issues)
     LANG: process.env.LANG || "en_US.UTF-8",
     LC_ALL: process.env.LC_ALL || "en_US.UTF-8",
+    // Pass model directory to Flask server
+    BONZAI_MODEL_DIR: MODEL_DIR,
   };
 
   // Log detailed spawn info
@@ -472,8 +475,11 @@ const restartServerManually = async () => {
   restartBackoffMs = 2000;
   isIntentionalShutdown = true; // Prevent auto-restart from killing
   await killPythonSubprocess();
-  isIntentionalShutdown = false;
+  // Wait for port to be fully released before starting new process
+  await new Promise((r) => setTimeout(r, 1000));
   startPythonSubprocess();
+  // Only clear intentional flag after the new process has started
+  isIntentionalShutdown = false;
   try {
     await checkPythonServer(`http://127.0.0.1:${PY_SERVER_PORT}`, true);
     return { success: true };
@@ -524,6 +530,160 @@ ipcMain.handle("store-set", (_event, key, value) => {
 ipcMain.handle("store-delete", (_event, key) => {
   store.delete(key);
   return true;
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Model directory management
+// ─────────────────────────────────────────────────────────────────────────────
+ipcMain.handle("get-model-dir", () => MODEL_DIR);
+
+// Helper: calculate directory size recursively
+async function calculateDirSize(dirPath) {
+  let total = 0;
+  const entries = fs.readdirSync(dirPath, { withFileTypes: true });
+  for (const entry of entries) {
+    const fullPath = path.join(dirPath, entry.name);
+    if (entry.isDirectory()) {
+      total += await calculateDirSize(fullPath);
+    } else if (entry.isFile()) {
+      total += fs.statSync(fullPath).size;
+    }
+  }
+  return total;
+}
+
+// Helper: collect all files recursively with relative paths
+function collectFiles(dirPath, basePath = dirPath) {
+  const results = [];
+  if (!fs.existsSync(dirPath)) return results;
+  const entries = fs.readdirSync(dirPath, { withFileTypes: true });
+  for (const entry of entries) {
+    const fullPath = path.join(dirPath, entry.name);
+    if (entry.isDirectory()) {
+      results.push(...collectFiles(fullPath, basePath));
+    } else if (entry.isFile()) {
+      results.push({
+        absolutePath: fullPath,
+        relativePath: path.relative(basePath, fullPath),
+        size: fs.statSync(fullPath).size,
+      });
+    }
+  }
+  return results;
+}
+
+// Helper: copy directory with stream-based progress
+async function copyDirWithProgress(srcDir, destDir, totalSize, progressFn) {
+  const files = collectFiles(srcDir);
+  let copiedBytes = 0;
+
+  for (const file of files) {
+    const destPath = path.join(destDir, file.relativePath);
+    const destDirPath = path.dirname(destPath);
+    fs.mkdirSync(destDirPath, { recursive: true });
+
+    // Skip files that already exist at dest with matching size (idempotent)
+    if (fs.existsSync(destPath)) {
+      const destStat = fs.statSync(destPath);
+      if (destStat.size === file.size) {
+        copiedBytes += file.size;
+        progressFn(copiedBytes, totalSize, file.relativePath);
+        continue;
+      }
+    }
+
+    // Stream-based copy with progress
+    await new Promise((resolve, reject) => {
+      const readStream = fs.createReadStream(file.absolutePath);
+      const writeStream = fs.createWriteStream(destPath);
+
+      readStream.on("data", (chunk) => {
+        copiedBytes += chunk.length;
+        progressFn(copiedBytes, totalSize, file.relativePath);
+      });
+
+      writeStream.on("finish", resolve);
+      writeStream.on("error", reject);
+      readStream.on("error", reject);
+      readStream.pipe(writeStream);
+    });
+  }
+}
+
+// Send migration progress to all renderer windows
+const notifyMigrationProgress = (data) => {
+  const windows = BrowserWindow.getAllWindows();
+  windows.forEach((win) => {
+    if (!win.isDestroyed()) {
+      win.webContents.send("migration-progress", data);
+    }
+  });
+};
+
+ipcMain.handle("select-model-dir", async () => {
+  const win = BrowserWindow.getFocusedWindow() || BrowserWindow.getAllWindows()[0];
+  const { canceled, filePaths } = await dialog.showOpenDialog(win, {
+    title: "Select Model Directory",
+    defaultPath: MODEL_DIR,
+    properties: ["openDirectory", "createDirectory"],
+  });
+  if (canceled || !filePaths.length) return null;
+
+  const newDir = filePaths[0];
+  const oldDir = MODEL_DIR;
+
+  // Skip migration if same directory
+  if (path.resolve(oldDir) === path.resolve(newDir)) {
+    return newDir;
+  }
+
+  fs.mkdirSync(newDir, { recursive: true });
+
+  // Migrate files from old to new directory
+  try {
+    notifyMigrationProgress({ phase: "scanning", pct: 0, detail: "Scanning files..." });
+
+    const totalSize = await calculateDirSize(oldDir);
+    if (totalSize === 0) {
+      notifyMigrationProgress({ phase: "complete", pct: 100, detail: "No files to migrate." });
+    } else {
+      const totalMB = (totalSize / 1024 / 1024).toFixed(1);
+      notifyMigrationProgress({ phase: "copying", pct: 1, detail: `Copying ${totalMB} MB...` });
+
+      await copyDirWithProgress(oldDir, newDir, totalSize, (copiedBytes, total, currentFile) => {
+        // Copying phase: 0-90%
+        const pct = Math.min(90, Math.round((copiedBytes / total) * 90));
+        const copiedMB = (copiedBytes / 1024 / 1024).toFixed(1);
+        notifyMigrationProgress({
+          phase: "copying",
+          pct,
+          detail: `${copiedMB} / ${totalMB} MB — ${currentFile}`,
+        });
+      });
+
+      notifyMigrationProgress({ phase: "verifying", pct: 95, detail: "Verifying..." });
+    }
+  } catch (e) {
+    console.error("[Model Dir] Migration failed:", e);
+    notifyMigrationProgress({ phase: "error", pct: 0, detail: e.message });
+    return { error: `Migration failed: ${e.message}` };
+  }
+
+  // Update MODEL_DIR and restart server
+  MODEL_DIR = newDir;
+  store.set("models", newDir);
+
+  notifyMigrationProgress({ phase: "restarting", pct: 98, detail: "Restarting server..." });
+
+  try {
+    await restartServerManually();
+  } catch (e) {
+    console.warn("[Model Dir] Server restart after dir change failed:", e.message);
+  }
+
+  notifyMigrationProgress({ phase: "complete", pct: 100, detail: "Migration complete." });
+
+  return newDir;
 });
 
 // File existence check for media validation
@@ -1065,10 +1225,11 @@ async function systemInformation() {
   };
 }
 
-// Ensure models dir exists on first run (now uses unified MODEL_DIR)
-const modelDir = store.get("models");
-if (!modelDir || !modelDir.includes("bonzai-models")) {
-  // Migrate to new unified model directory
+// Restore user's model directory from store, or use default
+const storedModelDir = store.get("models");
+if (storedModelDir && fs.existsSync(storedModelDir)) {
+  MODEL_DIR = storedModelDir;
+} else {
   store.set("models", MODEL_DIR);
 }
 

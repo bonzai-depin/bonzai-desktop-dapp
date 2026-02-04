@@ -70,7 +70,7 @@
         </div>
         <hr />
         <!-- Companions (unified list - all user-created) -->
-        <div class="companion-grid mt-5 pt-5">
+        <div v-if="!showCustomCompanion" class="companion-grid mt-5 pt-5">
           <div
             v-for="companion in companions"
             :key="companion.id"
@@ -190,7 +190,7 @@
             </div>
           </div>
           <div class="buttons">
-            <div class="select is-medium mr-2">
+            <div class="select is-medium mr-5">
               <select v-model="customCompanionStyle">
                 <option value="romantic">Romantic</option>
                 <option value="adventurous">Adventurous</option>
@@ -200,7 +200,7 @@
               </select>
             </div>
             <button
-              class="button is-info is-medium mt-2"
+              class="button is-success is-medium mt-2 mr-5"
               @click="generateCustomCompanion"
               :disabled="!customCompanionPrompt || isGenerating"
             >
@@ -216,11 +216,19 @@
               {{ isGenerating ? "Generating..." : "Generate" }}
             </button>
             <button
-              class="button is-danger is-medium mt-2"
-              @click="showCustomCompanion = false"
+              class="button is-danger is-medium mt-2 is-pulled-right"
+              @click="cancelCustomCompanion"
             >
               Cancel
             </button>
+          </div>
+          <!-- Generation Error -->
+          <div v-if="generationError" class="notification is-danger mt-4 mb-0">
+            <button class="delete" @click="generationError = null"></button>
+            <p class="is-size-7">
+              <span class="material-symbols-outlined mr-1" style="font-size: 14px; vertical-align: middle">error</span>
+              {{ generationError }}
+            </p>
           </div>
           <!-- Generated Custom Companion Preview -->
           <div
@@ -477,7 +485,7 @@
         </div>
         <hr />
         <!-- Scenarios (unified list - all user-created) -->
-        <div class="scenario-grid">
+        <div v-if="!showCustomScenario" class="scenario-grid">
           <div
             v-for="scenario in scenarios"
             :key="scenario.id"
@@ -651,10 +659,18 @@
             </button>
             <button
               class="button is-danger is-medium"
-              @click="showCustomScenario = false"
+              @click="cancelCustomScenario"
             >
               Cancel
             </button>
+          </div>
+          <!-- Generation Error -->
+          <div v-if="generationError" class="notification is-danger mt-4 mb-0">
+            <button class="delete" @click="generationError = null"></button>
+            <p class="is-size-7">
+              <span class="material-symbols-outlined mr-1" style="font-size: 14px; vertical-align: middle">error</span>
+              {{ generationError }}
+            </p>
           </div>
 
           <div
@@ -1771,6 +1787,8 @@ export default {
     const customCompanion = ref(null);
     const customScenario = ref(null);
     const isGenerating = ref(false);
+    const generationError = ref(null);
+    const generationCancelled = ref(false);
 
     // ═══════════════════════════════════════════════════════════════════════════
     // KEYWORD CYCLING ANIMATION
@@ -2432,6 +2450,11 @@ export default {
 
       await saveCompanions();
       console.log(`[Roleplay] Companion saved: ${companionToSave.name}`);
+
+      // Select the saved companion and close the form
+      selectedCompanion.value = companionToSave;
+      showCustomCompanion.value = false;
+      customCompanion.value = null;
     };
 
     // Delete a companion
@@ -2454,9 +2477,9 @@ export default {
 
     // Check if a companion name already exists
     const isCompanionAlreadySaved = (companion) => {
-      if (!companion) return false;
+      if (!companion?.name) return false;
       return companions.value.some(
-        (c) => c.name.toLowerCase() === companion.name.toLowerCase(),
+        (c) => c.name?.toLowerCase() === companion.name.toLowerCase(),
       );
     };
 
@@ -2490,6 +2513,11 @@ export default {
 
       await saveScenarios();
       console.log(`[Roleplay] Scenario saved: ${scenarioToSave.name}`);
+
+      // Select the saved scenario and close the form
+      selectedScenario.value = scenarioToSave;
+      showCustomScenario.value = false;
+      customScenario.value = null;
     };
 
     // Delete a scenario
@@ -2512,9 +2540,9 @@ export default {
 
     // Check if a scenario name already exists
     const isScenarioAlreadySaved = (scenario) => {
-      if (!scenario) return false;
+      if (!scenario?.name) return false;
       return scenarios.value.some(
-        (s) => s.name.toLowerCase() === scenario.name.toLowerCase(),
+        (s) => s.name?.toLowerCase() === scenario.name.toLowerCase(),
       );
     };
 
@@ -3315,9 +3343,29 @@ export default {
       showCustomScenario.value = true;
     };
 
+    const cancelCustomCompanion = () => {
+      generationCancelled.value = true;
+      isGenerating.value = false;
+      typingStatus.value = "";
+      customCompanion.value = null;
+      showCustomCompanion.value = false;
+      generationError.value = null;
+    };
+
+    const cancelCustomScenario = () => {
+      generationCancelled.value = true;
+      isGenerating.value = false;
+      typingStatus.value = "";
+      customScenario.value = null;
+      showCustomScenario.value = false;
+      generationError.value = null;
+    };
+
     const generateCustomCompanion = async () => {
       if (!customCompanionPrompt.value || isGenerating.value) return;
       isGenerating.value = true;
+      generationError.value = null;
+      generationCancelled.value = false;
 
       try {
         // Generate companion profile with LLM
@@ -3329,10 +3377,12 @@ export default {
           { updateStatus: (s) => console.log("[Roleplay]", s) },
         );
 
+        if (generationCancelled.value) return;
+
         // Age validation - reject underage companions
         const ageValidation = validateCompanionAge(result);
         if (!ageValidation.valid) {
-          alert(`Cannot create companion: ${ageValidation.reason}`);
+          generationError.value = `Cannot create companion: ${ageValidation.reason}`;
           isGenerating.value = false;
           typingStatus.value = "";
           return;
@@ -3343,6 +3393,7 @@ export default {
 
         // Generate companion portrait image using /image/advanced (square)
         try {
+          if (generationCancelled.value) return;
           const { generateCompanionPicture } =
             await import("../../skills/flagship.js");
           typingStatus.value = "Generating portrait...";
@@ -3352,6 +3403,8 @@ export default {
             height: 768, // Square for companion portraits
             style: "professional portrait photography",
           });
+
+          if (generationCancelled.value) return;
 
           if (imageResult.success && imageResult.image) {
             result.image = imageResult.image;
@@ -3364,9 +3417,13 @@ export default {
           );
         }
 
+        if (generationCancelled.value) return;
         customCompanion.value = result;
       } catch (e) {
         console.error("[Roleplay] Failed to generate companion:", e);
+        if (!generationCancelled.value) {
+          generationError.value = `Failed to generate companion. Please try again.`;
+        }
       } finally {
         isGenerating.value = false;
         typingStatus.value = "";
@@ -3389,6 +3446,8 @@ export default {
     const generateCustomScenario = async () => {
       if (!customScenarioPrompt.value || isGenerating.value) return;
       isGenerating.value = true;
+      generationError.value = null;
+      generationCancelled.value = false;
 
       try {
         // Generate scenario profile with LLM
@@ -3397,8 +3456,11 @@ export default {
           { updateStatus: (s) => console.log("[Roleplay]", s) },
         );
 
+        if (generationCancelled.value) return;
+
         // Generate scenario background image using /image/turbo (landscape)
         try {
+          if (generationCancelled.value) return;
           const { generateScenarioPicture } =
             await import("../../skills/flagship.js");
           typingStatus.value = "Generating scene...";
@@ -3409,6 +3471,8 @@ export default {
             style: "cinematic environment",
           });
 
+          if (generationCancelled.value) return;
+
           if (imageResult.success && imageResult.image) {
             result.image = imageResult.image;
             console.log(`[Roleplay] Generated scene for ${result.name}`);
@@ -3417,9 +3481,13 @@ export default {
           console.warn("[Roleplay] Scene generation failed:", imgErr.message);
         }
 
+        if (generationCancelled.value) return;
         customScenario.value = result;
       } catch (e) {
         console.error("[Roleplay] Failed to generate scenario:", e);
+        if (!generationCancelled.value) {
+          generationError.value = `Failed to generate scenario. Please try again.`;
+        }
       } finally {
         isGenerating.value = false;
         typingStatus.value = "";
@@ -4883,6 +4951,10 @@ export default {
       useCustomCompanion,
       generateCustomScenario,
       useCustomScenario,
+      cancelCustomCompanion,
+      cancelCustomScenario,
+      generationError,
+      generationCancelled,
       // Keyword cycling animation
       keywordIndices,
       getCurrentKeyword,

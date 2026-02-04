@@ -157,7 +157,11 @@ logger = logging.getLogger("bonzai-server")
 
 
 def get_safe_model_dir() -> Path:
-    safe = Path.home() / "bonzai-models"
+    env_dir = os.environ.get("BONZAI_MODEL_DIR")
+    if env_dir:
+        safe = Path(env_dir)
+    else:
+        safe = Path.home() / "bonzai-models"
     safe.mkdir(parents=True, exist_ok=True)
     return safe
 
@@ -273,6 +277,10 @@ QWEN3_VL_REPO = "Qwen/Qwen3-VL-2B-Instruct"
 # Qwen3-TTS - High-quality TTS with voice cloning and voice design
 QWEN3_TTS_BASE_REPO = "Qwen/Qwen3-TTS-12Hz-1.7B-Base"  # For voice cloning
 QWEN3_TTS_DESIGN_REPO = "Qwen/Qwen3-TTS-12Hz-1.7B-VoiceDesign"  # For voice design from description
+
+# ACE-Step v1.5 Music Generation (handler-based, hybrid LM + DiT architecture)
+# Models auto-download on first run via acestep internals; this repo is for the pipeline plan guard only.
+ACE_STEP_REPO = "ACE-Step/Ace-Step1.5"
 
 LLAMA_REPOS = {
     "llama-3.2-1b": "meta-llama/Llama-3.2-1B",
@@ -1848,6 +1856,8 @@ def _plan_for(pipeline: str) -> Dict[str, Any]:
     if pipeline in ("audio_quality_persona", "qwen3_tts_persona"):
         # Persona needs both models
         return {"repos_to_fetch": [QWEN3_TTS_BASE_REPO, QWEN3_TTS_DESIGN_REPO], "single_files": []}
+    if pipeline in ("music", "ace_step"):
+        return {"repos_to_fetch": [ACE_STEP_REPO], "single_files": []}
 
     # Video pipelines
     if pipeline in ("video_fast", "ltx2_video_gguf"):
@@ -3393,6 +3403,10 @@ def audio_multilingual():
         DeviceManager.free_memory()
 
 
+# ACE-Step v1.5 handler cache (DiT handler only; LLM optional for low-VRAM)
+_ace_step_dit = None
+_ace_step_lock = threading.Lock()
+
 # Kokoro TTS pipeline cache
 _kokoro_pipeline = None
 _kokoro_pipeline_lock = threading.Lock()
@@ -4017,6 +4031,162 @@ def audio_quality_voices():
     return jsonify({"voices": voices, "count": len(voices)}), 200
 
 
+# =============================================================================
+# ACE-STEP MUSIC GENERATION
+# =============================================================================
+
+def _load_ace_step():
+    """Load or get cached ACE-Step v1.5 DiT handler."""
+    global _ace_step_dit
+    with _ace_step_lock:
+        if _ace_step_dit is not None:
+            return _ace_step_dit
+
+        from acestep.handler import AceStepHandler
+
+        # Resolve checkpoint root — ACE-Step v1.5 expects a directory
+        # containing checkpoints/ with VAE, text encoder, and DiT sub-dirs.
+        # The repos are downloaded into MODEL_DIR/repos/<repo>.
+        main_local = repo_local_dir(ACE_STEP_REPO)
+        project_root = str(main_local) if main_local.exists() else "./"
+
+        device = DeviceManager.get_device()
+        device_str = "cuda" if device.type == "cuda" else (
+            "mps" if device.type == "mps" else "cpu"
+        )
+
+        handler = AceStepHandler()
+        status_msg, success = handler.initialize_service(
+            project_root=project_root,
+            config_path="acestep-v15-turbo",
+            device=device_str,
+            offload_to_cpu=(device.type != "cuda"),
+        )
+        if not success:
+            raise RuntimeError(f"ACE-Step v1.5 init failed: {status_msg}")
+
+        _ace_step_dit = handler
+        logger.info("ACE-Step v1.5 DiT handler loaded (%s): %s", device_str, status_msg)
+        return _ace_step_dit
+
+
+@app.route("/audio/music", methods=["POST"])
+@require_auth(min_level=LEVEL_REQUIREMENTS["audio"], allow_demo=True)
+def audio_music():
+    """
+    Generate music using ACE-Step v1.5 (hybrid LM + DiT).
+
+    Parameters:
+        prompt (str): Caption / genre-style tags (e.g. "pop rock, energetic, electric guitar")
+        lyrics (str, optional): Song lyrics with [verse]/[chorus] markers
+        duration (int): Duration in seconds (10-600, default 60)
+        steps (int): Inference steps (1-20 for turbo, default 8)
+        guidance_scale (float): CFG scale (default 7.0)
+        seed (int): Random seed (-1 for random, default -1)
+        bpm (int, optional): Tempo 30-300
+        keyscale (str, optional): Musical key e.g. "C minor"
+        instrumental (bool): Force instrumental, no vocals (default false)
+        vocal_language (str): ISO language code (default "en")
+        auto_download (bool): Auto-download model if missing (default false)
+    """
+    data = request.get_json(force=True, silent=True) or {}
+    prompt = (data.get("prompt") or "").strip()
+    if not prompt:
+        return jsonify({"error": "prompt is required"}), 400
+
+    lyrics = (data.get("lyrics") or "").strip() or ""
+    duration = max(10, min(600, int(data.get("duration", 60))))
+    steps = max(1, min(20, int(data.get("steps", 8))))
+    guidance_scale = float(data.get("guidance_scale", 7.0))
+    seed = int(data.get("seed", -1))
+    bpm = data.get("bpm")
+    if bpm is not None:
+        bpm = max(30, min(300, int(bpm)))
+    keyscale = (data.get("keyscale") or "").strip()
+    instrumental = bool(data.get("instrumental", False))
+    vocal_language = (data.get("vocal_language") or "en").strip()
+    auto_dl = bool(data.get("auto_download", False))
+
+    # Ensure model files are present
+    guard = _ensure_files_present_or_start("music", auto_download=auto_dl)
+    if guard is not None:
+        return guard
+
+    gen_id = genbus.new("ace_step_music", {"endpoint": "/audio/music", "prompt": prompt[:100]})
+
+    try:
+        gc.collect()
+        DeviceManager.free_memory()
+
+        dit_handler = _load_ace_step()
+
+        import random as _rng
+        actual_seed = seed if seed >= 0 else _rng.randint(0, 2**31 - 1)
+
+        genbus.update(gen_id, 10, "generating")
+
+        from acestep.inference import generate_music, GenerationParams, GenerationConfig
+
+        params = GenerationParams(
+            caption=prompt,
+            lyrics=lyrics,
+            instrumental=instrumental,
+            duration=float(duration),
+            bpm=bpm,
+            keyscale=keyscale,
+            vocal_language=vocal_language,
+            inference_steps=steps,
+            guidance_scale=guidance_scale,
+            seed=actual_seed,
+            shift=3.0,
+            infer_method="ode",
+            task_type="text2music",
+            thinking=False,  # skip LLM phase — DiT-only for speed
+        )
+
+        config = GenerationConfig(
+            batch_size=1,
+            use_random_seed=False,
+            audio_format="wav",
+        )
+
+        save_dir = str(FILES_DIR)
+
+        # generate_music accepts llm_handler=None when thinking=False
+        from acestep.llm_inference import LLMHandler
+        _dummy_llm = LLMHandler()
+
+        result = generate_music(
+            dit_handler=dit_handler,
+            llm_handler=_dummy_llm,
+            params=params,
+            config=config,
+            save_dir=save_dir,
+        )
+
+        if not result.success or not result.audios:
+            err = result.error or "No audio generated"
+            genbus.error(gen_id, err)
+            return jsonify({"error": err}), 500
+
+        audio_path = result.audios[0].get("path", "")
+        genbus.complete(gen_id, {"audio_path": audio_path})
+
+        return jsonify(_json_sanitize({
+            "ok": True,
+            "audio_path": audio_path,
+            "duration": duration,
+            "seed": actual_seed,
+        })), 201
+
+    except Exception as e:
+        logger.exception("ACE-Step v1.5 music generation failed")
+        genbus.error(gen_id, str(e))
+        return jsonify({"error": str(e)}), 500
+    finally:
+        DeviceManager.free_memory()
+
+
 @app.route("/audio/info", methods=["GET"])
 def audio_info():
     '''Audio model capabilities.'''
@@ -4057,6 +4227,13 @@ def audio_info():
                 "features": ["voice_design", "voice_cloning", "persona_caching", "high_quality"],
                 "requires_voice_reference": False,
                 "description": "Design a persona voice and generate speech (combines design + clone)",
+            },
+            "music": {
+                "name": "ACE-Step v1.5 Music",
+                "endpoint": "/audio/music",
+                "features": ["music_generation", "lyrics_support", "genre_tags", "bpm_control", "key_control", "instrumental"],
+                "duration_range": [10, 600],
+                "description": "Hybrid LM+DiT music generation with lyrics, BPM, key, and language control",
             },
         },
         "cached_voices": list(_voice_prompt_cache.keys()),
@@ -5531,6 +5708,16 @@ def memory_clear():
 
     try:
         unloaded = []
+
+        # Unload ACE-Step v1.5 DiT handler
+        global _ace_step_dit
+        if _ace_step_dit is not None:
+            try:
+                del _ace_step_dit
+            except:
+                pass
+            _ace_step_dit = None
+            unloaded.append("ace_step_music")
 
         # Unload Kokoro TTS pipeline
         global _kokoro_pipeline

@@ -362,27 +362,91 @@
               </div>
             </div>
           </div>
-          <ul class="columns is-multiline has-text-left">
-            <li class="column is-6" v-for="model in availableModels">
-              <button
-                class="button is-outlined is-info is-large fira-sans-condensed-black-italic is-size-4 is-fullwidth mb-5"
-                @click="
-                  pickModel(model);
-                  openModel = false;
-                "
-                style="justify-content: left"
+          <!-- Migration Progress -->
+          <div v-if="migrationProgress.active" class="notification is-info mb-4">
+            <p class="mb-2">
+              <strong class="fira-sans-condensed-black-italic">Migrating model files...</strong>
+              <span class="is-pulled-right fira-sans-condensed-black-italic">{{ migrationProgress.pct }}%</span>
+            </p>
+            <progress class="progress is-success" :value="migrationProgress.pct" max="100">{{ migrationProgress.pct }}%</progress>
+            <p class="is-size-7 has-text-white">{{ migrationProgress.detail }}</p>
+          </div>
+          <div v-if="migrationProgress.error" class="notification is-danger mb-4">
+            <strong>Migration failed:</strong> {{ migrationProgress.error }}
+          </div>
+          <!-- Model Directory -->
+          <div class="model-dir-bar mb-5 p-4">
+            <span class="material-symbols-outlined mr-2 has-text-white is-size-1" style="vertical-align: middle">folder</span>
+            <span class="is-size-7 has-text-grey-light model-dir-path">{{ modelDir }}</span>
+            <button
+              class="button is-medium is-outlined is-warning ml-3"
+              @click="changeModelDir"
+              title="Change model storage location"
+              style="box-shadow: none;"
+            >
+              Change
+            </button>
+          </div>
+          <ul class="columns is-multiline has-text-left mt-5">
+            <li class="column is-6" v-for="model in availableModels" :key="model.filename">
+              <div
+                class="model-card mb-5"
+                :class="{
+                  'model-card--downloaded': modelAvailabilityMap[model.filename],
+                  'model-card--selected': currentModel.filename === model.filename,
+                }"
               >
-                <span class="material-symbols-outlined is-size-2 mr-2">
-                  neurology
-                </span>
-                {{ model.modelname }}
-                <span class="filesize">
-                  <span class="material-symbols-outlined is-size-5 mr-2">
-                    hard_drive
+                <button
+                  class="button is-outlined is-info is-large fira-sans-condensed-black-italic is-size-4 is-fullwidth"
+                  @click="
+                    pickModel(model);
+                    openModel = false;
+                  "
+                  style="justify-content: left"
+                >
+                  <span class="material-symbols-outlined is-size-2 mr-2">
+                    neurology
                   </span>
-                  {{ model.filesize }}
-                </span>
-              </button>
+                  {{ model.modelname }}
+                  <span class="filesize">
+                    <span class="material-symbols-outlined is-size-3 mr-2 is-pulled-left">
+                      hard_drive
+                    </span>
+                    {{ model.filesize }}
+                    <button
+                      v-if="!modelAvailabilityMap[model.filename]"
+                      class="button is-success is-small ml-2"
+                      :disabled="modelDownloading[model.filename]"
+                      @click.stop="downloadModelInList(model)"
+                      title="Download model"
+                      style="box-shadow: none;"
+                    >
+                      <span
+                        v-if="modelDownloading[model.filename]"
+                        class="is-size-7 fira-sans-condensed-black-italic"
+                      >
+                        {{ modelDownloadProgress[model.filename] || 0 }}%
+                      </span>
+                      <template v-else>
+                        <span class="material-symbols-outlined" style="font-size: 20px">download</span>
+                      </template>
+                    </button>
+                    <button
+                      v-if="modelAvailabilityMap[model.filename]"
+                      class="button is-danger is-small ml-2"
+                      :disabled="modelDownloading[model.filename]"
+                      @click.stop="deleteModelInList(model)"
+                      title="Delete model from disk"
+                      style="box-shadow: none;"
+                    >
+                      <span class="material-symbols-outlined" style="font-size: 20px">delete</span>
+                    </button>
+                  </span>
+                </button>
+                <div class="model-card__tip models__activity--payouts">
+                  {{ model.modeldesc }}
+                </div>
+              </div>
             </li>
           </ul>
         </div>
@@ -520,7 +584,7 @@
 </template>
 
 <script>
-import { ref, reactive, shallowRef, toRaw, computed } from "vue";
+import { ref, reactive, shallowRef, toRaw, computed, watch } from "vue";
 import { v4 as uuid } from "uuid";
 import VueMarkdown from "vue-markdown-render";
 import useClipboard from "vue-clipboard3";
@@ -705,6 +769,22 @@ export default {
     const isModel = ref(false);
     const openModel = ref(false);
     const openChat = ref(false);
+
+    // Model directory
+    const modelDir = ref("");
+
+    // Per-model availability tracking for the model list
+    const modelAvailabilityMap = reactive({});
+    const modelDownloading = reactive({});
+    const modelDownloadProgress = reactive({});
+
+    // Migration progress state
+    const migrationProgress = reactive({
+      active: false,
+      pct: 0,
+      detail: "",
+      error: null,
+    });
 
     // OpenClaw integration state
     const openclawInstalled = ref(false);
@@ -963,17 +1043,30 @@ export default {
         context: 131072,
       },
 
-      glm_4_7_flash: {
-        modelname: "GLM 4.7 Flash",
+      glm_4_7_flash_uncen: {
+        modelname: "GLM 4.7 Flash Uncensored",
         modeldesc:
-          "30B-parameter Mixture-of-Experts model from Zhipu AI with only 3.6B active parameters per forward pass and 200K context. Ultra-efficient MoE architecture delivers strong reasoning at a fraction of the compute. Best for: fast local inference, coding assistance, math reasoning, and general-purpose AI on consumer hardware.",
-        url: "https://huggingface.co/unsloth/GLM-4.7-Flash-GGUF/resolve/main/GLM-4.7-Flash-Q4_K_M.gguf",
-        filename: "glm-4.7-flash-q4_k_m.gguf",
-        filesize: "18.3 GB",
+          "30B-parameter Mixture-of-Experts model from Zhipu AI (DavidAU NEO-CODE-MAX imatrix) with only 3B active parameters per forward pass and 200K context. Dual imatrix calibration (creative + code) with 16-bit output tensor for higher fidelity. Best for: uncensored creative writing, coding assistance, reasoning, and general-purpose AI on consumer hardware.",
+        url: "https://huggingface.co/DavidAU/GLM-4.7-Flash-Uncensored-Heretic-NEO-CODE-Imatrix-MAX-GGUF/resolve/main/GLM-4.7-Flash-Uncen-Hrt-NEO-CODE-MAX-imat-D_AU-Q4_K_M.gguf",
+        filename: "GLM-4.7-Flash-Uncen-Hrt-NEO-CODE-MAX-imat-D_AU-Q4_K_M.gguf",
+        filesize: "18.5 GB",
         parameters: 30000000000,
-        activeParameters: 3600000000,
+        activeParameters: 3000000000,
         isMoE: true,
-        context: 202752,
+        context: 200000,
+      },
+
+      qwen3_coder_next_80B_A3B: {
+        modelname: "Qwen3 Coder Next 80B A3B",
+        modeldesc:
+          "80B-parameter Mixture-of-Experts Qwen3-Coder-Next model with only 3B active parameters per token and a native 262,144-token context window. Hybrid architecture (Gated DeltaNet + Gated Attention + MoE with 512 experts) designed for coding agents and long-horizon agentic reasoning. Best for: advanced coding copilots, multi-file refactoring, complex tool use, and IDE-integrated development agents.",
+        url: "https://huggingface.co/unsloth/Qwen3-Coder-Next-GGUF/resolve/main/Qwen3-Coder-Next-Q4_K_M.gguf",
+        filename: "Qwen3-Coder-Next-Q4_K_M.gguf",
+        filesize: "48.5 GB",
+        parameters: 80000000000,
+        activeParameters: 3000000000,
+        isMoE: true,
+        context: 262144,
       },
 
       // MiniCPM-V 4.5 is disabled for GenerativeText - vision is handled server-side via diffuser.py
@@ -1034,6 +1127,7 @@ export default {
 
       if (success) {
         isModel.value = true;
+        modelAvailabilityMap[filename] = true;
         console.log("Model download success!");
       } else {
         console.error("Model download failure...");
@@ -1047,12 +1141,128 @@ export default {
       console.log("Now deleting model...", filename);
       if (success) {
         isModel.value = false;
+        modelAvailabilityMap[filename] = false;
         console.log("Model deleting success!");
       } else {
         console.error("Model deleting failure...");
       }
       isLoading.value = false;
     };
+
+    // Check availability of all models in the list
+    const checkAllModelAvailability = async () => {
+      const models = Object.values(availableModels.value);
+      await Promise.all(
+        models.map(async (model) => {
+          try {
+            const available = await window.electronAPI.checkModel(model.filename);
+            modelAvailabilityMap[model.filename] = available;
+          } catch {
+            modelAvailabilityMap[model.filename] = false;
+          }
+        })
+      );
+    };
+
+    // Download a model from the model list
+    const downloadModelInList = async (model) => {
+      modelDownloading[model.filename] = true;
+      modelDownloadProgress[model.filename] = 0;
+
+      const progressHandler = (_e, data) => {
+        if (data.filename === model.filename) {
+          modelDownloadProgress[model.filename] = Math.round(data.percent * 100);
+        }
+      };
+      window.electronAPI.onDownloadProgress(progressHandler);
+
+      try {
+        const success = await window.electronAPI.downloadModel(model.url, model.filename);
+        if (success) {
+          modelAvailabilityMap[model.filename] = true;
+        }
+      } catch (e) {
+        console.error(`Failed to download ${model.filename}:`, e);
+      } finally {
+        modelDownloading[model.filename] = false;
+        modelDownloadProgress[model.filename] = 0;
+      }
+    };
+
+    // Delete a model from the model list
+    const deleteModelInList = async (model) => {
+      modelDownloading[model.filename] = true;
+      try {
+        const success = await window.electronAPI.deleteModel(model.filename);
+        if (success) {
+          modelAvailabilityMap[model.filename] = false;
+          // If the deleted model is the currently selected one, update its status
+          if (currentModel.value.filename === model.filename) {
+            isModel.value = false;
+          }
+        }
+      } catch (e) {
+        console.error(`Failed to delete ${model.filename}:`, e);
+      } finally {
+        modelDownloading[model.filename] = false;
+      }
+    };
+
+    // Change model directory
+    const changeModelDir = async () => {
+      // Subscribe to migration progress events
+      migrationProgress.active = false;
+      migrationProgress.pct = 0;
+      migrationProgress.detail = "";
+      migrationProgress.error = null;
+
+      let unsubscribe = null;
+      if (window.electronAPI?.onMigrationProgress) {
+        unsubscribe = window.electronAPI.onMigrationProgress((data) => {
+          if (data.phase === "error") {
+            migrationProgress.active = false;
+            migrationProgress.error = data.detail;
+            return;
+          }
+          if (data.phase === "complete") {
+            migrationProgress.active = false;
+            migrationProgress.pct = 100;
+            migrationProgress.detail = data.detail;
+            return;
+          }
+          migrationProgress.active = true;
+          migrationProgress.pct = data.pct || 0;
+          migrationProgress.detail = data.detail || "";
+        });
+      }
+
+      try {
+        const result = await window.electronAPI.selectModelDir();
+        if (result && typeof result === "string") {
+          modelDir.value = result;
+          // Re-check all model availability in the new directory
+          await checkAllModelAvailability();
+          // Re-check current model
+          await isModelAvailable(currentModel.value.filename);
+        }
+      } finally {
+        if (unsubscribe) unsubscribe();
+      }
+    };
+
+    // Load model directory on init
+    const loadModelDir = async () => {
+      if (window.electronAPI?.getModelDir) {
+        modelDir.value = await window.electronAPI.getModelDir();
+      }
+    };
+
+    // Refresh model availability when the modal opens
+    watch(openModel, async (isOpen) => {
+      if (isOpen) {
+        await checkAllModelAvailability();
+      }
+    });
 
     const loadModel = async (model) => {
       console.log("Now loading (raw)...", model);
@@ -1403,6 +1613,16 @@ export default {
       deleteModel,
       loadModel,
       openModel,
+      // Model list management
+      loadModelDir,
+      modelDir,
+      modelAvailabilityMap,
+      modelDownloading,
+      modelDownloadProgress,
+      downloadModelInList,
+      deleteModelInList,
+      changeModelDir,
+      migrationProgress,
       openChat,
       form,
       sendMessage,
@@ -1448,6 +1668,11 @@ export default {
     };
   },
   async mounted() {
+    // Load model directory path
+    if (window.electronAPI?.getModelDir) {
+      this.modelDir = await window.electronAPI.getModelDir();
+    }
+
     const readyToPrompt = await this.isModelAvailable(
       this.currentModel.filename
     );
@@ -1491,6 +1716,8 @@ export default {
     setTimeout(() => this.setupScrollObserver(), 100);
     // Setup scroll listener for scroll-to-top button
     this.setupScrollListener();
+
+    await this.loadModelDir();
   },
   beforeUnmount() {
     this.cleanupScrollObserver();
@@ -1726,16 +1953,18 @@ span.answer__id {
 }
 
 .filesize {
+  min-width: 40%;
   position: absolute;
   top: -10px;
   right: -10px;
-  padding: 5px 10px;
+  padding: 5px;
   font-size: 20px;
   color: rgba(255, 255, 255, 1);
   background: rgba(255, 255, 255, 0.25);
   border: 1px solid rgba(255, 255, 255, 0.25);
   border-radius: 4px;
   backdrop-filter: blur(32px) !important;
+  text-align: right;
 }
 
 .models__deployment-use {
@@ -1964,5 +2193,63 @@ ol.chat li {
 
 .button.is-outlined.is-warning .openclaw-label {
   color: #ffdd57;
+}
+
+/* Model directory bar */
+.model-dir-bar {
+  display: flex;
+  align-items: center;
+  padding: 0.5rem 0.75rem;
+  border-radius: 6px;
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+.model-dir-path {
+  font-family: monospace;
+  word-break: break-all;
+  flex: 1;
+}
+
+/* Model card in the picker list */
+.model-card {
+  position: relative;
+  border-radius: 8px;
+  border: 1px solid transparent;
+  transition: border-color 0.2s;
+}
+
+.model-card--downloaded {
+  border-color: rgba(72, 199, 142, 0.3);
+}
+
+.model-card--selected {
+  border-color: rgba(32, 156, 238, 0.5);
+}
+
+.model-card-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  padding: 0.25rem 0.5rem 0.5rem;
+  gap: 0.25rem;
+}
+
+.model-card__tip {
+  display: none;
+  position: absolute;
+  bottom: 100%;
+  left: 0;
+  right: 0;
+  z-index: 10;
+  font-size: 0.75rem;
+  line-height: 1.4;
+  color: rgba(255, 255, 255, 0.85);
+  padding: 1em !important;
+  margin-bottom: 4px;
+}
+
+.model-card:hover .model-card__tip {
+  display: block;
 }
 </style>

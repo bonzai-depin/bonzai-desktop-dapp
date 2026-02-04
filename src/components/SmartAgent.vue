@@ -250,7 +250,7 @@
                     </template>
                   </ul>
                   <!-- Show all missing files/ggufs -->
-                  <ul style="margin-top: 0.5rem; text-transform: lowercase">
+                  <ul style="text-transform: lowercase">
                     <template
                       v-for="model in missingModels"
                       :key="model.key + '_files'"

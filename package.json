@@ -81,7 +81,8 @@
     "vite-plugin-static-copy": "^1.0.5",
     "vue": "^3.2.13",
     "vue-clipboard3": "^2.0.0",
-    "vue-markdown-render": "^2.2.1"
+    "vue-markdown-render": "^2.2.1",
+    "vue-sound": "^0.1.10"
   },
   "optionalDependencies": {
     "appdmg": "^0.6.6"

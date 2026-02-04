@@ -252,6 +252,18 @@ export const MODEL_REQUIREMENTS = {
     description: 'High-quality TTS with voice design and cloning',
   },
 
+  // Music Generation
+  music: {
+    name: 'ACE-Step v1.5 Music',
+    type: 'audio',
+    pipeline: 'music',
+    endpoint: '/audio/music',
+    repo: 'ACE-Step/Ace-Step1.5',
+    size: '~4 GB (turbo DiT)',
+    vram: '4 GB',
+    description: 'Hybrid LM+DiT music generation with lyrics, BPM, and key control',
+  },
+
   // Video Models
   video_fast: {
     name: 'LTX-2 Video',
@@ -4097,6 +4109,11 @@ Return ONLY the JSON object, no other text.`;
 
       const response = await generateTextWithModel(prompt, '', ROLEPLAY_LLM);
       const companion = extractJSON(response);
+
+      if (!companion.name) {
+        throw new Error('Generation failed: companion name is missing from LLM response');
+      }
+
       companion.id = `custom_${Date.now()}`;
       companion.isCustom = true;
 
@@ -4127,6 +4144,11 @@ Return ONLY the JSON object, no other text.`;
 
       const response = await generateTextWithModel(prompt, '', ROLEPLAY_LLM);
       const scenario = extractJSON(response);
+
+      if (!scenario.name) {
+        throw new Error('Generation failed: scenario name is missing from LLM response');
+      }
+
       scenario.id = `custom_${Date.now()}`;
       scenario.isCustom = true;
 
