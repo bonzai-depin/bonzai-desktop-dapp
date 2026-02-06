@@ -1089,13 +1089,24 @@ export default {
       }, 1000);
     };
 
+    // Pipeline names relevant to this view
+    const IMAGE_PIPELINES = [
+      "image_standard", "sdxl", "sdxl_intermediate",
+      "image_turbo", "flux_klein",
+      "image_quality", "flux_krea",
+      "image_advanced", "z_image_turbo",
+    ];
+
+    const isRelevantPipeline = (pipelineName) => {
+      return IMAGE_PIPELINES.some((p) => pipelineName === p || pipelineName?.startsWith(p));
+    };
+
     const resumeActiveDownloadIfAny = async () => {
       try {
         const { data } = await axios.get(`${API_BASE}/downloads/list`);
         const active = (data?.pipelines || []).filter((p) =>
-          ["pending", "downloading", "retrying", "waiting_retry"].includes(
-            p.status
-          )
+          ["pending", "downloading", "retrying", "waiting_retry"].includes(p.status) &&
+          isRelevantPipeline(p.pipeline_name)
         );
         if (!active.length) return;
         ensureDownloadsSocket();
@@ -1409,6 +1420,14 @@ export default {
 
       // Build endpoint URL
       const url = `${API_BASE}${endpointForMode()}`;
+
+      // Free GPU memory: unload local LLM + clear cached Flask models
+      try {
+        await window.electronAPI?.unloadModel?.();
+        await fetch(`${API_BASE}/memory/clear`, { method: "POST" });
+      } catch (e) {
+        console.warn("[GenerativeImage] Memory clear:", e.message);
+      }
 
       ensureGenerationSocket();
       startGeneration("image"); // Initialize generation state

@@ -397,12 +397,12 @@
                 }"
               >
                 <button
-                  class="button is-outlined is-info is-large fira-sans-condensed-black-italic is-size-4 is-fullwidth"
+                  class="button is-outlined is-info is-large fira-sans-condensed-black-italic is-size-5 is-fullwidth"
                   @click="
                     pickModel(model);
                     openModel = false;
                   "
-                  style="justify-content: left"
+                  style="justify-content: left; box-shadow: none;"
                 >
                   <span class="material-symbols-outlined is-size-2 mr-2">
                     neurology
@@ -1048,7 +1048,7 @@ export default {
         modeldesc:
           "30B-parameter Mixture-of-Experts model from Zhipu AI (DavidAU NEO-CODE-MAX imatrix) with only 3B active parameters per forward pass and 200K context. Dual imatrix calibration (creative + code) with 16-bit output tensor for higher fidelity. Best for: uncensored creative writing, coding assistance, reasoning, and general-purpose AI on consumer hardware.",
         url: "https://huggingface.co/DavidAU/GLM-4.7-Flash-Uncensored-Heretic-NEO-CODE-Imatrix-MAX-GGUF/resolve/main/GLM-4.7-Flash-Uncen-Hrt-NEO-CODE-MAX-imat-D_AU-Q4_K_M.gguf",
-        filename: "GLM-4.7-Flash-Uncen-Hrt-NEO-CODE-MAX-imat-D_AU-Q4_K_M.gguf",
+        filename: "glm-4.7-flash-uncen-hrt-neo-code-max-imat-d_au-q4_k_m.gguf",
         filesize: "18.5 GB",
         parameters: 30000000000,
         activeParameters: 3000000000,
@@ -1061,7 +1061,7 @@ export default {
         modeldesc:
           "80B-parameter Mixture-of-Experts Qwen3-Coder-Next model with only 3B active parameters per token and a native 262,144-token context window. Hybrid architecture (Gated DeltaNet + Gated Attention + MoE with 512 experts) designed for coding agents and long-horizon agentic reasoning. Best for: advanced coding copilots, multi-file refactoring, complex tool use, and IDE-integrated development agents.",
         url: "https://huggingface.co/unsloth/Qwen3-Coder-Next-GGUF/resolve/main/Qwen3-Coder-Next-Q4_K_M.gguf",
-        filename: "Qwen3-Coder-Next-Q4_K_M.gguf",
+        filename: "qwen3-coder-next-q4_k_m.gguf",
         filesize: "48.5 GB",
         parameters: 80000000000,
         activeParameters: 3000000000,
@@ -2219,10 +2219,6 @@ ol.chat li {
   transition: border-color 0.2s;
 }
 
-.model-card--downloaded {
-  border-color: rgba(72, 199, 142, 0.3);
-}
-
 .model-card--selected {
   border-color: rgba(32, 156, 238, 0.5);
 }
@@ -2247,6 +2243,7 @@ ol.chat li {
   color: rgba(255, 255, 255, 0.85);
   padding: 1em !important;
   margin-bottom: 4px;
+  backdrop-filter: blur(32px);
 }
 
 .model-card:hover .model-card__tip {

@@ -16,7 +16,8 @@
     "make": "npm run package && npx electron-installer-dmg out/BonzAI-darwin-arm64/BonzAI.app BonzAI --out=out/make --overwrite",
     "make:x64": "npm run build:vite && electron-packager . BonzAI --platform=darwin --arch=x64 --out=out --overwrite --icon=src/assets/logo --ignore=\"^/(dist|bonzai|binaries|out|out-test|\\.venv|venv|build)$\" && npx electron-installer-dmg out/BonzAI-darwin-x64/BonzAI.app BonzAI --out=out/make --overwrite",
     "publish": "echo 'Use CI for publishing'",
-    "lint": "eslint --ext .ts,.tsx ."
+    "lint": "eslint --ext .ts,.tsx .",
+    "postinstall": "node scripts/patch-vue-sound.js"
   },
   "keywords": [],
   "author": {

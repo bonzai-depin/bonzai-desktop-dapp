@@ -38,7 +38,7 @@ npm run publish
 │ - GenerativeText (local llama-cpp)                      │
 │ - GenerativeImage (FLUX/SDXL via Flask)                 │
 │ - GenerativeVideo (LTX-2 via Flask)                     │
-│ - GenerativeMusic (ChatterBox via Flask)                  │
+│ - GenerativeAudio (Qwen TTS + ACE-Step via Flask)         │
 │ - Generative3D, GenerativeRobot, SmartAgent             │
 │ State: Pinia (inferenceStore.js, web3.store.js)         │
 └─────────────────────┬───────────────────────────────────┘
@@ -54,7 +54,7 @@ npm run publish
 ┌─────────────────────▼───────────────────────────────────┐
 │ Python Flask Server (src/server/diffuser.py)            │
 │ Endpoints: /image, /video, /audio/music, /3d, /robot/*  │
-│ Models: FLUX, SDXL, LTX-2, MusicGen, LeRobot            │
+│ Models: FLUX, SDXL, LTX-2, Qwen TTS, ACE-Step, LeRobot  │
 │ Socket.IO for real-time progress                        │
 └─────────────────────────────────────────────────────────┘
 ```

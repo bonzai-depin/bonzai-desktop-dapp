@@ -353,7 +353,7 @@
                         <span class="material-symbols-outlined is-size-6">
                           deployed_code
                         </span>
-                        {{ t.filename }} —
+                        {{ t.filename || t.name || t.task_id }} —
                         <span class="fira-sans-condensed-black-italic">
                           {{ t.status }}
                         </span>
@@ -1103,7 +1103,7 @@
 </template>
 
 <script>
-import { ref, reactive, computed, onMounted, watch } from "vue";
+import { ref, reactive, computed, onMounted, onBeforeUnmount, watch } from "vue";
 import VueMarkdown from "vue-markdown-render";
 import axios from "axios";
 import { io } from "socket.io-client";
@@ -1553,6 +1553,108 @@ export default {
       }, 1000);
     };
 
+    // Resume active downloads when view is loaded
+    const resumeActiveDownloadIfAny = async () => {
+      let hasActiveDownloads = false;
+
+      // Check for active LLM downloads via Electron API
+      try {
+        const activeLLM = await window.electronAPI?.getActiveDownloads?.() || [];
+        if (activeLLM.length > 0) {
+          hasActiveDownloads = true;
+          downloads.active = true;
+          downloads.status = "downloading";
+          downloads.pipeline = downloads.pipeline || { tasks: {} };
+
+          for (const dl of activeLLM) {
+            const taskId = `llm_${dl.filename}`;
+            downloads.pipeline.tasks[taskId] = {
+              task_id: taskId,
+              filename: dl.filename,
+              status: "downloading",
+              progress: Math.round((dl.percent || 0) * 100),
+              total_size: 0,
+              downloaded_size: 0,
+            };
+          }
+
+          // Subscribe to progress updates
+          window.electronAPI.onDownloadProgress((e, data) => {
+            const taskId = `llm_${data.filename}`;
+            if (downloads.pipeline.tasks[taskId]) {
+              downloads.pipeline.tasks[taskId].progress = Math.round(data.percent * 100);
+              const totalPct = computeTotalFromTasks(downloads.pipeline.tasks);
+              downloads.progress = totalPct;
+              downloads.total_progress = totalPct;
+              downloadProgress.value = Math.round(totalPct);
+            }
+          });
+
+          const totalPct = computeTotalFromTasks(downloads.pipeline.tasks);
+          downloads.progress = totalPct;
+          downloads.total_progress = totalPct;
+          downloadProgress.value = Math.round(totalPct);
+
+          console.log("[SmartAgent] Resuming active LLM downloads:", activeLLM.length);
+        }
+      } catch (e) {
+        console.error("[SmartAgent] Failed to check active LLM downloads:", e);
+      }
+
+      // Check for active Flask pipeline downloads
+      try {
+        const { data } = await axios.get(`${API_BASE}/downloads/list`);
+        const active = (data?.pipelines || []).filter((p) =>
+          ["pending", "downloading", "retrying", "waiting_retry"].includes(
+            p.status
+          )
+        );
+
+        if (active.length > 0) {
+          hasActiveDownloads = true;
+          downloads.active = true;
+          downloads.status = "downloading";
+          downloads.pipeline = downloads.pipeline || { tasks: {} };
+
+          console.log("[SmartAgent] Resuming active Flask downloads:", active.length);
+
+          ensureDownloadsSocket();
+
+          // Subscribe to each active pipeline
+          for (const pl of active) {
+            connectAndSubscribe(pl.pipeline_id);
+
+            // Merge existing tasks into downloads.pipeline.tasks
+            if (pl.tasks) {
+              for (const [tid, task] of Object.entries(pl.tasks)) {
+                downloads.pipeline.tasks[tid] = {
+                  task_id: tid,
+                  filename: task.name || task.filename || tid,
+                  name: task.name,
+                  status: task.status || "downloading",
+                  progress: task.progress || 0,
+                  total_size: task.total_bytes || task.total_size || 0,
+                  downloaded_size: task.done_bytes || task.downloaded_size || 0,
+                };
+              }
+            }
+          }
+
+          // Update overall progress
+          const totalPct = computeTotalFromTasks(downloads.pipeline.tasks);
+          downloads.progress = totalPct;
+          downloads.total_progress = totalPct;
+          downloadProgress.value = Math.round(totalPct);
+        }
+      } catch (e) {
+        console.error("[SmartAgent] Failed to resume active Flask downloads:", e);
+      }
+
+      if (!hasActiveDownloads) {
+        downloads.active = false;
+      }
+    };
+
     // Download all missing models
     const downloadAllMissingModels = async () => {
       const missing = missingModels.value;
@@ -1577,11 +1679,34 @@ export default {
             // LLM models via electron API
             if (window.electronAPI?.downloadModel) {
               hasActiveDownload = true;
+
+              // Create a task entry for this LLM download
+              const taskId = `llm_${model.filename}`;
+              downloads.pipeline.tasks[taskId] = {
+                task_id: taskId,
+                filename: model.filename,
+                status: "downloading",
+                progress: 0,
+                total_size: 0,
+                downloaded_size: 0,
+              };
+
               const progressHandler = (e, data) => {
                 if (data.filename === model.filename) {
-                  downloadProgress.value = Math.round(data.percent * 100);
-                  downloads.progress = downloadProgress.value;
-                  downloads.total_progress = downloadProgress.value;
+                  const pct = Math.round(data.percent * 100);
+
+                  // Update task progress
+                  if (downloads.pipeline.tasks[taskId]) {
+                    downloads.pipeline.tasks[taskId].progress = pct;
+                    downloads.pipeline.tasks[taskId].downloaded_size = data.downloaded || 0;
+                    downloads.pipeline.tasks[taskId].total_size = data.total || 0;
+                  }
+
+                  // Recalculate total progress from all tasks
+                  const totalPct = computeTotalFromTasks(downloads.pipeline.tasks);
+                  downloadProgress.value = Math.round(totalPct);
+                  downloads.progress = totalPct;
+                  downloads.total_progress = totalPct;
                 }
               };
               window.electronAPI.onDownloadProgress(progressHandler);
@@ -1590,6 +1715,12 @@ export default {
                 model.url,
                 model.filename,
               );
+
+              // Mark task as completed or failed
+              if (downloads.pipeline.tasks[taskId]) {
+                downloads.pipeline.tasks[taskId].status = success ? "completed" : "failed";
+                downloads.pipeline.tasks[taskId].progress = success ? 100 : downloads.pipeline.tasks[taskId].progress;
+              }
 
               if (success) {
                 modelAvailability[model.filename] = true;
@@ -1608,6 +1739,12 @@ export default {
             }
           }
         }
+
+        // Check if all LLM downloads completed (Flask pipelines haven't started yet)
+        const allLLMTasksComplete = Object.values(downloads.pipeline.tasks || {}).every(
+          (t) => t.status === "completed" || t.status === "failed"
+        );
+        const hasLLMTasks = Object.keys(downloads.pipeline.tasks || {}).length > 0;
 
         // Prefetch all Flask pipelines together
         if (pipelines.length > 0) {
@@ -1649,6 +1786,14 @@ export default {
         // If no active downloads started (all models already available), complete immediately
         if (!hasActiveDownload) {
           console.log("[SmartAgent] All models already downloaded, completing");
+          downloads.status = "completed";
+          downloads.active = false;
+          downloads.progress = 100;
+          downloads.total_progress = 100;
+        }
+        // If only LLM downloads occurred (no Flask pipelines) and they're all done
+        else if (pipelines.length === 0 && hasLLMTasks && allLLMTasksComplete) {
+          console.log("[SmartAgent] All LLM downloads completed, finishing");
           downloads.status = "completed";
           downloads.active = false;
           downloads.progress = 100;
@@ -2774,12 +2919,26 @@ Provide a concise analysis covering:
       await skillStore.initialize();
       await checkModelAvailability();
       await checkPolymarketModelAvailability(); // Legacy check for Polymarket default model
+      await resumeActiveDownloadIfAny(); // Resume any ongoing downloads
       tokenService.initialize();
 
       // Auto-select the featured Roleplay Companion skill by default
       const roleplaySkillId = 'roleplay-companion-v1.0.0';
       if (skillStore.getSkillById(roleplaySkillId)) {
         selectSkillById(roleplaySkillId);
+      }
+    });
+
+    onBeforeUnmount(() => {
+      // Clean up download socket when leaving view
+      if (downloadsSocket.value?.connected) {
+        try {
+          downloadsSocket.value.disconnect();
+        } catch {}
+      }
+      if (httpPollTimer) {
+        clearInterval(httpPollTimer);
+        httpPollTimer = null;
       }
     });
 

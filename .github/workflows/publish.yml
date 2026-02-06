@@ -34,6 +34,7 @@ jobs:
           pip install -U qwen-tts --no-deps
           pip install -U qwen-vl-utils --no-deps
           pip install https://github.com/vBaiCai/python-pesq/archive/master.zip
+          pip install git+https://github.com/ace-step/ACE-Step.git
 
       - name: Build Python binary (macOS ARM64)
         run: |
@@ -54,6 +55,7 @@ jobs:
             --collect-submodules=datasets \
             --collect-submodules=qwen_tts \
             --collect-submodules=qwen_vl_utils \
+            --collect-submodules=acestep \
             --hidden-import=pytorch_lightning \
             --hidden-import=torchaudio \
             --hidden-import=torchaudio.functional \

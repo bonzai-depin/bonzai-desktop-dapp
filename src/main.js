@@ -663,6 +663,48 @@ ipcMain.handle("select-model-dir", async () => {
 
       notifyMigrationProgress({ phase: "verifying", pct: 95, detail: "Verifying..." });
     }
+
+    // Update inference history paths to point to new location
+    notifyMigrationProgress({ phase: "updating", pct: 96, detail: "Updating history paths..." });
+
+    const historyKeys = ["audioInferences", "imageInferences", "videoInferences", "objectInferences"];
+    const oldDirNormalized = path.resolve(oldDir);
+    const newDirNormalized = path.resolve(newDir);
+
+    for (const key of historyKeys) {
+      try {
+        const history = store.get(key, []);
+        if (Array.isArray(history) && history.length > 0) {
+          let updated = false;
+          const updatedHistory = history.map((inference) => {
+            // Deep clone to avoid mutation
+            const item = JSON.parse(JSON.stringify(inference));
+
+            // Update paths in answer.data
+            if (item?.answer?.data) {
+              const data = item.answer.data;
+              const pathFields = ["audio_path", "video_path", "image_path", "path", "output_path", "object_path"];
+
+              for (const field of pathFields) {
+                if (data[field] && typeof data[field] === "string" && data[field].startsWith(oldDirNormalized)) {
+                  data[field] = data[field].replace(oldDirNormalized, newDirNormalized);
+                  updated = true;
+                }
+              }
+            }
+
+            return item;
+          });
+
+          if (updated) {
+            store.set(key, updatedHistory);
+            console.log(`[Model Dir] Updated paths in ${key}`);
+          }
+        }
+      } catch (e) {
+        console.warn(`[Model Dir] Failed to update ${key}:`, e.message);
+      }
+    }
   } catch (e) {
     console.error("[Model Dir] Migration failed:", e);
     notifyMigrationProgress({ phase: "error", pct: 0, detail: e.message });
@@ -684,6 +726,54 @@ ipcMain.handle("select-model-dir", async () => {
   notifyMigrationProgress({ phase: "complete", pct: 100, detail: "Migration complete." });
 
   return newDir;
+});
+
+// Fix history paths - useful for users who already migrated without path updates
+ipcMain.handle("fix-history-paths", (_event, oldDir, newDir) => {
+  if (!oldDir || !newDir) {
+    return { error: "Both oldDir and newDir are required" };
+  }
+
+  const historyKeys = ["audioInferences", "imageInferences", "videoInferences", "objectInferences"];
+  const oldDirNormalized = path.resolve(oldDir);
+  const newDirNormalized = path.resolve(newDir);
+  let totalUpdated = 0;
+
+  for (const key of historyKeys) {
+    try {
+      const history = store.get(key, []);
+      if (Array.isArray(history) && history.length > 0) {
+        let updated = false;
+        const updatedHistory = history.map((inference) => {
+          const item = JSON.parse(JSON.stringify(inference));
+
+          if (item?.answer?.data) {
+            const data = item.answer.data;
+            const pathFields = ["audio_path", "video_path", "image_path", "path", "output_path", "object_path"];
+
+            for (const field of pathFields) {
+              if (data[field] && typeof data[field] === "string" && data[field].startsWith(oldDirNormalized)) {
+                data[field] = data[field].replace(oldDirNormalized, newDirNormalized);
+                updated = true;
+                totalUpdated++;
+              }
+            }
+          }
+
+          return item;
+        });
+
+        if (updated) {
+          store.set(key, updatedHistory);
+          console.log(`[Fix Paths] Updated paths in ${key}`);
+        }
+      }
+    } catch (e) {
+      console.warn(`[Fix Paths] Failed to update ${key}:`, e.message);
+    }
+  }
+
+  return { success: true, updatedPaths: totalUpdated };
 });
 
 // File existence check for media validation
@@ -1288,6 +1378,18 @@ function generatePartUrl(baseUrl, partNum, totalParts) {
   return baseUrl.replace(/-\d{5}-of-\d{5}\.gguf/i, `-${partStr}-of-${String(totalParts).padStart(5, "0")}.gguf`);
 }
 
+// Track active LLM downloads for UI resume
+const activeDownloads = new Map(); // filename -> { url, percent, status }
+
+function getActiveDownloads() {
+  return Array.from(activeDownloads.entries()).map(([filename, data]) => ({
+    filename,
+    ...data,
+  }));
+}
+
+ipcMain.handle("get-active-downloads", () => getActiveDownloads());
+
 async function downloadModel(_event, url, filename) {
   const win = BrowserWindow.getFocusedWindow() || BrowserWindow.getAllWindows()[0];
   if (!win) {
@@ -1303,6 +1405,10 @@ async function downloadModel(_event, url, filename) {
 
   // Single file download
   const normalizedFilename = normalizeModelFilename(filename);
+
+  // Track active download
+  activeDownloads.set(normalizedFilename, { url, percent: 0, status: "downloading" });
+
   try {
     const dl = await download(win, url, {
       filename: normalizedFilename,
@@ -1312,13 +1418,19 @@ async function downloadModel(_event, url, filename) {
         const pct = p.percent;
         win.setProgressBar(pct);
         win.webContents.send("download-progress", { filename: normalizedFilename, percent: pct });
+        // Update tracking
+        activeDownloads.set(normalizedFilename, { url, percent: pct, status: "downloading" });
       },
     });
     win.setProgressBar(-1);
+    // Remove from tracking on completion
+    activeDownloads.delete(normalizedFilename);
     return { savedPath: dl.getSavePath() };
   } catch (error) {
     console.error("Download failed:", error);
     win?.setProgressBar(-1);
+    // Remove from tracking on failure
+    activeDownloads.delete(normalizedFilename);
     return { error: error.message || "Download failed" };
   }
 }

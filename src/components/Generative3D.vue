@@ -1371,20 +1371,101 @@ export default {
       }, 1000);
     };
 
+    // Pipeline names relevant to this view (3D/vision)
+    const VISION_PIPELINES = [
+      "qwen3_vision", "vision", "trellis", "3d",
+    ];
+
+    const isRelevantPipeline = (pipelineName) => {
+      return VISION_PIPELINES.some((p) => pipelineName === p || pipelineName?.startsWith(p));
+    };
+
     // Resume active download if any
     const resumeActiveDownloadIfAny = async () => {
+      let hasActiveDownloads = false;
+
+      // Check for active LLM downloads via Electron API
+      try {
+        const activeLLM = await window.electronAPI?.getActiveDownloads?.() || [];
+        const relevantLLM = activeLLM.filter((d) =>
+          d.filename === currentModel.value.filename
+        );
+
+        if (relevantLLM.length > 0) {
+          hasActiveDownloads = true;
+          downloads.active = true;
+          downloads.status = "downloading";
+          downloads.pipeline = downloads.pipeline || { tasks: {} };
+
+          for (const dl of relevantLLM) {
+            const taskId = `llm_${dl.filename}`;
+            downloads.pipeline.tasks[taskId] = {
+              task_id: taskId,
+              filename: dl.filename,
+              status: "downloading",
+              progress: Math.round((dl.percent || 0) * 100),
+            };
+          }
+
+          // Subscribe to progress updates
+          window.electronAPI.onDownloadProgress((e, data) => {
+            if (data.filename === currentModel.value.filename) {
+              const taskId = `llm_${data.filename}`;
+              if (downloads.pipeline.tasks[taskId]) {
+                downloads.pipeline.tasks[taskId].progress = Math.round(data.percent * 100);
+                updateTotalProgress();
+              }
+            }
+          });
+
+          updateTotalProgress();
+        }
+      } catch (e) {
+        console.error("[Generative3D] Failed to check active LLM downloads:", e);
+      }
+
+      // Check for active Flask pipeline downloads (vision model)
       try {
         const { data } = await axios.get(`${SERVER_URL}/downloads/list`);
         const active = (data?.pipelines || []).filter((p) =>
-          ["pending", "downloading", "retrying", "waiting_retry"].includes(
-            p.status
-          )
+          ["pending", "downloading", "retrying", "waiting_retry"].includes(p.status) &&
+          isRelevantPipeline(p.pipeline_name)
         );
-        if (active.length) {
-          const { pipeline_id, websocket_url } = active[0];
-          startDownloadTracking(pipeline_id, websocket_url || WS_DL);
+
+        if (active.length > 0) {
+          hasActiveDownloads = true;
+          downloads.active = true;
+          downloads.status = "downloading";
+          downloads.pipeline = downloads.pipeline || { tasks: {} };
+
+          // Add vision task if not already present
+          if (!downloads.pipeline.tasks["vision-model"]) {
+            downloads.pipeline.tasks["vision-model"] = {
+              task_id: "vision-model",
+              filename: VISION_MODEL.name,
+              status: "downloading",
+              progress: 0,
+            };
+          }
+
+          ensureDownloadsSocket();
+          active.forEach((pl) => {
+            // Update vision task progress from pipeline data
+            if (pl.total_progress) {
+              downloads.pipeline.tasks["vision-model"].progress = Math.round(pl.total_progress);
+            }
+            connectAndSubscribe(pl.pipeline_id, pl.websocket_url || WS_DL);
+          });
+
+          updateTotalProgress();
         }
-      } catch {}
+      } catch (e) {
+        console.error("[Generative3D] Failed to check active Flask downloads:", e);
+      }
+
+      if (!hasActiveDownloads) {
+        downloads.active = false;
+      }
     };
 
     // Computed: sorted task list for display
@@ -2220,16 +2301,16 @@ Generate ONLY the additional code for: ${missingList}`;
         context: 131072,
       },
       quality: {
-        modelname: "GLM 4.7 Flash",
+        modelname: "Qwen3 Coder Next 80B A3B",
         modeldesc:
-          "30B-parameter Mixture-of-Experts model from Zhipu AI with only 3.6B active parameters per forward pass and 200K context. Ultra-efficient MoE architecture delivers strong reasoning at a fraction of the compute.",
-        url: "https://huggingface.co/unsloth/GLM-4.7-Flash-GGUF/resolve/main/GLM-4.7-Flash-Q4_K_M.gguf",
-        filename: "glm-4.7-flash-q4_k_m.gguf",
-        filesize: "18.3 GB",
-        parameters: 30000000000,
-        activeParameters: 3600000000,
+          "80B-parameter Mixture-of-Experts Qwen3-Coder-Next model with only 3B active parameters per token and a native 262,144-token context window. Hybrid architecture (Gated DeltaNet + Gated Attention + MoE with 512 experts) designed for coding agents and long-horizon agentic reasoning.",
+        url: "https://huggingface.co/unsloth/Qwen3-Coder-Next-GGUF/resolve/main/Qwen3-Coder-Next-Q4_K_M.gguf",
+        filename: "qwen3-coder-next-q4_k_m.gguf",
+        filesize: "48.5 GB",
+        parameters: 80000000000,
+        activeParameters: 3000000000,
         isMoE: true,
-        context: 202752,
+        context: 262144,
       },
     };
 

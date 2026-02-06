@@ -11,6 +11,7 @@ contextBridge.exposeInMainWorld("electronAPI", {
   downloadModel: (url, filename) =>
     ipcRenderer.invoke("model-download", url, filename),
   onDownloadProgress: (cb) => ipcRenderer.on("download-progress", cb),
+  getActiveDownloads: () => ipcRenderer.invoke("get-active-downloads"),
   deleteModel: (modelname) => ipcRenderer.invoke("model-delete", modelname),
   loadModel: (modelname) => ipcRenderer.invoke("model-load", modelname),
   unloadModel: () => ipcRenderer.invoke("model-unload"),
@@ -37,6 +38,8 @@ contextBridge.exposeInMainWorld("electronAPI", {
     ipcRenderer.invoke("agent-save-video", defaultName, sourcePath),
   // File existence check (for media validation)
   fileExists: (filePath) => ipcRenderer.invoke("file-exists", filePath),
+  // Fix history paths after MODEL_DIR migration
+  fixHistoryPaths: (oldDir, newDir) => ipcRenderer.invoke("fix-history-paths", oldDir, newDir),
   // Open URL in default browser
   openExternal: (url) => ipcRenderer.invoke("open-external", url),
   // Server status events (for self-healing notifications)

@@ -1625,6 +1625,13 @@ REPO_SPECS = {
         "extra_dirs": ["speech_tokenizer"],
         "fallback_any_weights": True,
     },
+    # ACE-Step v1.5: handler-based music model (no model_index.json)
+    "ACE-Step/Ace-Step1.5": {
+        "must_files": ["config.json"],
+        "must_tokenizers": [],
+        "must_weight_dirs": ["vae"],
+        "extra_dirs": ["acestep-v15-turbo", "Qwen3-Embedding-0.6B"],
+    },
 }
 
 DEFAULT_SPEC = {"must_files": ["model_index.json"], "must_weight_dirs": [], "must_tokenizers": [], "fallback_any_weights": True}
@@ -2598,17 +2605,20 @@ def stream_media():
     allowed_dirs = [
         cwd,
         str(MODEL_DIR),
+        str(FILES_DIR),
         os.path.expanduser("~"),
         "/tmp",
         "/var/folders",  # macOS temp
+        "/Volumes",  # External drives on macOS
     ]
 
     # Normalize path to prevent directory traversal
     file_path = os.path.abspath(file_path)
-    is_allowed = any(file_path.startswith(os.path.abspath(d)) for d in allowed_dirs)
+    is_allowed = any(file_path.startswith(os.path.abspath(d)) for d in allowed_dirs if d)
 
     if not is_allowed:
         logger.warning(f"[Media] Blocked access to path outside allowed dirs: {file_path}")
+        logger.warning(f"[Media] Current MODEL_DIR: {MODEL_DIR}, FILES_DIR: {FILES_DIR}")
         return jsonify({"error": "Access denied"}), 403
 
     if not os.path.isfile(file_path):
@@ -4044,11 +4054,23 @@ def _load_ace_step():
 
         from acestep.handler import AceStepHandler
 
-        # Resolve checkpoint root — ACE-Step v1.5 expects a directory
-        # containing checkpoints/ with VAE, text encoder, and DiT sub-dirs.
-        # The repos are downloaded into MODEL_DIR/repos/<repo>.
+        # Resolve checkpoint root from MODEL_DIR.
+        # ACE-Step expects models inside <project_root>/checkpoints/.
+        # BonzAI downloads the HF repo to MODEL_DIR/repos/<repo>/ where
+        # model dirs (vae/, acestep-v15-turbo/, etc.) live at root level.
+        # We create a "checkpoints" symlink pointing to "." so
+        # <repo>/checkpoints/<component> resolves to <repo>/<component>.
         main_local = repo_local_dir(ACE_STEP_REPO)
-        project_root = str(main_local) if main_local.exists() else "./"
+        if not main_local.exists():
+            raise RuntimeError(
+                f"ACE-Step repo not found at {main_local}. "
+                "Download it first via the pipeline system."
+            )
+        project_root = str(main_local)
+
+        ckpt_link = main_local / "checkpoints"
+        if not ckpt_link.exists():
+            os.symlink(".", str(ckpt_link))
 
         device = DeviceManager.get_device()
         device_str = "cuda" if device.type == "cuda" else (
@@ -4056,6 +4078,11 @@ def _load_ace_step():
         )
 
         handler = AceStepHandler()
+        # Override internal path resolution to use MODEL_DIR location.
+        # The handler's _get_project_root() defaults to site-packages,
+        # ignoring the project_root parameter passed to initialize_service().
+        handler._get_project_root = lambda: project_root
+
         status_msg, success = handler.initialize_service(
             project_root=project_root,
             config_path="acestep-v15-turbo",
@@ -4064,6 +4091,11 @@ def _load_ace_step():
         )
         if not success:
             raise RuntimeError(f"ACE-Step v1.5 init failed: {status_msg}")
+
+        # Keep using the stock tiled_decode - it uses overlap-discard which
+        # may have minor boundary artifacts but produces correct output.
+        # A crossfade version was attempted but had issues.
+        logger.info("ACE-Step: using stock tiled_decode (overlap-discard)")
 
         _ace_step_dit = handler
         logger.info("ACE-Step v1.5 DiT handler loaded (%s): %s", device_str, status_msg)
@@ -4085,6 +4117,8 @@ def audio_music():
         seed (int): Random seed (-1 for random, default -1)
         bpm (int, optional): Tempo 30-300
         keyscale (str, optional): Musical key e.g. "C minor"
+        time_signature (str, optional): Time signature e.g. "4/4", "3/4" (included in caption)
+        shift (float, optional): Noise schedule shift (1.0-10.0, default 4.0)
         instrumental (bool): Force instrumental, no vocals (default false)
         vocal_language (str): ISO language code (default "en")
         auto_download (bool): Auto-download model if missing (default false)
@@ -4099,13 +4133,19 @@ def audio_music():
     steps = max(1, min(20, int(data.get("steps", 8))))
     guidance_scale = float(data.get("guidance_scale", 7.0))
     seed = int(data.get("seed", -1))
+    shift = max(1.0, min(10.0, float(data.get("shift", 4.0))))
     bpm = data.get("bpm")
     if bpm is not None:
         bpm = max(30, min(300, int(bpm)))
     keyscale = (data.get("keyscale") or "").strip()
+    time_signature = (data.get("time_signature") or "").strip()
     instrumental = bool(data.get("instrumental", False))
     vocal_language = (data.get("vocal_language") or "en").strip()
     auto_dl = bool(data.get("auto_download", False))
+
+    # Append time signature to caption if provided (ACE-Step uses it as a style tag)
+    if time_signature and time_signature not in prompt:
+        prompt = f"{prompt}, {time_signature} time"
 
     # Ensure model files are present
     guard = _ensure_files_present_or_start("music", auto_download=auto_dl)
@@ -4123,7 +4163,7 @@ def audio_music():
         import random as _rng
         actual_seed = seed if seed >= 0 else _rng.randint(0, 2**31 - 1)
 
-        genbus.update(gen_id, 10, "generating")
+        genbus.progress(gen_id, "generating", 1, 10)
 
         from acestep.inference import generate_music, GenerationParams, GenerationConfig
 
@@ -4138,7 +4178,7 @@ def audio_music():
             inference_steps=steps,
             guidance_scale=guidance_scale,
             seed=actual_seed,
-            shift=3.0,
+            shift=shift,
             infer_method="ode",
             task_type="text2music",
             thinking=False,  # skip LLM phase — DiT-only for speed
@@ -4170,7 +4210,7 @@ def audio_music():
             return jsonify({"error": err}), 500
 
         audio_path = result.audios[0].get("path", "")
-        genbus.complete(gen_id, {"audio_path": audio_path})
+        genbus.finish(gen_id, {"audio_path": audio_path})
 
         return jsonify(_json_sanitize({
             "ok": True,
@@ -5681,6 +5721,17 @@ def root():
     return jsonify(_json_sanitize({
         "message": "BonzAI Media Generation Server",
         "local_only": LOCAL_ONLY
+    }))
+
+
+@app.route("/config")
+def config():
+    """Return current server configuration including paths."""
+    return jsonify(_json_sanitize({
+        "model_dir": str(MODEL_DIR),
+        "files_dir": str(FILES_DIR),
+        "hf_home": os.environ.get("HF_HOME", ""),
+        "local_only": LOCAL_ONLY,
     }))
 
 

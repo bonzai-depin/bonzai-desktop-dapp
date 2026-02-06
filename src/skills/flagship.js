@@ -165,7 +165,7 @@ export const MODEL_REQUIREMENTS = {
   llm_mythomax: {
     name: 'MythoMax L2 13B',
     type: 'llm',
-    filename: 'mythomax-l2-13b.Q4_K_M.gguf',
+    filename: 'mythomax-l2-13b.q4_k_m.gguf',
     url: 'https://huggingface.co/TheBloke/MythoMax-L2-13B-GGUF/resolve/main/mythomax-l2-13b.Q4_K_M.gguf',
     size: '7.87 GB',
     vram: '10 GB',
@@ -262,6 +262,8 @@ export const MODEL_REQUIREMENTS = {
     size: '~4 GB (turbo DiT)',
     vram: '4 GB',
     description: 'Hybrid LM+DiT music generation with lyrics, BPM, and key control',
+    llmRequired: 'llm_default',
+    llmNote: 'LLaMA 3.1 8B recommended for lyrics generation',
   },
 
   // Video Models
@@ -311,7 +313,7 @@ export const SKILL_MODEL_REQUIREMENTS = {
   'virtual-try-on-v1.0.0': ['llm_default', 'image_turbo'],
   'chefs-table-v1.0.0': ['llm_default', 'image_quality'],
   'eli5-v1.0.0': ['llm_default', 'image_turbo', 'audio'],
-  'music-video-forge-v1.0.0': ['llm_default', 'image_turbo', 'video_fast'],
+  'music-video-forge-v1.0.0': ['llm_default', 'image_turbo', 'video_fast', 'music'],
   'game-maker-v1.0.0': ['llm_default', 'image_turbo'],
   'manga-to-anime-v1.0.0': ['llm_default', 'image_turbo', 'video_fast'],
   'hairstyle-studio-v1.0.0': ['llm_default', 'image_turbo'],
@@ -862,7 +864,7 @@ const DEFAULT_LLM = {
 // Roleplay LLM - MythoMax L2 13B for excellent creative roleplay
 const ROLEPLAY_LLM = {
   modelname: 'MythoMax L2 13B',
-  filename: 'mythomax-l2-13b.Q4_K_M.gguf',
+  filename: 'mythomax-l2-13b.q4_k_m.gguf',
   url: 'https://huggingface.co/TheBloke/MythoMax-L2-13B-GGUF/resolve/main/mythomax-l2-13b.Q4_K_M.gguf',
 };
 
