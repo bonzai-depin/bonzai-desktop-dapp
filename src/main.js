@@ -197,17 +197,22 @@ const scheduleServerRestart = () => {
   restartBackoffMs = Math.min(restartBackoffMs * 2, MAX_BACKOFF_MS);
 };
 
-const killPort = (port = PY_SERVER_PORT) => {
+const killPort = async (port = PY_SERVER_PORT) => {
   try {
     if (process.platform === "win32") {
-      child_process.execSync(
-        `for /f "tokens=5" %a in ('netstat -aon ^| find ":${port}" ^| find "LISTENING"') do taskkill /f /pid %a`,
-        { stdio: "ignore" }
-      );
+      await new Promise((resolve) => {
+        child_process.exec(
+          `for /f "tokens=5" %a in ('netstat -aon ^| find ":${port}" ^| find "LISTENING"') do taskkill /f /pid %a`,
+          { stdio: "ignore" },
+          () => resolve()
+        );
+      });
     } else {
       // Get PIDs first, then kill if any exist
-      const result = child_process.execSync(`lsof -ti:${port} 2>/dev/null || true`, {
-        encoding: "utf8",
+      const result = await new Promise((resolve) => {
+        child_process.exec(`lsof -ti:${port} 2>/dev/null || true`, { encoding: "utf8" }, (err, stdout) => {
+          resolve(stdout || "");
+        });
       });
       const pids = result.trim().split("\n").filter(Boolean);
       if (pids.length > 0) {
@@ -220,8 +225,8 @@ const killPort = (port = PY_SERVER_PORT) => {
             console.warn(`[killPort] Failed to kill PID ${pid}: ${e.message}`);
           }
         }
-        // Wait briefly for port to be freed
-        child_process.execSync("sleep 0.5");
+        // Wait briefly for port to be freed (non-blocking)
+        await new Promise((resolve) => setTimeout(resolve, 500));
       } else {
         console.log(`[killPort] No process found on port ${port}`);
       }
@@ -231,8 +236,8 @@ const killPort = (port = PY_SERVER_PORT) => {
   }
 };
 
-const startPythonSubprocess = () => {
-  killPort(PY_SERVER_PORT);
+const startPythonSubprocess = async () => {
+  await killPort(PY_SERVER_PORT);
   isIntentionalShutdown = false; // Reset flag on new start
 
   let launch;
@@ -537,59 +542,89 @@ ipcMain.handle("store-delete", (_event, key) => {
 // ─────────────────────────────────────────────────────────────────────────────
 ipcMain.handle("get-model-dir", () => MODEL_DIR);
 
-// Helper: calculate directory size recursively
+// Helper: calculate directory size recursively (async for non-blocking)
 async function calculateDirSize(dirPath) {
   let total = 0;
-  const entries = fs.readdirSync(dirPath, { withFileTypes: true });
-  for (const entry of entries) {
-    const fullPath = path.join(dirPath, entry.name);
-    if (entry.isDirectory()) {
-      total += await calculateDirSize(fullPath);
-    } else if (entry.isFile()) {
-      total += fs.statSync(fullPath).size;
-    }
+  try {
+    const entries = await fs.promises.readdir(dirPath, { withFileTypes: true });
+    // Process entries in parallel for speed
+    const sizes = await Promise.all(
+      entries.map(async (entry) => {
+        const fullPath = path.join(dirPath, entry.name);
+        if (entry.isDirectory()) {
+          return calculateDirSize(fullPath);
+        } else if (entry.isFile()) {
+          try {
+            const stat = await fs.promises.stat(fullPath);
+            return stat.size;
+          } catch {
+            return 0;
+          }
+        }
+        return 0;
+      })
+    );
+    total = sizes.reduce((sum, size) => sum + size, 0);
+  } catch (e) {
+    console.warn(`[calculateDirSize] Error reading ${dirPath}: ${e.message}`);
   }
   return total;
 }
 
-// Helper: collect all files recursively with relative paths
-function collectFiles(dirPath, basePath = dirPath) {
+// Helper: collect all files recursively with relative paths (async)
+async function collectFiles(dirPath, basePath = dirPath) {
   const results = [];
-  if (!fs.existsSync(dirPath)) return results;
-  const entries = fs.readdirSync(dirPath, { withFileTypes: true });
-  for (const entry of entries) {
-    const fullPath = path.join(dirPath, entry.name);
-    if (entry.isDirectory()) {
-      results.push(...collectFiles(fullPath, basePath));
-    } else if (entry.isFile()) {
-      results.push({
-        absolutePath: fullPath,
-        relativePath: path.relative(basePath, fullPath),
-        size: fs.statSync(fullPath).size,
-      });
+  try {
+    await fs.promises.access(dirPath);
+  } catch {
+    return results;
+  }
+  try {
+    const entries = await fs.promises.readdir(dirPath, { withFileTypes: true });
+    for (const entry of entries) {
+      const fullPath = path.join(dirPath, entry.name);
+      if (entry.isDirectory()) {
+        const subResults = await collectFiles(fullPath, basePath);
+        results.push(...subResults);
+      } else if (entry.isFile()) {
+        try {
+          const stat = await fs.promises.stat(fullPath);
+          results.push({
+            absolutePath: fullPath,
+            relativePath: path.relative(basePath, fullPath),
+            size: stat.size,
+          });
+        } catch {
+          // Skip files that can't be stat'd
+        }
+      }
     }
+  } catch (e) {
+    console.warn(`[collectFiles] Error reading ${dirPath}: ${e.message}`);
   }
   return results;
 }
 
-// Helper: copy directory with stream-based progress
+// Helper: copy directory with stream-based progress (fully async)
 async function copyDirWithProgress(srcDir, destDir, totalSize, progressFn) {
-  const files = collectFiles(srcDir);
+  const files = await collectFiles(srcDir);
   let copiedBytes = 0;
 
   for (const file of files) {
     const destPath = path.join(destDir, file.relativePath);
     const destDirPath = path.dirname(destPath);
-    fs.mkdirSync(destDirPath, { recursive: true });
+    await fs.promises.mkdir(destDirPath, { recursive: true });
 
     // Skip files that already exist at dest with matching size (idempotent)
-    if (fs.existsSync(destPath)) {
-      const destStat = fs.statSync(destPath);
+    try {
+      const destStat = await fs.promises.stat(destPath);
       if (destStat.size === file.size) {
         copiedBytes += file.size;
         progressFn(copiedBytes, totalSize, file.relativePath);
         continue;
       }
+    } catch {
+      // File doesn't exist, will copy
     }
 
     // Stream-based copy with progress

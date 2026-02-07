@@ -1766,10 +1766,11 @@ hr {
   z-index: -1;
   height: 100%;
   width: 100%;
-  background: url("../assets/bonzai_chat.jpg") no-repeat;
+  background: url("../assets/bonzai_chat.webp") no-repeat;
   background-size: cover;
   filter: blur(6px);
   animation: move 40s ease infinite;
+  will-change: transform;
   overflow: hidden;
 }
 
@@ -1858,25 +1859,25 @@ hr {
 .tabs li.chat {
   /* aspect-ratio: 16/9; */
   height: 20vh;
-  background: url("../assets/bonzai_chat.jpg") no-repeat;
+  background: url("../assets/bonzai_chat.webp") no-repeat;
   background-size: cover;
 }
 
 .tabs li.image {
   height: 20vh;
-  background: url("../assets/bonzai_image.jpg") no-repeat;
+  background: url("../assets/bonzai_image.webp") no-repeat;
   background-size: cover;
 }
 
 .tabs li.video {
   height: 20vh;
-  background: url("../assets/bonzai_video.jpg") no-repeat;
+  background: url("../assets/bonzai_video.webp") no-repeat;
   background-size: cover;
 }
 
 .tabs li.music {
   height: 20vh;
-  background: url("../assets/bonzai_music.jpg") no-repeat;
+  background: url("../assets/bonzai_music.webp") no-repeat;
   background-size: cover;
 }
 

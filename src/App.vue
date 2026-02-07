@@ -334,11 +334,23 @@ export default {
       }
     };
 
-    onMounted(async () => {
-      // Get system info
-      const mySystemValues = await window.electronAPI.systemInformation();
-      systemValues.value = mySystemValues;
-      console.log("Ready to start, sir.", systemValues.value);
+    onMounted(() => {
+      // Load system info asynchronously (non-blocking) with timeout
+      const loadSystemInfo = async () => {
+        try {
+          const timeoutPromise = new Promise((_, reject) =>
+            setTimeout(() => reject(new Error("System info timeout")), 5000)
+          );
+          const infoPromise = window.electronAPI.systemInformation();
+          const mySystemValues = await Promise.race([infoPromise, timeoutPromise]);
+          systemValues.value = mySystemValues;
+          console.log("System info loaded:", systemValues.value);
+        } catch (e) {
+          console.warn("Failed to load system info:", e.message);
+          // Continue without system info - non-critical
+        }
+      };
+      loadSystemInfo(); // Fire and forget - don't block mount
 
       // Initialize OpenClaw webhook handler
       initOpenClawHandler();
@@ -581,7 +593,7 @@ body {
 
 /* Menu Item Backgrounds */
 .tabs.menu li.agent {
-  background: url("./assets/bonzai_agent.jpg") no-repeat;
+  background: url("./assets/bonzai_agent.webp") no-repeat;
   background-position: center 66%;
   background-size: cover;
   height: 11.33vh;
@@ -609,38 +621,38 @@ body {
 }
 
 .tabs.menu li.chat {
-  background: url("./assets/bonzai_chat.jpg") no-repeat;
+  background: url("./assets/bonzai_chat.webp") no-repeat;
   background-size: cover;
   height: 11.33vh;
 }
 
 .tabs.menu li.image {
-  background: url("./assets/bonzai_image.jpg") no-repeat;
+  background: url("./assets/bonzai_image.webp") no-repeat;
   background-size: cover;
   height: 11.33vh;
 }
 
 .tabs.menu li.music {
-  background: url("./assets/bonzai_music.jpg") no-repeat;
+  background: url("./assets/bonzai_music.webp") no-repeat;
   background-size: cover;
   height: 11.33vh;
 }
 
 .tabs.menu li.robot {
-  background: url("./assets/bonzai_robots.jpg") no-repeat;
+  background: url("./assets/bonzai_robots.webp") no-repeat;
   background-position: center 33%;
   background-size: cover;
   height: 11.33vh;
 }
 
 .tabs.menu li.three {
-  background: url("./assets/bonzai_3d.jpg") no-repeat;
+  background: url("./assets/bonzai_3d.webp") no-repeat;
   background-size: cover;
   height: 11.33vh;
 }
 
 .tabs.menu li.video {
-  background: url("./assets/bonzai_video.jpg") no-repeat;
+  background: url("./assets/bonzai_video.webp") no-repeat;
   background-size: cover;
   height: 11.33vh;
 }

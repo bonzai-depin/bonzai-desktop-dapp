@@ -176,6 +176,7 @@
 
                 <!-- MUSIC MODE INPUTS -->
                 <div v-if="mode === 'music'" class="mb-4">
+
                   <!-- ═══════════════════════════════════════════════════════════
                        SECTION 1: LYRICS GENERATION
                        ═══════════════════════════════════════════════════════════ -->
@@ -189,39 +190,40 @@
                       </label>
                       <div class="lyrics-gen-row mt-3">
                         <input
-                          class="input is-large"
+                          class="input is-medium"
                           type="text"
                           v-model="lyricsTheme"
                           placeholder="e.g. summer road trip"
                           @keyup.enter="generateLyrics"
                         />
 
-                      <div class="is-pulled-right has-text-white">
-                        <div class="select is-large is-info">
-                          <select v-model="musicVocalLanguage">
-                            <option value="en">English</option>
-                            <option value="zh">Chinese</option>
-                            <option value="ja">Japanese</option>
-                            <option value="ko">Korean</option>
-                            <option value="es">Spanish</option>
-                            <option value="fr">French</option>
-                            <option value="de">German</option>
-                            <option value="it">Italian</option>
-                            <option value="pt">Portuguese</option>
-                            <option value="ru">Russian</option>
-                            <option value="other">Other...</option>
+                      <div class="is-pulled-right has-text-white vocal-lang-row">
+                        <div class="select is-dark is-size-5">
+                          <select v-model="musicVocalLanguage" style="height: 50px; border-color: #fff;">
+                            <option value="en">🇺🇸 English</option>
+                            <option value="zh">🇨🇳 Chinese</option>
+                            <option value="ja">🇯🇵 Japanese</option>
+                            <option value="ko">🇰🇷 Korean</option>
+                            <option value="es">🇪🇸 Spanish</option>
+                            <option value="fr">🇫🇷 French</option>
+                            <option value="de">🇩🇪 German</option>
+                            <option value="it">🇮🇹 Italian</option>
+                            <option value="pt">🇧🇷 Portuguese</option>
+                            <option value="ru">🇷🇺 Russian</option>
+                            <option value="other">🌐 Other...</option>
                           </select>
                         </div>
                         <input
                           v-if="musicVocalLanguage === 'other'"
-                          class="input is-large custom-language-input ml-2"
+                          class="input is-dark is-medium custom-language-input is-pulled-right"
                           type="text"
                           v-model="customVocalLanguage"
                           placeholder="e.g. Creole, Swahili, Hindi..."
+                           style="height: 50px; border-color: #fff; border-left: none;"
                         />
                       </div>
                         <button
-                          class="button is-large is-info"
+                          class="button is-medium is-info"
                           :class="{ 'is-loading': isGeneratingLyrics }"
                           :disabled="isGeneratingLyrics || !lyricsTheme.trim()"
                           @click.prevent="generateLyrics"
@@ -328,19 +330,6 @@
                       class="has-text-white fira-sans-condensed-black-italic is-size-3"
                     >
                       Generation Settings
-                      <button
-                        class="button is-small is-info ml-auto is-pulled-right"
-                        @click="showAdvancedParams = !showAdvancedParams"
-                      >
-                        <span
-                          class="material-symbols-outlined"
-                          style="font-size: 18px"
-                        >
-                          {{
-                            showAdvancedParams ? "expand_less" : "expand_more"
-                          }}
-                        </span>
-                      </button>
                     </label>
                     <!-- Basic Parameters (always visible) -->
                     <div class="params-grid mt-5">
@@ -435,11 +424,8 @@
                       </div>
                     </div>
 
-                    <!-- Advanced Parameters (collapsible) -->
-                    <div
-                      v-if="showAdvancedParams"
-                      class="params-grid mt-3 advanced-params"
-                    >
+                    <!-- Advanced Parameters -->
+                    <div class="params-grid mt-3 advanced-params">
                       <!-- Inference Steps -->
                       <div class="param-item">
                         <label class="param-label">
@@ -450,15 +436,15 @@
                           <input
                             type="range"
                             v-model.number="musicSteps"
-                            min="4"
-                            max="60"
+                            :min="1"
+                            :max="8"
                             step="1"
                             class="slider"
                           />
                           <span class="param-value">{{ musicSteps }}</span>
                         </div>
                         <p class="param-help">
-                          More steps = higher quality, slower generation
+                          1-4: fastest, 6-8: best quality
                         </p>
                       </div>
 
@@ -676,10 +662,10 @@
                       </div>
                   </div>
 
-                  <!-- Song Name & Generate Button -->
-                  <div class="music-section mt-4 models__activity--payouts">
+                  <!-- Generate Button & Semantic Toggle -->
+                  <div class="music-section mt-4 models__activity--payouts generate-row">
                     <button
-                      class="button is-success is-large mt-3 generate-music-btn pl-2"
+                      class="button is-success is-large generate-music-btn pl-2"
                       :class="{ 'is-loading': isLoading }"
                       :disabled="
                         isLoading ||
@@ -693,6 +679,12 @@
                       </span>
                       <span>Make Music</span>
                     </button>
+                    <div class="select is-dark">
+                      <select v-model="musicSemantic">
+                        <option :value="false">⚡ Fast</option>
+                        <option :value="true">🧠 Semantic</option>
+                      </select>
+                    </div>
                   </div>
                 </div>
 
@@ -1127,10 +1119,10 @@ export default {
     const musicGuidance = ref(7.0);
     const musicSeed = ref(-1);
     const musicShift = ref(4.0);
+    const musicSemantic = ref(false); // Use 5Hz LLM for semantic audio codes
     const musicVocalLanguage = ref("en");
     const customVocalLanguage = ref("");
     const songName = ref("");
-    const showAdvancedParams = ref(false);
     const isGeneratingLyrics = ref(false);
 
     // Dimension selection state
@@ -1858,6 +1850,7 @@ Remember: 6-10 syllables per line, use all appropriate structure tags. Write in 
           musicGuidance.value = params.guidance || 7.0;
           musicSeed.value = params.seed || -1;
           musicShift.value = params.shift || 4.0;
+          musicSemantic.value = params.semantic || false;
           musicInstrumental.value = params.instrumental || false;
           musicVocalLanguage.value = params.vocalLanguage || "en";
           customVocalLanguage.value = params.customVocalLanguage || "";
@@ -2481,6 +2474,7 @@ Remember: 6-10 syllables per line, use all appropriate structure tags. Write in 
           instrumental: musicInstrumental.value,
           vocal_language: vocalLang,
           song_name: songName.value.trim() || undefined,
+          semantic: musicSemantic.value,
           auto_download: true,
         };
       } else if (mode.value === "clone" && synthesisBase64.value) {
@@ -2543,7 +2537,7 @@ Remember: 6-10 syllables per line, use all appropriate structure tags. Write in 
             },
             id: uuid(),
             language: language.value,
-            model: mode.value === "music" ? "ace-step-v1.5" : "qwen3-tts",
+            model: mode.value === "music" ? "ace-step-v1.5-turbo" : "qwen3-tts",
             hasClone: mode.value === "clone",
             isMusic: mode.value === "music",
             voiceGender: voiceGender.value,
@@ -2565,6 +2559,7 @@ Remember: 6-10 syllables per line, use all appropriate structure tags. Write in 
                 instrumental: musicInstrumental.value,
                 vocalLanguage: musicVocalLanguage.value,
                 customVocalLanguage: customVocalLanguage.value,
+                semantic: musicSemantic.value,
                 genres: [...selectedGenres.value],
                 moods: [...selectedMoods.value],
                 instruments: [...selectedInstruments.value],
@@ -2878,10 +2873,10 @@ Remember: 6-10 syllables per line, use all appropriate structure tags. Write in 
       musicGuidance,
       musicSeed,
       musicShift,
+      musicSemantic,
       musicVocalLanguage,
       customVocalLanguage,
       songName,
-      showAdvancedParams,
       isGeneratingLyrics,
       lyricsError,
       generateLyrics,
@@ -2925,6 +2920,7 @@ Remember: 6-10 syllables per line, use all appropriate structure tags. Write in 
   z-index: 1;
   opacity: 0.9;
 }
+
 .material-symbols-outlined {
   font-variation-settings:
     "FILL" 0,
@@ -2941,10 +2937,11 @@ Remember: 6-10 syllables per line, use all appropriate structure tags. Write in 
   z-index: -1;
   height: 100%;
   width: 100%;
-  background: url("../assets/bonzai_music.jpg") no-repeat;
+  background: url("../assets/bonzai_music.webp") no-repeat;
   background-size: cover;
   filter: blur(6px);
   animation: move 40s ease infinite;
+  will-change: transform;
   overflow: hidden;
 }
 .models__deployment {
@@ -3297,6 +3294,14 @@ ol.chat li {
 .custom-language-input {
   flex: 1;
   max-width: 200px;
+}
+
+/* Generate row with semantic toggle */
+.generate-row {
+  display: flex;
+  align-items: center;
+  gap: 1.5rem;
+  flex-wrap: wrap;
 }
 
 /* Generate music button */

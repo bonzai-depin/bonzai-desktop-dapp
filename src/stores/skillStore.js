@@ -9,12 +9,21 @@
  */
 
 import { defineStore } from 'pinia';
-import { ref, computed, toRaw } from 'vue';
+import { ref, computed, toRaw, watch } from 'vue';
 import { skillService } from '../services/skill.service.js';
 import { levelService } from '../services/level.service.js';
 import { authService, isAuthenticated, refreshToken, reAuthenticate } from '../services/auth.service.js';
 import { SKILL_CATEGORIES, SKILL_CATEGORY_META } from '../skills/types.js';
 import { roleplayCompanion } from '../skills/flagship.js';
+
+// Debounce helper for search performance
+function debounce(fn, delay) {
+  let timeoutId;
+  return (...args) => {
+    clearTimeout(timeoutId);
+    timeoutId = setTimeout(() => fn(...args), delay);
+  };
+}
 
 export const useSkillStore = defineStore('skill', () => {
   // ═══════════════════════════════════════════════════════════════════════════
@@ -39,8 +48,19 @@ export const useSkillStore = defineStore('skill', () => {
   // Selected category filter
   const selectedCategory = ref(null);
 
-  // Search query
+  // Search query (user input) and debounced version for filtering
   const searchQuery = ref('');
+  const debouncedSearchQuery = ref('');
+
+  // Debounce search query updates for performance (150ms delay)
+  const updateDebouncedSearch = debounce((value) => {
+    debouncedSearchQuery.value = value;
+  }, 150);
+
+  // Watch searchQuery and update debounced version
+  watch(searchQuery, (newValue) => {
+    updateDebouncedSearch(newValue);
+  });
 
   // Pending skill navigation (set when navigating from outside SmartAgent)
   const pendingSkillId = ref(null);
@@ -130,12 +150,13 @@ export const useSkillStore = defineStore('skill', () => {
     return skills.value.filter(s => s.category === selectedCategory.value);
   });
 
-  // Skills filtered by search query, with featured skills first
+  // Skills filtered by search query (debounced), with featured skills first
   const filteredSkills = computed(() => {
     let result = skillsByCategory.value;
 
-    if (searchQuery.value) {
-      const query = searchQuery.value.toLowerCase();
+    // Use debounced search query for performance
+    if (debouncedSearchQuery.value) {
+      const query = debouncedSearchQuery.value.toLowerCase();
       result = result.filter(
         s =>
           s.name.toLowerCase().includes(query) ||

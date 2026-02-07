@@ -280,7 +280,7 @@ QWEN3_TTS_DESIGN_REPO = "Qwen/Qwen3-TTS-12Hz-1.7B-VoiceDesign"  # For voice desi
 
 # ACE-Step v1.5 Music Generation (handler-based, hybrid LM + DiT architecture)
 # Models auto-download on first run via acestep internals; this repo is for the pipeline plan guard only.
-ACE_STEP_REPO = "ACE-Step/Ace-Step1.5"
+ACE_STEP_REPO = "ACE-Step/Ace-Step1.5"  # Turbo model (8 steps max, DMD-GAN distilled)
 
 LLAMA_REPOS = {
     "llama-3.2-1b": "meta-llama/Llama-3.2-1B",
@@ -3414,8 +3414,12 @@ def audio_multilingual():
 
 
 # ACE-Step v1.5 handler cache (DiT handler only; LLM optional for low-VRAM)
-_ace_step_dit = None
+_ace_step_dit = None  # Turbo model
 _ace_step_lock = threading.Lock()
+
+# ACE-Step LLM handler for semantic audio mode
+_ace_step_llm = None
+_ace_step_llm_lock = threading.Lock()
 
 # Kokoro TTS pipeline cache
 _kokoro_pipeline = None
@@ -4083,6 +4087,7 @@ def _load_ace_step():
         # ignoring the project_root parameter passed to initialize_service().
         handler._get_project_root = lambda: project_root
 
+        is_mps = device.type == "mps"
         status_msg, success = handler.initialize_service(
             project_root=project_root,
             config_path="acestep-v15-turbo",
@@ -4092,6 +4097,28 @@ def _load_ace_step():
         if not success:
             raise RuntimeError(f"ACE-Step v1.5 init failed: {status_msg}")
 
+        if is_mps:
+            # Monkey-patch the handler to use MPS-specific cache clearing
+            # The original _load_model_context calls torch.cuda.empty_cache() which does nothing on MPS
+            _original_load_model_context = handler._load_model_context
+
+            from contextlib import contextmanager
+
+            @contextmanager
+            def _mps_aware_load_model_context(model_name: str):
+                """Wrapper that adds MPS cache clearing after offloading."""
+                with _original_load_model_context(model_name):
+                    yield
+                # After the context exits (model offloaded), clear MPS cache
+                if hasattr(torch.mps, 'empty_cache'):
+                    torch.mps.empty_cache()
+                if hasattr(torch.mps, 'synchronize'):
+                    torch.mps.synchronize()
+                gc.collect()
+
+            handler._load_model_context = _mps_aware_load_model_context
+            logger.info("ACE-Step TURBO: MPS cache clearing patch applied")
+
         # Keep using the stock tiled_decode - it uses overlap-discard which
         # may have minor boundary artifacts but produces correct output.
         # A crossfade version was attempted but had issues.
@@ -4100,6 +4127,51 @@ def _load_ace_step():
         _ace_step_dit = handler
         logger.info("ACE-Step v1.5 DiT handler loaded (%s): %s", device_str, status_msg)
         return _ace_step_dit
+
+
+def _load_ace_step_llm():
+    """Load or get cached ACE-Step v1.5 LLM handler for thinking/CoT mode."""
+    global _ace_step_llm
+    with _ace_step_llm_lock:
+        if _ace_step_llm is not None:
+            return _ace_step_llm
+
+        from acestep.llm_inference import LLMHandler
+
+        main_local = repo_local_dir(ACE_STEP_REPO)
+        if not main_local.exists():
+            raise RuntimeError(
+                f"ACE-Step repo not found at {main_local}. "
+                "Download it first via the pipeline system."
+            )
+        project_root = str(main_local)
+
+        device = DeviceManager.get_device()
+        device_str = "cuda" if device.type == "cuda" else (
+            "mps" if device.type == "mps" else "cpu"
+        )
+
+        handler = LLMHandler(persistent_storage_path=str(MODEL_DIR))
+
+        # Initialize LLM with the 5Hz language model
+        # The model path is relative to the checkpoint dir (acestep-5Hz-lm-1.7B in ACE-Step 1.5)
+        lm_model_path = "acestep-5Hz-lm-1.7B"  # 5Hz Language Model for CoT reasoning
+        status_msg, success = handler.initialize(
+            checkpoint_dir=project_root,
+            lm_model_path=lm_model_path,
+            backend="transformers",  # Use transformers backend for broader compatibility
+            device=device_str,
+            offload_to_cpu=(device.type != "cuda"),
+        )
+        if not success:
+            logger.warning(f"ACE-Step LLM init failed: {status_msg}. Thinking mode unavailable.")
+            # Return a dummy handler that won't be used for thinking
+            _ace_step_llm = LLMHandler()
+            return _ace_step_llm
+
+        _ace_step_llm = handler
+        logger.info("ACE-Step v1.5 LLM handler loaded (%s): %s", device_str, status_msg)
+        return _ace_step_llm
 
 
 @app.route("/audio/music", methods=["POST"])
@@ -4112,7 +4184,7 @@ def audio_music():
         prompt (str): Caption / genre-style tags (e.g. "pop rock, energetic, electric guitar")
         lyrics (str, optional): Song lyrics with [verse]/[chorus] markers
         duration (int): Duration in seconds (10-600, default 60)
-        steps (int): Inference steps (1-20 for turbo, default 8)
+        steps (int): Inference steps (1-8 for turbo, default 8)
         guidance_scale (float): CFG scale (default 7.0)
         seed (int): Random seed (-1 for random, default -1)
         bpm (int, optional): Tempo 30-300
@@ -4121,6 +4193,7 @@ def audio_music():
         shift (float, optional): Noise schedule shift (1.0-10.0, default 4.0)
         instrumental (bool): Force instrumental, no vocals (default false)
         vocal_language (str): ISO language code (default "en")
+        semantic (bool): Use 5Hz LLM to generate semantic audio codes for better lyrics alignment (default false)
         auto_download (bool): Auto-download model if missing (default false)
     """
     data = request.get_json(force=True, silent=True) or {}
@@ -4130,7 +4203,7 @@ def audio_music():
 
     lyrics = (data.get("lyrics") or "").strip() or ""
     duration = max(10, min(600, int(data.get("duration", 60))))
-    steps = max(1, min(20, int(data.get("steps", 8))))
+    steps = max(1, min(8, int(data.get("steps", 8))))  # Turbo max 8 steps
     guidance_scale = float(data.get("guidance_scale", 7.0))
     seed = int(data.get("seed", -1))
     shift = max(1.0, min(10.0, float(data.get("shift", 4.0))))
@@ -4141,11 +4214,28 @@ def audio_music():
     time_signature = (data.get("time_signature") or "").strip()
     instrumental = bool(data.get("instrumental", False))
     vocal_language = (data.get("vocal_language") or "en").strip()
+    semantic = bool(data.get("semantic", False))
     auto_dl = bool(data.get("auto_download", False))
+
+    # Memory check for semantic mode (LLM + DiT together need ~10GB)
+    SEMANTIC_MIN_MEMORY_GB = 10
+    if semantic:
+        import psutil
+        available_gb = psutil.virtual_memory().available / (1024 ** 3)
+        if available_gb < SEMANTIC_MIN_MEMORY_GB:
+            logger.warning(f"[ACE-Step] Semantic mode requires {SEMANTIC_MIN_MEMORY_GB}GB free memory, "
+                          f"only {available_gb:.1f}GB available. Disabling semantic mode.")
+            return jsonify({"ok": False, "error": f"Semantic mode requires at least {SEMANTIC_MIN_MEMORY_GB}GB free memory. "
+                           f"Currently only {available_gb:.1f}GB available. Please close other applications or disable semantic mode."}), 400
 
     # Append time signature to caption if provided (ACE-Step uses it as a style tag)
     if time_signature and time_signature not in prompt:
         prompt = f"{prompt}, {time_signature} time"
+
+    # Log all music generation parameters for debugging
+    logger.info(f"[ACE-Step] Music generation params: steps={steps}, duration={duration}, bpm={bpm}, "
+                f"guidance={guidance_scale}, seed={seed}, shift={shift}, instrumental={instrumental}, "
+                f"keyscale={keyscale}, vocal_language={vocal_language}, semantic={semantic}")
 
     # Ensure model files are present
     guard = _ensure_files_present_or_start("music", auto_download=auto_dl)
@@ -4163,9 +4253,19 @@ def audio_music():
         import random as _rng
         actual_seed = seed if seed >= 0 else _rng.randint(0, 2**31 - 1)
 
-        genbus.progress(gen_id, "generating", 1, 10)
-
         from acestep.inference import generate_music, GenerationParams, GenerationConfig
+        from acestep.llm_inference import LLMHandler
+
+        # Semantic mode: use 5Hz LLM to generate audio codes for better lyrics alignment
+        if semantic:
+            genbus.progress(gen_id, "loading 5Hz LLM for semantic codes", 1, 10)
+            llm_handler = _load_ace_step_llm()
+            use_thinking = True
+            logger.info("[ACE-Step] Semantic mode: using 5Hz LLM for audio code generation")
+        else:
+            genbus.progress(gen_id, "generating (turbo)", 1, 10)
+            llm_handler = LLMHandler()  # Dummy handler
+            use_thinking = False
 
         params = GenerationParams(
             caption=prompt,
@@ -4181,7 +4281,11 @@ def audio_music():
             shift=shift,
             infer_method="ode",
             task_type="text2music",
-            thinking=False,  # skip LLM phase — DiT-only for speed
+            thinking=use_thinking,
+            # CoT settings (only used when thinking=True)
+            use_cot_metas=True,
+            use_cot_caption=True,
+            use_cot_language=True,
         )
 
         config = GenerationConfig(
@@ -4192,13 +4296,12 @@ def audio_music():
 
         save_dir = str(FILES_DIR)
 
-        # generate_music accepts llm_handler=None when thinking=False
-        from acestep.llm_inference import LLMHandler
-        _dummy_llm = LLMHandler()
+        if semantic:
+            genbus.progress(gen_id, "generating semantic codes + audio", 3, 10)
 
         result = generate_music(
             dit_handler=dit_handler,
-            llm_handler=_dummy_llm,
+            llm_handler=llm_handler,
             params=params,
             config=config,
             save_dir=save_dir,
@@ -4217,6 +4320,7 @@ def audio_music():
             "audio_path": audio_path,
             "duration": duration,
             "seed": actual_seed,
+            "semantic": semantic,
         })), 201
 
     except Exception as e:
@@ -4269,15 +4373,16 @@ def audio_info():
                 "description": "Design a persona voice and generate speech (combines design + clone)",
             },
             "music": {
-                "name": "ACE-Step v1.5 Music",
+                "name": "ACE-Step v1.5 Music (Turbo)",
                 "endpoint": "/audio/music",
                 "features": ["music_generation", "lyrics_support", "genre_tags", "bpm_control", "key_control", "instrumental"],
                 "duration_range": [10, 600],
-                "description": "Hybrid LM+DiT music generation with lyrics, BPM, key, and language control",
+                "steps_range": [1, 8],
+                "description": "Fast turbo music generation (ODE solver, 8 steps max, DMD-GAN distilled). Optional semantic mode uses 5Hz LLM for better lyrics alignment.",
             },
         },
         "cached_voices": list(_voice_prompt_cache.keys()),
-        "note": "Turbo uses Kokoro for fast inference, Quality uses Qwen3-TTS for high-quality output",
+        "note": "Turbo uses Kokoro for fast inference, Quality uses Qwen3-TTS for high-quality output.",
     }), 200
 
 # =============================================================================
@@ -5769,6 +5874,16 @@ def memory_clear():
                 pass
             _ace_step_dit = None
             unloaded.append("ace_step_music")
+
+        # Unload ACE-Step v1.5 LLM handler (for quality mode)
+        global _ace_step_llm
+        if _ace_step_llm is not None:
+            try:
+                del _ace_step_llm
+            except:
+                pass
+            _ace_step_llm = None
+            unloaded.append("ace_step_llm")
 
         # Unload Kokoro TTS pipeline
         global _kokoro_pipeline

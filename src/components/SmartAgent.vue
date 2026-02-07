@@ -1193,6 +1193,9 @@ export default {
     const downloadsSocket = ref(null);
     const lastDlEventAt = ref(0);
     let httpPollTimer = null;
+    let completionCheckTimer = null;
+    const MAX_POLL_LIFETIME_MS = 30 * 60 * 1000; // 30 minutes max polling
+    let pollStartTime = 0;
 
     // Download task list computed
     const downloadTaskList = computed(() => {
@@ -1253,35 +1256,43 @@ export default {
       return true;
     };
 
+    // Cache for model availability checks (5 minute TTL)
+    const MODEL_CACHE_TTL_MS = 5 * 60 * 1000;
+    let lastModelCheckTimestamp = 0;
+
     // Check model availability on mount and when skill changes
-    const checkModelAvailability = async () => {
+    const checkModelAvailability = async (forceRefresh = false) => {
+      // Skip if recently checked (within TTL) unless forced
+      const now = Date.now();
+      if (!forceRefresh && lastModelCheckTimestamp > 0 && now - lastModelCheckTimestamp < MODEL_CACHE_TTL_MS) {
+        console.log("[SmartAgent] Using cached model availability (checked", Math.round((now - lastModelCheckTimestamp) / 1000), "s ago)");
+        return;
+      }
+
       console.log("[SmartAgent] Checking model availability...");
 
-      // Check LLM models via electron API (check each model individually)
+      // Check LLM models via electron API - PARALLEL checks
       if (window.electronAPI?.checkModel) {
-        // Check all LLM models defined in MODEL_REQUIREMENTS
         const llmModelKeys = ["llm_default", "llm_hermes", "llm_mythomax"];
 
-        for (const key of llmModelKeys) {
+        // Run all LLM checks in parallel
+        const llmChecks = llmModelKeys.map(async (key) => {
           const model = MODEL_REQUIREMENTS[key];
           if (model?.filename) {
             try {
-              const exists = await window.electronAPI.checkModel(
-                model.filename,
-              );
+              const exists = await window.electronAPI.checkModel(model.filename);
               modelAvailability[model.filename] = exists;
               console.log(
                 `[SmartAgent] LLM model ${model.filename}: ${exists ? "available" : "not found"}`,
               );
             } catch (e) {
-              console.warn(
-                `[SmartAgent] Failed to check model ${model.filename}:`,
-                e,
-              );
+              console.warn(`[SmartAgent] Failed to check model ${model.filename}:`, e);
               modelAvailability[model.filename] = false;
             }
           }
-        }
+        });
+
+        await Promise.all(llmChecks);
       }
 
       // Check Flask server readiness for diffusion/audio/video models via /pipelines/plan
@@ -1381,6 +1392,7 @@ export default {
       await Promise.all(pipelineChecks);
 
       modelAvailabilityChecked.value = true;
+      lastModelCheckTimestamp = Date.now();
     };
 
     const getModelTypeIcon = (type) => {
@@ -1509,7 +1521,15 @@ export default {
 
     const kickHttpPollIfStale = (pipelineId) => {
       if (httpPollTimer) return;
+      pollStartTime = Date.now();
       httpPollTimer = setInterval(async () => {
+        // Safety: stop polling after max lifetime to prevent runaway timers
+        if (Date.now() - pollStartTime > MAX_POLL_LIFETIME_MS) {
+          console.warn("[SmartAgent] HTTP poll timer exceeded max lifetime, stopping");
+          clearInterval(httpPollTimer);
+          httpPollTimer = null;
+          return;
+        }
         const idleMs = Date.now() - lastDlEventAt.value;
         if (idleMs < 1500) return;
         try {
@@ -1544,12 +1564,28 @@ export default {
 
     const startDownloadTracking = (pipelineId, websocketUrl) => {
       connectAndSubscribe(pipelineId, websocketUrl);
-      const t = setInterval(async () => {
-        if (!downloads.active && downloads.status !== "failed") {
-          clearInterval(t);
-          await checkModelAvailability();
+      // Clear any existing completion timer
+      if (completionCheckTimer) {
+        clearInterval(completionCheckTimer);
+      }
+      const timerStartTime = Date.now();
+      completionCheckTimer = setInterval(async () => {
+        // Safety: stop after max lifetime
+        if (Date.now() - timerStartTime > MAX_POLL_LIFETIME_MS) {
+          console.warn("[SmartAgent] Completion check timer exceeded max lifetime, stopping");
+          clearInterval(completionCheckTimer);
+          completionCheckTimer = null;
+          return;
         }
-        if (downloads.status === "failed") clearInterval(t);
+        if (!downloads.active && downloads.status !== "failed") {
+          clearInterval(completionCheckTimer);
+          completionCheckTimer = null;
+          await checkModelAvailability(true); // Force refresh after download completes
+        }
+        if (downloads.status === "failed") {
+          clearInterval(completionCheckTimer);
+          completionCheckTimer = null;
+        }
       }, 1000);
     };
 
@@ -2914,12 +2950,19 @@ Provide a concise analysis covering:
       return n.toFixed(2);
     };
 
-    // Lifecycle
+    // Lifecycle - optimized with parallel initialization
     onMounted(async () => {
+      // Initialize skill store first (others may depend on it)
       await skillStore.initialize();
-      await checkModelAvailability();
-      await checkPolymarketModelAvailability(); // Legacy check for Polymarket default model
-      await resumeActiveDownloadIfAny(); // Resume any ongoing downloads
+
+      // Run independent checks in parallel for faster startup
+      const [, , ] = await Promise.all([
+        checkModelAvailability(),
+        checkPolymarketModelAvailability(),
+        resumeActiveDownloadIfAny(),
+      ]);
+
+      // Non-blocking initialization
       tokenService.initialize();
 
       // Auto-select the featured Roleplay Companion skill by default
@@ -2936,9 +2979,14 @@ Provide a concise analysis covering:
           downloadsSocket.value.disconnect();
         } catch {}
       }
+      // Clean up all polling timers
       if (httpPollTimer) {
         clearInterval(httpPollTimer);
         httpPollTimer = null;
+      }
+      if (completionCheckTimer) {
+        clearInterval(completionCheckTimer);
+        completionCheckTimer = null;
       }
     });
 
@@ -2962,6 +3010,7 @@ Provide a concise analysis covering:
     });
 
     // Watch for pending skill navigation from external sources (e.g., companion notification)
+    // Note: removed { immediate: true } to avoid redundant execution on mount
     watch(
       () => skillStore.pendingSkillId,
       (pendingId) => {
@@ -2970,8 +3019,7 @@ Provide a concise analysis covering:
           selectSkillById(pendingId);
           skillStore.clearPendingSkillId();
         }
-      },
-      { immediate: true }
+      }
     );
 
     return {
@@ -3136,6 +3184,7 @@ Provide a concise analysis covering:
 
 .rotating {
   animation: spin 1s linear infinite;
+  will-change: transform;
 }
 
 @keyframes spin {
@@ -3160,10 +3209,11 @@ Provide a concise analysis covering:
   z-index: -1;
   height: 100%;
   width: 100%;
-  background: url("https://www.bonzai.sh/bonzai_agent.jpg") no-repeat;
+  background: url("../assets/bonzai_agent.webp") no-repeat;
   background-size: cover;
   filter: blur(6px);
   animation: move 40s ease infinite;
+  will-change: transform;
   overflow: hidden;
 }
 

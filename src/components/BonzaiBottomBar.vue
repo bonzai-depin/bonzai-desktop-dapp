@@ -787,6 +787,7 @@ watch(
 
 .spinning {
   animation: spin 1s linear infinite;
+  will-change: transform;
 }
 
 @keyframes spin {
