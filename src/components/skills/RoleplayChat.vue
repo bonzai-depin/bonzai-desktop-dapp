@@ -1892,7 +1892,7 @@ export default {
     const downloadsSocket = ref(null);
 
     // Required LLM for roleplay
-    const REQUIRED_LLM = "llm_mythomax";
+    const REQUIRED_LLM = "llm_mythomax_13b";
     const requiredLLMName = computed(
       () => MODEL_REQUIREMENTS[REQUIRED_LLM]?.name || "MythoMax L2 13B",
     );

@@ -1273,7 +1273,7 @@ export default {
 
       // Check LLM models via electron API - PARALLEL checks
       if (window.electronAPI?.checkModel) {
-        const llmModelKeys = ["llm_default", "llm_hermes", "llm_mythomax"];
+        const llmModelKeys = ["llm_llama_3_1_8b", "llm_hermes_4_14b", "llm_mythomax_13b"];
 
         // Run all LLM checks in parallel
         const llmChecks = llmModelKeys.map(async (key) => {

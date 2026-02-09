@@ -8,7 +8,7 @@
         <Transition name="wallet-fade" mode="out-in">
           <div v-if="!isConnected || isConnecting" key="connect-btns" class="connect-buttons">
             <button
-              class="button is-success is-medium"
+              class="button is-success"
               @click="connect"
               :disabled="isConnecting"
             >
@@ -91,6 +91,17 @@
         </div>
 
         <div class="action-buttons">
+          <button
+            class="button"
+            :class="{ 'is-warning': p2pStatus.started, 'is-success': !p2pStatus.started }"
+            @click="showNetworkModal = true"
+            title="Serve to Peers"
+          >
+            <span class="material-symbols-outlined mr-2" :class="{ 'pulse-icon': p2pStatus.started }">
+              {{ p2pStatus.started ? 'sensors' : 'cell_tower' }}
+            </span>
+            {{ p2pStatus.started ? 'Serving Peers' : 'Serve Peers' }}
+          </button>
           <a
             :href="buyLink"
             target="_blank"
@@ -271,14 +282,45 @@
         </div>
       </Transition>
     </Teleport>
+
+    <!-- Network Settings Modal -->
+    <Teleport to="body">
+      <Transition name="fade">
+        <div
+          v-if="showNetworkModal"
+          class="network-modal-overlay"
+          @click.self="showNetworkModal = false"
+        >
+          <div class="network-modal">
+            <div class="network-modal-header">
+              <h2 class="fira-sans-condensed-black-italic">
+                <span class="material-symbols-outlined mr-2">hub</span>
+                Distributed Network
+              </h2>
+              <button
+                class="button is-danger"
+                @click="showNetworkModal = false"
+                title="Close"
+              >
+                <span class="material-symbols-outlined">close</span>
+              </button>
+            </div>
+            <div class="network-modal-body">
+              <NetworkSettings />
+            </div>
+          </div>
+        </div>
+      </Transition>
+    </Teleport>
   </div>
 </template>
 
 <script setup>
-import { ref, computed, onMounted, watch } from "vue";
+import { ref, computed, onMounted, onUnmounted, watch } from "vue";
 import { useBonzaiWeb3 } from "../composables/useBonzaiWeb3.js";
 import { CONFIG } from "../config/web3.config.js";
 import { levelService, checkAllLevels, canUnlockWithEth, unlockAllWithEth, clearOpenLevelModalRequest } from "../services/level.service.js";
+import NetworkSettings from "./NetworkSettings.vue";
 
 const {
   isConnected,
@@ -308,6 +350,23 @@ const isUnlocking = ref(false);
 const selectedLevel = ref(null);
 const unlockStatus = ref('');
 const unlockStatusType = ref('info'); // 'info', 'warning', 'success', 'danger'
+
+// Network modal state
+const showNetworkModal = ref(false);
+const p2pStatus = ref({ started: false });
+let p2pStatusInterval = null;
+
+// Poll P2P status for the serve button indicator
+const refreshP2PStatus = async () => {
+  try {
+    const status = await window.electronAPI.p2pStatus();
+    if (status.ok) {
+      p2pStatus.value = status;
+    }
+  } catch (err) {
+    console.warn('[BonzaiBottomBar] Failed to get P2P status:', err);
+  }
+};
 
 // Unlock status styling
 const unlockStatusClass = computed(() => `is-${unlockStatusType.value}`);
@@ -505,6 +564,16 @@ const unlockAllLevels = async () => {
 onMounted(async () => {
   if (isConnected.value) {
     await checkAllLevels();
+  }
+
+  // Initial P2P status check and start polling
+  await refreshP2PStatus();
+  p2pStatusInterval = setInterval(refreshP2PStatus, 5000);
+});
+
+onUnmounted(() => {
+  if (p2pStatusInterval) {
+    clearInterval(p2pStatusInterval);
   }
 });
 
@@ -1073,6 +1142,80 @@ hr {
   font-weight: 600;
 }
 
+/* Serve to Peers Button */
+
+.serve-label {
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.pulse-icon {
+  animation: pulseGreen 2s ease-in-out infinite;
+}
+
+@keyframes pulseGreen {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.5; }
+}
+
+/* Network Modal */
+.network-modal-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.85);
+  backdrop-filter: blur(16px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 10001;
+}
+
+.network-modal {
+  width: 95%;
+  max-width: 900px;
+  max-height: 90vh;
+  background: linear-gradient(180deg, #1a1a2e 0%, #16213e 100%);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 16px;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+
+.network-modal-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 16px 24px;
+  background: rgba(0, 0, 0, 0.3);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+.network-modal-header h2 {
+  display: flex;
+  align-items: center;
+  font-size: 1.5rem;
+  color: #fff;
+  margin: 0;
+}
+
+.network-modal-body {
+  flex: 1;
+  overflow-y: auto;
+  padding: 0;
+}
+
+/* Override NetworkSettings styles when inside modal */
+.network-modal-body :deep(.network-settings) {
+  height: auto;
+  max-height: 70vh;
+  padding: 24px;
+}
+
+.network-modal-body :deep(.panel) {
+  max-width: none;
+}
+
 /* Responsive */
 @media (max-width: 768px) {
   .bar-content {
@@ -1090,6 +1233,9 @@ hr {
   }
   .level-connector {
     width: 12px;
+  }
+  .serve-label {
+    display: none;
   }
 }
 </style>

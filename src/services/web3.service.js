@@ -15,9 +15,10 @@ import { reactive, readonly, computed } from "vue";
 import { CONFIG } from "../config/web3.config.js";
 import { authService } from "./auth.service.js";
 
-// NOTE: install deps:
-//   npm i @walletconnect/ethereum-provider ethers
-import EthereumProvider from "@walletconnect/ethereum-provider";
+// Reown AppKit - official WalletConnect integration
+import { createAppKit } from "@reown/appkit/vue";
+import { EthersAdapter } from "@reown/appkit-adapter-ethers";
+import { mainnet, arbitrum } from "@reown/appkit/networks";
 
 // ═══════════════════════════════════════════════════════════════════════════
 // ABI DEFINITIONS
@@ -74,7 +75,7 @@ let browserProvider = null;
 const rpcProviders = {};
 
 let eip1193Provider = null; // injected or WalletConnect provider
-let wcProvider = null; // WalletConnect provider instance (if used)
+let appKit = null; // AppKit instance (singleton)
 
 /**
  * Create a provider that tries the primary RPC, then fallbacks
@@ -125,12 +126,71 @@ const initRpcProviders = async () => {
 };
 
 /**
+ * Initialize AppKit (singleton) - Official Reown/WalletConnect integration
+ */
+const initAppKit = () => {
+  if (appKit) return appKit;
+
+  const projectId = (
+    CONFIG?.walletconnect?.projectId ||
+    import.meta?.env?.VITE_WALLETCONNECT_PROJECT_ID ||
+    ""
+  ).trim();
+
+  if (!projectId) {
+    throw new Error(
+      "WalletConnect is not configured. Set CONFIG.walletconnect.projectId or VITE_WALLETCONNECT_PROJECT_ID."
+    );
+  }
+
+  // Detect Electron production mode
+  const isElectronProduction = typeof window !== "undefined" &&
+    (window.location.protocol === "file:" ||
+     window.location.protocol === "app:" ||
+     window.location.protocol.startsWith("file"));
+
+  const metadataUrl = isElectronProduction
+    ? "https://bonzai.sh"
+    : `${window.location.protocol}//${window.location.host}`;
+
+  const metadata = {
+    name: 'BonzAI',
+    description: 'BonzAI Desktop DApp',
+    url: metadataUrl,
+    icons: ['https://bonzai.sh/icon.png'],
+  };
+
+  appKit = createAppKit({
+    adapters: [new EthersAdapter()],
+    networks: [mainnet, arbitrum],
+    defaultNetwork: arbitrum,
+    metadata,
+    projectId,
+    features: {
+      analytics: false,
+    },
+    // Only show these wallets
+    includeWalletIds: [
+      'c57ca95b47569778a828d19178114f4db188b89b763c899ba0be274e97267d96', // MetaMask
+      'fd20dc426fb37566d803205b19bbc1d4096b248ac04548e3cfb6b3a38bd033aa', // Coinbase Wallet
+      '4622a2b2d6af1c9844944291e5e7351a6aa24cd7b23099efac1b2fd875da31a0', // Trust Wallet
+      '18388be9ac2d02726dbac9777c96efaac06d744b2f6d580fccdd4127a6d01fd1', // Rabby Wallet
+    ],
+    themeMode: 'dark',
+    themeVariables: {
+      '--w3m-accent': '#10b981',
+    },
+  });
+
+  return appKit;
+};
+
+/**
  * Ensure there is an EIP-1193 wallet provider available.
- * - If window.ethereum exists -> use it (MetaMask in browsers)
- * - Else -> WalletConnect (recommended for Electron)
+ * Uses Reown AppKit for WalletConnect integration.
  *
  * @param {Object} opts
- * @param {boolean} opts.auto - if true, try to reuse existing WalletConnect session without showing QR
+ * @param {boolean} opts.auto - if true, try to reuse existing session without showing modal
  */
 export const ensureWalletProvider = async (opts = {}) => {
   const { auto = false } = opts;
@@ -139,111 +199,66 @@ export const ensureWalletProvider = async (opts = {}) => {
     throw new Error("Wallet provider requires a browser-like environment.");
   }
 
-  // 1) Injected provider (MetaMask browser extension, etc.)
-  if (window.ethereum) {
-    eip1193Provider = window.ethereum;
-    state.walletType = "injected";
+  // Initialize AppKit (singleton)
+  const modal = initAppKit();
+
+  // Check if already connected via AppKit
+  const walletProvider = modal.getWalletProvider();
+  if (walletProvider) {
+    eip1193Provider = walletProvider;
+    state.walletType = 'walletconnect';
     return eip1193Provider;
   }
 
-  // 2) WalletConnect fallback
-  const projectId = (
-    CONFIG?.walletconnect?.projectId ||
-    import.meta?.env?.VITE_WALLETCONNECT_PROJECT_ID ||
-    ""
-  ).trim();
-  if (!projectId) {
-    throw new Error(
-      "No injected wallet found. WalletConnect is not configured. Set CONFIG.walletconnect.projectId or VITE_WALLETCONNECT_PROJECT_ID."
-    );
+  // If auto mode, don't show modal - just return null
+  if (auto) {
+    return null;
   }
 
-  const chains =
-    CONFIG?.walletconnect?.chains && CONFIG.walletconnect.chains.length
-      ? CONFIG.walletconnect.chains
-      : [1]; // Ethereum mainnet
+  // Open the modal and wait for connection
+  try {
+    await modal.open();
 
-  // Detect Electron production mode (file:// or app:// protocol)
-  const isElectronProduction = typeof window !== "undefined" &&
-    (window.location.protocol === "file:" ||
-     window.location.protocol === "app:" ||
-     window.location.protocol.startsWith("file"));
+    // Wait for connection with timeout (poll for provider)
+    const connected = await new Promise((resolve, reject) => {
+      const timeout = setTimeout(() => {
+        clearInterval(interval);
+        reject(new Error('Connection timeout'));
+      }, 120000); // 2 minute timeout
 
-  // Use verified domain for production Electron (must be configured in WalletConnect Cloud)
-  // In development (localhost), use localhost URL
-  const metadataUrl = isElectronProduction
-    ? "https://bonzai.sh"  // Must be verified in WalletConnect Cloud dashboard
-    : `${window.location.protocol}//${window.location.host}`;
-
-  // Create once
-  if (!wcProvider) {
-    wcProvider = await EthereumProvider.init({
-      projectId,
-      chains,
-      showQrModal: !auto,
-      optionalChains: CONFIG?.walletconnect?.optionalChains || [],
-      metadata: {
-        name: "BonzAI",
-        description: "BonzAI Desktop DApp",
-        url: metadataUrl,
-        icons: ["https://bonzai.sh/icon.png"],
-      },
-      methods: [
-        "eth_requestAccounts",
-        "eth_accounts",
-        "eth_chainId",
-        "eth_sendTransaction",
-        "personal_sign",
-        "eth_signTypedData",
-        "eth_signTypedData_v4",
-        "wallet_switchEthereumChain",
-        "wallet_addEthereumChain",
-      ],
-      events: ["accountsChanged", "chainChanged", "disconnect"],
-      // Disable provider ping to reduce connection issues in Electron
-      disableProviderPing: true,
-      // Required for Electron: skip origin verification at client level
-      // Note: WalletConnect Cloud project must have origins configured
-      qrModalOptions: {
-        // Use dark theme for better visibility in Electron
-        themeMode: "dark",
-      },
+      let modalWasOpen = false;
+      const interval = setInterval(() => {
+        const provider = modal.getWalletProvider();
+        if (provider) {
+          clearInterval(interval);
+          clearTimeout(timeout);
+          resolve(provider);
+          return;
+        }
+        // Track if modal has been open
+        if (modal.isOpen()) {
+          modalWasOpen = true;
+        }
+        // Check if modal was closed without connecting (only after it was open)
+        if (modalWasOpen && !modal.isOpen()) {
+          clearInterval(interval);
+          clearTimeout(timeout);
+          reject(new Error('Wallet connection cancelled'));
+        }
+      }, 300);
     });
-  } else {
-    // Update QR modal behavior if caller toggles auto/interactive
-    try {
-      wcProvider.modal?.setTheme?.("dark");
-    } catch {}
+
+    eip1193Provider = connected;
+    state.walletType = 'walletconnect';
+
+    // Close the modal now that we have the provider
+    await modal.close();
+
+    return eip1193Provider;
+  } catch (err) {
+    console.warn('[Web3] Connection failed/cancelled:', err.message);
+    throw err;
   }
-
-  // Attempt silent reconnect first
-  const accounts = await wcProvider
-    .request({ method: "eth_accounts" })
-    .catch(() => []);
-  if ((!accounts || accounts.length === 0) && !auto) {
-    try {
-      await wcProvider.connect();
-    } catch (connectError) {
-      // User cancelled or connection failed - reset the provider for next attempt
-      console.warn('[Web3] WalletConnect connection failed/cancelled:', connectError.message);
-
-      // Disconnect and reset the provider so next attempt creates a fresh instance
-      try {
-        await wcProvider.disconnect().catch(() => {});
-      } catch {}
-      wcProvider = null;
-      eip1193Provider = null;
-
-      throw new Error('Wallet connection cancelled');
-    }
-  }
-
-  // Expose for codepaths that expect window.ethereum
-  window.ethereum = wcProvider;
-
-  eip1193Provider = wcProvider;
-  state.walletType = "walletconnect";
-  return eip1193Provider;
 };
 
 /**
@@ -391,13 +406,14 @@ export const connectWallet = async () => {
  * Disconnect wallet and logout from auth service
  */
 export const disconnectWallet = async () => {
-  // Remember if we set window.ethereum (WalletConnect case)
-  const weSetWindowEthereum = state.walletType === "walletconnect";
-
   try {
-    // WalletConnect: explicitly disconnect session
-    if (state.walletType === "walletconnect" && wcProvider?.disconnect) {
-      await wcProvider.disconnect().catch(() => {});
+    // Disconnect via AppKit
+    if (appKit) {
+      try {
+        await appKit.disconnect();
+      } catch (e) {
+        console.warn('[Web3] AppKit disconnect warning:', e.message);
+      }
     }
 
     // Logout from auth service
@@ -416,16 +432,9 @@ export const disconnectWallet = async () => {
 
     removeEventListeners();
 
-    // Clear providers - including wcProvider to force fresh instance on reconnect
+    // Clear browser provider
     browserProvider = null;
     eip1193Provider = null;
-    wcProvider = null;
-
-    // Clear window.ethereum if we set it (WalletConnect case)
-    // This ensures ensureWalletProvider creates a fresh provider on reconnect
-    if (weSetWindowEthereum && window.ethereum) {
-      delete window.ethereum;
-    }
   }
 };
 
@@ -692,6 +701,9 @@ export const web3Service = {
   getSigner,
   getBrowserProvider,
   getProvider,
+
+  // AppKit
+  getAppKit: () => appKit,
 
   // Auth service reference
   authService,

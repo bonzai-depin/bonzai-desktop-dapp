@@ -2933,10 +2933,6 @@ export default {
       try {
         if (!code || typeof code !== "string")
           throw new Error("Code must be a non-empty string");
-        if (/THREE\.CapsuleGeometry/.test(code))
-          throw new Error(
-            "CapsuleGeometry does not exist — use Cylinder or Sphere instead."
-          );
         const open = (code.match(/{/g) || []).length,
           close = (code.match(/}/g) || []).length;
         if (open !== close)

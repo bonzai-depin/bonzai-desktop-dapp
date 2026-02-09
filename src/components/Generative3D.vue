@@ -97,90 +97,17 @@
           <div class="models__activity--payouts">
             <div class="columns">
               <div class="column is-12">
-                <!-- MODE & STRATEGY SELECTORS (side by side) -->
-                <div
-                  class="environment-controls models__activity--payouts mb-4"
-                >
-                  <div class="columns is-multiline">
-                    <!-- Mode (Standard/Quality) -->
-                    <div class="column is-6">
-                      <label
-                        class="control-label fira-sans-condensed-black-italic"
-                      >
-                        Mode
-                      </label>
-                      <div class="mode-buttons compact">
-                        <button
-                          v-for="mode in modelModes"
-                          :key="mode.id"
-                          class="mode-btn"
-                          :class="{ active: modelMode === mode.id }"
-                          @click="modelMode = mode.id"
-                          :title="mode.description"
-                        >
-                          <span class="mode-icon">
-                            <span class="material-symbols-outlined is-size-4">
-                              {{ mode.icon }}
-                            </span>
-                          </span>
-                          <span class="mode-label">{{ mode.label }}</span>
-                        </button>
-                      </div>
-                    </div>
-
-                    <!-- Strategy (Generation approach) -->
-                    <div class="column is-6">
-                      <label
-                        class="control-label fira-sans-condensed-black-italic"
-                      >
-                        Strategy
-                      </label>
-                      <div class="mode-buttons compact">
-                        <button
-                          v-for="mode in generationModes"
-                          :key="mode.id"
-                          class="mode-btn small"
-                          :class="{ active: generationMode === mode.id }"
-                          @click="generationMode = mode.id"
-                          :title="mode.description"
-                        >
-                          <span class="mode-icon">
-                            <span class="material-symbols-outlined is-size-3">
-                              {{ mode.icon }}
-                            </span>
-                          </span>
-                          <span class="mode-label">{{ mode.label }}</span>
-                        </button>
-                      </div>
-                    </div>
-
-                    <!-- Vision Analysis Indicator (always active) -->
-                    <div class="column is-6 mt-2">
-                      <div class="vision-indicator" :class="{ ready: visionModelReady }">
-                        <span class="material-symbols-outlined vision-icon">
-                          {{ visionModelReady ? 'visibility' : 'visibility_off' }}
-                        </span>
-                        <span class="vision-label">
-                          Vision Analysis
-                          <span v-if="visionModelReady" class="ml-2 tag is-success active fira-sans-condensed-black-italic">Active</span>
-                          <span v-else class="ml-2 tag is-danger pending fira-sans-condensed-black-italic">Download Required</span>
-                        </span>
-                      </div>
-                    </div>
-                    <div class="column is-6 mt-2">
-                      <!-- STRATEGY INFO -->
-                      <div class="notification is-info mb-4 strategy-info">
-                        <span class="material-symbols-outlined info-icon">
-                          info
-                        </span>
-                        <span>
-                          {{
-                            generationModes.find((m) => m.id === generationMode)
-                              ?.description
-                          }}
-                        </span>
-                      </div>
-                    </div>
+                <!-- VISION STATUS INDICATOR -->
+                <div class="environment-controls models__activity--payouts mb-4">
+                  <div class="vision-indicator" :class="{ ready: visionModelReady }">
+                    <span class="material-symbols-outlined vision-icon">
+                      {{ visionModelReady ? 'visibility' : 'visibility_off' }}
+                    </span>
+                    <span class="vision-label">
+                      Vision Analysis
+                      <span v-if="visionModelReady" class="ml-2 tag is-success active fira-sans-condensed-black-italic">Active</span>
+                      <span v-else class="ml-2 tag is-danger pending fira-sans-condensed-black-italic">Download Required</span>
+                    </span>
                   </div>
                 </div>
 
@@ -1150,26 +1077,6 @@ export default {
       setTimeout(() => onSubmit(true), 0);
     };
 
-    // ═══════════════════════════════════════════════════════════════════════
-    // GENERATION MODE
-    // ═══════════════════════════════════════════════════════════════════════
-    const generationMode = ref("normal");
-    const generationModes = ref([
-      {
-        id: "normal",
-        label: "Normal",
-        icon: "bolt",
-        description: "Quick generation with vision verification (up to 3 fixes)",
-        visionChecks: 3,
-      },
-      {
-        id: "craftsman",
-        label: "Craftsman",
-        icon: "diamond",
-        description: "High-quality like H.chest helper (up to 5 vision fixes)",
-        visionChecks: 5,
-      },
-    ]);
 
     const MAX_RETRY_ATTEMPTS = 3;
 
@@ -1906,39 +1813,49 @@ IMAGE LAYOUT (2x2 grid):
 YOUR STANDARD: HIGH PRODUCTION VALUE. This should look like a polished game asset, not a programmer art placeholder.
 
 EVALUATION CRITERIA:
-1. PRESENCE: Is each requested element actually visible and identifiable?
-2. MATERIALS: Do surfaces have appropriate materials? (metallic, glossy, matte, glowing, transparent as needed)
+1. GEOMETRIC ORIENTATION (CRITICAL):
+   - Are components pointing in the CORRECT direction?
+   - Cones/spikes on a crown should point UP (vertical), not sideways
+   - Sword blades should extend FROM the handle, not perpendicular
+   - Legs should point DOWN, arms should extend OUTWARD
+   - Antennas/spires/towers should point UP
+   - Wheels should be VERTICAL (standing), axles HORIZONTAL
+   - CHECK EACH VIEW: Does the object look correct from ALL angles?
+2. PRESENCE: Is each requested element actually visible and identifiable?
+3. MATERIALS: Do surfaces have appropriate materials? (metallic, glossy, matte, glowing, transparent as needed)
    - Plain gray/white = FAIL. Objects need proper colors and material properties.
-3. DETAIL: Are there meaningful details? Bevels, patterns, sub-elements, visual interest?
+4. DETAIL: Are there meaningful details? Bevels, patterns, sub-elements, visual interest?
    - A "sword" that's just a rectangle = FAIL. It needs a blade, guard, handle.
    - A "treasure chest" needs wood grain texture, metal bands, proper lid shape.
-4. LIGHTING/GLOW: If something should glow or emit light, does it actually glow?
-5. COHESION: Do parts form a unified, intentional design? Or random disconnected shapes?
-6. POSITIONING: Properly grounded (not floating, not clipping through floor)?
-7. SCALE: Are proportions correct? Does it look right?
+5. LIGHTING/GLOW: If something should glow or emit light, does it actually glow?
+6. COHESION: Do parts form a unified, intentional design? Or random disconnected shapes?
+7. POSITIONING: Properly grounded (not floating, not clipping through floor)?
+8. SCALE: Are proportions correct? Does it look right?
 
 REJECT (MATCHES: NO) if:
+- ANY component is pointing in the WRONG DIRECTION (horizontal instead of vertical, etc.)
+- Objects are rotated incorrectly (lying on their side when should be upright)
 - Objects are basic untextured geometry (plain boxes, spheres, cylinders)
-- Colors/materials are obviously wrong or missing (gray metal instead of gold, no glow on magic items)
-- Requested details are absent (coins with no embossing, gems with no facets, swords with no guard)
+- Colors/materials are obviously wrong or missing
+- Requested details are absent
 - It looks like a quick prototype rather than a finished asset
-- You would be embarrassed to show this to an artist
 
 ACCEPT (MATCHES: YES) only if:
+- ALL components are oriented CORRECTLY (spikes point up, blades extend properly, etc.)
 - All requested elements are present AND well-executed
 - Materials are appropriate and visually interesting
 - The object has polish and attention to detail
-- You would be PROUD to use this in a game
 
 Step-by-step analysis:
 1. List what the user asked for
-2. For EACH element: Is it present? Is it HIGH QUALITY or just placeholder geometry?
-3. Overall: Is this production-ready or needs more work?
+2. CHECK ORIENTATION FIRST: For each component, is it pointing the right way?
+3. For EACH element: Is it present? Is it HIGH QUALITY or just placeholder geometry?
+4. Overall: Is this production-ready or needs more work?
 
 Respond in this EXACT format:
-MATCHES: [YES only if genuinely high quality, NO if anything needs improvement]
-MISSING: [comma-separated list of missing OR poorly-rendered elements, or "none" if genuinely excellent]
-FEEDBACK: [SPECIFIC instructions on what to fix or improve. Be detailed about colors, shapes, positions, textures that need work]`;
+MATCHES: [YES only if genuinely high quality AND correctly oriented, NO if anything needs improvement]
+MISSING: [comma-separated list of missing, poorly-rendered, OR INCORRECTLY ORIENTED elements, or "none" if genuinely excellent]
+FEEDBACK: [SPECIFIC instructions on what to fix. For orientation issues, specify: "rotate X component 90° around [axis] to point [direction]"]`;
 
         // Single API call with grid image
         const { data } = await axios.post(
@@ -2272,55 +2189,21 @@ Generate ONLY the additional code for: ${missingList}`;
       { id: "foggy", label: "Fog", icon: "🌫️", class: "foggy" },
     ]);
 
-    // Model mode: standard (Qwen) or quality (GLM)
-    const modelMode = ref("standard");
-    const modelModes = ref([
-      {
-        id: "standard",
-        label: "Standard",
-        icon: "bolt",
-        description: "Qwen 2.5 Coder 14B - Fast and efficient code generation",
-      },
-      {
-        id: "quality",
-        label: "Quality",
-        icon: "diamond",
-        description: "GLM 4.7 Flash - Higher quality with 200K context",
-      },
-    ]);
-
-    const models = {
-      standard: {
-        modelname: "Qwen 2.5 Coder 14B",
-        modeldesc:
-          "14B-parameter Qwen 2.5 Coder instruction-tuned model with 128K context. State-of-the-art code generation and reasoning. Best for: serious development work, complex refactoring, and code agents requiring stronger understanding.",
-        url: "https://huggingface.co/Qwen/Qwen2.5-Coder-14B-Instruct-GGUF/resolve/main/qwen2.5-coder-14b-instruct-q4_k_m.gguf",
-        filename: "qwen2.5-coder-14b-instruct-q4_k_m.gguf",
-        filesize: "8.93 GB",
-        parameters: 14000000000,
-        context: 131072,
-      },
-      quality: {
-        modelname: "Qwen3 Coder Next 80B A3B",
-        modeldesc:
-          "80B-parameter Mixture-of-Experts Qwen3-Coder-Next model with only 3B active parameters per token and a native 262,144-token context window. Hybrid architecture (Gated DeltaNet + Gated Attention + MoE with 512 experts) designed for coding agents and long-horizon agentic reasoning.",
-        url: "https://huggingface.co/unsloth/Qwen3-Coder-Next-GGUF/resolve/main/Qwen3-Coder-Next-Q4_K_M.gguf",
-        filename: "qwen3-coder-next-q4_k_m.gguf",
-        filesize: "48.5 GB",
-        parameters: 80000000000,
-        activeParameters: 3000000000,
-        isMoE: true,
-        context: 262144,
-      },
+    // Single model: GLM 4.7 Flash
+    const model = {
+      modelname: "GLM 4.7 Flash Uncensored",
+      modeldesc:
+        "30B-parameter Mixture-of-Experts model from Zhipu AI with only 3B active parameters per forward pass and 200K context. Optimized for 3D asset generation.",
+      url: "https://huggingface.co/DavidAU/GLM-4.7-Flash-Uncensored-Heretic-NEO-CODE-Imatrix-MAX-GGUF/resolve/main/GLM-4.7-Flash-Uncen-Hrt-NEO-CODE-MAX-imat-D_AU-Q4_K_M.gguf",
+      filename: "glm-4.7-flash-q4_k_m.gguf",
+      filesize: "18.5 GB",
+      parameters: 30000000000,
+      activeParameters: 3000000000,
+      isMoE: true,
+      context: 200000,
     };
 
-    const currentModel = computed(() => models[modelMode.value]);
-
-    // Watch for model mode changes to check availability and reset loaded state
-    watch(modelMode, async (newMode) => {
-      isModelLoaded.value = false; // Reset since different model needs loading
-      await isModelAvailable(models[newMode].filename);
-    });
+    const currentModel = computed(() => model);
 
     const examplePrompts = ref([
       {
@@ -3180,11 +3063,724 @@ Think like an artisan. Quality over quantity. Write complete code.`;
       const response = await Promise.race([
         window.electronAPI.chat(prompt),
         new Promise((_, reject) =>
-          setTimeout(() => reject(new Error("Timeout")), 360000)
+          setTimeout(() => reject(new Error("Timeout")), 720000)
         ),
       ]);
       if (!response) throw new Error("Empty response from LLM");
       return String(response);
+    };
+
+    // Enrich user prompt with comprehensive visual details before generation
+    const enrichPrompt = async (userPrompt) => {
+      const enrichmentPrompt = `You are a 3D artist describing an object for a talented sculptor to build. Write a rich, vivid, natural language description that paints a complete picture.
+
+Object to describe: "${userPrompt}"
+
+Write flowing prose (not bullet points or specs) that describes the object as if you're explaining it to someone who will recreate it perfectly. For EACH distinct part of the object, naturally weave in:
+
+- What it looks like (shape, size, proportions relative to other parts)
+- Where it sits and which way it points (use natural phrases like "rising vertically from the base", "pointing straight up toward the sky", "extending outward to the sides", "lying flat", "standing upright")
+- The material and how light interacts with it (gleaming gold, matte velvet, translucent crystal, brushed metal)
+- Colors with richness (not just "gold" but "warm burnished gold with subtle orange undertones")
+- Surface details that add realism (scratches, engravings, fabric texture, facets, patina)
+
+IMPORTANT spatial language to use:
+- "pointing upward/vertical/toward the sky" = along Y axis
+- "extending sideways/horizontal/to the left and right" = along X axis
+- "projecting forward/backward" = along Z axis
+- Be explicit about which way pointed parts face (spikes, cones, tips, blades)
+
+Write 150-250 words of natural, descriptive prose. Make it read like concept art direction, not technical specifications.`;
+
+      try {
+        lastStatus.value = "Enriching prompt...";
+        const enriched = await callLLM(enrichmentPrompt);
+        // Clean up the response - remove any markdown or extra formatting
+        const cleaned = enriched
+          .replace(/^["']|["']$/g, '')
+          .replace(/^#+\s*/gm, '')
+          .replace(/^\*+|\*+$/g, '')
+          .trim();
+        console.log("[Prompt Enrichment] Original:", userPrompt);
+        console.log("[Prompt Enrichment] Enriched:", cleaned);
+        return cleaned || userPrompt;
+      } catch (e) {
+        console.warn("[Prompt Enrichment] Failed, using original:", e.message);
+        return userPrompt;
+      }
+    };
+
+    // ═══════════════════════════════════════════════════════════════════════
+    // SCHEMA-BASED GENERATION
+    // ═══════════════════════════════════════════════════════════════════════
+
+    // Generate JSON schema from enriched prompt
+    const generateSchema = async (enrichedPrompt) => {
+      const schemaPrompt = `You are a 3D modeler creating stunning, visually impressive objects with VFX and shaders. Decompose objects into primitives with high production value.
+
+DESCRIPTION:
+${enrichedPrompt}
+
+OUTPUT FORMAT (valid JSON only, no markdown):
+{
+  "name": "object_name",
+  "parts": [
+    {
+      "name": "part_name",
+      "shape": "box|sphere|cylinder|cone|torus|torusKnot|capsule|circle|ring|plane|dodecahedron|icosahedron|octahedron|tetrahedron|lathe",
+      "size": {...} (see SHAPE REFERENCE),
+      "position": [x, y, z],
+      "rotation": [rx, ry, rz] (degrees, optional),
+      "direction": "up|down|left|right|forward|back" (optional),
+      "material": {
+        "type": "standard|physical|phong|toon|lambert|basic|gradient|fresnel|holographic|glow",
+        "color": "#hexcolor",
+        "color2": "#hexcolor" (for gradient, second color),
+        "direction": "x|y" (for gradient, direction of gradient),
+        "rimColor": "#hexcolor" (for fresnel, edge glow color),
+        "rimPower": 1-5 (for fresnel, edge sharpness),
+        "speed": 0.5-3 (for holographic, animation speed),
+        "intensity": 0.5-3 (for glow, brightness),
+        "falloff": 1-4 (for glow, edge softness),
+        "metalness": 0-1, "roughness": 0-1 (for standard/physical),
+        "emissive": "#hexcolor", "emissiveIntensity": 0-5 (optional glow),
+        "opacity": 0-1 (makes transparent),
+        "shininess": 0-100 (for phong),
+        "clearcoat": 0-1 (for physical),
+        "iridescence": 0-1 (for physical),
+        "transmission": 0-1 (for physical, glass),
+        "ior": 1-2.5 (for physical),
+        "wireframe": true/false
+      },
+      "glow": { "color": "#hexcolor", "scale": 1.1-1.3, "intensity": 0.5-2 } (PART-LEVEL outer glow halo, NOT inside material!),
+      "animation": { "type": "rotate|float|pulse", "speed": 0.5-2, "axis": "x|y|z", "amplitude": 0.1-0.5 } (optional),
+      "parent": "other_part_name" (optional),
+      "count": number (optional, for repeated elements),
+      "arrangement": "radial|linear|grid" (if count > 1),
+      "arrangementAxis": "x|y|z" (for linear),
+      "arrangementRadius": number (for radial)
+    }
+  ],
+  "effects": {
+    "particles": { "style": "dust|sparks|magic|fire|snow", "count": 30-100, "spread": 1-3, "size": 0.02-0.1, "color": "#hexcolor" } (optional),
+    "ambientParticles": true/false (adds subtle floating particles)
+  }
+}
+
+SHAPES:
+- box: size=[w,h,d] - rectangular prism
+- sphere: size={radius:r} - ball
+- cylinder: size={radius:r, height:h} - vertical by default
+- cone: size={radius:r, height:h} - vertical, point up
+- torus: size={radius:r, tube:t} - donut shape
+- torusKnot: size={radius:r, tube:t, p:2, q:3} - decorative knot
+- capsule: size={radius:r, length:l} - cylinder with round ends
+- circle: size={radius:r} - flat disc
+- ring: size={innerRadius:r1, outerRadius:r2} - flat ring
+- plane: size=[w,h] - flat rectangle
+- dodecahedron/icosahedron/octahedron/tetrahedron: size={radius:r} - gem shapes
+- lathe: size={points:[[x,y],...]} - rotated profile (vases, goblets)
+
+MATERIALS (use shaders for impressive visuals!):
+- standard: PBR with metalness/roughness (default)
+- physical: realistic glass, clearcoat, iridescence (gems, water, chrome)
+- phong: classic shiny (polished metal)
+- toon: cartoon cel-shading (stylized)
+- lambert: soft matte (fabric, clay)
+- basic: unlit flat color
+- gradient: two-color gradient blend (sunset skies, flames, magical auras)
+- fresnel: edge glow/rim lighting (energy fields, halos, sci-fi tech)
+- holographic: animated rainbow iridescence (magical items, holograms, crystals)
+- glow: additive glow shader (light sources, energy cores, magic)
+
+VFX TIPS:
+- material.type="holographic": crystals, gems, magical orbs, tech devices
+- material.type="fresnel": energy shields, auras, supernatural effects
+- material.type="gradient": flames, sunsets, color transitions
+- material.type="glow": light sources, energy cores (use as MATERIAL TYPE)
+- part.glow={...}: adds outer halo effect (SEPARATE from material, at PART level!)
+- Use emissive for subtle self-illumination on standard/physical materials
+- Add particles for atmosphere: "magic" for spells, "fire" for flames, "sparks" for metal
+- Add "animation" for living objects: rotate for spinning, float for hovering, pulse for breathing
+
+ORIENTATION:
+- Y = UP, X = RIGHT, Z = FORWARD
+- Cones/cylinders point UP by default
+- Use "direction" or "rotation" [rx,ry,rz] in degrees to adjust
+
+CREATE VISUALLY STUNNING OBJECTS! Use shaders, glow, particles, and animations generously.
+Output ONLY valid JSON, no explanation:`;
+
+      lastStatus.value = "Generating structure...";
+      const response = await callLLM(schemaPrompt);
+
+      // Extract JSON from response
+      let jsonStr = response.trim();
+      // Remove markdown code blocks if present
+      jsonStr = jsonStr.replace(/^```json?\s*/i, '').replace(/```\s*$/i, '');
+      // Find JSON object
+      const jsonMatch = jsonStr.match(/\{[\s\S]*\}/);
+      if (!jsonMatch) {
+        throw new Error("No valid JSON found in response");
+      }
+
+      const schema = JSON.parse(jsonMatch[0]);
+      console.log("[Schema Generation] Generated schema:", schema);
+      return schema;
+    };
+
+    // Convert schema to Three.js code with VFX
+    const schemaToCode = (schema) => {
+      const parts = schema.parts || [];
+      const effects = schema.effects || {};
+      const animations = schema.animations || [];
+
+      let code = `export default async function generate(params) {
+  const { THREE, scene, addUpdateCallback } = params;
+  const root = new THREE.Group();
+  root.name = "${schema.name || 'GeneratedObject'}";
+  const animatedObjects = [];
+  let time = 0;
+
+  // ═══════════════════════════════════════════════════════════════════════
+  // VFX SHADERS
+  // ═══════════════════════════════════════════════════════════════════════
+
+  // Gradient shader material
+  const createGradientMaterial = (color1, color2, direction = 'y') => {
+    return new THREE.ShaderMaterial({
+      uniforms: {
+        color1: { value: new THREE.Color(color1) },
+        color2: { value: new THREE.Color(color2) },
+      },
+      vertexShader: \`
+        varying vec2 vUv;
+        varying vec3 vPosition;
+        void main() {
+          vUv = uv;
+          vPosition = position;
+          gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+        }
+      \`,
+      fragmentShader: \`
+        uniform vec3 color1;
+        uniform vec3 color2;
+        varying vec2 vUv;
+        varying vec3 vPosition;
+        void main() {
+          float mixFactor = vUv.\${direction === 'x' ? 'x' : 'y'};
+          vec3 color = mix(color1, color2, mixFactor);
+          gl_FragColor = vec4(color, 1.0);
+        }
+      \`,
+    });
+  };
+
+  // Fresnel/rim light shader
+  const createFresnelMaterial = (baseColor, rimColor, rimPower = 2.0) => {
+    return new THREE.ShaderMaterial({
+      uniforms: {
+        baseColor: { value: new THREE.Color(baseColor) },
+        rimColor: { value: new THREE.Color(rimColor) },
+        rimPower: { value: rimPower },
+      },
+      vertexShader: \`
+        varying vec3 vNormal;
+        varying vec3 vViewPosition;
+        void main() {
+          vNormal = normalize(normalMatrix * normal);
+          vec4 mvPosition = modelViewMatrix * vec4(position, 1.0);
+          vViewPosition = -mvPosition.xyz;
+          gl_Position = projectionMatrix * mvPosition;
+        }
+      \`,
+      fragmentShader: \`
+        uniform vec3 baseColor;
+        uniform vec3 rimColor;
+        uniform float rimPower;
+        varying vec3 vNormal;
+        varying vec3 vViewPosition;
+        void main() {
+          vec3 viewDir = normalize(vViewPosition);
+          float fresnel = pow(1.0 - abs(dot(viewDir, vNormal)), rimPower);
+          vec3 color = mix(baseColor, rimColor, fresnel);
+          gl_FragColor = vec4(color, 1.0);
+        }
+      \`,
+    });
+  };
+
+  // Holographic/iridescent shader
+  const createHolographicMaterial = (baseColor = '#4488ff', speed = 1.0) => {
+    const mat = new THREE.ShaderMaterial({
+      uniforms: {
+        time: { value: 0 },
+        baseColor: { value: new THREE.Color(baseColor) },
+      },
+      vertexShader: \`
+        varying vec3 vNormal;
+        varying vec3 vPosition;
+        varying vec2 vUv;
+        void main() {
+          vNormal = normalize(normalMatrix * normal);
+          vPosition = position;
+          vUv = uv;
+          gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+        }
+      \`,
+      fragmentShader: \`
+        uniform float time;
+        uniform vec3 baseColor;
+        varying vec3 vNormal;
+        varying vec3 vPosition;
+        varying vec2 vUv;
+        void main() {
+          float fresnel = pow(1.0 - abs(dot(normalize(cameraPosition - vPosition), vNormal)), 2.0);
+          vec3 rainbow = 0.5 + 0.5 * cos(6.28318 * (vUv.y * 3.0 + time * \${speed} + vec3(0.0, 0.33, 0.67)));
+          vec3 color = mix(baseColor, rainbow, fresnel * 0.8);
+          gl_FragColor = vec4(color, 0.9);
+        }
+      \`,
+      transparent: true,
+    });
+    animatedObjects.push({ type: 'shader', material: mat, speed: speed });
+    return mat;
+  };
+
+  // Glow/emission shader
+  const createGlowMaterial = (color, intensity = 1.5, falloff = 2.0) => {
+    return new THREE.ShaderMaterial({
+      uniforms: {
+        glowColor: { value: new THREE.Color(color) },
+        intensity: { value: intensity },
+        falloff: { value: falloff },
+      },
+      vertexShader: \`
+        varying vec3 vNormal;
+        varying vec3 vViewPosition;
+        void main() {
+          vNormal = normalize(normalMatrix * normal);
+          vec4 mvPosition = modelViewMatrix * vec4(position, 1.0);
+          vViewPosition = -mvPosition.xyz;
+          gl_Position = projectionMatrix * mvPosition;
+        }
+      \`,
+      fragmentShader: \`
+        uniform vec3 glowColor;
+        uniform float intensity;
+        uniform float falloff;
+        varying vec3 vNormal;
+        varying vec3 vViewPosition;
+        void main() {
+          vec3 viewDir = normalize(vViewPosition);
+          float glow = pow(1.0 - abs(dot(viewDir, vNormal)), falloff) * intensity;
+          gl_FragColor = vec4(glowColor * glow, glow);
+        }
+      \`,
+      transparent: true,
+      blending: THREE.AdditiveBlending,
+      depthWrite: false,
+      side: THREE.BackSide,
+    });
+  };
+
+  // ═══════════════════════════════════════════════════════════════════════
+  // PARTICLE SYSTEM
+  // ═══════════════════════════════════════════════════════════════════════
+
+  const createParticles = (opts) => {
+    const count = opts.count || 50;
+    const spread = opts.spread || 1;
+    const size = opts.size || 0.05;
+    const color = new THREE.Color(opts.color || '#ffffff');
+    const style = opts.style || 'dust'; // dust, sparks, magic, fire, snow
+
+    const geometry = new THREE.BufferGeometry();
+    const positions = new Float32Array(count * 3);
+    const velocities = new Float32Array(count * 3);
+    const colors = new Float32Array(count * 3);
+    const sizes = new Float32Array(count);
+
+    for (let i = 0; i < count; i++) {
+      positions[i * 3] = (Math.random() - 0.5) * spread;
+      positions[i * 3 + 1] = Math.random() * spread;
+      positions[i * 3 + 2] = (Math.random() - 0.5) * spread;
+
+      const xzDrift = style === 'snow' ? 0.005 : style === 'sparks' ? 0.03 : 0.02;
+      velocities[i * 3] = (Math.random() - 0.5) * xzDrift;
+      velocities[i * 3 + 1] = style === 'fire' ? 0.02 + Math.random() * 0.03 : style === 'snow' ? -0.01 - Math.random() * 0.02 : style === 'sparks' ? 0.03 + Math.random() * 0.05 : (Math.random() - 0.5) * 0.02;
+      velocities[i * 3 + 2] = (Math.random() - 0.5) * xzDrift;
+
+      const c = color.clone();
+      if (style === 'magic') c.offsetHSL(Math.random() * 0.2 - 0.1, 0, 0);
+      if (style === 'fire') c.offsetHSL(Math.random() * 0.1, 0, Math.random() * 0.3);
+      if (style === 'sparks') c.offsetHSL(Math.random() * 0.05, -Math.random() * 0.3, Math.random() * 0.4);
+      colors[i * 3] = c.r;
+      colors[i * 3 + 1] = c.g;
+      colors[i * 3 + 2] = c.b;
+
+      sizes[i] = size * (0.5 + Math.random() * 0.5);
+    }
+
+    geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+    geometry.setAttribute('color', new THREE.BufferAttribute(colors, 3));
+    geometry.setAttribute('size', new THREE.BufferAttribute(sizes, 1));
+
+    const material = new THREE.PointsMaterial({
+      size: size,
+      vertexColors: true,
+      transparent: true,
+      opacity: style === 'dust' ? 0.6 : 0.8,
+      blending: style === 'fire' || style === 'magic' || style === 'sparks' ? THREE.AdditiveBlending : THREE.NormalBlending,
+      depthWrite: false,
+    });
+
+    const particles = new THREE.Points(geometry, material);
+    particles.userData.velocities = velocities;
+    particles.userData.style = style;
+    particles.userData.spread = spread;
+    animatedObjects.push({ type: 'particles', mesh: particles });
+    return particles;
+  };
+
+  // ═══════════════════════════════════════════════════════════════════════
+  // MATERIALS
+  // ═══════════════════════════════════════════════════════════════════════
+
+  const createMaterial = (mat) => {
+    // Normalize: if mat has nested 'glow' object but isn't glow type, extract color
+    if (mat.glow && typeof mat.glow === 'object' && mat.type !== 'glow') {
+      // LLM confused glow effect with glow material - ignore glow property
+      mat = { ...mat };
+      delete mat.glow;
+    }
+
+    const type = mat.type || 'standard';
+
+    // Handle special shader materials
+    if (type === 'gradient') {
+      return createGradientMaterial(mat.color || '#ff0000', mat.color2 || '#0000ff', mat.direction);
+    }
+    if (type === 'fresnel') {
+      return createFresnelMaterial(mat.color || '#333333', mat.rimColor || '#00ffff', mat.rimPower || 2.0);
+    }
+    if (type === 'holographic') {
+      return createHolographicMaterial(mat.color || '#4488ff', mat.speed || 1.0);
+    }
+    if (type === 'glow') {
+      return createGlowMaterial(mat.color || '#00ffff', mat.intensity || 1.5, mat.falloff || 2.0);
+    }
+
+    const baseOpts = { color: new THREE.Color(mat.color || '#888888') };
+
+    if (mat.opacity !== undefined && mat.opacity < 1) {
+      baseOpts.transparent = true;
+      baseOpts.opacity = mat.opacity;
+    }
+    if (mat.emissive) {
+      baseOpts.emissive = new THREE.Color(mat.emissive);
+      baseOpts.emissiveIntensity = mat.emissiveIntensity ?? 1;
+    }
+    if (mat.wireframe) baseOpts.wireframe = true;
+    if (mat.flatShading) baseOpts.flatShading = true;
+    if (mat.side === 'double') baseOpts.side = THREE.DoubleSide;
+
+    switch (type) {
+      case 'physical': {
+        const opts = { ...baseOpts, metalness: mat.metalness ?? 0, roughness: mat.roughness ?? 0.5 };
+        if (mat.clearcoat !== undefined) opts.clearcoat = mat.clearcoat;
+        if (mat.clearcoatRoughness !== undefined) opts.clearcoatRoughness = mat.clearcoatRoughness;
+        if (mat.iridescence !== undefined) opts.iridescence = mat.iridescence;
+        if (mat.transmission !== undefined) { opts.transmission = mat.transmission; opts.transparent = true; }
+        if (mat.ior !== undefined) opts.ior = mat.ior;
+        if (mat.thickness !== undefined) opts.thickness = mat.thickness;
+        if (mat.sheen !== undefined) opts.sheen = mat.sheen;
+        if (mat.sheenColor) opts.sheenColor = new THREE.Color(mat.sheenColor);
+        return new THREE.MeshPhysicalMaterial(opts);
+      }
+      case 'phong': {
+        const opts = { ...baseOpts, shininess: mat.shininess ?? 30 };
+        if (mat.specular) opts.specular = new THREE.Color(mat.specular);
+        return new THREE.MeshPhongMaterial(opts);
+      }
+      case 'toon':
+        return new THREE.MeshToonMaterial(baseOpts);
+      case 'lambert':
+        return new THREE.MeshLambertMaterial(baseOpts);
+      case 'basic':
+        return new THREE.MeshBasicMaterial(baseOpts);
+      case 'standard':
+      default:
+        return new THREE.MeshStandardMaterial({
+          ...baseOpts,
+          metalness: mat.metalness ?? 0.5,
+          roughness: mat.roughness ?? 0.5,
+        });
+    }
+  };
+
+  // ═══════════════════════════════════════════════════════════════════════
+  // GEOMETRIES
+  // ═══════════════════════════════════════════════════════════════════════
+
+  const createGeometry = (shape, size) => {
+    const s = size || {};
+    const segments = s.radialSegments || 32;
+    switch (shape) {
+      case 'box':
+        return new THREE.BoxGeometry(s[0] || s.width || 1, s[1] || s.height || 1, s[2] || s.depth || 1);
+      case 'sphere':
+        return new THREE.SphereGeometry(s.radius || 0.5, s.widthSegments || 32, s.heightSegments || 32);
+      case 'cylinder':
+        return new THREE.CylinderGeometry(s.radiusTop || s.radius || 0.5, s.radiusBottom || s.radius || 0.5, s.height || 1, segments);
+      case 'cone':
+        return new THREE.ConeGeometry(s.radius || 0.5, s.height || 1, segments);
+      case 'torus':
+        return new THREE.TorusGeometry(s.radius || 0.5, s.tube || 0.2, 16, 48);
+      case 'torusKnot':
+        return new THREE.TorusKnotGeometry(s.radius || 0.5, s.tube || 0.15, 64, 8, s.p || 2, s.q || 3);
+      case 'capsule':
+        return new THREE.CapsuleGeometry(s.radius || 0.25, s.length || 1, 8, 16);
+      case 'circle':
+        return new THREE.CircleGeometry(s.radius || 0.5, 32);
+      case 'ring':
+        return new THREE.RingGeometry(s.innerRadius || 0.3, s.outerRadius || 0.5, 32);
+      case 'plane':
+        return new THREE.PlaneGeometry(s[0] || s.width || 1, s[1] || s.height || 1);
+      case 'dodecahedron':
+        return new THREE.DodecahedronGeometry(s.radius || 0.5, s.detail || 0);
+      case 'icosahedron':
+        return new THREE.IcosahedronGeometry(s.radius || 0.5, s.detail || 0);
+      case 'octahedron':
+        return new THREE.OctahedronGeometry(s.radius || 0.5, s.detail || 0);
+      case 'tetrahedron':
+        return new THREE.TetrahedronGeometry(s.radius || 0.5, s.detail || 0);
+      case 'lathe':
+        if (s.points && Array.isArray(s.points)) {
+          const pts = s.points.map(p => new THREE.Vector2(p[0], p[1]));
+          return new THREE.LatheGeometry(pts, s.segments || 32);
+        }
+        const defaultPts = [new THREE.Vector2(0.1, 0), new THREE.Vector2(0.3, 0.3), new THREE.Vector2(0.25, 0.6), new THREE.Vector2(0.3, 1)];
+        return new THREE.LatheGeometry(defaultPts, 32);
+      default:
+        return new THREE.BoxGeometry(1, 1, 1);
+    }
+  };
+
+  // Helper: apply direction
+  const applyDirection = (mesh, direction) => {
+    switch (direction) {
+      case 'down': mesh.rotation.x = Math.PI; break;
+      case 'left': mesh.rotation.z = Math.PI / 2; break;
+      case 'right': mesh.rotation.z = -Math.PI / 2; break;
+      case 'forward': mesh.rotation.x = Math.PI / 2; break;
+      case 'back': mesh.rotation.x = -Math.PI / 2; break;
+    }
+  };
+
+  // Helper: add glow effect to mesh
+  const addGlow = (mesh, color, scale = 1.15, intensity = 1.5) => {
+    const glowGeo = mesh.geometry.clone();
+    const glowMat = createGlowMaterial(color, intensity, 2.0);
+    const glow = new THREE.Mesh(glowGeo, glowMat);
+    glow.scale.multiplyScalar(scale);
+    mesh.add(glow);
+    return glow;
+  };
+
+  // Store parts by name for parenting
+  const partMap = {};
+
+`;
+
+      // Generate code for each part
+      for (const part of parts) {
+        const partVar = part.name.replace(/[^a-zA-Z0-9]/g, '_');
+        const count = part.count || 1;
+
+        if (count === 1) {
+          code += `  // ${part.name}\n`;
+          code += `  const ${partVar}_geo = createGeometry('${part.shape}', ${JSON.stringify(part.size || {})});\n`;
+          code += `  const ${partVar}_mat = createMaterial(${JSON.stringify(part.material || {})});\n`;
+          code += `  const ${partVar} = new THREE.Mesh(${partVar}_geo, ${partVar}_mat);\n`;
+          code += `  ${partVar}.name = '${part.name}';\n`;
+
+          if (part.position) {
+            code += `  ${partVar}.position.set(${part.position[0] || 0}, ${part.position[1] || 0}, ${part.position[2] || 0});\n`;
+          }
+          if (part.direction) {
+            code += `  applyDirection(${partVar}, '${part.direction}');\n`;
+          }
+          if (part.rotation) {
+            code += `  ${partVar}.rotation.set(${(part.rotation[0] || 0) * Math.PI / 180}, ${(part.rotation[1] || 0) * Math.PI / 180}, ${(part.rotation[2] || 0) * Math.PI / 180});\n`;
+          }
+
+          // Add glow effect
+          if (part.glow) {
+            const glow = part.glow;
+            code += `  addGlow(${partVar}, '${glow.color || '#00ffff'}', ${glow.scale || 1.15}, ${glow.intensity || 1.5});\n`;
+          }
+
+          // Register animation
+          if (part.animation) {
+            const anim = part.animation;
+            code += `  animatedObjects.push({ type: 'mesh', mesh: ${partVar}, animType: '${anim.type || 'rotate'}', speed: ${anim.speed || 1}, axis: '${anim.axis || 'y'}', amplitude: ${anim.amplitude || 0.2}, baseY: ${partVar}.position.y });\n`;
+          }
+
+          code += `  partMap['${part.name}'] = ${partVar};\n`;
+
+          if (part.parent) {
+            code += `  if (partMap['${part.parent}']) partMap['${part.parent}'].add(${partVar});\n`;
+            code += `  else root.add(${partVar});\n`;
+          } else {
+            code += `  root.add(${partVar});\n`;
+          }
+          code += `\n`;
+        } else {
+          // Multiple instances
+          code += `  // ${part.name} (${count}x)\n`;
+          code += `  const ${partVar}_group = new THREE.Group();\n`;
+          code += `  ${partVar}_group.name = '${part.name}_group';\n`;
+
+          if (part.arrangement === 'radial') {
+            const radius = part.arrangementRadius || 1;
+            code += `  for (let i = 0; i < ${count}; i++) {\n`;
+            code += `    const angle = (i / ${count}) * Math.PI * 2;\n`;
+            code += `    const geo = createGeometry('${part.shape}', ${JSON.stringify(part.size || {})});\n`;
+            code += `    const mat = createMaterial(${JSON.stringify(part.material || {})});\n`;
+            code += `    const mesh = new THREE.Mesh(geo, mat);\n`;
+            code += `    mesh.position.set(Math.cos(angle) * ${radius}, ${part.position?.[1] || 0}, Math.sin(angle) * ${radius});\n`;
+            if (part.direction) {
+              code += `    applyDirection(mesh, '${part.direction}');\n`;
+            }
+            if (part.glow) {
+              code += `    addGlow(mesh, '${part.glow.color || '#00ffff'}', ${part.glow.scale || 1.15}, ${part.glow.intensity || 1.5});\n`;
+            }
+            code += `    ${partVar}_group.add(mesh);\n`;
+            code += `  }\n`;
+          } else if (part.arrangement === 'linear') {
+            const axis = part.arrangementAxis || 'x';
+            const spacing = 1;
+            code += `  for (let i = 0; i < ${count}; i++) {\n`;
+            code += `    const geo = createGeometry('${part.shape}', ${JSON.stringify(part.size || {})});\n`;
+            code += `    const mat = createMaterial(${JSON.stringify(part.material || {})});\n`;
+            code += `    const mesh = new THREE.Mesh(geo, mat);\n`;
+            const posExpr = axis === 'x' ? `i * ${spacing}, 0, 0` : axis === 'y' ? `0, i * ${spacing}, 0` : `0, 0, i * ${spacing}`;
+            code += `    mesh.position.set(${posExpr});\n`;
+            if (part.direction) {
+              code += `    applyDirection(mesh, '${part.direction}');\n`;
+            }
+            if (part.glow) {
+              code += `    addGlow(mesh, '${part.glow.color || '#00ffff'}', ${part.glow.scale || 1.15}, ${part.glow.intensity || 1.5});\n`;
+            }
+            code += `    ${partVar}_group.add(mesh);\n`;
+            code += `  }\n`;
+          }
+
+          if (part.position) {
+            code += `  ${partVar}_group.position.set(${part.position[0] || 0}, ${part.position[1] || 0}, ${part.position[2] || 0});\n`;
+          }
+
+          // Register group animation
+          if (part.animation) {
+            const anim = part.animation;
+            code += `  animatedObjects.push({ type: 'mesh', mesh: ${partVar}_group, animType: '${anim.type || 'rotate'}', speed: ${anim.speed || 1}, axis: '${anim.axis || 'y'}', amplitude: ${anim.amplitude || 0.2}, baseY: ${partVar}_group.position.y });\n`;
+          }
+
+          code += `  partMap['${part.name}'] = ${partVar}_group;\n`;
+
+          if (part.parent) {
+            code += `  if (partMap['${part.parent}']) partMap['${part.parent}'].add(${partVar}_group);\n`;
+            code += `  else root.add(${partVar}_group);\n`;
+          } else {
+            code += `  root.add(${partVar}_group);\n`;
+          }
+          code += `\n`;
+        }
+      }
+
+      // Generate effects (particles, ambient particles)
+      if (effects.particles) {
+        const p = effects.particles;
+        code += `  // Particle effects\n`;
+        code += `  const particles = createParticles({ style: '${p.style || 'dust'}', count: ${p.count || 50}, spread: ${p.spread || 2}, size: ${p.size || 0.05}, color: '${p.color || '#ffffff'}' });\n`;
+        code += `  root.add(particles);\n\n`;
+      }
+
+      if (effects.ambientParticles) {
+        code += `  // Ambient floating particles\n`;
+        code += `  const ambientParticles = createParticles({ style: 'dust', count: 30, spread: 3, size: 0.03, color: '#ffffff' });\n`;
+        code += `  root.add(ambientParticles);\n\n`;
+      }
+
+      // Add animation update callback
+      code += `
+  // Animation update loop
+  if (animatedObjects.length > 0) {
+    addUpdateCallback((delta) => {
+      time += delta;
+      for (const obj of animatedObjects) {
+        if (obj.type === 'shader' && obj.material.uniforms?.time) {
+          obj.material.uniforms.time.value = time * (obj.speed || 1);
+        }
+        if (obj.type === 'particles') {
+          const positions = obj.mesh.geometry.attributes.position.array;
+          const velocities = obj.mesh.userData.velocities;
+          const spread = obj.mesh.userData.spread || 2;
+          const style = obj.mesh.userData.style;
+          for (let i = 0; i < positions.length; i += 3) {
+            positions[i] += velocities[i];
+            positions[i + 1] += velocities[i + 1];
+            positions[i + 2] += velocities[i + 2];
+            // Reset particles that go out of bounds
+            if (style === 'fire') {
+              if (positions[i + 1] > spread) {
+                positions[i] = (Math.random() - 0.5) * spread * 0.5;
+                positions[i + 1] = 0;
+                positions[i + 2] = (Math.random() - 0.5) * spread * 0.5;
+              }
+            } else if (style === 'snow') {
+              if (positions[i + 1] < -spread) {
+                positions[i + 1] = spread;
+              }
+            } else {
+              // Dust/magic/sparks - wrap around
+              if (Math.abs(positions[i]) > spread) positions[i] *= -0.9;
+              if (Math.abs(positions[i + 1]) > spread) positions[i + 1] *= -0.9;
+              if (Math.abs(positions[i + 2]) > spread) positions[i + 2] *= -0.9;
+            }
+          }
+          obj.mesh.geometry.attributes.position.needsUpdate = true;
+        }
+        if (obj.type === 'mesh') {
+          const speed = obj.speed || 1;
+          const axis = obj.axis || 'y';
+          const amplitude = obj.amplitude || 0.2;
+          switch (obj.animType) {
+            case 'rotate':
+              obj.mesh.rotation[axis] += delta * speed;
+              break;
+            case 'float':
+              obj.mesh.position.y = obj.baseY + Math.sin(time * speed) * amplitude;
+              break;
+            case 'pulse':
+              const scale = 1 + Math.sin(time * speed * 2) * amplitude * 0.3;
+              obj.mesh.scale.setScalar(scale);
+              break;
+          }
+        }
+      }
+    });
+  }
+
+`;
+
+      code += `  scene.add(root);
+  return root;
+}`;
+
+      console.log("[Schema to Code] Generated code:", code);
+      return code;
     };
 
     const validateCode = async (code) => {
@@ -3352,13 +3948,6 @@ Think like an artisan. Quality over quantity. Write complete code.`;
       if (!item.prompt) return;
       // Set the prompt from the inference
       form.prompt = item.prompt;
-      // Optionally set the same generation mode
-      if (
-        item.mode &&
-        generationModes.value.some((m) => m.value === item.mode)
-      ) {
-        generationMode.value = item.mode;
-      }
       // Trigger generation
       await onSubmit();
     };
@@ -3641,7 +4230,7 @@ Think like an artisan. Quality over quantity. Write complete code.`;
     // VISION-INTEGRATED GENERATION HELPERS
     // ═══════════════════════════════════════════════════════════════════════
 
-    // Run vision check and apply targeted fix if needed
+    // Run vision check and regenerate schema if needed
     const runVisionCheckAndFix = async (
       code,
       prompt,
@@ -3661,7 +4250,7 @@ Think like an artisan. Quality over quantity. Write complete code.`;
       let currentCode = code;
 
       for (let fix = 1; fix <= maxFixes; fix++) {
-        lastStatus.value = `${phaseLabel}: Vision check ${fix}/${maxFixes}...`;
+        lastStatus.value = `Vision check ${fix}/${maxFixes}...`;
         await new Promise((r) => setTimeout(r, 500)); // Let render settle
 
         try {
@@ -3679,59 +4268,25 @@ Think like an artisan. Quality over quantity. Write complete code.`;
             return { code: currentCode, verified: true, screenshots: feedback.screenshots };
           }
 
-          // Try targeted fix first if we have specific missing elements
-          if (feedback.missing_elements?.length > 0 && fix < maxFixes) {
-            console.log(`[Vision:${phaseLabel}] Attempting targeted fix...`);
-            lastStatus.value = `${phaseLabel}: Adding missing elements...`;
+          // Regenerate schema with vision feedback
+          console.log(`[Vision:${phaseLabel}] Regenerating with feedback...`);
+          lastStatus.value = `Fixing: ${feedback.feedback?.substring(0, 50)}...`;
 
-            const patchPrompt = buildPatchPrompt(
-              prompt,
-              feedback.missing_elements,
-              currentCode
-            );
+          // Add feedback to prompt for regeneration
+          const feedbackPrompt = `${prompt}
 
-            const patchCode = await generateWithRetry(
-              patchPrompt,
-              prompt,
-              2,
-              `${phaseLabel} Patch`
-            );
+IMPORTANT CORRECTIONS NEEDED:
+${feedback.feedback}
+${feedback.missing_elements?.length > 0 ? `Missing/incorrect elements: ${feedback.missing_elements.join(', ')}` : ''}
 
-            if (patchCode) {
-              // Merge patch with existing code - patch is wrapped in IIFE to avoid variable collisions
-              const innerPatch = extractInnerCode(patchCode);
-              const innerCurrent = extractInnerCode(currentCode);
-              // Wrap patch in IIFE to create separate scope and avoid "already declared" errors
-              const wrappedPatch = `\n\n// === Vision Patch: Added elements ===\n(() => {\n${innerPatch}\n})();`;
-              currentCode = wrapWithModule(innerCurrent + wrappedPatch);
-              await viewer.applyModuleCode(currentCode, "replace");
-              continue; // Check again
-            }
-          }
+Please ensure all components are correctly oriented and positioned.`;
 
-          // Fall back to full regeneration
-          console.log(`[Vision:${phaseLabel}] Full regeneration with feedback...`);
-          lastStatus.value = `${phaseLabel}: Regenerating...`;
-
-          const feedbackPrompt = buildFeedbackPrompt(
-            prompt,
-            feedback.feedback,
-            feedback.missing_elements || [],
-            currentCode
-          );
-
-          const improvedCode = await generateWithRetry(
-            feedbackPrompt,
-            prompt,
-            MAX_RETRY_ATTEMPTS,
-            `${phaseLabel} Fix`
-          );
-
-          if (improvedCode) {
-            currentCode = improvedCode;
+          try {
+            const newSchema = await generateSchema(feedbackPrompt);
+            currentCode = schemaToCode(newSchema);
             await viewer.applyModuleCode(currentCode, "replace");
-          } else {
-            console.log(`[Vision:${phaseLabel}] Fix failed, keeping current`);
+          } catch (schemaErr) {
+            console.error(`[Vision:${phaseLabel}] Schema regeneration failed:`, schemaErr);
             return { code: currentCode, verified: false, screenshots: feedback.screenshots };
           }
         } catch (visionErr) {
@@ -3792,8 +4347,8 @@ ${innerCode}`;
         title: "",
         notes: "",
         code: "",
-        mode: generationMode.value,
-        screenshots: [], // Multi-angle screenshots
+        schema: null,
+        screenshots: [],
         visionVerified: false,
       };
 
@@ -3805,61 +4360,31 @@ ${innerCode}`;
         let finalCode = null;
         let finalScreenshots = [];
         let verified = false;
-        const mode = generationMode.value;
-        const modeConfig = generationModes.value.find((m) => m.id === mode);
-        const visionChecks = modeConfig?.visionChecks || 1;
+        let schema = null;
 
-        if (mode === "normal") {
-          // ═══════════════════════════════════════════════════════════════
-          // NORMAL MODE: Generate → Vision verify → Fix if needed (up to 3 fixes)
-          // ═══════════════════════════════════════════════════════════════
-          console.log("═══════════════════════════════════════════════════════");
-          console.log("NORMAL MODE: Generate with vision verification");
-          console.log("═══════════════════════════════════════════════════════");
+        console.log("═══════════════════════════════════════════════════════");
+        console.log("SCHEMA-BASED GENERATION");
+        console.log("═══════════════════════════════════════════════════════");
 
-          lastStatus.value = "Generating...";
-          const llmPrompt = buildObjectPrompt(form.prompt);
-          let code = await generateWithRetry(llmPrompt, form.prompt, MAX_RETRY_ATTEMPTS);
-          if (!code) throw new Error("Failed to generate code");
+        // Step 1: Enrich the prompt with visual details
+        const enrichedPrompt = await enrichPrompt(form.prompt);
 
-          await viewer.applyModuleCode(code, "replace");
-          const result = await runVisionCheckAndFix(code, form.prompt, "Normal", 3, isDemo);
-          finalCode = result.code;
-          verified = result.verified;
-          finalScreenshots = result.screenshots || [];
+        // Step 2: Generate JSON schema from enriched prompt
+        schema = await generateSchema(enrichedPrompt);
+        inference.schema = schema;
 
-        } else if (mode === "craftsman") {
-          // ═══════════════════════════════════════════════════════════════
-          // CRAFTSMAN MODE: High-quality prompt + more vision iterations (up to 5)
-          // ═══════════════════════════════════════════════════════════════
-          console.log("═══════════════════════════════════════════════════════");
-          console.log("CRAFTSMAN MODE: High-quality generation like H.chest");
-          console.log("═══════════════════════════════════════════════════════");
+        // Step 3: Convert schema to Three.js code (instant, deterministic)
+        lastStatus.value = "Building 3D object...";
+        let code = schemaToCode(schema);
 
-          lastStatus.value = "Crafting...";
-          const llmPrompt = buildExtremePrompt(form.prompt);
-          let code = await generateWithRetry(llmPrompt, form.prompt, MAX_RETRY_ATTEMPTS, "Craftsman");
-          if (!code) throw new Error("Failed to generate code");
+        // Step 4: Apply and validate the code
+        await viewer.applyModuleCode(code, "replace");
 
-          await viewer.applyModuleCode(code, "replace");
-          const result = await runVisionCheckAndFix(code, form.prompt, "Craftsman", 5, isDemo);
-          finalCode = result.code;
-          verified = result.verified;
-          finalScreenshots = result.screenshots || [];
-
-        } else {
-          // Fallback to normal mode for any unknown mode
-          console.log("Unknown mode, falling back to normal");
-          lastStatus.value = "Generating...";
-          const llmPrompt = buildObjectPrompt(form.prompt);
-          let code = await generateWithRetry(llmPrompt, form.prompt, MAX_RETRY_ATTEMPTS);
-          if (!code) throw new Error("Failed to generate code");
-          await viewer.applyModuleCode(code, "replace");
-          const result = await runVisionCheckAndFix(code, form.prompt, "Normal", 3, isDemo);
-          finalCode = result.code;
-          verified = result.verified;
-          finalScreenshots = result.screenshots || [];
-        }
+        // Step 5: Vision verification with up to 3 fixes
+        const result = await runVisionCheckAndFix(code, enrichedPrompt, "Schema", 3, isDemo);
+        finalCode = result.code;
+        verified = result.verified;
+        finalScreenshots = result.screenshots || [];
 
         if (!finalCode) throw new Error("Failed to generate valid code");
 
@@ -3883,7 +4408,6 @@ ${innerCode}`;
           dataUrl: String(s.dataUrl || ""),
         }));
         const inferenceData = JSON.parse(JSON.stringify({
-          mode: generationMode.value,
           screenshots: serializableScreenshots,
           visionVerified: verified,
           success: true,
@@ -3907,7 +4431,6 @@ ${innerCode}`;
           dataUrl: String(s.dataUrl || ""),
         }));
         const errorInferenceData = JSON.parse(JSON.stringify({
-          mode: generationMode.value,
           screenshots: serializableErrorScreenshots,
           visionVerified: false,
           success: false,
@@ -3995,11 +4518,6 @@ ${innerCode}`;
       lightingPresets,
       weatherOptions,
       // Model mode
-      modelMode,
-      modelModes,
-      // Generation mode
-      generationMode,
-      generationModes,
       // Vision (optional - not yet fully supported in node-llama-cpp)
       VISION_MODEL,
       visionSupported,

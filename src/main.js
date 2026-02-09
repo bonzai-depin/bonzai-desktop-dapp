@@ -23,6 +23,12 @@ import { unlink } from "node:fs";
 import child_process from "child_process";
 import http from "http";
 import { pipeline } from "stream/promises";
+import {
+  getP2PNode,
+  startP2PNode,
+  stopP2PNode,
+  PROTOCOLS as P2P_PROTOCOLS,
+} from "./services/libp2p.service.js";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Globals / paths
@@ -536,6 +542,210 @@ ipcMain.handle("store-delete", (_event, key) => {
   store.delete(key);
   return true;
 });
+
+// ─────────────────────────────────────────────────────────────────────────────
+// P2P Network (libp2p) - Distributed Inference
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Start the P2P node for distributed inference
+ * @param {Object} options Configuration options
+ * @param {number} options.listenPort Port to listen on (default: 4002)
+ * @param {boolean} options.enableRelay Enable relay server for other providers
+ * @param {string[]} options.bootstrapNodes Initial peers to connect to
+ */
+ipcMain.handle("p2p-start", async (_event, options = {}) => {
+  try {
+    console.log("[P2P] Starting libp2p node...");
+    const peerId = await startP2PNode(options);
+
+    // Register inference handler that routes to local servers
+    const node = getP2PNode();
+    node.onInferenceRequest(async (request, remotePeer) => {
+      console.log(`[P2P] Inference request from ${remotePeer}:`, request.pipeline);
+
+      // Check if this is a paid request (x402)
+      if (!request.payment) {
+        // Return 402 Payment Required
+        const providerId = store.get("p2p.providerId", null);
+        return {
+          ok: false,
+          error: "payment_required",
+          payment: {
+            amount: store.get("p2p.pricePerToken", "100000"), // 0.0001 USDC default
+            providerId,
+            chainId: 42161, // Arbitrum
+            contract: store.get("p2p.networkContract", null),
+          },
+        };
+      }
+
+      // TODO: Validate payment signature before processing
+      // For now, just route to local inference servers
+
+      try {
+        const result = await routeInferenceRequest(request);
+        return { ok: true, result };
+      } catch (err) {
+        return { ok: false, error: "inference_failed", detail: err.message };
+      }
+    });
+
+    // Register health handler
+    node.onHealthRequest(async (request, remotePeer) => {
+      const pipelines = store.get("p2p.pipelines", []);
+      return {
+        ok: true,
+        peerId: node.getPeerId(),
+        pipelines,
+        version: app.getVersion(),
+        uptime: process.uptime(),
+      };
+    });
+
+    return {
+      ok: true,
+      peerId,
+      multiaddrs: node.getMultiaddrs(),
+    };
+  } catch (err) {
+    console.error("[P2P] Failed to start:", err);
+    return { ok: false, error: err.message };
+  }
+});
+
+/**
+ * Stop the P2P node
+ */
+ipcMain.handle("p2p-stop", async () => {
+  try {
+    await stopP2PNode();
+    return { ok: true };
+  } catch (err) {
+    console.error("[P2P] Failed to stop:", err);
+    return { ok: false, error: err.message };
+  }
+});
+
+/**
+ * Get P2P node status
+ */
+ipcMain.handle("p2p-status", async () => {
+  const node = getP2PNode();
+  if (!node.isStarted) {
+    return { ok: true, started: false };
+  }
+
+  return {
+    ok: true,
+    started: true,
+    peerId: node.getPeerId(),
+    multiaddrs: node.getMultiaddrs(),
+    connectedPeers: node.getConnectedPeersCount(),
+    relayConnections: node.getRelayConnectionsCount(),
+    natStatus: node.getNatStatus(),
+    isUsingRelay: node.isUsingRelay(),
+  };
+});
+
+/**
+ * Dial a remote peer
+ */
+ipcMain.handle("p2p-dial", async (_event, peerIdOrAddr) => {
+  try {
+    const node = getP2PNode();
+    if (!node.isStarted) {
+      return { ok: false, error: "Node not started" };
+    }
+
+    await node.dial(peerIdOrAddr);
+    return { ok: true };
+  } catch (err) {
+    return { ok: false, error: err.message };
+  }
+});
+
+/**
+ * Send inference request to a remote provider
+ */
+ipcMain.handle("p2p-inference", async (_event, { peerId, request }) => {
+  try {
+    const node = getP2PNode();
+    if (!node.isStarted) {
+      return { ok: false, error: "Node not started" };
+    }
+
+    const response = await node.sendInferenceRequest(peerId, request);
+    return response;
+  } catch (err) {
+    return { ok: false, error: err.message };
+  }
+});
+
+/**
+ * Check health of a remote peer
+ */
+ipcMain.handle("p2p-health", async (_event, peerId) => {
+  try {
+    const node = getP2PNode();
+    if (!node.isStarted) {
+      return { ok: false, error: "Node not started" };
+    }
+
+    const health = await node.checkPeerHealth(peerId);
+    return health;
+  } catch (err) {
+    return { ok: false, error: err.message };
+  }
+});
+
+/**
+ * Route inference request to local servers (OpenClaw or Flask)
+ * @private
+ */
+async function routeInferenceRequest(request) {
+  const { pipeline, params } = request;
+
+  // Determine which server to route to based on pipeline
+  const isLLMPipeline = pipeline.startsWith("llm_");
+  const baseUrl = isLLMPipeline
+    ? "http://127.0.0.1:3002"  // OpenClaw (node-llama-cpp)
+    : `http://127.0.0.1:${process.env.BONZAI_SERVER_PORT || 65000}`;  // Flask
+
+  // Map pipeline to endpoint
+  let endpoint;
+  if (isLLMPipeline) {
+    endpoint = "/v1/chat/completions";
+  } else if (pipeline.startsWith("image_")) {
+    endpoint = `/image/${pipeline.replace("image_", "")}`;
+  } else if (pipeline.startsWith("audio_")) {
+    endpoint = `/audio/${pipeline.replace("audio_", "")}`;
+  } else if (pipeline === "audio") {
+    endpoint = "/audio/tts";
+  } else if (pipeline === "music") {
+    endpoint = "/audio/music";
+  } else if (pipeline === "video_fast") {
+    endpoint = "/video";
+  } else if (pipeline === "vision") {
+    endpoint = "/vision/analyze";
+  } else {
+    throw new Error(`Unknown pipeline: ${pipeline}`);
+  }
+
+  // Make the request
+  const response = await fetch(`${baseUrl}${endpoint}`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(params),
+  });
+
+  if (!response.ok) {
+    const error = await response.text();
+    throw new Error(`Inference failed: ${error}`);
+  }
+
+  return response.json();
+}
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Model directory management

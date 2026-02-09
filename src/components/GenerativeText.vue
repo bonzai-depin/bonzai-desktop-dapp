@@ -1043,12 +1043,12 @@ export default {
         context: 131072,
       },
 
-      glm_4_7_flash_uncen: {
+      glm_4_7_flash_30_B: {
         modelname: "GLM 4.7 Flash Uncensored",
         modeldesc:
           "30B-parameter Mixture-of-Experts model from Zhipu AI (DavidAU NEO-CODE-MAX imatrix) with only 3B active parameters per forward pass and 200K context. Dual imatrix calibration (creative + code) with 16-bit output tensor for higher fidelity. Best for: uncensored creative writing, coding assistance, reasoning, and general-purpose AI on consumer hardware.",
         url: "https://huggingface.co/DavidAU/GLM-4.7-Flash-Uncensored-Heretic-NEO-CODE-Imatrix-MAX-GGUF/resolve/main/GLM-4.7-Flash-Uncen-Hrt-NEO-CODE-MAX-imat-D_AU-Q4_K_M.gguf",
-        filename: "glm-4.7-flash-uncen-hrt-neo-code-max-imat-d_au-q4_k_m.gguf",
+        filename: "glm-4.7-flash-q4_k_m.gguf",
         filesize: "18.5 GB",
         parameters: 30000000000,
         activeParameters: 3000000000,
@@ -1056,7 +1056,7 @@ export default {
         context: 200000,
       },
 
-      qwen3_coder_next_80B_A3B: {
+      qwen3_coder_next_80_B: {
         modelname: "Qwen3 Coder Next 80B A3B",
         modeldesc:
           "80B-parameter Mixture-of-Experts Qwen3-Coder-Next model with only 3B active parameters per token and a native 262,144-token context window. Hybrid architecture (Gated DeltaNet + Gated Attention + MoE with 512 experts) designed for coding agents and long-horizon agentic reasoning. Best for: advanced coding copilots, multi-file refactoring, complex tool use, and IDE-integrated development agents.",

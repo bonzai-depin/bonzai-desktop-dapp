@@ -6,4 +6,15 @@ import tsconfigPaths from "vite-tsconfig-paths";
 export default defineConfig({
   plugins: [VuePlugin(), tsconfigPaths()],
   base: './', // Required for Electron file:// protocol
+  optimizeDeps: {
+    include: [
+      '@reown/appkit',
+      '@reown/appkit-adapter-ethers',
+    ],
+  },
+  build: {
+    commonjsOptions: {
+      include: [/node_modules/],
+    },
+  },
 });

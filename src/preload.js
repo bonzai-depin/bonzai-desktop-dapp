@@ -78,6 +78,55 @@ contextBridge.exposeInMainWorld("electronAPI", {
   openclawGetEnabled: () => ipcRenderer.invoke("openclaw-get-enabled"),
   openclawSetEnabled: (enabled) => ipcRenderer.invoke("openclaw-set-enabled", enabled),
   openclawIsInstalled: () => ipcRenderer.invoke("openclaw-is-installed"),
+
+  // ─────────────────────────────────────────────────────────────────────────────
+  // P2P Network (libp2p) - Distributed Inference
+  // ─────────────────────────────────────────────────────────────────────────────
+
+  /**
+   * Start the P2P node for distributed inference
+   * @param {Object} options Configuration options
+   * @param {number} options.listenPort Port to listen on (default: 4002)
+   * @param {boolean} options.enableRelay Enable relay server for other providers
+   * @param {string[]} options.bootstrapNodes Initial peers to connect to
+   * @returns {Promise<{ok: boolean, peerId?: string, multiaddrs?: string[], error?: string}>}
+   */
+  p2pStart: (options = {}) => ipcRenderer.invoke("p2p-start", options),
+
+  /**
+   * Stop the P2P node
+   * @returns {Promise<{ok: boolean, error?: string}>}
+   */
+  p2pStop: () => ipcRenderer.invoke("p2p-stop"),
+
+  /**
+   * Get P2P node status
+   * @returns {Promise<{ok: boolean, started: boolean, peerId?: string, multiaddrs?: string[], connectedPeers?: number, natStatus?: string}>}
+   */
+  p2pStatus: () => ipcRenderer.invoke("p2p-status"),
+
+  /**
+   * Dial a remote peer
+   * @param {string} peerIdOrAddr Peer ID or multiaddr
+   * @returns {Promise<{ok: boolean, error?: string}>}
+   */
+  p2pDial: (peerIdOrAddr) => ipcRenderer.invoke("p2p-dial", peerIdOrAddr),
+
+  /**
+   * Send inference request to a remote provider
+   * @param {string} peerId Target peer ID
+   * @param {Object} request Inference request with pipeline and params
+   * @returns {Promise<{ok: boolean, result?: any, error?: string}>}
+   */
+  p2pInference: (peerId, request) =>
+    ipcRenderer.invoke("p2p-inference", { peerId, request }),
+
+  /**
+   * Check health of a remote peer
+   * @param {string} peerId Target peer ID
+   * @returns {Promise<{ok: boolean, pipelines?: string[], version?: string, error?: string}>}
+   */
+  p2pHealth: (peerId) => ipcRenderer.invoke("p2p-health", peerId),
 });
 
 // ─────────────────────────────────────────────────────────────────────────────

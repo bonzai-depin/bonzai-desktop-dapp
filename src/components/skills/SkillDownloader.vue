@@ -230,7 +230,7 @@ export default {
 
       // Check LLM models via electron API
       if (window.electronAPI?.checkModel) {
-        const llmModelKeys = ['llm_default', 'llm_hermes', 'llm_mythomax'];
+        const llmModelKeys = ['llm_llama_3_1_8b', 'llm_hermes_4_14b', 'llm_mythomax_13b'];
         for (const key of llmModelKeys) {
           const model = MODEL_REQUIREMENTS[key];
           if (model?.filename) {
