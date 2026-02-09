@@ -76,11 +76,10 @@ BonzAI organizes its capabilities into tiers, each unlockable by holding BONZAI 
 
 **Three Audio Engines:**
 
-| Engine | Model | Speed | Quality | Features |
-|--------|-------|-------|---------|----------|
-| Turbo | Kokoro 82M | Very Fast | Good | Male/female preset voices |
-| Standard | ChatterBox | Medium | Great | Voice cloning from samples |
-| Quality | Qwen3-TTS | Slower | Excellent | Voice design + instant cloning |
+| Engine | Speed | Quality | Features |
+|--------|-------|---------|----------|
+| Turbo | Very Fast | Good | Male/female preset voices |
+| Quality | Slower | Excellent | Voice design + instant cloning |
 
 **Qwen3-TTS Capabilities:**
 - **Voice Design**: Describe any voice in natural language
@@ -768,7 +767,7 @@ Education, Entertainment, Fashion, Finance, Food, Healthcare, Housing, Personal 
 | Skill | Models Required | Total Size |
 |-------|-----------------|------------|
 | Roleplay Companion | MythoMax 13B, FLUX/SDXL, Qwen3-TTS, LTX-2, Qwen3-VL | ~45GB |
-| Story Studio | Llama 8B, FLUX Klein, ChatterBox | ~20GB |
+| Story Studio | Llama 8B, FLUX Klein, Kokoro | ~18GB |
 | Meditation Forge | Llama 8B, FLUX Klein, Kokoro | ~18GB |
 | Music Video Forge | Llama 8B, FLUX Klein, LTX-2 | ~28GB |
 

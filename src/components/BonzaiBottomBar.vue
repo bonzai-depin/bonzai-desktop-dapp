@@ -293,10 +293,10 @@
         >
           <div class="network-modal">
             <div class="network-modal-header">
-              <h2 class="fira-sans-condensed-black-italic">
-                <span class="material-symbols-outlined mr-2">hub</span>
-                Distributed Network
-              </h2>
+              <h1 class="fira-sans-condensed-black-italic is-size-1 has-text-white">
+                <span class="material-symbols-outlined mr-2 is-size-1">p2p</span>
+                Peer-to-Peer Network
+              </h1>
               <button
                 class="button is-danger"
                 @click="showNetworkModal = false"
@@ -935,16 +935,6 @@ watch(
   background: rgba(255, 255, 255, 0.04);
   border-radius: 10px;
   padding: 2em;
-  border: 1px solid rgba(241, 70, 104, 0.25); /* #f14668 */
-  animation: 2s pulseRed infinite;
-}
-
-.models__activity--payouts.ok {
-  background: rgba(16, 185, 129, 0.04);
-  border-radius: 10px;
-  padding: 2em;
-  border: 1px solid rgba(16, 185, 129, 0.25); /* #f14668 */
-  animation: 2s pulse infinite;
 }
 
 .modal-header {
@@ -1174,7 +1164,6 @@ hr {
   width: 95%;
   max-width: 900px;
   max-height: 90vh;
-  background: linear-gradient(180deg, #1a1a2e 0%, #16213e 100%);
   border: 1px solid rgba(255, 255, 255, 0.1);
   border-radius: 16px;
   overflow: hidden;

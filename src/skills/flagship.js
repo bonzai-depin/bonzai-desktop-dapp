@@ -385,16 +385,6 @@ export const MODEL_REQUIREMENTS = {
   },
 
   // Audio Models
-  audio: {
-    name: 'ChatterBox TTS',
-    type: 'audio',
-    pipeline: 'audio',
-    endpoint: '/audio',
-    repo: 'resemble-ai/chatterbox',
-    size: '~2 GB',
-    vram: '4 GB',
-    description: 'Text-to-speech with voice cloning',
-  },
   audio_turbo: {
     name: 'Kokoro TTS',
     type: 'audio',
@@ -1950,7 +1940,7 @@ export function findScenario(identifier, scenarios = []) {
   ) || null;
 }
 
-// TTS narration - supports Qwen3-TTS (high quality persona), Kokoro (fast), and Chatterbox (multilingual)
+// TTS narration - supports Qwen3-TTS (high quality persona) and Kokoro (fast)
 async function generateNarration(text, options = {}) {
   // Use Qwen3-TTS /audio/quality/persona for companion roleplay (high quality)
   if (options.companion) {
@@ -2032,13 +2022,11 @@ async function generateNarration(text, options = {}) {
     }, true);
   }
 
-  // Fall back to Chatterbox for multilingual or voice cloning
-  return await callFlaskEndpoint('/audio', {
+  // Default to Kokoro for fast TTS
+  return await callFlaskEndpoint('/audio/turbo', {
     prompt: text,
-    language: options.language || 'en',
-    exaggeration: options.exaggeration || 0.5,
-    max_tokens: options.maxTokens || 1024,
-    ...(options.voiceBase64 && { synthesis_base64: options.voiceBase64 }),
+    gender: options.gender || 'female',
+    speed: options.speed || 1.0,
   }, true);
 }
 

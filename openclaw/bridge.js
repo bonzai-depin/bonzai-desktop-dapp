@@ -143,7 +143,8 @@ async function main() {
         console.log(`\nCompanion: ${response.companion?.name || 'unknown'}`);
         console.log(`Response: ${response.text}`);
         if (response.audioPath) console.log(`Audio: ${response.audioPath}`);
-        if (response.imageBase64) console.log(`Image: [generated]`);
+        if (response.imagePath) console.log(`Image: ${response.imagePath}`);
+        if (response.imageBase64) console.log(`Image: [base64 generated]`);
       }
       break;
 

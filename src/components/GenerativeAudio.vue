@@ -2113,8 +2113,6 @@ Remember: 6-10 syllables per line, use all appropriate structure tags. Write in 
 
     // Pipeline names relevant to this view
     const AUDIO_PIPELINES = [
-      "audio",
-      "chatterbox",
       "audio_turbo",
       "kokoro",
       "audio_quality_clone",

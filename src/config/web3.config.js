@@ -181,6 +181,83 @@ export const CONFIG = {
   },
 
   // ═══════════════════════════════════════════════════════════════════════════
+  // P2P DISTRIBUTED INFERENCE NETWORK
+  // ═══════════════════════════════════════════════════════════════════════════
+  p2pNetwork: {
+    // BonzaiProviderRegistry contract on Arbitrum
+    providerRegistryAddress: null, // Will be set after deployment
+    // BonzaiP2PPayment contract on Arbitrum
+    paymentContractAddress: null, // Will be set after deployment
+    chainId: 42161, // Arbitrum One
+
+    // USDC token on Arbitrum (for payments)
+    usdcAddress: "0xaf88d065e77c8cC2239327C5EDb3A432268e5831", // Native USDC on Arbitrum
+
+    // Default pricing (USDC with 6 decimals)
+    defaultPricePerToken: "100000", // 0.1 USDC per 1000 tokens (0.0001 per token)
+
+    // Platform fee (basis points, 250 = 2.5%)
+    platformFeeBps: 250,
+
+    // Bootstrap nodes (public relays)
+    bootstrapNodes: [
+      // Will be populated with official BonzAI relays
+    ],
+
+    // Supported pipelines for P2P inference (matches flagship.js MODEL_REQUIREMENTS)
+    pipelines: {
+      // LLM Models (via OpenClaw port 3002)
+      llm: [
+        "llm_codestral_22b",
+        "llm_deepseek_r1_1_5b",
+        "llm_deepseek_r1_7b",
+        "llm_deepseek_r1_32b",
+        "llm_gemma_3_1b",
+        "llm_gpt_oss_20b",
+        "llm_hermes_4_14b",
+        "llm_llama_2_7b",
+        "llm_llama_3_1_8b",
+        "llm_mistral_7b",
+        "llm_mythomax_13b",
+        "llm_phi_3_mini",
+        "llm_phi_4_mini",
+        "llm_qwen_2_5_3b",
+        "llm_qwen_coder_7b",
+        "llm_qwen_coder_14b",
+        "llm_qwen_coder_32b",
+        "llm_qwen3_coder_30b",
+        "llm_yi_coder_9b",
+        "llm_glm_4_7_flash",
+        "llm_qwen3_coder_next",
+      ],
+      // Image Generation (via Flask port 65000)
+      image: [
+        "image_turbo",      // FLUX Klein - /image/turbo
+        "image_quality",    // FLUX Krea - /image/quality
+        "image_standard",   // SDXL 1.0 - /image/standard
+        "image_advanced",   // Z Turbo - /image/advanced
+      ],
+      // Audio Generation (via Flask port 65000)
+      audio: [
+        "audio_turbo",      // Fast TTS - /audio/turbo
+        "audio_quality",    // Quality TTS - /audio/quality/persona
+      ],
+      // Music Generation (via Flask port 65000)
+      music: [
+        "music",            // ACE-Step - /audio/music
+      ],
+      // Video Generation (via Flask port 65000)
+      video: [
+        "video_fast",       // LTX-2 Video - /video
+      ],
+      // Vision Analysis (via Flask port 65000)
+      vision: [
+        "vision",           // Qwen3-VL 2B - /vision/analyze
+      ],
+    },
+  },
+
+  // ═══════════════════════════════════════════════════════════════════════════
   // MARKETPLACE CONFIGURATION
   // ═══════════════════════════════════════════════════════════════════════════
   marketplace: {

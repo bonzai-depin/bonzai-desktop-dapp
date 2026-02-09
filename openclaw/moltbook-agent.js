@@ -62,7 +62,7 @@ const BONZAI_KNOWLEDGE = {
 
   features: {
     text: "Run 20+ LLMs locally including Llama 3.2, DeepSeek R1, Qwen 3, MythoMax for roleplay",
-    audio: "Three TTS engines: Kokoro (fast), ChatterBox (cloning), Qwen3-TTS (voice design)",
+    audio: "Two TTS engines: Kokoro (fast), Qwen3-TTS (voice cloning and design)",
     image: "FLUX, SDXL, Z-Turbo - no content filters, your creativity, your rules",
     video: "LTX-2 video generation with audio conditioning for companion videos",
     threeD: "AI-powered 3D asset generation with Three.js and vision verification",

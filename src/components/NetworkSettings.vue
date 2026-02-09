@@ -1,63 +1,66 @@
 <template>
-  <div class="network-settings">
+  <div class="models__activity--payouts">
     <div class="panel">
-      <div class="panel-header">
-        <p class="subtitle">
-          Join the BonzAI P2P network as a provider to earn USDC, or as a consumer to use remote inference.
-        </p>
-      </div>
-
       <!-- Network Mode Selector -->
       <div class="network-mode-section">
         <h2 class="section-title fira-sans-condensed-black-italic">
-          <span class="material-symbols-outlined">settings</span>
           Network Mode
         </h2>
 
-        <div class="mode-options">
-          <label class="mode-option" :class="{ active: networkMode === 'local' }">
-            <input type="radio" v-model="networkMode" value="local" />
-            <div class="mode-content">
-              <span class="material-symbols-outlined mode-icon">wifi_off</span>
-              <div class="mode-text">
-                <strong>Local Only</strong>
-                <span class="mode-desc">Offline mode, no network features</span>
-              </div>
-            </div>
+        <div class="control mb-5 has-text-left mode-selector">
+          <input
+            v-model="networkMode"
+            value="local"
+            id="mode_local"
+            type="radio"
+            name="networkMode"
+          />
+          <label for="mode_local" class="radio mr-3">
+            <span class="material-symbols-outlined" style="font-size: 32px !important">
+              wifi_off
+            </span>
+            Local Only
           </label>
 
-          <label class="mode-option" :class="{ active: networkMode === 'consumer' }">
-            <input type="radio" v-model="networkMode" value="consumer" />
-            <div class="mode-content">
-              <span class="material-symbols-outlined mode-icon">cloud_download</span>
-              <div class="mode-text">
-                <strong>Consumer</strong>
-                <span class="mode-desc">Use remote providers when local unavailable</span>
-              </div>
-            </div>
+          <input
+            v-model="networkMode"
+            value="consumer"
+            id="mode_consumer"
+            type="radio"
+            name="networkMode"
+          />
+          <label for="mode_consumer" class="radio mr-3">
+            <span class="material-symbols-outlined" style="font-size: 32px !important">
+              cloud_download
+            </span>
+            Consumer
           </label>
 
-          <label class="mode-option" :class="{ active: networkMode === 'provider' }">
-            <input type="radio" v-model="networkMode" value="provider" />
-            <div class="mode-content">
-              <span class="material-symbols-outlined mode-icon">cloud_upload</span>
-              <div class="mode-text">
-                <strong>Provider</strong>
-                <span class="mode-desc">Earn USDC by serving inference</span>
-              </div>
-            </div>
+          <input
+            v-model="networkMode"
+            value="provider"
+            id="mode_provider"
+            type="radio"
+            name="networkMode"
+          />
+          <label for="mode_provider" class="radio mr-3">
+            <span class="material-symbols-outlined" style="font-size: 32px !important">
+              cloud_upload
+            </span>
+            Provider
           </label>
         </div>
       </div>
 
+      <hr />
+
       <!-- P2P Status Panel -->
-      <div class="status-section" v-if="networkMode !== 'local'">
+      <div class="status-section mt-5" v-if="networkMode !== 'local'">
         <h2 class="section-title fira-sans-condensed-black-italic">
-          <span class="material-symbols-outlined">monitoring</span>
-          P2P Node Status
+          Node Status
         </h2>
 
-        <div class="status-panel" :class="{ online: p2pStatus.started, offline: !p2pStatus.started }">
+        <div class="status-panel mt-5 mb-5" :class="{ online: p2pStatus.started, offline: !p2pStatus.started }">
           <div class="status-row">
             <span class="status-label">Status</span>
             <span class="status-value">
@@ -65,7 +68,7 @@
               {{ p2pStatus.started ? 'Online' : 'Offline' }}
             </span>
           </div>
-
+          <hr />
           <template v-if="p2pStatus.started">
             <div class="status-row">
               <span class="status-label">Peer ID</span>
@@ -74,12 +77,12 @@
                 <span class="material-symbols-outlined copy-icon">content_copy</span>
               </span>
             </div>
-
+<hr />
             <div class="status-row">
               <span class="status-label">Connected Peers</span>
               <span class="status-value">{{ p2pStatus.connectedPeers || 0 }}</span>
             </div>
-
+<hr />
             <div class="status-row">
               <span class="status-label">NAT Status</span>
               <span class="status-value" :class="natStatusClass">
@@ -89,7 +92,7 @@
                 {{ formatNatStatus(p2pStatus.natStatus) }}
               </span>
             </div>
-
+<hr />
             <div class="status-row" v-if="p2pStatus.isUsingRelay">
               <span class="status-label">Relay Connections</span>
               <span class="status-value">{{ p2pStatus.relayConnections || 0 }}</span>
@@ -110,7 +113,7 @@
         </div>
 
         <!-- Start/Stop Button -->
-        <div class="control-buttons">
+        <div class="control-buttons mb-5">
           <button
             v-if="!p2pStatus.started"
             class="button is-success is-medium"
@@ -119,7 +122,7 @@
           >
             <span v-if="isStarting" class="loader mr-2"></span>
             <span class="material-symbols-outlined mr-2">play_arrow</span>
-            {{ isStarting ? 'Starting...' : 'Start P2P Node' }}
+            {{ isStarting ? 'Starting...' : 'Start Node' }}
           </button>
 
           <button
@@ -130,7 +133,7 @@
           >
             <span v-if="isStopping" class="loader mr-2"></span>
             <span class="material-symbols-outlined mr-2">stop</span>
-            {{ isStopping ? 'Stopping...' : 'Stop P2P Node' }}
+            {{ isStopping ? 'Stopping...' : 'Stop Node' }}
           </button>
 
           <button
@@ -143,27 +146,155 @@
         </div>
       </div>
 
+      <hr />
+
       <!-- Provider Settings (when in provider mode) -->
-      <div class="provider-section" v-if="networkMode === 'provider' && p2pStatus.started">
+      <div class="provider-section mt-5" v-if="networkMode === 'provider' && p2pStatus.started">
         <h2 class="section-title fira-sans-condensed-black-italic">
-          <span class="material-symbols-outlined">tune</span>
-          Provider Settings
+          Pipeline Pricing (USDC)
         </h2>
 
-        <div class="setting-group">
-          <label class="setting-label">
-            <span class="material-symbols-outlined">payments</span>
-            Price per 1K tokens (USDC)
-          </label>
-          <input
-            type="number"
-            class="input"
-            v-model.number="pricePerToken"
-            step="0.0001"
-            min="0"
-            placeholder="0.0001"
-          />
+        <div class="pricing-grid">
+          <!-- LLM -->
+          <div class="pricing-item">
+            <div class="pricing-header">
+              <span class="material-symbols-outlined">chat</span>
+              <span class="pricing-name">LLM</span>
+            </div>
+            <div class="pricing-input">
+              <input
+                type="number"
+                class="input"
+                v-model.number="pipelinePricing.llm"
+                step="0.0001"
+                min="0"
+                placeholder="0.0001"
+              />
+              <span class="pricing-unit">/ 1K tokens</span>
+            </div>
+          </div>
+
+          <!-- Image -->
+          <div class="pricing-item">
+            <div class="pricing-header">
+              <span class="material-symbols-outlined">image</span>
+              <span class="pricing-name">Image</span>
+            </div>
+            <div class="pricing-input">
+              <input
+                type="number"
+                class="input"
+                v-model.number="pipelinePricing.image"
+                step="0.001"
+                min="0"
+                placeholder="0.01"
+              />
+              <span class="pricing-unit">/ image</span>
+            </div>
+          </div>
+
+          <!-- Audio (TTS) -->
+          <div class="pricing-item">
+            <div class="pricing-header">
+              <span class="material-symbols-outlined">record_voice_over</span>
+              <span class="pricing-name">Audio</span>
+            </div>
+            <div class="pricing-input">
+              <input
+                type="number"
+                class="input"
+                v-model.number="pipelinePricing.audio"
+                step="0.0001"
+                min="0"
+                placeholder="0.001"
+              />
+              <span class="pricing-unit">/ second</span>
+            </div>
+          </div>
+
+          <!-- Music -->
+          <div class="pricing-item">
+            <div class="pricing-header">
+              <span class="material-symbols-outlined">music_note</span>
+              <span class="pricing-name">Music</span>
+            </div>
+            <div class="pricing-input">
+              <input
+                type="number"
+                class="input"
+                v-model.number="pipelinePricing.music"
+                step="0.01"
+                min="0"
+                placeholder="0.05"
+              />
+              <span class="pricing-unit">/ second</span>
+            </div>
+          </div>
+
+          <!-- Video -->
+          <div class="pricing-item">
+            <div class="pricing-header">
+              <span class="material-symbols-outlined">movie</span>
+              <span class="pricing-name">Video</span>
+            </div>
+            <div class="pricing-input">
+              <input
+                type="number"
+                class="input"
+                v-model.number="pipelinePricing.video"
+                step="0.01"
+                min="0"
+                placeholder="0.10"
+              />
+              <span class="pricing-unit">/ second</span>
+            </div>
+          </div>
+
+          <!-- Vision -->
+          <div class="pricing-item">
+            <div class="pricing-header">
+              <span class="material-symbols-outlined">visibility</span>
+              <span class="pricing-name">Vision</span>
+            </div>
+            <div class="pricing-input">
+              <input
+                type="number"
+                class="input"
+                v-model.number="pipelinePricing.vision"
+                step="0.001"
+                min="0"
+                placeholder="0.005"
+              />
+              <span class="pricing-unit">/ image</span>
+            </div>
+          </div>
+
+          <!-- Companions -->
+          <div class="pricing-item">
+            <div class="pricing-header">
+              <span class="material-symbols-outlined">self_improvement</span>
+              <span class="pricing-name">Companions</span>
+            </div>
+            <div class="pricing-input">
+              <input
+                type="number"
+                class="input"
+                v-model.number="pipelinePricing.companions"
+                step="0.001"
+                min="0"
+                placeholder="0.02"
+              />
+              <span class="pricing-unit">/ message</span>
+            </div>
+            <span class="pricing-note">Includes LLM + optional audio/image</span>
+          </div>
         </div>
+
+        <hr class="mt-5 mb-5" />
+
+        <h2 class="section-title fira-sans-condensed-black-italic">
+          Relay Settings
+        </h2>
 
         <div class="setting-group">
           <label class="setting-label">
@@ -202,38 +333,39 @@
         </div>
       </div>
 
+      <hr />
+
       <!-- Self-Test (Local Inference Routing) -->
-      <div class="test-section">
+      <div class="test-section mt-5">
         <h2 class="section-title fira-sans-condensed-black-italic">
-          <span class="material-symbols-outlined">verified</span>
-          Self-Test
+          Network Test
         </h2>
 
         <div class="test-panel">
-          <p class="test-description">
-            Verify your local inference servers are running and can be reached by the P2P network.
-          </p>
-
+          
           <button
             class="button is-success is-medium"
             @click="runSelfTest"
             :disabled="isSelfTesting"
           >
             <span v-if="isSelfTesting" class="loader mr-2"></span>
-            <span class="material-symbols-outlined mr-2">play_circle</span>
-            {{ isSelfTesting ? 'Testing...' : 'Run Self-Test' }}
+            <span class="material-symbols-outlined mr-2">monitor_heart</span>
+            {{ isSelfTesting ? 'Testing...' : 'Run' }}
           </button>
 
           <div v-if="selfTestResults" class="self-test-results mt-4">
             <!-- Flask Server (Diffusion) -->
             <div class="test-result-row" :class="{ success: selfTestResults.flask?.ok, error: !selfTestResults.flask?.ok }">
-              <span class="material-symbols-outlined mr-2">
+              <span
+                class="material-symbols-outlined mr-2 test-icon"
+                :class="selfTestResults.flask?.ok ? 'icon-success' : 'icon-error'"
+              >
                 {{ selfTestResults.flask?.ok ? 'check_circle' : 'error' }}
               </span>
               <div class="test-result-content">
                 <strong>Flask Server (Port 65000)</strong>
                 <span class="test-result-detail">
-                  {{ selfTestResults.flask?.ok ? `Image, Video, Audio, 3D pipelines` : (selfTestResults.flask?.error || 'Not responding') }}
+                  {{ selfTestResults.flask?.ok ? `Image, Audio, Video & Companion Pipelines` : (selfTestResults.flask?.error || 'Not responding') }}
                 </span>
                 <div v-if="selfTestResults.flask?.pipelines?.length" class="pipeline-tags">
                   <span v-for="p in selfTestResults.flask.pipelines" :key="p" class="pipeline-tag">{{ p }}</span>
@@ -242,21 +374,27 @@
             </div>
 
             <!-- OpenClaw Server (LLM) -->
-            <div class="test-result-row" :class="{ success: selfTestResults.openclaw?.ok, error: !selfTestResults.openclaw?.ok }">
-              <span class="material-symbols-outlined mr-2">
-                {{ selfTestResults.openclaw?.ok ? 'check_circle' : 'error' }}
+            <div class="test-result-row" :class="{ success: selfTestResults.openclaw?.ok, error: !selfTestResults.openclaw?.ok, warning: selfTestResults.openclaw?.error === 'OpenClaw not enabled' }">
+              <span
+                class="material-symbols-outlined mr-2 test-icon"
+                :class="selfTestResults.openclaw?.ok ? 'icon-success' : (selfTestResults.openclaw?.error === 'OpenClaw not enabled' ? 'icon-warning' : 'icon-error')"
+              >
+                {{ selfTestResults.openclaw?.ok ? 'check_circle' : (selfTestResults.openclaw?.error === 'OpenClaw not enabled' ? 'info' : 'error') }}
               </span>
               <div class="test-result-content">
                 <strong>OpenClaw Server (Port 3002)</strong>
                 <span class="test-result-detail">
-                  {{ selfTestResults.openclaw?.ok ? `LLM chat inference` : (selfTestResults.openclaw?.error || 'Not responding') }}
+                  {{ selfTestResults.openclaw?.ok ? `Text Generation & Chat` : (selfTestResults.openclaw?.error || 'Not responding') }}
                 </span>
               </div>
             </div>
 
             <!-- P2P Node -->
             <div class="test-result-row" :class="{ success: selfTestResults.p2p?.ok, error: !selfTestResults.p2p?.ok }">
-              <span class="material-symbols-outlined mr-2">
+              <span
+                class="material-symbols-outlined mr-2 test-icon"
+                :class="selfTestResults.p2p?.ok ? 'icon-success' : 'icon-error'"
+              >
                 {{ selfTestResults.p2p?.ok ? 'check_circle' : 'error' }}
               </span>
               <div class="test-result-content">
@@ -269,10 +407,13 @@
 
             <!-- Overall Status -->
             <div class="overall-status mt-3" :class="{ ready: selfTestResults.ready, 'not-ready': !selfTestResults.ready }">
-              <span class="material-symbols-outlined mr-2">
+              <span
+                class="material-symbols-outlined mr-2 test-icon"
+                :class="selfTestResults.ready ? 'icon-success' : 'icon-warning'"
+              >
                 {{ selfTestResults.ready ? 'rocket_launch' : 'warning' }}
               </span>
-              <span v-if="selfTestResults.ready">
+              <span class="has-text-white" v-if="selfTestResults.ready">
                 Ready to serve as a provider!
               </span>
               <span v-else>
@@ -285,8 +426,8 @@
 
       <!-- Connection Test -->
       <div class="test-section" v-if="p2pStatus.started">
-        <h2 class="section-title fira-sans-condensed-black-italic">
-          <span class="material-symbols-outlined">science</span>
+        <hr />
+        <h2 class="section-title fira-sans-condensed-black-italic mt-5">
           Peer Connection Test
         </h2>
 
@@ -295,16 +436,17 @@
             <div class="control is-expanded">
               <input
                 type="text"
-                class="input"
+                class="input is-large"
                 v-model="testPeerId"
                 placeholder="Enter peer ID to test connection (12D3KooW...)"
               />
             </div>
             <div class="control">
               <button
-                class="button is-info"
+                class="button is-success is-large"
                 @click="testConnection"
                 :disabled="!testPeerId || isTesting"
+                style="box-shadow: none;"
               >
                 <span v-if="isTesting" class="loader mr-2"></span>
                 <span class="material-symbols-outlined">{{ isTesting ? 'hourglass_empty' : 'cable' }}</span>
@@ -326,33 +468,6 @@
         </div>
       </div>
 
-      <!-- Info Section -->
-      <div class="info-section">
-        <h2 class="section-title fira-sans-condensed-black-italic">
-          <span class="material-symbols-outlined">info</span>
-          How It Works
-        </h2>
-
-        <div class="info-cards">
-          <div class="info-card">
-            <span class="material-symbols-outlined info-icon">dns</span>
-            <h3>Decentralized</h3>
-            <p>No central servers. Providers connect directly via libp2p DHT.</p>
-          </div>
-
-          <div class="info-card">
-            <span class="material-symbols-outlined info-icon">lock</span>
-            <h3>Zero-Knowledge</h3>
-            <p>Remote providers never store your prompts or generated content.</p>
-          </div>
-
-          <div class="info-card">
-            <span class="material-symbols-outlined info-icon">attach_money</span>
-            <h3>Earn USDC</h3>
-            <p>Providers earn USDC via x402 payments on Arbitrum.</p>
-          </div>
-        </div>
-      </div>
     </div>
   </div>
 </template>
@@ -378,7 +493,17 @@ const isRefreshing = ref(false);
 const isTesting = ref(false);
 const isSelfTesting = ref(false);
 
-const pricePerToken = ref(0.0001);
+// Per-pipeline pricing (USDC)
+const pipelinePricing = ref({
+  llm: 0.0001,        // per 1K tokens
+  image: 0.01,        // per image
+  audio: 0.001,       // per second
+  music: 0.05,        // per second
+  video: 0.10,        // per second
+  vision: 0.005,      // per image
+  companions: 0.02,   // per message (includes LLM + optional media)
+});
+
 const selfTestResults = ref(null);
 const enableRelay = ref(false);
 const relayFee = ref(5);
@@ -446,8 +571,8 @@ const startP2P = async () => {
       console.log('[NetworkSettings] P2P node started:', result.peerId);
       await refreshStatus();
 
-      // Save settings
-      await window.electronAPI.store.set('p2p.pricePerToken', pricePerToken.value.toString());
+      // Save pipeline pricing
+      await window.electronAPI.store.set('p2p.pipelinePricing', JSON.stringify(pipelinePricing.value));
       await window.electronAPI.store.set('p2p.enableRelay', enableRelay.value);
       await window.electronAPI.store.set('p2p.relayFee', relayFee.value);
     } else {
@@ -578,12 +703,22 @@ const runSelfTest = async () => {
 const loadSettings = async () => {
   try {
     const savedMode = await window.electronAPI.store.get('p2p.networkMode', 'local');
-    const savedPrice = await window.electronAPI.store.get('p2p.pricePerToken', '0.0001');
+    const savedPricing = await window.electronAPI.store.get('p2p.pipelinePricing', null);
     const savedRelay = await window.electronAPI.store.get('p2p.enableRelay', false);
     const savedRelayFee = await window.electronAPI.store.get('p2p.relayFee', 5);
 
     networkMode.value = savedMode;
-    pricePerToken.value = parseFloat(savedPrice);
+
+    // Load pipeline pricing (merge with defaults to handle new pipelines)
+    if (savedPricing) {
+      try {
+        const parsed = JSON.parse(savedPricing);
+        pipelinePricing.value = { ...pipelinePricing.value, ...parsed };
+      } catch (e) {
+        console.warn('[NetworkSettings] Failed to parse saved pricing:', e);
+      }
+    }
+
     enableRelay.value = savedRelay;
     relayFee.value = savedRelayFee;
   } catch (err) {
@@ -622,10 +757,37 @@ onUnmounted(() => {
 </script>
 
 <style scoped>
+/* BonzAI Design System - Matches Access Level Modal */
+:root {
+  --bonzai-bg-dark: #0a0a0f;
+  --bonzai-bg-card: rgba(20, 20, 30, 0.92);
+  --bonzai-green: #10b981;
+  --bonzai-green-glow: rgba(16, 185, 129, 0.3);
+  --bonzai-purple: #8b5cf6;
+  --bonzai-text: #f0f0f5;
+  --bonzai-text-muted: rgba(240, 240, 245, 0.7);
+  --bonzai-border: rgba(255, 255, 255, 0.1);
+  --bonzai-radius: 12px;
+}
+
+hr {
+  margin: 12px 0;
+  width: 100%;
+  border: none;
+  height: 1px;
+  background: linear-gradient(
+    to right,
+    transparent,
+    rgba(255, 255, 255, 1),
+    transparent
+  );
+}
+
 .network-settings {
   padding: 24px;
   overflow-y: auto;
   background: transparent;
+  color: #fff;
 }
 
 .panel {
@@ -635,11 +797,13 @@ onUnmounted(() => {
 
 .panel-header {
   margin-bottom: 24px;
+  text-align: center;
 }
 
 .panel-header .subtitle {
   color: rgba(255, 255, 255, 0.7);
   font-size: 1rem;
+  line-height: 1.5;
 }
 
 .section-title {
@@ -651,65 +815,45 @@ onUnmounted(() => {
   margin-bottom: 16px;
 }
 
-/* Network Mode Selector */
+.section-title .material-symbols-outlined {
+  color: var(--bonzai-green);
+}
+
+/* Network Mode Selector - Generative Style */
 .network-mode-section {
   margin-bottom: 32px;
 }
 
-.mode-options {
-  display: flex;
-  gap: 16px;
-  flex-wrap: wrap;
-}
-
-.mode-option {
-  flex: 1;
-  min-width: 200px;
-  padding: 16px;
-  background: rgba(255, 255, 255, 0.05);
-  border: 2px solid rgba(255, 255, 255, 0.1);
-  border-radius: 12px;
-  cursor: pointer;
-  transition: all 0.2s;
-}
-
-.mode-option:hover {
-  border-color: rgba(16, 185, 129, 0.5);
-}
-
-.mode-option.active {
-  border-color: #10b981;
-  background: rgba(16, 185, 129, 0.1);
-}
-
-.mode-option input {
+.mode-selector input[type="radio"] {
   display: none;
 }
 
-.mode-content {
-  display: flex;
+.mode-selector input[type="radio"] + label {
+  padding: 8px 16px 12px;
+  color: rgba(255, 255, 255, 0.3) !important;
+  border: 1px solid rgba(255, 255, 255, 0.3);
+  border-radius: 4px;
+  cursor: pointer;
+  transition: all 0.2s;
+  display: inline-flex;
   align-items: center;
-  gap: 12px;
+  gap: 8px;
 }
 
-.mode-icon {
-  font-size: 32px;
-  color: #10b981;
+.mode-selector input[type="radio"] + label:hover {
+  color: rgba(255, 255, 255, 0.6) !important;
+  border-color: rgba(255, 255, 255, 0.5);
 }
 
-.mode-text {
-  display: flex;
-  flex-direction: column;
+.mode-selector input[type="radio"]:checked + label {
+  color: rgba(255, 255, 255, 1) !important;
+  border: 1px solid rgba(255, 255, 255, 1) !important;
+  background: rgba(97, 55, 142, 0.33) !important;
+  backdrop-filter: blur(64px) !important;
 }
 
-.mode-text strong {
-  color: #fff;
-  font-size: 1.1rem;
-}
-
-.mode-desc {
-  color: rgba(255, 255, 255, 0.6);
-  font-size: 0.85rem;
+.mode-selector input[type="radio"] + label .material-symbols-outlined {
+  color: inherit;
 }
 
 /* Status Panel */
@@ -718,26 +862,40 @@ onUnmounted(() => {
 }
 
 .status-panel {
-  background: rgba(255, 255, 255, 0.05);
-  border: 1px solid rgba(255, 255, 255, 0.1);
-  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid var(--bonzai-border);
+  border-radius: 10px;
   padding: 20px;
 }
 
 .status-panel.online {
-  border-color: rgba(16, 185, 129, 0.3);
+  border-color: rgba(16, 185, 129, 0.25);
+  animation: pulseGreen 2s infinite;
 }
 
 .status-panel.offline {
-  border-color: rgba(239, 68, 68, 0.3);
+  border-color: rgba(241, 70, 104, 0.25);
+  animation: pulseRed 2s infinite;
+}
+
+@keyframes pulseGreen {
+  0% { box-shadow: 0 0 0 0 rgba(16, 185, 129, 0.1); }
+  50% { box-shadow: 0 0 0 64px rgba(16, 185, 129, 0); }
+  100% { box-shadow: 0 0 0 0 rgba(16, 185, 129, 0); }
+}
+
+@keyframes pulseRed {
+  0% { box-shadow: 0 0 0 0 rgba(241, 70, 104, 0.1); }
+  50% { box-shadow: 0 0 0 8px rgba(241, 70, 104, 0); }
+  100% { box-shadow: 0 0 0 0 rgba(241, 70, 104, 0); }
 }
 
 .status-row {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  padding: 8px 0;
-  border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+  padding: 10px 0;
+  color: #fff !important;
 }
 
 .status-row:last-child {
@@ -764,7 +922,7 @@ onUnmounted(() => {
 }
 
 .status-indicator.online {
-  background: #10b981;
+  background: var(--bonzai-green);
   animation: pulse 2s infinite;
 }
 
@@ -775,7 +933,7 @@ onUnmounted(() => {
 
 .peer-id {
   cursor: pointer;
-  font-family: monospace;
+  font-family: 'JetBrains Mono', monospace;
   font-size: 0.9rem;
 }
 
@@ -790,14 +948,13 @@ onUnmounted(() => {
   transition: opacity 0.2s;
 }
 
-.nat-public { color: #10b981; }
+.nat-public { color: var(--bonzai-green); }
 .nat-relayed { color: #f59e0b; }
 .nat-unknown { color: rgba(255, 255, 255, 0.5); }
 
 .multiaddrs {
   margin-top: 12px;
   padding-top: 12px;
-  border-top: 1px solid rgba(255, 255, 255, 0.05);
 }
 
 .addr-list {
@@ -810,10 +967,11 @@ onUnmounted(() => {
 .addr {
   font-size: 0.75rem;
   color: rgba(255, 255, 255, 0.6);
-  background: rgba(0, 0, 0, 0.2);
-  padding: 4px 8px;
-  border-radius: 4px;
+  background: rgba(0, 0, 0, 0.3);
+  padding: 6px 10px;
+  border-radius: 6px;
   word-break: break-all;
+  font-family: 'JetBrains Mono', monospace;
 }
 
 .more-addrs {
@@ -850,22 +1008,115 @@ onUnmounted(() => {
   margin-bottom: 32px;
 }
 
+/* Pipeline Pricing Grid */
+.pricing-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+  gap: 16px;
+}
+
+.pricing-item {
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid var(--bonzai-border);
+  border-radius: 10px;
+  padding: 16px;
+  transition: all 0.2s;
+}
+
+.pricing-item:hover {
+  border-color: rgba(255, 255, 255, 0.2);
+}
+
+.pricing-item.featured {
+  border-color: rgba(16, 185, 129, 0.3);
+  background: rgba(16, 185, 129, 0.05);
+}
+
+.pricing-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+
+.pricing-header .material-symbols-outlined {
+  color: rgba(255, 255, 255, 0.7);
+  font-size: 24px;
+}
+
+.pricing-item.featured .pricing-header .material-symbols-outlined {
+  color: var(--bonzai-green);
+}
+
+.pricing-name {
+  color: #fff;
+  font-weight: 600;
+  font-size: 1rem;
+}
+
+.pricing-badge {
+  background: var(--bonzai-green);
+  color: #000;
+  font-size: 0.65rem;
+  padding: 2px 6px;
+  border-radius: 4px;
+  font-weight: 700;
+  text-transform: uppercase;
+  margin-left: auto;
+}
+
+.pricing-input {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.pricing-input .input {
+  flex: 1;
+  min-width: 0;
+  padding: 8px 12px;
+  font-size: 0.95rem;
+}
+
+.pricing-unit {
+  color: rgba(255, 255, 255, 0.5);
+  font-size: 0.8rem;
+  white-space: nowrap;
+}
+
+.pricing-note {
+  display: block;
+  color: rgba(255, 255, 255, 0.4);
+  font-size: 0.75rem;
+  margin-top: 8px;
+}
+
 .setting-group {
-  margin-bottom: 20px;
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid var(--bonzai-border);
+  border-radius: 10px;
+  padding: 16px;
+  margin-bottom: 16px;
 }
 
 .setting-label {
   display: flex;
   align-items: center;
   gap: 8px;
-  color: rgba(255, 255, 255, 0.8);
-  margin-bottom: 8px;
+  color: rgba(255, 255, 255, 0.9);
+  margin-bottom: 12px;
+  font-weight: 500;
+}
+
+.setting-label .material-symbols-outlined {
+  color: var(--bonzai-green);
 }
 
 .setting-hint {
-  color: rgba(255, 255, 255, 0.5);
+  color: var(--bonzai-green);
   font-size: 0.85rem;
-  margin-top: 4px;
+  margin-top: 8px;
+  font-weight: 500;
 }
 
 .relay-toggle {
@@ -908,7 +1159,7 @@ onUnmounted(() => {
 }
 
 .toggle input:checked + .toggle-slider {
-  background: #10b981;
+  background: var(--bonzai-green);
 }
 
 .toggle input:checked + .toggle-slider:before {
@@ -934,57 +1185,53 @@ onUnmounted(() => {
   margin-bottom: 32px;
 }
 
-.test-panel {
-  background: rgba(255, 255, 255, 0.05);
-  border-radius: 12px;
-  padding: 20px;
-}
-
 .test-result {
   display: flex;
   align-items: center;
   margin-top: 12px;
-  padding: 12px;
+  padding: 12px 16px;
   border-radius: 8px;
 }
 
 .test-result.success {
-  background: rgba(16, 185, 129, 0.1);
-  color: #10b981;
+  background: rgba(16, 185, 129, 0.12);
+  border: 1px solid rgba(16, 185, 129, 0.25);
+  color: var(--bonzai-green);
 }
 
 .test-result.error {
-  background: rgba(239, 68, 68, 0.1);
-  color: #ef4444;
+  background: rgba(170, 170, 170, 0.12);
+  border: 1px solid rgba(241, 70, 104, 0.25);
+  color: #f14668;
 }
 
 .test-description {
   color: rgba(255, 255, 255, 0.7);
   margin-bottom: 16px;
   font-size: 0.95rem;
+  line-height: 1.5;
 }
 
 .self-test-results {
-  border-top: 1px solid rgba(255, 255, 255, 0.1);
   padding-top: 16px;
 }
 
 .test-result-row {
   display: flex;
   align-items: flex-start;
-  padding: 12px;
-  border-radius: 8px;
-  margin-bottom: 8px;
+  padding: 14px;
+  border-radius: 10px;
+  margin-bottom: 10px;
 }
 
 .test-result-row.success {
-  background: rgba(16, 185, 129, 0.1);
-  border: 1px solid rgba(16, 185, 129, 0.2);
+  background: rgba(16, 185, 129, 0.12);
+  border: 1px solid rgba(16, 185, 129, 0.25);
 }
 
 .test-result-row.error {
-  background: rgba(239, 68, 68, 0.1);
-  border: 1px solid rgba(239, 68, 68, 0.2);
+  background: rgba(241, 70, 104, 0.12);
+  border: 1px solid rgba(241, 70, 104, 0.25);
 }
 
 .test-result-row .material-symbols-outlined {
@@ -992,12 +1239,22 @@ onUnmounted(() => {
   margin-top: 2px;
 }
 
-.test-result-row.success .material-symbols-outlined {
-  color: #10b981;
+/* Test Icon Colors */
+.test-icon.icon-success {
+  color: #10b981 !important;
 }
 
-.test-result-row.error .material-symbols-outlined {
-  color: #ef4444;
+.test-icon.icon-error {
+  color: #f14668 !important;
+}
+
+.test-icon.icon-warning {
+  color: #f59e0b !important;
+}
+
+.test-result-row.warning {
+  background: rgba(245, 158, 11, 0.12);
+  border: 1px solid rgba(245, 158, 11, 0.25);
 }
 
 .test-result-content {
@@ -1019,70 +1276,80 @@ onUnmounted(() => {
   display: flex;
   flex-wrap: wrap;
   gap: 6px;
-  margin-top: 6px;
+  margin-top: 8px;
 }
 
 .pipeline-tag {
   background: rgba(16, 185, 129, 0.2);
-  color: #10b981;
+  color: var(--bonzai-green);
   font-size: 0.75rem;
-  padding: 2px 8px;
-  border-radius: 4px;
-  font-family: monospace;
+  padding: 4px 10px;
+  border-radius: 999px;
+  font-family: 'JetBrains Mono', monospace;
+  font-weight: 600;
 }
 
 .overall-status {
   display: flex;
   align-items: center;
   padding: 16px;
-  border-radius: 8px;
-  font-weight: 500;
+  border-radius: 10px;
+  font-weight: 600;
 }
 
 .overall-status.ready {
-  background: rgba(16, 185, 129, 0.15);
+  background: rgba(16, 185, 129, 0.12);
   border: 1px solid rgba(16, 185, 129, 0.3);
-  color: #10b981;
+  color: var(--bonzai-green);
+  animation: pulseGreen 2s infinite;
 }
 
 .overall-status.not-ready {
-  background: rgba(245, 158, 11, 0.15);
+  background: rgba(245, 158, 11, 0.12);
   border: 1px solid rgba(245, 158, 11, 0.3);
   color: #f59e0b;
 }
 
-/* Info Section */
-.info-section {
-  margin-bottom: 32px;
-}
-
-.info-cards {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
-  gap: 16px;
-}
-
-.info-card {
-  background: rgba(255, 255, 255, 0.05);
-  border: 1px solid rgba(255, 255, 255, 0.1);
-  border-radius: 12px;
-  padding: 20px;
-  text-align: center;
-}
-
-.info-icon {
-  font-size: 40px;
-  color: #10b981;
-  margin-bottom: 12px;
-}
-
-.info-card h3 {
+/* Input styling to match modal */
+.input {
+  background: rgba(0, 0, 0, 0.3);
+  border: 1px solid var(--bonzai-border);
+  border-radius: 8px;
   color: #fff;
-  margin-bottom: 8px;
+  padding: 10px 14px;
+  font-size: 1rem;
+  transition: border-color 0.2s;
 }
 
-.info-card p {
-  color: rgba(255, 255, 255, 0.6);
-  font-size: 0.9rem;
+.input:focus {
+  outline: none;
+  border-color: var(--bonzai-green);
+}
+
+.input::placeholder {
+  color: rgba(255, 255, 255, 0.4);
+}
+
+/* Field addons */
+.field.has-addons {
+  display: flex;
+}
+
+.field.has-addons input {
+  height: 58px;
+}
+
+.field.has-addons .control.is-expanded {
+  flex: 1;
+}
+
+.field.has-addons .control.is-expanded .input {
+  border-top-right-radius: 0;
+  border-bottom-right-radius: 0;
+}
+
+.field.has-addons .control:last-child .button {
+  border-top-left-radius: 0;
+  border-bottom-left-radius: 0;
 }
 </style>

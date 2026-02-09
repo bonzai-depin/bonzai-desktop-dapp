@@ -229,10 +229,6 @@ LTX2_GGUF_URL = "https://huggingface.co/vantagewithai/LTX-2-GGUF/resolve/main/di
 LTX2_I2V_LORA_REPO = "MachineDelusions/LTX-2_Image2Video_Adapter_LoRa"
 LTX2_I2V_LORA_FILENAME = "LTX-2-Image2Vid-Adapter.safetensors"
 
-CHATTERBOX_REPO = "ResembleAI/chatterbox"
-
-CHATTERBOX_MULTILINGUAL_MODEL_ID = "onnx-community/chatterbox-multilingual-ONNX"
-
 # Kokoro TTS - Fast, lightweight TTS with multiple voices (ONNX)
 # Supports male and female voices with style control
 KOKORO_REPO = "hexgrad/Kokoro-82M"
@@ -288,15 +284,6 @@ LLAMA_REPOS = {
     "llama-3.1-8b": "meta-llama/Llama-3.1-8B",
 }
 
-CHATTERBOX_LANGUAGES = {
-    "ar": "Arabic", "da": "Danish", "de": "German", "el": "Greek", "en": "English",
-    "es": "Spanish", "fi": "Finnish", "fr": "French", "he": "Hebrew", "hi": "Hindi",
-    "it": "Italian", "ja": "Japanese", "ko": "Korean", "ms": "Malay", "nl": "Dutch",
-    "no": "Norwegian", "pl": "Polish", "pt": "Portuguese", "ru": "Russian",
-    "sv": "Swedish", "sw": "Swahili", "tr": "Turkish", "zh": "Chinese",
-}
-
-
 EXPECTED_SIZES = {
     "flux1-krea-dev-q5_k_m.gguf": 8_419_501_344,
     "z_image_turbo-q5_k_m.gguf": 5_522_742_336,
@@ -305,11 +292,9 @@ EXPECTED_SIZES = {
 }
 
 # =============================================================================
-# ONNX / CHATTERBOX SETUP
+# AUDIO UTILITIES
 # =============================================================================
 
-_kakasi = None
-_cangjie_data = None
 
 
 def _load_audio_sf(path, target_sr: int = 24000):
@@ -439,314 +424,6 @@ def _encode_audio_to_latents(audio_data: bytes, pipe, target_duration: float, de
 
     return noisy_audio_latents
 
-
-class ChineseCangjieConverter:
-    """Converts Chinese characters to Cangjie codes."""
-    
-    def __init__(self, cache_dir=None):
-        global _cangjie_data
-        self.word2cj = {}
-        self.cj2word = {}
-        self.segmenter = None
-        
-        if _cangjie_data is not None:
-            self.word2cj, self.cj2word = _cangjie_data
-        else:
-            self._load_cangjie_mapping(cache_dir)
-        self._init_segmenter()
-    
-    def _load_cangjie_mapping(self, cache_dir):
-        global _cangjie_data
-        try:
-            from huggingface_hub import hf_hub_download
-            import json
-            cangjie_file = hf_hub_download(
-                repo_id=CHATTERBOX_MULTILINGUAL_MODEL_ID,
-                filename="Cangjie5_TC.json",
-                cache_dir=cache_dir,
-            )
-            with open(cangjie_file, "r", encoding="utf-8") as fp:
-                data = json.load(fp)
-            
-            for entry in data:
-                parts = entry.split("\t")
-                if len(parts) >= 2:
-                    word, code = parts[0], parts[1]
-                    self.word2cj[word] = code
-                    if code not in self.cj2word:
-                        self.cj2word[code] = [word]
-                    else:
-                        self.cj2word[code].append(word)
-            _cangjie_data = (self.word2cj, self.cj2word)
-        except Exception as e:
-            logger.warning(f"Could not load Cangjie mapping: {e}")
-    
-    def _init_segmenter(self):
-        try:
-            from pkuseg import pkuseg
-            self.segmenter = pkuseg()
-        except ImportError:
-            self.segmenter = None
-    
-    def __call__(self, text):
-        from unicodedata import category
-        output = []
-        full_text = " ".join(self.segmenter.cut(text)) if self.segmenter else text
-        
-        for t in full_text:
-            if category(t) == "Lo":
-                code = self.word2cj.get(t)
-                if code is None:
-                    output.append(t)
-                    continue
-                index = self.cj2word[code].index(t)
-                index_str = str(index) if index > 0 else ""
-                cangjie = code + index_str
-                cj_tokens = "".join(f"[cj_{c}]" for c in cangjie) + "[cj_.]"
-                output.append(cj_tokens)
-            else:
-                output.append(t)
-        return "".join(output)
-
-
-def _hiragana_normalize(text):
-    """Japanese text normalization."""
-    global _kakasi
-    try:
-        if _kakasi is None:
-            import pykakasi
-            _kakasi = pykakasi.kakasi()
-        
-        result = _kakasi.convert(text)
-        out = []
-        for r in result:
-            inp, hira = r['orig'], r["hira"]
-            if any(19968 <= ord(c) <= 40959 for c in inp):  # Has kanji
-                if hira and hira[0] in ["は", "へ"]:
-                    hira = " " + hira
-                out.append(hira)
-            elif all(12449 <= ord(c) <= 12538 for c in inp) if inp else False:  # All katakana
-                out.append(inp)
-            else:
-                out.append(inp)
-        
-        import unicodedata
-        return unicodedata.normalize('NFKD', "".join(out))
-    except ImportError:
-        return text
-
-
-def _korean_normalize(text):
-    """Korean text normalization."""
-    def decompose_hangul(char):
-        if not ('\uac00' <= char <= '\ud7af'):
-            return char
-        base = ord(char) - 0xAC00
-        return (chr(0x1100 + base // (21 * 28)) +
-                chr(0x1161 + (base % (21 * 28)) // 28) +
-                (chr(0x11A7 + base % 28) if base % 28 > 0 else ''))
-    return ''.join(decompose_hangul(c) for c in text).strip()
-
-
-def _prepare_language(text, language_id, cache_dir=None):
-    """Apply language-specific text processing."""
-    if language_id == 'zh':
-        text = ChineseCangjieConverter(cache_dir)(text)
-    elif language_id == 'ja':
-        text = _hiragana_normalize(text)
-    elif language_id == 'ko':
-        text = _korean_normalize(text)
-    if language_id:
-        text = f"[{language_id.lower()}]{text}"
-    return text
-
-
-class ChatterboxONNX:
-    """
-    Unified Chatterbox TTS using ONNX Runtime.
-    Supports Turbo (English, fast) and Multilingual (23 languages).
-    """
-    
-    sr = 24000
-    START_SPEECH_TOKEN = 6561
-    STOP_SPEECH_TOKEN = 6562
-    SILENCE_TOKEN = 4299
-    
-    def __init__(self, model_type, speech_encoder, embed_tokens, language_model, cond_decoder, tokenizer, cache_dir=None):
-        self.model_type = model_type
-        self.speech_encoder = speech_encoder
-        self.embed_tokens = embed_tokens
-        self.language_model = language_model
-        self.cond_decoder = cond_decoder
-        self.tokenizer = tokenizer
-        self.cache_dir = cache_dir
-        
-        # Model architecture - detect from ONNX inputs
-        self._kv_dtype = np.float32
-        layer_indices = set()
-        for inp in self.language_model.get_inputs():
-            if "past_key_values" in inp.name:
-                if inp.type == 'tensor(float16)':
-                    self._kv_dtype = np.float16
-                # Extract layer number from name like "past_key_values.16.key"
-                parts = inp.name.split(".")
-                if len(parts) >= 2 and parts[1].isdigit():
-                    layer_indices.add(int(parts[1]))
-
-        # Detect actual number of layers from ONNX model inputs
-        self._num_layers = max(layer_indices) + 1 if layer_indices else (16 if model_type == "turbo" else 30)
-        self._num_kv_heads = 16
-        self._head_dim = 64
-        logger.info(f"[Chatterbox {model_type}] Detected {self._num_layers} transformer layers, dtype={self._kv_dtype}")
-    
-    @classmethod
-    def from_pretrained(cls, model_type="multilingual", device="cpu", dtype="fp32", local_dir=None, local_files_only=True):
-        """
-        Load ChatterboxONNX from local directory (consistent with diffusion model pattern).
-
-        Args:
-            model_type: Must be "multilingual"
-            device: "cpu" or "cuda"
-            dtype: "fp32" or "q8"
-            local_dir: Path to repo_local_dir(CHATTERBOX_MULTILINGUAL_MODEL_ID)
-            local_files_only: If True, don't attempt network downloads
-        """
-        import onnxruntime as ort
-        from transformers import AutoTokenizer
-
-        if model_type != "multilingual":
-            raise ValueError(f"model_type must be 'multilingual'")
-
-        if local_dir is None:
-            local_dir = repo_local_dir(CHATTERBOX_MULTILINGUAL_MODEL_ID)
-        local_dir = Path(local_dir)
-
-        # CoreML fails with external .onnx_data files - use CPU
-        providers = ['CUDAExecutionProvider', 'CPUExecutionProvider'] if device == "cuda" and torch.cuda.is_available() else ['CPUExecutionProvider']
-
-        logger.info(f"[Chatterbox {model_type}] Loading ONNX models from {local_dir}...")
-
-        def get_onnx_path(name):
-            suffix = "" if dtype == "fp32" else "_quantized" if dtype == "q8" else f"_{dtype}"
-            filename = f"{name}{suffix}.onnx"
-            return str(local_dir / "onnx" / filename)
-
-        opts = ort.SessionOptions()
-        opts.graph_optimization_level = ort.GraphOptimizationLevel.ORT_ENABLE_ALL
-
-        return cls(
-            model_type=model_type,
-            speech_encoder=ort.InferenceSession(get_onnx_path("speech_encoder"), opts, providers=providers),
-            embed_tokens=ort.InferenceSession(get_onnx_path("embed_tokens"), opts, providers=providers),
-            language_model=ort.InferenceSession(get_onnx_path("language_model"), opts, providers=providers),
-            cond_decoder=ort.InferenceSession(get_onnx_path("conditional_decoder"), opts, providers=providers),
-            tokenizer=AutoTokenizer.from_pretrained(str(local_dir), local_files_only=local_files_only),
-            cache_dir=str(local_dir),
-        )
-    
-    def _normalize_text(self, text):
-        if not text or not text.strip():
-            return "You need to add some text for me to talk."
-        text = text.strip()
-        if text[0].islower():
-            text = text[0].upper() + text[1:]
-        text = " ".join(text.split())
-        for old, new in [("...", ", "), ("…", ", "), (":", ","), (" - ", ", "), (";", ", ")]:
-            text = text.replace(old, new)
-        if not any(text.endswith(p) for p in {".", "!", "?", "-", ","}):
-            text += "."
-        return text
-    
-    def generate(self, text, audio_prompt_path, language_id="en", max_new_tokens=1024,
-                 repetition_penalty=1.2, temperature=1.0, exaggeration=0.5):
-        # Text preprocessing
-        if self.model_type == "multilingual":
-            if language_id not in CHATTERBOX_LANGUAGES:
-                raise ValueError(f"Unsupported language '{language_id}'")
-            text = _prepare_language(text, language_id, self.cache_dir)
-        else:
-            text = self._normalize_text(text)
-        
-        audio = _load_audio_sf(audio_prompt_path, self.sr)[np.newaxis, :].astype(np.float32)
-        input_ids = self.tokenizer(text, return_tensors="np")["input_ids"].astype(np.int64)
-        
-        def apply_penalty(gen_tokens, scores):
-            score = np.take_along_axis(scores, gen_tokens, axis=1)
-            score = np.where(score < 0, score * repetition_penalty, score / repetition_penalty)
-            out = scores.copy()
-            np.put_along_axis(out, gen_tokens, score, axis=1)
-            return out
-        
-        gen_tokens = np.array([[self.START_SPEECH_TOKEN]], dtype=np.int64)
-        cond_emb = prompt_token = spk_emb = spk_feat = None
-        past_kv = attn_mask = pos_ids = None
-        
-        for i in range(max_new_tokens):
-            # Embed tokens
-            if self.model_type == "multilingual":
-                p_ids = np.where(input_ids >= self.START_SPEECH_TOKEN, 0,
-                                 np.arange(input_ids.shape[1])[np.newaxis, :] - 1).astype(np.int64)
-                embed_in = {"input_ids": input_ids, "position_ids": p_ids,
-                            "exaggeration": np.array([exaggeration], dtype=np.float32)}
-            else:
-                embed_in = {"input_ids": input_ids}
-            
-            embeds = self.embed_tokens.run(None, embed_in)[0]
-            
-            if i == 0:
-                enc_out = self.speech_encoder.run(None, {"audio_values": audio})
-                cond_emb, prompt_token, spk_emb, spk_feat = enc_out
-                embeds = np.concatenate((cond_emb, embeds), axis=1)
-                
-                bs, seq_len, _ = embeds.shape
-                past_kv = {f"past_key_values.{l}.{kv}": np.zeros([bs, self._num_kv_heads, 0, self._head_dim], dtype=self._kv_dtype)
-                           for l in range(self._num_layers) for kv in ("key", "value")}
-                attn_mask = np.ones((bs, seq_len), dtype=np.int64)
-                pos_ids = np.arange(seq_len, dtype=np.int64).reshape(1, -1).repeat(bs, axis=0)
-            
-            lm_in = {"inputs_embeds": embeds, "attention_mask": attn_mask, **past_kv}
-            if self.model_type == "turbo":
-                lm_in["position_ids"] = pos_ids
-            
-            lm_out = self.language_model.run(None, lm_in)
-            logits, present_kv = lm_out[0][:, -1, :], lm_out[1:]
-            
-            next_logits = apply_penalty(gen_tokens, logits)
-            if temperature != 1.0:
-                next_logits = next_logits / temperature
-            
-            next_tok = np.argmax(next_logits, axis=-1, keepdims=True).astype(np.int64)
-            gen_tokens = np.concatenate((gen_tokens, next_tok), axis=-1)
-            
-            if (next_tok.flatten() == self.STOP_SPEECH_TOKEN).all():
-                break
-            
-            input_ids = next_tok
-            attn_mask = np.concatenate([attn_mask, np.ones((bs, 1), dtype=np.int64)], axis=1)
-            if self.model_type == "turbo":
-                pos_ids = pos_ids[:, -1:] + 1
-            for j, key in enumerate(past_kv):
-                past_kv[key] = present_kv[j]
-        
-        speech_tokens = gen_tokens[:, 1:-1]
-        if self.model_type == "turbo":
-            silence = np.full((speech_tokens.shape[0], 3), self.SILENCE_TOKEN, dtype=np.int64)
-            speech_tokens = np.concatenate([prompt_token, speech_tokens, silence], axis=1)
-        else:
-            speech_tokens = np.concatenate([prompt_token, speech_tokens], axis=1)
-        
-        wav = self.cond_decoder.run(None, {
-            "speech_tokens": speech_tokens, "speaker_embeddings": spk_emb, "speaker_features": spk_feat
-        })[0]
-        return np.squeeze(wav, axis=0)
-    
-    def save_audio(self, audio, path):
-        import soundfile as sf
-        sf.write(str(path), audio, self.sr)
-    
-    @staticmethod
-    def get_supported_languages():
-        return CHATTERBOX_LANGUAGES.copy()
 
 # =============================================================================
 # FLASK / SOCKET.IO SETUP
@@ -1526,11 +1203,6 @@ def allow_patterns_for_repo(repo_id: str) -> Optional[List[str]]:
     if repo_id == Z_REPO:
         return ["model_index.json", "scheduler/**", "tokenizer/**", "text_encoder/**",
                 "transformer/**", "vae/**", "**/*.safetensors", "**/*.json", "**/*.bin"]
-    if repo_id == CHATTERBOX_REPO:
-        return ["**/*"]
-    if repo_id == CHATTERBOX_MULTILINGUAL_MODEL_ID:
-        # ONNX files for multilingual TTS + tokenizer files + default voice
-        return ["onnx/**", "*.json", "*.txt", "*.wav", "tokenizer/**"]
     if repo_id == LTX2_REPO:
         # Only download subfolders needed for quanto quantization
         # Skip root safetensors files (43GB+)
@@ -1582,17 +1254,6 @@ REPO_SPECS = {
         "must_tokenizers": ["tokenizer"],
         "must_weight_dirs": ["transformer", "vae", "text_encoder"],
         "extra_dirs": ["scheduler"],
-    },
-    "ResembleAI/chatterbox": {
-        "must_files": [], "must_tokenizers": [], "must_weight_dirs": [], "extra_dirs": [],
-    },
-    # Chatterbox Multilingual ONNX - check for ONNX model files
-    "onnx-community/chatterbox-multilingual-ONNX": {
-        "must_files": [],
-        "must_tokenizers": [],
-        "must_weight_dirs": [],
-        "extra_dirs": ["onnx"],
-        "onnx_files": ["speech_encoder.onnx", "embed_tokens.onnx", "language_model.onnx", "conditional_decoder.onnx"],
     },
     # LTX-2: Only download subfolders needed for quanto quantization
     # Skip root safetensors files (43GB+)
@@ -1707,7 +1368,7 @@ def _repo_completeness(repo_id: str) -> Dict[str, Any]:
         dp = root / d
         if not dp.exists() or not any(x.is_file() and _nonzero(x) for x in dp.rglob("*")):
             report["missing"].append(f"{d}/")
-    # Check for ONNX files (used by Chatterbox audio models)
+    # Check for ONNX files (if specified in model spec)
     for onnx_file in spec.get("onnx_files", []):
         # ONNX files are typically in the onnx subdirectory
         onnx_path = root / "onnx" / onnx_file
@@ -1834,7 +1495,8 @@ def _plan_for(pipeline: str) -> Dict[str, Any]:
     - image_turbo: FLUX Klein (fast generation, i2i)
     - image_quality: FLUX Krea (high quality)
     - image_advanced: Z turbo (advanced features)
-    - audio: Chatterbox TTS
+    - audio_turbo: Kokoro TTS
+    - audio_quality: Qwen3-TTS
     - video_fast: LTX2 GGUF (fast video)
     - vision: Qwen3 VL (image analysis)
     """
@@ -1851,8 +1513,6 @@ def _plan_for(pipeline: str) -> Dict[str, Any]:
         return {"repos_to_fetch": [Z_REPO], "single_files": [_sf(Z_GGUF_NAME, Z_GGUF_URL)]}
 
     # Audio pipelines
-    if pipeline in ("audio", "chatterbox"):
-        return {"repos_to_fetch": [CHATTERBOX_MULTILINGUAL_MODEL_ID], "single_files": []}
     # Kokoro TTS auto-downloads via KPipeline - always report as ready
     if pipeline in ("audio_turbo", "kokoro"):
         return {"repos_to_fetch": [], "single_files": []}
@@ -2588,6 +2248,59 @@ MEDIA_MIME_TYPES = {
 }
 
 
+def convert_wav_to_mp3(wav_path: str, bitrate: str = "128k") -> Optional[str]:
+    """
+    Convert a WAV file to MP3 using ffmpeg.
+    Returns the MP3 path on success, None on failure.
+
+    Args:
+        wav_path: Path to the WAV file
+        bitrate: MP3 bitrate (default 128k for good quality/size balance)
+
+    Returns:
+        Path to the MP3 file, or None if conversion failed
+    """
+    if not os.path.exists(wav_path):
+        logger.warning(f"[MP3] WAV file not found: {wav_path}")
+        return None
+
+    mp3_path = wav_path.rsplit(".", 1)[0] + ".mp3"
+
+    try:
+        ffmpeg_bin = get_ffmpeg_binary_path()
+        cmd = [
+            ffmpeg_bin, "-y",
+            "-i", wav_path,
+            "-codec:a", "libmp3lame",
+            "-b:a", bitrate,
+            "-ar", "44100",  # Standard sample rate
+            mp3_path
+        ]
+
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=60)
+
+        if result.returncode != 0:
+            logger.warning(f"[MP3] ffmpeg conversion failed: {result.stderr}")
+            return None
+
+        if os.path.exists(mp3_path):
+            logger.info(f"[MP3] Converted {wav_path} -> {mp3_path}")
+            return mp3_path
+        else:
+            logger.warning(f"[MP3] Output file not created: {mp3_path}")
+            return None
+
+    except FileNotFoundError:
+        logger.warning("[MP3] ffmpeg not available for MP3 conversion")
+        return None
+    except subprocess.TimeoutExpired:
+        logger.warning("[MP3] ffmpeg conversion timed out")
+        return None
+    except Exception as e:
+        logger.warning(f"[MP3] Conversion error: {e}")
+        return None
+
+
 @app.route("/media/stream", methods=["GET"])
 def stream_media():
     """
@@ -3313,106 +3026,6 @@ def image_quality_flux_krea():
         DeviceManager.free_memory()
 
 
-# =============================================================================
-# REST API: AUDIO GENERATION - CHATTERBOX
-# =============================================================================
-
-@app.route("/audio", methods=["POST"])
-@require_auth(min_level=LEVEL_REQUIREMENTS["audio"], allow_demo=True)
-def audio_multilingual():
-    '''Multilingual TTS with 23 languages and emotion control (ONNX).'''
-    data = request.get_json(silent=True) or {}
-
-    prompt = (data.get("prompt") or "").strip()
-    language = (data.get("language") or "en").strip().lower()
-    synthesis_b64 = (data.get("synthesis_base64") or "").strip()
-    synthesis_url = (data.get("synthesis_url") or "").strip()
-    exaggeration = float(data.get("exaggeration", 0.5))
-    max_tokens = int(data.get("max_tokens", 1024))
-    temperature = float(data.get("temperature", 1.0))
-    repetition_penalty = float(data.get("repetition_penalty", 1.2))
-    auto_dl = bool(data.get("auto_download", False))
-
-    if not prompt:
-        return jsonify({"error": "Missing 'prompt'"}), 400
-    if language not in CHATTERBOX_LANGUAGES:
-        return jsonify({
-            "error": f"Unsupported language '{language}'",
-            "supported": list(CHATTERBOX_LANGUAGES.keys())
-        }), 400
-
-    # Check if required files are present, otherwise trigger download UI
-    guard = _ensure_files_present_or_start("chatterbox", auto_download=auto_dl)
-    if guard:
-        return guard
-
-    gen_id = genbus.new("chatterbox_multilingual", {"endpoint": "/audio", "language": language})
-    local_dir = repo_local_dir(CHATTERBOX_MULTILINGUAL_MODEL_ID)
-
-    try:
-        gc.collect()
-        genbus.progress(gen_id, "loading", 0, 3)
-
-        # Use offline mode if pipeline is fully downloaded
-        with offline_mode_if_complete("chatterbox") as is_offline:
-            model = ChatterboxONNX.from_pretrained(
-                model_type="multilingual", device="cpu", local_dir=str(local_dir),
-                local_files_only=is_offline
-            )
-
-        temp_file = None
-        audio_path = None
-
-        if synthesis_url:
-            temp_file = str(FILES_DIR / f"_ref_{int(time.time())}.wav")
-            resp = requests.get(synthesis_url, timeout=30)
-            resp.raise_for_status()
-            with open(temp_file, "wb") as f:
-                f.write(resp.content)
-            audio_path = temp_file
-        elif synthesis_b64:
-            temp_file = str(FILES_DIR / f"_ref_{int(time.time())}.wav")
-            with open(temp_file, "wb") as f:
-                f.write(base64.b64decode(synthesis_b64))
-            audio_path = temp_file
-        else:
-            # Use default voice from local repo
-            audio_path = str(local_dir / "default_voice.wav")
-
-        genbus.progress(gen_id, "generating", 1, 3)
-
-        wav = model.generate(
-            text=prompt, audio_prompt_path=audio_path, language_id=language,
-            exaggeration=exaggeration, max_new_tokens=max_tokens,
-            temperature=temperature, repetition_penalty=repetition_penalty
-        )
-
-        genbus.progress(gen_id, "finalizing", 2, 3)
-
-        out_path = str(FILES_DIR / f"tts_{language}_{int(time.time())}.wav")
-        model.save_audio(wav, out_path)
-
-        if temp_file and os.path.exists(temp_file):
-            os.remove(temp_file)
-        del model, wav
-
-        genbus.progress(gen_id, "complete", 3, 3)
-        genbus.finish(gen_id, {"audio_path": out_path})
-        
-        return jsonify({
-            "ok": True, "audio_path": out_path, "model": "multilingual-onnx",
-            "language": language, "generation_id": gen_id,
-            "generation_websocket_url": generation_url(),
-        }), 201
-    
-    except Exception as e:
-        logger.exception("Multilingual TTS failed")
-        genbus.error(gen_id, str(e))
-        return jsonify({"error": str(e)}), 500
-    finally:
-        DeviceManager.free_memory()
-
-
 # ACE-Step v1.5 handler cache (DiT handler only; LLM optional for low-VRAM)
 _ace_step_dit = None  # Turbo model
 _ace_step_lock = threading.Lock()
@@ -3537,12 +3150,16 @@ def audio_turbo_kokoro():
             wav_file.setframerate(24000)  # Kokoro outputs at 24kHz
             wav_file.writeframes(audio_int16.tobytes())
 
-        genbus.finish(gen_id, {"audio_path": out_path})
-        logger.info(f"[Kokoro] Generated audio: {out_path}")
+        # Convert to MP3 for smaller file size (OpenClaw/WhatsApp compatibility)
+        mp3_path = convert_wav_to_mp3(out_path)
+
+        genbus.finish(gen_id, {"audio_path": out_path, "audio_path_mp3": mp3_path})
+        logger.info(f"[Kokoro] Generated audio: {out_path} (MP3: {mp3_path})")
 
         return jsonify({
             "ok": True,
             "audio_path": out_path,
+            "audio_path_mp3": mp3_path,
             "model": "kokoro",
             "voice": voice,
             "gender": KOKORO_VOICES[voice]["gender"],
@@ -3737,14 +3354,18 @@ def audio_quality_design():
             "created_at": time.time(),
         }
 
-        genbus.progress(gen_id, "complete", 3, 4)
-        genbus.finish(gen_id, {"audio_path": out_path, "voice_id": voice_id})
+        # Convert to MP3 for smaller file size (OpenClaw/WhatsApp compatibility)
+        mp3_path = convert_wav_to_mp3(out_path)
 
-        logger.info(f"[Qwen3-TTS] Voice designed: {out_path} (voice_id: {voice_id})")
+        genbus.progress(gen_id, "complete", 3, 4)
+        genbus.finish(gen_id, {"audio_path": out_path, "audio_path_mp3": mp3_path, "voice_id": voice_id})
+
+        logger.info(f"[Qwen3-TTS] Voice designed: {out_path} (MP3: {mp3_path}, voice_id: {voice_id})")
 
         return jsonify({
             "ok": True,
             "audio_path": out_path,
+            "audio_path_mp3": mp3_path,
             "voice_id": voice_id,
             "voice_prompt_cached": True,
             "model": "qwen3-tts-voicedesign",
@@ -3866,12 +3487,16 @@ def audio_quality_clone():
         import soundfile as sf
         sf.write(out_path, wavs[0], sr)
 
-        genbus.finish(gen_id, {"audio_path": out_path})
-        logger.info(f"[Qwen3-TTS] Voice cloned: {out_path}")
+        # Convert to MP3 for smaller file size (OpenClaw/WhatsApp compatibility)
+        mp3_path = convert_wav_to_mp3(out_path)
+
+        genbus.finish(gen_id, {"audio_path": out_path, "audio_path_mp3": mp3_path})
+        logger.info(f"[Qwen3-TTS] Voice cloned: {out_path} (MP3: {mp3_path})")
 
         return jsonify({
             "ok": True,
             "audio_path": out_path,
+            "audio_path_mp3": mp3_path,
             "voice_id": voice_id or None,
             "model": "qwen3-tts-base",
             "generation_id": gen_id,
@@ -4009,12 +3634,16 @@ def audio_quality_persona():
         import soundfile as sf
         sf.write(out_path, wavs[0], sr)
 
-        genbus.finish(gen_id, {"audio_path": out_path})
-        logger.info(f"[Qwen3-TTS] Persona speech: {out_path}")
+        # Convert to MP3 for smaller file size (OpenClaw/WhatsApp compatibility)
+        mp3_path = convert_wav_to_mp3(out_path)
+
+        genbus.finish(gen_id, {"audio_path": out_path, "audio_path_mp3": mp3_path})
+        logger.info(f"[Qwen3-TTS] Persona speech: {out_path} (MP3: {mp3_path})")
 
         return jsonify({
             "ok": True,
             "audio_path": out_path,
+            "audio_path_mp3": mp3_path,
             "voice_id": voice_id,
             "voice_designed": need_design,
             "model": "qwen3-tts-persona",
@@ -4313,11 +3942,17 @@ def audio_music():
             return jsonify({"error": err}), 500
 
         audio_path = result.audios[0].get("path", "")
-        genbus.finish(gen_id, {"audio_path": audio_path})
+
+        # Convert to MP3 for smaller file size (OpenClaw/WhatsApp compatibility)
+        # Use higher bitrate for music quality
+        mp3_path = convert_wav_to_mp3(audio_path, bitrate="192k")
+
+        genbus.finish(gen_id, {"audio_path": audio_path, "audio_path_mp3": mp3_path})
 
         return jsonify(_json_sanitize({
             "ok": True,
             "audio_path": audio_path,
+            "audio_path_mp3": mp3_path,
             "duration": duration,
             "seed": actual_seed,
             "semantic": semantic,
@@ -4336,13 +3971,6 @@ def audio_info():
     '''Audio model capabilities.'''
     return jsonify({
         "models": {
-            "multilingual": {
-                "name": "Chatterbox Multilingual (ONNX)",
-                "endpoint": "/audio",
-                "languages": CHATTERBOX_LANGUAGES,
-                "features": ["emotion_exaggeration", "voice_cloning", "23_languages"],
-                "requires_voice_reference": False,
-            },
             "turbo": {
                 "name": "Kokoro TTS",
                 "endpoint": "/audio/turbo",

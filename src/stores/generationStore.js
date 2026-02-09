@@ -92,7 +92,7 @@ const kindToModality = (kind) => {
   const k = kind.toLowerCase();
   if (k.includes('image') || k.includes('flux') || k.includes('sdxl')) return 'image';
   if (k.includes('video') || k.includes('wan') || k.includes('ltx') || k.includes('i2v')) return 'video';
-  if (k.includes('audio') || k.includes('music') || k.includes('voice') || k.includes('tts') || k.includes('chatterbox')) return 'audio';
+  if (k.includes('audio') || k.includes('music') || k.includes('voice') || k.includes('tts') || k.includes('kokoro') || k.includes('qwen3-tts')) return 'audio';
   if (k.includes('text') || k.includes('llm') || k.includes('chat')) return 'text';
   if (k.includes('3d') || k.includes('game') || k.includes('scene')) return '3d';
   return null;

@@ -22,6 +22,7 @@ import { download } from "electron-dl";
 import { unlink } from "node:fs";
 import child_process from "child_process";
 import http from "http";
+import crypto from "crypto";
 import { pipeline } from "stream/promises";
 import {
   getP2PNode,
@@ -29,6 +30,12 @@ import {
   stopP2PNode,
   PROTOCOLS as P2P_PROTOCOLS,
 } from "./services/libp2p.service.js";
+import {
+  createPaymentRequest,
+  validatePayment,
+  isSelfInference,
+  calculatePaymentAmount,
+} from "./services/x402.service.js";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Globals / paths
@@ -296,6 +303,8 @@ const startPythonSubprocess = async () => {
     LC_ALL: process.env.LC_ALL || "en_US.UTF-8",
     // Pass model directory to Flask server
     BONZAI_MODEL_DIR: MODEL_DIR,
+    // Pass JWT secret so tokens survive server restarts
+    BONZAI_JWT_SECRET: JWT_SECRET,
   };
 
   // Log detailed spawn info
@@ -303,6 +312,7 @@ const startPythonSubprocess = async () => {
   console.log(`[Spawn] Args: ${JSON.stringify(launch.args)}`);
   console.log(`[Spawn] CWD: ${launch.cwd}`);
   console.log(`[Spawn] TMPDIR: ${tmpDir}`);
+  console.log(`[Spawn] BONZAI_MODEL_DIR: ${MODEL_DIR}`);
   console.log(`[Spawn] Binary exists: ${fs.existsSync(launch.cmd)}`);
 
   // Check if binary is executable
@@ -533,6 +543,21 @@ if (process.platform === "win32") {
 // ─────────────────────────────────────────────────────────────────────────────
 const store = new Store();
 
+// ─────────────────────────────────────────────────────────────────────────────
+// JWT Secret - persisted so tokens survive server restarts
+// ─────────────────────────────────────────────────────────────────────────────
+function getOrCreateJwtSecret() {
+  let secret = store.get("jwtSecret");
+  if (!secret) {
+    secret = crypto.randomBytes(32).toString("hex");
+    store.set("jwtSecret", secret);
+    console.log("[Auth] Generated new JWT secret");
+  }
+  return secret;
+}
+
+const JWT_SECRET = getOrCreateJwtSecret();
+
 ipcMain.handle("store-get", (_event, key, def) => store.get(key, def));
 ipcMain.handle("store-set", (_event, key, value) => {
   store.set(key, value);
@@ -561,31 +586,78 @@ ipcMain.handle("p2p-start", async (_event, options = {}) => {
 
     // Register inference handler that routes to local servers
     const node = getP2PNode();
+    const localPeerId = node.getPeerId();
+
     node.onInferenceRequest(async (request, remotePeer) => {
       console.log(`[P2P] Inference request from ${remotePeer}:`, request.pipeline);
 
+      // Check if this is self-inference (consumer === provider)
+      // Self-inference is FREE - no payment required
+      if (isSelfInference(remotePeer, localPeerId)) {
+        console.log(`[P2P] Self-inference detected, processing for free`);
+        try {
+          const result = await routeInferenceRequest(request);
+          return { ok: true, result, selfInference: true };
+        } catch (err) {
+          return { ok: false, error: "inference_failed", detail: err.message };
+        }
+      }
+
+      // Get provider settings
+      const providerId = store.get("p2p.providerId", null);
+      const pricePerToken = store.get("p2p.pricePerToken", "100000"); // 0.0001 USDC default
+
       // Check if this is a paid request (x402)
       if (!request.payment) {
-        // Return 402 Payment Required
-        const providerId = store.get("p2p.providerId", null);
+        // Calculate required amount based on request
+        const requiredAmount = calculatePaymentAmount(request, pricePerToken);
+
+        // Return 402 Payment Required with x402 payment request
+        const paymentRequest = createPaymentRequest({
+          providerId,
+          amount: requiredAmount,
+          pipeline: request.pipeline,
+          chainId: 42161,
+        });
+
         return {
           ok: false,
           error: "payment_required",
-          payment: {
-            amount: store.get("p2p.pricePerToken", "100000"), // 0.0001 USDC default
-            providerId,
-            chainId: 42161, // Arbitrum
-            contract: store.get("p2p.networkContract", null),
-          },
+          status: 402,
+          payment: paymentRequest,
         };
       }
 
-      // TODO: Validate payment signature before processing
-      // For now, just route to local inference servers
+      // Validate the x402 payment signature
+      const validation = validatePayment(request.payment, {
+        expectedProviderId: providerId,
+        minAmount: calculatePaymentAmount(request, pricePerToken),
+        pipeline: request.pipeline,
+      });
 
+      if (!validation.valid) {
+        console.log(`[P2P] Payment validation failed: ${validation.error}`);
+        return {
+          ok: false,
+          error: "payment_invalid",
+          detail: validation.error,
+          status: 402,
+        };
+      }
+
+      console.log(`[P2P] Payment validated from ${validation.consumer}, amount: ${validation.amount}`);
+
+      // Payment valid - process the inference request
       try {
         const result = await routeInferenceRequest(request);
-        return { ok: true, result };
+        return {
+          ok: true,
+          result,
+          payment: {
+            consumer: validation.consumer,
+            amount: validation.amount,
+          },
+        };
       } catch (err) {
         return { ok: false, error: "inference_failed", detail: err.message };
       }
@@ -700,48 +772,111 @@ ipcMain.handle("p2p-health", async (_event, peerId) => {
 });
 
 /**
+ * Get local peer ID (for self-inference detection)
+ */
+ipcMain.handle("p2p-local-peer-id", async () => {
+  const node = getP2PNode();
+  if (!node.isStarted) {
+    return { ok: false, error: "Node not started" };
+  }
+  return { ok: true, peerId: node.getPeerId() };
+});
+
+/**
  * Route inference request to local servers (OpenClaw or Flask)
+ *
+ * Supports all pipelines from flagship.js MODEL_REQUIREMENTS:
+ * - LLM models (21 models) via OpenClaw on port 3002
+ * - Image/Audio/Video/3D/Vision via Flask on port 65000
+ *
  * @private
  */
 async function routeInferenceRequest(request) {
-  const { pipeline, params } = request;
+  const { pipeline, params, model } = request;
+
+  // OpenClaw port for LLM inference
+  const OPENCLAW_PORT = process.env.OPENCLAW_API_PORT || 3002;
+  // Flask port for diffusion/media inference
+  const FLASK_PORT = process.env.BONZAI_SERVER_PORT || 65000;
 
   // Determine which server to route to based on pipeline
-  const isLLMPipeline = pipeline.startsWith("llm_");
+  const isLLMPipeline = pipeline.startsWith("llm_") || pipeline === "llm";
   const baseUrl = isLLMPipeline
-    ? "http://127.0.0.1:3002"  // OpenClaw (node-llama-cpp)
-    : `http://127.0.0.1:${process.env.BONZAI_SERVER_PORT || 65000}`;  // Flask
+    ? `http://127.0.0.1:${OPENCLAW_PORT}`
+    : `http://127.0.0.1:${FLASK_PORT}`;
 
-  // Map pipeline to endpoint
+  // Map pipeline to endpoint and prepare params
   let endpoint;
+  let requestParams = { ...params };
+
   if (isLLMPipeline) {
+    // LLM inference via OpenClaw (OpenAI-compatible API)
     endpoint = "/v1/chat/completions";
-  } else if (pipeline.startsWith("image_")) {
-    endpoint = `/image/${pipeline.replace("image_", "")}`;
-  } else if (pipeline.startsWith("audio_")) {
-    endpoint = `/audio/${pipeline.replace("audio_", "")}`;
-  } else if (pipeline === "audio") {
-    endpoint = "/audio/tts";
-  } else if (pipeline === "music") {
-    endpoint = "/audio/music";
-  } else if (pipeline === "video_fast") {
-    endpoint = "/video";
-  } else if (pipeline === "vision") {
-    endpoint = "/vision/analyze";
+    // If a specific model was requested, include it
+    if (model) {
+      requestParams.model = model;
+    }
   } else {
-    throw new Error(`Unknown pipeline: ${pipeline}`);
+    // Map Flask pipelines to endpoints
+    switch (pipeline) {
+      // Image pipelines
+      case "image_turbo":
+        endpoint = "/image/turbo";
+        break;
+      case "image_quality":
+        endpoint = "/image/quality";
+        break;
+      case "image_standard":
+        endpoint = "/image/standard";
+        break;
+      case "image_advanced":
+        endpoint = "/image/advanced";
+        break;
+
+      // Audio pipelines
+      case "audio":
+        endpoint = "/audio/tts";
+        break;
+      case "audio_turbo":
+        endpoint = "/audio/turbo";
+        break;
+      case "audio_quality":
+        endpoint = "/audio/quality/persona";
+        break;
+
+      // Music pipeline (ACE-Step)
+      case "music":
+        endpoint = "/audio/music";
+        break;
+
+      // Video pipeline (LTX-2)
+      case "video_fast":
+        endpoint = "/video";
+        break;
+
+      // Vision pipeline (Qwen3-VL)
+      case "vision":
+      case "qwen3_vision":
+        endpoint = "/vision/analyze";
+        break;
+
+      default:
+        throw new Error(`Unknown pipeline: ${pipeline}`);
+    }
   }
+
+  console.log(`[P2P] Routing ${pipeline} to ${baseUrl}${endpoint}`);
 
   // Make the request
   const response = await fetch(`${baseUrl}${endpoint}`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(params),
+    body: JSON.stringify(requestParams),
   });
 
   if (!response.ok) {
     const error = await response.text();
-    throw new Error(`Inference failed: ${error}`);
+    throw new Error(`Inference failed (${response.status}): ${error}`);
   }
 
   return response.json();
@@ -1027,6 +1162,35 @@ ipcMain.handle("file-exists", (_event, filePath) => {
     return fs.existsSync(filePath);
   } catch {
     return false;
+  }
+});
+
+// Get home directory for file paths
+ipcMain.handle("get-home-dir", () => os.homedir());
+
+// Save base64 data to file (for OpenClaw/WhatsApp media delivery)
+ipcMain.handle("save-base64-to-file", async (_event, filePath, base64Data) => {
+  try {
+    // Ensure directory exists
+    const dir = path.dirname(filePath);
+    if (!fs.existsSync(dir)) {
+      fs.mkdirSync(dir, { recursive: true });
+    }
+
+    // Remove data URL prefix if present
+    let data = base64Data;
+    if (data.includes(",")) {
+      data = data.split(",")[1];
+    }
+
+    // Write base64 data as binary
+    const buffer = Buffer.from(data, "base64");
+    fs.writeFileSync(filePath, buffer);
+
+    return { success: true, path: filePath };
+  } catch (error) {
+    console.error("[save-base64-to-file] Error:", error);
+    return { success: false, error: error.message };
   }
 });
 
@@ -2245,10 +2409,12 @@ function forwardToRenderer(data) {
     }
 
     const requestId = ++webhookRequestId;
+    // 30 minute timeout for generation - video/music can take very long
+    // on slower hardware (especially first-time model downloads)
     const timeout = setTimeout(() => {
       pendingWebhookRequests.delete(requestId);
-      reject(new Error("Webhook request timed out"));
-    }, 120000); // 2 minute timeout for generation
+      reject(new Error("Webhook request timed out after 30 minutes"));
+    }, 30 * 60 * 1000);
 
     pendingWebhookRequests.set(requestId, {
       resolve: (result) => {
@@ -2365,6 +2531,65 @@ function startOpenClawAPIServer() {
         res.writeHead(503, { "Content-Type": "application/json" });
         res.end(JSON.stringify({ error: "Renderer not available" }));
       }
+      return;
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════
+    // Skills REST API (for OpenClaw skill discovery and execution)
+    // ═══════════════════════════════════════════════════════════════════════
+
+    if (req.method === "GET" && url.pathname === "/api/skills") {
+      try {
+        const category = url.searchParams.get("category");
+        const result = await forwardToRenderer({ type: "get-skills", category });
+        res.writeHead(200, { "Content-Type": "application/json" });
+        res.end(JSON.stringify(result || []));
+      } catch (error) {
+        res.writeHead(503, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ error: "Renderer not available", skills: [] }));
+      }
+      return;
+    }
+
+    if (req.method === "GET" && url.pathname.startsWith("/api/skills/")) {
+      const id = url.pathname.split("/")[3];
+      if (id && id !== "execute") {
+        try {
+          const result = await forwardToRenderer({ type: "get-skill", id });
+          if (result) {
+            res.writeHead(200, { "Content-Type": "application/json" });
+            res.end(JSON.stringify(result));
+          } else {
+            res.writeHead(404, { "Content-Type": "application/json" });
+            res.end(JSON.stringify({ error: "Skill not found" }));
+          }
+        } catch (error) {
+          res.writeHead(503, { "Content-Type": "application/json" });
+          res.end(JSON.stringify({ error: "Renderer not available" }));
+        }
+        return;
+      }
+    }
+
+    if (req.method === "POST" && url.pathname.match(/^\/api\/skills\/[^/]+\/execute$/)) {
+      const skillId = url.pathname.split("/")[3];
+      let body = "";
+      req.on("data", (chunk) => (body += chunk));
+      req.on("end", async () => {
+        try {
+          const inputs = JSON.parse(body || "{}");
+          const result = await forwardToRenderer({
+            type: "execute-skill",
+            skillId,
+            inputs,
+          });
+          res.writeHead(200, { "Content-Type": "application/json" });
+          res.end(JSON.stringify(result));
+        } catch (error) {
+          res.writeHead(500, { "Content-Type": "application/json" });
+          res.end(JSON.stringify({ error: error.message }));
+        }
+      });
       return;
     }
 
@@ -2683,8 +2908,15 @@ function startOpenClawAPIServer() {
     res.end(JSON.stringify({ error: "Not found" }));
   });
 
+  // Disable server timeouts for long-running generation requests
+  // Default Node.js timeout is 2 minutes which is not enough for video/music generation
+  openclawServer.timeout = 0; // No timeout
+  openclawServer.keepAliveTimeout = 0; // No keep-alive timeout
+  openclawServer.headersTimeout = 0; // No headers timeout
+
   openclawServer.listen(OPENCLAW_API_PORT, () => {
     console.log(`[OpenClaw API] Server running on http://localhost:${OPENCLAW_API_PORT}`);
+    console.log(`[OpenClaw API] Timeouts disabled for long-running generation requests`);
     console.log(`[OpenClaw API] Endpoints:`);
     console.log(`  GET  /v1/models            - List models (OpenAI-compatible)`);
     console.log(`  POST /v1/chat/completions  - Chat completions (OpenAI-compatible)`);

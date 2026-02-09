@@ -38,6 +38,11 @@ contextBridge.exposeInMainWorld("electronAPI", {
     ipcRenderer.invoke("agent-save-video", defaultName, sourcePath),
   // File existence check (for media validation)
   fileExists: (filePath) => ipcRenderer.invoke("file-exists", filePath),
+  // Get home directory for file paths
+  getHomeDir: () => ipcRenderer.invoke("get-home-dir"),
+  // Save base64 data to file (for OpenClaw/WhatsApp media delivery)
+  saveBase64ToFile: (filePath, base64Data) =>
+    ipcRenderer.invoke("save-base64-to-file", filePath, base64Data),
   // Fix history paths after MODEL_DIR migration
   fixHistoryPaths: (oldDir, newDir) => ipcRenderer.invoke("fix-history-paths", oldDir, newDir),
   // Open URL in default browser
@@ -127,6 +132,12 @@ contextBridge.exposeInMainWorld("electronAPI", {
    * @returns {Promise<{ok: boolean, pipelines?: string[], version?: string, error?: string}>}
    */
   p2pHealth: (peerId) => ipcRenderer.invoke("p2p-health", peerId),
+
+  /**
+   * Get local peer ID (for self-inference detection)
+   * @returns {Promise<{ok: boolean, peerId?: string, error?: string}>}
+   */
+  p2pLocalPeerId: () => ipcRenderer.invoke("p2p-local-peer-id"),
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
