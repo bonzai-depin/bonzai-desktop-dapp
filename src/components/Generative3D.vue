@@ -296,6 +296,40 @@
             </div>
           </div>
 
+          <!-- PAYOUT HISTORY -->
+          <div class="models__activity--payouts mt-5 pt-5 mb-5">
+            <div class="level">
+              <div class="level-left">
+                <div class="level-item">
+                  <h2 class="fira-sans-condensed-black-italic has-text-left mt-0">
+                    <span class="material-symbols-outlined is-size-1 mr-2">
+                      trophy
+                    </span>
+                    Payout History
+                  </h2>
+                </div>
+              </div>
+              <div class="level-right">
+                <div class="level-item">
+                  <button
+                    class="button is-info is-outlined is-medium"
+                    @click="requestOpenNetworkModal()"
+                    title="Configure Peer-to-Peer Network"
+                  >
+                    <span class="material-symbols-outlined">
+                      settings
+                    </span>
+                  </button>
+                </div>
+              </div>
+            </div>
+            <p>
+              Configure P2P mode to serve 3D Generation to peers and earn x402 USDC.
+            </p>
+          </div>
+
+          <hr class="mb-5" />
+
           <!-- GENERATION HISTORY HEADER -->
           <div class="level mb-4 mt-5" v-if="objectInferences.length > 0">
             <div class="level-left">
@@ -563,6 +597,7 @@ import {
 } from "vue";
 import ThreeViewer from "./ThreeViewer.vue";
 import AccessRequirements from "./AccessRequirements.vue";
+import { requestOpenNetworkModal } from "../services/level.service.js";
 import useClipboard from "vue-clipboard3";
 import axios from "axios";
 import { io } from "socket.io-client";
@@ -4572,6 +4607,8 @@ ${innerCode}`;
       isModelAvailable,
       downloadModel,
       deleteModel,
+      // Payout history
+      requestOpenNetworkModal,
     };
   },
 };

@@ -276,8 +276,21 @@ All media files are stored in `$MODEL_DIR/files/` and can be accessed directly.
 Load a specific LLM model on demand:
 
 - `!model <name>` - Load specific model
-- `!model` - Show current model
+- `!model` - Show current model and saved model
+- `!model restore` - Restore the model that was loaded before companion chat
 - `!models` - List all available models
+
+## Companion Chat Model Switching
+
+When you chat with a companion, BonzAI automatically:
+1. **Saves** your current model (e.g., Gemma)
+2. **Loads** MythoMax 13B (optimized for roleplay)
+3. **Keeps** MythoMax loaded during the companion session
+
+To restore your original model:
+- Use `!model restore` to switch back
+- Use `!reset` to clear chat history and restore model
+- Or use `!model <name>` to load any specific model
 
 ## Compact Models (< 4 GB)
 

@@ -33,6 +33,10 @@ import {
 import {
   getAuthHeaders,
   authFetch,
+  isAuthenticated,
+  refreshToken,
+  reAuthenticate,
+  authService,
 } from './auth.service.js';
 
 import {
@@ -100,6 +104,160 @@ async function saveBase64ImageToFile(base64Data, prefix = 'openclaw') {
   } catch (e) {
     console.error('[OpenClaw] Error saving image:', e);
     return null;
+  }
+}
+
+/**
+ * Ensure authentication token is valid before making Flask API calls.
+ * Proactively refreshes token if it's expired or about to expire.
+ * Returns true if authenticated (or demo mode available), false if auth failed.
+ */
+async function ensureValidAuth() {
+  // Check if we have an access token and it's still valid
+  if (isAuthenticated()) {
+    // Token exists and is not expired
+    const state = authService.state;
+    const now = Date.now();
+    const expiryBuffer = 2 * 60 * 1000; // 2 minutes buffer
+
+    // If token expires within 2 minutes, proactively refresh
+    if (state.tokenExpiry && now >= state.tokenExpiry - expiryBuffer) {
+      console.log('[OpenClaw] Token expiring soon, refreshing proactively...');
+      try {
+        await refreshToken();
+        console.log('[OpenClaw] Token refreshed successfully');
+        return true;
+      } catch (e) {
+        console.warn('[OpenClaw] Token refresh failed, trying re-authentication...');
+        try {
+          const success = await reAuthenticate();
+          if (success) {
+            console.log('[OpenClaw] Re-authentication successful');
+            return true;
+          }
+        } catch (reAuthError) {
+          console.warn('[OpenClaw] Re-authentication failed:', reAuthError.message);
+        }
+      }
+    }
+    return true;
+  }
+
+  // No valid token - try to refresh using stored refresh token
+  try {
+    await refreshToken();
+    console.log('[OpenClaw] Token refreshed from stored refresh token');
+    return true;
+  } catch (e) {
+    // Refresh failed - try re-authentication if signer is available
+    try {
+      const success = await reAuthenticate();
+      if (success) {
+        console.log('[OpenClaw] Re-authenticated successfully');
+        return true;
+      }
+    } catch (reAuthError) {
+      console.log('[OpenClaw] Re-authentication not available');
+    }
+  }
+
+  // No valid auth - will fall back to demo mode
+  console.log('[OpenClaw] No valid auth, will use demo mode');
+  return false;
+}
+
+// Roleplay LLM - MythoMax L2 13B for excellent creative roleplay
+const ROLEPLAY_LLM = {
+  modelKey: 'llm_mythomax_13b',
+  modelname: 'MythoMax L2 13B',
+  filename: 'mythomax-l2-13b.q4_k_m.gguf',
+  url: 'https://huggingface.co/TheBloke/MythoMax-L2-13B-GGUF/resolve/main/mythomax-l2-13b.Q4_K_M.gguf',
+};
+
+// Track the model before roleplay so we can restore it
+let preRoleplayModel = null;
+
+/**
+ * Load the roleplay LLM (MythoMax) and save the current model for later restoration.
+ */
+async function loadRoleplayLLM() {
+  if (!window.electronAPI?.loadModel) {
+    console.warn('[OpenClaw] loadModel not available');
+    return false;
+  }
+
+  // Check what's currently loaded
+  const modelInfo = await window.electronAPI.getModelInfo?.();
+  const currentlyLoaded = modelInfo?.modelName || networkSettings.currentModel;
+
+  // Save the current model so we can restore it later
+  if (currentlyLoaded && currentlyLoaded !== ROLEPLAY_LLM.modelname) {
+    preRoleplayModel = currentlyLoaded;
+    console.log(`[OpenClaw] Saving current model for restoration: ${preRoleplayModel}`);
+  }
+
+  // Check if MythoMax is already loaded
+  if (modelInfo?.modelName === ROLEPLAY_LLM.modelname) {
+    console.log('[OpenClaw] MythoMax already loaded');
+    return true;
+  }
+
+  // Load MythoMax for roleplay
+  console.log('[OpenClaw] Loading MythoMax for companion chat...');
+  try {
+    const loadResult = await window.electronAPI.loadModel(ROLEPLAY_LLM);
+    if (loadResult?.success) {
+      networkSettings.currentModel = ROLEPLAY_LLM.modelKey;
+      await saveNetworkSettings();
+      console.log('[OpenClaw] MythoMax loaded successfully');
+      return true;
+    } else {
+      console.error('[OpenClaw] Failed to load MythoMax:', loadResult?.error);
+      return false;
+    }
+  } catch (error) {
+    console.error('[OpenClaw] Error loading MythoMax:', error.message);
+    return false;
+  }
+}
+
+/**
+ * Restore the LLM that was loaded before roleplay.
+ */
+async function restorePreRoleplayLLM() {
+  if (!preRoleplayModel) {
+    console.log('[OpenClaw] No pre-roleplay model to restore');
+    return;
+  }
+
+  if (!window.electronAPI?.loadModel) {
+    console.warn('[OpenClaw] loadModel not available');
+    return;
+  }
+
+  console.log(`[OpenClaw] Restoring pre-roleplay model: ${preRoleplayModel}`);
+  try {
+    // Find the model config by name
+    const modelKey = Object.keys(MODEL_REQUIREMENTS).find(
+      key => MODEL_REQUIREMENTS[key]?.name === preRoleplayModel
+    );
+
+    if (modelKey && MODEL_REQUIREMENTS[modelKey]) {
+      const loadResult = await window.electronAPI.loadModel({
+        modelname: MODEL_REQUIREMENTS[modelKey].name,
+        filename: MODEL_REQUIREMENTS[modelKey].filename,
+        url: MODEL_REQUIREMENTS[modelKey].url,
+      });
+      if (loadResult?.success) {
+        networkSettings.currentModel = modelKey;
+        await saveNetworkSettings();
+        console.log(`[OpenClaw] Restored model: ${preRoleplayModel}`);
+      }
+    }
+  } catch (error) {
+    console.error('[OpenClaw] Error restoring model:', error.message);
+  } finally {
+    preRoleplayModel = null;
   }
 }
 
@@ -478,7 +636,10 @@ async function executeLocalInference(pipeline, params) {
   }
 
   // All other pipelines go through Flask
-  // Use authFetch for proper authentication with token refresh handling
+  // Proactively ensure auth token is valid before making the request
+  await ensureValidAuth();
+
+  // Get fresh auth headers after potential refresh
   const authHeaders = getAuthHeaders();
   const headers = {
     'Content-Type': 'application/json',
@@ -487,11 +648,14 @@ async function executeLocalInference(pipeline, params) {
   // If no auth token available, use demo mode header
   if (!authHeaders.Authorization) {
     headers['X-Demo-Mode'] = 'true';
+  } else {
+    // Add auth header to the request
+    headers['Authorization'] = authHeaders.Authorization;
   }
 
   // No timeout for local inference - generation can take a long time
   // especially for video, music, and high-quality images
-  console.log(`[OpenClaw] Calling Flask endpoint: ${pipelineInfo.endpoint}`);
+  console.log(`[OpenClaw] Calling Flask endpoint: ${pipelineInfo.endpoint} (auth: ${authHeaders.Authorization ? 'token' : 'demo'})`);
   const startTime = Date.now();
 
   const response = await authFetch(`${FLASK_URL}${pipelineInfo.endpoint}`, {
@@ -623,8 +787,9 @@ async function generateAudio(channelId, text, options = {}) {
   const pipeline = options.pipeline || 'audio_turbo';
   try {
     const params = {
-      text,
+      prompt: text,  // Flask expects 'prompt' field
       voice: options.voice || 'af_heart',
+      gender: options.gender || 'female',
       speed: options.speed || 1.0,
     };
     const result = await executeInference(channelId, pipeline, params);
@@ -921,7 +1086,7 @@ Use \`!network providers <pipeline>\` to find providers for a specific pipeline.
 \`!network stop\` - Stop P2P node
 \`!network providers [pipeline]\` - Discover providers
 \`!network use <local|auto|peerId>\` - Select provider
-\`!network mode [local|consumer|provider]\` - Set network mode
+\`!network mode [local|provider]\` - Set network mode
 \`!network pipelines\` - List available pipelines`,
       };
   }
@@ -1415,20 +1580,33 @@ async function handleCommand(channelId, cmd) {
       const modelName = cmd.args[0];
       if (!modelName) {
         const currentModel = networkSettings.currentModel || 'default';
+        const savedModel = preRoleplayModel || 'none';
         return {
           text: `**Current Model:** ${currentModel}
+**Saved Model:** ${savedModel}
 
-Usage: \`!model <model-name>\` to load a specific LLM
+Usage:
+- \`!model <model-name>\` - Load a specific LLM
+- \`!model restore\` - Restore the model before companion chat
 
 Available models:
 - \`llama_3_1_8b\` - Llama 3.1 8B
 - \`mistral_7b\` - Mistral 7B
 - \`deepseek_r1_7b\` - DeepSeek R1 7B
+- \`mythomax_13b\` - MythoMax 13B (roleplay)
 - \`qwen_coder_32b\` - Qwen Coder 32B
-- \`hermes_4_14b\` - Hermes 4 14B
 
 Use \`!models\` for full list.`,
         };
+      }
+
+      // Handle restore command
+      if (modelName.toLowerCase() === 'restore') {
+        if (!preRoleplayModel) {
+          return { text: 'No saved model to restore. Use companion chat first, then restore.' };
+        }
+        await restorePreRoleplayLLM();
+        return { text: `**Model Restored:** ${networkSettings.currentModel ? MODEL_REQUIREMENTS[networkSettings.currentModel]?.name : 'default'}` };
       }
 
       // Normalize model name
@@ -1440,11 +1618,12 @@ Use \`!models\` for full list.`,
         return { text: `Model not found: ${modelName}\n\nUse \`!models\` to see available models.` };
       }
 
-      // Load the model
+      // Load the model (also clears the saved pre-roleplay model)
       try {
         const loadResult = await window.electronAPI.loadModel(modelKey);
         if (loadResult.success) {
           networkSettings.currentModel = modelKey;
+          preRoleplayModel = null; // Clear saved model since user explicitly chose a new one
           await saveNetworkSettings();
           return { text: `**Model Loaded:** ${MODEL_REQUIREMENTS[modelKey].name}` };
         } else {
@@ -1550,7 +1729,9 @@ Usage: !settings <audio|images|video|music> <on|off>
         data.session.updatedAt = Date.now();
         await saveSessions();
       }
-      return { text: 'Conversation history cleared.' };
+      // Restore the model that was loaded before companion chat
+      await restorePreRoleplayLLM();
+      return { text: 'Conversation history cleared and model restored.' };
     }
 
     case 'status': {
@@ -1667,10 +1848,22 @@ async function handleChat(channelId, message) {
   context += `\nUser: ${message}\n${companion.name}:`;
 
   // Generate text response
+  const chatStartTime = Date.now();
+  console.log(`[OpenClaw] Starting chat with ${companion.name} (audio: ${mapping.settings.enableAudio}, image: ${mapping.settings.enableImage}, video: ${mapping.settings.enableVideo})`);
+
+  // Load MythoMax for roleplay (saves current model for later restoration)
+  const llmLoaded = await loadRoleplayLLM();
+  if (!llmLoaded) {
+    console.warn('[OpenClaw] Could not load MythoMax, using current model');
+  }
+
   let textResponse;
   try {
+    const llmStart = Date.now();
     textResponse = await generateText(channelId, `${systemPrompt}\n\n${context}`);
+    console.log(`[OpenClaw] LLM response in ${((Date.now() - llmStart) / 1000).toFixed(1)}s (using ${llmLoaded ? 'MythoMax' : 'current model'})`);
   } catch (error) {
+    console.error(`[OpenClaw] LLM failed: ${error.message}`);
     textResponse = `*${companion.name} smiles warmly* I'm here with you. What would you like to talk about?`;
   }
 
@@ -1698,54 +1891,81 @@ async function handleChat(channelId, message) {
     sessionKey,
   };
 
+  // Run media generation in PARALLEL for much faster response times
+  // Instead of text → audio → image → video sequentially (5-10+ min)
+  // We do text → [audio, image, video in parallel] (2-3 min)
+  const mediaPromises = [];
+
   // Generate audio if enabled
   if (mapping.settings.enableAudio) {
     const voice = companion.gender === 'female' ? 'af_heart' : 'am_adam';
-    const audioResult = await generateAudio(channelId, textResponse, { voice });
-    // Prefer MP3 for smaller file size (OpenClaw/WhatsApp compatibility)
-    const audioPath = audioResult?.audio_path_mp3 || audioResult?.audio_path;
-    if (audioPath) {
-      result.audioPath = audioPath;
-      assistantMessage.audio = audioPath;
-      console.log(`[OpenClaw] Chat audio saved: ${audioPath}`);
-    }
+    mediaPromises.push(
+      generateAudio(channelId, textResponse, { voice })
+        .then(audioResult => {
+          const audioPath = audioResult?.audio_path_mp3 || audioResult?.audio_path;
+          if (audioPath) {
+            result.audioPath = audioPath;
+            assistantMessage.audio = audioPath;
+            console.log(`[OpenClaw] Chat audio saved: ${audioPath}`);
+          }
+        })
+        .catch(err => console.error('[OpenClaw] Audio generation failed:', err.message))
+    );
   }
 
   // Generate image if enabled
   if (mapping.settings.enableImage) {
     const imagePrompt = `${companion.imagePromptBase || companion.appearance}, ${emotion} expression, ${scenario?.imagePromptBase || ''}, high quality`;
-    const imageResult = await generateImage(channelId, imagePrompt);
-    // Flask returns 'image' not 'image_base64'
-    const imageData = imageResult?.image || imageResult?.image_base64;
-    if (imageData) {
-      // Save image to file for OpenClaw/WhatsApp (they expect file paths, not base64)
-      const imagePath = await saveBase64ImageToFile(imageData, 'chat');
-      if (imagePath) {
-        result.imagePath = imagePath;
-        console.log(`[OpenClaw] Chat image saved to: ${imagePath}`);
-      } else {
-        // Fallback to base64 if file save failed
-        result.imageBase64 = imageData;
-      }
-      assistantMessage.image = imageData;
-      session.sceneState.lastImageAt = session.history.length - 1;
-    }
+    mediaPromises.push(
+      generateImage(channelId, imagePrompt)
+        .then(async imageResult => {
+          const imageData = imageResult?.image || imageResult?.image_base64;
+          if (imageData) {
+            const imagePath = await saveBase64ImageToFile(imageData, 'chat');
+            if (imagePath) {
+              result.imagePath = imagePath;
+              console.log(`[OpenClaw] Chat image saved to: ${imagePath}`);
+            } else {
+              result.imageBase64 = imageData;
+            }
+            assistantMessage.image = imageData;
+            session.sceneState.lastImageAt = session.history.length - 1;
+          }
+        })
+        .catch(err => console.error('[OpenClaw] Image generation failed:', err.message))
+    );
   }
 
-  // Generate video if enabled (less frequent)
+  // Generate video if enabled (less frequent - every 5 messages)
   if (mapping.settings.enableVideo && session.history.length % 5 === 0) {
     const videoPrompt = `${companion.appearance}, ${emotion}, ${scenario?.setting || ''}, cinematic`;
-    const videoResult = await generateVideo(channelId, videoPrompt);
-    if (videoResult?.video_path) {
-      result.videoPath = videoResult.video_path;
-      assistantMessage.video = videoResult.video_path;
-      console.log(`[OpenClaw] Chat video saved: ${videoResult.video_path}`);
-    }
+    mediaPromises.push(
+      generateVideo(channelId, videoPrompt)
+        .then(videoResult => {
+          if (videoResult?.video_path) {
+            result.videoPath = videoResult.video_path;
+            assistantMessage.video = videoResult.video_path;
+            console.log(`[OpenClaw] Chat video saved: ${videoResult.video_path}`);
+          }
+        })
+        .catch(err => console.error('[OpenClaw] Video generation failed:', err.message))
+    );
+  }
+
+  // Wait for all media generation to complete in parallel
+  if (mediaPromises.length > 0) {
+    const mediaStart = Date.now();
+    console.log(`[OpenClaw] Running ${mediaPromises.length} media generation(s) in parallel...`);
+    await Promise.all(mediaPromises);
+    console.log(`[OpenClaw] All media generation complete in ${((Date.now() - mediaStart) / 1000).toFixed(1)}s`);
   }
 
   // Persist
   await saveSessions();
   await saveChannelMappings();
+
+  const totalTime = ((Date.now() - chatStartTime) / 1000).toFixed(1);
+  console.log(`[OpenClaw] Chat complete in ${totalTime}s (text: ${result.text?.length || 0} chars, audio: ${result.audioPath ? 'yes' : 'no'}, image: ${result.imagePath ? 'yes' : 'no'})`);
 
   return result;
 }

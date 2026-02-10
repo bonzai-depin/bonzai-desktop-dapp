@@ -142,23 +142,27 @@ Common channels:
 - **Networks**: Ethereum Mainnet + Arbitrum One
 - **Wallet**: Reown AppKit (@reown/appkit) with MetaMask, Coinbase, Trust, Rabby
 - **Token**: BONZAI (ERC-20) on both chains
-- **Level System**: 6 tiers requiring BONZAI token holdings:
-  - LVL1 (1K): Text Generation
-  - LVL2 (5K): Audio Generation
-  - LVL3 (10K): Image Generation
-  - LVL4 (25K): Video Generation
-  - LVL5 (33K): Game Generation
-  - LVL6 (50K): Model Training
-- **Alternative**: 1 ETH one-time payment unlocks all levels
+- **Level System**: All features require BONZAI token holdings for access
+  - LVL1 (1K BONZAI): Text/LLM generation
+  - LVL2 (5K BONZAI): Audio generation (TTS, voice clone, music)
+  - LVL3 (10K BONZAI): Image generation, Vision analysis
+  - LVL4 (25K BONZAI): Video generation, Premium agents (Roleplay Companion)
+  - LVL5 (33K BONZAI): 3D generation, Expert agents
+  - LVL6 (50K BONZAI): Model Training (LLM finetune, LoRA)
+  - **Alternative**: 1 ETH one-time payment unlocks all levels
+  - **Demo Mode**: Limited free trials available for most endpoints
 
 ## P2P Distributed Inference
 
 BonzAI supports peer-to-peer inference via libp2p with x402 USDC payments.
 
+### Network Modes
+- **Local**: Run inference locally on your machine (default, FREE)
+- **Provider**: Share your GPU with the network and earn USDC
+
 ### Architecture
 - **Provider Registry**: Smart contract on Arbitrum for provider registration
 - **Payment Contract**: USDC payments with EIP-712 signatures
-- **Self-inference**: FREE when consumer === provider
 - **Platform Fee**: 2.5% on paid inference
 
 ### Pipeline Categories (for P2P)
@@ -221,7 +225,13 @@ BonzAI includes a companion roleplay system with pre-defined characters.
 - **Companions**: Defined in `src/skills/flagship.js` (`DEFAULT_COMPANIONS`)
 - **Scenarios**: Location-based roleplay settings
 - **UI**: `src/components/skills/RoleplayChat.vue`
-- **Features**: Voice generation, image generation, memory persistence
+- **Features**:
+  - Voice generation (Qwen TTS)
+  - Image generation with enhanced LLM-based prompts (GLM Flash primary, Llama fallback)
+  - Video generation (LTX-2)
+  - Memory persistence across sessions
+  - User appearance description for consistent image generation in intimate scenes
+  - Content levels: PG, PG-13, Mature, Adult
 
 ## Video Generation
 

@@ -1085,6 +1085,64 @@ ipcMain.handle("select-model-dir", async () => {
         console.warn(`[Model Dir] Failed to update ${key}:`, e.message);
       }
     }
+
+    // Also update roleplaySessions (companion chat history)
+    try {
+      const roleplaySessions = store.get("roleplaySessions", {});
+      if (roleplaySessions && typeof roleplaySessions === "object") {
+        let updated = false;
+        const pathFields = ["image", "audio", "video", "backgroundImage"];
+
+        const updatePath = (obj, field) => {
+          if (obj[field] && typeof obj[field] === "string" && obj[field].startsWith(oldDirNormalized)) {
+            obj[field] = obj[field].replace(oldDirNormalized, newDirNormalized);
+            return true;
+          }
+          return false;
+        };
+
+        for (const sessionKey in roleplaySessions) {
+          const session = roleplaySessions[sessionKey];
+          if (!session) continue;
+
+          // Update companion.image
+          if (session.companion) {
+            if (updatePath(session.companion, "image")) updated = true;
+          }
+
+          // Update scenario.image
+          if (session.scenario) {
+            if (updatePath(session.scenario, "image")) updated = true;
+          }
+
+          // Update session backgroundImage
+          if (updatePath(session, "backgroundImage")) updated = true;
+
+          // Update history messages
+          if (Array.isArray(session.history)) {
+            for (const msg of session.history) {
+              for (const field of pathFields) {
+                if (updatePath(msg, field)) updated = true;
+              }
+            }
+          }
+
+          // Update backgroundHistory
+          if (Array.isArray(session.backgroundHistory)) {
+            for (const entry of session.backgroundHistory) {
+              if (updatePath(entry, "image")) updated = true;
+            }
+          }
+        }
+
+        if (updated) {
+          store.set("roleplaySessions", roleplaySessions);
+          console.log(`[Model Dir] Updated paths in roleplaySessions`);
+        }
+      }
+    } catch (e) {
+      console.warn(`[Model Dir] Failed to update roleplaySessions:`, e.message);
+    }
   } catch (e) {
     console.error("[Model Dir] Migration failed:", e);
     notifyMigrationProgress({ phase: "error", pct: 0, detail: e.message });
@@ -1151,6 +1209,65 @@ ipcMain.handle("fix-history-paths", (_event, oldDir, newDir) => {
     } catch (e) {
       console.warn(`[Fix Paths] Failed to update ${key}:`, e.message);
     }
+  }
+
+  // Also update roleplaySessions (companion chat history)
+  try {
+    const roleplaySessions = store.get("roleplaySessions", {});
+    if (roleplaySessions && typeof roleplaySessions === "object") {
+      let updated = false;
+      const pathFields = ["image", "audio", "video", "backgroundImage"];
+
+      const updatePath = (obj, field) => {
+        if (obj[field] && typeof obj[field] === "string" && obj[field].startsWith(oldDirNormalized)) {
+          obj[field] = obj[field].replace(oldDirNormalized, newDirNormalized);
+          totalUpdated++;
+          return true;
+        }
+        return false;
+      };
+
+      for (const sessionKey in roleplaySessions) {
+        const session = roleplaySessions[sessionKey];
+        if (!session) continue;
+
+        // Update companion.image
+        if (session.companion) {
+          if (updatePath(session.companion, "image")) updated = true;
+        }
+
+        // Update scenario.image
+        if (session.scenario) {
+          if (updatePath(session.scenario, "image")) updated = true;
+        }
+
+        // Update session backgroundImage
+        if (updatePath(session, "backgroundImage")) updated = true;
+
+        // Update history messages
+        if (Array.isArray(session.history)) {
+          for (const msg of session.history) {
+            for (const field of pathFields) {
+              if (updatePath(msg, field)) updated = true;
+            }
+          }
+        }
+
+        // Update backgroundHistory
+        if (Array.isArray(session.backgroundHistory)) {
+          for (const entry of session.backgroundHistory) {
+            if (updatePath(entry, "image")) updated = true;
+          }
+        }
+      }
+
+      if (updated) {
+        store.set("roleplaySessions", roleplaySessions);
+        console.log(`[Fix Paths] Updated paths in roleplaySessions`);
+      }
+    }
+  } catch (e) {
+    console.warn(`[Fix Paths] Failed to update roleplaySessions:`, e.message);
   }
 
   return { success: true, updatedPaths: totalUpdated };
@@ -1577,7 +1694,7 @@ const createWindow = async () => {
     y: 0,
     show: false, // Don't show until ready to prevent resize flicker
     title: appTitle,
-    resizable: false, // Prevent corner drag resize
+    resizable: true, // Allow window to be resized freely
     maximizable: true, // Allow maximize button / double-click title bar
     minimizable: true, // Allow minimize to dock
     fullscreenable: true, // Allow green button fullscreen on macOS

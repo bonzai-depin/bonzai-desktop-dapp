@@ -135,8 +135,19 @@
                     </span>
                     <span
                       class="tag is-warning is-medium fira-sans-condensed-black-italic"
+                      :title="'Requires: ' + getSkillContentIcons(skill.id).join(', ')"
                     >
-                      {{ getRequiredLevel(skill) }} REQUIRED
+                      {{ getRequiredLevel(skill) }}
+                      <template v-if="getSkillContentIcons(skill.id).length > 0">
+                        <span
+                          v-for="icon in getSkillContentIcons(skill.id)"
+                          :key="icon"
+                          class="material-symbols-outlined ml-1"
+                          style="font-size: 18px"
+                        >
+                          {{ icon }}
+                        </span>
+                      </template>
                     </span>
                     <span
                       v-if="skill.author?.verified"
@@ -182,6 +193,16 @@
                           lock_open
                         </span>
                         UNLOCK {{ getRequiredLevel(skill) }}
+                        <template v-if="getSkillContentIcons(skill.id).length > 0">
+                          <span
+                            v-for="icon in getSkillContentIcons(skill.id)"
+                            :key="icon"
+                            class="material-symbols-outlined ml-1"
+                            style="font-size: 20px"
+                          >
+                            {{ icon }}
+                          </span>
+                        </template>
                       </button>
                     </template>
                   </div>
@@ -1122,7 +1143,54 @@ import MeditationForgeSkill from "./skills/MeditationForgeSkill.vue";
 import {
   getSkillModelRequirements,
   MODEL_REQUIREMENTS,
+  SKILL_MODEL_REQUIREMENTS,
 } from "../skills/flagship.js";
+
+// Map model type keys to content icons (matches nav menu icons)
+// Ordered by level: LVL1=chat, LVL2=headphones, LVL3=image, LVL4=movie, LVL5=3d_rotation, LVL6=exercise
+const MODEL_TYPE_TO_ICON = {
+  llm: 'chat',
+  image: 'image',
+  audio: 'headphones',
+  video: 'movie',
+  music: 'music_note',
+  vision: 'visibility',
+  training: 'exercise',
+  '3d': '3d_rotation',
+};
+
+// Icon order by level (LVL1 to LVL6)
+const ICON_LEVEL_ORDER = ['chat', 'headphones', 'image', 'movie', '3d_rotation', 'exercise'];
+
+/**
+ * Get unique content type icons for a skill based on its model requirements
+ * Returns icons ordered by their corresponding level (LVL1 first, LVL6 last)
+ * Always includes 'chat' icon since all skills require LLM (LVL1)
+ */
+function getSkillContentIcons(skillId) {
+  const modelKeys = SKILL_MODEL_REQUIREMENTS[skillId] || [];
+  const icons = new Set();
+
+  // Always include chat icon (LVL1) since all skills require LLM
+  icons.add('chat');
+
+  for (const key of modelKeys) {
+    // Extract the base type from keys like 'llm_llama_3_1_8b', 'image_turbo', 'audio_quality', etc.
+    const baseType = key.split('_')[0];
+    const icon = MODEL_TYPE_TO_ICON[baseType];
+    if (icon) {
+      icons.add(icon);
+    }
+  }
+
+  // Sort icons by their level order
+  return Array.from(icons).sort((a, b) => {
+    const orderA = ICON_LEVEL_ORDER.indexOf(a);
+    const orderB = ICON_LEVEL_ORDER.indexOf(b);
+    // Icons not in order list go to the end
+    return (orderA === -1 ? 999 : orderA) - (orderB === -1 ? 999 : orderB);
+  });
+}
 
 const API_BASE =
   (typeof process !== "undefined" && process.env?.VITE_API_BASE) ||
@@ -3048,6 +3116,7 @@ Provide a concise analysis covering:
       accessibleSkills,
       canRunSkill,
       getRequiredLevel,
+      getSkillContentIcons,
       openUnlockModal,
       refreshSkills,
       runSkill,

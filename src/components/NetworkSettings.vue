@@ -1,6 +1,12 @@
 <template>
   <div class="models__activity--payouts">
-    <div class="panel">
+    <!-- Loading State -->
+    <div v-if="isLoadingSettings" class="loading-container">
+      <div class="loading-spinner"></div>
+      <p class="loading-text">Loading network settings...</p>
+    </div>
+
+    <div v-else class="panel">
       <!-- Network Mode Selector -->
       <div class="network-mode-section">
         <h2 class="section-title fira-sans-condensed-black-italic">
@@ -16,10 +22,13 @@
             name="networkMode"
           />
           <label for="mode_local" class="radio mr-3">
-            <span class="material-symbols-outlined" style="font-size: 32px !important">
+            <span
+              class="material-symbols-outlined"
+              style="font-size: 32px !important"
+            >
               wifi_off
             </span>
-            Local Only
+            Local
           </label>
 
           <input
@@ -30,7 +39,10 @@
             name="networkMode"
           />
           <label for="mode_consumer" class="radio mr-3">
-            <span class="material-symbols-outlined" style="font-size: 32px !important">
+            <span
+              class="material-symbols-outlined"
+              style="font-size: 32px !important"
+            >
               cloud_download
             </span>
             Consumer
@@ -44,28 +56,168 @@
             name="networkMode"
           />
           <label for="mode_provider" class="radio mr-3">
-            <span class="material-symbols-outlined" style="font-size: 32px !important">
+            <span
+              class="material-symbols-outlined"
+              style="font-size: 32px !important"
+            >
               cloud_upload
             </span>
             Provider
           </label>
         </div>
+
+        <!-- Mode Descriptions -->
+        <div class="mode-description mb-5">
+          <div v-if="networkMode === 'local'" class="description-card">
+            <span class="material-symbols-outlined">info</span>
+            <div>
+              <strong>Local Mode</strong>
+              <p>
+                All generation runs on your device. Fully offline, maximum
+                privacy.
+              </p>
+            </div>
+          </div>
+          <div
+            v-else-if="networkMode === 'consumer'"
+            class="description-card consumer"
+          >
+            <span class="material-symbols-outlined">info</span>
+            <div>
+              <strong>Consumer Mode</strong>
+              <p>
+                All generation requests are offloaded to remote BonzAI
+                providers. Pay for completed requests with USDC.
+              </p>
+            </div>
+          </div>
+          <div
+            v-else-if="networkMode === 'provider'"
+            class="description-card provider"
+          >
+            <span class="material-symbols-outlined">info</span>
+            <div>
+              <strong>Provider Mode</strong>
+              <p>
+                Run generation locally and serve remote requests from other
+                users. Earn USDC for each completed request.
+              </p>
+            </div>
+          </div>
+        </div>
       </div>
 
-      <hr />
+      <!-- Consumer Mode: Provider Selection -->
+      <div class="consumer-section mt-5" v-if="networkMode === 'consumer'">
+        <h2 class="section-title fira-sans-condensed-black-italic">
+          Remote Providers
+        </h2>
+
+        <div class="provider-list">
+          <div v-if="availableProviders.length === 0" class="no-providers">
+            <span class="material-symbols-outlined">search_off</span>
+            <p>
+              No providers found in the registry. Check back later or switch to
+              Local mode.
+            </p>
+            <hr />
+            <button
+              class="button is-info is-medium mt-3"
+              @click="refreshProviders"
+              :disabled="isRefreshingProviders"
+            >
+              <span
+                class="material-symbols-outlined mr-2 is-size-3"
+                :class="{ spinning: isRefreshingProviders }"
+              >
+                refresh
+              </span>
+              Refresh
+            </button>
+          </div>
+
+          <div v-else class="provider-cards">
+            <div
+              v-for="provider in availableProviders"
+              :key="provider.peerId"
+              class="provider-card"
+              :class="{
+                selected: selectedProvider?.peerId === provider.peerId,
+              }"
+              @click="selectProvider(provider)"
+            >
+              <div class="provider-header">
+                <span class="material-symbols-outlined provider-icon">dns</span>
+                <div class="provider-info">
+                  <span class="provider-id">
+                    {{ truncateId(provider.peerId) }}
+                  </span>
+                  <span
+                    class="provider-status"
+                    :class="{ online: provider.online }"
+                  >
+                    {{ provider.online ? "Online" : "Offline" }}
+                  </span>
+                </div>
+              </div>
+              <div class="provider-pricing">
+                <div class="price-row" v-if="provider.pricing?.llm">
+                  <span>LLM:</span>
+                  <span>${{ provider.pricing.llm }}/1K tokens</span>
+                </div>
+                <div class="price-row" v-if="provider.pricing?.image">
+                  <span>Image:</span>
+                  <span>${{ provider.pricing.image }}/image</span>
+                </div>
+                <div class="price-row" v-if="provider.pricing?.video">
+                  <span>Video:</span>
+                  <span>${{ provider.pricing.video }}/sec</span>
+                </div>
+              </div>
+              <div class="provider-pipelines" v-if="provider.pipelines?.length">
+                <span
+                  v-for="p in provider.pipelines.slice(0, 4)"
+                  :key="p"
+                  class="pipeline-tag"
+                >
+                  {{ p }}
+                </span>
+                <span v-if="provider.pipelines.length > 4" class="more-tag">
+                  +{{ provider.pipelines.length - 4 }}
+                </span>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="selected-provider-info mt-4" v-if="selectedProvider">
+          <div class="notification is-success is-light">
+            <span class="material-symbols-outlined mr-2">check_circle</span>
+            Connected to
+            <strong>{{ truncateId(selectedProvider.peerId) }}</strong>
+            . Inference requests will be routed to this provider.
+          </div>
+        </div>
+      </div>
 
       <!-- P2P Status Panel -->
-      <div class="status-section mt-5" v-if="networkMode !== 'local'">
+      <div class="status-section mt-5" v-if="networkMode === 'provider'">
         <h2 class="section-title fira-sans-condensed-black-italic">
           Node Status
         </h2>
 
-        <div class="status-panel mt-5 mb-5" :class="{ online: p2pStatus.started, offline: !p2pStatus.started }">
+        <div
+          class="status-panel mt-5 mb-5"
+          :class="{ online: p2pStatus.started, offline: !p2pStatus.started }"
+        >
           <div class="status-row">
             <span class="status-label">Status</span>
             <span class="status-value">
-              <span class="status-indicator" :class="{ online: p2pStatus.started }"></span>
-              {{ p2pStatus.started ? 'Online' : 'Offline' }}
+              <span
+                class="status-indicator"
+                :class="{ online: p2pStatus.started }"
+              ></span>
+              {{ p2pStatus.started ? "Online" : "Offline" }}
             </span>
           </div>
           <hr />
@@ -74,34 +226,50 @@
               <span class="status-label">Peer ID</span>
               <span class="status-value peer-id" @click="copyPeerId">
                 {{ truncatedPeerId }}
-                <span class="material-symbols-outlined copy-icon">content_copy</span>
+                <span class="material-symbols-outlined copy-icon">
+                  content_copy
+                </span>
               </span>
             </div>
-<hr />
+            <hr />
             <div class="status-row">
               <span class="status-label">Connected Peers</span>
-              <span class="status-value">{{ p2pStatus.connectedPeers || 0 }}</span>
+              <span class="status-value">
+                {{ p2pStatus.connectedPeers || 0 }}
+              </span>
             </div>
-<hr />
+            <hr />
             <div class="status-row">
               <span class="status-label">NAT Status</span>
               <span class="status-value" :class="natStatusClass">
                 <span class="material-symbols-outlined mr-1">
-                  {{ p2pStatus.natStatus === 'public' ? 'public' : p2pStatus.natStatus === 'relayed' ? 'sync_alt' : 'help' }}
+                  {{
+                    p2pStatus.natStatus === "public"
+                      ? "public"
+                      : p2pStatus.natStatus === "relayed"
+                        ? "sync_alt"
+                        : "help"
+                  }}
                 </span>
                 {{ formatNatStatus(p2pStatus.natStatus) }}
               </span>
             </div>
-<hr />
+            <hr />
             <div class="status-row" v-if="p2pStatus.isUsingRelay">
               <span class="status-label">Relay Connections</span>
-              <span class="status-value">{{ p2pStatus.relayConnections || 0 }}</span>
+              <span class="status-value">
+                {{ p2pStatus.relayConnections || 0 }}
+              </span>
             </div>
 
             <div class="multiaddrs" v-if="p2pStatus.multiaddrs?.length">
               <span class="status-label">Listening Addresses</span>
               <div class="addr-list">
-                <code v-for="addr in p2pStatus.multiaddrs.slice(0, 3)" :key="addr" class="addr">
+                <code
+                  v-for="addr in p2pStatus.multiaddrs.slice(0, 3)"
+                  :key="addr"
+                  class="addr"
+                >
                   {{ addr }}
                 </code>
                 <span v-if="p2pStatus.multiaddrs.length > 3" class="more-addrs">
@@ -122,7 +290,7 @@
           >
             <span v-if="isStarting" class="loader mr-2"></span>
             <span class="material-symbols-outlined mr-2">play_arrow</span>
-            {{ isStarting ? 'Starting...' : 'Start Node' }}
+            {{ isStarting ? "Starting..." : "Start Node" }}
           </button>
 
           <button
@@ -133,7 +301,7 @@
           >
             <span v-if="isStopping" class="loader mr-2"></span>
             <span class="material-symbols-outlined mr-2">stop</span>
-            {{ isStopping ? 'Stopping...' : 'Stop Node' }}
+            {{ isStopping ? "Stopping..." : "Stop Node" }}
           </button>
 
           <button
@@ -141,15 +309,21 @@
             @click="refreshStatus"
             :disabled="isRefreshing"
           >
-            <span class="material-symbols-outlined" :class="{ spinning: isRefreshing }">refresh</span>
+            <span
+              class="material-symbols-outlined"
+              :class="{ spinning: isRefreshing }"
+            >
+              refresh
+            </span>
           </button>
         </div>
       </div>
 
-      <hr />
-
       <!-- Provider Settings (when in provider mode) -->
-      <div class="provider-section mt-5" v-if="networkMode === 'provider' && p2pStatus.started">
+      <div
+        class="provider-section mt-5"
+        v-if="networkMode === 'provider' && p2pStatus.started"
+      >
         <h2 class="section-title fira-sans-condensed-black-italic">
           Pipeline Pricing (USDC)
         </h2>
@@ -286,7 +460,9 @@
               />
               <span class="pricing-unit">/ message</span>
             </div>
-            <span class="pricing-note">Includes LLM + optional audio/image</span>
+            <span class="pricing-note">
+              Includes LLM + optional audio/image
+            </span>
           </div>
         </div>
 
@@ -303,11 +479,15 @@
           </label>
           <div class="relay-toggle">
             <label class="toggle">
-              <input type="checkbox" v-model="enableRelay" :disabled="p2pStatus.natStatus !== 'public'" />
+              <input
+                type="checkbox"
+                v-model="enableRelay"
+                :disabled="p2pStatus.natStatus !== 'public'"
+              />
               <span class="toggle-slider"></span>
             </label>
             <span class="toggle-label">
-              {{ enableRelay ? 'Enabled' : 'Disabled' }}
+              {{ enableRelay ? "Enabled" : "Disabled" }}
               <span v-if="p2pStatus.natStatus !== 'public'" class="toggle-note">
                 (Requires public IP)
               </span>
@@ -329,11 +509,11 @@
             max="10"
             placeholder="5"
           />
-          <span class="setting-hint">Earn {{ relayFee }}% of relayed inference fees</span>
+          <span class="setting-hint">
+            Earn {{ relayFee }}% of relayed inference fees
+          </span>
         </div>
       </div>
-
-      <hr />
 
       <!-- Self-Test (Local Inference Routing) -->
       <div class="test-section mt-5">
@@ -342,7 +522,6 @@
         </h2>
 
         <div class="test-panel">
-          
           <button
             class="button is-success is-medium"
             @click="runSelfTest"
@@ -350,74 +529,137 @@
           >
             <span v-if="isSelfTesting" class="loader mr-2"></span>
             <span class="material-symbols-outlined mr-2">monitor_heart</span>
-            {{ isSelfTesting ? 'Testing...' : 'Run' }}
+            {{ isSelfTesting ? "Testing..." : "Run" }}
           </button>
 
           <div v-if="selfTestResults" class="self-test-results mt-4">
             <!-- Flask Server (Diffusion) -->
-            <div class="test-result-row" :class="{ success: selfTestResults.flask?.ok, error: !selfTestResults.flask?.ok }">
+            <div
+              class="test-result-row"
+              :class="{
+                success: selfTestResults.flask?.ok,
+                error: !selfTestResults.flask?.ok,
+              }"
+            >
               <span
                 class="material-symbols-outlined mr-2 test-icon"
-                :class="selfTestResults.flask?.ok ? 'icon-success' : 'icon-error'"
+                :class="
+                  selfTestResults.flask?.ok ? 'icon-success' : 'icon-error'
+                "
               >
-                {{ selfTestResults.flask?.ok ? 'check_circle' : 'error' }}
+                {{ selfTestResults.flask?.ok ? "check_circle" : "error" }}
               </span>
               <div class="test-result-content">
                 <strong>Flask Server (Port 65000)</strong>
                 <span class="test-result-detail">
-                  {{ selfTestResults.flask?.ok ? `Image, Audio, Video & Companion Pipelines` : (selfTestResults.flask?.error || 'Not responding') }}
+                  {{
+                    selfTestResults.flask?.ok
+                      ? `Image, Audio, Video & Companion Pipelines`
+                      : selfTestResults.flask?.error || "Not responding"
+                  }}
                 </span>
-                <div v-if="selfTestResults.flask?.pipelines?.length" class="pipeline-tags">
-                  <span v-for="p in selfTestResults.flask.pipelines" :key="p" class="pipeline-tag">{{ p }}</span>
+                <div
+                  v-if="selfTestResults.flask?.pipelines?.length"
+                  class="pipeline-tags"
+                >
+                  <span
+                    v-for="p in selfTestResults.flask.pipelines"
+                    :key="p"
+                    class="pipeline-tag"
+                  >
+                    {{ p }}
+                  </span>
                 </div>
               </div>
             </div>
 
             <!-- OpenClaw Server (LLM) -->
-            <div class="test-result-row" :class="{ success: selfTestResults.openclaw?.ok, error: !selfTestResults.openclaw?.ok, warning: selfTestResults.openclaw?.error === 'OpenClaw not enabled' }">
+            <div
+              class="test-result-row"
+              :class="{
+                success: selfTestResults.openclaw?.ok,
+                error: !selfTestResults.openclaw?.ok,
+                warning:
+                  selfTestResults.openclaw?.error === 'OpenClaw not enabled',
+              }"
+            >
               <span
                 class="material-symbols-outlined mr-2 test-icon"
-                :class="selfTestResults.openclaw?.ok ? 'icon-success' : (selfTestResults.openclaw?.error === 'OpenClaw not enabled' ? 'icon-warning' : 'icon-error')"
+                :class="
+                  selfTestResults.openclaw?.ok
+                    ? 'icon-success'
+                    : selfTestResults.openclaw?.error === 'OpenClaw not enabled'
+                      ? 'icon-warning'
+                      : 'icon-error'
+                "
               >
-                {{ selfTestResults.openclaw?.ok ? 'check_circle' : (selfTestResults.openclaw?.error === 'OpenClaw not enabled' ? 'info' : 'error') }}
+                {{
+                  selfTestResults.openclaw?.ok
+                    ? "check_circle"
+                    : selfTestResults.openclaw?.error === "OpenClaw not enabled"
+                      ? "info"
+                      : "error"
+                }}
               </span>
               <div class="test-result-content">
                 <strong>OpenClaw Server (Port 3002)</strong>
                 <span class="test-result-detail">
-                  {{ selfTestResults.openclaw?.ok ? `Text Generation & Chat` : (selfTestResults.openclaw?.error || 'Not responding') }}
+                  {{
+                    selfTestResults.openclaw?.ok
+                      ? `Text Generation & Chat`
+                      : selfTestResults.openclaw?.error || "Not responding"
+                  }}
                 </span>
               </div>
             </div>
 
             <!-- P2P Node -->
-            <div class="test-result-row" :class="{ success: selfTestResults.p2p?.ok, error: !selfTestResults.p2p?.ok }">
+            <div
+              class="test-result-row"
+              :class="{
+                success: selfTestResults.p2p?.ok,
+                error: !selfTestResults.p2p?.ok,
+              }"
+            >
               <span
                 class="material-symbols-outlined mr-2 test-icon"
                 :class="selfTestResults.p2p?.ok ? 'icon-success' : 'icon-error'"
               >
-                {{ selfTestResults.p2p?.ok ? 'check_circle' : 'error' }}
+                {{ selfTestResults.p2p?.ok ? "check_circle" : "error" }}
               </span>
               <div class="test-result-content">
                 <strong>P2P Node</strong>
                 <span class="test-result-detail">
-                  {{ selfTestResults.p2p?.ok ? `Peer ID: ${truncatedPeerId}` : (selfTestResults.p2p?.error || 'Not started') }}
+                  {{
+                    selfTestResults.p2p?.ok
+                      ? `Peer ID: ${truncatedPeerId}`
+                      : selfTestResults.p2p?.error || "Not started"
+                  }}
                 </span>
               </div>
             </div>
 
             <!-- Overall Status -->
-            <div class="overall-status mt-3" :class="{ ready: selfTestResults.ready, 'not-ready': !selfTestResults.ready }">
+            <div
+              class="overall-status mt-3"
+              :class="{
+                ready: selfTestResults.ready,
+                'not-ready': !selfTestResults.ready,
+              }"
+            >
               <span
                 class="material-symbols-outlined mr-2 test-icon"
                 :class="selfTestResults.ready ? 'icon-success' : 'icon-warning'"
               >
-                {{ selfTestResults.ready ? 'rocket_launch' : 'warning' }}
+                {{ selfTestResults.ready ? "rocket_launch" : "warning" }}
               </span>
               <span class="has-text-white" v-if="selfTestResults.ready">
                 Ready to serve as a provider!
               </span>
               <span v-else>
-                {{ selfTestResults.readyMessage || 'Some services need attention' }}
+                {{
+                  selfTestResults.readyMessage || "Some services need attention"
+                }}
               </span>
             </div>
           </div>
@@ -446,44 +688,51 @@
                 class="button is-success is-large"
                 @click="testConnection"
                 :disabled="!testPeerId || isTesting"
-                style="box-shadow: none;"
+                style="box-shadow: none"
               >
                 <span v-if="isTesting" class="loader mr-2"></span>
-                <span class="material-symbols-outlined">{{ isTesting ? 'hourglass_empty' : 'cable' }}</span>
+                <span class="material-symbols-outlined">
+                  {{ isTesting ? "hourglass_empty" : "cable" }}
+                </span>
               </button>
             </div>
           </div>
 
-          <div v-if="testResult" class="test-result" :class="{ success: testResult.ok, error: !testResult.ok }">
+          <div
+            v-if="testResult"
+            class="test-result"
+            :class="{ success: testResult.ok, error: !testResult.ok }"
+          >
             <span class="material-symbols-outlined mr-2">
-              {{ testResult.ok ? 'check_circle' : 'error' }}
+              {{ testResult.ok ? "check_circle" : "error" }}
             </span>
             <span v-if="testResult.ok">
-              Connected! Peer supports {{ testResult.pipelines?.length || 0 }} pipelines
+              Connected! Peer supports
+              {{ testResult.pipelines?.length || 0 }} pipelines
             </span>
             <span v-else>
-              {{ testResult.error || 'Connection failed' }}
+              {{ testResult.error || "Connection failed" }}
             </span>
           </div>
         </div>
       </div>
-
     </div>
   </div>
 </template>
 
 <script setup>
-import { ref, computed, onMounted, onUnmounted, watch } from 'vue';
+import { ref, computed, onMounted, onUnmounted, watch } from "vue";
 
 // State
-const networkMode = ref('local');
+const isLoadingSettings = ref(true);
+const networkMode = ref("local");
 const p2pStatus = ref({
   started: false,
   peerId: null,
   multiaddrs: [],
   connectedPeers: 0,
   relayConnections: 0,
-  natStatus: 'unknown',
+  natStatus: "unknown",
   isUsingRelay: false,
 });
 
@@ -493,22 +742,27 @@ const isRefreshing = ref(false);
 const isTesting = ref(false);
 const isSelfTesting = ref(false);
 
+// Consumer mode state
+const availableProviders = ref([]);
+const selectedProvider = ref(null);
+const isRefreshingProviders = ref(false);
+
 // Per-pipeline pricing (USDC)
 const pipelinePricing = ref({
-  llm: 0.0001,        // per 1K tokens
-  image: 0.01,        // per image
-  audio: 0.001,       // per second
-  music: 0.05,        // per second
-  video: 0.10,        // per second
-  vision: 0.005,      // per image
-  companions: 0.02,   // per message (includes LLM + optional media)
+  llm: 0.0001, // per 1K tokens
+  image: 0.01, // per image
+  audio: 0.001, // per second
+  music: 0.05, // per second
+  video: 0.1, // per second
+  vision: 0.005, // per image
+  companions: 0.02, // per message (includes LLM + optional media)
 });
 
 const selfTestResults = ref(null);
 const enableRelay = ref(false);
 const relayFee = ref(5);
 
-const testPeerId = ref('');
+const testPeerId = ref("");
 const testResult = ref(null);
 
 let statusInterval = null;
@@ -516,22 +770,22 @@ let statusInterval = null;
 // Computed
 const truncatedPeerId = computed(() => {
   const id = p2pStatus.value.peerId;
-  if (!id) return '';
+  if (!id) return "";
   return `${id.slice(0, 8)}...${id.slice(-6)}`;
 });
 
 const natStatusClass = computed(() => ({
-  'nat-public': p2pStatus.value.natStatus === 'public',
-  'nat-relayed': p2pStatus.value.natStatus === 'relayed',
-  'nat-unknown': p2pStatus.value.natStatus === 'unknown',
+  "nat-public": p2pStatus.value.natStatus === "public",
+  "nat-relayed": p2pStatus.value.natStatus === "relayed",
+  "nat-unknown": p2pStatus.value.natStatus === "unknown",
 }));
 
 // Methods
 const formatNatStatus = (status) => {
   const labels = {
-    public: 'Public IP',
-    relayed: 'Using Relay',
-    unknown: 'Unknown',
+    public: "Public IP",
+    relayed: "Using Relay",
+    unknown: "Unknown",
   };
   return labels[status] || status;
 };
@@ -550,7 +804,7 @@ const refreshStatus = async () => {
       p2pStatus.value = { ...status, started: status.started };
     }
   } catch (err) {
-    console.error('[NetworkSettings] Failed to get status:', err);
+    console.error("[NetworkSettings] Failed to get status:", err);
   } finally {
     isRefreshing.value = false;
   }
@@ -568,18 +822,21 @@ const startP2P = async () => {
     });
 
     if (result.ok) {
-      console.log('[NetworkSettings] P2P node started:', result.peerId);
+      console.log("[NetworkSettings] P2P node started:", result.peerId);
       await refreshStatus();
 
       // Save pipeline pricing
-      await window.electronAPI.store.set('p2p.pipelinePricing', JSON.stringify(pipelinePricing.value));
-      await window.electronAPI.store.set('p2p.enableRelay', enableRelay.value);
-      await window.electronAPI.store.set('p2p.relayFee', relayFee.value);
+      await window.electronAPI.store.set(
+        "p2p.pipelinePricing",
+        JSON.stringify(pipelinePricing.value),
+      );
+      await window.electronAPI.store.set("p2p.enableRelay", enableRelay.value);
+      await window.electronAPI.store.set("p2p.relayFee", relayFee.value);
     } else {
-      console.error('[NetworkSettings] Failed to start P2P:', result.error);
+      console.error("[NetworkSettings] Failed to start P2P:", result.error);
     }
   } catch (err) {
-    console.error('[NetworkSettings] Error starting P2P:', err);
+    console.error("[NetworkSettings] Error starting P2P:", err);
   } finally {
     isStarting.value = false;
   }
@@ -590,18 +847,18 @@ const stopP2P = async () => {
 
   try {
     await window.electronAPI.p2pStop();
-    console.log('[NetworkSettings] P2P node stopped');
+    console.log("[NetworkSettings] P2P node stopped");
     p2pStatus.value = {
       started: false,
       peerId: null,
       multiaddrs: [],
       connectedPeers: 0,
       relayConnections: 0,
-      natStatus: 'unknown',
+      natStatus: "unknown",
       isUsingRelay: false,
     };
   } catch (err) {
-    console.error('[NetworkSettings] Error stopping P2P:', err);
+    console.error("[NetworkSettings] Error stopping P2P:", err);
   } finally {
     isStopping.value = false;
   }
@@ -623,6 +880,38 @@ const testConnection = async () => {
   }
 };
 
+// Consumer mode functions
+const truncateId = (id) => {
+  if (!id) return "";
+  return `${id.slice(0, 8)}...${id.slice(-6)}`;
+};
+
+const refreshProviders = async () => {
+  isRefreshingProviders.value = true;
+  try {
+    // TODO: Fetch from smart contract registry
+    // For now, simulate with mock data
+    const result = (await window.electronAPI.p2pGetProviders?.()) || {
+      providers: [],
+    };
+    availableProviders.value = result.providers || [];
+  } catch (err) {
+    console.error("[NetworkSettings] Failed to fetch providers:", err);
+    availableProviders.value = [];
+  } finally {
+    isRefreshingProviders.value = false;
+  }
+};
+
+const selectProvider = async (provider) => {
+  selectedProvider.value = provider;
+  // Save selected provider
+  await window.electronAPI.store.set(
+    "p2p.selectedProvider",
+    JSON.stringify(provider),
+  );
+};
+
 const runSelfTest = async () => {
   isSelfTesting.value = true;
   selfTestResults.value = null;
@@ -632,14 +921,14 @@ const runSelfTest = async () => {
     openclaw: { ok: false, error: null },
     p2p: { ok: false, error: null },
     ready: false,
-    readyMessage: '',
+    readyMessage: "",
   };
 
   // Test 1: Flask Server (port 65000)
   try {
-    const flaskResponse = await fetch('http://127.0.0.1:65000/audio/info', {
-      method: 'GET',
-      headers: { 'Content-Type': 'application/json' },
+    const flaskResponse = await fetch("http://127.0.0.1:65000/audio/info", {
+      method: "GET",
+      headers: { "Content-Type": "application/json" },
     });
     if (flaskResponse.ok) {
       const data = await flaskResponse.json();
@@ -649,15 +938,17 @@ const runSelfTest = async () => {
       results.flask.error = `HTTP ${flaskResponse.status}`;
     }
   } catch (err) {
-    results.flask.error = err.message?.includes('fetch') ? 'Server not running' : err.message;
+    results.flask.error = err.message?.includes("fetch")
+      ? "Server not running"
+      : err.message;
   }
 
   // Test 2: OpenClaw Server (port 3002) - check if enabled first
   try {
     const openclawEnabled = await window.electronAPI.openclawGetEnabled();
     if (openclawEnabled) {
-      const openclawResponse = await fetch('http://127.0.0.1:3002/health', {
-        method: 'GET',
+      const openclawResponse = await fetch("http://127.0.0.1:3002/health", {
+        method: "GET",
       });
       if (openclawResponse.ok) {
         results.openclaw.ok = true;
@@ -665,10 +956,12 @@ const runSelfTest = async () => {
         results.openclaw.error = `HTTP ${openclawResponse.status}`;
       }
     } else {
-      results.openclaw.error = 'OpenClaw not enabled';
+      results.openclaw.error = "OpenClaw not enabled";
     }
   } catch (err) {
-    results.openclaw.error = err.message?.includes('fetch') ? 'Server not running' : err.message;
+    results.openclaw.error = err.message?.includes("fetch")
+      ? "Server not running"
+      : err.message;
   }
 
   // Test 3: P2P Node
@@ -677,7 +970,7 @@ const runSelfTest = async () => {
     if (status.ok && status.started) {
       results.p2p.ok = true;
     } else {
-      results.p2p.error = 'P2P node not started';
+      results.p2p.error = "P2P node not started";
     }
   } catch (err) {
     results.p2p.error = err.message;
@@ -685,14 +978,14 @@ const runSelfTest = async () => {
 
   // Determine overall readiness
   const issues = [];
-  if (!results.flask.ok) issues.push('Flask server');
-  if (!results.p2p.ok) issues.push('P2P node');
+  if (!results.flask.ok) issues.push("Flask server");
+  if (!results.p2p.ok) issues.push("P2P node");
   // OpenClaw is optional for provider mode
 
   if (issues.length === 0) {
     results.ready = true;
   } else {
-    results.readyMessage = `Start: ${issues.join(', ')}`;
+    results.readyMessage = `Start: ${issues.join(", ")}`;
   }
 
   selfTestResults.value = results;
@@ -701,11 +994,25 @@ const runSelfTest = async () => {
 
 // Load saved settings
 const loadSettings = async () => {
+  isLoadingSettings.value = true;
   try {
-    const savedMode = await window.electronAPI.store.get('p2p.networkMode', 'local');
-    const savedPricing = await window.electronAPI.store.get('p2p.pipelinePricing', null);
-    const savedRelay = await window.electronAPI.store.get('p2p.enableRelay', false);
-    const savedRelayFee = await window.electronAPI.store.get('p2p.relayFee', 5);
+    const savedMode = await window.electronAPI.store.get(
+      "p2p.networkMode",
+      "local",
+    );
+    const savedPricing = await window.electronAPI.store.get(
+      "p2p.pipelinePricing",
+      null,
+    );
+    const savedRelay = await window.electronAPI.store.get(
+      "p2p.enableRelay",
+      false,
+    );
+    const savedRelayFee = await window.electronAPI.store.get("p2p.relayFee", 5);
+    const savedProvider = await window.electronAPI.store.get(
+      "p2p.selectedProvider",
+      null,
+    );
 
     networkMode.value = savedMode;
 
@@ -715,24 +1022,43 @@ const loadSettings = async () => {
         const parsed = JSON.parse(savedPricing);
         pipelinePricing.value = { ...pipelinePricing.value, ...parsed };
       } catch (e) {
-        console.warn('[NetworkSettings] Failed to parse saved pricing:', e);
+        console.warn("[NetworkSettings] Failed to parse saved pricing:", e);
+      }
+    }
+
+    // Load selected provider for consumer mode
+    if (savedProvider) {
+      try {
+        selectedProvider.value = JSON.parse(savedProvider);
+      } catch (e) {
+        console.warn("[NetworkSettings] Failed to parse saved provider:", e);
       }
     }
 
     enableRelay.value = savedRelay;
     relayFee.value = savedRelayFee;
   } catch (err) {
-    console.error('[NetworkSettings] Failed to load settings:', err);
+    console.error("[NetworkSettings] Failed to load settings:", err);
+  } finally {
+    isLoadingSettings.value = false;
   }
 };
 
 // Save network mode when changed
 watch(networkMode, async (newMode) => {
-  await window.electronAPI.store.set('p2p.networkMode', newMode);
+  await window.electronAPI.store.set("p2p.networkMode", newMode);
 
-  // Auto-stop when switching to local mode
-  if (newMode === 'local' && p2pStatus.value.started) {
+  // Auto-stop P2P when switching to local or consumer mode
+  if (
+    (newMode === "local" || newMode === "consumer") &&
+    p2pStatus.value.started
+  ) {
     await stopP2P();
+  }
+
+  // Refresh providers when switching to consumer mode
+  if (newMode === "consumer") {
+    await refreshProviders();
   }
 });
 
@@ -740,6 +1066,11 @@ watch(networkMode, async (newMode) => {
 onMounted(async () => {
   await loadSettings();
   await refreshStatus();
+
+  // Refresh providers if in consumer mode
+  if (networkMode.value === "consumer") {
+    await refreshProviders();
+  }
 
   // Poll status every 10 seconds when online
   statusInterval = setInterval(() => {
@@ -768,6 +1099,31 @@ onUnmounted(() => {
   --bonzai-text-muted: rgba(240, 240, 245, 0.7);
   --bonzai-border: rgba(255, 255, 255, 0.1);
   --bonzai-radius: 12px;
+}
+
+/* Loading State */
+.loading-container {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 80px 20px;
+  text-align: center;
+}
+
+.loading-spinner {
+  width: 48px;
+  height: 48px;
+  border: 3px solid rgba(255, 255, 255, 0.1);
+  border-top-color: var(--bonzai-green);
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+}
+
+.loading-text {
+  margin-top: 16px;
+  color: rgba(255, 255, 255, 0.7);
+  font-size: 1rem;
 }
 
 hr {
@@ -856,6 +1212,185 @@ hr {
   color: inherit;
 }
 
+/* Mode Descriptions */
+.mode-description {
+  margin-top: 16px;
+}
+
+.description-card {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  padding: 16px;
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid var(--bonzai-border);
+  border-radius: 10px;
+}
+
+.description-card .material-symbols-outlined {
+  color: rgba(255, 255, 255, 0.5);
+  font-size: 24px;
+  flex-shrink: 0;
+}
+
+.description-card strong {
+  color: #fff;
+  display: block;
+  margin-bottom: 4px;
+}
+
+.description-card p {
+  color: rgba(255, 255, 255, 0.7);
+  font-size: 0.9rem;
+  margin: 0;
+  line-height: 1.5;
+}
+
+.description-card.consumer {
+  border-color: rgba(59, 130, 246, 0.3);
+  background: rgba(59, 130, 246, 0.08);
+}
+
+.description-card.consumer .material-symbols-outlined {
+  color: #3b82f6;
+}
+
+.description-card.provider {
+  border-color: rgba(16, 185, 129, 0.3);
+  background: rgba(16, 185, 129, 0.08);
+}
+
+.description-card.provider .material-symbols-outlined {
+  color: var(--bonzai-green);
+}
+
+/* Consumer Mode - Provider Selection */
+.consumer-section {
+  margin-bottom: 32px;
+}
+
+.no-providers {
+  text-align: center;
+  padding: 40px 20px;
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px dashed var(--bonzai-border);
+  border-radius: 10px;
+}
+
+.no-providers .material-symbols-outlined {
+  font-size: 48px;
+  color: rgba(255, 255, 255, 0.3);
+  display: block;
+  margin-bottom: 12px;
+}
+
+.no-providers p {
+  color: rgba(255, 255, 255, 0.6);
+  margin: 0;
+}
+
+.provider-cards {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+  gap: 16px;
+}
+
+.provider-card {
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid var(--bonzai-border);
+  border-radius: 10px;
+  padding: 16px;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.provider-card:hover {
+  border-color: rgba(255, 255, 255, 0.3);
+  background: rgba(255, 255, 255, 0.06);
+}
+
+.provider-card.selected {
+  border-color: var(--bonzai-green);
+  background: rgba(16, 185, 129, 0.1);
+}
+
+.provider-header {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+
+.provider-icon {
+  font-size: 32px;
+  color: rgba(255, 255, 255, 0.6);
+}
+
+.provider-card.selected .provider-icon {
+  color: var(--bonzai-green);
+}
+
+.provider-info {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.provider-id {
+  color: #fff;
+  font-family: "JetBrains Mono", monospace;
+  font-size: 0.9rem;
+  font-weight: 600;
+}
+
+.provider-status {
+  font-size: 0.75rem;
+  color: rgba(255, 255, 255, 0.5);
+}
+
+.provider-status.online {
+  color: var(--bonzai-green);
+}
+
+.provider-pricing {
+  margin-bottom: 12px;
+}
+
+.price-row {
+  display: flex;
+  justify-content: space-between;
+  font-size: 0.85rem;
+  padding: 4px 0;
+  color: rgba(255, 255, 255, 0.7);
+}
+
+.price-row span:last-child {
+  color: #fff;
+  font-family: "JetBrains Mono", monospace;
+}
+
+.provider-pipelines {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.more-tag {
+  background: rgba(255, 255, 255, 0.1);
+  color: rgba(255, 255, 255, 0.6);
+  font-size: 0.75rem;
+  padding: 4px 8px;
+  border-radius: 999px;
+}
+
+.selected-provider-info .notification {
+  display: flex;
+  align-items: center;
+  background: rgba(16, 185, 129, 0.12);
+  border: 1px solid rgba(16, 185, 129, 0.3);
+  color: var(--bonzai-green);
+}
+
 /* Status Panel */
 .status-section {
   margin-bottom: 32px;
@@ -879,15 +1414,27 @@ hr {
 }
 
 @keyframes pulseGreen {
-  0% { box-shadow: 0 0 0 0 rgba(16, 185, 129, 0.1); }
-  50% { box-shadow: 0 0 0 64px rgba(16, 185, 129, 0); }
-  100% { box-shadow: 0 0 0 0 rgba(16, 185, 129, 0); }
+  0% {
+    box-shadow: 0 0 0 0 rgba(16, 185, 129, 0.1);
+  }
+  50% {
+    box-shadow: 0 0 0 64px rgba(16, 185, 129, 0);
+  }
+  100% {
+    box-shadow: 0 0 0 0 rgba(16, 185, 129, 0);
+  }
 }
 
 @keyframes pulseRed {
-  0% { box-shadow: 0 0 0 0 rgba(241, 70, 104, 0.1); }
-  50% { box-shadow: 0 0 0 8px rgba(241, 70, 104, 0); }
-  100% { box-shadow: 0 0 0 0 rgba(241, 70, 104, 0); }
+  0% {
+    box-shadow: 0 0 0 0 rgba(241, 70, 104, 0.1);
+  }
+  50% {
+    box-shadow: 0 0 0 8px rgba(241, 70, 104, 0);
+  }
+  100% {
+    box-shadow: 0 0 0 0 rgba(241, 70, 104, 0);
+  }
 }
 
 .status-row {
@@ -927,13 +1474,18 @@ hr {
 }
 
 @keyframes pulse {
-  0%, 100% { opacity: 1; }
-  50% { opacity: 0.5; }
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.5;
+  }
 }
 
 .peer-id {
   cursor: pointer;
-  font-family: 'JetBrains Mono', monospace;
+  font-family: "JetBrains Mono", monospace;
   font-size: 0.9rem;
 }
 
@@ -948,9 +1500,15 @@ hr {
   transition: opacity 0.2s;
 }
 
-.nat-public { color: var(--bonzai-green); }
-.nat-relayed { color: #f59e0b; }
-.nat-unknown { color: rgba(255, 255, 255, 0.5); }
+.nat-public {
+  color: var(--bonzai-green);
+}
+.nat-relayed {
+  color: #f59e0b;
+}
+.nat-unknown {
+  color: rgba(255, 255, 255, 0.5);
+}
 
 .multiaddrs {
   margin-top: 12px;
@@ -971,7 +1529,7 @@ hr {
   padding: 6px 10px;
   border-radius: 6px;
   word-break: break-all;
-  font-family: 'JetBrains Mono', monospace;
+  font-family: "JetBrains Mono", monospace;
 }
 
 .more-addrs {
@@ -996,7 +1554,9 @@ hr {
 }
 
 @keyframes spin {
-  to { transform: rotate(360deg); }
+  to {
+    transform: rotate(360deg);
+  }
 }
 
 .spinning {
@@ -1147,7 +1707,7 @@ hr {
 }
 
 .toggle-slider:before {
-  content: '';
+  content: "";
   position: absolute;
   height: 20px;
   width: 20px;
@@ -1285,7 +1845,7 @@ hr {
   font-size: 0.75rem;
   padding: 4px 10px;
   border-radius: 999px;
-  font-family: 'JetBrains Mono', monospace;
+  font-family: "JetBrains Mono", monospace;
   font-weight: 600;
 }
 

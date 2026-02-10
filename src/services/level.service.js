@@ -68,6 +68,9 @@ const state = reactive({
     LVL6: { holdingMet: false, ethUnlocked: false, active: false },
   },
 
+  // Cross-component modal control
+  openNetworkModal: false,
+
   // ETH unlock price (fixed 1 ETH for ALL levels)
   unlockPrice: 1.0, // ETH
 
@@ -526,6 +529,21 @@ export const clearOpenLevelModalRequest = () => {
   state.openLevelModalFor = null;
 };
 
+/**
+ * Request opening the network settings modal
+ * BonzaiBottomBar watches this and opens the modal when it changes
+ */
+export const requestOpenNetworkModal = () => {
+  state.openNetworkModal = true;
+};
+
+/**
+ * Clear the network modal request (called after modal opens)
+ */
+export const clearOpenNetworkModalRequest = () => {
+  state.openNetworkModal = false;
+};
+
 // ═══════════════════════════════════════════════════════════════════════════
 // EXPORT
 // ═══════════════════════════════════════════════════════════════════════════
@@ -560,6 +578,8 @@ export const levelService = {
   // Cross-component communication
   requestOpenLevelModal,
   clearOpenLevelModalRequest,
+  requestOpenNetworkModal,
+  clearOpenNetworkModalRequest,
 
   // Config reference
   CONFIG,

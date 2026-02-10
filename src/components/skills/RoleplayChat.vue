@@ -867,6 +867,33 @@
             </div>
           </div>
         </div>
+
+        <!-- User Description (for image generation consistency) -->
+        <div class="columns mt-4" v-if="settings.contentLevel === 'mature' || settings.contentLevel === 'adult'">
+          <div class="column is-12">
+            <div class="field has-text-left">
+              <label
+                class="label has-text-white fira-sans-condensed-black-italic is-size-4"
+              >
+                <span class="material-symbols-outlined mr-2 is-size-2">
+                  person
+                </span>
+                Your Appearance
+              </label>
+              <p class="is-size-7 has-text-grey-light mb-3">
+                Describe your physical appearance for consistent image generation in intimate scenes.
+              </p>
+              <div class="control">
+                <textarea
+                  v-model="settings.userDescription"
+                  class="textarea"
+                  placeholder="e.g., A tall man with dark hair, athletic build, and tanned skin"
+                  rows="2"
+                ></textarea>
+              </div>
+            </div>
+          </div>
+        </div>
       </div>
 
       <!-- Autonomous Mode Integration (shown when companion is selected) -->
@@ -1515,6 +1542,14 @@
                 <div class="image-actions">
                   <button
                     class="image-action-btn"
+                    @click="regenerateMedia(idx, true, false)"
+                    :disabled="regeneratingMediaIdx === idx"
+                    title="Regenerate image with enhanced prompt"
+                  >
+                    <span class="material-symbols-outlined">{{ regeneratingMediaIdx === idx ? 'hourglass_empty' : 'refresh' }}</span>
+                  </button>
+                  <button
+                    class="image-action-btn"
                     @click="downloadImage(msg.image, idx)"
                     title="Download image"
                   >
@@ -1528,6 +1563,14 @@
                     <span class="material-symbols-outlined">movie</span>
                   </button>
                   <button
+                    class="image-action-btn"
+                    @click="regenerateMedia(idx, false, true)"
+                    :disabled="regeneratingMediaIdx === idx"
+                    title="Generate video from this image"
+                  >
+                    <span class="material-symbols-outlined">{{ regeneratingMediaIdx === idx ? 'hourglass_empty' : 'slow_motion_video' }}</span>
+                  </button>
+                  <button
                     class="image-action-btn delete-btn"
                     @click="deleteMessageMedia(idx, 'image')"
                     title="Delete image"
@@ -1536,6 +1579,7 @@
                   </button>
                 </div>
               </div>
+
 
               <!-- Audio -->
               <div v-if="msg.audio" class="message-audio mt-3">
@@ -1755,6 +1799,7 @@ import {
   clearAllMemory,
   validateCompanionAge,
   sanitizeCompanionAge,
+  regenerateMessageMedia,
 } from "../../skills/flagship.js";
 import { useSkillStore } from "../../stores/skillStore.js";
 import { moltbookService } from "../../services/moltbook.service.js";
@@ -1847,6 +1892,8 @@ export default {
 
     const settings = ref({
       contentLevel: "pg13",
+      // User's appearance description for image generation consistency
+      userDescription: "",
       // Media options as individual checkboxes
       enableImage: true,
       enableAudio: false,
@@ -2140,6 +2187,9 @@ export default {
       recentActions: [], // Last few actions (for variety)
       lastOpeningPhrase: "", // Last response opening (avoid repetition)
     });
+
+    // Media regeneration state
+    const regeneratingMediaIdx = ref(null); // Index of message currently regenerating media
 
     // Session persistence
     const STORAGE_KEY = "roleplaySessions";
@@ -4310,6 +4360,60 @@ export default {
       await saveSession();
     };
 
+    /**
+     * Regenerate image and/or video for a message using enhanced LLM-based prompt generation.
+     * This creates more accurate visuals by analyzing the full response text.
+     */
+    const regenerateMedia = async (messageIdx, regenerateImage = true, regenerateVideo = false) => {
+      const msg = chatHistory.value[messageIdx];
+      if (!msg || msg.role !== 'assistant') return;
+
+      regeneratingMediaIdx.value = messageIdx;
+      typingStatus.value = 'Creating enhanced visual...';
+
+      try {
+        const result = await regenerateMessageMedia({
+          message: msg,
+          companion: selectedCompanion.value,
+          scenario: selectedScenario.value,
+          contentLevel: settings.value.contentLevel,
+          sceneState: {
+            ...sceneState.value,
+            userAppearance: settings.value.userDescription || 'a man',
+          },
+        }, {
+          regenerateImage,
+          regenerateVideo,
+          onProgress: (progress) => {
+            if (progress.type === 'status') {
+              typingStatus.value = progress.message;
+            } else if (progress.type === 'image') {
+              chatHistory.value[messageIdx].image = progress.image;
+            } else if (progress.type === 'video') {
+              chatHistory.value[messageIdx].video = progress.video;
+            }
+          },
+        });
+
+        // Update message with regenerated media
+        if (result.image) {
+          chatHistory.value[messageIdx].image = result.image;
+        }
+        if (result.video) {
+          chatHistory.value[messageIdx].video = result.video;
+        }
+
+        // Save session with updated media
+        await saveSession();
+        console.log(`[RoleplayChat] Regenerated media for message ${messageIdx}`);
+      } catch (e) {
+        console.error('[RoleplayChat] Failed to regenerate media:', e);
+      } finally {
+        regeneratingMediaIdx.value = null;
+        typingStatus.value = '';
+      }
+    };
+
     // ═══════════════════════════════════════════════════════════════════════════
     // VISION / IMAGE UPLOAD FUNCTIONS
     // ═══════════════════════════════════════════════════════════════════════════
@@ -4436,7 +4540,10 @@ export default {
               history: chatHistory.value.slice(0, -1), // Exclude the placeholder
             },
             settings: executionSettings,
-            sceneState: sceneState.value,
+            sceneState: {
+              ...sceneState.value,
+              userAppearance: settings.value.userDescription || 'a man',
+            },
             visionData, // Pass vision analysis to LLM
           },
           {
@@ -4975,6 +5082,8 @@ export default {
       downloadImage,
       sendToVideoGenerator,
       deleteMessageMedia,
+      regenerateMedia,
+      regeneratingMediaIdx,
       // Vision/Image upload
       imageInput,
       uploadedImage,
@@ -6024,6 +6133,34 @@ hr {
 .image-action-btn.delete-btn:hover,
 .media-action-btn.delete-btn:hover {
   background: rgba(200, 50, 50, 0.9);
+}
+
+/* Generate media button for messages without images */
+.generate-media-btn {
+  display: flex;
+  justify-content: center;
+  opacity: 0.7;
+  transition: opacity 0.2s ease;
+}
+
+.generate-media-btn:hover {
+  opacity: 1;
+}
+
+.generate-media-btn .button {
+  border-color: rgba(255, 255, 255, 0.3);
+  color: rgba(255, 255, 255, 0.8);
+  background: rgba(0, 0, 0, 0.3);
+}
+
+.generate-media-btn .button:hover {
+  border-color: rgba(255, 255, 255, 0.5);
+  background: rgba(0, 0, 0, 0.5);
+}
+
+.generate-media-btn .button:disabled {
+  opacity: 0.5;
+  cursor: wait;
 }
 
 /* Audio actions overlay */

@@ -31,10 +31,10 @@ jobs:
         run: |
           pip install git+https://github.com/huggingface/diffusers.git
           pip install -r requirements.txt
-          pip install -U qwen-tts --no-deps
-          pip install -U qwen-vl-utils --no-deps
           pip install https://github.com/vBaiCai/python-pesq/archive/master.zip
-          pip install git+https://github.com/ace-step/ACE-Step.git
+          # Install packages with --no-deps to avoid pulling in gradio/fastapi/sox
+          pip install -U qwen-tts --no-deps
+          pip install git+https://github.com/ace-step/ACE-Step-1.5.git --no-deps
 
       - name: Build Python binary (macOS ARM64)
         run: |

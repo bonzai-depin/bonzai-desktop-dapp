@@ -7,7 +7,7 @@
  */
 
 import { createSkillDefinition } from './types.js';
-import { getAuthHeaders, authFetch } from '../services/auth.service.js';
+import { getAuthHeaders, authFetch, ensureAuth } from '../services/auth.service.js';
 
 // ═══════════════════════════════════════════════════════════════════════════
 // AGE VALIDATION - COMPANION SAFETY
@@ -990,6 +990,11 @@ function getFlaskPort() {
 
 async function callFlaskEndpoint(endpoint, payload, useDemo = false) {
   const port = getFlaskPort();
+
+  // Proactively ensure auth token is valid before making the request
+  // Use 5 minute buffer since generation can take several minutes
+  await ensureAuth(5);
+
   const authHeaders = getAuthHeaders();
 
   // Use demo mode if no auth token available or explicitly requested
@@ -1000,6 +1005,8 @@ async function callFlaskEndpoint(endpoint, payload, useDemo = false) {
   // If no auth token and demo mode allowed, use demo header
   if (!authHeaders.Authorization && useDemo) {
     headers['X-Demo-Mode'] = 'true';
+  } else if (authHeaders.Authorization) {
+    headers['Authorization'] = authHeaders.Authorization;
   }
 
   // Use authFetch for automatic 401 handling with token refresh
@@ -1032,6 +1039,13 @@ const ROLEPLAY_LLM = {
   modelname: 'MythoMax L2 13B',
   filename: 'mythomax-l2-13b.q4_k_m.gguf',
   url: 'https://huggingface.co/TheBloke/MythoMax-L2-13B-GGUF/resolve/main/mythomax-l2-13b.Q4_K_M.gguf',
+};
+
+// GLM Flash LLM - Best for generating enhanced image prompts (uncensored, fast)
+const GLM_FLASH_LLM = {
+  modelname: 'GLM 4.7 Flash Uncensored',
+  filename: 'glm-4.7-flash-q4_k_m.gguf',
+  url: 'https://huggingface.co/DavidAU/GLM-4.7-Flash-Uncensored-Heretic-NEO-CODE-Imatrix-MAX-GGUF/resolve/main/GLM-4.7-Flash-Uncen-Hrt-NEO-CODE-MAX-imat-D_AU-Q4_K_M.gguf',
 };
 
 async function ensureLLMLoaded(config = DEFAULT_LLM) {
@@ -2099,20 +2113,382 @@ async function getMemoryStatus() {
 }
 
 // Video generation (I2V or T2V)
-// Reduced defaults for MPS/Apple Silicon memory constraints
+// Landscape defaults for better cinematic feel
 async function generateVideo(imageBase64OrNull, prompt, options = {}) {
   const mode = imageBase64OrNull ? 'i2v' : 't2v';
   return await callFlaskEndpoint('/video', {
     mode,
     prompt,
     ...(imageBase64OrNull && { image_base64: imageBase64OrNull }),
-    height: options.height || 480,
-    width: options.width || 352,
-    frames: options.frames || 37,  // ~3 seconds at 12fps
-    frame_rate: options.frameRate || 12,
+    height: options.height || 448,
+    width: options.width || 640,  // Landscape orientation
+    frames: options.frames || 121,  // 5 seconds at 24fps
+    frame_rate: options.frameRate || 24,
     steps: options.steps || 10,
     guidance_scale: options.guidanceScale || 1.0,
   }, true); // Enable demo mode fallback
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// ENHANCED IMAGE PROMPT GENERATION
+// ═══════════════════════════════════════════════════════════════════════════
+
+/**
+ * Generate an enhanced image prompt by analyzing the companion's response text.
+ * Uses GLM Flash LLM (best for this task) with Llama as fallback.
+ * Properly loads/unloads/clears memory throughout.
+ *
+ * @param {Object} params
+ * @param {string} params.responseText - The companion's full response text
+ * @param {Object} params.companion - Companion object with name, appearance, etc.
+ * @param {string} params.contentLevel - Content level (pg, pg13, mature, adult)
+ * @param {string} params.emotion - Detected emotion from response
+ * @param {string} params.action - Detected action from response
+ * @param {string} params.location - Current location/setting
+ * @returns {Promise<string>} Enhanced image prompt
+ */
+async function generateEnhancedImagePrompt({
+  responseText,
+  companion,
+  contentLevel = 'pg13',
+  emotion = 'neutral',
+  action = '',
+  location = '',
+  userAppearance = 'a man', // Default user appearance for adult scenes
+}) {
+  const isAdult = contentLevel === 'adult';
+  const isMature = contentLevel === 'mature' || isAdult;
+
+  // Build base character description
+  const characterBase = `${companion.name}, ${companion.appearance}`;
+  const styleAnchors = 'consistent character design, same person, same face, same features';
+
+  // ═══════════════════════════════════════════════════════════════════════════
+  // SMART ACTION EXTRACTION
+  // Prioritizes actual physical actions over dialogue and narration
+  // ═══════════════════════════════════════════════════════════════════════════
+
+  // Step 1: Extract asterisk-wrapped actions (roleplay convention: *she walks over*)
+  const asteriskActions = [];
+  const asteriskPattern = /\*([^*]+)\*/g;
+  let asteriskMatch;
+  while ((asteriskMatch = asteriskPattern.exec(responseText)) !== null) {
+    const content = asteriskMatch[1].trim();
+    if (content.length > 3) {
+      asteriskActions.push(content);
+    }
+  }
+
+  // Step 2: Split into sentences and filter
+  const sentences = responseText
+    .replace(/\*[^*]+\*/g, '') // Remove asterisk content (already extracted)
+    .split(/[.!?]+/)
+    .map(s => s.trim())
+    .filter(s => s.length > 10);
+
+  // Step 3: Identify dialogue vs action sentences
+  const dialogueVerbs = /\b(say|says|said|ask|asks|asked|reply|replies|replied|whisper|whispers|whispered|murmur|murmurs|murmured|speak|speaks|spoke|tell|tells|told|exclaim|exclaims|exclaimed|mutter|mutters|muttered|breathe|breathes|breathed)\b/i;
+  const quoteHeavy = (s) => {
+    const quoteCount = (s.match(/["']/g) || []).length;
+    return quoteCount >= 2; // Has at least one quoted phrase
+  };
+
+  // Step 4: Physical action indicators (verbs and body parts)
+  // Use word stems with optional suffixes to catch all forms (walk, walks, walked, walking)
+  const physicalVerbStems = [
+    // Movement
+    'walk', 'move', 'lean', 'step', 'run', 'climb', 'crawl', 'kneel', 'bend', 'arch', 'spread', 'turn', 'shift', 'lower', 'raise', 'lift',
+    // Contact/Touch
+    'touch', 'grab', 'pull', 'push', 'wrap', 'press', 'slide', 'slip', 'trail', 'trace', 'stroke', 'caress', 'rub', 'massage', 'squeeze', 'grip', 'hold', 'clutch', 'cling', 'embrace', 'hug',
+    // Intimate actions
+    'kiss', 'lick', 'suck', 'bite', 'nibble', 'swallow', 'swirl', 'bob', 'thrust', 'pump', 'pound', 'fuck', 'ride', 'straddle', 'mount', 'grind', 'rock', 'bounce', 'buck', 'writhe', 'gyrate',
+    // Undressing
+    'undress', 'remove', 'unbutton', 'unzip', 'strip', 'peel', 'tug', 'yank',
+    // Positioning
+    'sit', 'stand', 'lie', 'lay', 'pin', 'position', 'straddle', 'spread', 'part', 'open',
+    // Body reactions
+    'tremble', 'shudder', 'shiver', 'quiver', 'twitch', 'clench', 'tighten', 'relax', 'tense', 'arch', 'curl',
+    // Vocalizations (physical)
+    'gasp', 'moan', 'groan', 'whimper', 'cry', 'scream', 'pant', 'breathe', 'sigh',
+    // Taking/receiving
+    'take', 'receive', 'accept', 'engulf', 'envelope', 'surround', 'swallow', 'devour',
+  ];
+  // Build regex that matches: stem, stem+s, stem+ed, stem+ing, stem+es (handles most conjugations)
+  const physicalVerbs = new RegExp(`\\b(${physicalVerbStems.join('|')})(s|ed|ing|es|d)?\\b`, 'i');
+
+  const bodyParts = /\b(hand|hands|finger|fingers|arm|arms|leg|legs|thigh|thighs|hip|hips|waist|chest|breast|breasts|nipple|nipples|neck|throat|lips|mouth|tongue|back|spine|shoulder|shoulders|hair|body|bodies|skin|face|eyes|head|cock|dick|member|shaft|balls|pussy|clit|cunt|ass|butt|cheek|cheeks)\b/i;
+
+  // Step 5: Score each sentence
+  const pronounPattern = /\b(she|he|her|his|herself|himself)\b/i;
+  const scoredSentences = sentences
+    .filter(s => pronounPattern.test(s)) // Must have pronoun
+    .map(s => {
+      let score = 0;
+
+      // Penalize dialogue-heavy sentences
+      if (dialogueVerbs.test(s)) score -= 3;
+      if (quoteHeavy(s)) score -= 2;
+
+      // Reward physical action indicators
+      if (physicalVerbs.test(s)) score += 5;
+      if (bodyParts.test(s)) score += 3;
+
+      // Bonus for multiple action verbs
+      const verbMatches = s.match(physicalVerbs);
+      if (verbMatches) score += verbMatches.length;
+
+      // Penalize very short sentences (likely fragments)
+      if (s.length < 20) score -= 1;
+
+      // Bonus for longer, descriptive sentences
+      if (s.length > 50) score += 1;
+
+      return { text: s, score };
+    })
+    .filter(item => item.score > 0) // Only keep positive-scored sentences
+    .sort((a, b) => b.score - a.score); // Sort by score descending
+
+  // Step 6: Combine asterisk actions (highest priority) with best scored sentences
+  const topScoredSentences = scoredSentences.slice(0, 2).map(item => item.text);
+  const allActions = [...asteriskActions, ...topScoredSentences];
+  const extractedActions = allActions.slice(0, 4).join('. '); // Take up to 4 best actions
+
+  console.log('[Roleplay] Action extraction:', {
+    asteriskActions: asteriskActions.length,
+    scoredSentences: scoredSentences.slice(0, 3).map(s => ({ text: s.text.substring(0, 50), score: s.score })),
+    finalExtracted: extractedActions.substring(0, 100),
+  });
+
+  // Use extracted actions if available, otherwise fall back to provided action
+  const actionDescription = extractedActions || action || '';
+
+  // For non-adult content, use simple prompt construction (no LLM needed)
+  if (!isMature) {
+    const actionPart = actionDescription || 'in a dramatic pose';
+    return `${characterBase}, ${emotion} expression, ${actionPart}, ${location || 'beautiful background'}, highly detailed, cinematic lighting, ${styleAnchors}, high quality`;
+  }
+
+  // For adult content, use explicit LLM prompt that includes the user
+  const adultInstructions = isAdult
+    ? `CRITICAL FOR NSFW/SEX SCENES:
+- This is an EXPLICIT adult scene - be EXTREMELY detailed and graphic
+- Include BOTH characters: the companion AND the user (${userAppearance})
+- ALWAYS describe the man's VISIBLE ERECT COCK/PENIS explicitly - this is MANDATORY for sex scenes
+- Describe male anatomy: "thick hard cock", "erect penis", "throbbing member", "his shaft deep inside her"
+- Describe the sex act in vivid anatomical detail: penetration, thrusting, positions, body parts
+- Use explicit language: "cock buried inside", "balls-deep", "dripping wet", "his dick in her mouth", etc.
+- Describe physical connection: how bodies are intertwined, grip, sweat, fluids, visible penetration
+- Include emotional intensity: raw passion, dominance, submission, pleasure, ecstasy
+- Example style: "${userAppearance} with his thick erect cock buried balls-deep in her tight dripping pussy, fucking her from behind, her back arched in ecstasy, his hands gripping her hips"
+- For oral scenes: "his hard cock in her mouth", "her lips wrapped around his shaft", "sucking his erect penis"`
+    : `For sensual/mature scenes, describe suggestive poses, partial nudity, and intimate tension while being tasteful.`;
+
+  // Highlight the extracted action sentences for the LLM
+  const actionContext = extractedActions
+    ? `\n\nKEY ACTION SENTENCES (these describe EXACTLY what is happening - use these as the basis for the visual!):\n"${extractedActions}"`
+    : '';
+
+  const llmPrompt = `You are an expert at creating extremely detailed, explicit image generation prompts for adult content. Create a vivid, graphically detailed prompt that captures EXACTLY what is happening in this scene.
+
+COMPANION CHARACTER (the woman/man being depicted):
+${characterBase}
+
+USER CHARACTER (include in intimate scenes):
+${userAppearance}
+
+CURRENT SCENE TEXT:
+"${responseText}"${actionContext}
+
+EMOTION: ${emotion}
+LOCATION: ${location}
+
+${adultInstructions}
+
+PROMPT STRUCTURE:
+1. Start with the companion's full appearance (body type, hair, skin, features)
+2. If this is a sex/intimate scene, describe BOTH bodies - MUST include visible male genitalia (erect cock/penis)
+3. Describe the EXACT physical action: positions, movements, and WHERE the cock is (inside her, in her mouth, in her hand, etc.)
+4. Include facial expressions showing ${emotion} - pleasure, ecstasy, desire, etc.
+5. Describe state of undress, exposed body parts, sweat, physical arousal signs on BOTH bodies
+6. Include the setting/atmosphere: ${location || 'intimate bedroom setting'}
+7. End with: raw passion, unfiltered physical connection, soft golden-hour cinematic lighting, photorealistic, 8k
+
+MANDATORY: For ANY sex scene, you MUST explicitly mention the man's erect cock/penis and where it is positioned.
+
+OUTPUT: Return ONLY the image prompt as a single paragraph of vivid, explicit descriptors. No explanations, no quotes, no JSON. Be graphic and detailed.`;
+
+  // Helper to generate prompt with a specific LLM
+  const generateWithLLM = async (llmConfig) => {
+    // Unload any existing LLM first
+    await unloadLLM();
+
+    // Load the specified LLM
+    console.log(`[Roleplay] Loading ${llmConfig.modelname} for enhanced prompt generation...`);
+    await ensureLLMLoaded(llmConfig);
+
+    // Generate the prompt using chat API
+    const result = await window.electronAPI.chat(llmPrompt);
+
+    // Unload LLM and clear memory
+    await unloadLLM();
+    await clearGenerationMemory();
+
+    return (result || '').trim();
+  };
+
+  // Try GLM Flash first (best for image prompts)
+  try {
+    console.log('[Roleplay] Generating enhanced prompt with GLM Flash...');
+    const enhancedPrompt = await generateWithLLM(GLM_FLASH_LLM);
+
+    if (enhancedPrompt && enhancedPrompt.length > 20) {
+      // Ensure character base is included even if LLM forgot
+      if (!enhancedPrompt.toLowerCase().includes(companion.name.toLowerCase())) {
+        return `${characterBase}, ${enhancedPrompt}`;
+      }
+      return enhancedPrompt;
+    }
+    throw new Error('GLM Flash returned empty or too short prompt');
+  } catch (glmError) {
+    console.warn('[Roleplay] GLM Flash failed, trying Llama fallback:', glmError.message);
+
+    // Fallback to Llama
+    try {
+      const enhancedPrompt = await generateWithLLM(DEFAULT_LLM);
+
+      if (enhancedPrompt && enhancedPrompt.length > 20) {
+        if (!enhancedPrompt.toLowerCase().includes(companion.name.toLowerCase())) {
+          return `${characterBase}, ${enhancedPrompt}`;
+        }
+        return enhancedPrompt;
+      }
+      throw new Error('Llama returned empty or too short prompt');
+    } catch (llamaError) {
+      console.warn('[Roleplay] Llama fallback also failed:', llamaError.message);
+
+      // Final fallback to simple construction
+      if (isAdult) {
+        return `${characterBase}, ${emotion} expression, ${action || 'in an intimate pose'}, ${location}, sensual, explicit, nsfw, ${styleAnchors}, high quality, realistic`;
+      }
+      return `${characterBase}, ${emotion} expression, ${action || 'in a dramatic pose'}, ${location}, ${styleAnchors}, high quality, detailed`;
+    }
+  }
+}
+
+/**
+ * Regenerate image and/or video for an existing chat message.
+ * Allows users to get better visual results for a specific message.
+ *
+ * @param {Object} params
+ * @param {Object} params.message - The chat message object with content, image, video, etc.
+ * @param {Object} params.companion - Companion object
+ * @param {Object} params.scenario - Scenario object
+ * @param {string} params.contentLevel - Content level
+ * @param {Object} params.sceneState - Current scene state
+ * @param {Object} options
+ * @param {boolean} options.regenerateImage - Whether to regenerate the image
+ * @param {boolean} options.regenerateVideo - Whether to regenerate the video
+ * @param {Function} options.onProgress - Progress callback
+ * @returns {Promise<Object>} Updated message with new image/video
+ */
+async function regenerateMessageMedia({
+  message,
+  companion,
+  scenario,
+  contentLevel = 'pg13',
+  sceneState = {},
+}, options = {}) {
+  const { regenerateImage = true, regenerateVideo = false, onProgress } = options;
+
+  const isAdult = contentLevel === 'adult';
+  const isMature = contentLevel === 'mature' || isAdult;
+  const currentLocation = sceneState.currentLocation || scenario?.setting || '';
+
+  // Extract emotion and action from message if available
+  const emotion = message.emotion || 'neutral';
+  const action = message.action || '';
+  const responseText = message.content || '';
+
+  const result = { ...message };
+
+  // Generate enhanced image prompt
+  onProgress?.({ type: 'status', message: 'Creating enhanced prompt...' });
+
+  const enhancedPrompt = await generateEnhancedImagePrompt({
+    responseText,
+    companion,
+    contentLevel,
+    emotion,
+    action,
+    location: currentLocation,
+    userAppearance: sceneState.userAppearance || scenario?.userAppearance || 'a man',
+  });
+
+  console.log(`[Roleplay] Regenerating media with enhanced prompt: ${enhancedPrompt.substring(0, 200)}...`);
+
+  // Detect if this is an explicit scene (for model selection)
+  const explicitEmotions = ['aroused', 'lustful', 'passionate', 'breathless', 'overwhelmed', 'ecstatic'];
+  const explicitKeywords = ['sex', 'fuck', 'thrust', 'moan', 'orgasm', 'cum', 'naked', 'undress', 'intimate', 'penetrat', 'riding', 'sucking', 'licking', 'cock', 'pussy', 'nipple', 'breast'];
+  const responseLower = responseText.toLowerCase();
+  const emotionLower = emotion.toLowerCase();
+
+  const hasExplicitKeywords = explicitKeywords.some(k => responseLower.includes(k));
+  const hasExplicitEmotion = explicitEmotions.some(e => emotionLower.includes(e));
+  const isExplicitScene = isAdult && (hasExplicitKeywords || hasExplicitEmotion);
+
+  // Regenerate image
+  if (regenerateImage) {
+    onProgress?.({ type: 'status', message: `Visualizing ${companion.name}...` });
+
+    try {
+      let imageResult;
+
+      if (isExplicitScene) {
+        // SDXL for explicit content
+        imageResult = await generateImageSDXL(enhancedPrompt, { width: 1024, height: 768 });
+      } else if (isMature) {
+        // Z Turbo for mature
+        imageResult = await generateImage(enhancedPrompt, { width: 1024, height: 768, advanced: true });
+      } else {
+        // Z Turbo for general
+        imageResult = await generateImage(enhancedPrompt, { width: 1024, height: 768, advanced: true });
+      }
+
+      result.image = imageResult.image_base64 || imageResult.image;
+      onProgress?.({ type: 'image', image: result.image });
+
+      // Clear memory after image
+      await clearGenerationMemory();
+    } catch (e) {
+      console.warn('[Roleplay] Image regeneration failed:', e.message);
+    }
+  }
+
+  // Regenerate video (using the new/existing image)
+  if (regenerateVideo && result.image) {
+    onProgress?.({ type: 'status', message: 'Generating video...' });
+
+    try {
+      // Use the enhanced prompt for video too
+      const videoResult = await generateVideo(result.image, enhancedPrompt, {
+        height: 448,
+        width: 640,
+        frames: 121,  // 5s @ 24fps
+        frameRate: 24,
+        steps: 10,
+      });
+
+      result.video = videoResult.video_path || videoResult.video_base64 || videoResult.video;
+      onProgress?.({ type: 'video', video: result.video });
+
+      // Clear memory after video
+      await clearGenerationMemory();
+    } catch (e) {
+      console.warn('[Roleplay] Video regeneration failed:', e.message);
+    }
+  }
+
+  return result;
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -2907,7 +3283,7 @@ Return ONLY valid JSON.`;
           scene.image = imgResult.image_base64 || imgResult.image;
 
           context.updateStatus?.(`Animating scene ${i + 1}...`);
-          const videoResult = await generateVideo(scene.image, scene.motionDescription, { frames: 37, fps: 12, height: 480, width: 352 });
+          const videoResult = await generateVideo(scene.image, scene.motionDescription, { frames: 121, fps: 24, height: 448, width: 640 });
           scene.video = videoResult.video_path || videoResult.video;
         } catch (e) {
           scene.image = null;
@@ -3106,7 +3482,7 @@ Return ONLY valid JSON.`;
 
           // Animate the frame
           context.updateStatus?.(`Animating frame ${i + 1}...`);
-          const videoResult = await generateVideo(frame.image, `${frame.motion}, anime animation, smooth motion`, { frames: 37, fps: 12, height: 480, width: 352 });
+          const videoResult = await generateVideo(frame.image, `${frame.motion}, anime animation, smooth motion`, { frames: 121, fps: 24, height: 448, width: 640 });
           frame.video = videoResult.video_path || videoResult.video;
         } catch (e) {
           frame.image = null;
@@ -3712,19 +4088,12 @@ Respond with JSON:
           console.log(`[Roleplay] Image generation: contentLevel=${contentLevel}, isAdult=${isAdult}, hasExplicitKeywords=${hasExplicitKeywords}, hasExplicitEmotion=${hasExplicitEmotion}, isExplicitScene=${isExplicitScene}, imageModel=${imageModel}`);
 
           // ═══════════════════════════════════════════════════════════════════
-          // CHARACTER CONSISTENCY: Always use companion's full appearance as base
+          // ENHANCED IMAGE PROMPT GENERATION
+          // Use LLM to create detailed prompts from the full response text
           // ═══════════════════════════════════════════════════════════════════
 
-          // Extract core character features that must remain consistent
-          const characterBase = `${companion.name}, ${companion.appearance}`;
-
-          // Style anchors for visual consistency across all images
-          const styleAnchors = 'consistent character design, same person, same face, same features';
-
-          // Scene context from LLM (action, emotion, setting)
-          const sceneContext = response.imagePrompt;
-
-          // Current setting/location
+          let prompt;
+          const isMatureOrAdult = isAdult || contentLevel === 'mature';
           const settingContext = response.newLocation || currentLocation || scenario?.setting || '';
 
           // Vision context - incorporate elements from user's uploaded image if present
@@ -3732,34 +4101,47 @@ Respond with JSON:
             ? `, incorporating elements from: ${visionData.imageAnalysis.substring(0, 150)}`
             : '';
 
-          // Build prompt with character consistency as foundation
-          // Note: isExplicitScene, actionLower, emotionLower, responseLower already defined above for model selection
-          let prompt;
+          if (isMatureOrAdult && isExplicitScene) {
+            // For explicit adult scenes, use enhanced prompt generation to capture all visual details
+            context.updateStatus?.('Creating detailed scene description...');
+            prompt = await generateEnhancedImagePrompt({
+              responseText: response.response,
+              companion,
+              contentLevel,
+              emotion: response.emotion || 'passionate',
+              action: response.action || '',
+              location: settingContext,
+              userAppearance: sceneState.userAppearance || 'a man',
+            });
 
-          if (isAdult && isExplicitScene) {
-            // Adult explicit scene: generate image depicting the sexual activity
-            const activityHints = [];
-            if (actionLower.includes('riding') || responseLower.includes('riding')) activityHints.push('cowgirl position');
-            if (actionLower.includes('behind') || responseLower.includes('behind') || responseLower.includes('doggy')) activityHints.push('doggy style');
-            if (actionLower.includes('missionary') || responseLower.includes('missionary')) activityHints.push('missionary position');
-            if (actionLower.includes('oral') || actionLower.includes('sucking') || actionLower.includes('blowjob')) activityHints.push('oral sex');
-            if (actionLower.includes('kiss') && (actionLower.includes('passionate') || responseLower.includes('passionate'))) activityHints.push('passionate kissing');
+            // Append vision context if present
+            if (visionImageContext) {
+              prompt += visionImageContext;
+            }
+          } else if (isMatureOrAdult) {
+            // Mature/adult non-explicit: use enhanced prompt for better detail
+            prompt = await generateEnhancedImagePrompt({
+              responseText: response.response,
+              companion,
+              contentLevel,
+              emotion: response.emotion || 'neutral',
+              action: response.action || '',
+              location: settingContext,
+              userAppearance: sceneState.userAppearance || 'a man',
+            });
 
-            const activityStr = activityHints.length > 0 ? activityHints.join(', ') : 'intimate sexual activity';
-            // Character base FIRST, then scene, then explicit modifiers
-            prompt = `${characterBase}, ${sceneContext}, ${activityStr}${visionImageContext}, explicit nsfw sex scene, nude, erotic, graphic sexual content, two people having sex, detailed bodies, ${styleAnchors}, high quality, realistic`;
-          } else if (isAdult) {
-            // Adult/NSFW but not explicit scene
-            prompt = `${characterBase}, ${sceneContext}, ${settingContext}${visionImageContext}, explicit, nsfw, sensual, seductive, attractive, ${styleAnchors}, high quality, detailed`;
-          } else if (contentLevel === 'mature') {
-            // Mature: suggestive but tasteful
-            prompt = `${characterBase}, ${sceneContext}, ${settingContext}${visionImageContext}, sensual, alluring, tasteful, ${styleAnchors}, high quality, detailed`;
+            if (visionImageContext) {
+              prompt += visionImageContext;
+            }
           } else {
-            // PG/PG13: beautiful and clean
+            // PG/PG13: use simpler prompt construction (faster)
+            const characterBase = `${companion.name}, ${companion.appearance}`;
+            const sceneContext = response.imagePrompt || `${response.emotion || 'neutral'} expression, ${response.action || 'in a dramatic pose'}`;
+            const styleAnchors = 'consistent character design, same person, same face, same features';
             prompt = `${characterBase}, ${sceneContext}, ${settingContext}${visionImageContext}, beautiful, elegant, ${styleAnchors}, high quality, detailed`;
           }
 
-          console.log(`[Roleplay] Image prompt with character consistency: ${prompt.substring(0, 200)}...`);
+          console.log(`[Roleplay] Image prompt (enhanced): ${prompt.substring(0, 250)}...`);
 
           // Use appropriate model based on content level (landscape orientation)
           if (imageModel === 'image_standard') {
@@ -4321,6 +4703,12 @@ Return ONLY the JSON object, no other text.`;
       await unloadLLM();
       return scenario;
     },
+
+    /**
+     * Regenerate image and/or video for an existing message.
+     * Uses enhanced LLM-based prompt generation for better visual accuracy.
+     */
+    regenerateMessageMedia,
   },
   metadata: { createdAt: '2025-01-25T00:00:00Z', updatedAt: '2025-01-25T00:00:00Z', license: 'MIT' },
 });
@@ -4339,5 +4727,8 @@ export const flagshipSkills = [
 
 // Export memory management functions for use by components
 export { clearAllMemory, getMemoryStatus, clearGenerationMemory };
+
+// Export enhanced image prompt generation for direct use
+export { generateEnhancedImagePrompt, regenerateMessageMedia };
 
 export default flagshipSkills;

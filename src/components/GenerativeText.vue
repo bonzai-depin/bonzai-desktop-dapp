@@ -165,13 +165,14 @@
               Chat with {{ currentModel.modelname }}
             </button>
             <button
-              class="button is-success is-large fira-sans-condensed-black-italic ml-5"
-              disabled
+              class="button is-info is-outlined is-large fira-sans-condensed-black-italic ml-5"
+              @click="requestOpenNetworkModal()"
+              title="Configure Peer-to-Peer Network"
             >
               <span class="material-symbols-outlined is-size-3 mr-2">
-                public
+                settings
               </span>
-              Serve to Peers
+              P2P
             </button>
           </div>
         </div>
@@ -191,25 +192,24 @@
             </div>
             <div class="level-right">
               <div class="level-item">
-                <a
-                  href="https://app.uniswap.org/swap?chain=arbitrum&outputCurrency=0x0a84edf70f30325151631ce7a61307d1f4d619a3"
-                  target="_blank"
-                  class="button is-info is-outlined is-medium is-fullwidth-mobile"
+                <button
+                  class="button is-info is-outlined is-medium"
+                  @click="requestOpenNetworkModal()"
+                  title="Configure Peer-to-Peer Network"
                 >
-                  <span class="material-symbols-outlined mr-2">
-                    shopping_cart
+                  <span class="material-symbols-outlined">
+                    settings
                   </span>
-                  Buy BONZAI
-                </a>
+                </button>
               </div>
             </div>
           </div>
           <p>
-            Serve
+            Configure P2P mode to serve
             <span class="fira-sans-condensed-black-italic">
               {{ currentModel.modelname }}
             </span>
-            to Peers to earn rewards.
+            to peers and earn x402 USDC.
           </p>
         </div>
         <div class="models__activity--payouts mt-5">
@@ -752,6 +752,7 @@ const computeMemoryRequirements = (model, options = {}) => {
 
 import GenerativeImage from "./GenerativeImage.vue";
 import AccessRequirements from "./AccessRequirements.vue";
+import { requestOpenNetworkModal } from "../services/level.service.js";
 
 const DEMO_PROMPT =
   "Explain what makes a bonsai tree special in exactly 3 sentences.";
@@ -1665,6 +1666,8 @@ export default {
       openclawEnabled,
       checkOpenClawStatus,
       toggleOpenClaw,
+      // Network modal
+      requestOpenNetworkModal,
     };
   },
   async mounted() {

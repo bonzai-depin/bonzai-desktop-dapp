@@ -221,9 +221,11 @@ LTX2_REPO = "Lightricks/LTX-2"
 LTX2_QUANTO_CACHE_DIR = MODEL_DIR / "ltx2_quanto_cache"
 
 # LTX-2 GGUF (for /video endpoint) - Distilled Q3_K_S quantization
-LTX2_GGUF_REPO = "vantagewithai/LTX-2-GGUF"
+# LTX2_GGUF_REPO = "vantagewithai/LTX-2-GGUF"
+LTX2_GGUF_REPO = "https://huggingface.co/3ndetz/LTX2-Rapid-Merges-GGUF"
 LTX2_GGUF_NAME = "ltx-2-19b-distilled-q3_k_s.gguf"
-LTX2_GGUF_URL = "https://huggingface.co/vantagewithai/LTX-2-GGUF/resolve/main/distilled/ltx-2-19b-distilled-Q3_K_S.gguf"
+LTX2_GGUF_URL = "https://huggingface.co/3ndetz/LTX2-Rapid-Merges-GGUF/resolve/main/nsfw/ltx2-phr00tmerge-nsfw-v62/ltx2-phr00tmerge-nsfw-v62-Q3_K_S.gguf"
+# LTX2_GGUF_URL = "https://huggingface.co/vantagewithai/LTX-2-GGUF/resolve/main/distilled/ltx-2-19b-distilled-Q3_K_S.gguf"
 
 # LTX-2 Image2Video Adapter LoRA - improves I2V quality
 LTX2_I2V_LORA_REPO = "MachineDelusions/LTX-2_Image2Video_Adapter_LoRa"
@@ -288,7 +290,7 @@ EXPECTED_SIZES = {
     "flux1-krea-dev-q5_k_m.gguf": 8_419_501_344,
     "z_image_turbo-q5_k_m.gguf": 5_522_742_336,
     "umt5-xxl-encoder-q3_k_m.gguf": 5_580_000_000,  # ~5.2GB GGUF text encoder
-    "ltx-2-19b-distilled-q3_k_s.gguf": 9_283_503_264,  # 9.28GB Q3_K_S distilled
+    "ltx-2-19b-distilled-q3_k_s.gguf": 8_667_234_304, #9_283_503_264,  # 9.28GB Q3_K_S distilled
 }
 
 # =============================================================================
@@ -456,7 +458,7 @@ socketio = SocketIO(
 # Configuration
 JWT_SECRET = os.environ.get("BONZAI_JWT_SECRET", secrets.token_hex(32))
 HMAC_SECRET = os.environ.get("BONZAI_HMAC_SECRET", secrets.token_hex(32))
-ACCESS_TOKEN_EXPIRY = 6 * 60 * 60  # 6 hours
+ACCESS_TOKEN_EXPIRY = 48 * 60 * 60  # 48 hours
 REFRESH_TOKEN_EXPIRY = 7 * 24 * 60 * 60  # 7 days
 CHALLENGE_EXPIRY = 300  # 5 minutes
 
@@ -2440,7 +2442,7 @@ def _img_b64_to_pil(b64: str) -> Image.Image:
 
 
 @app.route("/image/standard", methods=["POST"])
-@require_auth(min_level=LEVEL_REQUIREMENTS["image"], allow_demo=True)
+@require_auth(LEVEL_REQUIREMENTS["image"], allow_demo=True)
 def image_standard_sdxl():
     import logging as _logging
     _logging.getLogger("transformers.tokenization_utils_base").setLevel(_logging.ERROR)
@@ -2662,7 +2664,7 @@ def image_standard_sdxl():
 # =============================================================================
 
 @app.route("/image/advanced", methods=["POST"])
-@require_auth(min_level=LEVEL_REQUIREMENTS["image"], allow_demo=True)
+@require_auth(LEVEL_REQUIREMENTS["image"], allow_demo=True)
 def z_image_advanced():
     """Generate image using Z-Image-Turbo (advanced mode)."""
     data = request.get_json(silent=True) or {}
@@ -2758,7 +2760,7 @@ def z_image_advanced():
 # =============================================================================
 
 @app.route("/image/turbo", methods=["POST"])
-@require_auth(min_level=LEVEL_REQUIREMENTS["image"], allow_demo=True)
+@require_auth(LEVEL_REQUIREMENTS["image"], allow_demo=True)
 def image_turbo_flux_klein():
     """Generate image using FLUX Klein 4B (fast turbo mode)."""
     data = request.json or {}
@@ -2836,7 +2838,7 @@ def image_turbo_flux_klein():
 
 
 @app.route("/image/image/turbo", methods=["POST"])
-@require_auth(min_level=LEVEL_REQUIREMENTS["image"], allow_demo=True)
+@require_auth(LEVEL_REQUIREMENTS["image"], allow_demo=True)
 def image_turbo_flux_klein_i2i():
     """Generate image-to-image using FLUX Klein 4B (fast turbo edit mode)."""
     data = request.get_json(silent=True) or {}
@@ -2941,7 +2943,7 @@ def image_turbo_flux_klein_i2i():
 # =============================================================================
 
 @app.route("/image/quality", methods=["POST"])
-@require_auth(min_level=LEVEL_REQUIREMENTS["image"], allow_demo=True)
+@require_auth(LEVEL_REQUIREMENTS["image"], allow_demo=True)
 def image_quality_flux_krea():
     """Generate image using FLUX Krea."""
     data = request.json or {}
@@ -3068,7 +3070,7 @@ def _load_kokoro_pipeline():
 
 
 @app.route("/audio/turbo", methods=["POST"])
-@require_auth(min_level=LEVEL_REQUIREMENTS["audio"], allow_demo=True)
+@require_auth(LEVEL_REQUIREMENTS["audio"], allow_demo=True)
 def audio_turbo_kokoro():
     """
     Kokoro TTS - Fast, high-quality text-to-speech.
@@ -3215,10 +3217,12 @@ def _load_qwen3_tts_base():
         local_dir = repo_local_dir(QWEN3_TTS_BASE_REPO)
         model_path = str(local_dir) if local_dir.exists() else QWEN3_TTS_BASE_REPO
 
+        # NOTE: Qwen3TTSModel doesn't support .to(), use device_map for all devices
+        # With accelerate>=1.12.0, device_map should work correctly
         with offline_mode_if_complete("audio_quality_clone") as is_offline:
             _qwen3_tts_base = Qwen3TTSModel.from_pretrained(
                 model_path,
-                device_map=str(device),
+                device_map="auto",
                 torch_dtype=dtype,
                 attn_implementation=attn_impl,
                 local_files_only=is_offline,
@@ -3255,10 +3259,12 @@ def _load_qwen3_tts_design():
         local_dir = repo_local_dir(QWEN3_TTS_DESIGN_REPO)
         model_path = str(local_dir) if local_dir.exists() else QWEN3_TTS_DESIGN_REPO
 
+        # NOTE: Qwen3TTSModel doesn't support .to(), use device_map for all devices
+        # With accelerate>=1.12.0, device_map should work correctly
         with offline_mode_if_complete("audio_quality_design") as is_offline:
             _qwen3_tts_design = Qwen3TTSModel.from_pretrained(
                 model_path,
-                device_map=str(device),
+                device_map="auto",
                 torch_dtype=dtype,
                 attn_implementation=attn_impl,
                 local_files_only=is_offline,
@@ -3269,7 +3275,7 @@ def _load_qwen3_tts_design():
 
 
 @app.route("/audio/quality/design", methods=["POST"])
-@require_auth(min_level=LEVEL_REQUIREMENTS["audio"], allow_demo=True)
+@require_auth(LEVEL_REQUIREMENTS["audio"], allow_demo=True)
 def audio_quality_design():
     """
     Design a voice from a text description using Qwen3-TTS VoiceDesign.
@@ -3382,7 +3388,7 @@ def audio_quality_design():
 
 
 @app.route("/audio/quality/clone", methods=["POST"])
-@require_auth(min_level=LEVEL_REQUIREMENTS["audio"], allow_demo=True)
+@require_auth(LEVEL_REQUIREMENTS["audio"], allow_demo=True)
 def audio_quality_clone():
     """
     Generate speech using voice cloning with Qwen3-TTS Base.
@@ -3512,7 +3518,7 @@ def audio_quality_clone():
 
 
 @app.route("/audio/quality/persona", methods=["POST"])
-@require_auth(min_level=LEVEL_REQUIREMENTS["audio"], allow_demo=True)
+@require_auth(LEVEL_REQUIREMENTS["audio"], allow_demo=True)
 def audio_quality_persona():
     """
     Create a persona voice and generate speech in one call.
@@ -3660,6 +3666,7 @@ def audio_quality_persona():
 
 
 @app.route("/audio/quality/voices", methods=["GET"])
+@require_auth(LEVEL_REQUIREMENTS["audio"], allow_demo=True)
 def audio_quality_voices():
     """List cached voice prompts."""
     voices = {}
@@ -3804,7 +3811,7 @@ def _load_ace_step_llm():
 
 
 @app.route("/audio/music", methods=["POST"])
-@require_auth(min_level=LEVEL_REQUIREMENTS["audio"], allow_demo=True)
+@require_auth(LEVEL_REQUIREMENTS["audio"], allow_demo=True)
 def audio_music():
     """
     Generate music using ACE-Step v1.5 (hybrid LM + DiT).
@@ -3967,6 +3974,7 @@ def audio_music():
 
 
 @app.route("/audio/info", methods=["GET"])
+@require_auth(LEVEL_REQUIREMENTS["audio"], allow_demo=True)
 def audio_info():
     '''Audio model capabilities.'''
     return jsonify({
@@ -4018,7 +4026,7 @@ def audio_info():
 # =============================================================================
 
 @app.route("/video", methods=["POST"])
-@require_auth(min_level=LEVEL_REQUIREMENTS["video"], allow_demo=True)
+@require_auth(LEVEL_REQUIREMENTS["video"], allow_demo=True)
 def ltx2_gguf_video():
     """
     LTX-2 (19B DiT) Video generation using distilled Q3_K_S GGUF quantization.
@@ -4193,19 +4201,19 @@ def ltx2_gguf_video():
             )
 
             # Load I2V Adapter LoRA for better image-to-video quality
-            try:
-                logger.info("[LTX-2 GGUF] Loading I2V Adapter LoRA...")
-                pipe.load_lora_weights(
-                    LTX2_I2V_LORA_REPO,
-                    weight_name=LTX2_I2V_LORA_FILENAME,
-                )
-                logger.info("[LTX-2 GGUF] I2V Adapter LoRA loaded successfully")
-            except Exception as e:
-                logger.warning(f"[LTX-2 GGUF] Failed to load I2V LoRA (continuing without it): {e}")
+            # try:
+            #     logger.info("[LTX-2 GGUF] Loading I2V Adapter LoRA...")
+            #     pipe.load_lora_weights(
+            #         LTX2_I2V_LORA_REPO,
+            #         weight_name=LTX2_I2V_LORA_FILENAME,
+            #     )
+            #     logger.info("[LTX-2 GGUF] I2V Adapter LoRA loaded successfully")
+            # except Exception as e:
+            #     logger.warning(f"[LTX-2 GGUF] Failed to load I2V LoRA (continuing without it): {e}")
 
         # Enable memory optimizations
         pipe.enable_model_cpu_offload()
-        
+
         # Enable tiling for high resolutions (720p+ = ~900K pixels)
         # Tiling causes padding errors when latent dimensions are too small
         # Safe resolutions: 640x448, 1280x704, 1920x1088 (latents divide evenly)
@@ -4384,6 +4392,7 @@ def ltx2_gguf_video():
 # =============================================================================
 
 @app.route("/training/datasets", methods=["GET"])
+@require_auth(LEVEL_REQUIREMENTS["training"], allow_demo=False)
 def list_training_datasets():
     """List available training datasets."""
     datasets_dir = MODEL_DIR / "datasets"
@@ -4403,6 +4412,7 @@ def list_training_datasets():
 
 
 @app.route("/training/datasets", methods=["POST"])
+@require_auth(LEVEL_REQUIREMENTS["training"], allow_demo=False)
 def create_training_dataset():
     """Create a new training dataset from uploaded files."""
     data = request.get_json(silent=True) or {}
@@ -4447,6 +4457,7 @@ def create_training_dataset():
 
 
 @app.route("/training/datasets/<dataset_id>", methods=["DELETE"])
+@require_auth(LEVEL_REQUIREMENTS["training"], allow_demo=False)
 def delete_training_dataset(dataset_id):
     """Delete a training dataset."""
     dataset_dir = MODEL_DIR / "datasets" / dataset_id
@@ -4462,7 +4473,7 @@ def delete_training_dataset(dataset_id):
 # =============================================================================
 
 @app.route("/training/llm/start", methods=["POST"])
-@require_auth(min_level=LEVEL_REQUIREMENTS["training"], allow_demo=False)
+@require_auth(LEVEL_REQUIREMENTS["training"], allow_demo=False)
 def start_llm_finetuning():
     """
     Start LLM finetuning using LoRA/QLoRA.
@@ -4791,7 +4802,7 @@ def start_llm_finetuning():
 # =============================================================================
 
 @app.route("/training/sdxl/start", methods=["POST"])
-@require_auth(min_level=LEVEL_REQUIREMENTS["training"], allow_demo=False)
+@require_auth(LEVEL_REQUIREMENTS["training"], allow_demo=False)
 def start_sdxl_lora_training():
     """
     Start SDXL LoRA training from image dataset.
@@ -5142,6 +5153,7 @@ def start_sdxl_lora_training():
 # =============================================================================
 
 @app.route("/training/models", methods=["GET"])
+@require_auth(LEVEL_REQUIREMENTS["training"], allow_demo=False)
 def list_trained_models():
     """List all trained models (LoRAs, finetunes)."""
     trained_dir = MODEL_DIR / "trained"
@@ -5161,6 +5173,7 @@ def list_trained_models():
 
 
 @app.route("/training/models/<model_id>", methods=["DELETE"])
+@require_auth(LEVEL_REQUIREMENTS["training"], allow_demo=False)
 def delete_trained_model(model_id):
     """Delete a trained model."""
     model_dir = MODEL_DIR / "trained" / model_id
@@ -5172,6 +5185,7 @@ def delete_trained_model(model_id):
 
 
 @app.route("/training/models/<model_id>/export", methods=["POST"])
+@require_auth(LEVEL_REQUIREMENTS["training"], allow_demo=False)
 def export_trained_model(model_id):
     """Export a trained model to a specified path."""
     model_dir = MODEL_DIR / "trained" / model_id
@@ -5202,6 +5216,7 @@ def export_trained_model(model_id):
 # =============================================================================
 
 @app.route("/training/info", methods=["GET"])
+@require_auth(LEVEL_REQUIREMENTS["training"], allow_demo=False)
 def training_info():
     """Get training capabilities based on current device."""
     device = DeviceManager.get_device()
@@ -5309,7 +5324,7 @@ def _unload_qwen3_vision():
 
 
 @app.route("/vision/analyze", methods=["POST"])
-@require_auth(min_level=LEVEL_REQUIREMENTS["vision"], allow_demo=True)
+@require_auth(LEVEL_REQUIREMENTS["vision"], allow_demo=True)
 def vision_analyze():
     """
     Analyze an image using Qwen3-VL 2B vision-language model.
@@ -5443,6 +5458,7 @@ def vision_analyze():
 
 
 @app.route("/vision/unload", methods=["POST"])
+@require_auth(LEVEL_REQUIREMENTS["vision"], allow_demo=True)
 def vision_unload():
     """Unload the vision model to free memory."""
     _unload_qwen3_vision()

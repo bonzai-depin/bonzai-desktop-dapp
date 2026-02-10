@@ -890,6 +890,40 @@
 
                 <hr class="mt-5" />
 
+                <!-- PAYOUT HISTORY -->
+                <div class="models__activity--payouts mt-5 pt-5">
+                  <div class="level">
+                    <div class="level-left">
+                      <div class="level-item">
+                        <h2 class="fira-sans-condensed-black-italic has-text-left mt-0">
+                          <span class="material-symbols-outlined is-size-1 mr-2">
+                            trophy
+                          </span>
+                          Payout History
+                        </h2>
+                      </div>
+                    </div>
+                    <div class="level-right">
+                      <div class="level-item">
+                        <button
+                          class="button is-info is-outlined is-medium"
+                          @click="requestOpenNetworkModal()"
+                          title="Configure Peer-to-Peer Network"
+                        >
+                          <span class="material-symbols-outlined">
+                            settings
+                          </span>
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                  <p>
+                    Configure P2P mode to serve Audio Generation to peers and earn x402 USDC.
+                  </p>
+                </div>
+
+                <hr class="mt-5" />
+
                 <!-- GENERATION HISTORY HEADER -->
                 <div class="level pt-5 mt-5">
                   <div class="level-left">
@@ -1083,6 +1117,7 @@ import {
   clearError,
 } from "../stores/generationStore";
 import AccessRequirements from "./AccessRequirements.vue";
+import { requestOpenNetworkModal } from "../services/level.service.js";
 
 const DEMO_PROMPT = "Hello, welcome to sovereign AI.";
 
@@ -2902,6 +2937,8 @@ Remember: 6-10 syllables per line, use all appropriate structure tags. Write in 
       onDemoGenerate,
       canGenerateWithAccess,
       DEMO_PROMPT,
+      // Network modal
+      requestOpenNetworkModal,
     };
   },
 };

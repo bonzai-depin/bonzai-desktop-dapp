@@ -377,6 +377,53 @@ export const authFetch = async (url, options = {}) => {
   return res;
 };
 
+/**
+ * Proactively ensure auth token is valid before starting long operations.
+ * Call this before video/music/image generation to avoid mid-operation token expiry.
+ *
+ * @param {number} bufferMinutes - Refresh if token expires within this many minutes (default: 5)
+ * @returns {Promise<boolean>} - true if authenticated, false if using demo mode
+ */
+export const ensureAuth = async (bufferMinutes = 5) => {
+  const now = Date.now();
+  const bufferMs = bufferMinutes * 60 * 1000;
+
+  // Check if we have a valid token that won't expire during the operation
+  if (state.accessToken && state.tokenExpiry) {
+    if (now < state.tokenExpiry - bufferMs) {
+      // Token is valid and has enough buffer
+      return true;
+    }
+
+    // Token exists but is expiring soon - proactively refresh
+    console.log(`[Auth] Token expires in ${Math.round((state.tokenExpiry - now) / 1000)}s, refreshing proactively...`);
+    try {
+      await refreshToken();
+      console.log("[Auth] Proactive token refresh successful");
+      return true;
+    } catch (e) {
+      console.warn("[Auth] Proactive refresh failed:", e.message);
+    }
+  }
+
+  // No valid token or refresh failed - try re-authentication
+  if (signerGetter) {
+    try {
+      const success = await reAuthenticate();
+      if (success) {
+        console.log("[Auth] Re-authentication successful");
+        return true;
+      }
+    } catch (e) {
+      console.warn("[Auth] Re-authentication failed:", e.message);
+    }
+  }
+
+  // Fall back to demo mode
+  console.log("[Auth] No valid auth available, will use demo mode");
+  return false;
+};
+
 // ═══════════════════════════════════════════════════════════════════════════
 // EXPORT
 // ═══════════════════════════════════════════════════════════════════════════
@@ -393,6 +440,7 @@ export const authService = {
   logout,
   reAuthenticate,
   setSignerGetter,
+  ensureAuth,
 
   // Utilities
   getAuthHeaders,

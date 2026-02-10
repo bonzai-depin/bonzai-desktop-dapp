@@ -26,31 +26,55 @@
             >
               <span class="material-symbols-outlined">close</span>
             </button>
+            <!-- P2P button (disconnected state) -->
+            <button
+              class="button ml-2"
+              :class="p2pButtonClass"
+              @click="showNetworkModal = true"
+              title="Peer-to-Peer Network"
+            >
+              <span class="material-symbols-outlined" :class="{ 'pulse-icon': p2pStatus.started }">
+                {{ p2pModeIcon }}
+              </span>
+              <span class="serve-label ml-2">{{ p2pModeLabel }}</span>
+            </button>
           </div>
 
           <!-- Only show wallet info when fully connected with a valid address -->
           <div v-else-if="isConnected && walletAddress" key="wallet-info" class="wallet-info">
-          <div class="wallet-address p-3" @click="copyAddress">
-            <span class="address-text">{{ truncatedAddress }}</span>
-            <span class="network-badge" :class="{ arbitrum: isOnArbitrum }">
-              {{ isOnArbitrum ? "ARB" : "ETH" }}
-            </span>
-            <span class="fira-sans-condensed-black-italic current-level-label">
-              <span v-if="displayedHighestLevelKey">
-                {{ displayedHighestLevelKey }}
+            <div class="wallet-address p-3" @click="copyAddress">
+              <span class="address-text">{{ truncatedAddress }}</span>
+              <span class="network-badge" :class="{ arbitrum: isOnArbitrum }">
+                {{ isOnArbitrum ? "ARB" : "ETH" }}
               </span>
-              <span v-else class="no-level">LVL 0</span>
-            </span>
-          </div>
+              <span class="fira-sans-condensed-black-italic current-level-label">
+                <span v-if="displayedHighestLevelKey">
+                  {{ displayedHighestLevelKey }}
+                </span>
+                <span v-else class="no-level">LVL 0</span>
+              </span>
+            </div>
 
-          <button
-            class="button is-danger"
-            @click="disconnect"
-            title="Disconnect"
-          >
-            <span class="material-symbols-outlined">logout</span>
-          </button>
-        </div>
+            <button
+              class="button is-danger"
+              @click="disconnect"
+              title="Disconnect"
+            >
+              <span class="material-symbols-outlined">logout</span>
+            </button>
+            <!-- P2P button (connected state) -->
+            <button
+              class="button ml-2"
+              :class="p2pButtonClass"
+              @click="showNetworkModal = true"
+              title="Peer-to-Peer Network"
+            >
+              <span class="material-symbols-outlined" :class="{ 'pulse-icon': p2pStatus.started }">
+                {{ p2pModeIcon }}
+              </span>
+              <span class="serve-label ml-2">{{ p2pModeLabel }}</span>
+            </button>
+          </div>
         </Transition>
       </div>
 
@@ -91,17 +115,6 @@
         </div>
 
         <div class="action-buttons">
-          <button
-            class="button"
-            :class="{ 'is-warning': p2pStatus.started, 'is-success': !p2pStatus.started }"
-            @click="showNetworkModal = true"
-            title="Serve to Peers"
-          >
-            <span class="material-symbols-outlined mr-2" :class="{ 'pulse-icon': p2pStatus.started }">
-              {{ p2pStatus.started ? 'sensors' : 'cell_tower' }}
-            </span>
-            {{ p2pStatus.started ? 'Serving Peers' : 'Serve Peers' }}
-          </button>
           <a
             :href="buyLink"
             target="_blank"
@@ -319,7 +332,7 @@
 import { ref, computed, onMounted, onUnmounted, watch } from "vue";
 import { useBonzaiWeb3 } from "../composables/useBonzaiWeb3.js";
 import { CONFIG } from "../config/web3.config.js";
-import { levelService, checkAllLevels, canUnlockWithEth, unlockAllWithEth, clearOpenLevelModalRequest } from "../services/level.service.js";
+import { levelService, checkAllLevels, canUnlockWithEth, unlockAllWithEth, clearOpenLevelModalRequest, clearOpenNetworkModalRequest } from "../services/level.service.js";
 import NetworkSettings from "./NetworkSettings.vue";
 
 const {
@@ -354,19 +367,45 @@ const unlockStatusType = ref('info'); // 'info', 'warning', 'success', 'danger'
 // Network modal state
 const showNetworkModal = ref(false);
 const p2pStatus = ref({ started: false });
+const p2pMode = ref('local'); // 'local', 'consumer', 'provider'
 let p2pStatusInterval = null;
 
-// Poll P2P status for the serve button indicator
+// Poll P2P status and mode for the button indicator
 const refreshP2PStatus = async () => {
   try {
     const status = await window.electronAPI.p2pStatus();
     if (status.ok) {
       p2pStatus.value = status;
     }
+    // Also refresh mode
+    const savedMode = await window.electronAPI.store.get('p2p.networkMode', 'local');
+    p2pMode.value = savedMode;
   } catch (err) {
     console.warn('[BonzaiBottomBar] Failed to get P2P status:', err);
   }
 };
+
+// P2P button computed properties
+const p2pModeIcon = computed(() => {
+  if (p2pMode.value === 'consumer') return 'cloud_download';
+  if (p2pMode.value === 'provider' && p2pStatus.value.started) return 'sensors';
+  if (p2pMode.value === 'provider') return 'cloud_upload';
+  return 'wifi_off';
+});
+
+const p2pModeLabel = computed(() => {
+  if (p2pMode.value === 'consumer') return 'Consumer';
+  if (p2pMode.value === 'provider' && p2pStatus.value.started) return 'Serving';
+  if (p2pMode.value === 'provider') return 'Provider';
+  return 'Local';
+});
+
+const p2pButtonClass = computed(() => {
+  if (p2pMode.value === 'consumer') return 'is-info';
+  if (p2pMode.value === 'provider' && p2pStatus.value.started) return 'is-warning';
+  if (p2pMode.value === 'provider') return 'is-info';
+  return 'is-info';
+});
 
 // Unlock status styling
 const unlockStatusClass = computed(() => `is-${unlockStatusType.value}`);
@@ -593,6 +632,17 @@ watch(
     }
   }
 );
+
+// Watch for cross-component network modal requests (from Generative* views)
+watch(
+  () => levelService.state.openNetworkModal,
+  (shouldOpen) => {
+    if (shouldOpen) {
+      showNetworkModal.value = true;
+      clearOpenNetworkModalRequest();
+    }
+  }
+);
 </script>
 
 <style scoped>
@@ -621,6 +671,8 @@ watch(
   backdrop-filter: blur(20px);
   box-shadow: 10px 0 25px #000;
   transition: all 0.3s ease;
+  display: flex;
+  align-items: center;
 }
 
 /* Main Bar Content */
@@ -630,6 +682,8 @@ watch(
   justify-content: space-between;
   padding: 6px 12px;
   gap: 24px;
+  width: 100%;
+  height: 100%;
 }
 
 /* Wallet Section */
@@ -647,6 +701,10 @@ watch(
   display: flex;
   align-items: center;
   gap: 10px;
+}
+
+.serve-label {
+  font-weight: 600;
 }
 
 .wallet-address {
@@ -1132,7 +1190,7 @@ hr {
   font-weight: 600;
 }
 
-/* Serve to Peers Button */
+/* P2P Button */
 
 .serve-label {
   font-size: 12px;
