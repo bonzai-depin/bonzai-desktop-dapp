@@ -4,16 +4,28 @@ require("dotenv").config();
 /** @type import('hardhat/config').HardhatUserConfig */
 module.exports = {
   solidity: {
-    version: "0.8.20",
+    version: "0.8.34",
     settings: {
       optimizer: {
         enabled: true,
         runs: 200,
       },
+      evmVersion: "cancun",
       viaIR: true,
     },
   },
   networks: {
+    hardhat: {
+      allowUnlimitedContractSize: true,
+    },
+    // Base Mainnet
+    base: {
+      url: process.env.BASE_RPC_URL || "https://base.llamarpc.com",
+      chainId: 8453,
+      accounts: process.env.DEPLOYER_PRIVATE_KEY
+        ? [process.env.DEPLOYER_PRIVATE_KEY]
+        : [],
+    },
     // LUKSO Testnet
     luksoTestnet: {
       url: "https://rpc.testnet.lukso.gateway.fm",
@@ -33,10 +45,17 @@ module.exports = {
   },
   etherscan: {
     apiKey: {
-      luksoTestnet: "no-api-key-needed",
-      luksoMainnet: "no-api-key-needed",
+      base: process.env.ETHERSCAN_API_KEY || "",
     },
     customChains: [
+      {
+        network: "base",
+        chainId: 8453,
+        urls: {
+          apiURL: "https://api.etherscan.io/v2/api?chainid=8453",
+          browserURL: "https://basescan.org",
+        },
+      },
       {
         network: "luksoTestnet",
         chainId: 4201,
@@ -55,8 +74,11 @@ module.exports = {
       },
     ],
   },
+  sourcify: {
+    enabled: true,
+  },
   paths: {
-    sources: "./contracts",
+    sources: "./src/contracts",
     tests: "./test",
     cache: "./cache",
     artifacts: "./artifacts",

@@ -3,7 +3,7 @@
   <div class="models__deployment column is-8 is-paddingless">
     <div class="models__deployment-install">
       <div class="columns">
-        <div class="column is-12 p-5">
+        <div class="column is-12">
           <div class="level">
             <div class="level-left">
               <div class="level-item">
@@ -367,10 +367,7 @@
                 />
 
                 <!-- IMAGE PICKER (Edit modes only) -->
-                <div
-                  class="notification p-4 preview mb-5"
-                  v-if="isEditMode"
-                >
+                <div class="notification p-4 preview mb-5" v-if="isEditMode">
                   <div class="file is-fullwidth is-medium">
                     <label class="file-label">
                       <input
@@ -424,40 +421,6 @@
                     v-if="isLoading"
                   ></button>
                 </form>
-
-                <hr class="mt-5" />
-
-                <!-- PAYOUT HISTORY -->
-                <div class="models__activity--payouts mt-5 pt-5">
-                  <div class="level">
-                    <div class="level-left">
-                      <div class="level-item">
-                        <h2 class="fira-sans-condensed-black-italic has-text-left mt-0">
-                          <span class="material-symbols-outlined is-size-1 mr-2">
-                            trophy
-                          </span>
-                          Payout History
-                        </h2>
-                      </div>
-                    </div>
-                    <div class="level-right">
-                      <div class="level-item">
-                        <button
-                          class="button is-info is-outlined is-medium"
-                          @click="requestOpenNetworkModal()"
-                          title="Configure Peer-to-Peer Network"
-                        >
-                          <span class="material-symbols-outlined">
-                            settings
-                          </span>
-                        </button>
-                      </div>
-                    </div>
-                  </div>
-                  <p>
-                    Configure P2P mode to serve Image Generation to peers and earn x402 USDC.
-                  </p>
-                </div>
 
                 <hr class="mt-5" />
 
@@ -578,13 +541,14 @@
                         </span>
                       </button>
                       <button
-                        disabled
                         class="button is-medium is-warning copy is-pulled-left ml-5 pl-2"
+                        @click="openMint(inference)"
+                        :disabled="!!inference.nft"
                       >
                         <span class="material-symbols-outlined is-size-2 mr-1">
-                          token
+                          {{ inference.nft ? "check_circle" : "token" }}
                         </span>
-                        Mint
+                        {{ inference.nft ? "Minted" : "Mint" }}
                       </button>
                       <button
                         class="button is-medium is-warning copy is-pulled-left ml-5 pl-2"
@@ -625,20 +589,19 @@
               </div>
             </div>
           </div>
-
-          <!-- SCROLL TO TOP BUTTON -->
-          <button
-            v-if="showScrollTop"
-            class="scroll-to-top-btn"
-            @click="scrollToTop"
-            title="Scroll to top"
-          >
-            <span class="material-symbols-outlined">arrow_upward</span>
-          </button>
         </div>
       </div>
     </div>
   </div>
+
+  <!-- Mint Modal -->
+  <MintModal
+    v-if="mintTarget"
+    :visible="!!mintTarget"
+    v-bind="mintTarget"
+    @close="mintTarget = null"
+    @minted="onMinted"
+  />
 </template>
 
 <script>
@@ -693,6 +656,7 @@ import {
   clearError,
 } from "../stores/generationStore";
 import AccessRequirements from "./AccessRequirements.vue";
+import MintModal from "./MintModal.vue";
 import { requestOpenNetworkModal } from "../services/level.service.js";
 
 const DEMO_PROMPT =
@@ -708,7 +672,7 @@ const WS_GEN = `${API_BASE}/generation`;
 
 export default {
   name: "GenerativeImage",
-  components: { AccessRequirements },
+  components: { AccessRequirements, MintModal },
   setup() {
     // ------------ injected from App -------
     const goAnimateToVideo = inject("goAnimateToVideo", () => {});
@@ -718,6 +682,37 @@ export default {
       const img = inference?.answer?.data?.image;
       if (!img) return;
       goAnimateToVideo(img);
+    };
+
+    // ------------ NFT Minting ---------
+    const mintTarget = ref(null);
+
+    const openMint = (inference) => {
+      mintTarget.value = {
+        inferenceType: "image",
+        inferenceId: inference.id,
+        content: inference.answer?.data?.image,
+        contentType: "image/webp",
+        prompt: inference.question,
+        generation: {
+          type: "text-to-image",
+          model: inference.model || inference.pipeline || mode.value,
+          timestamp: inference.timestamp,
+          elapsedMs: inference.elapsedMs || null,
+        },
+      };
+    };
+
+    const onMinted = (result) => {
+      // Update the inference in the local array
+      const inf = inferences.value.find(
+        (i) =>
+          i.id === result.inferenceId || i.id === mintTarget.value?.inferenceId,
+      );
+      if (inf) {
+        inf.nft = result;
+      }
+      mintTarget.value = null;
     };
 
     // ------------ basic state -------------
@@ -737,14 +732,66 @@ export default {
     const showScrollTop = ref(false);
     const scrollContainer = ref(null);
 
+    // Normalize inference to handle both component format and unified store format
+    // Component format: { question, answer: { data: { image } } }
+    // Get image data from any format
+    const getImageData = (item) => {
+      // Component format: answer.data.image
+      if (item.answer?.data?.image) return item.answer.data.image;
+      // Unified store format: imageData
+      if (item.imageData) return item.imageData;
+      // Direct image property
+      if (item.image) return item.image;
+      // Base64 data property
+      if (item.data?.image) return item.data.image;
+      return null;
+    };
+
+    // Normalize inference to component format
+    const normalizeInference = (item) => {
+      const imageData = getImageData(item);
+      if (!imageData) return null;
+
+      // Already in component format with valid data
+      if (item.answer?.data?.image) {
+        return item;
+      }
+
+      // Convert any other format to component format
+      return {
+        ...item,
+        question: item.prompt || item.question || "",
+        answer: {
+          status: item.answer?.status || 200,
+          data: {
+            image: imageData,
+            ...(item.answer?.data || {}),
+          },
+        },
+      };
+    };
+
     // Reversed inferences (most recent first) with original index
+    // Filter out invalid entries and normalize data structure
     const reversedInferences = computed(() => {
-      return inferences.value
-        .map((item, idx) => ({
-          ...item,
-          _originalIndex: idx,
-        }))
-        .reverse();
+      const normalized = inferences.value
+        .map((item, idx) => {
+          const norm = normalizeInference(item);
+          if (!norm) {
+            console.warn("[GenerativeImage] Skipping invalid inference:", item);
+            return null;
+          }
+          return {
+            ...norm,
+            _originalIndex: idx,
+          };
+        })
+        .filter((item) => item && item.answer?.data?.image);
+
+      console.log(
+        `[GenerativeImage] ${inferences.value.length} total, ${normalized.length} valid`,
+      );
+      return normalized.reverse();
     });
 
     // Displayed inferences (lazy loaded subset)
@@ -754,7 +801,7 @@ export default {
 
     // Check if there are more items to load
     const hasMore = computed(
-      () => displayedCount.value < inferences.value.length
+      () => displayedCount.value < inferences.value.length,
     );
 
     // Load more items
@@ -764,7 +811,7 @@ export default {
       setTimeout(() => {
         displayedCount.value = Math.min(
           displayedCount.value + ITEMS_PER_PAGE,
-          inferences.value.length
+          inferences.value.length,
         );
         isLoadingMore.value = false;
       }, 100);
@@ -791,7 +838,7 @@ export default {
             loadMore();
           }
         },
-        { root, rootMargin: "100px" }
+        { root, rootMargin: "100px" },
       );
       scrollObserver.observe(loadMoreSentinel.value);
     };
@@ -815,8 +862,14 @@ export default {
     // Debounced persistence to avoid excessive writes
     const persistInferences = debounce(async (data) => {
       try {
-        await window.electronAPI?.store?.set?.("imageInferences", data);
-      } catch {}
+        // Use JSON.parse/stringify to ensure proper serialization
+        await window.electronAPI?.store?.set?.(
+          "imageInferences",
+          JSON.parse(JSON.stringify(data)),
+        );
+      } catch (e) {
+        console.error("[GenerativeImage] Failed to persist inferences:", e);
+      }
     }, 500);
 
     // ------------ image editing state -----
@@ -864,22 +917,21 @@ export default {
 
     const showUpdateCTA = computed(
       () =>
-        !readiness.checking && (
-          readiness.authRequired ||
+        !readiness.checking &&
+        (readiness.authRequired ||
           generation.blocked ||
           !readiness.ok ||
           readiness.missingRepos.length > 0 ||
-          readiness.missingGguf
-        )
+          readiness.missingGguf),
     );
 
     const canGenerate = computed(
-      () => readiness.ok && !readiness.authRequired && !generation.active
+      () => readiness.ok && !readiness.authRequired && !generation.active,
     );
 
     // Combined check: technical readiness AND access rights
     const canGenerateWithAccess = computed(
-      () => canGenerate.value && hasAccess.value
+      () => canGenerate.value && hasAccess.value,
     );
 
     // ------------ generation --------------
@@ -888,10 +940,10 @@ export default {
 
     // Computed properties for progress display (avoid repeated Math.round in template)
     const generationPctRounded = computed(() =>
-      Math.round(generation.value.pct)
+      Math.round(generation.value.pct),
     );
     const generationPctClamped = computed(() =>
-      Math.max(0, Math.min(100, generation.value.pct))
+      Math.max(0, Math.min(100, generation.value.pct)),
     );
 
     // ------------ pipeline/endpoint maps --
@@ -960,7 +1012,7 @@ export default {
       ) {
         out.downloaded_size = Math.max(
           dst.downloaded_size || 0,
-          src.downloaded_size || 0
+          src.downloaded_size || 0,
         );
       }
       if (
@@ -1015,7 +1067,7 @@ export default {
       // Don't show 100% until every task is finished (prevents the "100% while tasks pending" bug)
       const tasksList = Object.values(merged);
       const anyActive = tasksList.some((t) =>
-        ["downloading", "pending"].includes(t.status)
+        ["downloading", "pending"].includes(t.status),
       );
       if (anyActive) next = Math.min(next, 99.9);
 
@@ -1028,14 +1080,14 @@ export default {
         tasksList.every((t) => t.status === "completed");
       if (allTasksComplete && downloads.status === "downloading") {
         console.log(
-          "[Downloads] All tasks completed, forcing status to completed"
+          "[Downloads] All tasks completed, forcing status to completed",
         );
         downloads.status = "completed";
       }
 
       const wasActive = downloads.active;
       downloads.active = !["completed", "failed", "cancelled"].includes(
-        downloads.status
+        downloads.status,
       );
 
       // Immediately refresh readiness when download completes
@@ -1071,10 +1123,10 @@ export default {
       downloadsSocket.value.on("download_progress", throttledProgressHandler);
 
       downloadsSocket.value.on("connect_error", (e) =>
-        console.warn("[downloads] connect_error", e?.message || e)
+        console.warn("[downloads] connect_error", e?.message || e),
       );
       downloadsSocket.value.on("error", (e) =>
-        console.warn("[downloads] error", e)
+        console.warn("[downloads] error", e),
       );
     };
 
@@ -1085,7 +1137,7 @@ export default {
         if (idleMs < 1500) return;
         try {
           const { data } = await axios.get(
-            `${API_BASE}/downloads/status/${pipelineId}`
+            `${API_BASE}/downloads/status/${pipelineId}`,
           );
           if (data) {
             applyPipelineUpdate(data);
@@ -1126,22 +1178,31 @@ export default {
 
     // Pipeline names relevant to this view
     const IMAGE_PIPELINES = [
-      "image_standard", "sdxl", "sdxl_intermediate",
-      "image_turbo", "flux_klein",
-      "image_quality", "flux_krea",
-      "image_advanced", "z_image_turbo",
+      "image_standard",
+      "sdxl",
+      "sdxl_intermediate",
+      "image_turbo",
+      "flux_klein",
+      "image_quality",
+      "flux_krea",
+      "image_advanced",
+      "z_image_turbo",
     ];
 
     const isRelevantPipeline = (pipelineName) => {
-      return IMAGE_PIPELINES.some((p) => pipelineName === p || pipelineName?.startsWith(p));
+      return IMAGE_PIPELINES.some(
+        (p) => pipelineName === p || pipelineName?.startsWith(p),
+      );
     };
 
     const resumeActiveDownloadIfAny = async () => {
       try {
         const { data } = await axios.get(`${API_BASE}/downloads/list`);
-        const active = (data?.pipelines || []).filter((p) =>
-          ["pending", "downloading", "retrying", "waiting_retry"].includes(p.status) &&
-          isRelevantPipeline(p.pipeline_name)
+        const active = (data?.pipelines || []).filter(
+          (p) =>
+            ["pending", "downloading", "retrying", "waiting_retry"].includes(
+              p.status,
+            ) && isRelevantPipeline(p.pipeline_name),
         );
         if (!active.length) return;
         ensureDownloadsSocket();
@@ -1155,7 +1216,7 @@ export default {
         const { status } = await axios.post(
           `${API_BASE}/downloads/cancel/${downloads.pipelineId}`,
           {},
-          { validateStatus: () => true }
+          { validateStatus: () => true },
         );
         if (status === 200) {
           downloads.status = "cancelled";
@@ -1170,12 +1231,12 @@ export default {
         const { data, status } = await axios.post(
           `${API_BASE}/downloads/retry/${downloads.pipelineId}`,
           {},
-          { validateStatus: () => true }
+          { validateStatus: () => true },
         );
         if (status === 202 && data?.pipeline_id) {
           startDownloadTracking(
             data.pipeline_id,
-            data.websocket_url || downloads.wsUrl || WS_DL
+            data.websocket_url || downloads.wsUrl || WS_DL,
           );
         }
       } catch {}
@@ -1186,7 +1247,8 @@ export default {
       const repos = Array.isArray(data?.repos) ? data.repos : [];
       const incomplete = repos.filter(
         (r) =>
-          r && (r.ok === false || (Number.isFinite(r.missing) && r.missing > 0))
+          r &&
+          (r.ok === false || (Number.isFinite(r.missing) && r.missing > 0)),
       );
       readiness.missingRepos = [
         ...new Set(incomplete.map((r) => r.repo).filter(Boolean)),
@@ -1198,13 +1260,15 @@ export default {
       }));
       // Check for missing GGUFs from gguf_status (legacy) or required_files (new)
       const ggufs = Array.isArray(data?.gguf_status) ? data.gguf_status : [];
-      const requiredFiles = Array.isArray(data?.required_files) ? data.required_files : [];
+      const requiredFiles = Array.isArray(data?.required_files)
+        ? data.required_files
+        : [];
       const missG = ggufs.filter((g) => g && g.configured && !g.exists);
       const missReq = requiredFiles.filter((f) => f && !f.ok && !f.exists);
       const allMissing = [...missG, ...missReq];
       readiness.missingGguf = allMissing.length > 0;
       readiness.ggufNames = allMissing.map((g) =>
-        (g.path || g.name || "").split("/").pop()
+        (g.path || g.name || "").split("/").pop(),
       );
       readiness.authRequired = !!data?.auth_required;
       readiness.authRepos = Array.isArray(data?.auth_repos)
@@ -1333,7 +1397,7 @@ export default {
             signal: controller.signal,
             validateStatus: () => true,
             timeout: 10000,
-          }
+          },
         );
 
         if (mySeq !== planReq.seq) return; // stale response
@@ -1376,7 +1440,7 @@ export default {
         const res = await axios.post(
           `${API_BASE}/pipelines/prefetch`,
           { pipeline, deep_validate: true },
-          { validateStatus: () => true }
+          { validateStatus: () => true },
         );
 
         if (res.status === 202) {
@@ -1407,7 +1471,7 @@ export default {
 
         setError(
           "image",
-          res?.data?.error || `Prefetch failed (${res.status})`
+          res?.data?.error || `Prefetch failed (${res.status})`,
         );
       } catch (e) {
         setError("image", e?.message || "Network error");
@@ -1466,11 +1530,24 @@ export default {
 
       ensureGenerationSocket();
       startGeneration("image"); // Initialize generation state
+      const _genStart = Date.now();
 
       const onSuccess = async (response) => {
         if (response?.data?.image) {
+          const elapsedMs = Date.now() - _genStart;
           // Only store serializable data - axios response object contains non-serializable
           // properties (config.transformRequest, request object) that break persistence
+          const pipelineName = currentPipeline.value;
+          const modelName =
+            pipelineName === "image_turbo"
+              ? "flux-klein"
+              : pipelineName === "image_quality"
+                ? "flux-krea"
+                : pipelineName === "image_standard"
+                  ? "sdxl"
+                  : pipelineName === "image_advanced"
+                    ? "z-image-turbo"
+                    : pipelineName;
           const newInference = {
             question: prompt,
             answer: {
@@ -1478,6 +1555,9 @@ export default {
               data: response.data,
             },
             id: uuid(),
+            model: modelName,
+            pipeline: pipelineName,
+            elapsedMs,
           };
           // Update shallowRef by replacing array (triggers reactivity)
           inferences.value = [...inferences.value, newInference];
@@ -1488,7 +1568,10 @@ export default {
           // Reset to first page to show the new result
           resetToFirstPage();
         } else {
-          console.warn("[GenerativeImage] No image in response:", response?.data);
+          console.warn(
+            "[GenerativeImage] No image in response:",
+            response?.data,
+          );
         }
       };
 
@@ -1496,7 +1579,12 @@ export default {
     };
 
     // ------------ request wrapper ---------
-    const requestWithDownloadTracking = async (url, payload, onSuccess, isDemo = false) => {
+    const requestWithDownloadTracking = async (
+      url,
+      payload,
+      onSuccess,
+      isDemo = false,
+    ) => {
       try {
         isLoading.value = true;
         const headers = isDemo ? { "X-Demo-Mode": "true" } : {};
@@ -1578,7 +1666,7 @@ export default {
       const b64 = await fileToBase64(file);
       uploadedImageBase64.value = String(b64).replace(
         /^data:image\/[a-zA-Z+]+;base64,/,
-        ""
+        "",
       );
     };
 
@@ -1693,7 +1781,7 @@ export default {
       try {
         const saved = await window.electronAPI?.store?.get?.(
           "imageInferences",
-          []
+          [],
         );
         if (Array.isArray(saved)) {
           // Load into shallowRef by replacing the array
@@ -1737,7 +1825,7 @@ export default {
       () => {
         probeCurrentMode();
       },
-      { immediate: true }
+      { immediate: true },
     );
 
     return {
@@ -1801,6 +1889,10 @@ export default {
       animate,
       // Network modal
       requestOpenNetworkModal,
+      // NFT Minting
+      mintTarget,
+      openMint,
+      onMinted,
     };
   },
 };
@@ -1862,6 +1954,12 @@ export default {
   border-radius: 4px !important;
 }
 
+.models__activity--payouts h2 {
+  font-size: 48px;
+  color: #fff;
+  text-align: right;
+}
+
 .generated__image {
   width: 100% !important;
   height: auto !important;
@@ -1908,7 +2006,14 @@ form {
 hr {
   margin: 12px 0;
   width: 100%;
-  background-color: rgba(255, 255, 255, 0.015);
+  border: none;
+  height: 1px;
+  background: linear-gradient(
+    to right,
+    transparent,
+    rgba(255, 255, 255, 1),
+    transparent
+  );
 }
 .input {
   color: #fff;

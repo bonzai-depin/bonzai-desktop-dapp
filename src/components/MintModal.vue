@@ -1,0 +1,772 @@
+<template>
+  <Teleport to="body">
+    <Transition name="fade">
+      <div v-if="visible" class="mint-modal-overlay" @click.self="handleClose">
+        <div class="mint-modal">
+          <!-- Header -->
+          <div class="mint-modal-header p-5">
+            <h2
+              class="fira-sans-condensed-black-italic is-size-3 has-text-white"
+            >
+              <span class="material-symbols-outlined mr-2 is-size-2">
+                token
+              </span>
+              Mint Collectible
+            </h2>
+            <div class="header-right">
+              <span class="network-pill" :class="networkClass">
+                {{ networkConfig.label }} &middot; {{ networkConfig.standard }}
+              </span>
+              <button
+                class="button is-danger is-small"
+                @click="handleClose"
+                title="Close"
+              >
+                <span class="material-symbols-outlined">close</span>
+              </button>
+            </div>
+          </div>
+
+          <div class="mint-modal-body p-5">
+            <!-- Content Preview -->
+            <div class="content-preview mb-5">
+              <div
+                v-if="contentType?.startsWith('image/')"
+                class="preview-image"
+              >
+                <img :src="previewSrc" alt="Content preview" />
+              </div>
+              <div v-else class="preview-icon">
+                <span
+                  class="material-symbols-outlined"
+                  style="font-size: 48px; opacity: 0.5"
+                >
+                  {{ previewIcon }}
+                </span>
+                <span class="preview-type">{{ generationType }}</span>
+              </div>
+            </div>
+
+            <!-- Editable Fields (before minting) -->
+            <div v-if="stage === 'ready'" class="mint-fields">
+              <!-- Wallet not connected -->
+              <div v-if="!isWalletConnected" class="notification is-danger mb-4" style="background: rgba(241, 70, 104, 0.12); border: 1px solid rgba(241, 70, 104, 0.3);">
+                <p class="has-text-weight-bold has-text-danger fira-sans-condensed-black-italic">
+                  <span class="material-symbols-outlined mr-1" style="font-size: 18px; vertical-align: middle;">account_balance_wallet</span>
+                  Wallet Not Connected
+                </p>
+                <p class="has-text-white-ter" style="font-size: 13px; margin-top: 4px;">Connect your wallet to mint your content as a collectible.</p>
+              </div>
+
+              <!-- Checking levels -->
+              <div v-else-if="isCheckingLevels" class="notification mb-4" style="background: rgba(255, 255, 255, 0.06); border: 1px solid rgba(255, 255, 255, 0.1);">
+                <p class="has-text-white fira-sans-condensed-black-italic">
+                  <span class="material-symbols-outlined mr-1" style="font-size: 18px; vertical-align: middle;">sync</span>
+                  Checking mint access...
+                </p>
+              </div>
+
+              <!-- Level gate banner -->
+              <div v-else-if="!mintAccess.canMint" class="notification is-warning mb-4" style="background: rgba(255, 224, 138, 0.12); border: 1px solid rgba(255, 224, 138, 0.3);">
+                <p class="has-text-weight-bold has-text-warning fira-sans-condensed-black-italic">
+                  <span class="material-symbols-outlined mr-1" style="font-size: 18px; vertical-align: middle;">lock</span>
+                  {{ mintAccess.levelRequired }} Required
+                </p>
+                <p class="has-text-white-ter" style="font-size: 13px; margin-top: 4px;">{{ mintAccess.reason }}.</p>
+              </div>
+
+              <div class="field mb-5">
+                <label class="label fira-sans-condensed-black-italic">
+                  Collectible Title
+                </label>
+                <input
+                  v-model="mintTitle"
+                  class="input"
+                  type="text"
+                  maxlength="80"
+                />
+              </div>
+              <div class="field mb-5">
+                <label class="label fira-sans-condensed-black-italic">Collectible Description</label>
+                <textarea
+                  v-model="mintDescription"
+                  class="textarea"
+                  rows="2"
+                  maxlength="500"
+                ></textarea>
+              </div>
+              <hr />
+              <div class="has-text-centered">
+                <button
+                  class="button is-warning is-large mt-4 mb-5"
+                  @click="startMint"
+                  :disabled="isMinting || !mintAccess.canMint || isCheckingLevels || !isWalletConnected || !hasValidFields"
+                >
+                  <span class="material-symbols-outlined mr-2">token</span>
+                  <template v-if="!isWalletConnected">Connect Wallet to Mint</template>
+                  <template v-else-if="isCheckingLevels">Checking Access...</template>
+                  <template v-else-if="!hasValidFields">Enter a Title</template>
+                  <template v-else>Mint Collectible &middot; {{ networkConfig.fee }} {{ networkConfig.currency }}</template>
+                </button>
+              </div>
+            </div>
+
+            <!-- Progress (during minting) -->
+            <div v-else-if="stage === 'minting'" class="mint-progress">
+              <div class="progress-stages">
+                <div
+                  v-for="(s, i) in stages"
+                  :key="s.key"
+                  class="progress-stage"
+                  :class="{
+                    active: currentStage === s.key,
+                    done: stageIndex(currentStage) > i,
+                  }"
+                >
+                  <span class="stage-icon material-symbols-outlined">
+                    {{ stageIndex(currentStage) > i ? "check_circle" : s.icon }}
+                  </span>
+                  <span class="stage-label">{{ s.label }}</span>
+                </div>
+              </div>
+
+              <progress
+                class="progress is-warning"
+                :value="progressPercent"
+                max="100"
+              >
+                {{ progressPercent }}%
+              </progress>
+              <p class="progress-message">{{ progressMessage }}</p>
+              <div class="has-text-centered mt-4">
+                <button class="button is-danger is-small" @click="cancelMint">
+                  <span class="material-symbols-outlined mr-1" style="font-size: 16px;">close</span>
+                  Cancel
+                </button>
+              </div>
+            </div>
+
+            <!-- Success Result -->
+            <div v-else-if="stage === 'success'" class="mint-result">
+              <div class="result-icon success">
+                <span
+                  class="material-symbols-outlined"
+                  style="font-size: 48px; color: #48c78e"
+                >
+                  check_circle
+                </span>
+              </div>
+              <h3 class="has-text-white has-text-centered mb-4">
+                Minted Successfully!
+              </h3>
+
+              <div class="result-details">
+                <div class="detail-row" v-if="mintResult.tokenId">
+                  <span class="label">Token ID</span>
+                  <span class="value monospace">{{ mintResult.tokenId }}</span>
+                </div>
+                <div class="detail-row">
+                  <span class="label">Network</span>
+                  <span class="value">
+                    {{ networkConfig.label }} ({{ networkConfig.standard }})
+                  </span>
+                </div>
+                <div class="detail-row" v-if="mintResult.explorerUrl">
+                  <span class="label">Transaction</span>
+                  <a
+                    :href="mintResult.explorerUrl"
+                    target="_blank"
+                    class="value link"
+                  >
+                    View on Explorer
+                    <span
+                      class="material-symbols-outlined"
+                      style="font-size: 14px"
+                    >
+                      open_in_new
+                    </span>
+                  </a>
+                </div>
+                <div class="detail-row" v-if="mintResult.contentUrl">
+                  <span class="label">Content</span>
+                  <a
+                    :href="mintResult.contentUrl"
+                    target="_blank"
+                    class="value link"
+                  >
+                    View on Arweave
+                    <span
+                      class="material-symbols-outlined"
+                      style="font-size: 14px"
+                    >
+                      open_in_new
+                    </span>
+                  </a>
+                </div>
+              </div>
+
+              <button
+                class="button is-success is-fullwidth mt-4"
+                @click="handleClose"
+              >
+                Done
+              </button>
+            </div>
+
+            <!-- Error -->
+            <div v-else-if="stage === 'error'" class="mint-error">
+              <div class="notification is-danger error">
+                <span class="material-symbols-outlined" style="font-size: 48px">
+                  error
+                </span>
+                <p>There was an error during the minting of your collectible, please retry.</p>
+              </div>
+              <hr />
+              <div class="error-actions">
+                <button class="button is-warning mr-3" @click="startMint">
+                  <span class="material-symbols-outlined mr-1">refresh</span>
+                  Retry
+                </button>
+                <button class="button is-danger" @click="handleClose">
+                  Cancel
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </Transition>
+
+    <!-- Wallet signature overlay (shown above everything when awaiting wallet confirmation) -->
+    <Transition name="fade">
+      <div v-if="awaitingSignature" class="wallet-sign-overlay">
+        <div class="wallet-sign-card">
+          <span class="material-symbols-outlined wallet-sign-icon pulse">
+            account_balance_wallet
+          </span>
+          <h3 class="has-text-white fira-sans-condensed-black-italic mt-3 mb-2">
+            Wallet Confirmation Required
+          </h3>
+          <p class="has-text-grey-light" style="font-size: 14px;">
+            Please confirm the transaction in your wallet (MetaMask / WalletConnect).
+          </p>
+        </div>
+      </div>
+    </Transition>
+  </Teleport>
+</template>
+
+<script setup>
+import { ref, computed, watch } from "vue";
+import { mintStore } from "../stores/mintStore.js";
+import { mintContent } from "../services/contentNFT.service.js";
+import { canMintContentType, checkAllLevels } from "../services/level.service.js";
+import { useWeb3Store } from "../stores/web3.store.js";
+import { web3Service } from "../services/web3.service.js";
+
+const props = defineProps({
+  visible: { type: Boolean, default: false },
+  inferenceType: { type: String, default: "" },
+  inferenceId: { type: String, default: "" },
+  content: { type: [String, Object, null], default: null },
+  contentType: { type: String, default: "" },
+  prompt: { type: String, default: "" },
+  generation: { type: Object, default: () => ({}) },
+});
+
+const emit = defineEmits(["close", "minted"]);
+
+const networkConfig = mintStore.activeMintNetwork;
+
+const networkClass = computed(() => mintStore.state.network);
+
+// Wallet connection state — use Pinia store (same source as bottom bar)
+const web3Store = useWeb3Store();
+const isWalletConnected = computed(() => web3Store.isConnected);
+const isCheckingLevels = ref(false);
+
+// Stage: 'ready' | 'minting' | 'success' | 'error'
+const stage = ref("ready");
+const isMinting = ref(false);
+const progressPercent = ref(0);
+const progressMessage = ref("");
+const currentStage = ref("upload");
+const mintResult = ref({});
+const errorMessage = ref("");
+
+// Editable fields
+const mintTitle = ref("");
+const mintDescription = ref("");
+
+const stages = [
+  { key: "upload", label: "Upload", icon: "cloud_upload" },
+  { key: "metadata", label: "Metadata", icon: "description" },
+  { key: "mint", label: "Mint", icon: "token" },
+  { key: "finalize", label: "Done", icon: "check" },
+];
+
+const stageIndex = (key) => stages.findIndex((s) => s.key === key);
+
+const previewIcon = computed(() => {
+  if (props.contentType?.startsWith("audio/")) return "graphic_eq";
+  if (props.contentType?.startsWith("video/")) return "play_circle";
+  if (props.contentType?.startsWith("text/")) return "code";
+  if (props.contentType?.startsWith("model/")) return "3d_rotation";
+  return "token";
+});
+
+const generationType = computed(() => {
+  return props.generation?.type || props.inferenceType || "Content";
+});
+
+// Level gate check for minting
+const mintAccess = computed(() => canMintContentType(props.inferenceType));
+
+// Form validation — title is required
+const hasValidFields = computed(() => mintTitle.value.trim().length > 0);
+
+// Show wallet signature overlay when wallet confirmation is needed
+// 'sign' stage = Irys signing (legacy), mint stage with wallet confirm message = on-chain tx
+const awaitingSignature = computed(() =>
+  isMinting.value && (
+    currentStage.value === 'sign' ||
+    (currentStage.value === 'mint' && progressMessage.value.includes('Confirm'))
+  ),
+);
+
+const previewSrc = computed(() => {
+  if (!props.content) return "";
+  if (typeof props.content === "string") {
+    if (props.content.startsWith("data:")) return props.content;
+    // Assume base64 image
+    return `data:${props.contentType || "image/webp"};base64,${props.content}`;
+  }
+  return "";
+});
+
+// Reset state when modal opens
+watch(
+  () => props.visible,
+  async (v) => {
+    if (v) {
+      stage.value = "ready";
+      isMinting.value = false;
+      progressPercent.value = 0;
+      progressMessage.value = "";
+      currentStage.value = "upload";
+      mintResult.value = {};
+      errorMessage.value = "";
+
+      // Refresh balances + level status (await to ensure mint button reflects reality)
+      if (isWalletConnected.value) {
+        isCheckingLevels.value = true;
+        try {
+          await web3Service.fetchAllBalances();
+          await checkAllLevels();
+        } catch (e) {
+          console.warn('[MintModal] Level check failed:', e.message);
+        } finally {
+          isCheckingLevels.value = false;
+        }
+      }
+
+      // Auto-generate title from prompt
+      mintTitle.value =
+        (props.prompt || "").substring(0, 50) ||
+        `BonzAI ${generationType.value}`;
+      mintDescription.value = `AI-generated ${generationType.value} by BonzAI.`;
+    }
+  },
+);
+
+async function startMint() {
+  isMinting.value = true;
+  stage.value = "minting";
+  progressPercent.value = 5;
+  progressMessage.value = "Starting...";
+
+  const result = await mintContent({
+    content: props.content,
+    contentType: props.contentType,
+    prompt: props.prompt,
+    generation: props.generation,
+    title: mintTitle.value,
+    description: mintDescription.value,
+    inferenceType: props.inferenceType,
+    inferenceId: props.inferenceId,
+    onProgress: (stageKey, message, percent) => {
+      currentStage.value = stageKey;
+      progressMessage.value = message;
+      progressPercent.value = percent;
+    },
+  });
+
+  isMinting.value = false;
+
+  if (result.success) {
+    stage.value = "success";
+    mintResult.value = result;
+    emit("minted", result);
+  } else {
+    stage.value = "error";
+    errorMessage.value = result.error || "Minting failed. Please try again.";
+  }
+}
+
+function cancelMint() {
+  isMinting.value = false;
+  stage.value = "ready";
+  progressPercent.value = 0;
+  progressMessage.value = "";
+  currentStage.value = "upload";
+}
+
+function handleClose() {
+  if (isMinting.value) {
+    cancelMint();
+    return;
+  }
+  emit("close");
+}
+</script>
+
+<style scoped>
+.mint-modal-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.85);
+  backdrop-filter: blur(12px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 10003;
+}
+
+.mint-modal {
+  width: 90%;
+  max-width: 640px;
+  /* background: #0a0a0f; */
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 16px;
+  overflow: hidden;
+}
+
+.mint-modal-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 16px 20px;
+  background: rgba(0, 0, 0, 0.3);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+.mint-modal-header h2 {
+  display: flex;
+  align-items: center;
+  margin: 0;
+}
+
+.header-right {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.network-pill {
+  padding: 8px 10px;
+  border-radius: 4px;
+  font-size: 8px;
+  font-weight: 700;
+  text-transform: uppercase;
+}
+
+.network-pill.base {
+  background: rgba(0, 82, 255, 0.2);
+  color: #5b8eff;
+  border: 1px solid rgba(0, 82, 255, 0.4);
+}
+
+.mint-modal-body {
+  padding: 20px;
+}
+
+hr {
+  margin: 12px 0;
+  width: 100%;
+  border: none;
+  height: 1px;
+  background: linear-gradient(
+    to right,
+    transparent,
+    rgba(255, 255, 255, 1),
+    transparent
+  );
+}
+
+/* Content Preview */
+.content-preview {
+  margin-bottom: 16px;
+  border-radius: 4px !important;
+  overflow: hidden;
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid rgba(255, 255, 255, 0.06);
+}
+
+.preview-image {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  max-height: 200px;
+  overflow: hidden;
+}
+
+.preview-image img {
+  max-width: 100%;
+  object-fit: contain;
+}
+
+.preview-icon {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  color: rgba(255, 255, 255, 0.5);
+}
+
+.preview-type {
+  font-size: 12px;
+  text-transform: uppercase;
+  margin-top: 8px;
+  opacity: 0.6;
+}
+
+/* Fields */
+.mint-fields .field {
+  margin-bottom: 12px;
+}
+
+.mint-fields .label {
+  color: rgba(255, 255, 255, 1);
+  font-size: 12px;
+  margin-bottom: 10px;
+}
+
+.mint-fields .input,
+.mint-fields .textarea {
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  color: #fff;
+  border-radius: 4px;
+  resize: none;
+}
+
+.mint-fields .input:focus,
+.mint-fields .textarea:focus {
+  border-color: rgba(255, 255, 255, 0.3);
+  box-shadow: none;
+}
+
+/* Fee */
+.fee-display {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px 16px;
+  background: rgba(255, 255, 255, 0.04);
+  border-radius: 8px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.fee-label {
+  color: rgba(255, 255, 255, 0.6);
+  font-size: 13px;
+}
+
+.fee-amount {
+  color: #ffe08a;
+  font-size: 16px;
+}
+
+/* Progress */
+.mint-progress {
+  text-align: center;
+}
+
+.progress-stages {
+  display: flex;
+  justify-content: space-between;
+  margin-bottom: 16px;
+}
+
+.progress-stage {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  opacity: 0.4;
+  transition: opacity 0.3s;
+}
+
+.progress-stage.active {
+  opacity: 1;
+}
+
+.progress-stage.done {
+  opacity: 0.8;
+}
+
+.progress-stage.done .stage-icon {
+  color: #48c78e;
+}
+
+.stage-icon {
+  font-size: 24px;
+  color: rgba(255, 255, 255, 0.8);
+}
+
+.progress-stage.active .stage-icon {
+  color: #ffe08a;
+  animation: pulse-icon 1.5s ease-in-out infinite;
+}
+
+@keyframes pulse-icon {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.5;
+  }
+}
+
+.stage-label {
+  font-size: 11px;
+  color: rgba(255, 255, 255, 0.7);
+}
+
+.progress {
+  margin-bottom: 12px;
+  height: 6px;
+  border-radius: 3px;
+}
+
+.progress-message {
+  color: rgba(255, 255, 255, 0.6);
+  font-size: 13px;
+}
+
+/* Result */
+.mint-result,
+.mint-error {
+  text-align: center;
+}
+
+.result-icon {
+  margin-bottom: 12px;
+}
+
+.result-details {
+  text-align: left;
+  margin-top: 16px;
+}
+
+.result-details .detail-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 10px 0;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.result-details .detail-row:last-child {
+  border-bottom: none;
+}
+
+.result-details .label {
+  color: rgba(255, 255, 255, 0.5);
+  font-size: 12px;
+}
+
+.result-details .value {
+  color: #fff;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.result-details .value.monospace {
+  font-family: "JetBrains Mono", monospace;
+  font-size: 12px;
+}
+
+.result-details .value.link {
+  color: #5b8eff;
+  text-decoration: none;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.result-details .value.link:hover {
+  text-decoration: underline;
+}
+
+/* Error */
+.error-message {
+  color: #f14668;
+  margin: 12px 0;
+  font-size: 14px;
+}
+
+.error-actions {
+  display: flex;
+  gap: 10px;
+  justify-content: center;
+  margin-top: 16px;
+}
+
+/* Wallet Signature Overlay — z-index above everything */
+.wallet-sign-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.88);
+  backdrop-filter: blur(16px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 99999;
+}
+
+.wallet-sign-card {
+  text-align: center;
+  padding: 40px 48px;
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid rgba(255, 224, 138, 0.25);
+  border-radius: 20px;
+  max-width: 400px;
+}
+
+.wallet-sign-icon {
+  font-size: 56px;
+  color: #ffe08a;
+}
+
+.wallet-sign-icon.pulse {
+  animation: wallet-pulse 1.8s ease-in-out infinite;
+}
+
+@keyframes wallet-pulse {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50% { opacity: 0.5; transform: scale(0.92); }
+}
+
+/* Transitions */
+.fade-enter-active,
+.fade-leave-active {
+  transition: opacity 0.2s ease;
+}
+.fade-enter-from,
+.fade-leave-to {
+  opacity: 0;
+}
+</style>

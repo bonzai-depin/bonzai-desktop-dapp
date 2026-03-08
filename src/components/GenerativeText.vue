@@ -4,7 +4,7 @@
   <div class="models__deployment column is-8 is-paddingless">
     <div class="models__deployment-install">
       <div class="columns">
-        <div class="column is-12 p-5">
+        <div class="column is-12">
           <div class="level">
             <div class="level-left">
               <div class="level-item">
@@ -21,29 +21,21 @@
             </div>
             <div class="level-right">
               <div class="level-item">
-                <!-- OpenClaw Integration Toggle -->
-                <button
-                  v-if="openclawInstalled"
-                  class="button is-medium fira-sans-condensed-black-italic mr-5 mt-4 pl-2"
-                  :class="openclawEnabled ? 'is-success' : 'is-warning'"
-                  @click="toggleOpenClaw"
-                  :title="openclawEnabled ? 'OpenClaw integration enabled - click to disable' : 'Enable OpenClaw integration'"
-                >
-                  <span class="openclaw-label is-size-4">{{ openclawEnabled ? '🦞 ON' : '🦞 OFF' }}</span>
-                </button>
+                <!-- OpenClaw toggle moved to BonzaiBottomBar -->
                 <button
                   class="button is-outlined is-info is-medium fira-sans-condensed-black-italic ml-2 mt-4"
                   @click="openModel = true"
                 >
-                  <span class="material-symbols-outlined is-size-3">
+                  <span class="material-symbols-outlined is-size-3 mr-2">
                     folder_open
                   </span>
+                  Browse Models
                 </button>
               </div>
             </div>
           </div>
-          <div class="desc">
-            <p>
+          <div class="desc models__activity--payouts pb-0">
+            <div class="desc-content">
               {{ currentModel.modeldesc }}
 
               <hr />
@@ -70,7 +62,7 @@
                   CTX
                 </span>
               </span>
-            </p>
+            </div>
           </div>
           <div class="models__deployment-install--cta has-text-right p-0">
             <button
@@ -141,7 +133,12 @@
               Download Vision
               <span
                 class="filesize"
-                style="font-size: 15px; top: -20px; right: -25px; text-shadow: none;"
+                style="
+                  font-size: 15px;
+                  top: -20px;
+                  right: -25px;
+                  text-shadow: none;
+                "
                 v-if="mmprojDownloadProgress"
               >
                 {{ mmprojDownloadProgress }}%
@@ -149,14 +146,23 @@
               <span
                 v-else
                 class="filesize"
-                style="font-size: 15px; top: -20px; right: -25px; text-shadow: none;"
+                style="
+                  font-size: 15px;
+                  top: -20px;
+                  right: -25px;
+                  text-shadow: none;
+                "
               >
                 {{ currentModel.mmprojFilesize }}
               </span>
             </button>
             <button
               class="button is-success is-large fira-sans-condensed-black-italic ml-5 mr-5"
-              v-if="!isLoading && isModel && (!currentModel.isMultimodal || isMmprojAvailable)"
+              v-if="
+                !isLoading &&
+                isModel &&
+                (!currentModel.isMultimodal || isMmprojAvailable)
+              "
               @click="openChat = true"
             >
               <span class="material-symbols-outlined is-size-3 mr-2">
@@ -164,54 +170,10 @@
               </span>
               Chat with {{ currentModel.modelname }}
             </button>
-            <button
-              class="button is-info is-outlined is-large fira-sans-condensed-black-italic ml-5"
-              @click="requestOpenNetworkModal()"
-              title="Configure Peer-to-Peer Network"
-            >
-              <span class="material-symbols-outlined is-size-3 mr-2">
-                settings
-              </span>
-              P2P
-            </button>
           </div>
         </div>
       </div>
-      <div class="models__activity has-text-left mt-5 pt-5">
-        <div class="models__activity--payouts">
-          <div class="level">
-            <div class="level-left">
-              <div class="level-item">
-                <h2 class="fira-sans-condensed-black-italic has-text-left mt-0">
-                  <span class="material-symbols-outlined is-size-1 mr-2">
-                    trophy
-                  </span>
-                  Payout History
-                </h2>
-              </div>
-            </div>
-            <div class="level-right">
-              <div class="level-item">
-                <button
-                  class="button is-info is-outlined is-medium"
-                  @click="requestOpenNetworkModal()"
-                  title="Configure Peer-to-Peer Network"
-                >
-                  <span class="material-symbols-outlined">
-                    settings
-                  </span>
-                </button>
-              </div>
-            </div>
-          </div>
-          <p>
-            Configure P2P mode to serve
-            <span class="fira-sans-condensed-black-italic">
-              {{ currentModel.modelname }}
-            </span>
-            to peers and earn x402 USDC.
-          </p>
-        </div>
+      <div class="models__activity has-text-left mt-5">
         <div class="models__activity--payouts mt-5">
           <div class="level">
             <div class="level-left">
@@ -264,35 +226,65 @@
               }"
             >
               <p class="question">{{ inference.question }}</p>
-              <div class="answer" style="white-space: pre-line">
+              <div class="answer markdown-body" @click="handleAnswerClick">
+                <div class="answer__meta">
+                  <span v-if="inference.model" class="answer__model">
+                    <span class="material-symbols-outlined mr-2">
+                      neurology
+                    </span>
+                    {{ inference.model }}
+                    <span v-if="inference.tokensPerSecond" class="answer__tps">
+                      @ {{ inference.tokensPerSecond }} tok/s
+                    </span>
+                  </span>
+                </div>
                 <vue-markdown :source="inference.answer.text" />
+                <span
+                  v-if="
+                    isLoading && inference.answer.id === streamingInferenceId
+                  "
+                  class="streaming-cursor"
+                ></span>
+                <hr class="answer-divider" />
                 <button
-                  class="button is-medium is-success copy is-pulled-right"
+                  class="button is-medium is-success copy p-0 pl-1 pr-1 mr-3"
                   @click="
                     copy(inference.answer.text);
                     hasCopy[inference._originalIndex] = true;
-                    scrollToTop();
                   "
                   v-if="!hasCopy[inference._originalIndex]"
                 >
-                  <span class="material-symbols-outlined">content_copy</span>
-                  Copy
+                  <span class="material-symbols-outlined is-size-2">
+                    content_copy
+                  </span>
                 </button>
                 <button
-                  class="button is-medium is-outlined copy is-pulled-right"
-                  @click="
-                    copy(inference.answer.text);
-                    scrollToTop();
-                  "
-                  v-if="
-                    hasCopy[inference._originalIndex] &&
-                    hasCopy[inference._originalIndex] == true
-                  "
+                  class="button is-medium is-outlined copy p-0 pl-1 pr-1 mr-3"
+                  @click="copy(inference.answer.text)"
+                  v-if="hasCopy[inference._originalIndex]"
                 >
-                  <span class="material-symbols-outlined">check</span>
+                  <span class="material-symbols-outlined is-size-2">check</span>
+                </button>
+                <button
+                  class="button is-medium is-warning copy ml-3 pl-2"
+                  @click="openMint(inference)"
+                  :disabled="!!inference.nft"
+                >
+                  <span class="material-symbols-outlined is-size-2 mr-2">
+                    {{ inference.nft ? "check_circle" : "token" }}
+                  </span>
+                  {{ inference.nft ? "Minted" : "Mint" }}
+                </button>
+                <button
+                  class="button is-medium is-danger is-pulled-right ml- p-0 pl-1 pr-1"
+                  @click="removeInference(inference._originalIndex)"
+                  title="Remove this result"
+                >
+                  <span class="material-symbols-outlined is-size-2">
+                    delete
+                  </span>
                 </button>
               </div>
-              <span class="answer__id"># {{ inference.answer.id }}</span>
             </li>
           </ol>
           <!-- LAZY LOAD SENTINEL -->
@@ -305,32 +297,6 @@
               Loading more...
             </span>
           </div>
-
-          <!-- SCROLL TO TOP BUTTON -->
-          <button
-            v-if="showScrollTop"
-            class="scroll-to-top-btn"
-            @click="scrollToTop"
-            title="Scroll to top"
-          >
-            <span class="material-symbols-outlined">arrow_upward</span>
-          </button>
-          <p v-else>
-            <span v-if="isModel">
-              Chat with
-              <span class="fira-sans-condensed-black-italic">
-                {{ currentModel.modelname }}
-              </span>
-              to get started.
-            </span>
-            <span v-else>
-              Download
-              <span class="fira-sans-condensed-black-italic">
-                {{ currentModel.modelname }}
-              </span>
-              to get started.
-            </span>
-          </p>
         </div>
       </div>
     </div>
@@ -363,37 +329,69 @@
             </div>
           </div>
           <!-- Migration Progress -->
-          <div v-if="migrationProgress.active" class="notification is-info mb-4">
+          <div
+            v-if="migrationProgress.active"
+            class="notification is-info mb-4"
+          >
             <p class="mb-2">
-              <strong class="fira-sans-condensed-black-italic">Migrating model files...</strong>
-              <span class="is-pulled-right fira-sans-condensed-black-italic">{{ migrationProgress.pct }}%</span>
+              <strong class="fira-sans-condensed-black-italic">
+                Migrating model files...
+              </strong>
+              <span class="is-pulled-right fira-sans-condensed-black-italic">
+                {{ migrationProgress.pct }}%
+              </span>
             </p>
-            <progress class="progress is-success" :value="migrationProgress.pct" max="100">{{ migrationProgress.pct }}%</progress>
-            <p class="is-size-7 has-text-white">{{ migrationProgress.detail }}</p>
+            <progress
+              class="progress is-success"
+              :value="migrationProgress.pct"
+              max="100"
+            >
+              {{ migrationProgress.pct }}%
+            </progress>
+            <p class="is-size-7 has-text-white">
+              {{ migrationProgress.detail }}
+            </p>
           </div>
-          <div v-if="migrationProgress.error" class="notification is-danger mb-4">
-            <strong>Migration failed:</strong> {{ migrationProgress.error }}
+          <div
+            v-if="migrationProgress.error"
+            class="notification is-danger mb-4"
+          >
+            <strong>Migration failed:</strong>
+            {{ migrationProgress.error }}
           </div>
           <!-- Model Directory -->
           <div class="model-dir-bar mb-5 p-4">
-            <span class="material-symbols-outlined mr-2 has-text-white is-size-1" style="vertical-align: middle">folder</span>
-            <span class="is-size-7 has-text-grey-light model-dir-path">{{ modelDir }}</span>
+            <span
+              class="material-symbols-outlined mr-2 has-text-white is-size-1"
+              style="vertical-align: middle"
+            >
+              folder
+            </span>
+            <span class="is-size-7 has-text-grey-light model-dir-path">
+              {{ modelDir }}
+            </span>
             <button
               class="button is-medium is-outlined is-warning ml-3"
               @click="changeModelDir"
               title="Change model storage location"
-              style="box-shadow: none;"
+              style="box-shadow: none"
             >
               Change
             </button>
           </div>
           <ul class="columns is-multiline has-text-left mt-5">
-            <li class="column is-6" v-for="model in availableModels" :key="model.filename">
+            <li
+              class="column is-6"
+              v-for="model in sortedModels"
+              :key="model.filename"
+            >
               <div
                 class="model-card mb-5"
                 :class="{
-                  'model-card--downloaded': modelAvailabilityMap[model.filename],
-                  'model-card--selected': currentModel.filename === model.filename,
+                  'model-card--downloaded':
+                    modelAvailabilityMap[model.filename],
+                  'model-card--selected':
+                    currentModel.filename === model.filename,
                 }"
               >
                 <button
@@ -402,14 +400,16 @@
                     pickModel(model);
                     openModel = false;
                   "
-                  style="justify-content: left; box-shadow: none;"
+                  style="justify-content: left; box-shadow: none"
                 >
                   <span class="material-symbols-outlined is-size-2 mr-2">
                     neurology
                   </span>
                   {{ model.modelname }}
                   <span class="filesize">
-                    <span class="material-symbols-outlined is-size-3 mr-2 is-pulled-left">
+                    <span
+                      class="material-symbols-outlined is-size-3 mr-2 is-pulled-left"
+                    >
                       hard_drive
                     </span>
                     {{ model.filesize }}
@@ -419,7 +419,7 @@
                       :disabled="modelDownloading[model.filename]"
                       @click.stop="downloadModelInList(model)"
                       title="Download model"
-                      style="box-shadow: none;"
+                      style="box-shadow: none"
                     >
                       <span
                         v-if="modelDownloading[model.filename]"
@@ -428,7 +428,12 @@
                         {{ modelDownloadProgress[model.filename] || 0 }}%
                       </span>
                       <template v-else>
-                        <span class="material-symbols-outlined" style="font-size: 20px">download</span>
+                        <span
+                          class="material-symbols-outlined"
+                          style="font-size: 20px"
+                        >
+                          download
+                        </span>
                       </template>
                     </button>
                     <button
@@ -437,9 +442,14 @@
                       :disabled="modelDownloading[model.filename]"
                       @click.stop="deleteModelInList(model)"
                       title="Delete model from disk"
-                      style="box-shadow: none;"
+                      style="box-shadow: none"
                     >
-                      <span class="material-symbols-outlined" style="font-size: 20px">delete</span>
+                      <span
+                        class="material-symbols-outlined"
+                        style="font-size: 20px"
+                      >
+                        delete
+                      </span>
                     </button>
                   </span>
                 </button>
@@ -492,7 +502,10 @@
 
           <form ref="promptForm" @submit.prevent>
             <!-- Image attachment preview for multimodal models -->
-            <div v-if="isMultimodalModel && attachedImage" class="attached-image-preview">
+            <div
+              v-if="isMultimodalModel && attachedImage"
+              class="attached-image-preview"
+            >
               <img :src="attachedImage.dataUrl" alt="Attached image" />
               <button
                 type="button"
@@ -506,6 +519,24 @@
             </div>
 
             <div class="chat-input-row">
+              <!-- Reasoning toggle for thinking models -->
+              <button
+                v-if="isThinkingModel"
+                type="button"
+                class="button reasoning-toggle-btn is-pulled-left mr-3"
+                :class="{ active: reasoningEnabled }"
+                @click="reasoningEnabled = !reasoningEnabled"
+                :disabled="isLoading"
+                :title="
+                  reasoningEnabled
+                    ? 'Reasoning ON — model thinks step-by-step'
+                    : 'Reasoning OFF — direct answers'
+                "
+              >
+                <span class="material-symbols-outlined is-size-2">
+                  network_intelligence_history
+                </span>
+              </button>
               <!-- Image attachment button for multimodal models -->
               <label
                 v-if="isMultimodalModel && isMmprojAvailable"
@@ -513,7 +544,9 @@
                 :class="{ 'has-image': attachedImage }"
                 title="Attach an image for analysis"
               >
-                <span class="material-symbols-outlined">add_photo_alternate</span>
+                <span class="material-symbols-outlined">
+                  add_photo_alternate
+                </span>
                 <input
                   type="file"
                   accept="image/*"
@@ -525,7 +558,11 @@
               <input
                 class="input is-large is-fullwidth"
                 type="text"
-                :placeholder="isMultimodalModel ? 'Ask about an image or just chat...' : 'Ask me something and press enter...'"
+                :placeholder="
+                  isMultimodalModel
+                    ? 'Ask about an image or just chat...'
+                    : 'Ask me something and press enter...'
+                "
                 v-model="form.prompt"
                 @keyup.enter.native="hasAccess && sendMessage(form.prompt)"
                 :disabled="isLoading || !hasAccess"
@@ -546,48 +583,93 @@
               }"
             >
               <p class="question">{{ inference.question }}</p>
-              <div class="answer" style="white-space: pre-line">
+              <div class="answer markdown-body" @click="handleAnswerClick">
+                <div class="answer__meta">
+                  <span v-if="inference.model" class="answer__model">
+                    From {{ inference.model }}
+                    <span v-if="inference.tokensPerSecond" class="answer__tps">
+                      @ {{ inference.tokensPerSecond }} tok/s
+                    </span>
+                  </span>
+                </div>
                 <vue-markdown :source="inference.answer.text" />
+                <span
+                  v-if="
+                    isLoading && inference.answer.id === streamingInferenceId
+                  "
+                  class="streaming-cursor"
+                ></span>
+                <hr class="answer-divider" />
                 <button
-                  class="button is-medium is-success copy is-pulled-right"
+                  class="button is-medium is-success copy p-0 pl-1 pr-1 mr-3"
                   @click="
                     copy(inference.answer.text);
                     hasCopy[inference._originalIndex] = true;
-                    scrollToTop();
                   "
                   v-if="!hasCopy[inference._originalIndex]"
                 >
-                  <span class="material-symbols-outlined">content_copy</span>
-                  Copy
+                  <span class="material-symbols-outlined is-size-2">
+                    content_copy
+                  </span>
                 </button>
                 <button
-                  class="button is-medium is-outlined copy is-pulled-right"
-                  @click="
-                    copy(inference.answer.text);
-                    scrollToTop();
-                  "
-                  v-if="
-                    hasCopy[inference._originalIndex] &&
-                    hasCopy[inference._originalIndex] == true
-                  "
+                  class="button is-medium is-outlined copy p-0 pl-1 pr-1 mr-3"
+                  @click="copy(inference.answer.text)"
+                  v-if="hasCopy[inference._originalIndex]"
                 >
-                  <span class="material-symbols-outlined">check</span>
+                  <span class="material-symbols-outlined is-size-2">check</span>
+                </button>
+                <button
+                  class="button is-medium is-warning copy ml-3 pl-2"
+                  @click="openMint(inference)"
+                  :disabled="!!inference.nft"
+                >
+                  <span class="material-symbols-outlined is-size-2 mr-2">
+                    {{ inference.nft ? "check_circle" : "token" }}
+                  </span>
+                  {{ inference.nft ? "Minted" : "Mint" }}
+                </button>
+                <button
+                  class="button is-medium is-danger is-pulled-right ml-5 p-0 pl-1 pr-1"
+                  @click="removeInference(inference._originalIndex)"
+                  title="Remove this result"
+                >
+                  <span class="material-symbols-outlined is-size-2">
+                    delete
+                  </span>
                 </button>
               </div>
-              <span class="answer__id"># {{ inference.answer.id }}</span>
             </li>
           </ol>
         </div>
       </div>
     </div>
   </div>
+
+  <!-- Mint Modal -->
+  <MintModal
+    v-if="mintTarget"
+    :visible="!!mintTarget"
+    v-bind="mintTarget"
+    @close="mintTarget = null"
+    @minted="onMinted"
+  />
 </template>
 
 <script>
-import { ref, reactive, shallowRef, toRaw, computed, watch } from "vue";
+import {
+  ref,
+  reactive,
+  shallowRef,
+  toRaw,
+  computed,
+  watch,
+  nextTick,
+} from "vue";
 import { v4 as uuid } from "uuid";
 import VueMarkdown from "vue-markdown-render";
 import useClipboard from "vue-clipboard3";
+import MintModal from "./MintModal.vue";
 
 // Debounce utility for persistence
 const debounce = (fn, delay) => {
@@ -763,13 +845,43 @@ export default {
     VueMarkdown,
     GenerativeImage,
     AccessRequirements,
+    MintModal,
   },
   setup() {
+    // ------------ NFT Minting ---------
+    const mintTarget = ref(null);
+
+    const openMint = (inference) => {
+      mintTarget.value = {
+        inferenceType: "text",
+        inferenceId: inference.id,
+        content: inference.answer?.text,
+        contentType: "text/plain",
+        prompt: inference.question,
+        generation: {
+          type: "text-generation",
+          model: inference.model || "llm",
+          timestamp: inference.timestamp,
+          tokensPerSecond: inference.tokensPerSecond || null,
+        },
+      };
+    };
+
+    const onMinted = (result) => {
+      // Trigger re-render for shallowRef
+      const arr = [...inferences.value];
+      const inf = arr.find((i) => i.id === mintTarget.value?.inferenceId);
+      if (inf) inf.nft = result;
+      inferences.value = arr;
+      mintTarget.value = null;
+    };
+
     const downloadProgress = ref(0);
     const isLoading = ref(false);
     const isModel = ref(false);
     const openModel = ref(false);
     const openChat = ref(false);
+    const reasoningEnabled = ref(false);
 
     // Model directory
     const modelDir = ref("");
@@ -786,38 +898,6 @@ export default {
       detail: "",
       error: null,
     });
-
-    // OpenClaw integration state
-    const openclawInstalled = ref(false);
-    const openclawEnabled = ref(false);
-
-    const checkOpenClawStatus = async () => {
-      try {
-        openclawInstalled.value = await window.electronAPI.openclawIsInstalled();
-        console.log("[OpenClaw] Installed:", openclawInstalled.value);
-        if (openclawInstalled.value) {
-          openclawEnabled.value = await window.electronAPI.openclawGetEnabled();
-          console.log("[OpenClaw] Enabled:", openclawEnabled.value);
-        }
-      } catch (e) {
-        console.error("Failed to check OpenClaw status:", e);
-      }
-    };
-
-    const toggleOpenClaw = async () => {
-      try {
-        const newState = !openclawEnabled.value;
-        const result = await window.electronAPI.openclawSetEnabled(newState);
-        if (result.success) {
-          openclawEnabled.value = newState;
-          console.log(`OpenClaw integration ${newState ? "enabled" : "disabled"}`);
-        } else {
-          console.error("Failed to toggle OpenClaw:", result.error);
-        }
-      } catch (e) {
-        console.error("Failed to toggle OpenClaw:", e);
-      }
-    };
 
     // ------------ access control -----------
     const accessRef = ref(null);
@@ -840,6 +920,7 @@ export default {
         url: "https://huggingface.co/bartowski/Codestral-22B-v0.1-GGUF/resolve/main/Codestral-22B-v0.1-Q4_K_M.gguf",
         filename: "codestral-22b-v0.1-q4_k_m.gguf",
         filesize: "13.3 GB",
+        filesizeBytes: 13.3e9,
         parameters: 22000000000,
         context: 32768,
       },
@@ -851,8 +932,10 @@ export default {
         url: "https://huggingface.co/unsloth/DeepSeek-R1-Distill-Qwen-1.5B-GGUF/resolve/main/DeepSeek-R1-Distill-Qwen-1.5B-Q4_K_M.gguf",
         filename: "deepseek-r1-distill-qwen-1.5b-q4_k_m.gguf",
         filesize: "1.12 GB",
+        filesizeBytes: 1.12e9,
         parameters: 1500000000,
         context: 32768,
+        thinking: true,
       },
 
       deepseek_R1_7_B: {
@@ -862,8 +945,10 @@ export default {
         url: "https://huggingface.co/unsloth/DeepSeek-R1-Distill-Qwen-7B-GGUF/resolve/main/DeepSeek-R1-Distill-Qwen-7B-Q4_K_M.gguf",
         filename: "deepseek-r1-distill-qwen-7b-q4_k_m.gguf",
         filesize: "4.68 GB",
+        filesizeBytes: 4.68e9,
         parameters: 7000000000,
         context: 32768,
+        thinking: true,
       },
 
       deepseek_R1_32_B: {
@@ -873,8 +958,10 @@ export default {
         url: "https://huggingface.co/unsloth/DeepSeek-R1-Distill-Qwen-32B-GGUF/resolve/main/DeepSeek-R1-Distill-Qwen-32B-Q4_K_M.gguf",
         filename: "deepseek-r1-distill-qwen-32b-q4_k_m.gguf",
         filesize: "19.85 GB",
+        filesizeBytes: 19.85e9,
         parameters: 32000000000,
         context: 32768,
+        thinking: true,
       },
 
       gemma_3_1_B: {
@@ -884,8 +971,21 @@ export default {
         url: "https://huggingface.co/unsloth/gemma-3-1b-it-GGUF/resolve/main/gemma-3-1b-it-Q4_K_M.gguf",
         filename: "gemma-3-1b-it-q4_k_m.gguf",
         filesize: "806 MB",
+        filesizeBytes: 806e6,
         parameters: 1000000000,
         context: 32768,
+      },
+
+      gemma_3_12_B: {
+        modelname: "Gemma 3 12B",
+        modeldesc:
+          "12B-parameter Gemma 3 instruction-tuned model from Google with a 32,768-token context window. A compact, efficient chat and reasoning model. Best for: lightweight multilingual assistants, summarization, and everyday QA on laptops or edge devices.",
+        url: "https://huggingface.co/unsloth/gemma-3-12b-it-GGUF/resolve/main/gemma-3-12b-it-UD-Q4_K_XL.gguf",
+        filename: "gemma-3-12b-it-ud-q4_k_xl.gguf",
+        filesize: "7.43 GB",
+        filesizeBytes: 7.43e9,
+        parameters: 12000000000,
+        context: 131072,
       },
 
       gpt_oss_20_B: {
@@ -895,6 +995,7 @@ export default {
         url: "https://huggingface.co/unsloth/gpt-oss-20b-GGUF/resolve/main/gpt-oss-20b-Q4_K_M.gguf",
         filename: "gpt-oss-20b-q4_k_m.gguf",
         filesize: "11.6 GB",
+        filesizeBytes: 11.6e9,
         parameters: 20000000000,
         context: 131072,
       },
@@ -906,6 +1007,7 @@ export default {
         url: "https://huggingface.co/bartowski/NousResearch_Hermes-4-14B-GGUF/resolve/main/NousResearch_Hermes-4-14B-Q4_K_M.gguf",
         filename: "nousresearch_hermes-4-14b-q4_k_m.gguf",
         filesize: "8.99 GB",
+        filesizeBytes: 8.99e9,
         parameters: 14000000000,
         context: 32768,
       },
@@ -917,6 +1019,7 @@ export default {
         url: "https://huggingface.co/TheBloke/Llama-2-7B-Chat-GGUF/resolve/main/llama-2-7b-chat.Q4_K_M.gguf",
         filename: "llama-2-7b-chat-q4_k_m.gguf",
         filesize: "4.08 GB",
+        filesizeBytes: 4.08e9,
         parameters: 7000000000,
         context: 4096,
       },
@@ -928,6 +1031,7 @@ export default {
         url: "https://huggingface.co/lmstudio-community/Meta-Llama-3.1-8B-Instruct-GGUF/resolve/main/Meta-Llama-3.1-8B-Instruct-Q4_K_M.gguf",
         filename: "meta-llama-3.1-8b-instruct-q4_k_m.gguf",
         filesize: "4.92 GB",
+        filesizeBytes: 4.92e9,
         parameters: 8000000000,
         context: 131072,
       },
@@ -939,6 +1043,7 @@ export default {
         url: "https://huggingface.co/TheBloke/Mistral-7B-Instruct-v0.2-GGUF/resolve/main/mistral-7b-instruct-v0.2.Q4_K_M.gguf",
         filename: "mistral-7b-instruct-v0.2-q4_k_m.gguf",
         filesize: "4.37 GB",
+        filesizeBytes: 4.37e9,
         parameters: 7000000000,
         context: 32768,
       },
@@ -950,6 +1055,7 @@ export default {
         url: "https://huggingface.co/TheBloke/MythoMax-L2-13B-GGUF/resolve/main/mythomax-l2-13b.Q4_K_M.gguf",
         filename: "mythomax-l2-13b.q4_k_m.gguf",
         filesize: "7.87 GB",
+        filesizeBytes: 7.87e9,
         parameters: 13000000000,
         context: 4096,
       },
@@ -961,6 +1067,7 @@ export default {
         url: "https://huggingface.co/microsoft/Phi-3-mini-4k-instruct-gguf/resolve/main/Phi-3-mini-4k-instruct-q4.gguf",
         filename: "phi-3-mini-4k-instruct-q4.gguf",
         filesize: "2.39 GB",
+        filesizeBytes: 2.39e9,
         parameters: 3800000000,
         context: 4096,
       },
@@ -969,9 +1076,10 @@ export default {
         modelname: "Phi-4 Mini 3.8B",
         modeldesc:
           "3.8B-parameter Phi-4 Mini instruction-tuned model from Microsoft with a 128,000-token context window. Long-context, reasoning-focused small model. Best for: document QA, longer chats, and compact local assistants that still handle large prompts.",
-        url: "https://huggingface.co/bartowski/microsoft_Phi-4-mini-instruct-GGUF/resolve/main/Phi-4-mini-instruct-Q4_K_M.gguf",
+        url: "https://huggingface.co/unsloth/Phi-4-mini-instruct-GGUF/resolve/main/Phi-4-mini-instruct-Q4_K_M.gguf",
         filename: "phi-4-mini-instruct-q4_k_m.gguf",
         filesize: "2.49 GB",
+        filesizeBytes: 2.49e9,
         parameters: 3800000000,
         context: 128000,
       },
@@ -983,6 +1091,7 @@ export default {
         url: "https://huggingface.co/Qwen/Qwen2.5-3B-Instruct-GGUF/resolve/main/qwen2.5-3b-instruct-q5_k_m.gguf",
         filename: "qwen2.5-3b-instruct-q5_k_m.gguf",
         filesize: "2.44 GB",
+        filesizeBytes: 2.44e9,
         parameters: 3090000000,
         context: 32768,
       },
@@ -994,8 +1103,9 @@ export default {
         url: "https://huggingface.co/Qwen/Qwen2.5-Coder-7B-Instruct-GGUF/resolve/main/qwen2.5-coder-7b-instruct-q5_k_m.gguf",
         filename: "qwen2.5-coder-7b-instruct-q5_k_m.gguf",
         filesize: "5.48 GB",
+        filesizeBytes: 5.48e9,
         parameters: 7000000000,
-        context: 32768,
+        context: 131072,
       },
 
       qwen_2_5_coder_14_B: {
@@ -1005,6 +1115,7 @@ export default {
         url: "https://huggingface.co/Qwen/Qwen2.5-Coder-14B-Instruct-GGUF/resolve/main/qwen2.5-coder-14b-instruct-q4_k_m.gguf",
         filename: "qwen2.5-coder-14b-instruct-q4_k_m.gguf",
         filesize: "8.93 GB",
+        filesizeBytes: 8.93e9,
         parameters: 14000000000,
         context: 131072,
       },
@@ -1016,6 +1127,7 @@ export default {
         url: "https://huggingface.co/bartowski/Qwen2.5-Coder-32B-Instruct-GGUF/resolve/main/Qwen2.5-Coder-32B-Instruct-Q4_K_M.gguf",
         filename: "qwen2.5-coder-32b-instruct-q4_k_m.gguf",
         filesize: "19.9 GB",
+        filesizeBytes: 19.9e9,
         parameters: 32000000000,
         context: 131072,
       },
@@ -1027,6 +1139,7 @@ export default {
         url: "https://huggingface.co/unsloth/Qwen3-Coder-30B-A3B-Instruct-GGUF/resolve/main/Qwen3-Coder-30B-A3B-Instruct-UD-Q5_K_XL.gguf",
         filename: "qwen3-coder-30b-a3b-instruct-ud-q5_k_xl.gguf",
         filesize: "21.7 GB",
+        filesizeBytes: 21.7e9,
         parameters: 30500000000,
         activeParameters: 3000000000,
         isMoE: true,
@@ -1040,17 +1153,31 @@ export default {
         url: "https://huggingface.co/bartowski/Yi-Coder-9B-Chat-GGUF/resolve/main/Yi-Coder-9B-Chat-Q5_K_M.gguf",
         filename: "yi-coder-9b-chat-q5_k_m.gguf",
         filesize: "6.26 GB",
+        filesizeBytes: 6.26e9,
+        parameters: 9000000000,
+        context: 131072,
+      },
+
+      yi_1_5_coder_9_B: {
+        modelname: "Yi-Coder 1.5 9B Chat",
+        modeldesc:
+          "9B-parameter Yi-Coder Chat model from 01.AI with 128K context window. First sub-10B model to pass 20% on LiveCodeBench. Supports 52 programming languages. Best for: capable coding assistant on modest hardware, long-context code understanding.",
+        url: "https://huggingface.co/bartowski/Yi-1.5-9B-Chat-GGUF/resolve/main/Yi-1.5-9B-Chat-Q5_K_M.gguf",
+        filename: "yi1.5-coder-9b-chat-q5_k_m.gguf",
+        filesize: "6.26 GB",
+        filesizeBytes: 6.26e9,
         parameters: 9000000000,
         context: 131072,
       },
 
       glm_4_7_flash_30_B: {
-        modelname: "GLM 4.7 Flash Uncensored",
+        modelname: "GLM 4.7 Flash",
         modeldesc:
           "30B-parameter Mixture-of-Experts model from Zhipu AI (DavidAU NEO-CODE-MAX imatrix) with only 3B active parameters per forward pass and 200K context. Dual imatrix calibration (creative + code) with 16-bit output tensor for higher fidelity. Best for: uncensored creative writing, coding assistance, reasoning, and general-purpose AI on consumer hardware.",
         url: "https://huggingface.co/DavidAU/GLM-4.7-Flash-Uncensored-Heretic-NEO-CODE-Imatrix-MAX-GGUF/resolve/main/GLM-4.7-Flash-Uncen-Hrt-NEO-CODE-MAX-imat-D_AU-Q4_K_M.gguf",
-        filename: "glm-4.7-flash-q4_k_m.gguf",
-        filesize: "18.5 GB",
+        filename: "glm-4.7-flash-q2_m.gguf",
+        filesize: "10.3 GB",
+        filesizeBytes: 10.3e9,
         parameters: 30000000000,
         activeParameters: 3000000000,
         isMoE: true,
@@ -1064,20 +1191,301 @@ export default {
         url: "https://huggingface.co/unsloth/Qwen3-Coder-Next-GGUF/resolve/main/Qwen3-Coder-Next-Q4_K_M.gguf",
         filename: "qwen3-coder-next-q4_k_m.gguf",
         filesize: "48.5 GB",
+        filesizeBytes: 48.5e9,
         parameters: 80000000000,
         activeParameters: 3000000000,
         isMoE: true,
         context: 262144,
       },
 
-      // MiniCPM-V 4.5 is disabled for GenerativeText - vision is handled server-side via diffuser.py
-      // This model is used in Generative3D for vision analysis
-      // minicpm_v_4_5: {
-      //   modelname: "MiniCPM-V 4.5 (Vision)",
-      //   modeldesc: "8B-parameter multimodal vision-language model from OpenBMB...",
-      //   disabled: true,
-      // },
+      qwen3_5_27_B: {
+        modelname: "Qwen3.5 27B",
+        modeldesc:
+          "27B-parameter Qwen3.5 hybrid attention model combining DeltaNet linear attention with Gated Attention and a native 262,144-token context window. Q2_K quantization fits 32GB unified memory. Best for: advanced reasoning, creative writing, coding, and vision-capable tasks on Apple Silicon.",
+        url: "https://huggingface.co/unsloth/Qwen3.5-27B-GGUF/resolve/main/Qwen3.5-27B-Q2_K.gguf",
+        filename: "qwen3.5-27b-q2_k.gguf",
+        filesize: "10.5 GB",
+        filesizeBytes: 10.5e9,
+        parameters: 27000000000,
+        activeParameters: 8000000000,
+        context: 262144,
+        thinking: true,
+      },
+
+      nanbeige_4_1_3_B: {
+        modelname: "Nanbeige 4.1 3B",
+        modeldesc:
+          "3B-parameter Nanbeige 4.1 model fine-tuned via SFT and RL for reasoning, preference alignment, and agentic capabilities. Supports English and Chinese. Excels at code, math, and multi-step reasoning in a compact package. Best for: lightweight reasoning tasks, code generation, tool use, and 3D object generation.",
+        url: "https://huggingface.co/Edge-Quant/Nanbeige4.1-3B-Q4_K_M-GGUF/resolve/main/nanbeige4.1-3b-q4_k_m.gguf",
+        filename: "nanbeige4.1-3b-q4_k_m.gguf",
+        filesize: "2.44 GB",
+        filesizeBytes: 2.44e9,
+        parameters: 3000000000,
+        context: 32768,
+      },
+
+      // ─── Qwen 3.5 Family (thinking models) ─────────────────────────────
+      qwen3_5_9_B_q4: {
+        modelname: "Qwen3.5 9B Q4",
+        modeldesc:
+          "9B-parameter Qwen3.5 hybrid model with Gated DeltaNet + Gated Attention and 262K context. Q4_K_XL quantization. Fast dense architecture ideal for code generation, reasoning, and creative tasks. Best for: high-quality output with fast inference on 16GB+ machines.",
+        url: "https://huggingface.co/unsloth/Qwen3.5-9B-GGUF/resolve/main/Qwen3.5-9B-UD-Q4_K_XL.gguf",
+        filename: "qwen3.5-9b-ud-q4_k_xl.gguf",
+        filesize: "5.97 GB",
+        filesizeBytes: 5.97e9,
+        parameters: 9000000000,
+        context: 262144,
+        thinking: true,
+      },
+
+      qwen3_5_27_B_q4: {
+        modelname: "Qwen3.5 27B Q4",
+        modeldesc:
+          "27B-parameter Qwen3.5 hybrid attention model with Q4_K_XL quantization and 262K context. Higher fidelity than Q2_K at the cost of more memory. Best for: users with 48GB+ unified memory wanting better quality Qwen3.5 output.",
+        url: "https://huggingface.co/unsloth/Qwen3.5-27B-GGUF/resolve/main/Qwen3.5-27B-UD-Q4_K_XL.gguf",
+        filename: "qwen3.5-27b-ud-q4_k_xl.gguf",
+        filesize: "16.7 GB",
+        filesizeBytes: 16.7e9,
+        parameters: 27000000000,
+        activeParameters: 8000000000,
+        context: 262144,
+        thinking: true,
+      },
+      qwen3_5_27_B_q8: {
+        modelname: "Qwen3.5 27B Q8",
+        modeldesc:
+          "27B-parameter Qwen3.5 hybrid attention model with Q8_K_XL quantization and 262K context. Near-lossless quality for maximum fidelity. Best for: workstations with 64GB+ memory wanting the best Qwen3.5 27B quality.",
+        url: "https://huggingface.co/unsloth/Qwen3.5-27B-GGUF/resolve/main/Qwen3.5-27B-UD-Q8_K_XL.gguf",
+        filename: "qwen3.5-27b-ud-q8_k_xl.gguf",
+        filesize: "32.4 GB",
+        filesizeBytes: 32.4e9,
+        parameters: 27000000000,
+        activeParameters: 8000000000,
+        context: 262144,
+        thinking: true,
+      },
+      qwen3_5_35_B_a3b_iq3: {
+        modelname: "Qwen3.5 35B A3B IQ3",
+        modeldesc:
+          "35B-parameter MoE Qwen3.5 model with only 3B active parameters per token and 262K context. IQ3_XXS quantization — compact 3-bit with superior accuracy via Unsloth Dynamic quant. Best for: high-quality 3D code generation and reasoning on consumer hardware.",
+        url: "https://huggingface.co/unsloth/Qwen3.5-35B-A3B-GGUF/resolve/main/Qwen3.5-35B-A3B-UD-IQ3_XXS.gguf",
+        filename: "qwen3.5-35b-a3b-ud-iq3_xxs.gguf",
+        filesize: "13.1 GB",
+        filesizeBytes: 13.1e9,
+        parameters: 35000000000,
+        activeParameters: 3000000000,
+        isMoE: true,
+        context: 262144,
+        thinking: true,
+      },
+      qwen3_5_35_B_a3b_q2: {
+        modelname: "Qwen3.5 35B A3B",
+        modeldesc:
+          "35B-parameter MoE Qwen3.5 model with only 3B active parameters per token and 262K context. Q2_K_XL quantization. Ultra-efficient MoE architecture for fast inference. Best for: lightweight yet capable reasoning on consumer hardware.",
+        url: "https://huggingface.co/unsloth/Qwen3.5-35B-A3B-GGUF/resolve/main/Qwen3.5-35B-A3B-UD-Q2_K_XL.gguf",
+        filename: "qwen3.5-35b-a3b-ud-q2_k_xl.gguf",
+        filesize: "12.9 GB",
+        filesizeBytes: 12.9e9,
+        parameters: 35000000000,
+        activeParameters: 3000000000,
+        isMoE: true,
+        context: 262144,
+        thinking: true,
+      },
+      qwen3_5_35_B_a3b_q4: {
+        modelname: "Qwen3.5 35B A3B Q4",
+        modeldesc:
+          "35B-parameter MoE Qwen3.5 model with 3B active parameters. Q4_K_XL quantization for higher fidelity. Best for: users wanting better quality MoE inference with moderate memory.",
+        url: "https://huggingface.co/unsloth/Qwen3.5-35B-A3B-GGUF/resolve/main/Qwen3.5-35B-A3B-UD-Q4_K_XL.gguf",
+        filename: "qwen3.5-35b-a3b-ud-q4_k_xl.gguf",
+        filesize: "20.6 GB",
+        filesizeBytes: 20.6e9,
+        parameters: 35000000000,
+        activeParameters: 3000000000,
+        isMoE: true,
+        context: 262144,
+        thinking: true,
+      },
+      qwen3_5_35_B_a3b_q8: {
+        modelname: "Qwen3.5 35B A3B Q8",
+        modeldesc:
+          "35B-parameter MoE Qwen3.5 model with 3B active parameters. Q8_K_XL near-lossless quantization. Best for: maximum quality MoE inference on systems with 64GB+ memory.",
+        url: "https://huggingface.co/unsloth/Qwen3.5-35B-A3B-GGUF/resolve/main/Qwen3.5-35B-A3B-UD-Q8_K_XL.gguf",
+        filename: "qwen3.5-35b-a3b-ud-q8_k_xl.gguf",
+        filesize: "38.7 GB",
+        filesizeBytes: 38.7e9,
+        parameters: 35000000000,
+        activeParameters: 3000000000,
+        isMoE: true,
+        context: 262144,
+        thinking: true,
+      },
+      qwen3_5_122_B_a10b_q2: {
+        modelname: "Qwen3.5 122B A10B",
+        modeldesc:
+          "122B-parameter MoE Qwen3.5 model with 10B active parameters and 262K context. Q2_K_XL quantization. Frontier-class reasoning with efficient MoE inference. Best for: high-end workstations with 64GB+ memory.",
+        url: "https://huggingface.co/unsloth/Qwen3.5-122B-A10B-GGUF/resolve/main/Qwen3.5-122B-A10B-UD-Q2_K_XL.gguf",
+        filename: "qwen3.5-122b-a10b-ud-q2_k_xl.gguf",
+        filesize: "46.7 GB",
+        filesizeBytes: 46.7e9,
+        parameters: 122000000000,
+        activeParameters: 10000000000,
+        isMoE: true,
+        context: 262144,
+        thinking: true,
+      },
+      qwen3_5_122_B_a10b_q4: {
+        modelname: "Qwen3.5 122B A10B Q4",
+        modeldesc:
+          "122B-parameter MoE Qwen3.5 model with 10B active parameters. Q4_K_XL quantization (3 shards). Best for: multi-GPU or 128GB+ memory systems wanting high-quality frontier reasoning.",
+        url: "https://huggingface.co/unsloth/Qwen3.5-122B-A10B-GGUF/resolve/main/Qwen3.5-122B-A10B-UD-Q4_K_XL-00001-of-00003.gguf",
+        filename: "qwen3.5-122b-a10b-ud-q4_k_xl-00001-of-00003.gguf",
+        filesize: "68.4 GB",
+        filesizeBytes: 68.4e9,
+        parameters: 122000000000,
+        activeParameters: 10000000000,
+        isMoE: true,
+        context: 262144,
+        thinking: true,
+      },
+      qwen3_5_397_B_a17b_q2: {
+        modelname: "Qwen3.5 397B A17B",
+        modeldesc:
+          "397B-parameter MoE Qwen3.5 model with 17B active parameters and 262K context. Q2_K_XL quantization. The largest Qwen3.5 variant for maximum reasoning capability. Best for: multi-GPU clusters or 256GB+ memory systems.",
+        url: "https://huggingface.co/unsloth/Qwen3.5-397B-A17B-GGUF/resolve/main/Qwen3.5-397B-A17B-UD-Q2_K_XL-00001-of-00005.gguf",
+        filename: "qwen3.5-397b-a17b-ud-q2_k_xl-00001-of-00005.gguf",
+        filesize: "149 GB",
+        filesizeBytes: 149e9,
+        parameters: 397000000000,
+        activeParameters: 17000000000,
+        isMoE: true,
+        context: 262144,
+        thinking: true,
+      },
+      qwen3_5_397_B_a17b_q4: {
+        modelname: "Qwen3.5 397B A17B Q4",
+        modeldesc:
+          "397B-parameter MoE Qwen3.5 model with 17B active parameters. Q4_K_XL quantization (6 shards). Best for: maximum quality on multi-GPU clusters with 384GB+ total memory.",
+        url: "https://huggingface.co/unsloth/Qwen3.5-397B-A17B-GGUF/resolve/main/Qwen3.5-397B-A17B-UD-Q4_K_XL-00001-of-00006.gguf",
+        filename: "qwen3.5-397b-a17b-ud-q4_k_xl-00001-of-00006.gguf",
+        filesize: "219 GB",
+        filesizeBytes: 219e9,
+        parameters: 397000000000,
+        activeParameters: 17000000000,
+        isMoE: true,
+        context: 262144,
+        thinking: true,
+      },
+
+      // ─── Kimi K2.5 (thinking model, MoE 1T/32B) ──────────────────────
+      kimi_k2_5_q4: {
+        modelname: "Kimi K2.5 Q4",
+        modeldesc:
+          "1T-parameter MoE model from Moonshot AI with 32B active parameters and 256K context. Q4_K_XL quantization (13 shards). One of the largest open-weight models available. Best for: frontier-class reasoning on multi-GPU clusters with 1TB+ total memory.",
+        url: "https://huggingface.co/unsloth/Kimi-K2.5-GGUF/resolve/main/Kimi-K2.5-UD-Q4_K_XL-00001-of-00013.gguf",
+        filename: "kimi-k2.5-ud-q4_k_xl-00001-of-00013.gguf",
+        filesize: "622 GB",
+        filesizeBytes: 622e9,
+        parameters: 1000000000000,
+        activeParameters: 32000000000,
+        isMoE: true,
+        context: 256000,
+        thinking: true,
+      },
+
+      // ─── MiniMax M2.5 (thinking model, MoE 229B/10B) ─────────────────
+      minimax_m2_5_q4: {
+        modelname: "MiniMax M2.5 Q4",
+        modeldesc:
+          "229B-parameter MoE model from MiniMax with 10B active parameters and 205K context. Q4_K_XL quantization (4 shards). Strong reasoning and code generation at moderate MoE scale. Best for: high-end workstations with 192GB+ memory.",
+        url: "https://huggingface.co/unsloth/MiniMax-M2.5-GGUF/resolve/main/MiniMax-M2.5-UD-Q4_K_XL-00001-of-00004.gguf",
+        filename: "minimax-m2.5-ud-q4_k_xl-00001-of-00004.gguf",
+        filesize: "131 GB",
+        filesizeBytes: 131e9,
+        parameters: 229000000000,
+        activeParameters: 10000000000,
+        isMoE: true,
+        context: 205000,
+        thinking: true,
+      },
+
+      // ─── Devstral Small 2 24B (coding-focused, dense) ─────────────────
+      devstral_24_B_q2: {
+        modelname: "Devstral 24B",
+        modeldesc:
+          "24B-parameter dense coding model from Mistral AI with 256K context. Q2_K_XL quantization. Specialized for code generation, debugging, and software engineering tasks. Best for: dedicated coding copilot on consumer GPUs with 16GB+ VRAM.",
+        url: "https://huggingface.co/unsloth/Devstral-Small-2-24B-Instruct-2512-GGUF/resolve/main/Devstral-Small-2-24B-Instruct-2512-UD-Q2_K_XL.gguf",
+        filename: "devstral-small-2-24b-instruct-2512-ud-q2_k_xl.gguf",
+        filesize: "9.29 GB",
+        filesizeBytes: 9.29e9,
+        parameters: 24000000000,
+        context: 256000,
+      },
+      devstral_24_B_q4: {
+        modelname: "Devstral 24B Q4",
+        modeldesc:
+          "24B-parameter dense coding model from Mistral AI with 256K context. Q4_K_XL quantization for higher fidelity code generation. Best for: serious development work on systems with 24GB+ VRAM.",
+        url: "https://huggingface.co/unsloth/Devstral-Small-2-24B-Instruct-2512-GGUF/resolve/main/Devstral-Small-2-24B-Instruct-2512-UD-Q4_K_XL.gguf",
+        filename: "devstral-small-2-24b-instruct-2512-ud-q4_k_xl.gguf",
+        filesize: "14.5 GB",
+        filesizeBytes: 14.5e9,
+        parameters: 24000000000,
+        context: 256000,
+      },
+      devstral_24_B_q8: {
+        modelname: "Devstral 24B Q8",
+        modeldesc:
+          "24B-parameter dense coding model from Mistral AI with 256K context. Q8_K_XL near-lossless quantization. Best for: maximum code generation quality on workstations with 48GB+ memory.",
+        url: "https://huggingface.co/unsloth/Devstral-Small-2-24B-Instruct-2512-GGUF/resolve/main/Devstral-Small-2-24B-Instruct-2512-UD-Q8_K_XL.gguf",
+        filename: "devstral-small-2-24b-instruct-2512-ud-q8_k_xl.gguf",
+        filesize: "29 GB",
+        filesizeBytes: 29e9,
+        parameters: 24000000000,
+        context: 256000,
+      },
+
+      // ─── Ministral 3 (compact, dense) ─────────────────────────────────
+      ministral_3_3_B_q4: {
+        modelname: "Ministral 3B",
+        modeldesc:
+          "3B-parameter compact instruction model from Mistral AI with 256K context. Q4_K_XL quantization. Ultra-lightweight for edge deployment. Best for: fast local assistants, embedded systems, and quick code helpers on minimal hardware.",
+        url: "https://huggingface.co/unsloth/Ministral-3-3B-Instruct-2512-GGUF/resolve/main/Ministral-3-3B-Instruct-2512-UD-Q4_K_XL.gguf",
+        filename: "ministral-3-3b-instruct-2512-ud-q4_k_xl.gguf",
+        filesize: "2.19 GB",
+        filesizeBytes: 2.19e9,
+        parameters: 3000000000,
+        context: 256000,
+      },
+      ministral_3_8_B_q4: {
+        modelname: "Ministral 8B",
+        modeldesc:
+          "8B-parameter instruction model from Mistral AI with 256K context. Q4_K_XL quantization. Strong general-purpose performance in a compact package. Best for: versatile local assistant with long context on a single consumer GPU.",
+        url: "https://huggingface.co/unsloth/Ministral-3-8B-Instruct-2512-GGUF/resolve/main/Ministral-3-8B-Instruct-2512-UD-Q4_K_XL.gguf",
+        filename: "ministral-3-8b-instruct-2512-ud-q4_k_xl.gguf",
+        filesize: "5.29 GB",
+        filesizeBytes: 5.29e9,
+        parameters: 8000000000,
+        context: 256000,
+      },
+
+      qwen3_5_4B: {
+        modelname: "Qwen3.5 4B",
+        modeldesc:
+          "4B-parameter hybrid Qwen3.5 model with Gated DeltaNet + Gated Attention and 262K context. Q4_K_M quantization. Compact and fast. Best for: efficient local inference, code generation, and 3D scene crafting on modest hardware.",
+        url: "https://huggingface.co/unsloth/Qwen3.5-4B-GGUF/resolve/main/Qwen3.5-4B-Q4_K_M.gguf",
+        filename: "qwen3.5-4b-q4_k_m.gguf",
+        filesize: "2.8 GB",
+        filesizeBytes: 2.8e9,
+        parameters: 4000000000,
+        context: 262144,
+      },
     });
+
+    const sortedModels = computed(() =>
+      Object.values(availableModels.value).sort((a, b) =>
+        a.modelname.localeCompare(b.modelname)
+      )
+    );
 
     const currentModel = ref({
       modelname: "Gemma 3 1B",
@@ -1086,6 +1494,7 @@ export default {
       url: "https://huggingface.co/unsloth/gemma-3-1b-it-GGUF/resolve/main/gemma-3-1b-it-Q4_K_M.gguf",
       filename: "gemma-3-1b-it-q4_k_m.gguf",
       filesize: "806 MB",
+      filesizeBytes: 806e6,
       parameters: 1000000000,
       context: 32768,
     });
@@ -1156,12 +1565,14 @@ export default {
       await Promise.all(
         models.map(async (model) => {
           try {
-            const available = await window.electronAPI.checkModel(model.filename);
+            const available = await window.electronAPI.checkModel(
+              model.filename,
+            );
             modelAvailabilityMap[model.filename] = available;
           } catch {
             modelAvailabilityMap[model.filename] = false;
           }
-        })
+        }),
       );
     };
 
@@ -1172,13 +1583,18 @@ export default {
 
       const progressHandler = (_e, data) => {
         if (data.filename === model.filename) {
-          modelDownloadProgress[model.filename] = Math.round(data.percent * 100);
+          modelDownloadProgress[model.filename] = Math.round(
+            data.percent * 100,
+          );
         }
       };
       window.electronAPI.onDownloadProgress(progressHandler);
 
       try {
-        const success = await window.electronAPI.downloadModel(model.url, model.filename);
+        const success = await window.electronAPI.downloadModel(
+          model.url,
+          model.filename,
+        );
         if (success) {
           modelAvailabilityMap[model.filename] = true;
         }
@@ -1272,6 +1688,9 @@ export default {
         filename: model.filename,
         parameters: model.parameters,
         context: model.context,
+        filesizeBytes: model.filesizeBytes,
+        activeParameters: model.activeParameters,
+        isMoE: model.isMoE,
         isMultimodal: model.isMultimodal || false,
         mmproj: model.mmproj || null,
       };
@@ -1282,7 +1701,9 @@ export default {
 
       // Update mmproj availability for multimodal models
       if (model.isMultimodal && model.mmproj) {
-        isMmprojAvailable.value = await window.electronAPI.checkMmproj(model.mmproj);
+        isMmprojAvailable.value = await window.electronAPI.checkMmproj(
+          model.mmproj,
+        );
       } else {
         isMmprojAvailable.value = false;
       }
@@ -1335,7 +1756,9 @@ export default {
     // Check mmproj availability when model changes
     const checkMmprojAvailability = async (model) => {
       if (model?.isMultimodal && model?.mmproj) {
-        isMmprojAvailable.value = await window.electronAPI.checkMmproj(model.mmproj);
+        isMmprojAvailable.value = await window.electronAPI.checkMmproj(
+          model.mmproj,
+        );
       } else {
         isMmprojAvailable.value = false;
       }
@@ -1353,14 +1776,59 @@ export default {
     const showScrollTop = ref(false);
     const scrollContainer = ref(null);
 
+    // Get text content from any format
+    const getTextContent = (item) => {
+      // Component format: answer.text
+      if (item.answer?.text !== undefined) return item.answer.text;
+      // String answer directly
+      if (typeof item.answer === "string") return item.answer;
+      // Direct text property
+      if (item.text) return item.text;
+      return null;
+    };
+
+    // Normalize inference to component format
+    const normalizeInference = (item) => {
+      const textContent = getTextContent(item);
+      if (textContent === null) return null;
+
+      // Already in component format with valid data
+      if (item.answer?.text !== undefined) {
+        return item;
+      }
+
+      // Convert any other format to component format
+      return {
+        ...item,
+        question: item.question || item.prompt || "",
+        answer: {
+          text: textContent,
+          id: item.id || item.answer?.id || "",
+        },
+      };
+    };
+
     // Reversed inferences (most recent first) with original index
+    // Normalize data structure for compatibility
     const reversedInferences = computed(() => {
-      return inferences.value
-        .map((item, idx) => ({
-          ...item,
-          _originalIndex: idx,
-        }))
-        .reverse();
+      const normalized = inferences.value
+        .map((item, idx) => {
+          const norm = normalizeInference(item);
+          if (!norm) {
+            console.warn("[GenerativeText] Skipping invalid inference:", item);
+            return null;
+          }
+          return {
+            ...norm,
+            _originalIndex: idx,
+          };
+        })
+        .filter((item) => item && item.answer?.text !== undefined);
+
+      console.log(
+        `[GenerativeText] ${inferences.value.length} total, ${normalized.length} valid`,
+      );
+      return normalized.reverse();
     });
 
     // Displayed inferences (lazy loaded subset)
@@ -1370,7 +1838,7 @@ export default {
 
     // Check if there are more items to load
     const hasMore = computed(
-      () => displayedCount.value < inferences.value.length
+      () => displayedCount.value < inferences.value.length,
     );
 
     // Load more items
@@ -1380,7 +1848,7 @@ export default {
       setTimeout(() => {
         displayedCount.value = Math.min(
           displayedCount.value + ITEMS_PER_PAGE,
-          inferences.value.length
+          inferences.value.length,
         );
         isLoadingMore.value = false;
       }, 100);
@@ -1407,7 +1875,7 @@ export default {
             loadMore();
           }
         },
-        { root, rootMargin: "100px" }
+        { root, rootMargin: "100px" },
       );
       scrollObserver.observe(loadMoreSentinel.value);
     };
@@ -1454,11 +1922,25 @@ export default {
       }
     };
 
+    // Delete a single inference from history
+    const removeInference = async (idx) => {
+      if (idx < 0 || idx >= inferences.value.length) return;
+      inferences.value = inferences.value.filter((_, i) => i !== idx);
+      hasCopy.value = hasCopy.value.filter((_, i) => i !== idx);
+      persistInferences([...inferences.value]);
+    };
+
     // Debounced persistence
     const persistInferences = debounce(async (data) => {
       try {
-        await window.electronAPI?.store?.set?.("textInferences", data);
-      } catch {}
+        // Use JSON.parse/stringify to ensure proper serialization
+        await window.electronAPI?.store?.set?.(
+          "textInferences",
+          JSON.parse(JSON.stringify(data)),
+        );
+      } catch (e) {
+        console.error("[GenerativeText] Failed to persist inferences:", e);
+      }
     }, 500);
 
     const initialState = {
@@ -1475,6 +1957,11 @@ export default {
     // Check if current model supports vision
     const isMultimodalModel = computed(() => {
       return currentModel.value?.isMultimodal === true;
+    });
+
+    // Check if current model supports thinking/reasoning
+    const isThinkingModel = computed(() => {
+      return currentModel.value?.thinking === true;
     });
 
     function resetForm() {
@@ -1533,7 +2020,7 @@ export default {
       try {
         const saved = await window.electronAPI?.store?.get?.(
           "textInferences",
-          []
+          [],
         );
         if (Array.isArray(saved)) {
           inferences.value = saved;
@@ -1544,41 +2031,105 @@ export default {
       }
     };
 
+    // Streaming state: the inference currently being streamed
+    const streamingText = ref("");
+    const streamingInferenceId = ref(null);
+
     const sendMessage = async (prompt, isDemo = false) => {
       // Allow demo generation even without access
       if (!isDemo && !hasAccess.value) return;
 
       isLoading.value = true;
+      streamingText.value = "";
+
+      // Create the inference entry immediately so streaming text appears
+      const answerId = uuid();
+      streamingInferenceId.value = answerId;
+      const modelName = currentModel.value?.modelname || "Unknown";
+      const newInference = {
+        question: prompt,
+        answer: { id: answerId, text: "" },
+        image: attachedImage.value?.dataUrl || null,
+        model: modelName,
+        tokensPerSecond: null,
+      };
+      inferences.value = [...inferences.value, newInference];
+      hasCopy.value = [...hasCopy.value, false];
 
       try {
         let assistantResult;
+        let tokenCount = 0;
+        const startTime = performance.now();
 
         // Check if we have an attached image and current model is multimodal
         if (attachedImage.value && isMultimodalModel.value) {
           console.log("Sending vision message with image...");
           assistantResult = await window.electronAPI.chatVision(
             prompt,
-            attachedImage.value.dataUrl
+            attachedImage.value.dataUrl,
           );
         } else {
-          // Standard text-only inference
-          assistantResult = await window.electronAPI.chat(prompt);
+          // Stream text-only inference (with fallback to non-streaming)
+          const chatOpts = {};
+          if (!reasoningEnabled.value) chatOpts.thoughtTokens = 0;
+
+          const canStream =
+            typeof window.electronAPI.chatStream === "function" &&
+            typeof window.electronAPI.onChatToken === "function";
+
+          if (canStream) {
+            // Subscribe to token stream
+            const unsubscribe = window.electronAPI.onChatToken((chunk) => {
+              tokenCount++;
+              streamingText.value += chunk;
+              // Update the last inference's answer text in-place
+              const arr = inferences.value;
+              const last = arr[arr.length - 1];
+              if (last && last.answer.id === answerId) {
+                last.answer.text = streamingText.value;
+                // Live tok/s update
+                const elapsed = (performance.now() - startTime) / 1000;
+                if (elapsed > 0.1)
+                  last.tokensPerSecond = (tokenCount / elapsed).toFixed(1);
+                inferences.value = [...arr];
+              }
+            });
+
+            try {
+              assistantResult = await window.electronAPI.chatStream(
+                prompt,
+                chatOpts,
+              );
+            } finally {
+              unsubscribe();
+            }
+          } else {
+            // Fallback: non-streaming (old preload without chatStream)
+            assistantResult = await window.electronAPI.chat(prompt, chatOpts);
+          }
         }
 
-        const assistantMessage = {
-          id: uuid(),
-          text: assistantResult,
-        };
+        // Compute final tokens/s
+        const elapsedSec = (performance.now() - startTime) / 1000;
+        const finalTokPerSec =
+          tokenCount > 0 && elapsedSec > 0
+            ? (tokenCount / elapsedSec).toFixed(1)
+            : null;
 
-        console.log("prompt", assistantMessage);
-        // Update shallowRef by replacing array
-        const newInference = {
-          question: prompt,
-          answer: assistantMessage,
-          image: attachedImage.value?.dataUrl || null, // Store attached image
-        };
-        inferences.value = [...inferences.value, newInference];
-        hasCopy.value = [...hasCopy.value, false];
+        // Final update with complete text (ensures consistency)
+        const arr = inferences.value;
+        const last = arr[arr.length - 1];
+        if (last && last.answer.id === answerId) {
+          last.answer.text = assistantResult;
+          last.tokensPerSecond = finalTokPerSec;
+          inferences.value = [...arr];
+        }
+
+        console.log("prompt", {
+          id: answerId,
+          text: assistantResult,
+          tokPerSec: finalTokPerSec,
+        });
 
         // Debounced persistence
         persistInferences([...inferences.value]);
@@ -1587,7 +2138,17 @@ export default {
         isLoading.value = false;
       } catch (e) {
         console.error("Chat error:", e);
+        // Remove the empty streaming entry on error
+        const arr = inferences.value;
+        const last = arr[arr.length - 1];
+        if (last && last.answer.id === answerId && !last.answer.text) {
+          inferences.value = arr.slice(0, -1);
+          hasCopy.value = hasCopy.value.slice(0, -1);
+        }
         isLoading.value = false;
+      } finally {
+        streamingText.value = "";
+        streamingInferenceId.value = null;
       }
     };
 
@@ -1602,11 +2163,53 @@ export default {
       }
     };
 
+    // Handle clicks inside answer divs — code block copy via event delegation
+    const handleAnswerClick = async (event) => {
+      const btn = event.target.closest(".code-copy-btn");
+      if (!btn) return;
+      const pre = btn.closest("pre");
+      if (!pre) return;
+      const code = pre.querySelector("code");
+      const text = code ? code.textContent : pre.textContent;
+      try {
+        await toClipboard(text);
+        btn.textContent = "Copied!";
+        setTimeout(() => {
+          btn.textContent = "Copy";
+        }, 1500);
+      } catch (e) {
+        console.error("Failed to copy code:", e);
+      }
+    };
+
+    // Inject copy buttons into rendered <pre> code blocks
+    const injectCodeCopyButtons = () => {
+      const answerEls = document.querySelectorAll(".markdown-body pre");
+      answerEls.forEach((pre) => {
+        if (pre.querySelector(".code-copy-btn")) return; // already injected
+        const btn = document.createElement("button");
+        btn.className = "code-copy-btn";
+        btn.textContent = "Copy";
+        btn.type = "button";
+        pre.style.position = "relative";
+        pre.appendChild(btn);
+      });
+    };
+
+    // Re-inject copy buttons whenever inferences change
+    watch(
+      () => inferences.value.length,
+      () => nextTick(injectCodeCopyButtons),
+    );
+    // Also re-inject on streaming updates (answer text changes)
+    watch(streamingText, () => nextTick(injectCodeCopyButtons));
+
     return {
       downloadProgress,
       isLoading,
       isModel,
       availableModels,
+      sortedModels,
       currentModel,
       isModelAvailable,
       pickModel,
@@ -1633,6 +2236,9 @@ export default {
       importHistory,
       copy,
       hasCopy,
+      removeInference,
+      handleAnswerClick,
+      streamingInferenceId,
       // lazy loading pagination
       paginatedInferences,
       loadMoreSentinel,
@@ -1655,19 +2261,21 @@ export default {
       computeMemoryRequirements,
       // multimodal/vision support
       isMultimodalModel,
+      // reasoning toggle
+      isThinkingModel,
+      reasoningEnabled,
       attachedImage,
       attachImage,
       removeAttachedImage,
       isMmprojAvailable,
       mmprojDownloadProgress,
       downloadMmproj,
-      // OpenClaw integration
-      openclawInstalled,
-      openclawEnabled,
-      checkOpenClawStatus,
-      toggleOpenClaw,
       // Network modal
       requestOpenNetworkModal,
+      // NFT Minting
+      mintTarget,
+      openMint,
+      onMinted,
     };
   },
   async mounted() {
@@ -1677,7 +2285,7 @@ export default {
     }
 
     const readyToPrompt = await this.isModelAvailable(
-      this.currentModel.filename
+      this.currentModel.filename,
     );
     console.log("Ready to prompt, sir.", readyToPrompt);
 
@@ -1685,7 +2293,9 @@ export default {
     if (readyToPrompt) {
       // Check mmproj availability for multimodal models
       if (this.currentModel.isMultimodal && this.currentModel.mmproj) {
-        this.isMmprojAvailable = await window.electronAPI.checkMmproj(this.currentModel.mmproj);
+        this.isMmprojAvailable = await window.electronAPI.checkMmproj(
+          this.currentModel.mmproj,
+        );
       }
       const canLoad = !this.currentModel.isMultimodal || this.isMmprojAvailable;
       if (canLoad) {
@@ -1697,14 +2307,11 @@ export default {
       }
     }
 
-    // Check OpenClaw installation status
-    await this.checkOpenClawStatus();
-
     // Load persisted chat history
     try {
       const saved = await window.electronAPI?.store?.get?.(
         "textInferences",
-        []
+        [],
       );
       if (Array.isArray(saved) && saved.length > 0) {
         // Replace array (shallowRef requires full replacement, not mutation)
@@ -1734,7 +2341,7 @@ export default {
 @import url("https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:opsz,wght,FILL,GRAD@20..48,100..700,0..1,-50..200");
 
 hr {
-  margin: 12px 0;
+  margin: 24px 0 !important;
   width: 100%;
   border: none;
   height: 1px;
@@ -1900,10 +2507,16 @@ hr {
   background: rgba(0, 0, 0, 0.5);
 }
 
+.models__deployment-install--cta {
+  position: relative;
+  top: -30px;
+  right: 2.5em;
+}
+
 .models__activity--payouts {
   padding: 4em;
   border: 1px solid rgba(255, 255, 255, 0.1);
-  backdrop-filter: blur(32px);
+  backdrop-filter: blur(32px) !important;
   border-radius: 4px !important;
 }
 
@@ -1920,6 +2533,7 @@ h2 {
   text-align: right;
 }
 
+.desc-content,
 p {
   margin-bottom: 3em;
   font-size: 24px;
@@ -1930,7 +2544,6 @@ p {
   font-style: normal;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
-  transform: translate3d(0, 0, 0);
 }
 
 div.desc p {
@@ -1942,14 +2555,24 @@ div.desc p {
   backdrop-filter: blur(32px);
 }
 
-span.answer__id {
-  display: block;
-  position: absolute;
-  top: 0;
-  right: 0;
+.answer__meta {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 12px;
   font-size: 12px;
+  font-family: "Fira Sans", sans-serif;
+  color: rgba(255, 255, 255, 0.4);
+}
+
+.answer__model {
+  font-weight: 600;
+  color: rgba(255, 255, 255, 0.5);
+}
+
+.answer__tps {
+  color: #48c774;
   font-weight: 700;
-  color: rgba(255, 255, 255, 0.25);
 }
 
 .models__deployment-install .card {
@@ -2024,6 +2647,39 @@ form {
   border-color: #48c774;
 }
 
+/* Reasoning toggle button */
+.reasoning-toggle-btn {
+  height: 60px;
+  width: 60px;
+  min-width: 52px;
+  padding: 0;
+  position: relative;
+  top: -24px;
+  background: rgba(255, 255, 255, 0.1);
+  border: 2px solid rgba(255, 255, 255, 0.2);
+  color: rgba(255, 255, 255, 0.5);
+  cursor: pointer;
+  transition: all 0.2s ease;
+  border-radius: 4px;
+}
+
+.reasoning-toggle-btn:hover {
+  background: rgba(255, 255, 255, 0.2);
+  border-color: rgba(255, 255, 255, 0.4);
+  color: #fff;
+}
+
+.reasoning-toggle-btn.active {
+  background: rgba(32, 156, 238, 0.4);
+  border-color: #209cee;
+  color: #fff;
+  box-shadow: 0 0 12px rgba(32, 156, 238, 0.4);
+}
+
+.reasoning-toggle-btn.active:hover {
+  background: rgba(32, 156, 238, 0.55);
+}
+
 .attached-image-preview {
   position: relative;
   margin-bottom: 12px;
@@ -2091,7 +2747,7 @@ form {
   width: 32px;
   height: 32px;
   right: 10px;
-  bottom: 14px;
+  top: 14px;
   border: none !important;
   box-shadow: none !important;
 }
@@ -2115,19 +2771,16 @@ ol.chat li {
   position: relative;
 }
 
-/* Fade-in animation for history items */
+/* Slide-in animation for history items */
 .history-item {
-  animation: fadeInUp 0.4s ease-out forwards;
-  opacity: 0;
+  animation: slideUp 0.4s ease-out;
 }
 
-@keyframes fadeInUp {
+@keyframes slideUp {
   from {
-    opacity: 0;
     transform: translateY(20px);
   }
   to {
-    opacity: 1;
     transform: translateY(0);
   }
 }
@@ -2183,22 +2836,6 @@ ol.chat li {
   }
 }
 
-/* OpenClaw toggle button */
-.openclaw-label {
-  font-size: 14px;
-  margin-left: 8px;
-  text-transform: uppercase;
-  letter-spacing: 0.5px;
-}
-
-.button.is-success .openclaw-label {
-  color: #fff;
-}
-
-.button.is-outlined.is-warning .openclaw-label {
-  color: #ffdd57;
-}
-
 /* Model directory bar */
 .model-dir-bar {
   display: flex;
@@ -2252,5 +2889,161 @@ ol.chat li {
 
 .model-card:hover .model-card__tip {
   display: block;
+}
+
+/* ── Markdown answer body ─────────────────────────────────────────── */
+.markdown-body {
+  white-space: normal;
+  line-height: 1.7;
+}
+
+/* Override the global p rules inside markdown answers */
+.markdown-body :deep(p) {
+  margin-bottom: 0.75em;
+  font-size: 16px;
+  line-height: 1.7;
+  text-align: left;
+}
+
+.markdown-body :deep(p:last-child) {
+  margin-bottom: 0;
+}
+
+/* Headings */
+.markdown-body :deep(h1),
+.markdown-body :deep(h2),
+.markdown-body :deep(h3),
+.markdown-body :deep(h4) {
+  color: #fff;
+  margin-top: 1em;
+  margin-bottom: 0.5em;
+  line-height: 1.3;
+  text-align: left;
+}
+
+/* Lists — restore proper numbering and bullets */
+.markdown-body :deep(ol),
+.markdown-body :deep(ul) {
+  padding-left: 1.75em;
+  margin: 0.5em 0;
+  font-size: 16px;
+  line-height: 1.7;
+}
+
+.markdown-body :deep(ol) {
+  list-style-type: decimal;
+}
+
+.markdown-body :deep(ul) {
+  list-style-type: disc;
+}
+
+.markdown-body :deep(li) {
+  margin-bottom: 0.25em;
+  padding-left: 0.25em;
+}
+
+.markdown-body :deep(li::marker) {
+  color: rgba(255, 255, 255, 0.5);
+}
+
+/* Blockquotes */
+.markdown-body :deep(blockquote) {
+  border-left: 3px solid rgba(255, 255, 255, 0.3);
+  padding-left: 1em;
+  margin: 0.75em 0;
+  color: rgba(255, 255, 255, 0.7);
+}
+
+/* Code blocks */
+.markdown-body :deep(pre) {
+  position: relative;
+  background: rgba(0, 0, 0, 0.5);
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  border-radius: 6px;
+  padding: 1em;
+  margin: 0.75em 0;
+  overflow-x: auto;
+  white-space: pre;
+}
+
+.markdown-body :deep(pre code) {
+  font-family: "Fira Code", "SF Mono", "Cascadia Code", "Consolas", monospace;
+  font-size: 15px;
+  line-height: 1.5;
+  color: #e6e6e6;
+  white-space: pre;
+  background: none;
+  padding: 0;
+}
+
+/* Inline code — purple highlight, matching text size */
+.markdown-body :deep(code) {
+  font-family: "Fira Code", "SF Mono", "Cascadia Code", "Consolas", monospace;
+  font-size: 14px;
+  background: rgba(97, 55, 142, 0.3);
+  padding: 2px 6px;
+  border-radius: 3px;
+  color: #c4a0ff;
+}
+
+/* Reset inline code overrides inside pre blocks */
+.markdown-body :deep(pre code) {
+  background: none;
+  padding: 0;
+  color: #e6e6e6;
+  font-size: 15px;
+}
+
+/* Code copy button */
+.markdown-body :deep(.code-copy-btn) {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  padding: 4px 10px;
+  font-size: 12px;
+  font-family: "Fira Sans", sans-serif;
+  background: rgba(255, 255, 255, 0.15);
+  border: 1px solid rgba(255, 255, 255, 0.25);
+  border-radius: 4px;
+  color: rgba(255, 255, 255, 0.7);
+  cursor: pointer;
+  transition: all 0.15s ease;
+  z-index: 2;
+}
+
+.markdown-body :deep(.code-copy-btn:hover) {
+  background: rgba(255, 255, 255, 0.3);
+  color: #fff;
+}
+
+.answer-divider {
+  margin: 12px 0;
+  width: 100%;
+  border: none;
+  height: 1px;
+  background: linear-gradient(
+    to right,
+    transparent,
+    rgba(255, 255, 255, 1),
+    transparent
+  );
+}
+
+/* Streaming cursor */
+.streaming-cursor {
+  display: inline-block;
+  width: 8px;
+  height: 1.2em;
+  background: #48c774;
+  margin-left: 2px;
+  vertical-align: text-bottom;
+  animation: blink 0.7s step-end infinite;
+}
+
+@keyframes blink {
+  50% {
+    opacity: 0;
+  }
 }
 </style>

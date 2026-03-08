@@ -36,13 +36,38 @@ import {
   isSelfInference,
   calculatePaymentAmount,
 } from "./services/x402.service.js";
+import {
+  listExamples as studioListExamples,
+  saveExample as studioSaveExample,
+  deleteExample as studioDeleteExample,
+  exportDataset as studioExportDataset,
+} from "./scripts/dataset-studio.js";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Globals / paths
 // ─────────────────────────────────────────────────────────────────────────────
 let llama = null;
+let llamaUnifiedMemoryBroken = false; // node-llama-cpp 3.16.x reports unifiedSize=0 on Apple Silicon
 try {
-  llama = await getLlama();
+  llama = await getLlama({ logLevel: "warn" });
+  console.log(`[LLM] Engine initialized — gpu: ${llama.gpu}, gpuOffload: ${llama.supportsGpuOffloading}`);
+  try {
+    const vramState = await llama._vramOrchestrator?.getMemoryState?.();
+    if (vramState) {
+      console.log(
+        `[LLM] VRAM state — total: ${(vramState.total / 1e9).toFixed(1)}GB, ` +
+        `free: ${(vramState.free / 1e9).toFixed(1)}GB, ` +
+        `unifiedSize: ${((vramState.unifiedSize || 0) / 1e9).toFixed(1)}GB`
+      );
+      // Detect broken unified memory reporting: Metal GPU detected but unifiedSize=0
+      if (llama.gpu === "metal" && (vramState.unifiedSize || 0) === 0 && vramState.total > 0) {
+        llamaUnifiedMemoryBroken = true;
+        console.warn("[LLM] Detected broken unifiedSize=0 on Metal — will use gpuLayers override");
+      }
+    }
+  } catch (e) {
+    console.warn("[LLM] Could not read VRAM state:", e.message);
+  }
 } catch (error) {
   console.warn("node-llama-cpp initialization failed:", error.message);
   // Continue without LLM support - app will still work for other features
@@ -195,7 +220,7 @@ const scheduleServerRestart = () => {
 
   setTimeout(async () => {
     console.log(`[Self-Healing] Attempting restart...`);
-    startPythonSubprocess();
+    await startPythonSubprocess();
     // Wait for server to be ready and send "ready" notification
     try {
       await checkPythonServer(`http://127.0.0.1:${PY_SERVER_PORT}`);
@@ -238,8 +263,8 @@ const killPort = async (port = PY_SERVER_PORT) => {
             console.warn(`[killPort] Failed to kill PID ${pid}: ${e.message}`);
           }
         }
-        // Wait briefly for port to be freed (non-blocking)
-        await new Promise((resolve) => setTimeout(resolve, 500));
+        // Wait for port to be fully released by the OS
+        await waitForPortFree(port);
       } else {
         console.log(`[killPort] No process found on port ${port}`);
       }
@@ -249,7 +274,33 @@ const killPort = async (port = PY_SERVER_PORT) => {
   }
 };
 
+// Poll until no process holds the port (max ~3s)
+const waitForPortFree = async (port, timeoutMs = 3000) => {
+  const start = Date.now();
+  while (Date.now() - start < timeoutMs) {
+    const still = await new Promise((resolve) => {
+      child_process.exec(`lsof -ti:${port} 2>/dev/null || true`, { encoding: "utf8" }, (_e, out) => {
+        resolve((out || "").trim());
+      });
+    });
+    if (!still) {
+      console.log(`[killPort] Port ${port} is free`);
+      return;
+    }
+    await new Promise((r) => setTimeout(r, 250));
+  }
+  console.warn(`[killPort] Port ${port} still occupied after ${timeoutMs}ms`);
+};
+
 const startPythonSubprocess = async () => {
+  // Detach old process handlers BEFORE killing port to prevent its close
+  // handler from triggering a self-healing restart that races with this spawn
+  if (subpy) {
+    const oldProc = subpy;
+    subpy = null;
+    oldProc.removeAllListeners("close");
+    oldProc.removeAllListeners("error");
+  }
   await killPort(PY_SERVER_PORT);
   isIntentionalShutdown = false; // Reset flag on new start
 
@@ -326,6 +377,31 @@ const startPythonSubprocess = async () => {
       console.log(`[Spawn] chmod applied successfully`);
     } catch (e) {
       console.error(`[Spawn] chmod failed: ${e.message}`);
+    }
+  }
+
+  // ─────────────────────────────────────────────────────────────────────────────
+  // macOS quarantine fix: When users download and install a signed/notarized DMG,
+  // macOS adds com.apple.quarantine to all files. While the main app's quarantine
+  // is cleared on first launch, nested executables launched as subprocesses retain
+  // their quarantine and are silently blocked. We must clear it explicitly.
+  // ─────────────────────────────────────────────────────────────────────────────
+  if (process.platform === "darwin" && app.isPackaged) {
+    try {
+      // Clear quarantine from the diffuser binary and its containing directory
+      child_process.execSync(`xattr -rd com.apple.quarantine "${launch.cmd}"`, {
+        stdio: "ignore",
+      });
+      console.log(`[Spawn] Cleared quarantine attribute from binary`);
+
+      // Also clear from the runtime directory (for onedir mode with _internal/)
+      child_process.execSync(`xattr -rd com.apple.quarantine "${launch.cwd}"`, {
+        stdio: "ignore",
+      });
+      console.log(`[Spawn] Cleared quarantine from runtime directory`);
+    } catch (e) {
+      // Ignore errors - attribute may not exist, or we may lack permissions
+      console.log(`[Spawn] Quarantine clear: ${e.message || "no attribute"}`);
     }
   }
 
@@ -558,6 +634,46 @@ function getOrCreateJwtSecret() {
 
 const JWT_SECRET = getOrCreateJwtSecret();
 
+// ─────────────────────────────────────────────────────────────────────────────
+// Transaction confirmation dialog (P0 Security)
+// Shows native Electron dialog for agent wallet transactions above threshold
+// ─────────────────────────────────────────────────────────────────────────────
+const TX_CONFIRM_THRESHOLD_ETH = 0.0005; // ~$1 — anything above requires user approval
+
+ipcMain.handle("confirm-transaction", async (_event, details) => {
+  const { companionName, recipientAddress, amountEth, chainName, context } = details;
+
+  // Auto-approve transactions below threshold
+  const amount = parseFloat(amountEth) || 0;
+  if (amount <= TX_CONFIRM_THRESHOLD_ETH) {
+    return { approved: true, autoApproved: true };
+  }
+
+  // Show native dialog
+  const win = mainWindow || BrowserWindow.getFocusedWindow();
+  const result = await dialog.showMessageBox(win, {
+    type: "question",
+    title: "Confirm Agent Transaction",
+    message: `${companionName || "Companion"} wants to send ${amountEth} ETH`,
+    detail: [
+      `Recipient: ${recipientAddress}`,
+      `Chain: ${chainName || "Base"}`,
+      `Amount: ${amountEth} ETH`,
+      context ? `Context: ${context}` : "",
+      "",
+      "Do you approve this transaction?",
+    ]
+      .filter(Boolean)
+      .join("\n"),
+    buttons: ["Approve", "Reject"],
+    defaultId: 1, // Default to Reject
+    cancelId: 1,
+    noLink: true,
+  });
+
+  return { approved: result.response === 0, autoApproved: false };
+});
+
 ipcMain.handle("store-get", (_event, key, def) => store.get(key, def));
 ipcMain.handle("store-set", (_event, key, value) => {
   store.set(key, value);
@@ -567,6 +683,24 @@ ipcMain.handle("store-delete", (_event, key) => {
   store.delete(key);
   return true;
 });
+
+/**
+ * Check if user has at least the required auth level.
+ * Auth state is synced from the renderer's auth.service.js via electron store.
+ * @param {number} minLevel - Minimum level required (1-6)
+ */
+function requireAuthLevel(minLevel) {
+  const isAuth = store.get("auth.isAuthenticated", false);
+  const levelValue = store.get("auth.levelValue", 0);
+  const tokenExpiry = store.get("auth.tokenExpiry", 0);
+
+  if (!isAuth || Date.now() > tokenExpiry) {
+    throw new Error("Authentication required. Please connect your wallet and sign in.");
+  }
+  if (levelValue < minLevel) {
+    throw new Error(`Level ${minLevel} access required. Please hold enough BONZAI tokens or unlock with ETH.`);
+  }
+}
 
 // ─────────────────────────────────────────────────────────────────────────────
 // P2P Network (libp2p) - Distributed Inference
@@ -605,7 +739,7 @@ ipcMain.handle("p2p-start", async (_event, options = {}) => {
 
       // Get provider settings
       const providerId = store.get("p2p.providerId", null);
-      const pricePerToken = store.get("p2p.pricePerToken", "100000"); // 0.0001 USDC default
+      const pricePerToken = store.get("p2p.pricePerToken", "1000000000000"); // 0.000001 ETH per 1000 tokens
 
       // Check if this is a paid request (x402)
       if (!request.payment) {
@@ -629,7 +763,7 @@ ipcMain.handle("p2p-start", async (_event, options = {}) => {
       }
 
       // Validate the x402 payment signature
-      const validation = validatePayment(request.payment, {
+      const validation = await validatePayment(request.payment, {
         expectedProviderId: providerId,
         minAmount: calculatePaymentAmount(request, pricePerToken),
         pipeline: request.pipeline,
@@ -881,6 +1015,11 @@ async function routeInferenceRequest(request) {
 
   return response.json();
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// App version
+// ─────────────────────────────────────────────────────────────────────────────
+ipcMain.handle("get-app-version", () => app.getVersion());
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Model directory management
@@ -1273,6 +1412,160 @@ ipcMain.handle("fix-history-paths", (_event, oldDir, newDir) => {
   return { success: true, updatedPaths: totalUpdated };
 });
 
+// Force migrate all history paths to current MODEL_DIR
+// This automatically detects paths with bonzai-models or files/ and updates them
+ipcMain.handle("force-migrate-history", () => {
+  const currentModelDir = path.resolve(MODEL_DIR);
+  const currentFilesDir = path.join(currentModelDir, "files");
+  let totalUpdated = 0;
+
+  // Helper to detect and fix any path that looks like a bonzai model path
+  const fixPath = (pathStr) => {
+    if (!pathStr || typeof pathStr !== "string") return { changed: false, path: pathStr };
+
+    // Common patterns for bonzai model directories
+    const patterns = [
+      /\/Users\/[^/]+\/bonzai-models\/files\//,
+      /\/home\/[^/]+\/bonzai-models\/files\//,
+      /bonzai-models\/files\//,
+    ];
+
+    for (const pattern of patterns) {
+      if (pattern.test(pathStr)) {
+        // Extract the filename portion after files/
+        const match = pathStr.match(/files\/(.+)$/);
+        if (match) {
+          const newPath = path.join(currentFilesDir, match[1]);
+          if (newPath !== pathStr) {
+            return { changed: true, path: newPath };
+          }
+        }
+      }
+    }
+
+    return { changed: false, path: pathStr };
+  };
+
+  // Fix inference histories
+  const historyKeys = ["audioInferences", "imageInferences", "videoInferences", "objectInferences"];
+  for (const key of historyKeys) {
+    try {
+      const history = store.get(key, []);
+      if (Array.isArray(history) && history.length > 0) {
+        let updated = false;
+        const updatedHistory = history.map((inference) => {
+          const item = JSON.parse(JSON.stringify(inference));
+          if (item?.answer?.data) {
+            const data = item.answer.data;
+            const pathFields = ["audio_path", "video_path", "image_path", "path", "output_path", "object_path"];
+            for (const field of pathFields) {
+              if (data[field]) {
+                const result = fixPath(data[field]);
+                if (result.changed) {
+                  data[field] = result.path;
+                  updated = true;
+                  totalUpdated++;
+                }
+              }
+            }
+          }
+          return item;
+        });
+        if (updated) {
+          store.set(key, updatedHistory);
+          console.log(`[Force Migrate] Updated paths in ${key}`);
+        }
+      }
+    } catch (e) {
+      console.warn(`[Force Migrate] Failed to update ${key}:`, e.message);
+    }
+  }
+
+  // Fix roleplay sessions (companion history)
+  try {
+    const roleplaySessions = store.get("roleplaySessions", {});
+    if (roleplaySessions && typeof roleplaySessions === "object") {
+      let updated = false;
+      const pathFields = ["image", "audio", "video", "backgroundImage"];
+
+      for (const sessionKey in roleplaySessions) {
+        const session = roleplaySessions[sessionKey];
+        if (!session) continue;
+
+        // Update companion.image
+        if (session.companion?.image) {
+          const result = fixPath(session.companion.image);
+          if (result.changed) {
+            session.companion.image = result.path;
+            updated = true;
+            totalUpdated++;
+          }
+        }
+
+        // Update scenario.image
+        if (session.scenario?.image) {
+          const result = fixPath(session.scenario.image);
+          if (result.changed) {
+            session.scenario.image = result.path;
+            updated = true;
+            totalUpdated++;
+          }
+        }
+
+        // Update session backgroundImage
+        if (session.backgroundImage) {
+          const result = fixPath(session.backgroundImage);
+          if (result.changed) {
+            session.backgroundImage = result.path;
+            updated = true;
+            totalUpdated++;
+          }
+        }
+
+        // Update history messages
+        if (Array.isArray(session.history)) {
+          for (const msg of session.history) {
+            for (const field of pathFields) {
+              if (msg[field]) {
+                const result = fixPath(msg[field]);
+                if (result.changed) {
+                  msg[field] = result.path;
+                  updated = true;
+                  totalUpdated++;
+                }
+              }
+            }
+          }
+        }
+
+        // Update backgroundHistory
+        if (Array.isArray(session.backgroundHistory)) {
+          for (const entry of session.backgroundHistory) {
+            if (entry.image) {
+              const result = fixPath(entry.image);
+              if (result.changed) {
+                entry.image = result.path;
+                updated = true;
+                totalUpdated++;
+              }
+            }
+          }
+        }
+      }
+
+      if (updated) {
+        store.set("roleplaySessions", roleplaySessions);
+        console.log(`[Force Migrate] Updated paths in roleplaySessions`);
+      }
+    }
+  } catch (e) {
+    console.warn(`[Force Migrate] Failed to update roleplaySessions:`, e.message);
+  }
+
+  console.log(`[Force Migrate] Complete. Updated ${totalUpdated} paths to ${currentFilesDir}`);
+  return { success: true, updatedPaths: totalUpdated, newFilesDir: currentFilesDir };
+});
+
 // File existence check for media validation
 ipcMain.handle("file-exists", (_event, filePath) => {
   try {
@@ -1284,6 +1577,17 @@ ipcMain.handle("file-exists", (_event, filePath) => {
 
 // Get home directory for file paths
 ipcMain.handle("get-home-dir", () => os.homedir());
+
+// Read file as base64 (for NFT minting of audio/video files)
+ipcMain.handle("read-file-as-base64", async (_event, filePath) => {
+  try {
+    const data = fs.readFileSync(filePath);
+    return data.toString("base64");
+  } catch (e) {
+    console.error("[Main] Failed to read file as base64:", e.message);
+    throw e;
+  }
+});
 
 // Save base64 data to file (for OpenClaw/WhatsApp media delivery)
 ipcMain.handle("save-base64-to-file", async (_event, filePath, base64Data) => {
@@ -1309,6 +1613,85 @@ ipcMain.handle("save-base64-to-file", async (_event, filePath, base64Data) => {
     console.error("[save-base64-to-file] Error:", error);
     return { success: false, error: error.message };
   }
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Irys / Arweave Upload (runs in Node.js — no browser polyfill issues)
+// ─────────────────────────────────────────────────────────────────────────────
+let irysNode = null;
+
+ipcMain.handle("irys-init", async (_event, { privateKey }) => {
+  try {
+    const Irys = (await import("@irys/sdk")).default;
+    irysNode = new Irys({
+      url: "https://node2.irys.xyz",
+      token: "ethereum",
+      key: privateKey,
+    });
+    await irysNode.ready();
+    console.log(`[Irys] Connected — wallet: ${irysNode.address}`);
+    let balance = "0";
+    try {
+      const bal = await irysNode.getLoadedBalance();
+      balance = irysNode.utils.fromAtomic(bal);
+    } catch (e) {
+      console.warn("[Irys] Could not fetch balance:", e.message);
+    }
+    return { ok: true, address: irysNode.address, balance };
+  } catch (e) {
+    console.error("[Irys] Init failed:", e.message);
+    return { ok: false, error: e.message };
+  }
+});
+
+ipcMain.handle("irys-upload", async (_event, { data, contentType, tags }) => {
+  if (!irysNode) throw new Error("Irys not initialized — call irys-init first");
+  const buf = Buffer.from(data);
+  const receipt = await irysNode.upload(buf, { tags });
+  console.log(`[Irys] Uploaded: ${receipt.id} (${buf.length} bytes)`);
+  return {
+    id: receipt.id,
+    timestamp: receipt.timestamp,
+    signature: receipt.signature,
+  };
+});
+
+ipcMain.handle("irys-upload-json", async (_event, { json, tags }) => {
+  if (!irysNode) throw new Error("Irys not initialized — call irys-init first");
+  const buf = Buffer.from(JSON.stringify(json, null, 2), "utf-8");
+  const allTags = [{ name: "Content-Type", value: "application/json" }, ...(tags || [])];
+  const receipt = await irysNode.upload(buf, { tags: allTags });
+  console.log(`[Irys] Uploaded JSON: ${receipt.id}`);
+  return {
+    id: receipt.id,
+    timestamp: receipt.timestamp,
+    signature: receipt.signature,
+  };
+});
+
+ipcMain.handle("irys-balance", async () => {
+  if (!irysNode) throw new Error("Irys not initialized");
+  const bal = await irysNode.getLoadedBalance();
+  return irysNode.utils.fromAtomic(bal);
+});
+
+ipcMain.handle("irys-fund", async (_event, { amount }) => {
+  if (!irysNode) throw new Error("Irys not initialized");
+  const atomicAmount = irysNode.utils.toAtomic(amount);
+  const response = await irysNode.fund(atomicAmount);
+  console.log(`[Irys] Funded ${amount} ETH. TX: ${response.id}`);
+  return { id: response.id };
+});
+
+ipcMain.handle("irys-price", async (_event, { bytes }) => {
+  if (!irysNode) throw new Error("Irys not initialized");
+  const price = await irysNode.getPrice(bytes);
+  return irysNode.utils.fromAtomic(price);
+});
+
+ipcMain.handle("irys-disconnect", () => {
+  irysNode = null;
+  return { ok: true };
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -1589,6 +1972,358 @@ ipcMain.handle("polymarket:batch", async (_event, requests) => {
   return results;
 });
 
+// ─────────────────────────────────────────────────────────────────────────────
+// Social Platform Integration (Instagram, TikTok, X)
+// OAuth flows, API proxy, media upload for autonomous companion posting
+// ─────────────────────────────────────────────────────────────────────────────
+
+const SOCIAL_OAUTH_CONFIG = {
+  instagram: {
+    authUrl: 'https://www.facebook.com/v21.0/dialog/oauth',
+    tokenUrl: 'https://graph.facebook.com/v21.0/oauth/access_token',
+    redirectUri: 'bonzai://social/callback/instagram',
+    scopes: ['instagram_basic', 'instagram_content_publish', 'instagram_manage_insights', 'pages_show_list', 'pages_read_engagement'],
+  },
+  tiktok: {
+    authUrl: 'https://www.tiktok.com/v2/auth/authorize/',
+    tokenUrl: 'https://open.tiktokapis.com/v2/oauth/token/',
+    redirectUri: 'bonzai://social/callback/tiktok',
+    scopes: ['user.info.basic', 'video.publish', 'video.upload'],
+  },
+  x: {
+    authUrl: 'https://twitter.com/i/oauth2/authorize',
+    tokenUrl: 'https://api.twitter.com/2/oauth2/token',
+    redirectUri: 'bonzai://social/callback/x',
+    scopes: ['tweet.read', 'tweet.write', 'users.read', 'offline.access', 'media.write'],
+    usePKCE: true,
+  },
+};
+
+// In-memory credential store (persisted via Electron Store)
+const SOCIAL_CREDS_KEY = 'bonzai-social-credentials';
+
+function getSocialCredentials(platform, companionId) {
+  const all = store.get(SOCIAL_CREDS_KEY, {});
+  return all[`${platform}:${companionId}`] || null;
+}
+
+function setSocialCredentials(platform, companionId, tokens) {
+  const all = store.get(SOCIAL_CREDS_KEY, {});
+  all[`${platform}:${companionId}`] = {
+    ...tokens,
+    updatedAt: Date.now(),
+  };
+  store.set(SOCIAL_CREDS_KEY, all);
+}
+
+/**
+ * Start OAuth flow for a social platform.
+ * Opens a BrowserWindow popup for user to authorize.
+ */
+ipcMain.handle("social:oauth-start", async (_event, { platform, companionId }) => {
+  const config = SOCIAL_OAUTH_CONFIG[platform];
+  if (!config) return { success: false, error: `Unknown platform: ${platform}` };
+
+  // Get client ID from store (user configures in settings)
+  const clientId = store.get(`social-${platform}-client-id`, '');
+  if (!clientId) {
+    return { success: false, error: `No client ID configured for ${platform}. Set it in Social Settings.` };
+  }
+
+  const state = crypto.randomBytes(16).toString('hex');
+  let codeVerifier = null;
+  let codeChallenge = null;
+
+  // PKCE for X (Twitter)
+  if (config.usePKCE) {
+    codeVerifier = crypto.randomBytes(32).toString('base64url');
+    const hash = crypto.createHash('sha256').update(codeVerifier).digest();
+    codeChallenge = hash.toString('base64url');
+  }
+
+  // Build auth URL
+  const params = new URLSearchParams({
+    client_id: clientId,
+    redirect_uri: config.redirectUri,
+    response_type: 'code',
+    scope: config.scopes.join(platform === 'tiktok' ? ',' : ' '),
+    state,
+  });
+
+  if (codeChallenge) {
+    params.set('code_challenge', codeChallenge);
+    params.set('code_challenge_method', 'S256');
+  }
+
+  const authUrl = `${config.authUrl}?${params.toString()}`;
+
+  return new Promise((resolve) => {
+    const authWindow = new BrowserWindow({
+      width: 600,
+      height: 750,
+      parent: mainWindow,
+      modal: true,
+      webPreferences: { nodeIntegration: false, contextIsolation: true },
+    });
+
+    authWindow.loadURL(authUrl);
+
+    // Listen for redirect
+    const handleRedirect = async (redirectUrl) => {
+      try {
+        const url = new URL(redirectUrl);
+        if (!redirectUrl.startsWith(config.redirectUri)) return;
+
+        const code = url.searchParams.get('code');
+        const returnedState = url.searchParams.get('state');
+
+        if (returnedState !== state) {
+          resolve({ success: false, error: 'OAuth state mismatch' });
+          authWindow.close();
+          return;
+        }
+
+        if (!code) {
+          const error = url.searchParams.get('error') || 'No authorization code received';
+          resolve({ success: false, error });
+          authWindow.close();
+          return;
+        }
+
+        // Exchange code for tokens
+        const clientSecret = store.get(`social-${platform}-client-secret`, '');
+        const tokenBody = {
+          client_id: clientId,
+          code,
+          redirect_uri: config.redirectUri,
+          grant_type: 'authorization_code',
+        };
+
+        if (clientSecret) tokenBody.client_secret = clientSecret;
+        if (codeVerifier) tokenBody.code_verifier = codeVerifier;
+
+        const tokenRes = await fetch(config.tokenUrl, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+          body: new URLSearchParams(tokenBody).toString(),
+        });
+
+        const tokens = await tokenRes.json();
+
+        if (tokens.error) {
+          resolve({ success: false, error: tokens.error_description || tokens.error });
+          authWindow.close();
+          return;
+        }
+
+        // Calculate expiry
+        const expiresIn = tokens.expires_in || 7200;
+        tokens.expires_at = Date.now() + expiresIn * 1000;
+
+        // Store credentials
+        setSocialCredentials(platform, companionId, tokens);
+
+        resolve({ success: true, tokens });
+        authWindow.close();
+      } catch (e) {
+        resolve({ success: false, error: e.message });
+        authWindow.close();
+      }
+    };
+
+    // Intercept navigation for custom scheme redirect
+    authWindow.webContents.on('will-navigate', (_e, url) => handleRedirect(url));
+    authWindow.webContents.on('will-redirect', (_e, url) => handleRedirect(url));
+
+    // Handle custom protocol redirect (bonzai://)
+    authWindow.webContents.on('did-fail-load', (_e, _code, _desc, url) => {
+      if (url && url.startsWith('bonzai://')) handleRedirect(url);
+    });
+
+    authWindow.on('closed', () => {
+      resolve({ success: false, error: 'OAuth window closed by user' });
+    });
+  });
+});
+
+/**
+ * Get stored social credentials for a platform/companion.
+ */
+ipcMain.handle("social:get-credentials", async (_event, { platform, companionId }) => {
+  return getSocialCredentials(platform, companionId);
+});
+
+/**
+ * Refresh OAuth token for a platform.
+ */
+ipcMain.handle("social:refresh-token", async (_event, { platform, companionId }) => {
+  const config = SOCIAL_OAUTH_CONFIG[platform];
+  const creds = getSocialCredentials(platform, companionId);
+
+  if (!creds?.refresh_token) {
+    return { success: false, error: 'No refresh token available' };
+  }
+
+  const clientId = store.get(`social-${platform}-client-id`, '');
+  const clientSecret = store.get(`social-${platform}-client-secret`, '');
+
+  try {
+    const body = {
+      client_id: clientId,
+      grant_type: 'refresh_token',
+      refresh_token: creds.refresh_token,
+    };
+    if (clientSecret) body.client_secret = clientSecret;
+
+    const res = await fetch(config.tokenUrl, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: new URLSearchParams(body).toString(),
+    });
+
+    const tokens = await res.json();
+
+    if (tokens.error) {
+      return { success: false, error: tokens.error_description || tokens.error };
+    }
+
+    tokens.expires_at = Date.now() + (tokens.expires_in || 7200) * 1000;
+    // Preserve refresh token if not returned (some platforms don't return it on refresh)
+    if (!tokens.refresh_token) tokens.refresh_token = creds.refresh_token;
+
+    setSocialCredentials(platform, companionId, tokens);
+    return { success: true, tokens };
+  } catch (e) {
+    return { success: false, error: e.message };
+  }
+});
+
+/**
+ * Generic social API call through main process (CORS bypass).
+ */
+ipcMain.handle("social:api-call", async (_event, { platform, url, method, headers, body, formData }) => {
+  try {
+    const fetchOpts = {
+      method: method || 'GET',
+      headers: {
+        'User-Agent': 'BonzAI/1.0',
+        ...headers,
+      },
+    };
+
+    if (body && typeof body === 'string') {
+      fetchOpts.body = body;
+    } else if (body) {
+      fetchOpts.headers['Content-Type'] = fetchOpts.headers['Content-Type'] || 'application/json';
+      fetchOpts.body = JSON.stringify(body);
+    }
+
+    const response = await fetch(url, fetchOpts);
+    const contentType = response.headers.get('content-type');
+    let data;
+
+    if (contentType && contentType.includes('application/json')) {
+      data = await response.json();
+    } else {
+      data = await response.text();
+    }
+
+    return { ...data, status: response.status };
+  } catch (e) {
+    console.error(`[Social API] Error calling ${url}:`, e.message);
+    return { error: e.message, status: 0 };
+  }
+});
+
+/**
+ * Upload media for social platforms (binary data via multipart/form-data).
+ * Handles Buffer conversion from renderer's Uint8Array.
+ */
+ipcMain.handle("social:media-upload", async (_event, { platform, url, accessToken, file, fields }) => {
+  try {
+    // Special case: temporary hosting for Instagram (requires publicly accessible URL)
+    if (url === '__temp_host__') {
+      // For now, save to a temp file and serve via local HTTP
+      // In production, upload to a CDN or use the app's own hosting
+      const tempDir = path.join(os.tmpdir(), 'bonzai-social-media');
+      if (!fs.existsSync(tempDir)) fs.mkdirSync(tempDir, { recursive: true });
+
+      const ext = (file.contentType || 'image/jpeg').split('/')[1] || 'bin';
+      const filename = `${crypto.randomBytes(8).toString('hex')}.${ext}`;
+      const filePath = path.join(tempDir, filename);
+
+      fs.writeFileSync(filePath, Buffer.from(file.buffer));
+
+      // Return local file path — the adapter will need to handle this
+      // For Instagram, the image needs to be accessible via URL
+      // This is a placeholder; real implementation needs a hosting solution
+      return { success: true, url: `file://${filePath}`, localPath: filePath };
+    }
+
+    // Standard upload: construct multipart form
+    const { FormData, Blob } = await import('node-fetch');
+
+    // Use native fetch with FormData
+    const formDataObj = new FormData();
+
+    if (fields) {
+      for (const [key, value] of Object.entries(fields)) {
+        formDataObj.append(key, String(value));
+      }
+    }
+
+    if (file) {
+      const buffer = Buffer.from(file.buffer);
+      const blob = new Blob([buffer], { type: file.contentType || 'application/octet-stream' });
+      formDataObj.append('file', blob, file.name || 'media.bin');
+    }
+
+    const fetchHeaders = {};
+    if (accessToken) fetchHeaders['Authorization'] = `Bearer ${accessToken}`;
+
+    const response = await fetch(url, {
+      method: 'POST',
+      headers: fetchHeaders,
+      body: formDataObj,
+    });
+
+    const data = await response.json();
+    return { success: response.ok, ...data };
+  } catch (e) {
+    console.error(`[Social Media Upload] Error:`, e.message);
+    return { success: false, error: e.message };
+  }
+});
+
+/**
+ * Disconnect a social platform for a companion.
+ */
+ipcMain.handle("social:disconnect", async (_event, { platform, companionId }) => {
+  const all = store.get(SOCIAL_CREDS_KEY, {});
+  delete all[`${platform}:${companionId}`];
+  store.set(SOCIAL_CREDS_KEY, all);
+  return { success: true };
+});
+
+/**
+ * Get all connected platforms for a companion.
+ */
+ipcMain.handle("social:get-connected", async (_event, { companionId }) => {
+  const all = store.get(SOCIAL_CREDS_KEY, {});
+  const connected = {};
+  for (const platform of ['instagram', 'tiktok', 'x']) {
+    const creds = all[`${platform}:${companionId}`];
+    if (creds?.access_token) {
+      connected[platform] = {
+        connected: true,
+        expiresAt: creds.expires_at,
+        isExpired: creds.expires_at && Date.now() >= creds.expires_at,
+      };
+    }
+  }
+  return connected;
+});
+
 /**
  * Generic external API proxy for any URL
  * Use this for APIs not in the predefined endpoints
@@ -1605,14 +2340,6 @@ ipcMain.handle("proxy:fetch", async (_event, { url, options = {} }) => {
       body: options.body ? JSON.stringify(options.body) : undefined,
     });
 
-    if (!response.ok) {
-      return {
-        success: false,
-        error: `HTTP ${response.status}: ${response.statusText}`,
-        status: response.status,
-      };
-    }
-
     const contentType = response.headers.get("content-type");
     let data;
 
@@ -1620,6 +2347,18 @@ ipcMain.handle("proxy:fetch", async (_event, { url, options = {} }) => {
       data = await response.json();
     } else {
       data = await response.text();
+    }
+
+    if (!response.ok) {
+      // Include response body in error for better debugging
+      const errorMessage = data?.error || data?.message || `HTTP ${response.status}: ${response.statusText}`;
+      console.error(`[Proxy] Error from ${url}:`, { status: response.status, data });
+      return {
+        success: false,
+        error: errorMessage,
+        status: response.status,
+        data, // Include full response for detailed error handling
+      };
     }
 
     return { success: true, data };
@@ -1650,7 +2389,16 @@ ipcMain.handle("model-delete", deleteModel);
 ipcMain.handle("model-load", loadModel);
 ipcMain.handle("model-unload", unloadModel);
 ipcMain.handle("model-chat", chat);
+ipcMain.handle("model-chat-stream", chatStream);
 ipcMain.handle("model-chat-vision", chatWithVision);
+ipcMain.handle("model-reset-chat", () => {
+  if (modelSession) {
+    modelSession.resetChatHistory();
+    console.log("[LLM] Chat history reset");
+    return true;
+  }
+  return false;
+});
 ipcMain.handle("model-check-mmproj", checkMmproj);
 ipcMain.handle("model-download-mmproj", downloadMmproj);
 
@@ -1742,6 +2490,84 @@ app.on("ready", async () => {
   const flaskURL = `http://127.0.0.1:${PY_SERVER_PORT}`;
 
   // ─────────────────────────────────────────────────────────────────────────────
+  // Auto-migrate history paths to current MODEL_DIR on startup
+  // This ensures companion images/audio work after MODEL_DIR changes
+  // ─────────────────────────────────────────────────────────────────────────────
+  try {
+    const currentFilesDir = path.join(path.resolve(MODEL_DIR), "files");
+    const historyKeys = ["audioInferences", "imageInferences", "videoInferences", "objectInferences"];
+    let totalUpdated = 0;
+
+    const fixPath = (pathStr) => {
+      if (!pathStr || typeof pathStr !== "string") return { changed: false, path: pathStr };
+      const patterns = [/\/Users\/[^/]+\/bonzai-models\/files\//, /\/home\/[^/]+\/bonzai-models\/files\//, /bonzai-models\/files\//];
+      for (const pattern of patterns) {
+        if (pattern.test(pathStr)) {
+          const match = pathStr.match(/files\/(.+)$/);
+          if (match) {
+            const newPath = path.join(currentFilesDir, match[1]);
+            if (newPath !== pathStr) return { changed: true, path: newPath };
+          }
+        }
+      }
+      return { changed: false, path: pathStr };
+    };
+
+    // Fix inference histories
+    for (const key of historyKeys) {
+      const history = store.get(key, []);
+      if (Array.isArray(history) && history.length > 0) {
+        let updated = false;
+        const updatedHistory = history.map((inference) => {
+          const item = JSON.parse(JSON.stringify(inference));
+          if (item?.answer?.data) {
+            for (const field of ["audio_path", "video_path", "image_path", "path", "output_path", "object_path"]) {
+              if (item.answer.data[field]) {
+                const result = fixPath(item.answer.data[field]);
+                if (result.changed) { item.answer.data[field] = result.path; updated = true; totalUpdated++; }
+              }
+            }
+          }
+          return item;
+        });
+        if (updated) store.set(key, updatedHistory);
+      }
+    }
+
+    // Fix roleplay sessions
+    const roleplaySessions = store.get("roleplaySessions", {});
+    if (roleplaySessions && typeof roleplaySessions === "object") {
+      let updated = false;
+      for (const sessionKey in roleplaySessions) {
+        const session = roleplaySessions[sessionKey];
+        if (!session) continue;
+        if (session.companion?.image) { const r = fixPath(session.companion.image); if (r.changed) { session.companion.image = r.path; updated = true; totalUpdated++; } }
+        if (session.scenario?.image) { const r = fixPath(session.scenario.image); if (r.changed) { session.scenario.image = r.path; updated = true; totalUpdated++; } }
+        if (session.backgroundImage) { const r = fixPath(session.backgroundImage); if (r.changed) { session.backgroundImage = r.path; updated = true; totalUpdated++; } }
+        if (Array.isArray(session.history)) {
+          for (const msg of session.history) {
+            for (const field of ["image", "audio", "video", "backgroundImage"]) {
+              if (msg[field]) { const r = fixPath(msg[field]); if (r.changed) { msg[field] = r.path; updated = true; totalUpdated++; } }
+            }
+          }
+        }
+        if (Array.isArray(session.backgroundHistory)) {
+          for (const entry of session.backgroundHistory) {
+            if (entry.image) { const r = fixPath(entry.image); if (r.changed) { entry.image = r.path; updated = true; totalUpdated++; } }
+          }
+        }
+      }
+      if (updated) store.set("roleplaySessions", roleplaySessions);
+    }
+
+    if (totalUpdated > 0) {
+      console.log(`[Startup] Migrated ${totalUpdated} history paths to ${currentFilesDir}`);
+    }
+  } catch (e) {
+    console.warn(`[Startup] History path migration failed:`, e.message);
+  }
+
+  // ─────────────────────────────────────────────────────────────────────────────
   // WalletConnect WebSocket Origin Fix for Production Electron
   // The WalletConnect relay server rejects connections with file:// or null origins
   // This intercepts WebSocket handshakes and sets a valid Origin header
@@ -1770,7 +2596,7 @@ app.on("ready", async () => {
   await createWindow();
 
   // Start Python server in background (Vue app handles loading UI)
-  startPythonSubprocess();
+  await startPythonSubprocess();
 
   try {
     await checkPythonServer(flaskURL);
@@ -1790,10 +2616,337 @@ ipcMain.handle("stop-server", killPythonSubprocess);
 ipcMain.handle("restart-server", restartServerManually);
 ipcMain.handle("system-information", systemInformation);
 
+// ─────────────────────────────────────────────────────────────────────────────
+// Dataset Studio (scraping, curation, augmentation, export)
+// ─────────────────────────────────────────────────────────────────────────────
+
+ipcMain.handle("synth-examples-list", async () => {
+  try {
+    return { ok: true, examples: studioListExamples() };
+  } catch (e) {
+    return { ok: false, error: e.message, examples: [] };
+  }
+});
+
+ipcMain.handle("synth-example-save", async (_event, example) => {
+  try {
+    const saved = studioSaveExample(example);
+    return { ok: true, example: saved };
+  } catch (e) {
+    return { ok: false, error: e.message };
+  }
+});
+
+ipcMain.handle("synth-example-delete", async (_event, id) => {
+  try {
+    studioDeleteExample(id);
+    return { ok: true };
+  } catch (e) {
+    return { ok: false, error: e.message };
+  }
+});
+
+// Qwen 2.5 Coder 7B config for auto-loading in Dataset Studio describe
+// Code-specialized 7B dense model, Q5 quantization for higher fidelity output.
+const DATASET_STUDIO_MODEL_CONFIG = {
+  filename: "qwen2.5-coder-7b-instruct-q5_k_m.gguf",
+  url: "https://huggingface.co/Qwen/Qwen2.5-Coder-7B-Instruct-GGUF/resolve/main/qwen2.5-coder-7b-instruct-q5_k_m.gguf",
+  filesizeBytes: 5.48e9,
+  parameters: 7000000000,
+  context: 131072,
+};
+
+ipcMain.handle("synth-describe", async (_event, { mode, tier, html, css, js, text }) => {
+  // Game tier definitions (duplicated — main process can't import ES modules from dataset-studio)
+  const GAME_TIERS = [
+    { id: 1,  name: "Primitives",           desc: "Scene setup, camera, renderer, basic meshes, lighting" },
+    { id: 2,  name: "Materials & Shaders",  desc: "PBR materials, custom ShaderMaterial, GLSL, post-processing" },
+    { id: 3,  name: "Geometry & Terrain",   desc: "Procedural geometry, heightmaps, infinite terrain, LOD" },
+    { id: 4,  name: "Models & Assets",      desc: "GLTF/GLB loading, Blender workflow, animations, textures" },
+    { id: 5,  name: "Physics",              desc: "Cannon-es/Rapier integration, collision, rigid bodies, vehicles" },
+    { id: 6,  name: "Controls & Input",     desc: "FPS/orbit/pointer-lock, keyboard, gamepad, mobile touch" },
+    { id: 7,  name: "Animation & Particles",desc: "Skeletal animation, tweens (GSAP), particle systems, trails" },
+    { id: 8,  name: "Game Systems",         desc: "State machines, entity component, inventory, health, scoring" },
+    { id: 9,  name: "UI & Audio",           desc: "HUD overlays, menus, spatial audio, CSS3D" },
+    { id: 10, name: "Full Games",           desc: "Complete mini-games combining 3+ tiers above" },
+  ];
+
+  try {
+    // Build content from mode-specific fields
+    let content = "";
+    let promptText = "";
+
+    const isCodeMode = mode !== "text";
+
+    if (!isCodeMode) {
+      content = (text || "").trim();
+      if (!content) throw new Error("No text content to describe.");
+      promptText = [
+        "You are generating a detailed instruction for a LoRA finetuning dataset.",
+        "Given the following text content, write a thorough description covering:",
+        "- The theme, subject matter, and key topics",
+        "- The writing style, tone, and structure",
+        "- The purpose and intended audience",
+        "- Notable patterns, techniques, or conventions used",
+        "",
+        "Write a detailed, specific instruction that, paired with this content, would make an excellent training example for a LLAMA LoRA finetune.",
+        "Do NOT use markdown formatting (no #, **, `, etc.). Write plain text only.",
+        "",
+        "CONTENT:",
+        content,
+      ].join("\n");
+    } else {
+      // game mode
+      const parts = [];
+      if (html && html.trim()) parts.push(`HTML:\n${html.trim()}`);
+      if (css && css.trim()) parts.push(`CSS:\n${css.trim()}`);
+      if (js && js.trim()) parts.push(`JS:\n${js.trim()}`);
+      content = parts.join("\n\n");
+      if (!content) throw new Error("No code content to describe.");
+
+      // Build tier context for the prompt
+      const tierObj = GAME_TIERS.find((t) => t.id === (tier || 1)) || GAME_TIERS[0];
+      const tierContext = `This code belongs to Tier ${tierObj.id} (${tierObj.name}): ${tierObj.desc}.`;
+
+      promptText = [
+        "You are generating a detailed instruction for a Three.js game development LoRA finetuning dataset.",
+        tierContext,
+        "Given the following code, write a thorough description covering:",
+        "- The purpose and what the code creates or accomplishes",
+        "- The visual or interactive output (if applicable)",
+        "- Key techniques, libraries, APIs, and patterns used",
+        "- The structure and how the HTML, CSS, and JS work together",
+        "- Any notable algorithms, animations, or behaviors",
+        "",
+        "Write a detailed, specific instruction that, paired with this code, would make an excellent training example for a LLAMA LoRA finetune focused on Three.js game development.",
+        "Do NOT use markdown formatting (no #, **, `, etc.). Write plain text only.",
+        "Do NOT list libraries separately. Focus only on describing the code.",
+        "",
+        "CODE:",
+        content,
+      ].join("\n");
+    }
+
+    // Auto-load Qwen 2.5 Coder 7B if needed
+    const prevModel = currentLoadedModel ? { ...currentLoadedModel } : null;
+    const isDescribeModelLoaded = currentLoadedModel?.filename?.toLowerCase().includes("qwen2.5-coder-7b");
+    console.log("[synth-describe] Current model:", currentLoadedModel?.filename || "none", "Qwen Coder 7B loaded:", isDescribeModelLoaded);
+
+    if (!isDescribeModelLoaded) {
+      // Aggressively free memory before loading the describe model
+      console.log("[synth-describe] Clearing memory before model load...");
+
+      // 1. Unload any existing LLM model
+      if (loadedModel || modelContext || modelSession) {
+        await unloadModel();
+      }
+
+      // 2. Tell Flask server to unload all GPU pipelines
+      try {
+        await fetch(`http://127.0.0.1:${PY_SERVER_PORT}/memory/clear`, { method: "POST" });
+        console.log("[synth-describe] Flask pipelines cleared");
+      } catch (e) {
+        console.warn("[synth-describe] Flask memory clear skipped:", e.message);
+      }
+
+      // 3. Force garbage collection and let memory settle
+      if (global.gc) global.gc();
+      await new Promise(resolve => setTimeout(resolve, 1000));
+
+      // Check if model is downloaded
+      const modelFilename = normalizeModelFilename(DATASET_STUDIO_MODEL_CONFIG.filename);
+      const modelPath = path.join(MODEL_DIR, modelFilename);
+      console.log("[synth-describe] Qwen Coder 7B path:", modelPath, "exists:", fs.existsSync(modelPath));
+      if (!fs.existsSync(modelPath)) {
+        console.log("[synth-describe] Downloading Qwen 2.5 Coder 7B...");
+        await downloadModel(null, DATASET_STUDIO_MODEL_CONFIG.url, DATASET_STUDIO_MODEL_CONFIG.filename);
+      }
+      // Load Qwen 2.5 Coder 7B with context metadata
+      console.log("[synth-describe] Loading Qwen 2.5 Coder 7B...");
+      await loadModel(null, DATASET_STUDIO_MODEL_CONFIG);
+      console.log("[synth-describe] Qwen 2.5 Coder 7B loaded successfully");
+    }
+
+    // Reset chat history so the full context window is available for the code.
+    // Without this, accumulated history from prior conversations fills the
+    // context and the model never sees the code content.
+    modelSession.resetChatHistory();
+    console.log("[synth-describe] Prompting with", promptText.length, "chars");
+
+    const result = await modelSession.prompt(promptText, {
+      maxTokens: 1024,
+      temperature: 0.2,
+      repeatPenalty: {
+        lastTokens: 256,
+        penalty: 1.3,
+        frequencyPenalty: 0.1,
+      },
+    });
+    const rawOutput = result.trim();
+
+    // Strip any markdown formatting the LLM may have added
+    let description = rawOutput
+      .replace(/^#{1,6}\s+/gm, "")          // # headings
+      .replace(/\*\*([^*]+)\*\*/g, "$1")     // **bold**
+      .replace(/\*([^*]+)\*/g, "$1")         // *italic*
+      .replace(/`([^`]+)`/g, "$1")           // `inline code`
+      .replace(/^```[\s\S]*?^```/gm, "")     // ```code blocks```
+      .trim();
+    let libraries = [];
+    if (isCodeMode) {
+      // Strip any trailing JSON array the LLM may have appended to the description
+      const lines = description.split("\n");
+      for (let i = lines.length - 1; i >= 0; i--) {
+        const line = lines[i].trim();
+        if (line.startsWith("[") && line.endsWith("]")) {
+          try {
+            const parsed = JSON.parse(line);
+            if (Array.isArray(parsed)) {
+              // Remove the JSON line from description (we extract libs from code instead)
+              description = lines.slice(0, i).join("\n").trim();
+              break;
+            }
+          } catch { /* not valid JSON, keep as-is */ }
+        }
+        // Stop searching after 5 lines from the end
+        if (lines.length - 1 - i >= 5) break;
+      }
+
+      // ── Programmatic library extraction from actual code ──
+      // This is deterministic and doesn't depend on LLM output format.
+      const allCode = [html || "", css || "", js || ""].join("\n");
+
+      // 1. <script src="..."> tags (CDN / local references)
+      const scriptSrcRegex = /<script[^>]+src=["']([^"']+)["']/gi;
+      let match;
+      while ((match = scriptSrcRegex.exec(allCode)) !== null) {
+        const src = match[1];
+        const filename = src.split("/").pop().split("?")[0];
+        if (filename && filename.endsWith(".js")) {
+          libraries.push(filename);
+        }
+      }
+
+      // 2. ES module imports: import ... from 'library'
+      const importRegex = /import\s+(?:[\s\S]*?\s+from\s+)?['"]([^'"./][^'"]*)['"]/g;
+      while ((match = importRegex.exec(allCode)) !== null) {
+        libraries.push(match[1].split("/")[0]); // "@scope/pkg" → "@scope"... handled below
+      }
+
+      // 3. CommonJS requires: require('library')
+      const requireRegex = /require\s*\(\s*['"]([^'"./][^'"]*)['"]\s*\)/g;
+      while ((match = requireRegex.exec(allCode)) !== null) {
+        libraries.push(match[1].split("/")[0]);
+      }
+
+      // 4. Known globals — detect libraries by their runtime API usage.
+      //    Each entry: canonical name → regex patterns that indicate usage.
+      const KNOWN_GLOBALS = {
+        "three.js":       [/\bTHREE\./],
+        "gsap":           [/\bgsap\b/, /\bTweenMax\b/, /\bTimelineMax\b/, /\bTweenLite\b/, /\bTimelineLite\b/],
+        "cannon-es":      [/\bCANNON\./],
+        "rapier":         [/\bRAPIER\b/],
+        "ammo.js":        [/\bAmmo\b\s*\(/],
+        "xstate":         [/\bcreateMachine\s*\(/, /\binterpret\s*\(.*createMachine/],
+        "simplex-noise":  [/\bSimplexNoise\b/, /\bsimplex[_-]?noise\b/i],
+        "dat.gui":        [/\bnew\s+dat\.GUI\b/],
+        "lil-gui":        [/\bnew\s+GUI\b.*lil-gui/i, /\blil-gui\b/i],
+        "stats.js":       [/\bnew\s+Stats\s*\(/],
+        "howler.js":      [/\bnew\s+Howl\s*\(/, /\bHowler\b/],
+        "tone.js":        [/\bTone\./],
+        "matter.js":      [/\bMatter\./],
+        "planck.js":      [/\bplanck\./],
+        "p2.js":          [/\bp2\./],
+        "pixi.js":        [/\bPIXI\./],
+        "babylon.js":     [/\bBABYLON\./],
+        "socket.io":      [/\bio\s*\(\s*['"]/, /\bsocket\.io\b/i],
+        "tween.js":       [/\bnew\s+TWEEN\.Tween\b/, /\bTWEEN\.update\b/],
+        "d3":             [/\bd3\.\w+\s*\(/],
+        "chart.js":       [/\bnew\s+Chart\s*\(/],
+        "anime.js":       [/\banime\s*\(/],
+        "box2d":          [/\bb2\.\w+/, /\bBox2D\b/],
+        "oimo.js":        [/\bOIMO\./],
+      };
+      for (const [libName, patterns] of Object.entries(KNOWN_GLOBALS)) {
+        if (patterns.some((re) => re.test(allCode))) {
+          libraries.push(libName);
+        }
+      }
+
+      // ── Normalize and deduplicate ──
+      const LIBRARY_ALIASES = {
+        "three.min.js": "three.js",       "three.module.js": "three.js",
+        "three.module.min.js": "three.js", "three.r*.js": "three.js",
+        "cannon.min.js": "cannon-es",     "cannon-es.min.js": "cannon-es",
+        "cannon-es.js": "cannon-es",      "cannon.js": "cannon-es",
+        "gsap.min.js": "gsap",            "rapier.min.js": "rapier",
+        "rapier3d.min.js": "rapier",      "ammo.wasm.js": "ammo.js",
+        "stats.min.js": "stats.js",       "dat.gui.min.js": "dat.gui",
+        "lil-gui.min.js": "lil-gui",      "tween.min.js": "tween.js",
+        "tweenmax.min.js": "gsap",        "howler.min.js": "howler.js",
+        "tone.min.js": "tone.js",         "socket.io.min.js": "socket.io",
+        "pixi.min.js": "pixi.js",         "babylon.min.js": "babylon.js",
+        "p2.min.js": "p2.js",             "planck.min.js": "planck.js",
+        "matter.min.js": "matter.js",     "anime.min.js": "anime.js",
+        "d3.min.js": "d3",                "chart.min.js": "chart.js",
+        "oimo.min.js": "oimo.js",
+      };
+
+      libraries = libraries.map((lib) => {
+        const lower = lib.toLowerCase().trim();
+        return LIBRARY_ALIASES[lower] || lower.replace(/\.min\.js$/, ".js");
+      });
+
+      const seen = new Set();
+      libraries = libraries.filter((lib) => {
+        const key = lib.toLowerCase();
+        if (seen.has(key)) return false;
+        seen.add(key);
+        return true;
+      });
+
+      console.log("[synth-describe] Detected libraries:", libraries);
+    }
+
+    // Restore previous model if one was loaded before
+    if (prevModel && !isDescribeModelLoaded) {
+      try {
+        console.log("[synth-describe] Restoring previous model:", prevModel.filename);
+        await loadModel(null, prevModel);
+      } catch (restoreErr) {
+        console.warn("[synth-describe] Could not restore previous model:", restoreErr.message);
+      }
+    }
+
+    return { ok: true, description, libraries };
+  } catch (e) {
+    return { ok: false, error: e.message };
+  }
+});
+
+ipcMain.handle("synth-export", async (_event, { name }) => {
+  try {
+    const result = studioExportDataset(name);
+    return result;
+  } catch (e) {
+    return { ok: false, error: e.message };
+  }
+});
+
+// Kill the Python server before the app exits (prevents orphaned processes on port 65000)
+app.on("before-quit", async (e) => {
+  if (subpy && subpy.pid) {
+    e.preventDefault();
+    console.log("[before-quit] Killing Python server before exit...");
+    await killPythonSubprocess();
+    app.quit();
+  }
+});
+
 // Quit on all windows closed (non-mac)
 app.on("window-all-closed", () => {
   if (process.platform !== "darwin") {
-    killPythonSubprocess().then(() => app.quit());
+    app.quit();
   }
 });
 
@@ -2184,10 +3337,11 @@ function deleteModel(_event, modelname) {
 }
 
 function computeMaxContextForModel(currentModel, sysInfo) {
-  // For MoE models, use activeParameters for context sizing since that's
-  // what matters for compute/memory. Fall back to total parameters.
-  const isMoE = currentModel.isMoE || currentModel.activeParameters;
-  const params = currentModel.activeParameters || currentModel.parameters || 0;
+  // For MoE models, activeParameters drives KV-cache sizing (only active params
+  // contribute to attention). Total parameters drives weight-memory estimation
+  // (all expert weights are loaded).
+  const isMoE = !!(currentModel.isMoE || currentModel.activeParameters);
+  const activeParams = currentModel.activeParameters || currentModel.parameters || 0;
   const totalParams = currentModel.parameters || 0;
 
   const ramBytes = sysInfo.ramAvailable || sysInfo.ram || 0;
@@ -2201,70 +3355,156 @@ function computeMaxContextForModel(currentModel, sysInfo) {
   const isMac = process.platform === "darwin";
   const isUnified = isMac && vramMB === 0; // typical for Apple Silicon
 
+  // 1. Memory budget — how much RAM/VRAM we can safely use
   let memBudgetGB;
-
   if (isUnified) {
-    // Apple unified memory: CPU+GPU share the same pool
-    // Keep ~30% headroom for the OS, other apps, and fragmentation
-    memBudgetGB = ramGB * 0.7;
+    memBudgetGB = ramGB * 0.7; // 30% headroom for OS + apps
   } else if (vramGB > 0) {
-    // Discrete GPU case: KV cache + weights mostly limited by VRAM,
-    // but we also need RAM for the app + overhead.
-    // Be conservative and assume we can safely use ~80% of VRAM,
-    // and at most what RAM allows.
     memBudgetGB = Math.min(ramGB * 0.8, vramGB * 0.8);
   } else {
-    // Pure CPU, no GPU offload
-    memBudgetGB = ramGB * 0.8;
+    memBudgetGB = ramGB * 0.8; // CPU-only
   }
 
-  let baseCtx;
-
-  // Use memBudgetGB *and* params together
-  // For MoE models, params = activeParameters (e.g., 3.6B for GLM-4.7-Flash)
-  if (params <= 4_000_000_000) {
-    // 1–4B class (or MoE with <=4B active params)
-    if (memBudgetGB < 4) baseCtx = 4096;
-    else if (memBudgetGB < 8) baseCtx = 8192;
-    else if (memBudgetGB < 16) baseCtx = 16384;
-    else if (memBudgetGB < 24) baseCtx = 65536;
-    else baseCtx = 131072;
-  } else if (params <= 8_000_000_000) {
-    // 7–8B class (8B Q4 uses ~4-5GB, plenty of room for KV cache)
-    if (memBudgetGB < 8) baseCtx = 4096;
-    else if (memBudgetGB < 12) baseCtx = 8192;
-    else if (memBudgetGB < 20) baseCtx = 16384;
-    else baseCtx = 32768;
-  } else if (params <= 20_000_000_000) {
-    // 13–20B class (14B Q4 uses ~8-9GB, KV cache ~0.2GB per 1K ctx at fp16)
-    if (memBudgetGB < 12) baseCtx = 2048;
-    else if (memBudgetGB < 16) baseCtx = 4096;
-    else if (memBudgetGB < 20) baseCtx = 8192;
-    else if (memBudgetGB < 28) baseCtx = 16384;
-    else baseCtx = 32768;
+  // 2. Estimate model weight memory
+  //    Use actual file size when available (most accurate). Otherwise heuristic:
+  //    Dense Q4_K_M ≈ 0.55 bytes/param (totalParams).
+  //    MoE models: experts share weights, real file sizes are much smaller
+  //    than totalParams * 0.55 would suggest. Use 0.38 bytes/param for MoE
+  //    (calibrated: Qwen3.5-35B-A3B Q2=0.37, 122B-A10B Q2=0.38).
+  let modelWeightGB;
+  if (currentModel.filesizeBytes && currentModel.filesizeBytes > 0) {
+    modelWeightGB = currentModel.filesizeBytes / 1e9;
   } else {
-    // 30B+ monsters (DeepSeek 32B, Qwen3 Coder 30B, etc.)
-    // These need ~16-20GB for weights, so need more headroom
-    if (memBudgetGB < 24) baseCtx = 2048;
-    else if (memBudgetGB < 32) baseCtx = 4096;
-    else if (memBudgetGB < 48) baseCtx = 8192;
-    else if (memBudgetGB < 80) baseCtx = 16384;
-    else baseCtx = 32768;
+    const bytesPerParam = isMoE ? 0.38 : 0.55;
+    const weightParams = totalParams || activeParams;
+    modelWeightGB = (weightParams * bytesPerParam) / 1e9;
+  }
+
+  // 3. Reserve for GPU compute scratch buffers
+  //    Metal (unified memory) needs ~2GB for compute graphs and intermediate
+  //    tensors; discrete GPUs with separate VRAM need less host-side reserve.
+  const computeReserveGB = isUnified ? 2.0 : 1.5;
+
+  // 4. Available memory for KV cache
+  const availableForKvGB = Math.max(0, memBudgetGB - modelWeightGB - computeReserveGB);
+
+  // 5. Estimate KV cache bytes per token (fp16 K+V)
+  //    Depends on num_layers × num_kv_heads × head_dim — which scales with
+  //    active parameter count. MoE attention layers are shared (not per-expert),
+  //    so their KV cache is ~50% of an equivalently-sized dense model.
+  //    Calibrated against known architectures:
+  //      1.5B dense → ~50KB   3.8B dense → ~96KB   8B dense → ~130KB
+  //      14B  dense → ~200KB  32B  dense → ~400KB
+  const kvScale = isMoE ? 0.5 : 1.0;
+  let kvBytesPerToken;
+  if (activeParams <= 2_000_000_000)       kvBytesPerToken = 80_000;
+  else if (activeParams <= 5_000_000_000)  kvBytesPerToken = 120_000;
+  else if (activeParams <= 10_000_000_000) kvBytesPerToken = 200_000;
+  else if (activeParams <= 20_000_000_000) kvBytesPerToken = 320_000;
+  else                                     kvBytesPerToken = 500_000;
+  kvBytesPerToken = Math.round(kvBytesPerToken * kvScale);
+
+  // 6. Compute max context, snap down to nearest standard size
+  const STANDARD_SIZES = [131072, 65536, 32768, 16384, 8192, 4096, 2048, 1024, 512];
+  let baseCtx = 512;
+  if (availableForKvGB > 0) {
+    const maxTokens = Math.floor((availableForKvGB * 1e9) / kvBytesPerToken);
+    for (const size of STANDARD_SIZES) {
+      if (maxTokens >= size) {
+        baseCtx = size;
+        break;
+      }
+    }
   }
 
   const chosen = Math.min(modelMaxCtx, baseCtx);
 
   console.log(
     `[CTX] RAM=${ramGB.toFixed(1)}GB, memBudget=${memBudgetGB.toFixed(1)}GB, VRAM=${vramGB.toFixed(1)}GB, ` +
-    `params=${params}${isMoE ? ` (MoE, total=${totalParams})` : ""}, baseCtx=${baseCtx}, modelMaxCtx=${modelMaxCtx}, chosen=${chosen}, unified=${isUnified}`
+    `params=${activeParams}${isMoE ? ` (MoE, total=${totalParams})` : ""}, ` +
+    `weightEst=${modelWeightGB.toFixed(1)}GB, kvEst=${(kvBytesPerToken / 1024).toFixed(0)}KB/tok, ` +
+    `availForKV=${availableForKvGB.toFixed(1)}GB, baseCtx=${baseCtx}, modelMaxCtx=${modelMaxCtx}, ` +
+    `chosen=${chosen}, unified=${isUnified}`
   );
 
   return chosen;
 }
 
+// Model specs lookup table for enriching incomplete metadata.
+// Keyed by filename substring — matched against the model filename to fill in
+// missing parameters/context values that are required for accurate context sizing.
+const MODEL_SPECS = {
+  "meta-llama-3.1-8b-instruct":    { parameters: 8e9, context: 131072 },
+  "llama-3-3-8b":                   { parameters: 8e9, context: 131072 },
+  "llama-2-7b-chat":               { parameters: 7e9, context: 4096 },
+  "mythomax-l2-13b":               { parameters: 13e9, context: 4096 },
+  "mistral-7b-instruct":           { parameters: 7e9, context: 32768 },
+  "codestral-22b":                  { parameters: 22e9, context: 32768 },
+  "deepseek-r1-distill-qwen-1.5b": { parameters: 1.5e9, context: 131072 },
+  "deepseek-r1-distill-qwen-7b":   { parameters: 7e9, context: 131072 },
+  "deepseek-r1-distill-qwen-32b":  { parameters: 32e9, context: 131072 },
+  "gemma-3-1b-it":                  { parameters: 1e9, context: 32768 },
+  "gpt-oss-20b":                    { parameters: 20e9, context: 131072 },
+  "nousresearch_hermes-4-14b":      { parameters: 14e9, context: 131072 },
+  "phi-3-mini-4k-instruct":         { parameters: 3.8e9, context: 4096 },
+  "phi-4-mini-instruct":            { parameters: 3.8e9, context: 128000 },
+  "qwen2.5-3b-instruct":            { parameters: 3e9, context: 32768 },
+  "qwen2.5-coder-7b-instruct":      { parameters: 7e9, context: 131072 },
+  "qwen2.5-coder-14b-instruct":     { parameters: 14e9, context: 131072 },
+  "qwen2.5-coder-32b-instruct":     { parameters: 32e9, context: 131072 },
+  "qwen3-coder-30b-a3b":     { parameters: 30e9, activeParameters: 3e9, isMoE: true, context: 131072 },
+  "yi-coder-9b-chat":               { parameters: 9e9, context: 131072 },
+  "glm-4.7-flash":           { parameters: 30e9, activeParameters: 3e9, isMoE: true, context: 200000 },
+  "qwen3-coder-next":        { parameters: 80e9, activeParameters: 3e9, isMoE: true, context: 131072 },
+  "nanbeige4.1-3b":                 { parameters: 3e9, context: 32768 },
+  "qwen3.5-9b":                     { parameters: 9e9, context: 262144 },
+  "qwen3.5-27b":                    { parameters: 27e9, activeParameters: 8e9, context: 262144 },
+  "qwen3.5-35b-a3b":                { parameters: 35e9, activeParameters: 3e9, isMoE: true, context: 262144 },
+  "qwen3.5-122b-a10b":              { parameters: 122e9, activeParameters: 10e9, isMoE: true, context: 262144 },
+  "qwen3.5-397b-a17b":              { parameters: 397e9, activeParameters: 17e9, isMoE: true, context: 262144 },
+  "kimi-k2.5":                      { parameters: 1000e9, activeParameters: 32e9, isMoE: true, context: 256000 },
+  "minimax-m2.5":                   { parameters: 229e9, activeParameters: 10e9, isMoE: true, context: 205000 },
+  "devstral-small-2-24b":           { parameters: 24e9, context: 256000 },
+  "ministral-3-3b":                 { parameters: 3e9, context: 256000 },
+  "ministral-3-8b":                 { parameters: 8e9, context: 256000 },
+};
+
 async function loadModel(_event, currentModel) {
   if (!llama) {
     throw new Error("LLM engine not initialized. Please restart the application.");
+  }
+
+  // Normalize string model keys to object form (e.g. from openclaw passing "llm_llama_3_1_8b")
+  if (typeof currentModel === "string") {
+    currentModel = { filename: currentModel };
+  }
+
+  // Skip if the same model is already loaded (prevents HMR reload loops)
+  // Pass forceReload: true to bypass this guard (e.g. to recalculate context with current RAM)
+  const requestedFilename = (currentModel.filename || "").toLowerCase();
+  if (currentLoadedModel && modelSession && requestedFilename === (currentLoadedModel.filename || "").toLowerCase() && !currentModel.forceReload) {
+    console.log(`[LLM] Model already loaded: ${requestedFilename}, skipping reload`);
+    return true;
+  }
+
+  // Enrich model metadata from MODEL_SPECS if parameters/context are missing or invalid.
+  // This catches call sites that pass incomplete metadata (e.g. parameters: {}, or no parameters at all).
+  if (!currentModel.parameters || typeof currentModel.parameters !== "number") {
+    const filename = (currentModel.filename || "").toLowerCase();
+    for (const [key, specs] of Object.entries(MODEL_SPECS)) {
+      if (filename.includes(key)) {
+        console.log(`[LLM] Enriched model specs from MODEL_SPECS for "${key}"`);
+        if (!currentModel.parameters || typeof currentModel.parameters !== "number") {
+          currentModel.parameters = specs.parameters;
+        }
+        if (!currentModel.context || typeof currentModel.context !== "number") {
+          currentModel.context = specs.context;
+        }
+        if (specs.activeParameters) currentModel.activeParameters = specs.activeParameters;
+        if (specs.isMoE) currentModel.isMoE = specs.isMoE;
+        break;
+      }
+    }
   }
 
   // Cleanup any existing model before loading a new one
@@ -2309,29 +3549,53 @@ async function loadModel(_event, currentModel) {
   if (mmprojPath) {
     loadOptions.mmproj = mmprojPath;
   }
+  // Workaround: node-llama-cpp 3.16.x reports unifiedSize=0 on Apple Silicon Metal,
+  // causing its VRAM budget to reject models that actually fit in unified memory.
+  // Our own computeMaxContextForModel heuristic handles unified memory correctly.
+  if (llamaUnifiedMemoryBroken) {
+    loadOptions.ignoreMemorySafetyChecks = true;
+  }
 
   const model = await llama.loadModel(loadOptions);
   loadedModel = model; // Store reference for proper disposal
 
   const sysInfo = await systemInformation();
-  const desiredCtx = computeMaxContextForModel(currentModel, sysInfo);
-  console.log("Model context:", desiredCtx);
+  const heuristicCtx = computeMaxContextForModel(currentModel, sysInfo);
+  const modelMaxCtx = currentModel.context || 4096;
+  console.log("Model context: heuristic=%d, modelMax=%d", heuristicCtx, modelMaxCtx);
 
-  // Try progressively smaller context sizes if memory is insufficient
-  const contextSizesToTry = [desiredCtx];
-  let ctx = desiredCtx;
-  while (ctx > 2048) {
-    ctx = Math.floor(ctx / 2);
-    if (ctx >= 2048) contextSizesToTry.push(ctx);
+  // Standard context sizes to try, from largest to smallest.
+  // Start from the heuristic (memory-safe estimate), NOT the model's native max.
+  // createContext() can succeed at sizes that crash during inference because it
+  // only validates KV-cache allocation, not the compute buffers Metal needs.
+  const STANDARD_CONTEXT_SIZES = [
+    262144, 200000, 131072, 100000, 65536, 32768, 16384, 8192, 4096, 2048, 1024, 512,
+  ];
+  const contextSizesToTry = [heuristicCtx];
+  for (const size of STANDARD_CONTEXT_SIZES) {
+    if (size < heuristicCtx && !contextSizesToTry.includes(size)) {
+      contextSizesToTry.push(size);
+    }
   }
-  if (!contextSizesToTry.includes(2048)) contextSizesToTry.push(2048);
+
+  // When unified memory reporting is broken, our own heuristic is more reliable
+  // than node-llama-cpp's internal check, so bypass its safety checks.
+  const contextOpts = llamaUnifiedMemoryBroken ? { ignoreMemorySafetyChecks: true } : {};
+  // Flash attention improves throughput on standard transformer attention.
+  // Some hybrid architectures (e.g. Qwen 3.5 DeltaNet) may not benefit or may
+  // perform worse — caller can pass flashAttention: false to opt out.
+  if (currentModel.flashAttention !== false) {
+    contextOpts.flashAttention = true;
+  }
+  contextOpts.batchSize = 2048;
+  console.log(`[LLM] Context options: flashAttention=${!!contextOpts.flashAttention}, batchSize=2048`);
 
   let lastError = null;
   for (const contextSize of contextSizesToTry) {
     try {
-      console.log(`Trying context size: ${contextSize}`);
-      modelContext = await model.createContext({ contextSize });
-      console.log(`Successfully created context with size: ${contextSize}`);
+      console.log(`Trying context size: ${contextSize} (flashAttention: true, batchSize: 2048)`);
+      modelContext = await model.createContext({ contextSize, ...contextOpts });
+      console.log(`Successfully created context with size: ${contextSize} (flashAttention: ${!!contextOpts.flashAttention}, batchSize: ${contextOpts.batchSize || 'default'})`);
       break;
     } catch (err) {
       console.log(`Context size ${contextSize} failed: ${err.message}`);
@@ -2340,23 +3604,37 @@ async function loadModel(_event, currentModel) {
     }
   }
 
+  // Fallback: retry without flash attention if all attempts failed
+  if (!modelContext && contextOpts.flashAttention) {
+    console.log("[LLM] Retrying without flash attention...");
+    delete contextOpts.flashAttention;
+    for (const contextSize of contextSizesToTry) {
+      try {
+        console.log(`Trying context size: ${contextSize} (no flash attention)`);
+        modelContext = await model.createContext({ contextSize, ...contextOpts });
+        console.log(`Successfully created context with size: ${contextSize} (no flash attention)`);
+        break;
+      } catch (err) {
+        console.log(`Context size ${contextSize} failed: ${err.message}`);
+        lastError = err;
+      }
+    }
+  }
+
   if (!modelContext) {
     throw lastError || new Error("Failed to create model context");
   }
 
   // Detect model type and use appropriate chat wrapper
-  // MythoMax uses Alpaca format which needs explicit template
   const lowerFilename = normalizedFilename.toLowerCase();
   const isMythoMax = lowerFilename.includes('mythomax');
   const isAlpacaModel = isMythoMax || lowerFilename.includes('alpaca');
-
   let sessionOptions = {
     contextSequence: modelContext.getSequence(),
   };
 
   if (isAlpacaModel) {
     console.log("[LLM] Using Alpaca chat template for model:", normalizedFilename);
-    // Alpaca-style template for MythoMax and similar models
     sessionOptions.chatWrapper = new TemplateChatWrapper({
       template: "{{systemPrompt}}\n\n{{history}}### Instruction:\n{{completion}}\n\n### Response:\n",
       historyTemplate: {
@@ -2422,11 +3700,90 @@ function checkModel(_event, modelname) {
   return true;
 }
 
-async function chat(_event, userMessage) {
+async function chat(_event, input) {
   if (!modelSession) {
     throw new Error("Model not loaded");
   }
-  const assistantMessage = await modelSession.prompt(userMessage);
+
+  // Support both legacy string input and new object format
+  let userMessage, maxTokens, temperature, thoughtTokens;
+  if (typeof input === 'string') {
+    userMessage = input;
+    maxTokens = 2048; // Default
+    temperature = undefined;
+    thoughtTokens = undefined;
+  } else {
+    userMessage = input.message;
+    maxTokens = input.maxTokens || 2048;
+    temperature = input.temperature;
+    thoughtTokens = input.thoughtTokens;
+  }
+
+  const returnMetadata = typeof input === 'object' && input.returnMetadata;
+
+  let tokenCount = 0;
+  let firstTokenTime = null;
+  const promptOpts = { maxTokens, seed: Math.floor(Math.random() * 2147483647) };
+  if (temperature !== undefined) promptOpts.temperature = temperature;
+  // Budget-level thinking control: cap thinking tokens (0 = no thinking)
+  if (thoughtTokens !== undefined) {
+    promptOpts.budgets = { thoughtTokens };
+  }
+  // Count output tokens and measure from first token (excludes prefill)
+  if (returnMetadata) {
+    promptOpts.onToken = (tokens) => {
+      if (!firstTokenTime) firstTokenTime = Date.now();
+      tokenCount += Array.isArray(tokens) ? tokens.length : 1;
+    };
+  }
+
+  const startTime = Date.now();
+  const assistantMessage = await modelSession.prompt(userMessage, promptOpts);
+  // Generation time = first token → last token (excludes prompt prefill)
+  const generationMs = firstTokenTime ? Date.now() - firstTokenTime : Date.now() - startTime;
+  const prefillMs = firstTokenTime ? firstTokenTime - startTime : 0;
+
+  if (returnMetadata) {
+    return { text: assistantMessage, tokenCount, elapsedMs: generationMs, prefillMs };
+  }
+  return assistantMessage;
+}
+
+async function chatStream(event, input) {
+  if (!modelSession) {
+    throw new Error("Model not loaded");
+  }
+
+  let userMessage, maxTokens, temperature, thoughtTokens;
+  if (typeof input === 'string') {
+    userMessage = input;
+    maxTokens = 2048;
+    temperature = undefined;
+    thoughtTokens = undefined;
+  } else {
+    userMessage = input.message;
+    maxTokens = input.maxTokens || 2048;
+    temperature = input.temperature;
+    thoughtTokens = input.thoughtTokens;
+  }
+
+  const promptOpts = {
+    maxTokens,
+    seed: Math.floor(Math.random() * 2147483647),
+    onTextChunk(chunk) {
+      // Send each token/chunk to the renderer
+      const win = BrowserWindow.fromWebContents(event.sender);
+      if (win && !win.isDestroyed()) {
+        event.sender.send("chat-token", chunk);
+      }
+    },
+  };
+  if (temperature !== undefined) promptOpts.temperature = temperature;
+  if (thoughtTokens !== undefined) {
+    promptOpts.budgets = { thoughtTokens };
+  }
+
+  const assistantMessage = await modelSession.prompt(userMessage, promptOpts);
   return assistantMessage;
 }
 
@@ -2740,6 +4097,10 @@ function startOpenClawAPIServer() {
 
     // POST /v1/chat/completions - OpenAI-compatible chat endpoint
     if (req.method === "POST" && url.pathname === "/v1/chat/completions") {
+      // Auth removed — all LLM generation is free
+      if (false) {
+      }
+
       console.log(`[OpenAI API] Incoming request headers:`, JSON.stringify(req.headers));
       let body = "";
       req.on("data", (chunk) => (body += chunk));

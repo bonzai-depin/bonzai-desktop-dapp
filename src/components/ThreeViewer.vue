@@ -38,7 +38,10 @@ import { markRaw, shallowRef } from "vue";
 
 export default {
   name: "ThreeViewer",
-  props: { hideUI: { type: Boolean, default: false } },
+  props: {
+    hideUI: { type: Boolean, default: false },
+    enablePhysics: { type: Boolean, default: true }
+  },
   data() {
     return {
       isGenerating: false,
@@ -97,6 +100,17 @@ export default {
     this._sunRays = null;
     this._sunLight = null;
 
+    // Shim: LLMs often call mesh.computeBoundingBox() instead of mesh.geometry.computeBoundingBox()
+    if (!THREE.Mesh.prototype.computeBoundingBox) {
+      THREE.Mesh.prototype.computeBoundingBox = function () {
+        this.geometry.computeBoundingBox();
+      };
+      Object.defineProperty(THREE.Mesh.prototype, 'boundingBox', {
+        get() { return this.geometry.boundingBox; },
+        configurable: true,
+      });
+    }
+
     this._presets = {
       sunrise: {
         skyTop: 0x1a1040,
@@ -105,8 +119,8 @@ export default {
         horizonGlow: 0xffffcc,
         horizonWidth: 0.025,
         horizonIntensity: 1.2,
-        ambient: { color: 0xffd4aa, intensity: 2.0 },
-        main: { color: 0xffaa66, intensity: 5.0, position: [60, 15, 50] },
+        ambient: { color: 0xffd4aa, intensity: 1.0 },
+        main: { color: 0xffaa66, intensity: 3.0, position: [60, 15, 50] },
         fill: { color: 0x6688cc, intensity: 1.8 },
         hemisphere: { sky: 0xffaa77, ground: 0x554433, intensity: 1.8 },
         fog: { color: 0xffcc99, density: 0.0015 },
@@ -116,7 +130,7 @@ export default {
         celestialColor: 0xffcc66,
         celestialY: 0.06,
         celestialSize: 18,
-        bloomStrength: 0.3,
+        bloomStrength: 0.15,
         starsOpacity: 0.15,
         showCelestial: true,
       },
@@ -126,19 +140,19 @@ export default {
         skyBottom: 0xaaddff,
         horizonGlow: 0xffffff,
         horizonWidth: 0.015,
-        horizonIntensity: 0.55,
-        ambient: { color: 0xffffff, intensity: 3.0 },
-        main: { color: 0xfffff8, intensity: 6.0, position: [20, 60, 30] },
-        fill: { color: 0x99ccff, intensity: 2.5 },
-        hemisphere: { sky: 0x99ddff, ground: 0x887788, intensity: 2.5 },
+        horizonIntensity: 0.3,
+        ambient: { color: 0xffffff, intensity: 0.6 },
+        main: { color: 0xfffff8, intensity: 1.8, position: [20, 60, 30] },
+        fill: { color: 0x99ccff, intensity: 1.0 },
+        hemisphere: { sky: 0x99ddff, ground: 0x887788, intensity: 0.8 },
         fog: { color: 0xccddff, density: 0.0008 },
-        exposure: 1.4,
+        exposure: 1.0,
         moon: 0,
         groundColor: 0x404048,
         celestialColor: 0xffffee,
         celestialY: 0.85,
         celestialSize: 15,
-        bloomStrength: 0.22,
+        bloomStrength: 0.11,
         starsOpacity: 0,
         showCelestial: false,
       },
@@ -149,8 +163,8 @@ export default {
         horizonGlow: 0xffeedd,
         horizonWidth: 0.018,
         horizonIntensity: 0.7,
-        ambient: { color: 0xfff8ee, intensity: 2.8 },
-        main: { color: 0xffeedd, intensity: 5.5, position: [50, 35, 20] },
+        ambient: { color: 0xfff8ee, intensity: 1.4 },
+        main: { color: 0xffeedd, intensity: 3.2, position: [50, 35, 20] },
         fill: { color: 0x88aacc, intensity: 2.2 },
         hemisphere: { sky: 0xaaccee, ground: 0x776655, intensity: 2.2 },
         fog: { color: 0xddeeff, density: 0.001 },
@@ -160,7 +174,7 @@ export default {
         celestialColor: 0xffeedd,
         celestialY: 0.45,
         celestialSize: 16,
-        bloomStrength: 0.22,
+        bloomStrength: 0.11,
         starsOpacity: 0,
         showCelestial: false,
       },
@@ -171,8 +185,8 @@ export default {
         horizonGlow: 0xffee88,
         horizonWidth: 0.03,
         horizonIntensity: 1.35,
-        ambient: { color: 0xffaa77, intensity: 1.8 },
-        main: { color: 0xff6633, intensity: 4.5, position: [80, 8, 30] },
+        ambient: { color: 0xffaa77, intensity: 0.9 },
+        main: { color: 0xff6633, intensity: 2.8, position: [80, 8, 30] },
         fill: { color: 0x5533aa, intensity: 1.5 },
         hemisphere: { sky: 0xff7744, ground: 0x443322, intensity: 1.6 },
         fog: { color: 0xff8855, density: 0.0018 },
@@ -182,7 +196,7 @@ export default {
         celestialColor: 0xff5500,
         celestialY: 0.02,
         celestialSize: 22,
-        bloomStrength: 0.3,
+        bloomStrength: 0.15,
         starsOpacity: 0.25,
         showCelestial: true,
       },
@@ -193,8 +207,8 @@ export default {
         horizonGlow: 0x203050,
         horizonWidth: 0.012,
         horizonIntensity: 0.45,
-        ambient: { color: 0x4466aa, intensity: 1.2 },
-        main: { color: 0x6688bb, intensity: 1.5, position: [-30, 50, -20] },
+        ambient: { color: 0x4466aa, intensity: 0.6 },
+        main: { color: 0x6688bb, intensity: 1.0, position: [-30, 50, -20] },
         fill: { color: 0x334466, intensity: 0.8 },
         hemisphere: { sky: 0x223355, ground: 0x151520, intensity: 0.9 },
         fog: { color: 0x080c18, density: 0.002 },
@@ -204,7 +218,7 @@ export default {
         celestialColor: 0xddeeff,
         celestialY: 0.6,
         celestialSize: 12,
-        bloomStrength: 0.15,
+        bloomStrength: 0.08,
         starsOpacity: 1.0,
         showCelestial: true,
       },
@@ -349,6 +363,7 @@ export default {
       renderer.toneMapping = THREE.ACESFilmicToneMapping;
       renderer.toneMappingExposure = 1.1;
       renderer.useLegacyLights = false;
+      renderer.localClippingEnabled = true;
       renderer.outputColorSpace = THREE.SRGBColorSpace;
       this.renderer = markRaw(renderer);
       renderer.debug.checkShaderErrors = false;
@@ -368,8 +383,8 @@ export default {
         const envMap = pmremGen.fromEquirectangular(hdrTexture).texture;
         this._envMap = envMap;
         scene.environment = envMap;
-        scene.environmentIntensity = 1.0;
-        this.renderer.toneMappingExposure = 1.2;
+        scene.environmentIntensity = 0.4;
+        this.renderer.toneMappingExposure = 1.0;
         hdrTexture.dispose();
       } catch (e) {
         console.warn("HDR Environment failed:", e);
@@ -435,7 +450,8 @@ export default {
       };
 
       const onMouseDown = (event) => {
-        if (event.button !== 0) return; // Left click only
+        if (event.button !== 2) return; // Right click only
+        event.preventDefault();
         const intersects = getIntersects(event);
         if (intersects.length > 0) {
           let target = intersects[0].object;
@@ -565,31 +581,28 @@ export default {
             color,
             metalness: 0,
             roughness: o.roughness ?? 0.05,
-            transmission: o.transmission ?? 0.92,
-            thickness: o.thickness ?? 1.5,
+            transmission: o.transmission ?? 0.95,
+            thickness: o.thickness ?? 0.15,
             ior: o.ior ?? 1.5,
             clearcoat: 1,
-            clearcoatRoughness: 0.1,
+            clearcoatRoughness: 0.05,
             transparent: true,
             ...o,
           }),
-        gem: (color = 0xff0000, o = {}) => {
-          const { glow, ...rest } = o; // Extract custom props
-          return new THREE.MeshPhysicalMaterial({
+        gem: (color = 0xff0000, o = {}) =>
+          new THREE.MeshPhysicalMaterial({
             color,
             metalness: 0,
             roughness: 0.03,
-            transmission: 0.85,
+            transmission: 0.92,
             thickness: 1.5,
-            ior: o.ior ?? 2.4, // Higher IOR for more sparkle
+            ior: o.ior ?? 1.8,
             clearcoat: 1,
             emissive: color,
-            emissiveIntensity: glow ?? 0.4, // Increased default glow
+            emissiveIntensity: o.glow ?? 0.25,
             transparent: true,
-            toneMapped: false, // Important: Allows values > 1 for bloom
-            ...rest,
-          });
-        },
+            ...o,
+          }),
         metal: (color = 0xffd700, o = {}) =>
           new THREE.MeshPhysicalMaterial({
             color,
@@ -608,50 +621,174 @@ export default {
             clearcoat: o.clearcoat ?? 0.2,
             ...o,
           }),
-        glow: (color = 0x00ffff, o = {}) => {
-          const { intensity, ...rest } = o; // Extract custom props
-          return new THREE.MeshPhysicalMaterial({
+        glow: (color = 0x00ffff, o = {}) =>
+          new THREE.MeshPhysicalMaterial({
             color,
             emissive: color,
-            emissiveIntensity: intensity ?? 1.2, // Increased for better bloom
+            emissiveIntensity: o.intensity ?? 0.8,
             metalness: 0,
-            roughness: 0.2,
+            roughness: 0.3,
             transparent: true,
             opacity: o.opacity ?? 1,
-            toneMapped: false, // Important: Allows values > 1 for bloom
-            ...rest,
-          });
-        },
-        liquid: (color = 0xff0000, o = {}) => {
-          const { glow, glowIntensity, ...rest } = o; // Extract custom props
-          return new THREE.MeshPhysicalMaterial({
+            ...o,
+          }),
+        // H.liquid(color, opts) — material only (for manual geometry)
+        liquid: (color = 0xff0000, o = {}) =>
+          new THREE.MeshPhysicalMaterial({
             color,
-            metalness: 0.1,
-            roughness: o.roughness ?? 0.1,
-            transmission: o.transmission ?? 0.6,
-            thickness: o.thickness ?? 2,
-            ior: o.ior ?? 1.33,
-            clearcoat: 0.8,
-            emissive: glow ? color : 0x000000,
-            emissiveIntensity: glowIntensity ?? 0.3,
+            roughness: o.roughness ?? 0.2,
+            metalness: 0.02,
+            clearcoat: 0.5,
+            clearcoatRoughness: 0.1,
             transparent: true,
-            ...rest,
+            opacity: o.opacity ?? 0.88,
+            depthWrite: false,
+            side: THREE.DoubleSide,
+            ...o,
+          }),
+        // H.fillLiquid(containerMesh, color, opts) — builds liquid geometry that
+        // perfectly matches the container's interior. Works by extracting the
+        // LatheGeometry profile (or using bbox for other geometry types),
+        // trimming at fill height, and capping with a surface disc.
+        // fillLevel: 0-1 (default 0.7 = 70% full). inset: shrink factor (default 0.93).
+        fillLiquid: (containerMesh, color = 0xff0000, o = {}) => {
+          const fill = o.fillLevel ?? 0.7;
+          const inset = o.inset ?? 0.93;
+          const geo = containerMesh.geometry;
+          if (!geo.boundingBox) geo.computeBoundingBox();
+          const gBox = geo.boundingBox;
+          const gMinY = gBox.min.y;
+          const gMaxY = gBox.max.y;
+          const gHeight = gMaxY - gMinY;
+          const fillY = gMinY + gHeight * fill;
+
+          // Realistic liquid — dense colored body visible through transmission glass.
+          // Uses opacity-only transparency (NO transmission) so the glass container's
+          // transmission pipeline renders correctly on top. The liquid appears as a
+          // solid colored volume; the glass refracts it naturally.
+          const liqOpacity = o.opacity ?? 0.88;
+          const liquidMat = new THREE.MeshPhysicalMaterial({
+            color,
+            roughness: 0.2,
+            metalness: 0.02,
+            clearcoat: 0.5,
+            clearcoatRoughness: 0.1,
+            transparent: true,
+            opacity: liqOpacity,
+            depthWrite: false,
+            side: THREE.DoubleSide,
           });
+
+          let liquidGeo;
+          let surfaceRadius;
+
+          // Try to extract LatheGeometry profile for perfect liquid shape
+          if (geo.parameters && geo.parameters.points) {
+            const origPoints = geo.parameters.points;
+            const segments = geo.parameters.segments || 64;
+            const CENTER_THRESH = 0.02; // points with r < this are center-axis closures, not wall
+
+            // Find the INTERIOR WALL of the container: skip center-axis
+            // closure points (r ≈ 0) which are structural, not wall geometry.
+            // Also skip any points past a neck closure (where r returns to ≈ 0
+            // mid-profile, e.g. vials with flared lips above a sealed neck).
+            const wallPoints = [];
+            let passedFirstWall = false;
+            for (let i = 0; i < origPoints.length; i++) {
+              const pt = origPoints[i];
+              const r = pt.x;
+
+              // Once we've seen real wall points and hit center again, stop —
+              // we've reached the neck closure (interior ends here)
+              if (passedFirstWall && r < CENTER_THRESH) break;
+
+              // Skip center-axis closure points
+              if (r < CENTER_THRESH) continue;
+
+              passedFirstWall = true;
+
+              if (pt.y <= fillY) {
+                wallPoints.push(new THREE.Vector2(r * inset, pt.y));
+              } else {
+                // Interpolate the exact fill-level crossing
+                if (i > 0) {
+                  const prev = origPoints[i - 1];
+                  const prevR = Math.max(prev.x, CENTER_THRESH);
+                  if (prev.y < fillY) {
+                    const t = (fillY - prev.y) / (pt.y - prev.y);
+                    const interpR = prevR + (r - prevR) * t;
+                    wallPoints.push(new THREE.Vector2(interpR * inset, fillY));
+                  }
+                }
+                break;
+              }
+            }
+
+            if (wallPoints.length >= 2) {
+              const bottomY = gMinY; // Use geometry bbox min, not first wall point
+              surfaceRadius = wallPoints[wallPoints.length - 1].x;
+
+              // Build closed profile: center-bottom → wall bottom-to-top → center-top
+              const profile = [new THREE.Vector2(0.001, bottomY)];
+              for (const wp of wallPoints) profile.push(wp);
+              profile.push(new THREE.Vector2(0.001, fillY));
+
+              liquidGeo = new THREE.LatheGeometry(profile, segments);
+            }
+          }
+
+          // Fallback for non-Lathe geometries: use a cylinder matching bbox
+          if (!liquidGeo) {
+            const rX = (gBox.max.x - gBox.min.x) / 2 * inset;
+            const rZ = (gBox.max.z - gBox.min.z) / 2 * inset;
+            const r = Math.max(rX, rZ);
+            const liquidH = gHeight * fill;
+            liquidGeo = new THREE.CylinderGeometry(r, r, liquidH, 32, 1, false);
+            liquidGeo.translate(0, gMinY + liquidH / 2, 0);
+            surfaceRadius = r;
+          }
+
+          const liquidMesh = new THREE.Mesh(liquidGeo, liquidMat);
+          liquidMesh.position.copy(containerMesh.position);
+          liquidMesh.rotation.copy(containerMesh.rotation);
+
+          // Surface disc at fill level (visible meniscus — glossy top of liquid)
+          if (!surfaceRadius) surfaceRadius = (gBox.max.x - gBox.min.x) / 2 * inset * 0.9;
+          const surfaceGeo = new THREE.CircleGeometry(surfaceRadius, 64);
+          const surfaceMat = new THREE.MeshPhysicalMaterial({
+            color,
+            roughness: 0.05,
+            metalness: 0.05,
+            clearcoat: 1.0,
+            clearcoatRoughness: 0.0,
+            transparent: true,
+            opacity: liqOpacity * 0.95,
+            depthWrite: false,
+            side: THREE.DoubleSide,
+          });
+          const surface = new THREE.Mesh(surfaceGeo, surfaceMat);
+          surface.rotation.x = -Math.PI / 2;
+          surface.position.copy(containerMesh.position);
+          surface.position.y += fillY;
+
+          const group = new THREE.Group();
+          group.name = "liquid_fill";
+          group.add(liquidMesh);
+          group.add(surface);
+          return group;
         },
-        fire: (o = {}) => {
-          const { intensity, color, ...rest } = o; // Extract custom props
-          return new THREE.MeshPhysicalMaterial({
-            color: color ?? 0xff6600,
-            emissive: color ?? 0xff4400,
-            emissiveIntensity: intensity ?? 1.2,
+        fire: (o = {}) =>
+          new THREE.MeshPhysicalMaterial({
+            color: o.color ?? 0xff6600,
+            emissive: o.color ?? 0xff4400,
+            emissiveIntensity: o.intensity ?? 1.2,
             metalness: 0,
             roughness: 0.5,
             transparent: true,
             opacity: o.opacity ?? 0.9,
             side: THREE.DoubleSide,
-            ...rest,
-          });
-        },
+            ...o,
+          }),
         ice: (color = 0xaaddff, o = {}) =>
           new THREE.MeshPhysicalMaterial({
             color,
@@ -693,23 +830,11 @@ export default {
             ...o,
           }),
 
-        // LOW-POLY / STYLIZED materials (flat shading, CodePen-style)
-        // Yakudoo/Aviator style - MeshLambertMaterial with flatShading
+        // LOW-POLY / STYLIZED materials (flat shading, no reflections)
         lowPoly: (color = 0x888888, o = {}) => {
           const m = new THREE.MeshLambertMaterial({
             color,
             flatShading: true,
-            ...o,
-          });
-          return m;
-        },
-        // Yakudoo shiny style - MeshPhongMaterial with flatShading (slightly reflective)
-        lowPolyShiny: (color = 0x888888, o = {}) => {
-          const m = new THREE.MeshPhongMaterial({
-            color,
-            flatShading: true,
-            shininess: o.shininess ?? 30,
-            specular: o.specular ?? 0x444444,
             ...o,
           });
           return m;
@@ -1156,13 +1281,14 @@ export default {
               o.lowPoly ? 8 : 24,
               o.lowPoly ? 6 : 18
             );
-            bottleGeo.scale(1, 1.2, 1);
+            bottleGeo.scale(1, 1.05, 1); // Less stretched
             liquidGeo = new THREE.SphereGeometry(
-              0.21,
+              0.23, // A bit larger
               o.lowPoly ? 8 : 24,
               o.lowPoly ? 6 : 18
             );
-            liquidGeo.scale(1, 1.0, 1);
+            liquidGeo.scale(1, 0.95, 1); // Scaled to fit
+
           } else if (shape === "flask") {
             bottleGeo = new THREE.CylinderGeometry(
               0.08,
@@ -1213,7 +1339,11 @@ export default {
                 emissiveIntensity: o.glow ? 0.4 : 0,
               });
           const liquid = new THREE.Mesh(liquidGeo, liqMat);
-          liquid.position.y = shape === "round" ? 0.28 : 0.28;
+                    bottleGeo.computeBoundingBox();
+          liquidGeo.computeBoundingBox();
+          const bottleMinY = bottleGeo.boundingBox.min.y;
+          const liquidHeight = liquidGeo.boundingBox.max.y - liquidGeo.boundingBox.min.y;
+          liquid.position.y = 0.35 + bottleMinY + liquidHeight / 2 + 0.02; // a bit of margin
           liquid.castShadow = true;
           g.add(liquid);
 
@@ -1271,10 +1401,68 @@ export default {
             g.add(glow);
           }
 
+          // Diamonds
+          if (o.diamonds) {
+            const diamondGeo = new THREE.OctahedronGeometry(0.02, 0);
+            const diamondMat = new THREE.MeshPhysicalMaterial({
+              color: 0xffffff,
+              transmission: 1.0,
+              ior: 2.4,
+              roughness: 0,
+            });
+            for (let i = 0; i < 5; i++) {
+              const diamond = new THREE.Mesh(diamondGeo, diamondMat);
+              diamond.position.set(
+                (Math.random() - 0.5) * 0.2,
+                (Math.random() - 0.5) * 0.2 + 0.2,
+                (Math.random() - 0.5) * 0.2
+              );
+              diamond.rotation.set(
+                Math.random() * Math.PI,
+                Math.random() * Math.PI,
+                Math.random() * Math.PI
+              );
+              g.add(diamond);
+            }
+          }
+
+          // Liquid physics sloshing effect
+          g.userData.liquid = liquid;
+          g.userData.bottle = bottle;
+          let time = 0;
+          const liquidUpdate = ({ deltaTime }) => {
+            time += deltaTime;
+            const { liquid, bottle, lastPos } = g.userData;
+            if (!liquid || !bottle) return;
+
+            if (!lastPos) {
+              g.userData.lastPos = new THREE.Vector3();
+              bottle.getWorldPosition(g.userData.lastPos);
+            }
+
+            const currentPos = bottle.getWorldPosition(new THREE.Vector3());
+            const velocity = new THREE.Vector3()
+              .subVectors(currentPos, g.userData.lastPos)
+              .divideScalar(deltaTime);
+            g.userData.lastPos.copy(currentPos);
+
+            // Sloshing effect
+            liquid.rotation.z = -velocity.x * 0.5;
+            liquid.rotation.x = velocity.z * 0.5;
+
+            // Gentle bobbing
+            const initialY = 0.35 + bottleMinY + liquidHeight / 2 + 0.02;
+            liquid.position.y = initialY + Math.sin(time * 5) * 0.005;
+          };
+
+          if (o.addUpdateCallback) {
+            o.addUpdateCallback(liquidUpdate);
+          }
+
           return g;
         },
 
-        // Sword (positioned so bottom of pommel is at y=0)
+        // Sword
         sword: (o = {}) => {
           const g = new THREE.Group();
           const bladeMat = o.lowPoly
@@ -1308,33 +1496,21 @@ export default {
                 roughness: 0.3,
               });
 
-          // Base Y offset so pommel bottom sits at y=0
-          const baseY = 0.16; // pommel center (0.12) + pommel radius (0.04)
-
           // Blade
           const bladeLen = o.bladeLength ?? 0.8;
           const blade = new THREE.Mesh(
             new THREE.BoxGeometry(0.08, bladeLen, 0.02),
             bladeMat
           );
-          blade.position.y = baseY + bladeLen / 2 + 0.15;
+          blade.position.y = bladeLen / 2 + 0.15;
           blade.castShadow = true;
           g.add(blade);
-          // Blade tip
-          const tip = new THREE.Mesh(
-            new THREE.ConeGeometry(0.04, 0.15, 4),
-            bladeMat
-          );
-          tip.position.y = baseY + bladeLen + 0.22;
-          tip.rotation.z = Math.PI;
-          tip.castShadow = true;
-          g.add(tip);
           // Guard
           const guard = new THREE.Mesh(
             new THREE.BoxGeometry(0.25, 0.04, 0.06),
             guardMat
           );
-          guard.position.y = baseY + 0.12;
+          guard.position.y = 0.12;
           guard.castShadow = true;
           g.add(guard);
           // Handle
@@ -1342,7 +1518,7 @@ export default {
             new THREE.CylinderGeometry(0.03, 0.035, 0.18, o.lowPoly ? 6 : 12),
             handleMat
           );
-          handle.position.y = baseY;
+          handle.position.y = 0;
           handle.castShadow = true;
           g.add(handle);
           // Pommel
@@ -1354,7 +1530,7 @@ export default {
             ),
             guardMat
           );
-          pommel.position.y = baseY - 0.12; // = 0.04, bottom at y=0
+          pommel.position.y = -0.12;
           pommel.castShadow = true;
           g.add(pommel);
 
@@ -1750,7 +1926,7 @@ export default {
           return g;
         },
 
-        // Crown (positioned so bottom sits at y=0)
+        // Crown
         crown: (o = {}) => {
           const g = new THREE.Group();
           const goldMat = o.lowPoly
@@ -1776,9 +1952,6 @@ export default {
                 roughness: 0.1,
               });
 
-          // Base Y offset so bottom of torus sits at y=0
-          const baseY = 0.04; // tube radius
-
           // Base ring
           const base = new THREE.Mesh(
             new THREE.TorusGeometry(
@@ -1790,7 +1963,6 @@ export default {
             goldMat
           );
           base.rotation.x = Math.PI / 2;
-          base.position.y = baseY;
           base.castShadow = true;
           g.add(base);
 
@@ -1804,7 +1976,7 @@ export default {
             );
             point.position.set(
               Math.cos(angle) * 0.2,
-              baseY + 0.1,
+              0.1,
               Math.sin(angle) * 0.2
             );
             point.castShadow = true;
@@ -1816,7 +1988,7 @@ export default {
             );
             gem.position.set(
               Math.cos(angle) * 0.2,
-              baseY + 0.18,
+              0.18,
               Math.sin(angle) * 0.2
             );
             gem.castShadow = true;
@@ -2188,14 +2360,14 @@ export default {
       this._celestialGlow = glow;
       const sunLight = new THREE.DirectionalLight(0xffffff, 5.0);
       sunLight.castShadow = true;
-      sunLight.shadow.mapSize.width = 2048;
-      sunLight.shadow.mapSize.height = 2048;
+      sunLight.shadow.mapSize.width = 8192;
+      sunLight.shadow.mapSize.height = 8192;
       sunLight.shadow.camera.near = 10;
       sunLight.shadow.camera.far = 2000;
-      sunLight.shadow.camera.left = -80;
-      sunLight.shadow.camera.right = 80;
-      sunLight.shadow.camera.top = 80;
-      sunLight.shadow.camera.bottom = -80;
+      sunLight.shadow.camera.left = -8;
+      sunLight.shadow.camera.right = 8;
+      sunLight.shadow.camera.top = 8;
+      sunLight.shadow.camera.bottom = -8;
       sunLight.shadow.bias = -0.0001;
       group.add(sunLight);
       sunLight.target = new THREE.Object3D();
@@ -2578,10 +2750,10 @@ export default {
       );
       fill2.position.set(30, 20, -30);
       this.scene.add(fill2);
-      const rim = new THREE.DirectionalLight(0xffffff, 1.5);
+      const rim = new THREE.DirectionalLight(0xffffff, 0.5);
       rim.position.set(0, 10, -50);
       this.scene.add(rim);
-      const bounce = new THREE.PointLight(0xccbbff, 1.0, 30);
+      const bounce = new THREE.PointLight(0xccbbff, 0.4, 30);
       bounce.position.set(0, 0.5, 0);
       this.scene.add(bounce);
       const dummyMain = new THREE.DirectionalLight(0xffffff, 0);
@@ -2605,9 +2777,9 @@ export default {
       composer.addPass(new RenderPass(this.scene, this.camera));
       const bloom = new UnrealBloomPass(
         new THREE.Vector2(rw, rh),
-        0.4,  // strength - increased for more visible glow
-        0.6,  // radius - how far bloom spreads
-        0.5   // threshold - lowered so emissive materials bloom more
+        0.2,
+        0.5,
+        0.7
       );
       this._bloomPass = bloom;
       composer.addPass(bloom);
@@ -2720,7 +2892,7 @@ export default {
         }
         const dt = this.clock.getDelta(),
           t = this.clock.elapsedTime;
-        if (this.physics.world) {
+        if (this.physics.world && this.enablePhysics) {
           this.physics.world.step(1 / 60, dt, 3);
           for (const body of this.physics.objects) {
             if (body.__mesh) {
@@ -2914,32 +3086,131 @@ export default {
       this.resetCamera();
     },
     autoEnhanceObject(obj, THREE) {
+      const envMap = this._envMap;
+
+      // ── Auto-scale: fit object within 1.5 unit max dimension ──
+      const tempBox = new THREE.Box3().setFromObject(obj);
+      const tempSize = tempBox.getSize(new THREE.Vector3());
+      const maxDim = Math.max(tempSize.x, tempSize.y, tempSize.z);
+      if (maxDim > 1.5) {
+        const scale = 1.5 / maxDim;
+        obj.scale.multiplyScalar(scale);
+        // Recompute after scaling to fix positioning
+        const scaledBox = new THREE.Box3().setFromObject(obj);
+        const minY = scaledBox.min.y;
+        if (minY < 0) {
+          obj.position.y -= minY; // lift above ground
+        }
+      }
+
+      // ── Material enhancement pass ──
+      let renderOrderCounter = 10;
       obj.traverse(function (n) {
         if (n.isMesh && n.material) {
           n.material.needsUpdate = true;
-          n.material.envMapIntensity = 1.6;
+          if (envMap && n.material.isMeshPhysicalMaterial) {
+            n.material.envMap = envMap;
+            n.material.envMapIntensity = 1.0;
+          } else {
+            n.material.envMapIntensity = 1.0;
+          }
           if (!("clearcoat" in n.material)) {
             n.material.clearcoat = 0.2;
           }
           if (n.material.roughness > 0.8) n.material.roughness = 0.55;
-          n.renderOrder = 2;
+          // Fix transmission materials (liquids, glass, gems)
+          if (n.material.transmission && n.material.transmission > 0) {
+            // Detect liquid materials misusing transmission (transparent+opacity < 1,
+            // or low IOR suggesting liquid not glass/gems). Convert to MeshStandardMaterial
+            // so they render as visible colored volumes inside glass containers.
+            const isLiquid = n.material.transparent && n.material.opacity < 1;
+            const hasLowIOR = n.material.ior && n.material.ior < 1.45;
+            if (isLiquid || hasLowIOR) {
+              const color = n.material.color ? n.material.color.clone() : new THREE.Color(0x888888);
+              // Use color as emissive fallback so liquid color is always visible
+              const emissive = (n.material.emissive && n.material.emissive.r + n.material.emissive.g + n.material.emissive.b > 0)
+                ? n.material.emissive.clone() : color.clone().multiplyScalar(0.7);
+              const emissiveI = Math.max(n.material.emissiveIntensity || 0, 0.5);
+              n.material = new THREE.MeshStandardMaterial({
+                color,
+                emissive,
+                emissiveIntensity: emissiveI,
+                transparent: true,
+                opacity: n.material.opacity || 0.85,
+                side: THREE.DoubleSide,
+                depthWrite: false,
+                roughness: 0.2,
+                metalness: 0.0,
+              });
+            } else {
+              // True transmission (glass, gems) — keep as-is, don't force transparent
+              n.material.side = THREE.DoubleSide;
+              // Strip attenuationColor if liquid_fill sibling exists — attenuation
+              // tints the liquid and hides its true color through the glass
+              if (n.material.attenuationColor) {
+                let hasLiquid = false;
+                obj.traverse((c) => { if (c.name === "liquid_fill") hasLiquid = true; });
+                if (hasLiquid) {
+                  n.material.attenuationColor = new THREE.Color(0xffffff);
+                  n.material.attenuationDistance = Infinity;
+                }
+              }
+            }
+            n.renderOrder = renderOrderCounter++;
+          } else if (n.material.transparent) {
+            // Non-transmission transparent materials (alpha-blended)
+            n.material.depthWrite = false;
+            n.renderOrder = renderOrderCounter++;
+          } else {
+            n.renderOrder = 2;
+          }
           n.castShadow = true;
           n.receiveShadow = true;
         }
       });
+      // Gentle bloom boost for generated objects
+      if (this._bloomPass) {
+        this._bloomPass.strength = Math.max(this._bloomPass.strength, 0.18);
+      }
+      // If any transmission material was found, ensure scene has a background
+      // for the transmission buffer to refract through (null background = black refraction)
+      let hasTransmission = false;
+      obj.traverse((n) => {
+        if (n.isMesh && n.material && n.material.transmission > 0) hasTransmission = true;
+      });
+      if (hasTransmission && !this.scene.background && this._envMap) {
+        this.scene.background = this._envMap;
+        this.scene.backgroundBlurriness = 1.0;
+        this.scene.backgroundIntensity = 0.3;
+      }
     },
     async applyModuleCode(code, mode = "replace") {
       this.isGenerating = true;
       try {
         if (!code || typeof code !== "string")
           throw new Error("Code must be a non-empty string");
-        const open = (code.match(/{/g) || []).length,
-          close = (code.match(/}/g) || []).length;
+        
+        let fixedCode = code;
+        let open = (fixedCode.match(/{/g) || []).length;
+        let close = (fixedCode.match(/}/g) || []).length;
+        // Auto-fix small brace mismatches (common LLM error)
+        while (close > open && close - open <= 3) {
+          const lastBrace = fixedCode.lastIndexOf('}');
+          if (lastBrace === -1) break;
+          fixedCode = fixedCode.slice(0, lastBrace) + fixedCode.slice(lastBrace + 1);
+          close--;
+          console.warn(`[ThreeViewer] Auto-removed trailing } (${open} vs ${close + 1} → ${close})`);
+        }
+        while (open > close && open - close <= 3) {
+          fixedCode += '\n}';
+          close++;
+          console.warn(`[ThreeViewer] Auto-appended missing } (${open} vs ${close - 1} → ${close})`);
+        }
         if (open !== close)
           throw new Error(
             `Syntax error: mismatched braces (${open} vs ${close})`
           );
-        const blob = new Blob([code], { type: "text/javascript" });
+        const blob = new Blob([fixedCode], { type: "text/javascript" });
         const url = URL.createObjectURL(blob);
         let mod;
         try {
@@ -2958,20 +3229,7 @@ export default {
         const helpers = this.createHelpers(addUpdateCallback);
         const ctx = {
           THREE,
-          CANNON,
           helpers,
-          physics: {
-            world: this.physics.world,
-            addBody: (body, mesh) => {
-              this.physics.bodies.push(body);
-              this.physics.world.addBody(body);
-              if (mesh) {
-                body.__mesh = mesh;
-                this.physics.objects.push(body);
-              }
-            },
-            addConstraint: (c) => this.physics.constraints.push(c),
-          },
           scene: this.scene,
           camera: this.camera,
           renderer: this.renderer,
@@ -2979,7 +3237,6 @@ export default {
           lights: this._lights,
           controls: this.controls,
           setObjectInfo: (info) => console.log("Object info:", info),
-          physicsHelpers: this.makePhysicsHelpers(),
           addUpdateCallback,
           removeUpdateCallback: (cb) => {
             const i = this._updateCallbacks.indexOf(cb);
@@ -3007,11 +3264,13 @@ export default {
           const box = new THREE.Box3().setFromObject(result);
           const center = box.getCenter(new THREE.Vector3());
           const size = box.getSize(new THREE.Vector3());
-          const dist = Math.max(size.x, size.y, size.z) * 1.8;
-          this.controls.target.copy(center);
+          const dist = Math.max(size.x, size.y, size.z) * 2.0;
+          // Target vertical center for better framing
+          this.controls.target.set(center.x, center.y, center.z);
+          // Slightly elevated angle for more dramatic presentation
           this.camera.position.set(
             center.x + dist * 0.6,
-            center.y + dist * 0.4,
+            center.y + dist * 0.5,
             center.z + dist * 0.6
           );
           this.controls.update();
@@ -3024,161 +3283,6 @@ export default {
         throw err;
       } finally {
         this.isGenerating = false;
-      }
-    },
-    /**
-     * Capture a screenshot of the current 3D scene.
-     * @param {Object} options - Screenshot options
-     * @param {number} options.width - Target width (default: 512)
-     * @param {number} options.height - Target height (default: 512)
-     * @param {string} options.format - Image format: 'png' or 'jpeg' (default: 'png')
-     * @param {number} options.quality - JPEG quality 0-1 (default: 0.9)
-     * @returns {string} Base64 encoded image data URL
-     */
-    captureScreenshot(options = {}) {
-      const { width = 512, height = 512, format = "png", quality = 0.9 } = options;
-
-      if (!this.renderer || !this.scene || !this.camera) {
-        throw new Error("ThreeViewer not initialized");
-      }
-
-      // Store original size
-      const originalWidth = this.renderer.domElement.width;
-      const originalHeight = this.renderer.domElement.height;
-      const originalAspect = this.camera.aspect;
-
-      try {
-        // Resize for screenshot
-        this.renderer.setSize(width, height, false);
-        this.camera.aspect = width / height;
-        this.camera.updateProjectionMatrix();
-
-        // Render frame
-        if (this.composer) {
-          this.composer.setSize(width, height);
-          this.composer.render();
-        } else {
-          this.renderer.render(this.scene, this.camera);
-        }
-
-        // Capture
-        const mimeType = format === "jpeg" ? "image/jpeg" : "image/png";
-        const dataUrl = this.renderer.domElement.toDataURL(mimeType, quality);
-
-        return dataUrl;
-      } finally {
-        // Restore original size
-        this.renderer.setSize(originalWidth, originalHeight, false);
-        this.camera.aspect = originalAspect;
-        this.camera.updateProjectionMatrix();
-        if (this.composer) {
-          this.composer.setSize(originalWidth, originalHeight);
-        }
-      }
-    },
-
-    /**
-     * Capture screenshots from multiple angles for comprehensive vision analysis
-     * @param {Array} angles - Array of {name, azimuth, elevation, label} objects
-     * @param {Object} options - Screenshot options (width, height, format, quality)
-     * @returns {Array} Array of {name, label, dataUrl} objects
-     */
-    captureMultiAngleScreenshots(angles, options = {}) {
-      const { width = 512, height = 512, format = "png", quality = 0.9, disableHDR = false } = options;
-
-      if (!this.renderer || !this.scene || !this.camera || !this.controls) {
-        throw new Error("ThreeViewer not initialized");
-      }
-
-      // Store original camera state
-      const originalPosition = this.camera.position.clone();
-      const originalTarget = this.controls.target.clone();
-      const originalWidth = this.renderer.domElement.width;
-      const originalHeight = this.renderer.domElement.height;
-      const originalAspect = this.camera.aspect;
-
-      // Store original HDR/tone mapping settings
-      const originalToneMapping = this.renderer.toneMapping;
-      const originalToneMappingExposure = this.renderer.toneMappingExposure;
-      const originalBackground = this.scene.background;
-
-      const screenshots = [];
-
-      try {
-        // Disable HDR for more accurate vision analysis
-        if (disableHDR) {
-          this.renderer.toneMapping = THREE.NoToneMapping;
-          this.renderer.toneMappingExposure = 1.0;
-          // Use neutral gray background for better object visibility
-          this.scene.background = new THREE.Color(0x808080);
-        }
-
-        // Resize renderer for screenshots
-        this.renderer.setSize(width, height, false);
-        this.camera.aspect = width / height;
-        this.camera.updateProjectionMatrix();
-        if (this.composer) {
-          this.composer.setSize(width, height);
-        }
-
-        // Calculate scene center and appropriate distance
-        const target = originalTarget.clone();
-        const distance = originalPosition.distanceTo(target);
-
-        for (const angle of angles) {
-          // Convert degrees to radians
-          const azimuthRad = (angle.azimuth * Math.PI) / 180;
-          const elevationRad = (angle.elevation * Math.PI) / 180;
-
-          // Calculate camera position using spherical coordinates
-          const x = target.x + distance * Math.cos(elevationRad) * Math.sin(azimuthRad);
-          const y = target.y + distance * Math.sin(elevationRad);
-          const z = target.z + distance * Math.cos(elevationRad) * Math.cos(azimuthRad);
-
-          this.camera.position.set(x, y, z);
-          this.camera.lookAt(target);
-          this.camera.updateProjectionMatrix();
-
-          // Render frame - use direct renderer when HDR disabled to bypass post-processing
-          if (disableHDR || !this.composer) {
-            this.renderer.render(this.scene, this.camera);
-          } else {
-            this.composer.render();
-          }
-
-          // Capture
-          const mimeType = format === "jpeg" ? "image/jpeg" : "image/png";
-          const dataUrl = this.renderer.domElement.toDataURL(mimeType, quality);
-
-          screenshots.push({
-            name: angle.name,
-            label: angle.label,
-            azimuth: angle.azimuth,
-            elevation: angle.elevation,
-            dataUrl: dataUrl,
-          });
-        }
-
-        return screenshots;
-      } finally {
-        // Restore original HDR settings
-        if (disableHDR) {
-          this.renderer.toneMapping = originalToneMapping;
-          this.renderer.toneMappingExposure = originalToneMappingExposure;
-          this.scene.background = originalBackground;
-        }
-
-        // Restore original camera state
-        this.camera.position.copy(originalPosition);
-        this.controls.target.copy(originalTarget);
-        this.camera.lookAt(originalTarget);
-        this.renderer.setSize(originalWidth, originalHeight, false);
-        this.camera.aspect = originalAspect;
-        this.camera.updateProjectionMatrix();
-        if (this.composer) {
-          this.composer.setSize(originalWidth, originalHeight);
-        }
-        this.controls.update();
       }
     },
     cleanup() {
@@ -3197,7 +3301,7 @@ export default {
 };
 </script>
 <style scoped>
-/* Fonts imported from App.vue for offline mode */
+@import url("https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:opsz,wght,FILL,GRAD@20..48,100..700,0..1,-50..200");
 .material-symbols-outlined {
   font-variation-settings:
     "FILL" 0,

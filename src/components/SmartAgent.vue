@@ -45,33 +45,29 @@
           <!-- Tabs -->
           <div class="tabs is-large is-fullwidth mb-5">
             <ul>
-              <li :class="{ 'is-active': activeTab === 'browse' }">
-                <a
-                  @click.prevent="activeTab = 'browse'"
-                  class="fira-sans-condensed-black-italic is-size-1"
-                >
-                  <span class="material-symbols-outlined mr-2 is-size-1">
-                    shopping_cart
-                  </span>
-                  Browse
+              <li :class="{ 'is-active': activeTab === 'browseSkills' }">
+                <a @click.prevent="activeTab = 'browseSkills'" class="fira-sans-condensed-black-italic is-size-1">
+                  <span class="material-symbols-outlined mr-2 is-size-1">shopping_cart</span>
+                  Browse Skills
+                </a>
+              </li>
+              <li :class="{ 'is-active': activeTab === 'browseAgents' }">
+                <a @click.prevent="activeTab = 'browseAgents'" class="fira-sans-condensed-black-italic is-size-1">
+                  <span class="material-symbols-outlined mr-2 is-size-1">groups</span>
+                  Agents
                 </a>
               </li>
               <li :class="{ 'is-active': activeTab === 'my-skills' }">
-                <a
-                  @click.prevent="activeTab = 'my-skills'"
-                  class="fira-sans-condensed-black-italic is-size-1"
-                >
-                  <span class="material-symbols-outlined mr-2 is-size-1">
-                    start
-                  </span>
-                  Run
+                <a @click.prevent="activeTab = 'my-skills'" class="fira-sans-condensed-black-italic is-size-1">
+                  <span class="material-symbols-outlined mr-2 is-size-1">play_arrow</span>
+                  Run Skill
                 </a>
               </li>
             </ul>
           </div>
 
-          <!-- BROWSE TAB -->
-          <div v-if="activeTab === 'browse'">
+          <!-- BROWSE SKILLS TAB -->
+          <div v-if="activeTab === 'browseSkills'">
             <!-- Category Filter -->
             <div class="category-filter mb-5">
               <span class="category-selector">
@@ -170,41 +166,30 @@
 
                 <div class="skill-footer">
                   <div class="skill-actions">
-                    <template v-if="canRunSkill(skill.id).canRun">
-                      <button
-                        class="button is-info is-medium"
-                        @click="runSkill(skill)"
-                      >
-                        <span class="material-symbols-outlined mr-1">
-                          play_arrow
-                        </span>
-                        Run
-                      </button>
-                    </template>
-                    <template v-else>
-                      <button
-                        class="button is-warning is-medium fira-sans-condensed-black-italic"
-                        @click="openUnlockModal(skill)"
-                      >
-                        <span
-                          class="material-symbols-outlined mr-2"
-                          style="font-size: 24px"
-                        >
-                          lock_open
-                        </span>
-                        UNLOCK {{ getRequiredLevel(skill) }}
-                        <template v-if="getSkillContentIcons(skill.id).length > 0">
-                          <span
-                            v-for="icon in getSkillContentIcons(skill.id)"
-                            :key="icon"
-                            class="material-symbols-outlined ml-1"
-                            style="font-size: 20px"
-                          >
-                            {{ icon }}
-                          </span>
-                        </template>
-                      </button>
-                    </template>
+                    <!-- Free skill or already purchased → Run -->
+                    <button
+                      v-if="!skill.purchasePrice || parseFloat(skill.purchasePrice) === 0 || isSkillPurchased(skill.id)"
+                      class="button is-info is-medium"
+                      @click="runSkill(skill)"
+                    >
+                      <span class="material-symbols-outlined mr-1">
+                        play_arrow
+                      </span>
+                      Run
+                    </button>
+                    <!-- Paid skill, not purchased → Purchase -->
+                    <button
+                      v-else
+                      class="button is-warning is-medium"
+                      :class="{ 'is-loading': purchasingSkillId === skill.id }"
+                      :disabled="purchasingSkillId === skill.id"
+                      @click="handlePurchaseSkill(skill)"
+                    >
+                      <span class="material-symbols-outlined mr-1">
+                        shopping_cart
+                      </span>
+                      Purchase ({{ skill.purchasePrice }} ETH)
+                    </button>
                   </div>
                 </div>
               </div>
@@ -217,30 +202,15 @@
             </div>
           </div>
 
+          <!-- BROWSE AGENTS TAB -->
+          <div v-if="activeTab === 'browseAgents'">
+            <BrowseAgents />
+          </div>
+
           <!-- MY SKILLS TAB -->
           <div v-if="activeTab === 'my-skills'">
-            <div
-              v-if="accessibleSkills.length === 0"
-              class="notification is-warning p-5"
-            >
-              <span class="material-symbols-outlined mr-2 is-size-1">lock</span>
-              <h2 class="fira-sans-condensed-black-italic is-size-3 mt-5">
-                Connect Wallet or Upgrade your Level to unlock skills.
-              </h2>
-              <div class="control has-text-center mt-5 mb-5">
-                <button
-                  class="button is-success is-large"
-                  @click="activeTab = 'browse'"
-                >
-                  <span class="material-symbols-outlined mr-2">
-                    shopping_cart
-                  </span>
-                  Browse Skills
-                </button>
-              </div>
-            </div>
-
-            <div v-else>
+            <!-- Always show skill UI - gating happens inside the skill component -->
+            <div>
               <!-- DOWNLOAD REQUIRED (only when not actively downloading and check is complete) -->
               <div
                 v-if="
@@ -442,7 +412,7 @@
 
               <!-- Roleplay Companion - Special Chat Interface -->
               <div
-                v-else-if="selectedSkillId === 'roleplay-companion-v1.0.0'"
+                v-else-if="selectedSkillId === 'roleplay-companion-v1.0.0' && selectedSkill"
                 class="roleplay-interface"
               >
                 <div class="models__activity--payouts mb-4 has-text-left">
@@ -1132,6 +1102,7 @@ import { useSkillStore } from "../stores/skillStore.js";
 import { SKILL_CATEGORY_META } from "../skills/types.js";
 import polymarketAgent from "./polymarketAgent.js";
 import { tokenService } from "../services/token.service.js";
+import { hasPurchasedAgent, purchaseAgent } from "../services/agent.service.js";
 import { requestOpenLevelModal } from "../services/level.service.js";
 import SkillRunner from "./skills/SkillRunner.vue";
 import RoleplayChat from "./skills/RoleplayChat.vue";
@@ -1140,6 +1111,7 @@ import PolymarketSkill from "./skills/PolymarketSkill.vue";
 import TCGSkill from "./skills/TCGSkill.vue";
 import DSLASkill from "./skills/DSLASkill.vue";
 import MeditationForgeSkill from "./skills/MeditationForgeSkill.vue";
+import BrowseAgents from "./skills/BrowseAgents.vue";
 import {
   getSkillModelRequirements,
   MODEL_REQUIREMENTS,
@@ -1210,13 +1182,14 @@ export default {
     TCGSkill,
     DSLASkill,
     MeditationForgeSkill,
+    BrowseAgents,
   },
   setup() {
     // Store
     const skillStore = useSkillStore();
 
     // Tab state
-    const activeTab = ref("browse");
+    const activeTab = ref("my-skills");
 
     // Notifications
     const statusNotification = ref({ show: false, message: "", type: "info" });
@@ -1230,8 +1203,8 @@ export default {
     const isGenerating = ref(false);
     const loadingMessage = ref("");
 
-    // Skill execution state
-    const selectedSkillId = ref(null);
+    // Skill execution state - default to Roleplay Companion for preview
+    const selectedSkillId = ref("roleplay-companion-v1.0.0");
     const selectedSkill = computed(() =>
       skillStore.getSkillById(selectedSkillId.value),
     );
@@ -2115,6 +2088,9 @@ Return ONLY the JSON, no explanation.`;
       modelname: "LLaMA 3.1 8B",
       url: "https://huggingface.co/lmstudio-community/Meta-Llama-3.1-8B-Instruct-GGUF/resolve/main/Meta-Llama-3.1-8B-Instruct-Q4_K_M.gguf",
       filename: "meta-llama-3.1-8b-instruct-q4_k_m.gguf",
+      filesizeBytes: 4.92e9,
+      parameters: 8000000000,
+      context: 131072,
     };
 
     const polymarketPeriods = [
@@ -2191,7 +2167,9 @@ Return ONLY the JSON, no explanation.`;
         food: "is-primary",
         education: "is-link",
         reading: "is-dark",
-        "personal-care": "is-light",
+        beauty: "is-light",
+        sports: "is-success",
+        travel: "is-info",
         "prediction-market": "is-info",
         analysis: "is-success",
         trading: "is-warning",
@@ -2271,16 +2249,32 @@ Return ONLY the JSON, no explanation.`;
       showNotification("Skills refreshed!", "success");
     };
 
-    const runSkill = (skill) => {
-      // Check level access before running
-      const access = canRunSkill(skill.id);
-      if (!access.canRun) {
-        showNotification(
-          `${access.requiredLevel} required: ${access.reason}`,
-          "warning",
-        );
-        return;
+    // Skill purchase state
+    const purchasingSkillId = ref(null);
+
+    const isSkillPurchased = (skillId) => {
+      return hasPurchasedAgent(skillId);
+    };
+
+    const handlePurchaseSkill = async (skill) => {
+      if (purchasingSkillId.value) return;
+      purchasingSkillId.value = skill.id;
+      try {
+        const result = await purchaseAgent(skill.id);
+        if (result.success) {
+          showNotification(`Purchased ${skill.name}!`, "success");
+        } else {
+          showNotification(result.error || "Purchase failed", "danger");
+        }
+      } catch (e) {
+        showNotification(e.message || "Purchase failed", "danger");
+      } finally {
+        purchasingSkillId.value = null;
       }
+    };
+
+    const runSkill = (skill) => {
+      // Always navigate to skill UI - access gating happens inside the skill component
       selectSkillById(skill.id);
       activeTab.value = "my-skills";
     };
@@ -3004,6 +2998,9 @@ Provide a concise analysis covering:
       const payload = {
         modelname: modelConfig.modelname,
         filename: modelConfig.filename,
+        filesizeBytes: modelConfig.filesizeBytes,
+        parameters: modelConfig.parameters,
+        context: modelConfig.context,
       };
 
       await window.electronAPI?.loadModel?.(payload);
@@ -3029,6 +3026,9 @@ Provide a concise analysis covering:
         checkPolymarketModelAvailability(),
         resumeActiveDownloadIfAny(),
       ]);
+
+      // Set default skill to Roleplay on load
+      selectSkillById('roleplay-companion-v1.0.0');
 
       // Non-blocking initialization
       tokenService.initialize();
@@ -3121,6 +3121,9 @@ Provide a concise analysis covering:
       refreshSkills,
       runSkill,
       availableSkills,
+      isSkillPurchased,
+      handlePurchaseSkill,
+      purchasingSkillId,
 
       // Skill execution
       selectedSkillId,

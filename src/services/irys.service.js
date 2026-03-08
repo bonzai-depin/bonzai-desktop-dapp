@@ -1,150 +1,169 @@
 /**
- * Irys Service - Permanent storage with provenance
+ * Storage Service — IPFS uploads via Pinata
  *
- * Handles uploads to Arweave via Irys with cryptographic provenance tags
+ * Handles content & metadata uploads to IPFS via Pinata's API.
+ * No wallet signatures or funding required — uses API key auth.
+ *
+ * Keeps the same export API (`irysService`) for backward compatibility
+ * with all consumers (contentNFT, companion, roleplayChat, etc.).
  */
 
-import { WebIrys } from "@irys/sdk";
 import { ethers } from "ethers";
 
 // ═══════════════════════════════════════════════════════════════════════════
 // CONFIGURATION
 // ═══════════════════════════════════════════════════════════════════════════
 
+const PINATA_API = "https://api.pinata.cloud";
+const PINATA_GATEWAY = "https://gateway.pinata.cloud/ipfs";
+
+// Auth: JWT (preferred), falls back to API Key + Secret
+function getAuthHeaders() {
+  const jwt = import.meta.env.VITE_PINATA_JWT;
+  if (jwt) {
+    return { Authorization: `Bearer ${jwt}` };
+  }
+  const apiKey = import.meta.env.VITE_PINATA_API_KEY;
+  const apiSecret = import.meta.env.VITE_PINATA_API_SECRET;
+  if (apiKey && apiSecret) {
+    return {
+      pinata_api_key: apiKey,
+      pinata_secret_api_key: apiSecret,
+    };
+  }
+  throw new Error(
+    "Pinata credentials not configured. Set VITE_PINATA_JWT (or VITE_PINATA_API_KEY + VITE_PINATA_API_SECRET) in your .env file.",
+  );
+}
+
 const IRYS_CONFIG = {
-  // Use devnet for testing, mainnet for production
-  network: import.meta.env?.VITE_IRYS_NETWORK || "devnet",
-  token: "ethereum", // Payment token
-
-  // Irys nodes
-  nodes: {
-    devnet: "https://devnet.irys.xyz",
-    mainnet: "https://node1.irys.xyz",
-  },
-
-  // Arweave gateways
   gateways: {
-    primary: "https://arweave.net",
-    backup: "https://gateway.irys.xyz",
+    primary: PINATA_GATEWAY,
+    backup: "https://ipfs.io/ipfs",
   },
 };
 
 // ═══════════════════════════════════════════════════════════════════════════
-// STATE
+// STATE (compatibility stubs)
 // ═══════════════════════════════════════════════════════════════════════════
 
-let irysInstance = null;
+let _initialized = false;
 
 // ═══════════════════════════════════════════════════════════════════════════
-// INITIALIZATION
+// INITIALIZATION (lightweight — no wallet needed for Pinata)
 // ═══════════════════════════════════════════════════════════════════════════
 
-/**
- * Initialize Irys with connected wallet
- * @param {Object} provider - EIP-1193 provider (window.ethereum or WalletConnect)
- * @returns {WebIrys}
- */
-export async function initIrys(provider) {
-  if (!provider) {
-    throw new Error("Wallet provider required for Irys initialization");
-  }
-
-  const irys = new WebIrys({
-    network: IRYS_CONFIG.network,
-    token: IRYS_CONFIG.token,
-    wallet: { provider },
-  });
-
-  await irys.ready();
-  irysInstance = irys;
-
-  console.log(`[Irys] Connected to ${IRYS_CONFIG.network}`);
-  console.log(`[Irys] Wallet: ${irys.address}`);
-
-  try {
-    const balance = await irys.getLoadedBalance();
-    console.log(`[Irys] Balance: ${irys.utils.fromAtomic(balance)} ETH`);
-  } catch (e) {
-    console.warn("[Irys] Could not fetch balance:", e.message);
-  }
-
-  return irys;
+export async function initIrys(_provider) {
+  // Verify credentials are available
+  getAuthHeaders();
+  _initialized = true;
+  console.log("[Storage] Pinata IPFS ready");
+  return true;
 }
 
-/**
- * Get or initialize Irys instance
- */
-export async function getIrys(provider) {
-  if (irysInstance) return irysInstance;
-  return initIrys(provider);
+export async function getIrys(_provider) {
+  if (!_initialized) return initIrys(_provider);
+  return true;
 }
 
-/**
- * Check if Irys is initialized
- */
 export function isInitialized() {
-  return irysInstance !== null;
+  return _initialized;
 }
 
-/**
- * Disconnect Irys
- */
 export function disconnect() {
-  irysInstance = null;
+  _initialized = false;
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
-// FUNDING
+// FUNDING (no-ops — Pinata uses API plan, no per-upload funding)
 // ═══════════════════════════════════════════════════════════════════════════
 
-/**
- * Check current Irys balance
- * @returns {string} Balance in ETH
- */
 export async function getBalance() {
-  if (!irysInstance) throw new Error("Irys not initialized");
-  const balance = await irysInstance.getLoadedBalance();
-  return irysInstance.utils.fromAtomic(balance);
+  return "unlimited";
 }
 
-/**
- * Fund Irys account for uploads
- * @param {string} amount - Amount in ETH
- */
-export async function fund(amount) {
-  if (!irysInstance) throw new Error("Irys not initialized");
-
-  const atomicAmount = irysInstance.utils.toAtomic(amount);
-  const response = await irysInstance.fund(atomicAmount);
-
-  console.log(`[Irys] Funded ${amount} ETH. TX: ${response.id}`);
-  return response;
+export async function fund(_amount) {
+  return { id: "pinata-no-funding-needed" };
 }
 
-/**
- * Estimate upload cost
- * @param {number} bytes - File size in bytes
- * @returns {string} Cost in ETH
- */
-export async function estimateCost(bytes) {
-  if (!irysInstance) throw new Error("Irys not initialized");
-  const price = await irysInstance.getPrice(bytes);
-  return irysInstance.utils.fromAtomic(price);
+export async function estimateCost(_bytes) {
+  return "0";
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
-// UPLOAD
+// HELPERS
+// ═══════════════════════════════════════════════════════════════════════════
+
+function toUint8Array(data) {
+  if (data instanceof Uint8Array) return data;
+  if (data instanceof ArrayBuffer) return new Uint8Array(data);
+  if (typeof data === "string") return new TextEncoder().encode(data);
+  if (data?.buffer instanceof ArrayBuffer)
+    return new Uint8Array(data.buffer, data.byteOffset, data.byteLength);
+  if (data?.length !== undefined) return new Uint8Array(data);
+  throw new Error("Unsupported data type for upload");
+}
+
+function base64ToUint8Array(base64) {
+  const binary = atob(base64);
+  const bytes = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i++) {
+    bytes[i] = binary.charCodeAt(i);
+  }
+  return bytes;
+}
+
+/**
+ * Map content type to a file extension for Pinata filename hint.
+ */
+function extFromMime(contentType) {
+  const map = {
+    "image/png": "png",
+    "image/jpeg": "jpg",
+    "image/webp": "webp",
+    "video/mp4": "mp4",
+    "video/webm": "webm",
+    "audio/wav": "wav",
+    "audio/mpeg": "mp3",
+    "text/html": "html",
+    "text/plain": "txt",
+    "application/json": "json",
+    "model/gltf-binary": "glb",
+    "model/gltf+json": "gltf",
+    "application/octet-stream": "bin",
+  };
+  return map[contentType] || "bin";
+}
+
+/**
+ * Build Pinata keyvalues from generation + attribution tags.
+ */
+function buildKeyValues(generation = {}, attribution = {}) {
+  const kv = { "App-Name": "BonzAI", "App-Version": "1.0.0" };
+  if (generation.type) kv["Generation-Type"] = generation.type;
+  if (generation.model) kv["Model-ID"] = generation.model;
+  if (generation.modelVersion) kv["Model-Version"] = generation.modelVersion;
+  if (generation.promptHash) kv["Prompt-Hash"] = generation.promptHash;
+  if (generation.timestamp)
+    kv["Generation-Timestamp"] = String(generation.timestamp);
+  if (attribution.creator) kv["Creator-Address"] = attribution.creator;
+  if (attribution.platform) kv["Platform-Address"] = attribution.platform;
+  return kv;
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// UPLOAD — pinFileToIPFS
 // ═══════════════════════════════════════════════════════════════════════════
 
 /**
- * Upload content with BonzAI provenance tags
+ * Upload content to IPFS via Pinata.
  *
  * @param {Object} params
- * @param {Buffer|Uint8Array|Blob} params.data - Content to upload
+ * @param {Uint8Array|ArrayBuffer|Blob|string} params.data - Content to upload
  * @param {string} params.contentType - MIME type
  * @param {Object} params.generation - Generation metadata
- * @param {Object} params.attribution - Tri-party attribution
- * @returns {Object} Upload receipt with transaction ID
+ * @param {Object} params.attribution - Attribution metadata
+ * @returns {Object} Upload receipt compatible with existing consumers
  */
 export async function uploadContent({
   data,
@@ -152,131 +171,133 @@ export async function uploadContent({
   generation = {},
   attribution = {},
 }) {
-  if (!irysInstance) throw new Error("Irys not initialized");
-
-  // Convert Blob to Buffer if needed
   let uploadData = data;
   if (data instanceof Blob) {
     const arrayBuffer = await data.arrayBuffer();
-    uploadData = Buffer.from(arrayBuffer);
+    uploadData = new Uint8Array(arrayBuffer);
+  } else {
+    uploadData = toUint8Array(data);
   }
 
-  // Build provenance tags
-  const tags = [
-    // Standard tags
-    { name: "Content-Type", value: contentType },
-    { name: "App-Name", value: "BonzAI" },
-    { name: "App-Version", value: "1.0.0" },
-  ];
+  const ext = extFromMime(contentType);
+  const fileName = `bonzai-${generation.type || "content"}-${Date.now()}.${ext}`;
 
-  // Generation metadata tags
-  if (generation.type) {
-    tags.push({ name: "Generation-Type", value: generation.type });
-  }
-  if (generation.model) {
-    tags.push({ name: "Model-ID", value: generation.model });
-  }
-  if (generation.modelVersion) {
-    tags.push({ name: "Model-Version", value: generation.modelVersion });
-  }
-  if (generation.promptHash) {
-    tags.push({ name: "Prompt-Hash", value: generation.promptHash });
-  }
-  if (generation.timestamp) {
-    tags.push({
-      name: "Generation-Timestamp",
-      value: String(generation.timestamp),
-    });
-  }
+  const formData = new FormData();
+  formData.append("file", new Blob([uploadData], { type: contentType }), fileName);
+  formData.append(
+    "pinataMetadata",
+    JSON.stringify({
+      name: fileName,
+      keyvalues: buildKeyValues(generation, attribution),
+    }),
+  );
+  formData.append(
+    "pinataOptions",
+    JSON.stringify({ cidVersion: 1 }),
+  );
 
-  // Attribution tags
-  if (attribution.creator) {
-    tags.push({ name: "Creator-Address", value: attribution.creator });
-  }
-  if (attribution.creatorUP) {
-    tags.push({ name: "Creator-UP", value: attribution.creatorUP });
-  }
-  if (attribution.platform) {
-    tags.push({ name: "Platform-Address", value: attribution.platform });
-  }
-  if (attribution.inferenceNode) {
-    tags.push({ name: "Inference-Node", value: attribution.inferenceNode });
+  const res = await fetch(`${PINATA_API}/pinning/pinFileToIPFS`, {
+    method: "POST",
+    headers: getAuthHeaders(),
+    body: formData,
+  });
+
+  if (!res.ok) {
+    const errBody = await res.text();
+    throw new Error(`Pinata upload failed (${res.status}): ${errBody}`);
   }
 
-  // Add generation parameters as tags
-  if (generation.parameters) {
-    for (const [key, value] of Object.entries(generation.parameters)) {
-      if (value !== undefined && value !== null) {
-        tags.push({
-          name: `Param-${key}`,
-          value: String(value),
-        });
-      }
-    }
-  }
+  const result = await res.json();
+  const cid = result.IpfsHash;
 
-  // Upload with tags
-  const receipt = await irysInstance.upload(uploadData, { tags });
-
-  console.log(`[Irys] Uploaded: ${receipt.id}`);
-  console.log(`[Irys] URL: ${IRYS_CONFIG.gateways.primary}/${receipt.id}`);
+  console.log(`[Storage] Uploaded: ${cid}`);
+  console.log(`[Storage] URL: ${PINATA_GATEWAY}/${cid}`);
 
   return {
-    transactionId: receipt.id,
-    timestamp: receipt.timestamp,
-    signature: receipt.signature,
-    url: `ar://${receipt.id}`,
-    gatewayUrl: `${IRYS_CONFIG.gateways.primary}/${receipt.id}`,
-    size: uploadData.byteLength || uploadData.length,
-    tags,
+    transactionId: cid,
+    timestamp: result.Timestamp,
+    signature: null,
+    url: `ipfs://${cid}`,
+    gatewayUrl: `${PINATA_GATEWAY}/${cid}`,
+    size: result.PinSize || uploadData.byteLength || uploadData.length,
+    tags: Object.entries(buildKeyValues(generation, attribution)).map(
+      ([name, value]) => ({ name, value }),
+    ),
   };
 }
 
-/**
- * Upload metadata JSON
- */
-export async function uploadMetadata(metadata, generation = {}, attribution = {}) {
-  const jsonString = JSON.stringify(metadata, null, 2);
-  const data = new TextEncoder().encode(jsonString);
+// ═══════════════════════════════════════════════════════════════════════════
+// UPLOAD — pinJSONToIPFS (metadata)
+// ═══════════════════════════════════════════════════════════════════════════
 
-  return uploadContent({
-    data: Buffer.from(data),
-    contentType: "application/json",
-    generation,
-    attribution,
+export async function uploadMetadata(
+  metadata,
+  generation = {},
+  attribution = {},
+) {
+  const res = await fetch(`${PINATA_API}/pinning/pinJSONToIPFS`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      ...getAuthHeaders(),
+    },
+    body: JSON.stringify({
+      pinataContent: metadata,
+      pinataMetadata: {
+        name: `bonzai-metadata-${Date.now()}.json`,
+        keyvalues: buildKeyValues(generation, attribution),
+      },
+      pinataOptions: { cidVersion: 1 },
+    }),
   });
+
+  if (!res.ok) {
+    const errBody = await res.text();
+    throw new Error(`Pinata metadata upload failed (${res.status}): ${errBody}`);
+  }
+
+  const result = await res.json();
+  const cid = result.IpfsHash;
+
+  console.log(`[Storage] Metadata uploaded: ${cid}`);
+
+  return {
+    transactionId: cid,
+    timestamp: result.Timestamp,
+    signature: null,
+    url: `ipfs://${cid}`,
+    gatewayUrl: `${PINATA_GATEWAY}/${cid}`,
+    size: result.PinSize,
+    tags: [],
+  };
 }
 
-/**
- * Upload file from base64
- * @param {string} base64Data - Base64 encoded content
- * @param {string} contentType - MIME type
- * @param {Object} generation - Generation metadata
- * @param {Object} attribution - Tri-party attribution
- */
+// ═══════════════════════════════════════════════════════════════════════════
+// UPLOAD — base64 convenience
+// ═══════════════════════════════════════════════════════════════════════════
+
 export async function uploadBase64({
   base64Data,
   contentType,
   generation = {},
   attribution = {},
 }) {
-  // Remove data URL prefix if present
   const cleanBase64 = base64Data.replace(/^data:[^;]+;base64,/, "");
-  const buffer = Buffer.from(cleanBase64, "base64");
+  const data = base64ToUint8Array(cleanBase64);
 
   return uploadContent({
-    data: buffer,
+    data,
     contentType,
     generation,
     attribution,
   });
 }
 
-/**
- * Upload file from path (Electron only)
- */
+// ═══════════════════════════════════════════════════════════════════════════
+// UPLOAD — file from path (Electron only)
+// ═══════════════════════════════════════════════════════════════════════════
+
 export async function uploadFile(filePath, generation, attribution) {
-  // Check if we're in Electron
   const fs = typeof window !== "undefined" && window.require?.("fs");
   if (!fs) throw new Error("File upload only available in Electron");
 
@@ -308,68 +329,35 @@ export async function uploadFile(filePath, generation, attribution) {
 // RETRIEVAL & VERIFICATION
 // ═══════════════════════════════════════════════════════════════════════════
 
-/**
- * Fetch content from Arweave
- * @param {string} txId - Transaction ID
- * @returns {Response}
- */
-export async function fetchContent(txId) {
-  const url = `${IRYS_CONFIG.gateways.primary}/${txId}`;
+export async function fetchContent(cid) {
+  const url = `${PINATA_GATEWAY}/${cid}`;
   return fetch(url);
 }
 
-/**
- * Fetch and verify content with provenance
- */
-export async function fetchWithProvenance(txId) {
-  // Fetch content
-  const response = await fetchContent(txId);
+export async function fetchWithProvenance(cid) {
+  const response = await fetchContent(cid);
   if (!response.ok) throw new Error(`Failed to fetch: ${response.status}`);
-
-  // Fetch transaction metadata from Arweave GraphQL
-  const metaResponse = await fetch(`https://arweave.net/graphql`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      query: `
-        query {
-          transaction(id: "${txId}") {
-            id
-            owner { address }
-            tags { name value }
-            block { timestamp }
-          }
-        }
-      `,
-    }),
-  });
-
-  const metaData = await metaResponse.json();
-  const tx = metaData.data?.transaction;
 
   return {
     content: await response.blob(),
     provenance: {
-      transactionId: tx?.id || txId,
-      owner: tx?.owner?.address,
-      timestamp: tx?.block?.timestamp,
-      tags: tx?.tags?.reduce((acc, t) => ({ ...acc, [t.name]: t.value }), {}) || {},
+      transactionId: cid,
+      owner: null,
+      timestamp: null,
+      tags: {},
     },
   };
 }
 
-/**
- * Verify content hash matches stored hash
- */
-export async function verifyContentIntegrity(txId, expectedHash) {
-  const response = await fetchContent(txId);
+export async function verifyContentIntegrity(cid, expectedHash) {
+  const response = await fetchContent(cid);
   const buffer = await response.arrayBuffer();
   const hash = ethers.keccak256(new Uint8Array(buffer));
   return hash === expectedHash;
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
-// EXPORT
+// EXPORT (same name for backward compatibility)
 // ═══════════════════════════════════════════════════════════════════════════
 
 export const irysService = {
@@ -379,7 +367,7 @@ export const irysService = {
   isInitialized,
   disconnect,
 
-  // Funding
+  // Funding (no-ops)
   getBalance,
   fund,
   estimateCost,

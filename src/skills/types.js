@@ -112,6 +112,7 @@ export const DEFAULT_REQUIREMENTS = {
 
 // Categories (alphabetically sorted)
 export const SKILL_CATEGORIES = [
+  'beauty',
   'education',
   'entertainment',
   'fashion',
@@ -119,14 +120,15 @@ export const SKILL_CATEGORIES = [
   'food',
   'healthcare',
   'housing',
-  'personal-care',
   'reading',
   'social',
-  'transportation',
+  'sports',
+  'travel',
 ];
 
 // Category metadata for UI (alphabetically sorted)
 export const SKILL_CATEGORY_META = {
+  'beauty': { label: 'Beauty', icon: 'spa' },
   'education': { label: 'Education', icon: 'school' },
   'entertainment': { label: 'Entertainment', icon: 'chair' },
   'fashion': { label: 'Fashion', icon: 'checkroom' },
@@ -134,10 +136,10 @@ export const SKILL_CATEGORY_META = {
   'food': { label: 'Food', icon: 'restaurant' },
   'healthcare': { label: 'Healthcare', icon: 'health_and_safety' },
   'housing': { label: 'Housing', icon: 'home' },
-  'personal-care': { label: 'Personal Care', icon: 'spa' },
   'reading': { label: 'Reading', icon: 'menu_book' },
   'social': { label: 'Social', icon: 'groups' },
-  'transportation': { label: 'Transportation', icon: 'directions_car' },
+  'sports': { label: 'Sports', icon: 'sports' },
+  'travel': { label: 'Travel', icon: 'flight' },
 };
 
 /**

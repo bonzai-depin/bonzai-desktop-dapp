@@ -7,7 +7,7 @@
  * Levels ONLY gate SMART AGENT SKILLS that use these capabilities.
  *
  * A level is ACTIVE when EITHER:
- *   1. User holds >= required BONZAI tokens (across Ethereum + Arbitrum)
+ *   1. User holds >= required BONZAI tokens (across Ethereum + Base)
  *   OR
  *   2. User has paid 1 ETH one-time payment to unlock ALL levels via BonzaiUnlock
  *
@@ -30,7 +30,7 @@ import { web3Service } from './web3.service.js';
 // ═══════════════════════════════════════════════════════════════════════════
 
 // BonzaiUnlock contract ABI (1 ETH one-time payment unlocks all levels)
-// Contract: 0xE49492A2604Cea2a50060E47215Cb19bffD1Edae on Arbitrum
+// Contract: 0xeDadE2f9fa659817E000b887f3d8222c4AC687B8 on Base
 const BONZAI_UNLOCK_ABI = [
   // View functions
   'function unlockPrice() view returns (uint256)',
@@ -124,7 +124,7 @@ const getUnlockContract = async (withSigner = false) => {
     return new ethers.Contract(registryAddress, BONZAI_UNLOCK_ABI, signer);
   }
 
-  const provider = await web3Service.getProvider('arbitrum');
+  const provider = await web3Service.getProvider('base');
   return new ethers.Contract(registryAddress, BONZAI_UNLOCK_ABI, provider);
 };
 
@@ -287,37 +287,37 @@ export const unlockAllWithEth = async (onStatusChange) => {
   state.isUnlocking = true;
 
   try {
-    // The unlock contract is on Arbitrum - must switch to Arbitrum first
-    const targetChainId = CONFIG.levelUnlock?.chainId || 42161; // Arbitrum
+    // The unlock contract is on Base - must switch to Base first
+    const targetChainId = CONFIG.levelUnlock?.chainId || 8453; // Base
     const currentChainId = web3Service.state.currentChainId;
 
     if (currentChainId !== targetChainId) {
-      console.log('[Level] Switching to Arbitrum for unlock transaction...');
+      console.log('[Level] Switching to Base for unlock transaction...');
       if (onStatusChange) {
         onStatusChange('switching_network');
       }
 
-      // Switch to Arbitrum with timeout
-      const switchPromise = web3Service.switchToArbitrum();
+      // Switch to Base with timeout
+      const switchPromise = web3Service.switchNetwork('base');
       const timeoutPromise = new Promise((_, reject) =>
-        setTimeout(() => reject(new Error('Network switch timed out. Please switch to Arbitrum manually in your wallet.')), 30000)
+        setTimeout(() => reject(new Error('Network switch timed out. Please switch to Base manually in your wallet.')), 30000)
       );
 
       try {
         await Promise.race([switchPromise, timeoutPromise]);
       } catch (switchError) {
-        throw new Error(`Please switch to Arbitrum network in your wallet. ${switchError.message}`);
+        throw new Error(`Please switch to Base network in your wallet. ${switchError.message}`);
       }
 
       // Wait a moment for chain change event to be processed
       await new Promise(resolve => setTimeout(resolve, 500));
 
-      // Verify we're now on Arbitrum
+      // Verify we're now on Base
       if (web3Service.state.currentChainId !== targetChainId) {
-        throw new Error('Failed to switch to Arbitrum. Please switch manually in your wallet and try again.');
+        throw new Error('Failed to switch to Base. Please switch manually in your wallet and try again.');
       }
 
-      console.log('[Level] Successfully switched to Arbitrum');
+      console.log('[Level] Successfully switched to Base');
     }
 
     console.log('[Level] Getting unlock contract with signer...');
@@ -389,10 +389,10 @@ export const canAccessFeature = (feature) => {
 };
 
 /**
- * Check if a specific level is active
+ * Check if a specific level is active (holding met OR ETH unlocked)
  */
 export const isLevelActive = (levelKey) => {
-  return state.levels[levelKey]?.active ?? false;
+  return state.levels[levelKey]?.active || false;
 };
 
 /**
@@ -508,6 +508,37 @@ export const getAllLevelsWithStatus = computed(() => {
 });
 
 // ═══════════════════════════════════════════════════════════════════════════
+// MINT-LEVEL GATING
+// ═══════════════════════════════════════════════════════════════════════════
+
+/**
+ * Check if user can mint a specific content type.
+ * Generation is FREE — this only gates minting content as NFTs.
+ *
+ * @param {string} inferenceType - 'text'|'audio'|'image'|'video'|'object'|'training'
+ * @returns {{ canMint: boolean, levelRequired: string|null, reason: string|null }}
+ */
+export const canMintContentType = (inferenceType) => {
+  const levelKey = CONFIG.mintLevels?.[inferenceType];
+  if (!levelKey) return { canMint: true, levelRequired: null, reason: null };
+
+  const levelStatus = state.levels[levelKey];
+  if (levelStatus?.active) return { canMint: true, levelRequired: levelKey, reason: null };
+
+  const config = CONFIG.levels[levelKey];
+  if (!config) return { canMint: true, levelRequired: null, reason: null };
+
+  const currentBalance = web3Service.state.balances.total;
+  const needed = config.holdingRequired - currentBalance;
+
+  return {
+    canMint: false,
+    levelRequired: levelKey,
+    reason: `Hold ${config.holdingRequired.toLocaleString()} BONZAI (need ${Math.max(0, needed).toLocaleString()} more) or pay 1 ETH to unlock all levels`,
+  };
+};
+
+// ═══════════════════════════════════════════════════════════════════════════
 // CROSS-COMPONENT COMMUNICATION
 // ═══════════════════════════════════════════════════════════════════════════
 
@@ -563,6 +594,9 @@ export const levelService = {
   isLevelActive,
   getLevelBlockReason,
   getLevelUnlockOptions,
+
+  // Mint-level gating
+  canMintContentType,
 
   // Computed
   highestActiveLevel,

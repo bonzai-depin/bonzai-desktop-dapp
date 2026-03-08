@@ -22,7 +22,7 @@ contract BonzaiP2PPayment is Ownable, ReentrancyGuard, EIP712 {
     // ═══════════════════════════════════════════════════════════════════════════
 
     bytes32 public constant PAYMENT_TYPEHASH = keccak256(
-        "Payment(address providerId,uint256 amount,uint256 nonce,uint256 expiry,string pipeline)"
+        "Payment(address provider,uint256 amount,uint256 nonce,uint256 expiry,string service)"
     );
 
     // ═══════════════════════════════════════════════════════════════════════════
@@ -61,7 +61,7 @@ contract BonzaiP2PPayment is Ownable, ReentrancyGuard, EIP712 {
         address indexed provider,
         uint256 amount,
         uint256 platformFee,
-        string pipeline
+        string service
     );
     event PaymentSettled(
         address indexed consumer,
@@ -78,7 +78,9 @@ contract BonzaiP2PPayment is Ownable, ReentrancyGuard, EIP712 {
         address _usdc,
         address _treasury,
         uint256 _platformFeeBps
-    ) Ownable(msg.sender) EIP712("BonzAI x402", "1") {
+    ) Ownable(msg.sender) EIP712("BonzAI x402", "2") {
+        require(_usdc != address(0), "Invalid USDC address");
+        require(_treasury != address(0), "Invalid treasury address");
         usdc = IERC20(_usdc);
         treasury = _treasury;
         platformFeeBps = _platformFeeBps;
@@ -138,7 +140,7 @@ contract BonzaiP2PPayment is Ownable, ReentrancyGuard, EIP712 {
      * @param amount Payment amount in USDC
      * @param nonce Unique nonce to prevent replay
      * @param expiry Payment expiration timestamp
-     * @param pipeline Pipeline identifier
+     * @param service Service/pipeline identifier
      * @param signature Consumer's EIP-712 signature
      */
     function processPayment(
@@ -147,9 +149,12 @@ contract BonzaiP2PPayment is Ownable, ReentrancyGuard, EIP712 {
         uint256 amount,
         uint256 nonce,
         uint256 expiry,
-        string calldata pipeline,
+        string calldata service,
         bytes calldata signature
     ) external nonReentrant {
+        // Validate amount before burning nonce
+        require(amount > 0, "Amount must be positive");
+
         // Verify expiry
         require(block.timestamp <= expiry, "Payment expired");
 
@@ -166,7 +171,7 @@ contract BonzaiP2PPayment is Ownable, ReentrancyGuard, EIP712 {
             amount,
             nonce,
             expiry,
-            keccak256(bytes(pipeline))
+            keccak256(bytes(service))
         ));
 
         bytes32 hash = _hashTypedDataV4(structHash);
@@ -174,42 +179,42 @@ contract BonzaiP2PPayment is Ownable, ReentrancyGuard, EIP712 {
         require(signer == consumer, "Invalid signature");
 
         // Process payment
-        _processPayment(consumer, provider, amount, pipeline);
+        _processPayment(consumer, provider, amount, service);
     }
 
     /**
      * @notice Direct payment (consumer pays provider directly without signature)
      * @param provider Provider's address
      * @param amount Payment amount in USDC
-     * @param pipeline Pipeline identifier
+     * @param service Service/pipeline identifier
      */
     function payDirect(
         address provider,
         uint256 amount,
-        string calldata pipeline
+        string calldata service
     ) external nonReentrant {
         // Transfer from consumer
         usdc.safeTransferFrom(msg.sender, address(this), amount);
 
         // Process payment
-        _processPayment(msg.sender, provider, amount, pipeline);
+        _processPayment(msg.sender, provider, amount, service);
     }
 
     /**
      * @notice Pay from deposited balance
      * @param provider Provider's address
      * @param amount Payment amount in USDC
-     * @param pipeline Pipeline identifier
+     * @param service Service/pipeline identifier
      */
     function payFromBalance(
         address provider,
         uint256 amount,
-        string calldata pipeline
+        string calldata service
     ) external nonReentrant {
         require(balances[msg.sender] >= amount, "Insufficient balance");
 
         balances[msg.sender] -= amount;
-        _processPayment(msg.sender, provider, amount, pipeline);
+        _processPayment(msg.sender, provider, amount, service);
     }
 
     // ═══════════════════════════════════════════════════════════════════════════
@@ -279,7 +284,7 @@ contract BonzaiP2PPayment is Ownable, ReentrancyGuard, EIP712 {
         address consumer,
         address provider,
         uint256 amount,
-        string memory pipeline
+        string memory service
     ) internal {
         require(amount > 0, "Amount must be positive");
         require(provider != address(0), "Invalid provider");
@@ -314,6 +319,6 @@ contract BonzaiP2PPayment is Ownable, ReentrancyGuard, EIP712 {
             }
         }
 
-        emit PaymentProcessed(consumer, provider, amount, platformFee, pipeline);
+        emit PaymentProcessed(consumer, provider, amount, platformFee, service);
     }
 }

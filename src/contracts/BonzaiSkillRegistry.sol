@@ -11,16 +11,24 @@ import "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
  * @title BonzaiSkillRegistry
  * @author BonzAI Team
  * @notice On-chain registry for decentralized AI skills (packaged prompts + tools)
- * @dev Deployed on Arbitrum. Handles skill registration, purchases, and execution fees.
+ * @dev Deployed on Base. Handles skill registration, purchases, and execution fees.
  *
  * Skills are defined off-chain (IPFS/Arweave) and referenced by hash. This contract manages:
  * - Skill registration with author address and pricing
  * - One-time skill purchases (ETH payment)
  * - Per-execution running fees (BONZAI token)
- * - Revenue split: 90% to author, 10% platform fee
+ * - Revenue split: 80% to co-owners (via BonzaiSkillOwnership), 20% platform fee
  *
  * Works with both BonzAI desktop app and Claude Code CLI (via MCP server).
  */
+/**
+ * @title IBonzaiSkillOwnership
+ * @notice Interface for the skill co-ownership revenue distribution contract
+ */
+interface IBonzaiSkillOwnership {
+    function distributeRevenue(bytes32 skillId, uint256 amount) external payable;
+}
+
 contract BonzaiSkillRegistry is Ownable, ReentrancyGuard, Pausable {
     using SafeERC20 for IERC20;
 
@@ -31,11 +39,11 @@ contract BonzaiSkillRegistry is Ownable, ReentrancyGuard, Pausable {
     /// @notice Basis points for percentage calculations (100% = 10000)
     uint256 private constant BASIS_POINTS = 10000;
 
-    /// @notice Author share in basis points (90% = 9000)
-    uint256 private constant AUTHOR_SHARE_BPS = 9000;
+    /// @notice Author share in basis points (80% = 8000)
+    uint256 private constant AUTHOR_SHARE_BPS = 8000;
 
-    /// @notice Platform share in basis points (10% = 1000)
-    uint256 private constant PLATFORM_SHARE_BPS = 1000;
+    /// @notice Platform share in basis points (20% = 2000)
+    uint256 private constant PLATFORM_SHARE_BPS = 2000;
 
     /// @notice Maximum skills per author (spam prevention)
     uint256 public constant MAX_SKILLS_PER_AUTHOR = 100;
@@ -53,6 +61,7 @@ contract BonzaiSkillRegistry is Ownable, ReentrancyGuard, Pausable {
         address author;              // Creator's wallet
         string name;                 // Skill name
         string version;              // Semantic version
+        string category;             // Skill category
         string ipfsHash;             // IPFS/Arweave hash of full definition
         uint256 purchasePrice;       // One-time purchase price in wei (ETH)
         uint256 runningFee;          // Per-execution fee in BONZAI tokens
@@ -74,6 +83,9 @@ contract BonzaiSkillRegistry is Ownable, ReentrancyGuard, Pausable {
 
     /// @notice Platform treasury for fee collection
     address public treasury;
+
+    /// @notice Skill ownership contract
+    address public skillOwnershipContract;
 
     /// @notice Mapping of skill ID => Skill data
     mapping(bytes32 => Skill) public skills;
@@ -103,6 +115,7 @@ contract BonzaiSkillRegistry is Ownable, ReentrancyGuard, Pausable {
         address indexed author,
         string name,
         string version,
+        string category,
         string ipfsHash,
         uint256 purchasePrice,
         uint256 runningFee,
@@ -124,7 +137,7 @@ contract BonzaiSkillRegistry is Ownable, ReentrancyGuard, Pausable {
         address indexed buyer,
         address indexed author,
         uint256 price,
-        uint256 authorShare,
+        uint256 coOwnerShare,
         uint256 platformShare,
         uint256 timestamp
     );
@@ -153,6 +166,9 @@ contract BonzaiSkillRegistry is Ownable, ReentrancyGuard, Pausable {
         bool isActive,
         uint256 timestamp
     );
+
+    /// @notice Emitted when co-owner share falls back to treasury
+    event CoOwnerShareFallbackToTreasury(bytes32 indexed skillId, uint256 amount);
 
     /// @notice Emitted when treasury is updated
     event TreasuryUpdated(
@@ -258,13 +274,16 @@ contract BonzaiSkillRegistry is Ownable, ReentrancyGuard, Pausable {
      */
     constructor(
         address _bonzaiToken,
-        address _treasury
+        address _treasury,
+        address _skillOwnershipContract
     ) Ownable(msg.sender) {
         if (_bonzaiToken == address(0)) revert ZeroAddress();
         if (_treasury == address(0)) revert ZeroAddress();
+        if (_skillOwnershipContract == address(0)) revert ZeroAddress();
 
         bonzaiToken = IERC20(_bonzaiToken);
         treasury = _treasury;
+        skillOwnershipContract = _skillOwnershipContract;
     }
 
     // ═══════════════════════════════════════════════════════════════════════════
@@ -283,12 +302,13 @@ contract BonzaiSkillRegistry is Ownable, ReentrancyGuard, Pausable {
     function registerSkill(
         string calldata name,
         string calldata version,
+        string calldata category,
         string calldata ipfsHash,
         uint256 purchasePrice,
         uint256 runningFee
     ) external nonReentrant whenNotPaused returns (bytes32 skillId) {
         // Validate inputs
-        if (bytes(name).length == 0 || bytes(version).length == 0) revert EmptyString();
+        if (bytes(name).length == 0 || bytes(version).length == 0 || bytes(category).length == 0) revert EmptyString();
         if (bytes(ipfsHash).length < 10) revert InvalidIPFSHash();
         if (runningFee > MAX_RUNNING_FEE) revert RunningFeeTooHigh(runningFee, MAX_RUNNING_FEE);
 
@@ -309,6 +329,7 @@ contract BonzaiSkillRegistry is Ownable, ReentrancyGuard, Pausable {
             author: msg.sender,
             name: name,
             version: version,
+            category: category,
             ipfsHash: ipfsHash,
             purchasePrice: purchasePrice,
             runningFee: runningFee,
@@ -330,6 +351,7 @@ contract BonzaiSkillRegistry is Ownable, ReentrancyGuard, Pausable {
             msg.sender,
             name,
             version,
+            category,
             ipfsHash,
             purchasePrice,
             runningFee,
@@ -433,18 +455,26 @@ contract BonzaiSkillRegistry is Ownable, ReentrancyGuard, Pausable {
 
         // Split revenue if there's a payment
         if (msg.value > 0) {
-            uint256 authorShare;
+            uint256 coOwnerShare;
             uint256 platformShare;
 
             unchecked {
-                authorShare = (msg.value * AUTHOR_SHARE_BPS) / BASIS_POINTS;
-                platformShare = msg.value - authorShare;
+                coOwnerShare = (msg.value * AUTHOR_SHARE_BPS) / BASIS_POINTS;
+                platformShare = msg.value - coOwnerShare;
                 totalPlatformFeesETH += platformShare;
             }
 
-            // Transfer to author
-            (bool successAuthor, ) = skill.author.call{value: authorShare}("");
-            if (!successAuthor) revert TransferFailed(skill.author);
+            // Transfer to co-owners via BonzaiSkillOwnership contract.
+            // Uses try-catch so a revert in the ownership contract doesn't block
+            // the purchase — co-owner share falls back to treasury instead.
+            try IBonzaiSkillOwnership(skillOwnershipContract).distributeRevenue{value: coOwnerShare}(skillId, coOwnerShare) {
+                // Success — co-owners credited
+            } catch {
+                // Fallback: send co-owner share to treasury so purchase still completes
+                emit CoOwnerShareFallbackToTreasury(skillId, coOwnerShare);
+                (bool fallbackOk, ) = treasury.call{value: coOwnerShare}("");
+                if (!fallbackOk) revert TransferFailed(treasury);
+            }
 
             // Transfer to treasury
             (bool successTreasury, ) = treasury.call{value: platformShare}("");
@@ -453,9 +483,9 @@ contract BonzaiSkillRegistry is Ownable, ReentrancyGuard, Pausable {
             emit SkillPurchased(
                 skillId,
                 msg.sender,
-                skill.author,
+                skill.author, // author is still relevant as the original creator
                 msg.value,
-                authorShare,
+                coOwnerShare,
                 platformShare,
                 block.timestamp
             );
@@ -617,6 +647,18 @@ contract BonzaiSkillRegistry is Ownable, ReentrancyGuard, Pausable {
         bonzaiToken = IERC20(_bonzaiToken);
 
         emit BonzaiTokenUpdated(oldToken, _bonzaiToken);
+    }
+
+    /**
+     * @notice Update skill ownership contract address
+     * @param _skillOwnershipContract New ownership contract address
+     */
+    function setSkillOwnershipContract(address _skillOwnershipContract)
+        external
+        onlyOwner
+        notZeroAddress(_skillOwnershipContract)
+    {
+        skillOwnershipContract = _skillOwnershipContract;
     }
 
     /**

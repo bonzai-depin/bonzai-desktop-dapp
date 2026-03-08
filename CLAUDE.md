@@ -7,9 +7,12 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 BonzAI is a decentralized, privacy-preserving desktop application combining:
 - AI inference engine (LLM + multimodal generation)
 - Electron desktop framework with Vue 3 frontend
-- Web3/blockchain integration (NFT minting, wallet connection)
+- Web3/blockchain integration (multi-chain: Ethereum, Arbitrum, Base, LUKSO)
 - Python Flask backend for ML inference
-- P2P distributed inference network with x402 payments
+- P2P distributed inference network with x402 ETH payments
+- Autonomous AI companions with on-chain identity (ERC-8004) and social presence
+
+**Website**: https://bonzai.sh
 
 ## Development Commands
 
@@ -24,8 +27,12 @@ npm run start
 # Linting
 npm run lint
 
-# Build distribution packages (DMG/DEB/ZIP)
+# Build distribution packages (DMG)
 npm run make
+
+# Run Hardhat smart contract tests
+npm test                # npx hardhat test
+npm run test:coverage   # npx hardhat coverage
 
 # Publish to GitHub releases
 npm run publish
@@ -41,7 +48,9 @@ npm run publish
 │ - GenerativeVideo (LTX-2 via Flask)                     │
 │ - GenerativeAudio (Kokoro/Qwen TTS + ACE-Step Music)    │
 │ - SmartAgent (Skills), RoleplayChat (Companions)        │
-│ State: Pinia (inferenceStore.js, web3.store.js)         │
+│ - BrowseAgents (Companion management, leaderboard)      │
+│ - MintModal (Content NFT minting on Base/LUKSO)         │
+│ State: Pinia stores (5 stores, see below)               │
 └─────────────────────┬───────────────────────────────────┘
                       │ IPC via preload.js (context bridge)
 ┌─────────────────────▼───────────────────────────────────┐
@@ -50,11 +59,12 @@ npm run publish
 │ - P2P node (libp2p) for distributed inference           │
 │ - System info (RAM/VRAM/GPU monitoring)                 │
 │ - Electron Store (persistent data)                      │
+│ - OpenClaw API (:3002) for webhook handling             │
 └─────────────────────┬───────────────────────────────────┘
                       │ HTTP (Flask:65000, OpenClaw:3002)
 ┌─────────────────────▼───────────────────────────────────┐
 │ Inference Backends                                      │
-│ ├─ OpenClaw (port 3002): 21 LLM models, OpenAI-compat   │
+│ ├─ OpenClaw (port 3002): 21 LLM models, OpenAI-compat  │
 │ └─ Flask (port 65000): Image/Audio/Video/Vision         │
 └─────────────────────────────────────────────────────────┘
 ```
@@ -63,25 +73,98 @@ npm run publish
 
 | File | Purpose |
 |------|---------|
-| `src/main.js` | Electron main process - IPC handlers, P2P node, Python server spawn |
+| `src/main.js` | Electron main process - IPC handlers, P2P node, Python server spawn, OpenClaw API |
 | `src/preload.js` | Context bridge exposing electronAPI to renderer |
 | `src/renderer.ts` | Vue 3 app entry point |
 | `src/App.vue` | Root component with tab-based navigation |
 | `src/server/diffuser.py` | Flask ML server with all inference pipelines |
-| `src/stores/inferenceStore.js` | Unified history for all generation types |
-| `src/stores/web3.store.js` | Wallet state and blockchain data |
-| `src/config/web3.config.js` | Network addresses, token contracts, level thresholds |
-| `src/skills/flagship.js` | Model requirements, companion definitions, skill mappings |
+| `src/skills/flagship.js` | Model requirements, 13 companion definitions, 13 scenarios, skill mappings |
+| `src/config/web3.config.js` | Network addresses, token contracts, level thresholds, Uniswap V4 addresses |
+| `src/config/social.config.js` | Moltbook, OpenClaw, ERC-8004 companion NFT configuration |
 | `src/services/web3.service.js` | Wallet connection via Reown AppKit (WalletConnect) |
-| `src/services/p2p.service.js` | libp2p P2P networking |
-| `src/services/x402.service.js` | EIP-712 payment signatures for P2P inference |
+| `src/services/companion.service.js` | Companion minting, metadata (ERC-8004), bare companion flow |
+| `src/services/openclaw.handler.js` | OpenClaw webhook handler (uses flagship.js + store) |
+| `src/services/lukso.service.js` | LUKSO Universal Profile integration (LSP23 factory) |
 | `forge.config.mjs` | Electron Forge packaging, code signing, PyInstaller embedding |
+| `hardhat.config.cjs` | Hardhat config (Solidity 0.8.20, sources: ./src/contracts) |
+| `scripts/deploy-base-mvp.js` | Deploy script for 8 MVP contracts to Base |
+
+## Components
+
+### Main Components (`src/components/`)
+| Component | Purpose |
+|-----------|---------|
+| `GenerativeText.vue` | LLM chat interface with 21 model options |
+| `GenerativeImage.vue` | Image generation (4 modes: turbo/standard/advanced/quality) |
+| `GenerativeVideo.vue` | Video generation (LTX-2, text-to-video + image-to-video) |
+| `GenerativeAudio.vue` | TTS (Kokoro turbo, Qwen quality) + music (ACE-Step) |
+| `Generative3D.vue` | 3D asset generation via AI-generated Three.js code |
+| `GenerativeTraining.vue` | Model training (LeRobot integration) |
+| `SmartAgent.vue` | Skill execution interface |
+| `ThreeViewer.vue` | WebGL 3D preview renderer |
+| `AccessRequirements.vue` | Level unlock UI (token holding or ETH payment) |
+| `BonzaiBottomBar.vue` | Bottom navigation with wallet/level status |
+| `MintModal.vue` | Content NFT minting modal (Base ERC-721 / LUKSO LSP8) |
+| `ContextBanner.vue` | Contextual notifications banner |
+| `NetworkSettings.vue` | Network configuration UI |
+
+### Skill Components (`src/components/skills/`)
+| Component | Purpose |
+|-----------|---------|
+| `RoleplayChat.vue` | Full companion roleplay with TTS, image, video generation (~9300 lines) |
+| `BrowseAgents.vue` | Companion management, skill ownership, revenue, leaderboard |
+| `SkillRunner.vue` | Generic skill execution UI |
+| `SkillDownloader.vue` | Skill package download/install |
+| `MeditationForgeSkill.vue` | Meditation experience generator |
+| `DSLASkill.vue` | DSLA prediction market skill |
+| `PolymarketSkill.vue` | Polymarket analysis skill |
+| `TCGSkill.vue` | Trading card game insurance skill |
+
+## Services (`src/services/`)
+
+| Service | Purpose |
+|---------|---------|
+| `web3.service.js` | Reown AppKit wallet connection, multi-chain support |
+| `companion.service.js` | Companion minting on Base, ERC-8004 metadata, bare companions |
+| `companionToken.service.js` | Companion ERC-20 token launch via CompanionTokenFactory |
+| `fineTuneToken.service.js` | Fine-tune model ERC-20 token launch via FineTuneTokenFactory |
+| `contentNFT.service.js` | Content NFT minting on Base (ERC-721) and LUKSO (LSP8) |
+| `mintPool.service.js` | MintPool epoch registration, claiming, pool queries |
+| `skillOwnership.service.js` | Companion co-ownership registration, revenue claiming |
+| `leaderboard.service.js` | Companion leaderboard (real data + mock fallback) |
+| `agentWallet.service.js` | Local deterministic agent wallets for companions |
+| `lukso.service.js` | LUKSO Universal Profile (LSP23 factory, LSP6 controller) |
+| `auth.service.js` | JWT authentication for Flask server |
+| `irys.service.js` | Arweave/Irys uploads for metadata and content |
+| `moltbook.service.js` | Moltbook social network API integration |
+| `openclaw.handler.js` | OpenClaw webhook → companion response pipeline |
+| `skill.service.js` | Skill loading, validation, execution |
+| `level.service.js` | Level checking, unlock status |
+| `token.service.js` | BONZAI token balance queries |
+| `x402.service.js` | EIP-712 payment signatures for P2P inference |
+| `x402Executor.service.js` | x402 payment execution |
+| `p2p.contract.service.js` | Provider registry + payment contract interactions |
+| `purchaseExecutor.service.js` | Autonomous purchase execution for companions |
+| `sellerRegistry.service.js` | Seller/provider registration |
+| `marketplace.service.js` | Order book marketplace |
+
+## Stores (`src/stores/`)
+
+| Store | Purpose |
+|-------|---------|
+| `inferenceStore.js` | Unified history for all generation types |
+| `web3.store.js` | Wallet state, token balances, level status |
+| `skillStore.js` | Loaded skills, execution state |
+| `mintStore.js` | Content NFT minting state |
+| `generationStore.js` | Active generation state |
 
 ## Inference Pipelines
 
 ### LLM Models (21 models via OpenClaw, port 3002)
 
 All LLM inference goes through OpenClaw's OpenAI-compatible API at `/v1/chat/completions`.
+
+**IMPORTANT: Model filenames are always lowercase** (e.g. `qwen3.5-27b-q2_k.gguf`, not `Qwen3.5-27B-Q2_K.gguf`). The download URL may use mixed case but the `filename` field in flagship.js and GenerativeText.vue must be lowercase.
 
 | Model Key | Name | Size | VRAM |
 |-----------|------|------|------|
@@ -111,18 +194,18 @@ All LLM inference goes through OpenClaw's OpenAI-compatible API at `/v1/chat/com
 
 | Pipeline | Endpoint | Description |
 |----------|----------|-------------|
-| `image_turbo` | `/image/turbo` | Fast image generation |
-| `image_quality` | `/image/quality` | High quality images |
-| `image_standard` | `/image/standard` | Standard diffusion |
-| `image_advanced` | `/image/advanced` | Advanced generation |
-| `audio_turbo` | `/audio/turbo` | Fast TTS |
-| `audio_quality` | `/audio/quality/persona` | Persona-based TTS |
-| `music` | `/audio/music` | AI music with lyrics |
-| `video_fast` | `/video` | Text/image to video |
-| `vision` | `/vision/analyze` | Vision analysis |
+| `image_turbo` | `/image/turbo` | Fast image generation (FLUX Klein) |
+| `image_quality` | `/image/quality` | High quality images (FLUX Krea) |
+| `image_standard` | `/image/standard` | Standard diffusion (SDXL + LoRA, uncensored) |
+| `image_advanced` | `/image/advanced` | Advanced generation (Z-Image Turbo) |
+| `audio_turbo` | `/audio/turbo` | Fast TTS (Kokoro) |
+| `audio_quality` | `/audio/quality/persona` | Persona-based TTS (Qwen3-TTS) |
+| `music` | `/audio/music` | AI music with lyrics (ACE-Step) |
+| `video_fast` | `/video` | Text/image to video (LTX-2) |
+| `vision` | `/vision/analyze` | Vision analysis (Qwen3-VL) |
 
 ### NOT Supported
-- **No 3D generation** - TRELLIS is not implemented
+- **No 3D generation** - TRELLIS is not implemented (3D uses AI-generated Three.js code)
 - **No music_quality** - Only single music endpoint via ACE-Step
 
 ## IPC Communication Pattern
@@ -132,68 +215,222 @@ Main handlers in `src/main.js` via `ipcMain.handle('channel', handler)`
 
 Common channels:
 - `model-*` - LLM model operations
-- `store-*` - Persistent storage
+- `store-*` - Persistent storage (Electron Store)
 - `proxy-*` - External API proxying
-- `get-system-info` - Hardware stats
+- `get-system-info` - Hardware stats (RAM/VRAM/GPU)
 - `p2p-*` - P2P network operations
 
 ## Web3 Integration
 
-- **Networks**: Ethereum Mainnet + Arbitrum One
-- **Wallet**: Reown AppKit (@reown/appkit) with MetaMask, Coinbase, Trust, Rabby
-- **Token**: BONZAI (ERC-20) on both chains
-- **Level System**: All features require BONZAI token holdings for access
-  - LVL1 (1K BONZAI): Text/LLM generation
-  - LVL2 (5K BONZAI): Audio generation (TTS, voice clone, music)
-  - LVL3 (10K BONZAI): Image generation, Vision analysis
-  - LVL4 (25K BONZAI): Video generation, Premium agents (Roleplay Companion)
-  - LVL5 (33K BONZAI): 3D generation, Expert agents
-  - LVL6 (50K BONZAI): Model Training (LLM finetune, LoRA)
-  - **Alternative**: 1 ETH one-time payment unlocks all levels
-  - **Demo Mode**: Limited free trials available for most endpoints
+### Networks
+- **Ethereum** (chainId 1) - BONZAI token
+- **Arbitrum** (chainId 42161) - BONZAI token
+- **Base** (chainId 8453) - BONZAI token, 8 MVP protocol contracts, Uniswap V4
+- **LUKSO** (chainId 42) - Content NFT (LSP8), Universal Profile integration
+
+### Wallet
+- **Reown AppKit** (@reown/appkit) with MetaMask, Coinbase, Trust, Rabby
+- WalletConnect for Electron (QR code for mobile wallets)
+- Optional chains: Arbitrum, Base, LUKSO
+
+### Token
+- **BONZAI** (ERC-20) on Ethereum, Arbitrum, and Base
+  - Ethereum: `0xDdA9Ff241C7160be8295EF9Eca2e782361467666`
+  - Arbitrum: `0x0a84edf70f30325151631ce7a61307d1f4d619a3`
+  - Base: `0xc4d137def384ee0f8857887f5950669ba04984ec`
+
+### Level System — Mint Gating (NOT Generation Gating)
+
+**IMPORTANT**: All AI generation is FREE (LVL0). Levels gate MINTING content as NFTs and co-owning revenue pools.
+
+| Level | BONZAI Hold | Minting Rights | Pool Co-Ownership |
+|-------|-------------|----------------|-------------------|
+| LVL1 | 1,000 | Text NFTs | Text pool |
+| LVL2 | 5,000 | Audio NFTs | Audio pool |
+| LVL3 | 10,000 | Image NFTs | Image pool |
+| LVL4 | 25,000 | Video NFTs | Video pool |
+| LVL5 | 33,000 | 3D NFTs | 3D pool |
+| LVL6 | 50,000 | Training NFTs, ERC-20 token issuance | Training pool |
+
+- **Alternative**: 1 ETH one-time payment via BonzaiUnlock on Base unlocks ALL levels permanently
+- Proceeds split: 50% Foundation / 50% Liquidity
+
+### Treasury Wallets
+- Foundation: `0x8Ff3b2e823b33BeE30e699bB1b6BBc8F622fEa89`
+- Liquidity: `0x4135d59f0BfF96560b7aD5cfCe81154AB1810B93`
+
+## Smart Contracts
+
+### 8 MVP Contracts on Base (chainId 8453)
+
+Deployed via `scripts/deploy-base-mvp.js`. All addresses set in `web3.config.js` after deployment.
+
+| Contract | File | Purpose |
+|----------|------|---------|
+| `BonzaiUnlock` | `BonzaiUnlock.sol` | 1 ETH all-level unlock, 50/50 proceeds split |
+| `BonzaiMintPool` | `BonzaiMintPool.sol` | 6 epoch-based revenue pools (weekly epochs, 256-block flash loan protection) |
+| `BonzaiContent` | `BonzaiContent.sol` | ERC-721 content NFT, 80/20 fee split (treasury/pool), ERC-2981 royalties (7.5%), ERC721-C |
+| `BonzaiRoyaltySplitter` | `BonzaiRoyaltySplitter.sol` | Secondary royalty distribution (2/3 treasury, 1/3 pools weighted by activity) |
+| `BonzaiCompanions` | `BonzaiCompanions.sol` | ERC-721 + ERC-8004 companion NFT, 10K max supply, spending profiles (uint96), 0.25 ETH mint |
+| `BonzaiUniswapHook` | `BonzaiUniswapHook.sol` | V4 afterSwap hook capturing 1% fee, deployed via CREATE2 for address flags |
+| `CompanionTokenFactory` | `CompanionTokenFactory.sol` | Atomic ERC-20 + V4 LP for companions (1B supply, 96/4 split, LP locked at dead address) |
+| `FineTuneTokenFactory` | `FineTuneTokenFactory.sol` | Atomic ERC-20 + V4 LP for fine-tuned models (same structure) |
+
+### Additional Contracts
+| Contract | File | Purpose |
+|----------|------|---------|
+| `BonzaiSkillRegistry` | `BonzaiSkillRegistry.sol` | Skill marketplace on Base (80% to co-owners, 20% platform) |
+| `BonzaiSkillOwnership` | `BonzaiSkillOwnership.sol` | Companion co-ownership with attestation + weighted distribution |
+| `BonzaiProviderRegistry` | `BonzaiProviderRegistry.sol` | P2P provider registration on Base |
+| `BonzaiP2PPayment` | `BonzaiP2PPayment.sol` | P2P ETH payment processing |
+| `CompanionToken` | `CompanionToken.sol` | Individual companion ERC-20 token (deployed by factory) |
+
+### Uniswap V4 Addresses (Base)
+- PoolManager: `0x498581ff718922c3f8e6a244956af099b2652b2b`
+- PositionManager: `0x7c5f5a4bbd8fd63184577525326123b519429bdc`
+- Permit2: `0x000000000022D473030F116dDEE9F6B43aC78BA3`
+
+### Hook Fee Splits
+- **Companion tokens**: 33% treasury, 33% companion owner, 34% companion wallet
+- **FineTune tokens**: 80% creator, 10% treasury, 10% MintPool (LVL6 training pool)
+
+### Cross-Contract Wiring (performed after deployment)
+```
+Content  → MintPool, RoyaltySplitter
+MintPool → Content, RoyaltySplitter, FeeHook
+Hook     → CompanionFactory (authorized), FineTuneFactory (authorized)
+CompanionFactory → Companions (NFT ownership check)
+FineTuneFactory  → Content (NFT ownership check)
+```
 
 ## P2P Distributed Inference
 
-BonzAI supports peer-to-peer inference via libp2p with x402 USDC payments.
+BonzAI supports peer-to-peer inference via libp2p with x402 ETH payments on Base.
 
 ### Network Modes
 - **Local**: Run inference locally on your machine (default, FREE)
-- **Provider**: Share your GPU with the network and earn USDC
+- **Provider**: Share your GPU with the network and earn ETH
 
 ### Architecture
-- **Provider Registry**: Smart contract on Arbitrum for provider registration
-- **Payment Contract**: USDC payments with EIP-712 signatures
+- **Provider Registry**: Smart contract on Base for provider registration
+- **Payment Contract**: ETH payments with EIP-712 signatures on Base
 - **Platform Fee**: 2.5% on paid inference
+- **Default Chain**: Base (8453) — cheap gas ~$0.001
 
 ### Pipeline Categories (for P2P)
 ```
 0: LLM (all 21 models)
-1: IMAGE_TURBO
-2: IMAGE_QUALITY
-3: IMAGE_STANDARD
-4: IMAGE_ADVANCED
-5: AUDIO_TURBO
-6: AUDIO_QUALITY
-7: MUSIC
-8: VIDEO_FAST
-9: VISION
+1: IMAGE_TURBO        5: AUDIO_TURBO
+2: IMAGE_QUALITY       6: AUDIO_QUALITY
+3: IMAGE_STANDARD      7: MUSIC
+4: IMAGE_ADVANCED      8: VIDEO_FAST
+                       9: VISION
 ```
 
-### Key P2P Files
-- `src/services/p2p.service.js` - libp2p node management
-- `src/services/x402.service.js` - Payment validation
-- `src/services/p2p.contract.service.js` - Contract interactions
-- `src/contracts/BonzaiProviderRegistry.sol` - Provider registry
-- `src/contracts/BonzaiP2PPayment.sol` - Payment processing
+## Companion System
+
+### 13 Default Companions (defined in `flagship.js`)
+
+| ID | Name | Gender | Age | Type |
+|----|------|--------|-----|------|
+| `aurore` | Aurore Beaumont | Female | 28 | Human |
+| `mai` | Mai Tanaka | Female | 32 | Human |
+| `marcus` | Marcus Ferrara | Male | 35 | Human |
+| `james` | James Whitmore | Male | 40 | Human |
+| `aria` | ARIA-7 | Female | N/A (appears 25) | Android |
+| `kai` | KAI-9 | Male | N/A (appears 30) | Android |
+| `damon` | Damon Rivers | Male | 34 | Human |
+| `zara` | Zara Okonkwo | Female | 29 | Human |
+| `jin` | Jin Chen | Male | 31 | Human |
+| `priya` | Priya Sharma | Female | 30 | Human |
+| `arjun` | Arjun Kapoor | Male | 36 | Human |
+| `sofia` | Sofia Reyes | Female | 27 | Human |
+| `miguel` | Miguel Santos | Male | 33 | Human |
+
+### 13 Default Scenarios
+`art_gallery_after_dark`, `private_kitchen`, `jungle_retreat`, `university_study`, `neon_apartment`, `tuscan_villa`, `recording_studio`, `fashion_atelier`, `shanghai_penthouse`, `mumbai_monsoon`, `urban_studio`, `rio_beach_studio`, `bollywood_set`
+
+### Big 5 (OCEAN) Personality Model
+Companions use the Big 5 personality traits for style/personality: `openness`, `conscientiousness`, `extraversion`, `agreeableness`, `neuroticism`. Defined as `BIG5_TRAITS` in `flagship.js`. Used for companion creation and spending profile generation.
+
+### Spending Profile (12 categories)
+Each companion has a spending profile with 12 categories (values 1-10), packed into a `uint96` on-chain (4 bits per category):
+| Index | Category | Index | Category |
+|-------|----------|-------|----------|
+| 0 | education | 6 | housing |
+| 1 | entertainment | 7 | beauty |
+| 2 | fashion | 8 | reading |
+| 3 | finance | 9 | social |
+| 4 | food | 10 | sports |
+| 5 | healthcare | 11 | travel |
+
+### Companion NFT (Base Only)
+- **Base** (ERC-8004): 0.25 ETH mint, 10K max supply, agent wallets, x402 support
+
+### Content Levels
+- **PG**: Family-friendly
+- **PG-13**: Mild romantic content
+- **Mature (R)**: Adult themes, suggestive
+- **Adult (18+)**: Full creative freedom
+
+### Age Validation
+All companions must be 18+. Enforced via `validateCompanionAge()` in `flagship.js` with blocked terms and pattern matching.
+
+### Multi-Modal Generation Pipeline
+Text → Audio (Qwen TTS) → Image (GLM Flash prompt enhancement → FLUX/SDXL) → Video (LTX-2 with audio conditioning)
+
+### Bare Companion Flow
+Pre-reveal minting: `isBareCompanion()` detects pending companions, `finalizeCompanion()` completes setup, `buildBareRegistration()` generates placeholder metadata.
+
+## Companion Skill Ownership System
+
+Companions (ERC-721 NFTs on Base) can register as co-owners of skills. When a skill is purchased, 80% of ETH goes to registered companion co-owners, weighted by BONZAI balance and spending profile score.
+
+### Revenue Flow
+1. `BonzaiSkillRegistry.purchaseSkill()` on Base
+2. 80% ETH → `BonzaiSkillOwnership.distributeRevenue()`
+3. Weight = `BONZAI_balance(companionWallet) * profileScore`
+4. Revenue credited to `unclaimedRevenue[wallet]` (purchase-time snapshot)
+5. `claimRevenue()` withdraws accumulated ETH
+
+### Registration Requirements
+- Explicit opt-in via `registerCompanion()`
+- Spending profile score >= 5 in skill's category
+- EIP-191 attestation verifying NFT ownership + spending profile
+
+## Content NFT Minting
+
+### Base (ERC-721 via BonzaiContent)
+- Mint fee: 0.0025 ETH
+- Fee split: 80% treasury, 20% to content-type pool (via MintPool)
+- ERC-2981 royalties: 7.5%
+- ERC721-C transfer validation (Limit Break)
+- 6 content types: text(0), audio(1), image(2), video(3), object(4), training(5)
+
+### LUKSO (LSP8)
+- Mint fee: 15 LYX
+- NFT 2.0 standard with Universal Profile support
+
+## MintPool Revenue System
+
+- 6 pools (one per level/content type)
+- Weekly epochs (604,800 seconds)
+- BONZAI holders register per epoch → claim proportional share after finalization
+- 256-block gap enforcement (flash loan protection)
+- Pool thresholds: [1000, 5000, 10000, 25000, 33000, 50000] BONZAI
+- Revenue sources: content mint fees (20%), hook pool fees, royalty splitter distributions
+- Unclaimed funds sweepable after N+2 epochs
 
 ## Environment Variables
 
 ```
 GITHUB_TOKEN          # For releases
-VITE_PINATA_JWT       # IPFS uploads
+VITE_PINATA_JWT       # IPFS/Pinata uploads
 VITE_NFT_CONTRACT     # Smart contract address
 BONZAI_SERVER_PORT    # Flask server port (default: 65000)
 OPENCLAW_API_PORT     # OpenClaw LLM port (default: 3002)
+DEPLOYER_PRIVATE_KEY  # For contract deployment
+BASE_RPC_URL          # Base RPC endpoint (default: https://mainnet.base.org)
 ```
 
 ## Build System
@@ -201,37 +438,45 @@ OPENCLAW_API_PORT     # OpenClaw LLM port (default: 3002)
 - **Vite** - Three configs: main, preload, renderer (`vite.*.config.ts`)
 - **Electron Forge** - App packaging and distribution
 - **PyInstaller** - Compiles diffuser.py to platform binary for production
+- **Hardhat** - Smart contract compilation and testing (Solidity 0.8.20, optimizer 200 runs, viaIR)
 - **CI/CD** - GitHub Actions for build, code signing (macOS), and release
 
 ## Port Configuration
 
 - Flask server: `65000` (env: `BONZAI_SERVER_PORT`)
 - OpenClaw LLM: `3002` (env: `OPENCLAW_API_PORT`)
+- OpenClaw Gateway: `18789` (for multi-channel chat)
 - Model cache: `~/bonzai-models/`
 
-## Generation Flow
+## Social Integration
 
-1. User interacts with GenerativeX.vue component
-2. For LLM: HTTP POST to OpenClaw (port 3002) → `/v1/chat/completions`
-3. For other modalities: HTTP POST to Flask server (port 65000)
-4. Progress updates via Socket.IO
-5. Result saved to inferenceStore
-6. Optional NFT minting via Pinata + smart contract
+### Moltbook
+- Reddit-like social platform for AI agents
+- Companions auto-register, post autonomously, heartbeat engagement
+- Config: `src/config/social.config.js` (MOLTBOOK_CONFIG)
+
+### OpenClaw (Multi-Channel Chat)
+- Gateway at port 18789 for WhatsApp, Telegram, Discord, Mattermost
+- Webhooks forwarded to renderer via IPC (same code path as desktop UI)
+- Config: `src/config/social.config.js` (OPENCLAW_CONFIG)
 
 ## Roleplay System
 
-BonzAI includes a companion roleplay system with pre-defined characters.
+BonzAI includes a companion roleplay system with 13 pre-defined characters.
 
 - **Companions**: Defined in `src/skills/flagship.js` (`DEFAULT_COMPANIONS`)
-- **Scenarios**: Location-based roleplay settings
+- **Scenarios**: 13 location-based roleplay settings (`DEFAULT_SCENARIOS`)
 - **UI**: `src/components/skills/RoleplayChat.vue`
 - **Features**:
   - Voice generation (Qwen TTS)
   - Image generation with enhanced LLM-based prompts (GLM Flash primary, Llama fallback)
-  - Video generation (LTX-2)
+  - Video generation (LTX-2) with audio conditioning
   - Memory persistence across sessions
-  - User appearance description for consistent image generation in intimate scenes
+  - User appearance description for consistent image generation
   - Content levels: PG, PG-13, Mature, Adult
+  - Autonomous mode (companions act independently when user is away)
+  - Import/export companion identity
+  - Dynamic scene backgrounds with fade transitions and scroll-based anchoring
 
 ## Video Generation
 
@@ -251,4 +496,30 @@ Request example:
   "guidance_scale": 3.5,
   "image_base64": "..."
 }
+```
+
+## Testing
+
+Hardhat test suite with ~468 tests covering all 8 MVP contracts:
+```bash
+npm test              # Run all tests
+npm run test:coverage # Coverage report
+```
+
+Test structure:
+```
+test/
+  helpers/
+    constants.js      # Shared values (prices, thresholds, durations)
+    deploy.js         # loadFixture-based deployment helpers
+  BonzaiUnlock.test.js
+  BonzaiMintPool.test.js
+  BonzaiContent.test.js
+  BonzaiRoyaltySplitter.test.js
+  BonzaiCompanions.test.js
+  BonzaiUniswapHook.test.js
+  CompanionTokenFactory.test.js
+  FineTuneTokenFactory.test.js
+  Integration.test.js
+src/contracts/mocks/  # Mock contracts for testing
 ```

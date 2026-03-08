@@ -65,7 +65,7 @@
           class="button is-warning unlock mr-5"
           :disabled="isUnlocking"
           @click="unlockAllLevels"
-          :title="`Pay ${unlockPrice} ETH on Arbitrum to unlock all 6 levels permanently`"
+          :title="`Pay ${unlockPrice} ETH on Base to unlock all 6 levels permanently`"
         >
           <span class="material-symbols-outlined mr-2">
             {{ isUnlocking ? "hourglass_empty" : "lock_open" }}
@@ -189,7 +189,7 @@ const unlockAllLevels = async () => {
       // Update status based on unlock flow
       switch (status) {
         case 'switching_network':
-          unlockStatus.value = 'Switching to Arbitrum...';
+          unlockStatus.value = 'Switching to Base...';
           break;
         case 'awaiting_payment':
           unlockStatus.value = 'Please confirm in your wallet...';

@@ -145,7 +145,7 @@ async function getRegistryContract(needsSigner = false) {
     return new ethers.Contract(config.providerRegistryAddress, PROVIDER_REGISTRY_ABI, signer);
   }
 
-  const provider = await web3Service.getProvider("arbitrum");
+  const provider = await web3Service.getProvider("base");
   return new ethers.Contract(config.providerRegistryAddress, PROVIDER_REGISTRY_ABI, provider);
 }
 
@@ -163,7 +163,7 @@ async function getPaymentContract(needsSigner = false) {
     return new ethers.Contract(config.paymentContractAddress, PAYMENT_CONTRACT_ABI, signer);
   }
 
-  const provider = await web3Service.getProvider("arbitrum");
+  const provider = await web3Service.getProvider("base");
   return new ethers.Contract(config.paymentContractAddress, PAYMENT_CONTRACT_ABI, provider);
 }
 
@@ -178,7 +178,7 @@ async function getUsdcContract(needsSigner = false) {
     return new ethers.Contract(config.usdcAddress, ERC20_ABI, signer);
   }
 
-  const provider = await web3Service.getProvider("arbitrum");
+  const provider = await web3Service.getProvider("base");
   return new ethers.Contract(config.usdcAddress, ERC20_ABI, provider);
 }
 

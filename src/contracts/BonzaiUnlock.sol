@@ -11,7 +11,7 @@ import "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
  * @title BonzaiUnlock
  * @author BonzAI Team
  * @notice Secure contract for unlocking BonzAI premium features with ETH payment.
- * @dev Deployed on Arbitrum. Proceeds split 50/50 between foundation and liquidity wallets.
+ * @dev Deployed on Base. Proceeds split 50/50 between foundation and liquidity wallets.
  *
  * Features:
  * - Pay to unlock all levels for yourself
@@ -87,6 +87,9 @@ contract BonzaiUnlock is Ownable, ReentrancyGuard, Pausable {
         address indexed giftedBy,
         uint256 timestamp
     );
+
+    /// @notice Emitted when an address is skipped in batch gift
+    event GiftSkipped(address indexed recipient, string reason);
 
     /// @notice Emitted when unlock price is updated
     event UnlockPriceUpdated(
@@ -284,29 +287,33 @@ contract BonzaiUnlock is Ownable, ReentrancyGuard, Pausable {
      * @notice Gift unlocks to multiple wallets (batch)
      * @param recipients Array of addresses to receive free unlocks
      * @dev Gas-efficient batch gifting for airdrops, limited to MAX_BATCH_SIZE
+     * @return gifted Number of addresses actually gifted
      */
-    function batchGiftUnlock(address[] calldata recipients) 
-        external 
-        onlyOwner 
-        nonReentrant 
+    function batchGiftUnlock(address[] calldata recipients)
+        external
+        onlyOwner
+        nonReentrant
+        returns (uint256 gifted)
     {
         uint256 length = recipients.length;
-        
+
         // Prevent gas limit attacks
         if (length > MAX_BATCH_SIZE) {
             revert BatchSizeTooLarge(length, MAX_BATCH_SIZE);
         }
 
-        uint256 gifted = 0;
-
         for (uint256 i = 0; i < length; ) {
             address recipient = recipients[i];
-            
+
             // Skip zero addresses and already unlocked users (don't revert)
-            if (recipient != address(0) && !hasUnlocked[recipient]) {
+            if (recipient == address(0)) {
+                emit GiftSkipped(recipient, "zero address");
+            } else if (hasUnlocked[recipient]) {
+                emit GiftSkipped(recipient, "already unlocked");
+            } else {
                 hasUnlocked[recipient] = true;
                 emit UnlockGifted(recipient, msg.sender, block.timestamp);
-                
+
                 unchecked {
                     gifted += 1;
                 }

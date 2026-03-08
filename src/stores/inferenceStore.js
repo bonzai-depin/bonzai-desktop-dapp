@@ -110,15 +110,27 @@ export const initializeStore = async () => {
 
 // ==================== Text/Chat Inferences ====================
 
-export const addTextInference = async (question, answer, metadata = {}) => {
-  const record = createInferenceRecord('text', {
+// Format matches GenerativeText.vue component expectations:
+// { id, question, answer: { text, id }, ...metadata }
+export const addTextInference = async (question, answerText, metadata = {}) => {
+  const recordId = uuid();
+  // Use component-compatible format
+  const record = {
+    id: recordId,
     question,
-    answer,
+    answer: {
+      text: answerText,
+      id: recordId,
+    },
+    // Additional metadata
+    type: 'text',
+    timestamp: Date.now(),
+    createdAt: new Date().toISOString(),
     model: metadata.model || 'unknown',
     tokensUsed: metadata.tokensUsed || 0,
-    ...metadata,
-  });
-  
+    source: metadata.source || 'bonzai',
+  };
+
   state.textInferences.push(record);
   state.totalInferences++;
   await persist(STORE_KEYS.textInferences);
@@ -131,18 +143,32 @@ export const loadTextInferences = async () => {
 };
 
 // ==================== Image Inferences ====================
+// Format matches GenerativeImage.vue component expectations:
+// { id, question, answer: { status, data: { image, image_path } }, ...metadata }
 
 export const addImageInference = async (prompt, imageData, metadata = {}) => {
-  const record = createInferenceRecord('image', {
-    prompt,
-    imageData, // base64 encoded
+  // Use component-compatible format
+  const record = {
+    id: uuid(),
+    question: prompt,
+    answer: {
+      status: 200,
+      data: {
+        image: imageData, // base64 encoded
+        image_path: metadata.image_path || null, // file path if saved
+      },
+    },
+    // Additional metadata
+    type: 'image',
+    timestamp: Date.now(),
+    createdAt: new Date().toISOString(),
     pipeline: metadata.pipeline || 'unknown',
     width: metadata.width,
     height: metadata.height,
     steps: metadata.steps,
-    ...metadata,
-  });
-  
+    source: metadata.source || 'bonzai',
+  };
+
   state.imageInferences.push(record);
   state.totalInferences++;
   await persist(STORE_KEYS.imageInferences);
@@ -155,19 +181,32 @@ export const loadImageInferences = async () => {
 };
 
 // ==================== Video Inferences ====================
+// Format matches GenerativeVideo.vue component expectations:
+// { id, question, answer: { status, data: { video_path } }, ...metadata }
 
 export const addVideoInference = async (prompt, videoPath, metadata = {}) => {
-  const record = createInferenceRecord('video', {
-    prompt,
-    videoPath,
+  // Use component-compatible format
+  const record = {
+    id: uuid(),
+    question: prompt,
+    answer: {
+      status: 200,
+      data: {
+        video_path: videoPath,
+      },
+    },
+    // Additional metadata
+    type: 'video',
+    timestamp: Date.now(),
+    createdAt: new Date().toISOString(),
     pipeline: metadata.pipeline || 'unknown',
     duration: metadata.duration,
     fps: metadata.fps,
     width: metadata.width,
     height: metadata.height,
-    ...metadata,
-  });
-  
+    source: metadata.source || 'bonzai',
+  };
+
   state.videoInferences.push(record);
   state.totalInferences++;
   await persist(STORE_KEYS.videoInferences);
@@ -180,17 +219,30 @@ export const loadVideoInferences = async () => {
 };
 
 // ==================== Audio Inferences ====================
+// Format matches GenerativeAudio.vue component expectations:
+// { id, question, answer: { status, data: { audio_path } }, ...metadata }
 
 export const addAudioInference = async (prompt, audioPath, metadata = {}) => {
-  const record = createInferenceRecord('audio', {
-    prompt,
-    audioPath,
+  // Use component-compatible format
+  const record = {
+    id: uuid(),
+    question: prompt,
+    answer: {
+      status: 200,
+      data: {
+        audio_path: audioPath,
+      },
+    },
+    // Additional metadata
+    type: 'audio',
+    timestamp: Date.now(),
+    createdAt: new Date().toISOString(),
     pipeline: metadata.pipeline || 'vibevoice',
     duration: metadata.duration,
     sampleRate: metadata.sampleRate,
-    ...metadata,
-  });
-  
+    source: metadata.source || 'bonzai',
+  };
+
   state.audioInferences.push(record);
   state.totalInferences++;
   await persist(STORE_KEYS.audioInferences);
@@ -210,11 +262,14 @@ export const addObjectInference = async (prompt, code, metadata = {}) => {
     prompt: String(prompt || ''),
     code: String(code || ''),
     mode: String(metadata.mode || 'normal'),
+    model: metadata.model ? String(metadata.model) : undefined,
     screenshots: Array.isArray(metadata.screenshots) ? metadata.screenshots : [],
     visionVerified: Boolean(metadata.visionVerified),
     success: Boolean(metadata.success ?? true),
     title: metadata.title ? String(metadata.title) : undefined,
     notes: metadata.notes ? String(metadata.notes) : undefined,
+    blueprint: metadata.blueprint ? String(metadata.blueprint) : undefined,
+    tokensPerSecond: metadata.tokensPerSecond ? String(metadata.tokensPerSecond) : undefined,
   });
 
   // Deep clone to ensure serializability before storing
@@ -334,7 +389,7 @@ export const markAsMinted = async (type, inferenceId, nftData) => {
       contractAddress: nftData.contractAddress,
       transactionHash: nftData.transactionHash,
       mintedAt: Date.now(),
-      chainId: nftData.chainId || 42161, // Arbitrum
+      chainId: nftData.chainId || 8453, // Base
       explorerUrl: nftData.explorerUrl,
     };
     await persist(storeKey);

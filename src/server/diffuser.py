@@ -136,6 +136,7 @@ from diffusers import (
     FluxTransformer2DModel,
     Flux2KleinPipeline,
     ZImagePipeline,
+    ZImageTransformer2DModel,
     LTX2Pipeline,
     LTX2ImageToVideoPipeline,
     LTX2VideoTransformer3DModel,
@@ -207,11 +208,11 @@ FLUX_KREA_GGUF_URL = os.getenv("FLUX_KREA_GGUF_URL",
     "https://huggingface.co/QuantStack/FLUX.1-Krea-dev-GGUF/resolve/main/flux1-krea-dev-Q5_K_M.gguf").strip()
 
 # Flux Klein 4B - Fast turbo generation (standard HuggingFace loading)
-FLUX_KLEIN_REPO = "black-forest-labs/FLUX.2-klein-4B"
+FLUX_KLEIN_REPO = "black-forest-labs/FLUX.2-klein-4b"
 
 Z_REPO = "Tongyi-MAI/Z-Image-Turbo"
-Z_GGUF_NAME = "z_image_turbo-q5_k_m.gguf"
-Z_GGUF_URL = "https://huggingface.co/jayn7/Z-Image-Turbo-GGUF/resolve/main/z_image_turbo-Q5_K_M.gguf"
+Z_GGUF_NAME = "z-image-turbo-q4_k_m.gguf"
+Z_GGUF_URL = "https://huggingface.co/unsloth/Z-Image-Turbo-GGUF/resolve/main/z-image-turbo-Q4_K_M.gguf"
 
 # LTX-2 (19B DiT Model) - /video endpoint supports:
 # - Text-to-Video (t2v): Generate video from text prompt only
@@ -288,7 +289,7 @@ LLAMA_REPOS = {
 
 EXPECTED_SIZES = {
     "flux1-krea-dev-q5_k_m.gguf": 8_419_501_344,
-    "z_image_turbo-q5_k_m.gguf": 5_522_742_336,
+    "z-image-turbo-q4_k_m.gguf": 4_650_000_000,
     "umt5-xxl-encoder-q3_k_m.gguf": 5_580_000_000,  # ~5.2GB GGUF text encoder
     "ltx-2-19b-distilled-q3_k_s.gguf": 8_667_234_304, #9_283_503_264,  # 9.28GB Q3_K_S distilled
 }
@@ -927,12 +928,15 @@ class GenerationTracker:
         return gid
 
     def progress(self, generation_id: str, stage: str, step: int, total: int):
-        """Report progress. Ensures step <= total and calculates percentage."""
+        """Report progress. Ensures step <= total and calculates percentage.
+        Stage is normalized to 'Generating...' for consistency across all endpoints,
+        except for terminal 'complete' which is kept as-is."""
         step = min(step, total)
         pct = round((step / max(total, 1)) * 100.0, 2)
+        display_stage = stage if stage.lower() == "complete" else "Generating..."
         socket_emit("gen_progress", {
             "generation_id": generation_id,
-            "stage": stage,
+            "stage": display_stage,
             "step": int(step),
             "total": int(total),
             "pct": pct
@@ -1251,6 +1255,12 @@ REPO_SPECS = {
         "must_weight_dirs": ["unet", "vae"],
         "extra_dirs": ["scheduler"],
     },
+    "black-forest-labs/FLUX.2-klein-4b-fp8": {
+        "must_files": [],
+        "must_tokenizers": [],
+        "must_weight_dirs": [],
+        "fallback_any_weights": True,
+    },
     "Tongyi-MAI/Z-Image-Turbo": {
         "must_files": ["model_index.json"],
         "must_tokenizers": ["tokenizer"],
@@ -1355,6 +1365,12 @@ def _repo_completeness(repo_id: str) -> Dict[str, Any]:
     report = {"repo": repo_id, "root": str(root), "exists": root.exists(), "ok": False, "missing": []}
     if not root.exists():
         report["missing"].append("<entire repo>")
+        return report
+    # Treat empty directories as non-existent (likely failed/interrupted download)
+    has_real_files = any(f.is_file() and f.stat().st_size > 0 for f in root.rglob("*"))
+    if not has_real_files:
+        report["exists"] = False
+        report["missing"].append("<entire repo> (empty directory)")
         return report
     spec = REPO_SPECS.get(repo_id, DEFAULT_SPEC)
     for f in spec.get("must_files", []):
@@ -1516,7 +1532,8 @@ def _plan_for(pipeline: str) -> Dict[str, Any]:
 
     # Audio pipelines
     # Kokoro TTS auto-downloads via KPipeline - always report as ready
-    if pipeline in ("audio_turbo", "kokoro"):
+    # "audio" is an alias for audio_turbo (used by skill requirements)
+    if pipeline in ("audio", "audio_turbo", "kokoro"):
         return {"repos_to_fetch": [], "single_files": []}
     if pipeline in ("audio_quality_clone", "qwen3_tts_clone"):
         return {"repos_to_fetch": [QWEN3_TTS_BASE_REPO], "single_files": []}
@@ -1726,6 +1743,16 @@ def _start_prefetch_pipeline(pipeline: str) -> Dict[str, Any]:
 def _download_repo_files(pl: PipelineDownload, tid: str, repo_id: str, manifest: List[Dict[str, Any]]):
     headers = {"Authorization": f"Bearer {_hf_token()}"} if _hf_token() else {}
     base = repo_local_dir(repo_id)
+
+    # Clean up empty/corrupt repo directories before downloading
+    if base.exists():
+        # Check if directory is empty or has only empty subdirectories
+        has_real_files = any(f.is_file() and f.stat().st_size > 0 for f in base.rglob("*"))
+        if not has_real_files:
+            logger.warning(f"[Download] Removing empty/corrupt repo directory: {base}")
+            import shutil
+            shutil.rmtree(base, ignore_errors=True)
+
     base.mkdir(parents=True, exist_ok=True)
 
     # Calculate total bytes; if sizes unknown, use file count for consistent tracking
@@ -2250,6 +2277,25 @@ MEDIA_MIME_TYPES = {
 }
 
 
+def encode_image_to_webp(image, quality: int = 90) -> str:
+    """
+    Encode a PIL Image to WebP format and return base64 string.
+
+    WebP provides ~30% smaller file sizes than PNG while maintaining quality,
+    improving storage efficiency and transfer speeds.
+
+    Args:
+        image: PIL Image object
+        quality: WebP quality (0-100, default 90 for high quality)
+
+    Returns:
+        Base64-encoded WebP image string
+    """
+    buf = BytesIO()
+    image.save(buf, format="WEBP", quality=quality)
+    return base64.b64encode(buf.getvalue()).decode("utf-8")
+
+
 def convert_wav_to_mp3(wav_path: str, bitrate: str = "128k") -> Optional[str]:
     """
     Convert a WAV file to MP3 using ffmpeg.
@@ -2442,7 +2488,6 @@ def _img_b64_to_pil(b64: str) -> Image.Image:
 
 
 @app.route("/image/standard", methods=["POST"])
-@require_auth(LEVEL_REQUIREMENTS["image"], allow_demo=True)
 def image_standard_sdxl():
     import logging as _logging
     _logging.getLogger("transformers.tokenization_utils_base").setLevel(_logging.ERROR)
@@ -2639,14 +2684,22 @@ def image_standard_sdxl():
             callback_steps=max(1, cb_steps),
         ).images[0]
 
-        buf = BytesIO()
-        image.save(buf, format="PNG")
-        encoded = base64.b64encode(buf.getvalue()).decode("utf-8")
+        encoded = encode_image_to_webp(image)
+
+        # Save image to FILES_DIR for persistence
+        try:
+            out_path = FILES_DIR / f"image_standard_{gen_id}.webp"
+            image.save(str(out_path), format="WEBP", quality=90)
+            logger.info(f"[sdxl] Image saved to {out_path}")
+        except Exception as save_err:
+            logger.warning(f"[sdxl] Failed to save image to disk: {save_err}")
+
         genbus.finish(gen_id, {"ok": True})
         return jsonify(_json_sanitize({
             "prompt": prompt,
             "negative_prompt": negative_prompt,
             "image": encoded,
+            "image_path": str(out_path) if 'out_path' in dir() else None,
             "generation_id": gen_id,
             "generation_websocket_url": generation_url()
         })), 201
@@ -2664,7 +2717,6 @@ def image_standard_sdxl():
 # =============================================================================
 
 @app.route("/image/advanced", methods=["POST"])
-@require_auth(LEVEL_REQUIREMENTS["image"], allow_demo=True)
 def z_image_advanced():
     """Generate image using Z-Image-Turbo (advanced mode)."""
     data = request.get_json(silent=True) or {}
@@ -2698,17 +2750,23 @@ def z_image_advanced():
         else:
             compute_dtype = torch.float32
 
-        base_root = repo_local_dir(Z_REPO)
+        tr_cfg = repo_local_dir(Z_REPO) / "transformer" / "config.json"
 
         # Use offline mode if pipeline is fully downloaded
         with offline_mode_if_complete("z_image_turbo") as is_offline:
+            transformer = ZImageTransformer2DModel.from_single_file(
+                str(MODEL_DIR / Z_GGUF_NAME),
+                config=str(tr_cfg),
+                quantization_config=GGUFQuantizationConfig(compute_dtype=compute_dtype),
+                dtype=compute_dtype,
+            ).to(device)
+
             pipe = ZImagePipeline.from_pretrained(
-                str(base_root),
-                torch_dtype=compute_dtype,
+                str(repo_local_dir(Z_REPO)),
+                transformer=transformer,
+                dtype=compute_dtype,
                 local_files_only=is_offline,
-                low_cpu_mem_usage=False,
-            )
-        pipe = pipe.to(device)
+            ).to(device)
 
         generator = (
             torch.Generator(device=device).manual_seed(seed)
@@ -2731,9 +2789,15 @@ def z_image_advanced():
 
         genbus.progress(gen_id, "finalizing", 2, 3)
 
-        buf = BytesIO()
-        image.save(buf, format="PNG")
-        encoded = base64.b64encode(buf.getvalue()).decode("utf-8")
+        encoded = encode_image_to_webp(image)
+
+        # Save image to FILES_DIR for persistence
+        try:
+            out_path = FILES_DIR / f"image_advanced_{gen_id}.webp"
+            image.save(str(out_path), format="WEBP", quality=90)
+            logger.info(f"[z-image] Image saved to {out_path}")
+        except Exception as save_err:
+            logger.warning(f"[z-image] Failed to save image to disk: {save_err}")
 
         genbus.progress(gen_id, "complete", 3, 3)
         genbus.finish(gen_id, {"ok": True})
@@ -2743,6 +2807,7 @@ def z_image_advanced():
             "prompt": prompt,
             "negative_prompt": negative_prompt,
             "image": encoded,
+            "image_path": str(out_path) if 'out_path' in dir() else None,
             "generation_id": gen_id,
             "generation_websocket_url": generation_url(),
         })), 201
@@ -2760,7 +2825,6 @@ def z_image_advanced():
 # =============================================================================
 
 @app.route("/image/turbo", methods=["POST"])
-@require_auth(LEVEL_REQUIREMENTS["image"], allow_demo=True)
 def image_turbo_flux_klein():
     """Generate image using FLUX Klein 4B (fast turbo mode)."""
     data = request.json or {}
@@ -2813,15 +2877,23 @@ def image_turbo_flux_klein():
 
         genbus.progress(gen_id, "finalizing", 2, 3)
 
-        buf = BytesIO()
-        image.save(buf, format="PNG")
-        b64 = base64.b64encode(buf.getvalue()).decode("utf-8")
+        b64 = encode_image_to_webp(image)
+
+        # Save image to FILES_DIR for persistence
+        try:
+            out_path = FILES_DIR / f"image_turbo_{gen_id}.webp"
+            image.save(str(out_path), format="WEBP", quality=90)
+            logger.info(f"[flux-klein] Image saved to {out_path}")
+        except Exception as save_err:
+            logger.warning(f"[flux-klein] Failed to save image to disk: {save_err}")
 
         genbus.progress(gen_id, "complete", 3, 3)
         genbus.finish(gen_id, {"ok": True})
 
         return jsonify(_json_sanitize({
-            "prompt": prompt, "image": b64, "generation_id": gen_id,
+            "prompt": prompt, "image": b64,
+            "image_path": str(out_path) if 'out_path' in dir() else None,
+            "generation_id": gen_id,
             "generation_websocket_url": generation_url()
         })), 201
 
@@ -2838,7 +2910,6 @@ def image_turbo_flux_klein():
 
 
 @app.route("/image/image/turbo", methods=["POST"])
-@require_auth(LEVEL_REQUIREMENTS["image"], allow_demo=True)
 def image_turbo_flux_klein_i2i():
     """Generate image-to-image using FLUX Klein 4B (fast turbo edit mode)."""
     data = request.get_json(silent=True) or {}
@@ -2912,9 +2983,7 @@ def image_turbo_flux_klein_i2i():
 
         genbus.progress(gen_id, "finalizing", 4, 5)
 
-        buf = BytesIO()
-        image.save(buf, format="PNG")
-        b64 = base64.b64encode(buf.getvalue()).decode("utf-8")
+        b64 = encode_image_to_webp(image)
 
         genbus.progress(gen_id, "complete", 5, 5)
         genbus.finish(gen_id, {"ok": True})
@@ -2943,7 +3012,6 @@ def image_turbo_flux_klein_i2i():
 # =============================================================================
 
 @app.route("/image/quality", methods=["POST"])
-@require_auth(LEVEL_REQUIREMENTS["image"], allow_demo=True)
 def image_quality_flux_krea():
     """Generate image using FLUX Krea."""
     data = request.json or {}
@@ -3008,15 +3076,23 @@ def image_quality_flux_krea():
 
         genbus.progress(gen_id, "finalizing", 2, 3)
 
-        buf = BytesIO()
-        image.save(buf, format="PNG")
-        b64 = base64.b64encode(buf.getvalue()).decode("utf-8")
+        b64 = encode_image_to_webp(image)
+
+        # Save image to FILES_DIR for persistence
+        try:
+            out_path = FILES_DIR / f"image_quality_{gen_id}.webp"
+            image.save(str(out_path), format="WEBP", quality=90)
+            logger.info(f"[flux-krea] Image saved to {out_path}")
+        except Exception as save_err:
+            logger.warning(f"[flux-krea] Failed to save image to disk: {save_err}")
 
         genbus.progress(gen_id, "complete", 3, 3)
         genbus.finish(gen_id, {"ok": True})
-        
+
         return jsonify(_json_sanitize({
-            "prompt": prompt, "image": b64, "generation_id": gen_id, 
+            "prompt": prompt, "image": b64,
+            "image_path": str(out_path) if 'out_path' in dir() else None,
+            "generation_id": gen_id,
             "generation_websocket_url": generation_url()
         })), 201
 
@@ -3070,7 +3146,6 @@ def _load_kokoro_pipeline():
 
 
 @app.route("/audio/turbo", methods=["POST"])
-@require_auth(LEVEL_REQUIREMENTS["audio"], allow_demo=True)
 def audio_turbo_kokoro():
     """
     Kokoro TTS - Fast, high-quality text-to-speech.
@@ -3275,7 +3350,6 @@ def _load_qwen3_tts_design():
 
 
 @app.route("/audio/quality/design", methods=["POST"])
-@require_auth(LEVEL_REQUIREMENTS["audio"], allow_demo=True)
 def audio_quality_design():
     """
     Design a voice from a text description using Qwen3-TTS VoiceDesign.
@@ -3388,7 +3462,6 @@ def audio_quality_design():
 
 
 @app.route("/audio/quality/clone", methods=["POST"])
-@require_auth(LEVEL_REQUIREMENTS["audio"], allow_demo=True)
 def audio_quality_clone():
     """
     Generate speech using voice cloning with Qwen3-TTS Base.
@@ -3518,7 +3591,6 @@ def audio_quality_clone():
 
 
 @app.route("/audio/quality/persona", methods=["POST"])
-@require_auth(LEVEL_REQUIREMENTS["audio"], allow_demo=True)
 def audio_quality_persona():
     """
     Create a persona voice and generate speech in one call.
@@ -3532,12 +3604,19 @@ def audio_quality_persona():
         "persona": {
             "voice_id": "unique_persona_id",
             "instruct": "Voice description (age, gender, style)",
-            "sample_text": "Sample text for voice design" (optional)
+            "sample_text": "Sample text for voice design" (optional),
+            "restore_sample": "base64 audio to restore voice from" (optional)
         },
         "language": "English" (default),
         "force_redesign": false (recreate voice even if cached),
+        "return_sample": false (return the voice sample as base64),
         "auto_download": false
     }
+
+    Voice Persistence:
+    - If restore_sample is provided, the voice will be recreated from that sample
+    - If return_sample is true, the response includes voice_sample_base64
+    - Clients should store voice_sample_base64 and send it as restore_sample to restore voice
     """
     data = request.get_json(silent=True) or {}
 
@@ -3545,6 +3624,7 @@ def audio_quality_persona():
     persona = data.get("persona") or {}
     language = (data.get("language") or "English").strip()
     force_redesign = bool(data.get("force_redesign", False))
+    return_sample = bool(data.get("return_sample", False))
     auto_dl = bool(data.get("auto_download", False))
 
     if not text:
@@ -3553,10 +3633,11 @@ def audio_quality_persona():
     voice_id = (persona.get("voice_id") or "").strip()
     instruct = (persona.get("instruct") or "").strip()
     sample_text = (persona.get("sample_text") or "").strip()
+    restore_sample = (persona.get("restore_sample") or "").strip()
 
     if not voice_id:
         return jsonify({"error": "Missing 'persona.voice_id'"}), 400
-    if not instruct and voice_id not in _voice_prompt_cache:
+    if not instruct and not restore_sample and voice_id not in _voice_prompt_cache:
         return jsonify({"error": "Missing 'persona.instruct' for new persona"}), 400
 
     # Check if required files are present (both models)
@@ -3570,51 +3651,102 @@ def audio_quality_persona():
         gc.collect()
         genbus.progress(gen_id, "loading", 0, 5)
 
-        # Check if voice is already cached
+        import soundfile as sf
+        import base64
+        import io
+
+        # Check if we need to design/restore voice
         need_design = force_redesign or voice_id not in _voice_prompt_cache
+        voice_restored = False
+        ref_path = str(FILES_DIR / f"persona_{voice_id}_ref.wav")
 
         if need_design:
-            if not instruct:
-                return jsonify({"error": f"Persona '{voice_id}' not cached. Provide 'persona.instruct' to design it."}), 400
+            # Option 1: Restore from provided sample (voice persistence)
+            if restore_sample:
+                genbus.progress(gen_id, "restoring voice", 1, 5)
+                logger.info(f"[Qwen3-TTS] Restoring voice from sample: {voice_id}")
 
-            genbus.progress(gen_id, "designing voice", 1, 5)
+                try:
+                    # Decode base64 audio
+                    if restore_sample.startswith("data:"):
+                        # Handle data URL format
+                        restore_sample = restore_sample.split(",", 1)[1]
+                    audio_bytes = base64.b64decode(restore_sample)
+                    audio_io = io.BytesIO(audio_bytes)
 
-            # Use sample_text or generate a reasonable sample
-            if not sample_text:
-                sample_text = "Hello, this is my voice. I hope you like it."
+                    # Read the audio
+                    wavs_restored, sr = sf.read(audio_io)
+                    if len(wavs_restored.shape) > 1:
+                        wavs_restored = wavs_restored[:, 0]  # Take first channel if stereo
 
-            # Design the voice
-            design_model = _load_qwen3_tts_design()
-            wavs, sr = design_model.generate_voice_design(
-                text=sample_text,
-                language=language,
-                instruct=instruct,
-            )
+                    # Save as reference
+                    sf.write(ref_path, wavs_restored, sr)
 
-            # Save reference audio
-            ref_path = str(FILES_DIR / f"persona_{voice_id}_ref.wav")
-            import soundfile as sf
-            sf.write(ref_path, wavs[0], sr)
+                    genbus.progress(gen_id, "creating voice prompt", 2, 5)
 
-            genbus.progress(gen_id, "creating voice prompt", 2, 5)
+                    # Create clone prompt from restored audio
+                    clone_model = _load_qwen3_tts_base()
+                    voice_prompt = clone_model.create_voice_clone_prompt(
+                        ref_audio=(wavs_restored, sr),
+                        ref_text=sample_text or "Hello, this is my voice.",
+                    )
 
-            # Create clone prompt
-            clone_model = _load_qwen3_tts_base()
-            voice_prompt = clone_model.create_voice_clone_prompt(
-                ref_audio=(wavs[0], sr),
-                ref_text=sample_text,
-            )
+                    # Cache the prompt
+                    _voice_prompt_cache[voice_id] = {
+                        "prompt": voice_prompt,
+                        "ref_audio_path": ref_path,
+                        "ref_text": sample_text or "Restored voice sample",
+                        "instruct": instruct or "Restored from sample",
+                        "created_at": time.time(),
+                    }
+                    voice_restored = True
+                    logger.info(f"[Qwen3-TTS] Voice restored from sample: {voice_id}")
 
-            # Cache the prompt
-            _voice_prompt_cache[voice_id] = {
-                "prompt": voice_prompt,
-                "ref_audio_path": ref_path,
-                "ref_text": sample_text,
-                "instruct": instruct,
-                "created_at": time.time(),
-            }
+                except Exception as e:
+                    logger.warning(f"[Qwen3-TTS] Failed to restore voice from sample: {e}")
+                    # Fall through to design new voice
 
-            logger.info(f"[Qwen3-TTS] Persona voice designed: {voice_id}")
+            # Option 2: Design new voice from description
+            if not voice_restored:
+                if not instruct:
+                    return jsonify({"error": f"Persona '{voice_id}' not cached. Provide 'persona.instruct' to design it."}), 400
+
+                genbus.progress(gen_id, "designing voice", 1, 5)
+
+                # Use sample_text or generate a reasonable sample
+                if not sample_text:
+                    sample_text = "Hello, this is my voice. I hope you like it."
+
+                # Design the voice
+                design_model = _load_qwen3_tts_design()
+                wavs, sr = design_model.generate_voice_design(
+                    text=sample_text,
+                    language=language,
+                    instruct=instruct,
+                )
+
+                # Save reference audio
+                sf.write(ref_path, wavs[0], sr)
+
+                genbus.progress(gen_id, "creating voice prompt", 2, 5)
+
+                # Create clone prompt
+                clone_model = _load_qwen3_tts_base()
+                voice_prompt = clone_model.create_voice_clone_prompt(
+                    ref_audio=(wavs[0], sr),
+                    ref_text=sample_text,
+                )
+
+                # Cache the prompt
+                _voice_prompt_cache[voice_id] = {
+                    "prompt": voice_prompt,
+                    "ref_audio_path": ref_path,
+                    "ref_text": sample_text,
+                    "instruct": instruct,
+                    "created_at": time.time(),
+                }
+
+                logger.info(f"[Qwen3-TTS] Persona voice designed: {voice_id}")
         else:
             genbus.progress(gen_id, "using cached voice", 1, 5)
             logger.info(f"[Qwen3-TTS] Using cached persona: {voice_id}")
@@ -3637,7 +3769,6 @@ def audio_quality_persona():
         out_name = f"persona_{voice_id}_{int(time.time())}_{gen_id[:8]}.wav"
         out_path = str(FILES_DIR / out_name)
 
-        import soundfile as sf
         sf.write(out_path, wavs[0], sr)
 
         # Convert to MP3 for smaller file size (OpenClaw/WhatsApp compatibility)
@@ -3646,16 +3777,30 @@ def audio_quality_persona():
         genbus.finish(gen_id, {"audio_path": out_path, "audio_path_mp3": mp3_path})
         logger.info(f"[Qwen3-TTS] Persona speech: {out_path} (MP3: {mp3_path})")
 
-        return jsonify({
+        # Build response
+        response_data = {
             "ok": True,
             "audio_path": out_path,
             "audio_path_mp3": mp3_path,
             "voice_id": voice_id,
             "voice_designed": need_design,
+            "voice_restored": voice_restored if need_design else False,
             "model": "qwen3-tts-persona",
             "generation_id": gen_id,
             "generation_websocket_url": generation_url(),
-        }), 201
+        }
+
+        # Include voice sample for persistence if requested
+        if return_sample and ref_path and os.path.exists(ref_path):
+            try:
+                with open(ref_path, "rb") as f:
+                    audio_bytes = f.read()
+                response_data["voice_sample_base64"] = base64.b64encode(audio_bytes).decode("utf-8")
+                logger.info(f"[Qwen3-TTS] Including voice sample in response for persistence")
+            except Exception as e:
+                logger.warning(f"[Qwen3-TTS] Could not read voice sample: {e}")
+
+        return jsonify(response_data), 201
 
     except Exception as e:
         logger.exception("Qwen3-TTS Persona failed")
@@ -3666,7 +3811,6 @@ def audio_quality_persona():
 
 
 @app.route("/audio/quality/voices", methods=["GET"])
-@require_auth(LEVEL_REQUIREMENTS["audio"], allow_demo=True)
 def audio_quality_voices():
     """List cached voice prompts."""
     voices = {}
@@ -3811,7 +3955,6 @@ def _load_ace_step_llm():
 
 
 @app.route("/audio/music", methods=["POST"])
-@require_auth(LEVEL_REQUIREMENTS["audio"], allow_demo=True)
 def audio_music():
     """
     Generate music using ACE-Step v1.5 (hybrid LM + DiT).
@@ -3974,7 +4117,6 @@ def audio_music():
 
 
 @app.route("/audio/info", methods=["GET"])
-@require_auth(LEVEL_REQUIREMENTS["audio"], allow_demo=True)
 def audio_info():
     '''Audio model capabilities.'''
     return jsonify({
@@ -4026,7 +4168,6 @@ def audio_info():
 # =============================================================================
 
 @app.route("/video", methods=["POST"])
-@require_auth(LEVEL_REQUIREMENTS["video"], allow_demo=True)
 def ltx2_gguf_video():
     """
     LTX-2 (19B DiT) Video generation using distilled Q3_K_S GGUF quantization.
@@ -4392,7 +4533,6 @@ def ltx2_gguf_video():
 # =============================================================================
 
 @app.route("/training/datasets", methods=["GET"])
-@require_auth(LEVEL_REQUIREMENTS["training"], allow_demo=False)
 def list_training_datasets():
     """List available training datasets."""
     datasets_dir = MODEL_DIR / "datasets"
@@ -4412,7 +4552,6 @@ def list_training_datasets():
 
 
 @app.route("/training/datasets", methods=["POST"])
-@require_auth(LEVEL_REQUIREMENTS["training"], allow_demo=False)
 def create_training_dataset():
     """Create a new training dataset from uploaded files."""
     data = request.get_json(silent=True) or {}
@@ -4457,7 +4596,6 @@ def create_training_dataset():
 
 
 @app.route("/training/datasets/<dataset_id>", methods=["DELETE"])
-@require_auth(LEVEL_REQUIREMENTS["training"], allow_demo=False)
 def delete_training_dataset(dataset_id):
     """Delete a training dataset."""
     dataset_dir = MODEL_DIR / "datasets" / dataset_id
@@ -4473,7 +4611,6 @@ def delete_training_dataset(dataset_id):
 # =============================================================================
 
 @app.route("/training/llm/start", methods=["POST"])
-@require_auth(LEVEL_REQUIREMENTS["training"], allow_demo=False)
 def start_llm_finetuning():
     """
     Start LLM finetuning using LoRA/QLoRA.
@@ -4802,7 +4939,6 @@ def start_llm_finetuning():
 # =============================================================================
 
 @app.route("/training/sdxl/start", methods=["POST"])
-@require_auth(LEVEL_REQUIREMENTS["training"], allow_demo=False)
 def start_sdxl_lora_training():
     """
     Start SDXL LoRA training from image dataset.
@@ -5153,7 +5289,6 @@ def start_sdxl_lora_training():
 # =============================================================================
 
 @app.route("/training/models", methods=["GET"])
-@require_auth(LEVEL_REQUIREMENTS["training"], allow_demo=False)
 def list_trained_models():
     """List all trained models (LoRAs, finetunes)."""
     trained_dir = MODEL_DIR / "trained"
@@ -5173,7 +5308,6 @@ def list_trained_models():
 
 
 @app.route("/training/models/<model_id>", methods=["DELETE"])
-@require_auth(LEVEL_REQUIREMENTS["training"], allow_demo=False)
 def delete_trained_model(model_id):
     """Delete a trained model."""
     model_dir = MODEL_DIR / "trained" / model_id
@@ -5185,7 +5319,6 @@ def delete_trained_model(model_id):
 
 
 @app.route("/training/models/<model_id>/export", methods=["POST"])
-@require_auth(LEVEL_REQUIREMENTS["training"], allow_demo=False)
 def export_trained_model(model_id):
     """Export a trained model to a specified path."""
     model_dir = MODEL_DIR / "trained" / model_id
@@ -5216,7 +5349,6 @@ def export_trained_model(model_id):
 # =============================================================================
 
 @app.route("/training/info", methods=["GET"])
-@require_auth(LEVEL_REQUIREMENTS["training"], allow_demo=False)
 def training_info():
     """Get training capabilities based on current device."""
     device = DeviceManager.get_device()
@@ -5324,7 +5456,6 @@ def _unload_qwen3_vision():
 
 
 @app.route("/vision/analyze", methods=["POST"])
-@require_auth(LEVEL_REQUIREMENTS["vision"], allow_demo=True)
 def vision_analyze():
     """
     Analyze an image using Qwen3-VL 2B vision-language model.
@@ -5458,7 +5589,6 @@ def vision_analyze():
 
 
 @app.route("/vision/unload", methods=["POST"])
-@require_auth(LEVEL_REQUIREMENTS["vision"], allow_demo=True)
 def vision_unload():
     """Unload the vision model to free memory."""
     _unload_qwen3_vision()
@@ -5501,13 +5631,22 @@ def memory_clear():
     Clear GPU/CPU memory after generation to free resources.
     Called by frontend between generation tasks.
     Aggressively unloads ALL cached models to free maximum memory.
+
+    Optional JSON body:
+    - preserve_tts: bool - if true, keep voice prompt cache (for voice consistency during chat)
+                           TTS models themselves are always unloaded to free VRAM.
     """
     # Handle CORS preflight
     if request.method == "OPTIONS":
         return jsonify({"success": True}), 200
 
     try:
+        # Check if we should preserve TTS models
+        data = request.get_json(silent=True) or {}
+        preserve_tts = data.get("preserve_tts", False)
+
         unloaded = []
+        preserved = []
 
         # Unload ACE-Step v1.5 DiT handler
         global _ace_step_dit
@@ -5529,7 +5668,7 @@ def memory_clear():
             _ace_step_llm = None
             unloaded.append("ace_step_llm")
 
-        # Unload Kokoro TTS pipeline
+        # Always unload Kokoro TTS pipeline (voice cache is preserved separately)
         global _kokoro_pipeline
         if _kokoro_pipeline is not None:
             try:
@@ -5539,7 +5678,8 @@ def memory_clear():
             _kokoro_pipeline = None
             unloaded.append("kokoro_tts")
 
-        # Unload Qwen3 TTS models
+        # Always unload Qwen3 TTS models (large VRAM consumers)
+        # Voice cache is preserved separately when preserve_tts=True
         global _qwen3_tts_base, _qwen3_tts_design
         if _qwen3_tts_base is not None:
             try:
@@ -5578,12 +5718,15 @@ def memory_clear():
                 pass
             _qwen3_vl_processor = None
 
-        # Clear voice prompt cache (can hold large tensors)
+        # Voice prompt cache: preserve when preserve_tts=True (small, enables voice consistency)
         global _voice_prompt_cache
         if _voice_prompt_cache:
             cache_size = len(_voice_prompt_cache)
-            _voice_prompt_cache.clear()
-            unloaded.append(f"voice_cache({cache_size})")
+            if preserve_tts:
+                preserved.append(f"voice_cache({cache_size})")
+            else:
+                _voice_prompt_cache.clear()
+                unloaded.append(f"voice_cache({cache_size})")
 
         # Clear any GGUF model locks state
         global _GGUF_LOCKS_GUARD
@@ -5627,8 +5770,8 @@ def memory_clear():
         except ImportError:
             pass
 
-        logger.info(f"[Memory] Aggressively cleared RAM/VRAM. Unloaded: {unloaded or 'none cached'}")
-        return jsonify({"success": True, "message": "Memory cleared", "unloaded": unloaded})
+        logger.info(f"[Memory] Aggressively cleared RAM/VRAM. Unloaded: {unloaded or 'none cached'}, Preserved: {preserved or 'none'}")
+        return jsonify({"success": True, "message": "Memory cleared", "unloaded": unloaded, "preserved": preserved})
     except Exception as e:
         logger.warning(f"[Memory] Clear failed: {e}")
         return jsonify({"success": False, "error": str(e)}), 500

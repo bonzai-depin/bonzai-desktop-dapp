@@ -57,264 +57,689 @@
             </div>
           </div>
 
-          <!-- PAYOUT HISTORY -->
-          <div class="models__activity--payouts mt-5 pt-5 mb-5">
-            <div class="level">
-              <div class="level-left">
-                <div class="level-item">
-                  <h2 class="fira-sans-condensed-black-italic has-text-left mt-0">
-                    <span class="material-symbols-outlined is-size-1 mr-2">
-                      trophy
-                    </span>
-                    Payout History
-                  </h2>
-                </div>
-              </div>
-              <div class="level-right">
-                <div class="level-item">
-                  <button
-                    class="button is-info is-outlined is-medium"
-                    @click="requestOpenNetworkModal()"
-                    title="Configure Peer-to-Peer Network"
-                  >
-                    <span class="material-symbols-outlined">
-                      settings
-                    </span>
-                  </button>
-                </div>
-              </div>
-            </div>
-            <p>
-              Configure P2P mode to serve Model Training to peers and earn x402 USDC.
-            </p>
+          <!-- ACCESS REQUIREMENTS -->
+          <AccessRequirements
+            ref="accessRef"
+            level="LVL6"
+            :is-generating="training.active"
+            :demo-prompt="DEMO_PROMPT"
+            @access-changed="onAccessChanged"
+            @demo-generate="onDemoGenerate"
+          />
+
+          <!-- ═══════════════════════════════════════════════════════════ -->
+          <!-- MAIN TABS: Dataset / Run                                   -->
+          <!-- ═══════════════════════════════════════════════════════════ -->
+          <div class="tabs is-large is-fullwidth mb-5">
+            <ul>
+              <li :class="{ 'is-active': activeTab === 'dataset' }">
+                <a
+                  @click.prevent="activeTab = 'dataset'"
+                  class="fira-sans-condensed-black-italic is-size-1"
+                >
+                  <span class="material-symbols-outlined mr-2 is-size-1">
+                    dataset
+                  </span>
+                  Dataset
+                </a>
+              </li>
+              <li :class="{ 'is-active': activeTab === 'run' }">
+                <a
+                  @click.prevent="activeTab = 'run'"
+                  class="fira-sans-condensed-black-italic is-size-1"
+                >
+                  <span class="material-symbols-outlined mr-2 is-size-1">
+                    start
+                  </span>
+                  Run
+                </a>
+              </li>
+            </ul>
           </div>
 
-          <hr class="mb-5" />
+          <!-- ═══════════════════════════════════════════════════════════ -->
+          <!-- DATASET TAB                                                -->
+          <!-- ═══════════════════════════════════════════════════════════ -->
+          <div v-if="activeTab === 'dataset'">
+            <!-- DATASET STUDIO -->
+            <div class="models__activity--payouts mb-5">
+              <h3
+                class="fira-sans-condensed-black-italic is-size-1 mb-3 has-text-left"
+              >
+                Dataset Studio
+              </h3>
+              <p class="has-text-left has-text-white">
+                Use the studio to prepare and export your training data as a
+                JSONL file.
+              </p>
+              <hr />
 
-          <div class="models__activity--payouts">
-            <div class="columns">
-              <div class="column is-12">
-                <!-- ACCESS REQUIREMENTS -->
-                <AccessRequirements
-                  ref="accessRef"
-                  level="LVL6"
-                  :is-generating="training.active"
-                  :demo-prompt="DEMO_PROMPT"
-                  @access-changed="onAccessChanged"
-                  @demo-generate="onDemoGenerate"
-                />
-
-                <!-- TRAINING TYPE SELECTION -->
-                <div class="control mb-5 has-text-left">
-                  <input
-                    v-model="trainingType"
-                    :value="'llm'"
-                    id="type_llm"
-                    type="radio"
-                    name="trainingType"
-                    checked
-                    :disabled="!hasAccess"
-                  />
-                  <label for="type_llm" class="radio mr-3">
-                    <span
-                      class="material-symbols-outlined"
-                      style="font-size: 32px !important"
+              <div class="studio-layout">
+                <!-- LEFT: Entry list -->
+                <div class="studio-sidebar has-text-left">
+                  <div class="studio-example-list">
+                    <div
+                      v-for="ex in studio.examples"
+                      :key="ex.id"
+                      class="studio-example-item"
+                      :class="{ 'is-active': studio.selected?.id === ex.id }"
+                      @click="studioSelect(ex)"
                     >
-                      chat
-                    </span>
-                    Chat Model
-                    <span class="tag is-info is-light ml-1">LLaMa</span>
-                  </label>
-
-                  <input
-                    v-model="trainingType"
-                    :value="'sdxl'"
-                    id="type_sdxl"
-                    type="radio"
-                    name="trainingType"
-                    :disabled="!hasAccess"
-                  />
-                  <label for="type_sdxl" class="radio">
-                    <span
-                      class="material-symbols-outlined"
-                      style="font-size: 32px !important"
-                    >
-                      image
-                    </span>
-                    Image Model
-                    <span class="tag is-warning is-light ml-1">SDXL</span>
-                  </label>
-                </div>
-
-                <!-- DATASET MANAGEMENT -->
-                <div class="models__activity--payouts mb-5">
-                  <h3
-                    class="fira-sans-condensed-black-italic is-size-4 mb-3 has-text-left"
-                  >
-                    <span class="material-symbols-outlined mr-2">dataset</span>
-                    Training Datasets
-                  </h3>
-
-                  <div class="buttons mb-3">
-                    <button
-                      class="button is-success is-medium mr-5"
-                      @click="showCreateDataset = true"
-                    >
-                      <span class="material-symbols-outlined mr-1">add</span>
-                      Create Dataset
-                    </button>
-                    <button
-                      class="button is-info is-medium"
-                      @click="loadDatasets"
-                    >
-                      <span class="material-symbols-outlined mr-1">
-                        refresh
+                      <span class="studio-example-title">
+                        {{ studioItemLabel(ex) }}
                       </span>
-                      Refresh
-                    </button>
+                    </div>
+                    <div
+                      v-if="studio.examples.length === 0"
+                      class="has-text-grey-light is-size-7 p-3"
+                    >
+                      No examples yet. Click Add New.
+                    </div>
                   </div>
 
-                  <!-- Dataset List -->
-                  <div v-if="datasets.length" class="dataset-list">
-                    <div
-                      v-for="ds in filteredDatasets"
-                      :key="ds.id"
-                      class="dataset-item"
-                      :class="{ 'is-selected': selectedDataset?.id === ds.id }"
-                      @click="selectedDataset = ds"
-                    >
-                      <div class="dataset-info">
-                        <span class="material-symbols-outlined mr-2">
-                          {{
-                            ds.type === "text" ? "description" : "photo_library"
-                          }}
+                  <button
+                    class="button is-success is-medium is-fullwidth mt-3"
+                    @click="studioAddNew"
+                  >
+                    <span class="material-symbols-outlined mr-1">add</span>
+                    Add New Data
+                  </button>
+                </div>
+
+                <!-- RIGHT: Editor -->
+                <div class="studio-main has-text-left">
+                  <div v-if="studio.selected" class="studio-preview">
+                    <!-- Mode toggle -->
+                    <div class="control mb-3 has-text-left studio-mode-toggle">
+                      <input
+                        v-model="studio.editMode"
+                        value="game"
+                        id="studio_mode_game"
+                        type="radio"
+                        name="studioMode"
+                      />
+                      <label for="studio_mode_game" class="radio mr-3">
+                        <span
+                          class="material-symbols-outlined"
+                          style="font-size: 18px !important"
+                        >
+                          sports_esports
                         </span>
-                        <div>
-                          <strong>{{ ds.name }}</strong>
-                          <p class="is-size-7 has-text-grey-light">
-                            {{ ds.num_files }} files • {{ ds.type }}
-                          </p>
+                        Game
+                      </label>
+                      <input
+                        v-model="studio.editMode"
+                        value="text"
+                        id="studio_mode_text"
+                        type="radio"
+                        name="studioMode"
+                      />
+                      <label for="studio_mode_text" class="radio">
+                        <span
+                          class="material-symbols-outlined"
+                          style="font-size: 18px !important"
+                        >
+                          article
+                        </span>
+                        Text
+                      </label>
+                    </div>
+
+                    <!-- Tier dropdown (game mode only) -->
+                    <div v-if="studio.editMode === 'game'" class="field mb-3">
+                      <label
+                        class="label is-small fira-sans-condensed-black-italic"
+                      >
+                        TIER
+                      </label>
+                      <div class="studio-tier-select">
+                        <select v-model.number="studio.editTier">
+                          <option
+                            v-for="t in GAME_TIERS"
+                            :key="t.id"
+                            :value="t.id"
+                          >
+                            {{ t.id }}. {{ t.name }} — {{ t.desc }}
+                          </option>
+                        </select>
+                      </div>
+                    </div>
+
+                    <!-- Game mode: 3 textareas + libraries -->
+                    <div v-if="studio.editMode === 'game'">
+                      <div class="field mb-3 fira-sans-condensed-black-italic">
+                        <label class="label is-small">HTML</label>
+                        <textarea
+                          v-model="studio.editHtml"
+                          class="studio-code-area"
+                          spellcheck="false"
+                          placeholder="HTML markup..."
+                          rows="6"
+                        ></textarea>
+                      </div>
+                      <div class="field mb-3">
+                        <label
+                          class="label is-small fira-sans-condensed-black-italic"
+                        >
+                          CSS
+                        </label>
+                        <textarea
+                          v-model="studio.editCss"
+                          class="studio-code-area"
+                          spellcheck="false"
+                          placeholder="CSS styles..."
+                          rows="6"
+                        ></textarea>
+                      </div>
+                      <div class="field mb-3">
+                        <label class="label is-small">JS</label>
+                        <textarea
+                          v-model="studio.editJs"
+                          class="studio-code-area"
+                          spellcheck="false"
+                          placeholder="JavaScript code..."
+                          rows="6"
+                        ></textarea>
+                      </div>
+
+                      <!-- Libraries -->
+                      <div class="field mb-3">
+                        <label
+                          class="label is-small fira-sans-condensed-black-italic"
+                        >
+                          LIBRARIES
+                        </label>
+                        <div
+                          class="studio-lib-tags"
+                          v-if="studio.editLibraries.length"
+                        >
+                          <span
+                            v-for="(lib, idx) in studio.editLibraries"
+                            :key="idx"
+                            class="studio-lib-tag"
+                          >
+                            {{ lib }}
+                            <button
+                              class="delete is-small"
+                              @click="studioRemoveLib(idx)"
+                            ></button>
+                          </span>
+                        </div>
+                        <div class="studio-lib-input-row">
+                          <input
+                            v-model="studio.newLibInput"
+                            class="input is-small"
+                            type="text"
+                            placeholder="e.g. three.js, cannon-es, gsap"
+                            @keydown.enter.prevent="studioAddLib"
+                          />
                         </div>
                       </div>
+                    </div>
+
+                    <!-- Text mode: 1 large textarea -->
+                    <div v-else>
+                      <div class="field mb-3">
+                        <label
+                          class="label is-small fira-sans-condensed-black-italic"
+                        >
+                          TEXT
+                        </label>
+                        <textarea
+                          v-model="studio.editText"
+                          class="studio-code-area"
+                          spellcheck="false"
+                          placeholder="Paste or write your training text..."
+                          rows="16"
+                        ></textarea>
+                      </div>
+                    </div>
+
+                    <div class="field mb-3 mt-4">
+                      <label
+                        class="label is-small fira-sans-condensed-black-italic"
+                      >
+                        DESCRIPTION
+                      </label>
+                      <div class="studio-describe-row">
+                        <textarea
+                          v-model="studio.editDescription"
+                          class="studio-description-area"
+                          placeholder="Detailed instruction for this training entry..."
+                          rows="3"
+                        ></textarea>
+                      </div>
+                    </div>
+
+                    <div class="studio-actions">
                       <button
-                        class="button is-small is-danger"
-                        @click.stop="deleteDataset(ds.id)"
-                        title="Delete dataset"
+                        class="button is-link is-medium studio-describe-btn mr-5"
+                        @click="studioDescribe"
+                        :disabled="studio.describing || !studioHasContent"
+                      >
+                        <span
+                          v-if="studio.describing"
+                          class="loader mr-1"
+                        ></span>
+                        Generate Description
+                      </button>
+                      <button
+                        class="button is-success is-medium mr-5"
+                        @click="studioSave"
+                      >
+                        Save Data
+                      </button>
+                      <button
+                        class="button is-danger is-medium"
+                        @click="studioDelete"
                       >
                         <span class="material-symbols-outlined">delete</span>
                       </button>
                     </div>
                   </div>
-                </div>
 
-                <!-- LLM TRAINING CONFIGURATION -->
-                <div
-                  v-if="trainingType === 'llm'"
-                  class="models__activity--payouts mb-5"
-                >
-                  <h3 class="fira-sans-condensed-black-italic is-size-3 mb-3">
-                    <span class="material-symbols-outlined mr-2 is-size-2">
-                      tune
+                  <div v-else class="studio-empty has-text-white">
+                    <span
+                      class="material-symbols-outlined"
+                      style="font-size: 128px"
+                    >
+                      dataset
                     </span>
-                    LoRA Configuration
-                  </h3>
+                    <p class="has-text-grey-light mt-2">No data selected.</p>
+                  </div>
+                </div>
+              </div>
 
-                  <div class="field has-text-left mt-5">
+              <!-- Bottom bar -->
+              <div class="studio-bottom-bar mt-4">
+                <span
+                  class="is-size-1 has-text-white fira-sans-condensed-black-italic"
+                >
+                  {{ studio.examples.length }} entries
+                </span>
+                <button
+                  class="button is-success is-large"
+                  @click="studioExport"
+                  :disabled="studio.examples.length === 0"
+                >
+                  <span class="material-symbols-outlined mr-2">download</span>
+                  Export JSONL
+                </button>
+              </div>
+            </div>
+
+            <!-- UPLOAD DATASET -->
+            <div class="models__activity--payouts mb-5">
+              <div class="buttons mb-3">
+                <button
+                  class="button is-success is-medium mr-5"
+                  @click="showCreateDataset = true"
+                >
+                  <span class="material-symbols-outlined mr-1">add</span>
+                  Create Dataset
+                </button>
+                <button class="button is-info is-medium" @click="loadDatasets">
+                  <span class="material-symbols-outlined mr-1">refresh</span>
+                  Refresh
+                </button>
+              </div>
+              <hr />
+
+              <!-- Dataset List -->
+              <div v-if="datasets.length" class="dataset-list">
+                <div v-for="ds in datasets" :key="ds.id" class="dataset-item">
+                  <div class="dataset-info">
+                    <span class="material-symbols-outlined mr-2">
+                      {{ ds.type === "text" ? "description" : "photo_library" }}
+                    </span>
+                    <div>
+                      <strong>{{ ds.name }}</strong>
+                      <p class="is-size-7 has-text-grey-light">
+                        {{ ds.num_files || ds.num_examples || "?" }}
+                        {{ ds.type === "text" ? "examples" : "files" }} •
+                        {{ ds.type }}
+                      </p>
+                    </div>
+                  </div>
+                  <button
+                    class="button is-small is-danger"
+                    @click.stop="deleteDataset(ds.id)"
+                    title="Delete dataset"
+                  >
+                    <span class="material-symbols-outlined">delete</span>
+                  </button>
+                </div>
+              </div>
+              <div v-else class="notification is-info is-size-6 p-3">
+                No datasets yet. Create one above, or prepare your data using
+                the Dataset Studio.
+              </div>
+            </div>
+          </div>
+
+          <!-- ═══════════════════════════════════════════════════════════ -->
+          <!-- RUN TAB                                                    -->
+          <!-- ═══════════════════════════════════════════════════════════ -->
+          <div v-if="activeTab === 'run'">
+            <div class="models__activity--payouts mb-5">
+              <!-- TRAINING TYPE SELECTION -->
+              <div class="control mb-5 has-text-left">
+                <input
+                  v-model="trainingType"
+                  :value="'llm'"
+                  id="type_llm"
+                  type="radio"
+                  name="trainingType"
+                  checked
+                  :disabled="!hasAccess"
+                />
+                <label for="type_llm" class="radio mr-3">
+                  <span
+                    class="material-symbols-outlined"
+                    style="font-size: 32px !important"
+                  >
+                    chat
+                  </span>
+                  Chat Model
+                  <span class="tag is-info is-light ml-1">LLaMa</span>
+                </label>
+                <input
+                  v-model="trainingType"
+                  :value="'sdxl'"
+                  id="type_sdxl"
+                  type="radio"
+                  name="trainingType"
+                  :disabled="!hasAccess"
+                />
+                <label for="type_sdxl" class="radio">
+                  <span
+                    class="material-symbols-outlined"
+                    style="font-size: 32px !important"
+                  >
+                    image
+                  </span>
+                  Image Model
+                  <span class="tag is-warning is-light ml-1">SDXL</span>
+                </label>
+              </div>
+
+              <!-- DATASET PICKER -->
+              <div class="field has-text-left mb-5">
+                <label class="label fira-sans-condensed-black-italic is-size-5">
+                  <span
+                    class="material-symbols-outlined mr-1"
+                    style="vertical-align: middle"
+                  >
+                    dataset
+                  </span>
+                  Training Dataset
+                </label>
+                <div v-if="filteredDatasets.length" class="dataset-list">
+                  <div
+                    v-for="ds in filteredDatasets"
+                    :key="ds.id"
+                    class="dataset-item"
+                    :class="{ 'is-selected': selectedDataset?.id === ds.id }"
+                    @click="selectedDataset = ds"
+                  >
+                    <div class="dataset-info">
+                      <span class="material-symbols-outlined mr-2">
+                        {{
+                          ds.type === "text" ? "description" : "photo_library"
+                        }}
+                      </span>
+                      <div>
+                        <strong>{{ ds.name }}</strong>
+                        <p class="is-size-7 has-text-grey-light">
+                          {{ ds.num_files || ds.num_examples || "?" }}
+                          {{ ds.type === "text" ? "examples" : "files" }} •
+                          {{ ds.type }}
+                        </p>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+                <div v-else class="has-text-grey-light is-size-6 p-3">
+                  No {{ trainingType === "llm" ? "text" : "image" }} datasets
+                  found.
+                  <a
+                    @click.prevent="activeTab = 'dataset'"
+                    class="has-text-info"
+                    style="cursor: pointer"
+                  >
+                    Go to Dataset tab
+                  </a>
+                  to create one.
+                </div>
+              </div>
+            </div>
+
+            <!-- LLM TRAINING CONFIGURATION -->
+            <div
+              v-if="trainingType === 'llm'"
+              class="models__activity--payouts mb-5"
+            >
+              <h3 class="fira-sans-condensed-black-italic is-size-3 mb-3">
+                <span class="material-symbols-outlined mr-2 is-size-2">
+                  tune
+                </span>
+                LoRA Configuration
+              </h3>
+
+              <div class="field has-text-left mt-5">
+                <label class="label fira-sans-condensed-black-italic is-size-5">
+                  Base Model
+                </label>
+                <div class="select is-fullwidth is-medium mb-5 is-large">
+                  <select v-model="llmConfig.base_model">
+                    <option value="llama-3.2-1b">LLaMa 3.2 1B (Fastest)</option>
+                    <option value="llama-3.2-3b">
+                      LLaMa 3.2 3B (Balanced)
+                    </option>
+                    <option value="llama-3.1-8b">
+                      LLaMa 3.1 8B (Best Quality)
+                    </option>
+                  </select>
+                </div>
+              </div>
+
+              <div class="columns has-text-left mb-5">
+                <div class="column">
+                  <div class="field">
                     <label
                       class="label fira-sans-condensed-black-italic is-size-5"
                     >
-                      Base Model
+                      Epochs: {{ llmConfig.epochs }}
                     </label>
-                    <div class="select is-fullwidth is-medium mb-5 is-large">
-                      <select v-model="llmConfig.base_model">
-                        <option value="llama-3.2-1b">
-                          LLaMa 3.2 1B (Fastest)
-                        </option>
-                        <option value="llama-3.2-3b">
-                          LLaMa 3.2 3B (Balanced)
-                        </option>
-                        <option value="llama-3.1-8b">
-                          LLaMa 3.1 8B (Best Quality)
-                        </option>
+                    <input
+                      class="slider is-fullwidth p-4"
+                      type="range"
+                      v-model.number="llmConfig.epochs"
+                      min="1"
+                      max="10"
+                      step="1"
+                    />
+                  </div>
+                </div>
+                <div class="column">
+                  <div class="field">
+                    <label
+                      class="label fira-sans-condensed-black-italic is-size-5"
+                    >
+                      Batch Size
+                    </label>
+                    <div class="select is-fullwidth is-large">
+                      <select v-model.number="llmConfig.batch_size">
+                        <option :value="1">1 (Low VRAM)</option>
+                        <option :value="2">2</option>
+                        <option :value="4">4 (Default)</option>
+                        <option :value="8">8 (High VRAM)</option>
                       </select>
                     </div>
                   </div>
+                </div>
+              </div>
 
-                  <div class="columns has-text-left mb-5">
-                    <div class="column">
-                      <div class="field">
-                        <label
-                          class="label fira-sans-condensed-black-italic is-size-5"
-                        >
-                          Epochs: {{ llmConfig.epochs }}
-                        </label>
-                        <input
-                          class="slider is-fullwidth p-4"
-                          type="range"
-                          v-model.number="llmConfig.epochs"
-                          min="1"
-                          max="10"
-                          step="1"
-                        />
-                      </div>
-                    </div>
-                    <div class="column">
-                      <div class="field">
-                        <label
-                          class="label fira-sans-condensed-black-italic is-size-5"
-                        >
-                          Batch Size
-                        </label>
-                        <div class="select is-fullwidth is-large">
-                          <select v-model.number="llmConfig.batch_size">
-                            <option :value="1">1 (Low VRAM)</option>
-                            <option :value="2">2</option>
-                            <option :value="4">4 (Default)</option>
-                            <option :value="8">8 (High VRAM)</option>
-                          </select>
-                        </div>
-                      </div>
+              <div class="columns has-text-left mb-5">
+                <div class="column">
+                  <div class="field">
+                    <label
+                      class="label fira-sans-condensed-black-italic is-size-5"
+                    >
+                      LoRA Rank: {{ llmConfig.lora_r }}
+                    </label>
+                    <input
+                      class="slider is-fullwidth p-4"
+                      type="range"
+                      v-model.number="llmConfig.lora_r"
+                      min="4"
+                      max="64"
+                      step="4"
+                    />
+                  </div>
+                </div>
+                <div class="column">
+                  <div class="field">
+                    <label
+                      class="label fira-sans-condensed-black-italic is-size-5"
+                    >
+                      LoRA Alpha: {{ llmConfig.lora_alpha }}
+                    </label>
+                    <input
+                      class="slider is-fullwidth p-4"
+                      type="range"
+                      v-model.number="llmConfig.lora_alpha"
+                      min="8"
+                      max="128"
+                      step="8"
+                    />
+                  </div>
+                </div>
+              </div>
+
+              <div class="field has-text-left">
+                <label class="label fira-sans-condensed-black-italic is-size-5">
+                  Learning Rate
+                </label>
+                <input
+                  class="input is-large"
+                  type="number"
+                  v-model.number="llmConfig.learning_rate"
+                  step="0.00001"
+                />
+              </div>
+
+              <div class="field mt-5">
+                <label class="checkbox fira-sans-condensed-black-italic">
+                  <input
+                    class="mr-2"
+                    type="checkbox"
+                    v-model="llmConfig.use_4bit"
+                  />
+                  4-bit Quantization
+                </label>
+              </div>
+            </div>
+
+            <!-- SDXL TRAINING CONFIGURATION -->
+            <div
+              v-if="trainingType === 'sdxl'"
+              class="models__activity--payouts mb-5 has-text-left"
+            >
+              <h3 class="fira-sans-condensed-black-italic is-size-3 mb-3">
+                <span class="material-symbols-outlined is-size-2 mr-2">
+                  tune
+                </span>
+                LoRA Configuration
+              </h3>
+
+              <div class="field mb-5 mt-5">
+                <label class="label fira-sans-condensed-black-italic is-size-5">
+                  Instance Prompt
+                  <span class="has-text-danger">*</span>
+                </label>
+                <input
+                  class="input is-large"
+                  type="text"
+                  v-model="sdxlConfig.instance_prompt"
+                  placeholder="A photo of sks person"
+                />
+                <p class="help">
+                  Use a unique token like "sks" to identify your subject.
+                </p>
+              </div>
+
+              <div class="field mb-5">
+                <label class="label fira-sans-condensed-black-italic is-size-5">
+                  Class Prompt (Optional)
+                </label>
+                <input
+                  class="input is-large"
+                  type="text"
+                  v-model="sdxlConfig.class_prompt"
+                  placeholder="A photo of a person"
+                />
+                <p class="help">
+                  General class description for prior preservation.
+                </p>
+              </div>
+
+              <div class="columns">
+                <div class="column">
+                  <div class="field">
+                    <label
+                      class="label fira-sans-condensed-black-italic is-size-5"
+                    >
+                      Training Steps: {{ sdxlConfig.epochs }}
+                    </label>
+                    <input
+                      class="slider is-fullwidth p-4"
+                      type="range"
+                      v-model.number="sdxlConfig.epochs"
+                      min="100"
+                      max="2000"
+                      step="100"
+                    />
+                  </div>
+                </div>
+                <div class="column">
+                  <div class="field mb-5">
+                    <label
+                      class="label fira-sans-condensed-black-italic is-size-5"
+                    >
+                      Resolution
+                    </label>
+                    <div class="select is-fullwidth is-large">
+                      <select v-model.number="sdxlConfig.resolution">
+                        <option :value="512">512 (Fast)</option>
+                        <option :value="768">768</option>
+                        <option :value="1024">1024 (Best)</option>
+                      </select>
                     </div>
                   </div>
+                </div>
+              </div>
 
-                  <div class="columns has-text-left mb-5">
-                    <div class="column">
-                      <div class="field">
-                        <label
-                          class="label fira-sans-condensed-black-italic is-size-5"
-                        >
-                          LoRA Rank: {{ llmConfig.lora_r }}
-                        </label>
-                        <input
-                          class="slider is-fullwidth p-4"
-                          type="range"
-                          v-model.number="llmConfig.lora_r"
-                          min="4"
-                          max="64"
-                          step="4"
-                        />
-                      </div>
-                    </div>
-                    <div class="column">
-                      <div class="field">
-                        <label
-                          class="label fira-sans-condensed-black-italic is-size-5"
-                        >
-                          LoRA Alpha: {{ llmConfig.lora_alpha }}
-                        </label>
-                        <input
-                          class="slider is-fullwidth p-4"
-                          type="range"
-                          v-model.number="llmConfig.lora_alpha"
-                          min="8"
-                          max="128"
-                          step="8"
-                        />
-                      </div>
-                    </div>
+              <div class="columns">
+                <div class="column">
+                  <div class="field">
+                    <label
+                      class="label fira-sans-condensed-black-italic is-size-5"
+                    >
+                      LoRA Rank: {{ sdxlConfig.lora_rank }}
+                    </label>
+                    <input
+                      class="slider is-fullwidth p-4"
+                      type="range"
+                      v-model.number="sdxlConfig.lora_rank"
+                      min="4"
+                      max="128"
+                      step="4"
+                    />
                   </div>
-
-                  <div class="field has-text-left">
+                </div>
+                <div class="column">
+                  <div class="field">
                     <label
                       class="label fira-sans-condensed-black-italic is-size-5"
                     >
@@ -323,228 +748,107 @@
                     <input
                       class="input is-large"
                       type="number"
-                      v-model.number="llmConfig.learning_rate"
+                      v-model.number="sdxlConfig.learning_rate"
                       step="0.00001"
                     />
                   </div>
-
-                  <div class="field mt-5">
-                    <label class="checkbox fira-sans-condensed-black-italic">
-                      <input
-                        class="mr-2"
-                        type="checkbox"
-                        v-model="llmConfig.use_4bit"
-                      />
-                      4-bit Quantization
-                    </label>
-                  </div>
-                </div>
-
-                <!-- SDXL TRAINING CONFIGURATION -->
-                <div
-                  v-if="trainingType === 'sdxl'"
-                  class="models__activity--payouts mb-5 has-text-left"
-                >
-                  <h3 class="fira-sans-condensed-black-italic is-size-3 mb-3">
-                    <span class="material-symbols-outlined is-size-2 mr-2">
-                      tune
-                    </span>
-                    LoRA Configuration
-                  </h3>
-
-                  <div class="field mb-5 mt-5">
-                    <label
-                      class="label fira-sans-condensed-black-italic is-size-5"
-                    >
-                      Instance Prompt
-                      <span class="has-text-danger">*</span>
-                    </label>
-                    <input
-                      class="input is-large"
-                      type="text"
-                      v-model="sdxlConfig.instance_prompt"
-                      placeholder="A photo of sks person"
-                    />
-                    <p class="help">
-                      Use a unique token like "sks" to identify your subject.
-                    </p>
-                  </div>
-
-                  <div class="field mb-5">
-                    <label
-                      class="label fira-sans-condensed-black-italic is-size-5"
-                    >
-                      Class Prompt (Optional)
-                    </label>
-                    <input
-                      class="input is-large"
-                      type="text"
-                      v-model="sdxlConfig.class_prompt"
-                      placeholder="A photo of a person"
-                    />
-                    <p class="help">
-                      General class description for prior preservation.
-                    </p>
-                  </div>
-
-                  <div class="columns">
-                    <div class="column">
-                      <div class="field">
-                        <label
-                          class="label fira-sans-condensed-black-italic is-size-5"
-                        >
-                          Training Steps: {{ sdxlConfig.epochs }}
-                        </label>
-                        <input
-                          class="slider is-fullwidth p-4"
-                          type="range"
-                          v-model.number="sdxlConfig.epochs"
-                          min="100"
-                          max="2000"
-                          step="100"
-                        />
-                      </div>
-                    </div>
-                    <div class="column">
-                      <div class="field mb-5">
-                        <label
-                          class="label fira-sans-condensed-black-italic is-size-5"
-                        >
-                          Resolution
-                        </label>
-                        <div class="select is-fullwidth is-large">
-                          <select v-model.number="sdxlConfig.resolution">
-                            <option :value="512">512 (Fast)</option>
-                            <option :value="768">768</option>
-                            <option :value="1024">1024 (Best)</option>
-                          </select>
-                        </div>
-                      </div>
-                    </div>
-                  </div>
-
-                  <div class="columns">
-                    <div class="column">
-                      <div class="field">
-                        <label
-                          class="label fira-sans-condensed-black-italic is-size-5"
-                        >
-                          LoRA Rank: {{ sdxlConfig.lora_rank }}
-                        </label>
-                        <input
-                          class="slider is-fullwidth p-4"
-                          type="range"
-                          v-model.number="sdxlConfig.lora_rank"
-                          min="4"
-                          max="128"
-                          step="4"
-                        />
-                      </div>
-                    </div>
-                    <div class="column">
-                      <div class="field">
-                        <label
-                          class="label fira-sans-condensed-black-italic is-size-5"
-                        >
-                          Learning Rate
-                        </label>
-                        <input
-                          class="input is-large"
-                          type="number"
-                          v-model.number="sdxlConfig.learning_rate"
-                          step="0.00001"
-                        />
-                      </div>
-                    </div>
-                  </div>
-
-                  <div class="field fira-sans-condensed-black-italic is-size-5">
-                    <label class="checkbox">
-                      <input
-                        type="checkbox"
-                        v-model="sdxlConfig.use_8bit_adam"
-                        class="mr-2"
-                      />
-                      Use 8-bit Adam
-                    </label>
-                  </div>
-                </div>
-
-                <!-- START TRAINING BUTTON -->
-                <button
-                  class="button is-danger is-large"
-                  @click="startTraining"
-                  :disabled="!canStartTraining || training.active"
-                >
-                  <span class="material-symbols-outlined mr-2 is-size-2">
-                    exercise
-                  </span>
-                  Start Training Now
-                </button>
-
-                <!-- TRAINED MODELS -->
-                <div
-                  v-if="trainedModels.length"
-                  class="notification is-success mb-5"
-                >
-                  <h3 class="fira-sans-condensed-black-italic is-size-4 mb-3">
-                    <span class="material-symbols-outlined mr-2">verified</span>
-                    Trained Models
-                  </h3>
-
-                  <div
-                    v-for="model in trainedModels"
-                    :key="model.id"
-                    class="trained-model-item"
-                  >
-                    <div class="model-info">
-                      <span class="tag is-dark mr-2">
-                        {{ model.type === "llm_lora" ? "🧠 LLM" : "🎨 SDXL" }}
-                      </span>
-                      <div>
-                        <strong>{{ model.id }}</strong>
-                        <p class="is-size-7">
-                          {{ model.base_model }} • Loss:
-                          {{ model.final_loss?.toFixed(4) }}
-                        </p>
-                      </div>
-                    </div>
-                    <div class="buttons">
-                      <button
-                        class="button is-small is-info"
-                        @click="exportModel(model)"
-                        title="Export model"
-                      >
-                        <span class="material-symbols-outlined">download</span>
-                      </button>
-                      <button
-                        class="button is-small is-warning"
-                        @click="mintModelNFT(model)"
-                        title="Mint as NFT"
-                      >
-                        <span class="material-symbols-outlined">token</span>
-                      </button>
-                      <button
-                        class="button is-small is-danger"
-                        @click="deleteModel(model.id)"
-                        title="Delete model"
-                      >
-                        <span class="material-symbols-outlined">delete</span>
-                      </button>
-                    </div>
-                  </div>
-                </div>
-
-                <!-- TRAINING ERROR -->
-                <div
-                  v-if="training.error"
-                  class="notification is-danger"
-                  style="margin-bottom: 1rem"
-                >
-                  <strong>Training failed:</strong>
-                  {{ training.error }}
                 </div>
               </div>
+
+              <div class="field fira-sans-condensed-black-italic is-size-5">
+                <label class="checkbox">
+                  <input
+                    type="checkbox"
+                    v-model="sdxlConfig.use_8bit_adam"
+                    class="mr-2"
+                  />
+                  Use 8-bit Adam
+                </label>
+              </div>
+            </div>
+
+            <div class="models__activity--payouts">
+              <!-- START TRAINING BUTTON -->
+              <button
+                class="button is-danger is-large"
+                @click="startTraining"
+                :disabled="!canStartTraining || training.active"
+              >
+                <span class="material-symbols-outlined mr-2 is-size-2">
+                  exercise
+                </span>
+                Start Training Now
+              </button>
+            </div>
+
+            <!-- TRAINED MODELS -->
+            <div
+              v-if="trainedModels.length"
+              class="notification is-success mb-5 mt-5"
+            >
+              <h3 class="fira-sans-condensed-black-italic is-size-4 mb-3">
+                <span class="material-symbols-outlined mr-2">verified</span>
+                Trained Models
+              </h3>
+              <div
+                v-for="model in trainedModels"
+                :key="model.id"
+                class="trained-model-item"
+              >
+                <div class="model-info">
+                  <span class="tag is-dark mr-2">
+                    {{ model.type === "llm_lora" ? "🧠 LLM" : "🎨 SDXL" }}
+                  </span>
+                  <div>
+                    <strong>{{ model.id }}</strong>
+                    <p class="is-size-7">
+                      {{ model.base_model }} • Loss:
+                      {{ model.final_loss?.toFixed(4) }}
+                    </p>
+                  </div>
+                </div>
+                <div class="buttons">
+                  <button
+                    class="button is-small is-info"
+                    @click="exportModel(model)"
+                    title="Export model"
+                  >
+                    <span class="material-symbols-outlined">download</span>
+                  </button>
+                  <button
+                    class="button is-small is-warning"
+                    @click="mintModelNFT(model)"
+                    title="Mint as NFT"
+                  >
+                    <span class="material-symbols-outlined">token</span>
+                  </button>
+                  <button
+                    class="button is-small is-link"
+                    @click="launchModelToken(model)"
+                    :disabled="!model.contentTokenId"
+                    :title="model.contentTokenId ? 'Issue ERC-20 Token' : 'Mint as NFT first'"
+                  >
+                    <span class="material-symbols-outlined">currency_exchange</span>
+                  </button>
+                  <button
+                    class="button is-small is-danger"
+                    @click="deleteModel(model.id)"
+                    title="Delete model"
+                  >
+                    <span class="material-symbols-outlined">delete</span>
+                  </button>
+                </div>
+              </div>
+            </div>
+
+            <!-- TRAINING ERROR -->
+            <div
+              v-if="training.error"
+              class="notification is-danger"
+              style="margin-bottom: 1rem"
+            >
+              <strong>Training failed:</strong>
+              {{ training.error }}
             </div>
           </div>
         </div>
@@ -569,9 +873,7 @@
         </div>
 
         <div class="dataset-modal-header has-text-center">
-          <span class="material-symbols-outlined is-size-1">
-            dataset
-          </span>
+          <span class="material-symbols-outlined is-size-1">dataset</span>
           <h2 class="fira-sans-condensed-black-italic is-size-3">
             Create Training Dataset
           </h2>
@@ -581,15 +883,22 @@
           <!-- Dataset Type Preview -->
           <div class="dataset-type-preview">
             <div class="dataset-modal-status mb-4">
-              <span class="dataset-status-pill fira-sans-condensed-black-italic is-size-5">
-                {{ newDataset.type === 'text' ? 'TEXT DATASET' : 'IMAGE DATASET' }}
+              <span
+                class="dataset-status-pill fira-sans-condensed-black-italic is-size-5"
+              >
+                {{
+                  newDataset.type === "text" ? "TEXT DATASET" : "IMAGE DATASET"
+                }}
               </span>
             </div>
             <div class="dataset-type-tags">
               <span class="dataset-tag fira-sans-condensed-black-italic">
-                {{ newDataset.type === 'text' ? 'LLaMa' : 'SDXL' }}
+                {{ newDataset.type === "text" ? "LLaMa" : "SDXL" }}
               </span>
-              <span v-if="newDataset.files.length" class="dataset-tag is-count fira-sans-condensed-black-italic">
+              <span
+                v-if="newDataset.files.length"
+                class="dataset-tag is-count fira-sans-condensed-black-italic"
+              >
                 {{ newDataset.files.length }} files
               </span>
             </div>
@@ -623,7 +932,8 @@
 
             <div class="dataset-field">
               <label class="dataset-label fira-sans-condensed-black-italic">
-                Upload {{ newDataset.type === "text" ? "Text Files" : "Images" }}
+                Upload
+                {{ newDataset.type === "text" ? "Text Files" : "Images" }}
               </label>
               <div class="dataset-upload-zone">
                 <input
@@ -639,12 +949,19 @@
                   id="dataset-file-input"
                 />
                 <label for="dataset-file-input" class="dataset-upload-label">
-                  <span class="material-symbols-outlined is-size-2">upload_file</span>
+                  <span class="material-symbols-outlined is-size-2">
+                    upload_file
+                  </span>
                   <span class="fira-sans-condensed-black-italic">
-                    Click to select {{ newDataset.type === "text" ? "text" : "image" }} files
+                    Click to select
+                    {{ newDataset.type === "text" ? "text" : "image" }} files
                   </span>
                   <span class="dataset-upload-hint">
-                    {{ newDataset.type === 'text' ? 'Supports .txt, .md, .json, .jsonl' : 'Upload 10-50 images (same size preferred)' }}
+                    {{
+                      newDataset.type === "text"
+                        ? "Supports .txt, .md, .json, .jsonl"
+                        : "Upload 10-50 images (same size preferred)"
+                    }}
                   </span>
                 </label>
               </div>
@@ -676,7 +993,9 @@
           <button
             class="button dataset-primary-btn is-medium fira-sans-condensed-black-italic"
             @click="createDataset"
-            :disabled="!newDataset.name || !newDataset.files.length || creatingDataset"
+            :disabled="
+              !newDataset.name || !newDataset.files.length || creatingDataset
+            "
           >
             <span v-if="creatingDataset" class="loader mr-2"></span>
             <span class="material-symbols-outlined mr-2">add_circle</span>
@@ -692,6 +1011,119 @@
       </div>
     </div>
   </div>
+
+  <!-- Mint Modal -->
+  <MintModal
+    v-if="mintTarget"
+    :visible="showMintModal"
+    :inference-type="mintTarget.inferenceType"
+    :inference-id="mintTarget.inferenceId"
+    :content="mintTarget.content"
+    :content-type="mintTarget.contentType"
+    :prompt="mintTarget.prompt"
+    :generation="mintTarget.generation"
+    @close="showMintModal = false"
+    @minted="onMintComplete"
+  />
+
+  <!-- Token Launch Modal -->
+  <Teleport to="body">
+    <Transition name="fade">
+      <div
+        v-if="showTokenLaunchModal"
+        class="token-launch-overlay"
+        @click.self="!isLaunchingToken && (showTokenLaunchModal = false)"
+      >
+        <div class="token-launch-modal">
+          <div class="token-launch-header p-5">
+            <h2 class="fira-sans-condensed-black-italic is-size-3 has-text-white">
+              <span class="material-symbols-outlined mr-2 is-size-2">currency_exchange</span>
+              Issue Model Token
+            </h2>
+            <button
+              class="button is-danger is-small"
+              @click="showTokenLaunchModal = false"
+              :disabled="isLaunchingToken"
+            >
+              <span class="material-symbols-outlined">close</span>
+            </button>
+          </div>
+
+          <div class="token-launch-body p-5">
+            <div v-if="!tokenLaunchResult?.success">
+              <p class="has-text-white-ter mb-4" style="font-size: 13px;">
+                Launch an ERC-20 token for your fine-tuned model on Base.
+                96% of supply goes to Uniswap V2 LP (burned), 4% to you.
+              </p>
+
+              <div class="field mb-4">
+                <label class="label" style="color: rgba(255,255,255,0.8); font-size: 12px;">Token Name</label>
+                <input v-model="tokenName" class="input" type="text" maxlength="64"
+                  style="background: rgba(255,255,255,0.06); border: 1px solid rgba(255,255,255,0.12); color: #fff;" />
+              </div>
+
+              <div class="field mb-4">
+                <label class="label" style="color: rgba(255,255,255,0.8); font-size: 12px;">Token Symbol</label>
+                <input v-model="tokenSymbol" class="input" type="text" maxlength="10"
+                  style="background: rgba(255,255,255,0.06); border: 1px solid rgba(255,255,255,0.12); color: #fff; text-transform: uppercase;" />
+              </div>
+
+              <div class="field mb-5">
+                <label class="label" style="color: rgba(255,255,255,0.8); font-size: 12px;">ETH for Liquidity</label>
+                <input v-model="tokenEthAmount" class="input" type="number" step="0.001" min="0.01"
+                  style="background: rgba(255,255,255,0.06); border: 1px solid rgba(255,255,255,0.12); color: #fff;" />
+                <p class="help" style="color: rgba(255,255,255,0.4);">Min 0.01 ETH. LP tokens are burned (unruggable).</p>
+              </div>
+
+              <div v-if="tokenLaunchResult?.error" class="notification is-danger mb-4">
+                {{ tokenLaunchResult.error }}
+              </div>
+
+              <div class="has-text-centered">
+                <button
+                  class="button is-link is-large"
+                  @click="executeTokenLaunch"
+                  :disabled="isLaunchingToken || !tokenName || !tokenSymbol"
+                  :class="{ 'is-loading': isLaunchingToken }"
+                >
+                  <span class="material-symbols-outlined mr-2">rocket_launch</span>
+                  Launch Token
+                </button>
+              </div>
+            </div>
+
+            <!-- Success -->
+            <div v-else class="has-text-centered">
+              <span class="material-symbols-outlined" style="font-size: 48px; color: #48c78e;">check_circle</span>
+              <h3 class="has-text-white mt-3 mb-4">Token Launched!</h3>
+              <div style="text-align: left;" class="mb-4">
+                <div style="display: flex; justify-content: space-between; padding: 8px 0; border-bottom: 1px solid rgba(255,255,255,0.08);">
+                  <span style="color: rgba(255,255,255,0.5); font-size: 12px;">Symbol</span>
+                  <span class="has-text-white" style="font-size: 13px; font-weight: 600;">${{ tokenLaunchResult.symbol }}</span>
+                </div>
+                <div style="display: flex; justify-content: space-between; padding: 8px 0; border-bottom: 1px solid rgba(255,255,255,0.08);">
+                  <span style="color: rgba(255,255,255,0.5); font-size: 12px;">Token</span>
+                  <a :href="`https://basescan.org/token/${tokenLaunchResult.tokenAddress}`" target="_blank"
+                    style="color: #5b8eff; font-size: 12px; font-family: monospace;">
+                    {{ tokenLaunchResult.tokenAddress?.slice(0, 10) }}...
+                  </a>
+                </div>
+                <div style="display: flex; justify-content: space-between; padding: 8px 0;">
+                  <span style="color: rgba(255,255,255,0.5); font-size: 12px;">Trade</span>
+                  <a :href="`https://app.uniswap.org/swap?chain=base&outputCurrency=${tokenLaunchResult.tokenAddress}`"
+                    target="_blank" style="color: #5b8eff; font-size: 12px;">
+                    Uniswap
+                    <span class="material-symbols-outlined" style="font-size: 12px;">open_in_new</span>
+                  </a>
+                </div>
+              </div>
+              <button class="button is-success is-fullwidth" @click="showTokenLaunchModal = false">Done</button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </Transition>
+  </Teleport>
 </template>
 
 <script>
@@ -707,7 +1139,8 @@ import { v4 as uuid } from "uuid";
 import axios from "axios";
 import { io } from "socket.io-client";
 import AccessRequirements from "./AccessRequirements.vue";
-import { requestOpenNetworkModal } from "../services/level.service.js";
+import MintModal from "./MintModal.vue";
+import { fineTuneTokenService } from "../services/fineTuneToken.service.js";
 
 const API_BASE =
   (typeof process !== "undefined" && process.env?.VITE_API_BASE) ||
@@ -721,8 +1154,11 @@ const DEMO_PROMPT = "Train a custom LoRA model on your own data";
 
 export default {
   name: "GenerativeTraining",
-  components: { AccessRequirements },
+  components: { AccessRequirements, MintModal },
   setup() {
+    // Main tabs
+    const activeTab = ref("dataset");
+
     // Training type selection
     const trainingType = ref("llm"); // 'llm' or 'sdxl'
 
@@ -777,6 +1213,78 @@ export default {
       loss: null,
       eta: null,
       error: null,
+    });
+
+    // ─────────────────────────────────────────────────────────────
+    // Dataset Studio
+    // ─────────────────────────────────────────────────────────────
+    // Game tier definitions (imported concept — keep in sync with dataset-studio.js)
+    const GAME_TIERS = [
+      {
+        id: 1,
+        name: "Primitives",
+        desc: "Scene setup, camera, renderer, basic meshes, lighting",
+      },
+      {
+        id: 2,
+        name: "Materials & Shaders",
+        desc: "PBR materials, custom ShaderMaterial, GLSL, post-processing",
+      },
+      {
+        id: 3,
+        name: "Geometry & Terrain",
+        desc: "Procedural geometry, heightmaps, infinite terrain, LOD",
+      },
+      {
+        id: 4,
+        name: "Models & Assets",
+        desc: "GLTF/GLB loading, Blender workflow, animations, textures",
+      },
+      {
+        id: 5,
+        name: "Physics",
+        desc: "Cannon-es/Rapier integration, collision, rigid bodies, vehicles",
+      },
+      {
+        id: 6,
+        name: "Controls & Input",
+        desc: "FPS/orbit/pointer-lock, keyboard, gamepad, mobile touch",
+      },
+      {
+        id: 7,
+        name: "Animation & Particles",
+        desc: "Skeletal animation, tweens (GSAP), particle systems, trails",
+      },
+      {
+        id: 8,
+        name: "Game Systems",
+        desc: "State machines, entity component, inventory, health, scoring",
+      },
+      {
+        id: 9,
+        name: "UI & Audio",
+        desc: "HUD overlays, menus, spatial audio, CSS3D",
+      },
+      {
+        id: 10,
+        name: "Full Games",
+        desc: "Complete mini-games combining 3+ tiers above",
+      },
+    ];
+
+    const studio = reactive({
+      examples: [],
+      selected: null,
+      editMode: "game",
+      editTier: 1,
+      editHtml: "",
+      editCss: "",
+      editJs: "",
+      editText: "",
+      editDescription: "",
+      editLibraries: [],
+      newLibInput: "",
+      describing: false,
     });
 
     // Access control
@@ -911,7 +1419,7 @@ export default {
       } catch (e) {
         console.error("Failed to create dataset:", e);
         alert(
-          "Failed to create dataset: " + (e.response?.data?.error || e.message)
+          "Failed to create dataset: " + (e.response?.data?.error || e.message),
         );
       } finally {
         creatingDataset.value = false;
@@ -979,13 +1487,13 @@ export default {
     const exportModel = async (model) => {
       try {
         const { data } = await axios.post(
-          `${API_BASE}/training/models/${model.id}/export`
+          `${API_BASE}/training/models/${model.id}/export`,
         );
 
         if (data.model_path) {
           const result = await window.electronAPI?.saveModel?.(
             `bonzai_${model.type}_${model.id}.zip`,
-            data.model_path
+            data.model_path,
           );
 
           if (result?.success) {
@@ -1004,18 +1512,89 @@ export default {
       try {
         await axios.delete(`${API_BASE}/training/models/${modelId}`);
         trainedModels.value = trainedModels.value.filter(
-          (m) => m.id !== modelId
+          (m) => m.id !== modelId,
         );
       } catch (e) {
         console.error("Failed to delete model:", e);
       }
     };
 
+    // ─────────────────────────────────────────────────────────────
+    // NFT Minting
+    // ─────────────────────────────────────────────────────────────
+    const showMintModal = ref(false);
+    const mintTarget = ref(null);
+
     const mintModelNFT = async (model) => {
-      // Placeholder for NFT minting
-      alert(
-        `NFT minting for model ${model.id} coming soon!\n\nThis will create an on-chain record of your trained model.`
-      );
+      mintTarget.value = {
+        inferenceType: 'training',
+        inferenceId: model.id,
+        content: JSON.stringify({ id: model.id, type: model.type, base_model: model.base_model }),
+        contentType: 'application/json',
+        prompt: `Fine-tuned ${model.type === 'llm_lora' ? 'LLM' : 'SDXL'} model: ${model.id}`,
+        generation: { type: 'training', model: model.base_model, timestamp: Date.now() },
+      };
+      showMintModal.value = true;
+    };
+
+    const onMintComplete = (result) => {
+      // Store contentTokenId on the model for token issuance
+      if (result.tokenId && mintTarget.value) {
+        const model = trainedModels.value.find(m => m.id === mintTarget.value.inferenceId);
+        if (model) {
+          model.contentTokenId = result.tokenId;
+          model.irysHash = result.irysTransactionId;
+        }
+      }
+    };
+
+    // ─────────────────────────────────────────────────────────────
+    // Token Issuance (ERC-20 for fine-tuned models)
+    // ─────────────────────────────────────────────────────────────
+    const showTokenLaunchModal = ref(false);
+    const tokenLaunchTarget = ref(null);
+    const tokenName = ref('');
+    const tokenSymbol = ref('');
+    const tokenEthAmount = ref('0.01');
+    const isLaunchingToken = ref(false);
+    const tokenLaunchResult = ref(null);
+
+    const launchModelToken = (model) => {
+      if (!model.contentTokenId) {
+        alert('Mint this model as an NFT first before issuing a token.');
+        return;
+      }
+      tokenLaunchTarget.value = model;
+      tokenName.value = `BonzAI Fine-Tune: ${model.id}`;
+      tokenSymbol.value = `BZ${model.id.replace(/[^a-zA-Z0-9]/g, '').substring(0, 6).toUpperCase()}`;
+      tokenLaunchResult.value = null;
+      showTokenLaunchModal.value = true;
+    };
+
+    const executeTokenLaunch = async () => {
+      if (!tokenLaunchTarget.value) return;
+      isLaunchingToken.value = true;
+      tokenLaunchResult.value = null;
+
+      try {
+        const result = await fineTuneTokenService.launchFineTuneToken(
+          tokenLaunchTarget.value.contentTokenId,
+          tokenName.value,
+          tokenSymbol.value,
+          tokenLaunchTarget.value.irysHash || '',
+          tokenEthAmount.value,
+        );
+
+        tokenLaunchResult.value = result;
+        if (result.success) {
+          tokenLaunchTarget.value.tokenAddress = result.tokenAddress;
+          tokenLaunchTarget.value.pairAddress = result.pairAddress;
+        }
+      } catch (e) {
+        tokenLaunchResult.value = { success: false, error: e.message };
+      } finally {
+        isLaunchingToken.value = false;
+      }
     };
 
     // Demo generation handler - simulates training progress
@@ -1066,11 +1645,188 @@ export default {
       newDataset.type = newType === "llm" ? "text" : "image";
     });
 
+    // (studio.selected synced via studioSelect method)
+
+    // ─────────────────────────────────────────────────────────────
+    // Studio methods
+    // ─────────────────────────────────────────────────────────────
+    const loadStudioExamples = async () => {
+      try {
+        const res = await window.electronAPI?.synthExamplesList();
+        if (res?.ok) {
+          studio.examples = res.examples;
+        }
+      } catch (e) {
+        console.error("[Studio] Failed to load examples:", e);
+      }
+    };
+
+    const studioHasContent = computed(() => {
+      if (studio.editMode === "text") {
+        return !!(studio.editText && studio.editText.trim());
+      }
+      // game mode
+      return !!(
+        (studio.editHtml && studio.editHtml.trim()) ||
+        (studio.editCss && studio.editCss.trim()) ||
+        (studio.editJs && studio.editJs.trim())
+      );
+    });
+
+    const studioItemLabel = (ex) => {
+      const tierBadge = ex.mode !== "text" && ex.tier ? `[T${ex.tier}] ` : "";
+      if (ex.description && ex.description.trim()) {
+        return tierBadge + ex.description.substring(0, 36);
+      }
+      // Fallback: first 36 chars of content
+      if (ex.mode === "text" && ex.text) {
+        return ex.text.substring(0, 40) || "Empty";
+      }
+      const code = ex.js || ex.html || ex.css || "";
+      return tierBadge + (code.substring(0, 36) || "Empty");
+    };
+
+    const studioSelect = (ex) => {
+      studio.selected = ex;
+      studio.editMode = ex.mode || "game";
+      studio.editTier = ex.tier || 1;
+      studio.editHtml = ex.html || "";
+      studio.editCss = ex.css || "";
+      studio.editJs = ex.js || "";
+      studio.editText = ex.text || "";
+      studio.editDescription = ex.description || "";
+      studio.editLibraries = ex.libraries ? [...ex.libraries] : [];
+      studio.newLibInput = "";
+    };
+
+    const studioAddNew = () => {
+      const newEx = {
+        id: uuid(),
+        mode: studio.editMode,
+        ...(studio.editMode !== "text" ? { tier: studio.editTier } : {}),
+        html: "",
+        css: "",
+        js: "",
+        text: "",
+        description: "",
+        libraries: [],
+        createdAt: new Date().toISOString(),
+      };
+      studio.examples.unshift(newEx);
+      studioSelect(newEx);
+    };
+
+    const studioSave = async () => {
+      if (!studio.selected) return;
+      studio.selected.mode = studio.editMode;
+      if (studio.editMode !== "text") {
+        studio.selected.tier = studio.editTier;
+      }
+      studio.selected.html = studio.editHtml;
+      studio.selected.css = studio.editCss;
+      studio.selected.js = studio.editJs;
+      studio.selected.text = studio.editText;
+      studio.selected.description = studio.editDescription;
+      studio.selected.libraries = [...studio.editLibraries];
+      await window.electronAPI?.synthExampleSave(
+        JSON.parse(JSON.stringify(studio.selected)),
+      );
+      await loadStudioExamples();
+    };
+
+    const studioDelete = async () => {
+      if (!studio.selected) return;
+      if (!confirm("Delete this example?")) return;
+      await window.electronAPI?.synthExampleDelete(studio.selected.id);
+      studio.selected = null;
+      studio.editMode = "game";
+      studio.editTier = 1;
+      studio.editHtml = "";
+      studio.editCss = "";
+      studio.editJs = "";
+      studio.editText = "";
+      studio.editDescription = "";
+      studio.editLibraries = [];
+      studio.newLibInput = "";
+      await loadStudioExamples();
+    };
+
+    const studioDescribe = async () => {
+      if (!studioHasContent.value) return;
+      studio.describing = true;
+      try {
+        const res = await window.electronAPI?.synthDescribe({
+          mode: studio.editMode,
+          tier: studio.editTier,
+          html: studio.editHtml,
+          css: studio.editCss,
+          js: studio.editJs,
+          text: studio.editText,
+        });
+        if (res?.ok) {
+          studio.editDescription = res.description;
+          // Merge auto-detected libraries (don't lose manually added ones)
+          if (res.libraries && res.libraries.length > 0) {
+            const existing = new Set(
+              studio.editLibraries.map((l) => l.toLowerCase()),
+            );
+            for (const lib of res.libraries) {
+              if (!existing.has(lib.toLowerCase())) {
+                studio.editLibraries.push(lib);
+                existing.add(lib.toLowerCase());
+              }
+            }
+          }
+        } else {
+          alert("Describe failed: " + (res?.error || "Unknown error"));
+        }
+      } catch (e) {
+        alert("Describe failed: " + e.message);
+      } finally {
+        studio.describing = false;
+      }
+    };
+
+    const studioAddLib = () => {
+      const lib = studio.newLibInput.trim();
+      if (!lib) return;
+      const exists = studio.editLibraries.some(
+        (l) => l.toLowerCase() === lib.toLowerCase(),
+      );
+      if (!exists) {
+        studio.editLibraries.push(lib);
+      }
+      studio.newLibInput = "";
+    };
+
+    const studioRemoveLib = (idx) => {
+      studio.editLibraries.splice(idx, 1);
+    };
+
+    const studioExport = async () => {
+      const name = prompt("Dataset name:", "Dataset Studio Export");
+      if (!name) return;
+      try {
+        const res = await window.electronAPI?.synthExport({ name });
+        if (res?.ok) {
+          alert(
+            `Dataset exported!\n\n${res.metadata.num_examples} examples\nPath: ${res.path}`,
+          );
+          await loadDatasets();
+        } else {
+          alert("Export failed: " + (res?.error || "Unknown"));
+        }
+      } catch (e) {
+        alert("Export failed: " + e.message);
+      }
+    };
+
     // Lifecycle
     onMounted(async () => {
       setupTrainingSocket();
       await loadDatasets();
       await loadTrainedModels();
+      await loadStudioExamples();
     });
 
     onBeforeUnmount(() => {
@@ -1080,6 +1836,7 @@ export default {
     });
 
     return {
+      activeTab,
       trainingType,
       datasets,
       filteredDatasets,
@@ -1101,16 +1858,39 @@ export default {
       exportModel,
       deleteModel,
       mintModelNFT,
+      showMintModal,
+      mintTarget,
+      onMintComplete,
+      // Token issuance
+      showTokenLaunchModal,
+      tokenLaunchTarget,
+      tokenName,
+      tokenSymbol,
+      tokenEthAmount,
+      isLaunchingToken,
+      tokenLaunchResult,
+      launchModelToken,
+      executeTokenLaunch,
       // Access control
       accessRef,
       hasAccess,
       onAccessChanged,
-      canStartTraining,
       // Demo
       DEMO_PROMPT,
       onDemoGenerate,
-      // Network modal
-      requestOpenNetworkModal,
+      // Studio
+      GAME_TIERS,
+      studio,
+      studioHasContent,
+      studioItemLabel,
+      studioSelect,
+      studioAddNew,
+      studioSave,
+      studioDelete,
+      studioDescribe,
+      studioAddLib,
+      studioRemoveLib,
+      studioExport,
     };
   },
 };
@@ -1171,6 +1951,19 @@ h3 {
 h1 {
   font-size: 64px;
   text-align: right;
+}
+
+hr {
+  margin: 12px 0;
+  width: 100%;
+  border: none;
+  height: 1px;
+  background: linear-gradient(
+    to right,
+    transparent,
+    rgba(255, 255, 255, 1),
+    transparent
+  );
 }
 
 .label {
@@ -1641,6 +2434,217 @@ input[type="radio"]:checked + label {
   cursor: not-allowed;
 }
 
+/* ──────────────────────────────────────────────────────────────
+   Dataset Studio
+   ────────────────────────────────────────────────────────────── */
+
+.studio-layout {
+  display: flex;
+  gap: 16px;
+  min-height: 400px;
+}
+
+.studio-sidebar {
+  width: 240px;
+  flex-shrink: 0;
+}
+
+.studio-main {
+  flex: 1;
+  min-width: 0;
+}
+
+.studio-example-list {
+  max-height: 400px;
+  overflow-y: auto;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 4px;
+  background: rgba(0, 0, 0, 0.2);
+}
+
+.studio-example-item {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 8px;
+  cursor: pointer;
+  font-size: 12px;
+  color: rgba(255, 255, 255, 0.7);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+  transition: background 0.15s ease;
+}
+
+.tabs a {
+  color: rgba(255, 255, 255, 0.3);
+  border-color: rgba(255, 255, 255, 0.1);
+}
+
+.tabs a:hover {
+  color: rgba(255, 255, 255, 1);
+  border-color: rgba(255, 255, 255, 1);
+}
+
+.tabs li.is-active a {
+  color: #ffe08a;
+  border-color: #ffe08a;
+}
+
+.studio-example-item:hover {
+  background: rgba(255, 255, 255, 0.05);
+}
+
+.studio-example-item.is-active {
+  background: rgba(97, 55, 142, 0.3);
+  color: #fff;
+}
+
+.studio-example-title {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.studio-mode-toggle {
+  padding-bottom: 8px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+  margin-bottom: 12px;
+}
+
+.studio-mode-toggle input[type="radio"] + label {
+  padding: 4px 12px 6px;
+  font-size: 13px;
+}
+
+.studio-tier-select select {
+  width: 100%;
+  padding: 6px 10px;
+  background: rgba(0, 0, 0, 0.4);
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  border-radius: 4px;
+  color: #e0e0e0;
+  font-size: 12px;
+  cursor: pointer;
+  appearance: auto;
+}
+
+.studio-tier-select select:focus {
+  outline: none;
+  border-color: #9333ea;
+}
+
+.studio-tier-select select option {
+  background: #1a1a2e;
+  color: #fff;
+}
+
+.studio-preview {
+  padding: 12px;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 4px;
+  background: rgba(0, 0, 0, 0.2);
+}
+
+.studio-code-area {
+  width: 100%;
+  min-height: 200px;
+  background: rgba(0, 0, 0, 0.4);
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  border-radius: 4px;
+  color: #e0e0e0;
+  font-family: "SF Mono", "Fira Code", "Consolas", monospace;
+  font-size: 12px;
+  padding: 10px;
+  resize: vertical;
+  line-height: 1.5;
+}
+
+.studio-code-area:focus {
+  outline: none;
+  border-color: #9333ea;
+}
+
+.studio-lib-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-bottom: 6px;
+}
+
+.studio-lib-tag {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 3px 8px;
+  background: rgba(147, 51, 234, 0.2);
+  border: 1px solid rgba(147, 51, 234, 0.4);
+  border-radius: 4px;
+  color: #c084fc;
+  font-size: 12px;
+  font-family: "SF Mono", "Fira Code", "Consolas", monospace;
+}
+
+.studio-lib-input-row {
+  display: flex;
+  gap: 6px;
+}
+
+.studio-lib-input-row .input {
+  flex: 1;
+}
+
+.studio-describe-row {
+  display: flex;
+  gap: 8px;
+  align-items: flex-start;
+}
+
+.studio-description-area {
+  flex: 1;
+  background: rgba(0, 0, 0, 0.4);
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  border-radius: 4px;
+  color: #e0e0e0;
+  font-size: 13px;
+  padding: 10px;
+  resize: vertical;
+  line-height: 1.5;
+}
+
+.studio-description-area:focus {
+  outline: none;
+  border-color: #9333ea;
+}
+
+.studio-describe-btn {
+  flex-shrink: 0;
+  align-self: flex-end;
+}
+
+.studio-actions {
+  display: flex;
+  gap: 6px;
+  margin-top: 10px;
+  flex-wrap: wrap;
+}
+
+.studio-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  min-height: 300px;
+  text-align: center;
+}
+
+.studio-bottom-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 0;
+  border-top: 1px solid rgba(255, 255, 255, 0.1);
+}
+
 @keyframes move {
   0% {
     transform: scale(1.1);
@@ -1653,5 +2657,54 @@ input[type="radio"]:checked + label {
     transform: scale(1.1);
     transform-origin: bottom left;
   }
+}
+
+/* Token Launch Modal */
+.token-launch-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.85);
+  backdrop-filter: blur(12px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 10003;
+}
+
+.token-launch-modal {
+  width: 90%;
+  max-width: 480px;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 16px;
+  overflow: hidden;
+}
+
+.token-launch-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 16px 20px;
+  background: rgba(0, 0, 0, 0.3);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+.token-launch-header h2 {
+  display: flex;
+  align-items: center;
+  margin: 0;
+}
+
+.token-launch-body {
+  padding: 20px;
+}
+
+/* Fade transitions */
+.fade-enter-active,
+.fade-leave-active {
+  transition: opacity 0.2s ease;
+}
+.fade-enter-from,
+.fade-leave-to {
+  opacity: 0;
 }
 </style>

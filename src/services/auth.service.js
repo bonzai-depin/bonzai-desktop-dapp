@@ -2,13 +2,15 @@
  * BonzAI Authentication Service
  *
  * JWT-based authentication after WalletConnect.
- * - Long-lived access tokens (6 hours)
- * - Long-lived refresh tokens (7 days, HttpOnly cookie)
+ * - Long-lived access tokens (48 hours)
+ * - Long-lived refresh tokens (7 days, HttpOnly cookie + vault backup)
  * - Automatic token refresh before expiry
- * - Automatic re-authentication on 401 errors
+ * - Session persistence via Auth Vault
+ * - NEVER requests wallet signature automatically (breaks autonomous mode)
  */
 
 import { reactive, readonly } from "vue";
+import { authVault } from "./authVault.service.js";
 
 const API_BASE =
   (typeof window !== "undefined" && window?.electronAPI?.env?.API_BASE) ||
@@ -33,6 +35,20 @@ const state = reactive({
 let refreshTimer = null;
 let signerGetter = null; // Function to get signer for re-authentication
 let reAuthPromise = null; // Prevent concurrent re-auth attempts
+
+/**
+ * Sync auth state to electron store so main process can enforce access control
+ */
+const syncAuthToStore = () => {
+  try {
+    window.electronAPI?.store?.set("auth.isAuthenticated", state.isAuthenticated);
+    window.electronAPI?.store?.set("auth.level", state.level);
+    window.electronAPI?.store?.set("auth.levelValue", state.levelValue);
+    window.electronAPI?.store?.set("auth.tokenExpiry", state.tokenExpiry);
+  } catch (e) {
+    // Non-critical — main process will just deny access if store is empty
+  }
+};
 
 // ═══════════════════════════════════════════════════════════════════════════
 // AUTHENTICATION FLOW
@@ -132,6 +148,106 @@ export const authenticate = async (signer) => {
     state.levelValue = data.level_value;
     state.isAuthenticated = true;
 
+    // Sync auth state to electron store so main process can check it
+    syncAuthToStore();
+
+    console.log(`[Auth] Authenticated as ${address} with ${data.level}`);
+
+    return {
+      address: state.walletAddress,
+      level: state.level,
+      levelValue: state.levelValue,
+    };
+  } catch (e) {
+    state.error = e.message;
+    console.error("[Auth] Authentication failed:", e);
+    throw e;
+  } finally {
+    state.isAuthenticating = false;
+    state.isAwaitingSignature = false;
+  }
+};
+
+/**
+ * Combined authentication + vault initialization with ONE signature.
+ *
+ * This is the preferred method - user signs once, we:
+ * 1. Authenticate with server
+ * 2. Initialize/unlock the auth vault using the same signature
+ *
+ * @param {object} signer - ethers.js Signer from connected wallet
+ * @returns {Promise<{address, level, levelValue}>}
+ */
+export const authenticateWithVault = async (signer) => {
+  state.isAuthenticating = true;
+  state.isAwaitingSignature = false;
+  state.error = null;
+
+  try {
+    const address = await signer.getAddress();
+
+    // 1. Get challenge from server
+    const challengeRes = await fetch(`${API_BASE}/auth/challenge`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ address }),
+    });
+
+    if (!challengeRes.ok) {
+      const err = await challengeRes.json().catch(() => ({}));
+      throw new Error(getHttpErrorMessage(challengeRes.status, err.error));
+    }
+
+    const { challenge, mac, message } = await challengeRes.json();
+
+    // 2. User signs the message (wallet popup appears here) - ONE SIGNATURE
+    state.isAwaitingSignature = true;
+    let signature;
+    try {
+      signature = await signer.signMessage(message);
+    } finally {
+      state.isAwaitingSignature = false;
+    }
+
+    // 3. Send to server for verification + JWT
+    const verifyRes = await fetch(`${API_BASE}/auth/verify`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      credentials: "include", // For refresh token cookie
+      body: JSON.stringify({
+        address,
+        signature,
+        challenge,
+        mac,
+      }),
+    });
+
+    if (!verifyRes.ok) {
+      const err = await verifyRes.json().catch(() => ({}));
+      throw new Error(getHttpErrorMessage(verifyRes.status, err.error));
+    }
+
+    // 4. Store tokens and state
+    const data = await verifyRes.json();
+    setAccessToken(data.access_token, data.expires_in);
+
+    state.walletAddress = address.toLowerCase();
+    state.level = data.level;
+    state.levelValue = data.level_value;
+    state.isAuthenticated = true;
+
+    // Sync auth state to electron store so main process can check it
+    syncAuthToStore();
+
+    // 5. Initialize/unlock vault using the SAME signature (no new popup)
+    try {
+      await authVault.initializeOrUnlockFromSignature(address.toLowerCase(), signature);
+      console.log("[Auth] Vault initialized/unlocked from auth signature");
+    } catch (vaultError) {
+      // Vault is non-critical - log but don't fail auth
+      console.warn("[Auth] Vault initialization failed:", vaultError.message);
+    }
+
     console.log(`[Auth] Authenticated as ${address} with ${data.level}`);
 
     return {
@@ -155,10 +271,16 @@ export const authenticate = async (signer) => {
 
 /**
  * Set access token and schedule refresh
+ * Also persists to vault for session recovery
  */
 const setAccessToken = (token, expiresIn) => {
   state.accessToken = token;
   state.tokenExpiry = Date.now() + expiresIn * 1000;
+
+  // Persist to vault for session recovery across restarts
+  if (authVault.state.isUnlocked) {
+    authVault.setAuthTokens(token, state.tokenExpiry);
+  }
 
   // Schedule refresh 60 seconds before expiry
   const refreshIn = Math.max(0, (expiresIn - 60) * 1000);
@@ -204,6 +326,9 @@ export const refreshToken = async () => {
   state.level = data.level;
   state.levelValue = data.level_value;
 
+  // Sync auth state to electron store so main process can check it
+  syncAuthToStore();
+
   console.log("[Auth] Token refreshed successfully");
   return data;
 };
@@ -245,9 +370,9 @@ export const isAuthenticated = () => {
 /**
  * Check if user has minimum level access
  */
+// All generation is free — level checks always pass
 export const hasMinLevel = (minLevel) => {
-  if (!state.isAuthenticated) return false;
-  return state.levelValue >= minLevel;
+  return true;
 };
 
 /**
@@ -261,6 +386,9 @@ export const logout = () => {
   state.level = null;
   state.levelValue = 0;
   state.error = null;
+
+  // Sync cleared auth state to electron store
+  syncAuthToStore();
 
   if (refreshTimer) {
     clearTimeout(refreshTimer);
@@ -286,23 +414,46 @@ export const setSignerGetter = (getter) => {
 };
 
 /**
- * Attempt to re-authenticate automatically using the stored signer getter
+ * Attempt to re-authenticate using refresh token ONLY.
+ * NEVER automatically requests wallet signatures - this breaks autonomous mode.
+ * If refresh fails, returns false and autonomous operations should gracefully degrade.
+ *
+ * @param {boolean} allowWalletSignature - Only set to true for USER-INITIATED re-auth
  * Returns true if successful, false otherwise
  */
-export const reAuthenticate = async () => {
+export const reAuthenticate = async (allowWalletSignature = false) => {
   // Prevent concurrent re-auth attempts
   if (reAuthPromise) {
     return reAuthPromise;
   }
 
-  if (!signerGetter) {
-    console.log("[Auth] No signer getter registered, cannot re-authenticate");
-    return false;
-  }
-
   reAuthPromise = (async () => {
+    // First, try refresh token (no user interaction needed)
     try {
-      console.log("[Auth] Attempting automatic re-authentication...");
+      console.log("[Auth] Attempting token refresh...");
+      await refreshToken();
+      console.log("[Auth] Token refresh successful");
+      return true;
+    } catch (refreshError) {
+      console.log("[Auth] Token refresh failed:", refreshError.message);
+    }
+
+    // If refresh failed and wallet signature is NOT allowed, stop here
+    // This prevents breaking autonomous mode with signature popups
+    if (!allowWalletSignature) {
+      console.log("[Auth] Wallet signature not allowed (autonomous mode), returning false");
+      console.log("[Auth] User must manually re-authenticate via the UI");
+      return false;
+    }
+
+    // Only try wallet signature if explicitly allowed (user-initiated)
+    if (!signerGetter) {
+      console.log("[Auth] No signer getter registered, cannot re-authenticate");
+      return false;
+    }
+
+    try {
+      console.log("[Auth] Attempting wallet re-authentication (user-initiated)...");
       const signer = await signerGetter();
       if (!signer) {
         console.log("[Auth] No signer available");
@@ -310,22 +461,25 @@ export const reAuthenticate = async () => {
       }
 
       await authenticate(signer);
-      console.log("[Auth] Automatic re-authentication successful");
+      console.log("[Auth] Wallet re-authentication successful");
       return true;
     } catch (e) {
-      console.error("[Auth] Automatic re-authentication failed:", e);
+      console.error("[Auth] Wallet re-authentication failed:", e);
       return false;
-    } finally {
-      reAuthPromise = null;
     }
   })();
 
-  return reAuthPromise;
+  try {
+    return await reAuthPromise;
+  } finally {
+    reAuthPromise = null;
+  }
 };
 
 /**
  * Make authenticated API request
  * Automatically includes auth headers and handles 401 responses
+ * Uses ONLY token refresh for automatic recovery - never requests wallet signature
  */
 export const authFetch = async (url, options = {}) => {
   const headers = {
@@ -339,7 +493,7 @@ export const authFetch = async (url, options = {}) => {
     credentials: "include",
   });
 
-  // Handle 401 - try to refresh token, then re-authenticate
+  // Handle 401 - try to refresh token only (no wallet signature)
   if (res.status === 401 && state.accessToken) {
     try {
       await refreshToken();
@@ -353,23 +507,10 @@ export const authFetch = async (url, options = {}) => {
         credentials: "include",
       });
     } catch (refreshError) {
-      // Refresh failed, try automatic re-authentication
-      console.log("[Auth] Token refresh failed, attempting re-authentication...");
-      const reAuthSuccess = await reAuthenticate();
-      if (reAuthSuccess) {
-        // Retry with new token after re-auth
-        return fetch(url, {
-          ...options,
-          headers: {
-            ...options.headers,
-            ...getAuthHeaders(),
-          },
-          credentials: "include",
-        });
-      }
-      // Re-auth also failed
-      logout();
-      window.dispatchEvent(new CustomEvent("auth:expired"));
+      // Refresh failed - DO NOT try wallet signature automatically
+      // This would break autonomous mode
+      console.log("[Auth] Token refresh failed, session needs manual re-authentication");
+      window.dispatchEvent(new CustomEvent("auth:needs-reauth"));
       throw new Error("Session expired. Please reconnect your wallet.");
     }
   }
@@ -380,6 +521,9 @@ export const authFetch = async (url, options = {}) => {
 /**
  * Proactively ensure auth token is valid before starting long operations.
  * Call this before video/music/image generation to avoid mid-operation token expiry.
+ *
+ * IMPORTANT: This function NEVER requests wallet signatures automatically.
+ * If auth can't be refreshed, it falls back to demo mode gracefully.
  *
  * @param {number} bufferMinutes - Refresh if token expires within this many minutes (default: 5)
  * @returns {Promise<boolean>} - true if authenticated, false if using demo mode
@@ -406,21 +550,14 @@ export const ensureAuth = async (bufferMinutes = 5) => {
     }
   }
 
-  // No valid token or refresh failed - try re-authentication
-  if (signerGetter) {
-    try {
-      const success = await reAuthenticate();
-      if (success) {
-        console.log("[Auth] Re-authentication successful");
-        return true;
-      }
-    } catch (e) {
-      console.warn("[Auth] Re-authentication failed:", e.message);
-    }
+  // No valid token or refresh failed
+  // DO NOT try wallet signature - this breaks autonomous mode
+  // Just notify and fall back to demo mode
+  if (state.accessToken) {
+    // Had a token but it's expired - notify user
+    console.log("[Auth] Token expired, will use demo mode");
+    window.dispatchEvent(new CustomEvent("auth:needs-reauth"));
   }
-
-  // Fall back to demo mode
-  console.log("[Auth] No valid auth available, will use demo mode");
   return false;
 };
 
@@ -430,15 +567,83 @@ export const ensureAuth = async (bufferMinutes = 5) => {
 
 export { getHttpErrorMessage };
 
+/**
+ * User-initiated re-authentication.
+ * Call this when the user explicitly clicks a "Reconnect" or "Re-authenticate" button.
+ * Unlike automatic re-auth, this IS allowed to request a wallet signature.
+ */
+export const userInitiatedReAuth = async () => {
+  return reAuthenticate(true); // Allow wallet signature for user-initiated action
+};
+
+/**
+ * Restore session from vault on app start.
+ * Call this after wallet connects to restore previous session without new signature.
+ */
+export const restoreSessionFromVault = async () => {
+  if (!authVault.state.isUnlocked) {
+    console.log("[Auth] Vault not unlocked, cannot restore session");
+    return false;
+  }
+
+  const tokens = authVault.getAuthTokens();
+  if (!tokens.accessToken || !tokens.tokenExpiry) {
+    console.log("[Auth] No tokens in vault to restore");
+    return false;
+  }
+
+  const now = Date.now();
+
+  // Check if access token is still valid
+  if (now < tokens.tokenExpiry) {
+    console.log("[Auth] Restoring valid session from vault");
+    state.accessToken = tokens.accessToken;
+    state.tokenExpiry = tokens.tokenExpiry;
+    state.isAuthenticated = true;
+
+    // Schedule refresh
+    const refreshIn = Math.max(0, tokens.tokenExpiry - now - 60000);
+    scheduleRefresh(refreshIn);
+
+    // Refresh to recover level info and sync auth state to main process
+    try {
+      await refreshToken(); // sets level, levelValue, calls syncAuthToStore
+    } catch (e) {
+      // Refresh failed but token is still valid — sync what we have
+      console.warn("[Auth] Refresh during vault restore failed, syncing partial state");
+      syncAuthToStore();
+    }
+
+    return true;
+  }
+
+  // Access token expired, try refresh
+  console.log("[Auth] Stored access token expired, attempting refresh...");
+  try {
+    // Set isAuthenticated BEFORE refresh so syncAuthToStore inside refreshToken sees true
+    state.isAuthenticated = true;
+    await refreshToken(); // sets level, levelValue, calls syncAuthToStore
+    return true;
+  } catch (e) {
+    state.isAuthenticated = false;
+    syncAuthToStore();
+    console.log("[Auth] Session restore failed, user needs to re-authenticate");
+    return false;
+  }
+};
+
 export const authService = {
   state: readonly(state),
 
   // Authentication
   authenticate,
+  authenticateWithVault, // Combined auth + vault (ONE signature)
   refreshToken,
   getDemoToken,
   logout,
   reAuthenticate,
+  userInitiatedReAuth, // For UI buttons
+  restoreSessionFromVault, // For app startup
   setSignerGetter,
   ensureAuth,
 
@@ -458,6 +663,8 @@ export const authService = {
  * Handle visibility change to refresh tokens when app becomes active after idle.
  * setTimeout is unreliable when the system is idle/sleeping - the OS can pause
  * JavaScript timers. This ensures we check token validity when the user returns.
+ *
+ * IMPORTANT: Only uses token refresh, never requests wallet signature automatically.
  */
 if (typeof document !== "undefined") {
   document.addEventListener("visibilitychange", async () => {
@@ -472,12 +679,8 @@ if (typeof document !== "undefined") {
           await refreshToken();
         } catch (e) {
           console.error("[Auth] Refresh after idle failed:", e);
-          // Try re-authentication as fallback
-          const reAuthSuccess = await reAuthenticate();
-          if (!reAuthSuccess) {
-            logout();
-            window.dispatchEvent(new CustomEvent("auth:expired"));
-          }
+          // DO NOT try wallet signature - just notify user
+          window.dispatchEvent(new CustomEvent("auth:needs-reauth"));
         }
       }
     }

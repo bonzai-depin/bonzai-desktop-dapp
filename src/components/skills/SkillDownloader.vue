@@ -316,7 +316,7 @@ export default {
           const pipeline = pipelineMap[model.key];
           if (!pipeline) continue;
 
-          const res = await axios.post(`http://localhost:${port}/pipelines/download`, {
+          const res = await axios.post(`http://localhost:${port}/pipelines/prefetch`, {
             pipeline,
           });
 

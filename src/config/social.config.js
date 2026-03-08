@@ -170,12 +170,12 @@ export const COMPANION_NFT_CONFIG = {
   agentRegistration: {
     defaultType: 'companion',
     supportedProtocols: ['moltbook', 'openclaw', 'bonzai'],
-    endpointTemplate: 'https://bonzai.app/api/companions/{tokenId}',
+    endpointTemplate: 'https://bonzai.sh/api/companions/{tokenId}',
   },
 
   // Metadata Configuration
   metadata: {
-    baseUri: 'https://bonzai.app/api/companions/',
+    baseUri: 'https://bonzai.sh/api/companions/',
     ipfsGateway: 'https://gateway.pinata.cloud/ipfs/',
   },
 

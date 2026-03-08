@@ -14,11 +14,35 @@ import { ethers } from "ethers";
 import { reactive, readonly, computed } from "vue";
 import { CONFIG } from "../config/web3.config.js";
 import { authService } from "./auth.service.js";
+import { authVault } from "./authVault.service.js";
+import { luksoService } from "./lukso.service.js";
 
 // Reown AppKit - official WalletConnect integration
 import { createAppKit } from "@reown/appkit/vue";
 import { EthersAdapter } from "@reown/appkit-adapter-ethers";
-import { mainnet, arbitrum } from "@reown/appkit/networks";
+import { mainnet, arbitrum, base, lukso } from "@reown/appkit/networks";
+
+
+// Universal Profile custom wallet for LUKSO network
+const UP_CUSTOM_WALLET = {
+  id: 'universal-profiles',
+  name: 'Universal Profile',
+  homepage: 'https://universaleverything.io',
+  image_url: 'https://wallet.universalprofile.cloud/assets/images/up-logo.png',
+  mobile_link: 'io.universaleverything.universalprofiles://',
+  desktop_link: '',
+  webapp_link: 'https://universaleverything.io',
+  app_store: 'https://apps.apple.com/app/universal-profiles/id6702018631',
+  play_store: 'https://play.google.com/store/apps/details?id=io.universaleverything.universalprofiles',
+};
+
+// Standard wallet IDs shown when NOT on LUKSO
+const DEFAULT_WALLET_IDS = [
+  'c57ca95b47569778a828d19178114f4db188b89b763c899ba0be274e97267d96', // MetaMask
+  'fd20dc426fb37566d803205b19bbc1d4096b248ac04548e3cfb6b3a38bd033aa', // Coinbase Wallet
+  '4622a2b2d6af1c9844944291e5e7351a6aa24cd7b23099efac1b2fd875da31a0', // Trust Wallet
+  '18388be9ac2d02726dbac9777c96efaac06d744b2f6d580fccdd4127a6d01fd1', // Rabby Wallet
+];
 
 // ═══════════════════════════════════════════════════════════════════════════
 // ABI DEFINITIONS
@@ -47,6 +71,10 @@ const state = reactive({
   // Wallet type
   walletType: null, // 'injected' | 'walletconnect' | null
 
+  // Universal Profile (LUKSO)
+  isUniversalProfile: false,
+  universalProfileData: null, // { name, description, avatar, tags, links }
+
   // Authentication (JWT)
   isAuthenticated: false,
   authLevel: null,
@@ -56,6 +84,7 @@ const state = reactive({
   balances: {
     ethereum: 0,
     arbitrum: 0,
+    base: 0,
     total: 0,
   },
 
@@ -107,12 +136,14 @@ const createProviderWithFallback = async (network) => {
 const initRpcProviders = async () => {
   try {
     // Try to connect with fallback support
-    const [ethProvider, arbProvider] = await Promise.all([
+    const [ethProvider, arbProvider, baseProvider] = await Promise.all([
       createProviderWithFallback("ethereum"),
       createProviderWithFallback("arbitrum"),
+      createProviderWithFallback("base"),
     ]);
     rpcProviders.ethereum = ethProvider;
     rpcProviders.arbitrum = arbProvider;
+    rpcProviders.base = baseProvider;
   } catch (e) {
     console.error("[Web3] Failed to initialize RPC providers:", e);
     // Fallback to simple initialization
@@ -122,11 +153,14 @@ const initRpcProviders = async () => {
     rpcProviders.arbitrum = new ethers.JsonRpcProvider(
       CONFIG.networks.arbitrum.rpc
     );
+    rpcProviders.base = new ethers.JsonRpcProvider(
+      CONFIG.networks.base.rpc
+    );
   }
 };
 
 /**
- * Initialize AppKit (singleton) - Official Reown/WalletConnect integration
+ * Initialize AppKit (singleton — createAppKit ignores all subsequent calls).
  */
 const initAppKit = () => {
   if (appKit) return appKit;
@@ -160,22 +194,21 @@ const initAppKit = () => {
     icons: ['https://bonzai.sh/icon.png'],
   };
 
+  // Clear cached recent wallets to prevent stale/broken entries in the modal
+  try { localStorage.removeItem('@appkit/recent_wallets'); } catch { /* noop */ }
+  try { localStorage.removeItem('@appkit/recent_wallet'); } catch { /* noop */ }
+
   appKit = createAppKit({
     adapters: [new EthersAdapter()],
-    networks: [mainnet, arbitrum],
-    defaultNetwork: arbitrum,
+    networks: [base, mainnet, arbitrum, lukso],
+    defaultNetwork: base,
     metadata,
     projectId,
     features: {
       analytics: false,
     },
-    // Only show these wallets
-    includeWalletIds: [
-      'c57ca95b47569778a828d19178114f4db188b89b763c899ba0be274e97267d96', // MetaMask
-      'fd20dc426fb37566d803205b19bbc1d4096b248ac04548e3cfb6b3a38bd033aa', // Coinbase Wallet
-      '4622a2b2d6af1c9844944291e5e7351a6aa24cd7b23099efac1b2fd875da31a0', // Trust Wallet
-      '18388be9ac2d02726dbac9777c96efaac06d744b2f6d580fccdd4127a6d01fd1', // Rabby Wallet
-    ],
+    customWallets: [UP_CUSTOM_WALLET],
+    includeWalletIds: DEFAULT_WALLET_IDS,
     themeMode: 'dark',
     themeVariables: {
       '--w3m-accent': '#10b981',
@@ -335,8 +368,20 @@ export const connectWallet = async () => {
     // Set up event listeners
     setupEventListeners();
 
-    // Authenticate with server
-    // First try to refresh existing token (avoids signature prompt on reconnect)
+    // Check if the connected address is a Universal Profile on LUKSO.
+    // Uses its own LUKSO RPC, so works regardless of the current chain.
+    await checkIsUniversalProfile(state.walletAddress);
+
+    // ═══════════════════════════════════════════════════════════════════════
+    // AUTHENTICATION FLOW
+    //
+    // Priority order (minimize signatures):
+    // 1. Try token refresh (HttpOnly cookie) - no signature
+    // 2. Try vault session restore - no signature if vault already unlocked
+    // 3. Full auth with ONE signature (auth + vault key derivation combined)
+    // ═══════════════════════════════════════════════════════════════════════
+
+    // First, always try token refresh (no user interaction)
     try {
       const refreshResult = await authService.refreshToken();
       state.isAuthenticated = true;
@@ -344,11 +389,14 @@ export const connectWallet = async () => {
       state.authLevelValue = refreshResult.level_value;
       console.log(`[Web3] Token refreshed, level ${refreshResult.level}`);
     } catch (refreshError) {
-      // Refresh failed - need fresh authentication (triggers sign message prompt)
-      console.log("[Web3] Token refresh failed, requesting new signature...");
+      // Refresh failed - need signature-based authentication
+      console.log("[Web3] Token refresh failed, requesting signature...");
+
       try {
         const signer = await browserProvider.getSigner();
-        const authResult = await authService.authenticate(signer);
+
+        // Single signature flow: authenticate AND initialize vault from same signature
+        const authResult = await authService.authenticateWithVault(signer);
 
         state.isAuthenticated = true;
         state.authLevel = authResult.level;
@@ -357,7 +405,6 @@ export const connectWallet = async () => {
         console.log(`[Web3] Authenticated with level ${authResult.level}`);
       } catch (authError) {
         // User rejected signature or auth failed
-        // Connection still valid, but not authenticated
         console.warn("[Web3] Authentication failed:", authError.message);
         state.isAuthenticated = false;
         state.authLevel = null;
@@ -416,6 +463,13 @@ export const disconnectWallet = async () => {
       }
     }
 
+    // Lock the vault (clears in-memory secrets)
+    try {
+      authVault.lockVault();
+    } catch (e) {
+      console.warn('[Web3] Vault lock warning:', e.message);
+    }
+
     // Logout from auth service
     authService.logout();
   } finally {
@@ -423,6 +477,8 @@ export const disconnectWallet = async () => {
     state.walletAddress = null;
     state.currentChainId = null;
     state.walletType = null;
+    state.isUniversalProfile = false;
+    state.universalProfileData = null;
     state.isAuthenticated = false;
     state.authLevel = null;
     state.authLevelValue = 0;
@@ -480,15 +536,17 @@ export const fetchAllBalances = async () => {
   state.isLoadingBalances = true;
 
   try {
-    // Fetch balances in parallel
-    const [ethBalance, arbBalance] = await Promise.all([
+    // Fetch balances in parallel across all chains
+    const [ethBalance, arbBalance, baseBalance] = await Promise.all([
       fetchBalanceOnChain("ethereum"),
       fetchBalanceOnChain("arbitrum"),
+      fetchBalanceOnChain("base"),
     ]);
 
     state.balances.ethereum = ethBalance;
     state.balances.arbitrum = arbBalance;
-    state.balances.total = ethBalance + arbBalance;
+    state.balances.base = baseBalance;
+    state.balances.total = ethBalance + arbBalance + baseBalance;
     state.lastBalanceCheck = Date.now();
 
     return state.balances;
@@ -523,7 +581,6 @@ export const switchNetwork = async (networkKey) => {
       method: "wallet_switchEthereumChain",
       params: [{ chainId: network.chainIdHex }],
     });
-    return true;
   } catch (e) {
     // Chain not added, try to add it
     if (e.code === 4902) {
@@ -539,16 +596,29 @@ export const switchNetwork = async (networkKey) => {
           },
         ],
       });
-      return true;
+    } else {
+      throw e;
     }
-    throw e;
   }
+
+  // Update state directly — WalletConnect providers may not fire chainChanged
+  state.currentChainId = network.chainId;
+  if (eip1193Provider) {
+    browserProvider = new ethers.BrowserProvider(eip1193Provider);
+  }
+
+  return true;
 };
 
 /**
- * Switch to Arbitrum (primary network for BonzAI)
+ * Switch to Arbitrum
  */
 export const switchToArbitrum = () => switchNetwork("arbitrum");
+
+/**
+ * Switch to Base (primary network for payments)
+ */
+export const switchToBase = () => switchNetwork("base");
 
 // ═══════════════════════════════════════════════════════════════════════════
 // EVENT HANDLERS
@@ -560,6 +630,51 @@ const handleAccountsChanged = async (accounts) => {
   } else if (accounts[0] !== state.walletAddress) {
     state.walletAddress = accounts[0];
     await fetchAllBalances();
+  }
+};
+
+/**
+ * Check if the connected address is a Universal Profile on LUKSO.
+ * If so, fetch LSP3 data and sync luksoService.
+ */
+const checkIsUniversalProfile = async (address) => {
+  try {
+    console.log("[Web3] Checking if address is UP on LUKSO:", address);
+    const luksoRpc = new ethers.JsonRpcProvider(CONFIG.networks.lukso.rpc);
+    const code = await luksoRpc.getCode(address);
+    if (code === "0x") {
+      // No contract at this address on LUKSO — not a UP
+      console.log("[Web3] No contract at address on LUKSO, not a UP");
+      state.isUniversalProfile = false;
+      state.universalProfileData = null;
+      return;
+    }
+    const contract = new ethers.Contract(
+      address,
+      ["function supportsInterface(bytes4 interfaceId) view returns (bool)"],
+      luksoRpc
+    );
+    // LSP0 ERC725Account interface ID
+    const isUP = await contract.supportsInterface("0x24871b3d");
+    console.log("[Web3] supportsInterface result:", isUP);
+
+    state.isUniversalProfile = isUP;
+
+    if (isUP) {
+      console.log("[Web3] Address is a Universal Profile on LUKSO");
+      state.universalProfileData = await luksoService.fetchProfileData(address);
+      console.log("[Web3] UP profile data:", state.universalProfileData);
+      // Sync luksoService with AppKit connection
+      if (eip1193Provider) {
+        await luksoService.syncFromAppKit(eip1193Provider, address);
+      }
+    } else {
+      state.universalProfileData = null;
+    }
+  } catch (err) {
+    console.warn("[Web3] UP detection failed:", err.message);
+    state.isUniversalProfile = false;
+    state.universalProfileData = null;
   }
 };
 
@@ -645,7 +760,7 @@ export const getBrowserProvider = async () => {
 /**
  * Get RPC provider for a specific chain
  */
-export const getProvider = async (chain = "arbitrum") => {
+export const getProvider = async (chain = "base") => {
   if (!rpcProviders[chain]) await initRpcProviders();
   return rpcProviders[chain];
 };
@@ -688,6 +803,7 @@ export const web3Service = {
   // Networks
   switchNetwork,
   switchToArbitrum,
+  switchToBase,
 
   // Computed
   truncatedAddress,

@@ -3,7 +3,7 @@
   <div class="models__deployment column is-8 is-paddingless">
     <div class="models__deployment-install">
       <div class="columns">
-        <div class="column is-12 p-5">
+        <div class="column is-12">
           <div class="level">
             <div class="level-left">
               <div class="level-item">
@@ -395,40 +395,6 @@
             </div>
             <hr class="mt-5" />
 
-            <!-- PAYOUT HISTORY -->
-            <div class="models__activity--payouts mt-5 pt-5">
-              <div class="level">
-                <div class="level-left">
-                  <div class="level-item">
-                    <h2 class="fira-sans-condensed-black-italic has-text-left mt-0">
-                      <span class="material-symbols-outlined is-size-1 mr-2">
-                        trophy
-                      </span>
-                      Payout History
-                    </h2>
-                  </div>
-                </div>
-                <div class="level-right">
-                  <div class="level-item">
-                    <button
-                      class="button is-info is-outlined is-medium"
-                      @click="requestOpenNetworkModal()"
-                      title="Configure Peer-to-Peer Network"
-                    >
-                      <span class="material-symbols-outlined">
-                        settings
-                      </span>
-                    </button>
-                  </div>
-                </div>
-              </div>
-              <p>
-                Configure P2P mode to serve Video Generation to peers and earn x402 USDC.
-              </p>
-            </div>
-
-            <hr class="mt-5" />
-
             <!-- GENERATION HISTORY HEADER -->
             <div class="level pt-5 mt-5">
               <div class="level-left">
@@ -543,15 +509,16 @@
                           </span>
                         </button>
                         <button
-                          disabled
                           class="button is-medium is-warning copy is-pulled-left ml-5 pl-2"
+                          @click="openMint(inference)"
+                          :disabled="!!inference.nft"
                         >
                           <span
                             class="material-symbols-outlined is-size-2 mr-1"
                           >
-                            token
+                            {{ inference.nft ? 'check_circle' : 'token' }}
                           </span>
-                          Mint
+                          {{ inference.nft ? 'Minted' : 'Mint' }}
                         </button>
                       </div>
                     </div>
@@ -568,15 +535,6 @@
                     Loading more...
                   </span>
                 </div>
-                <!-- SCROLL TO TOP BUTTON -->
-                <button
-                  v-if="showScrollTop"
-                  class="scroll-to-top-btn"
-                  @click="scrollToTop"
-                  title="Scroll to top"
-                >
-                  <span class="material-symbols-outlined">arrow_upward</span>
-                </button>
               </div>
             </div>
           </div>
@@ -584,6 +542,15 @@
       </div>
     </div>
   </div>
+
+  <!-- Mint Modal -->
+  <MintModal
+    v-if="mintTarget"
+    :visible="!!mintTarget"
+    v-bind="mintTarget"
+    @close="mintTarget = null"
+    @minted="onMinted"
+  />
 </template>
 
 <script>
@@ -602,6 +569,7 @@ import useClipboard from "vue-clipboard3";
 import axios from "axios";
 import { io } from "socket.io-client";
 import AccessRequirements from "./AccessRequirements.vue";
+import MintModal from "./MintModal.vue";
 import { requestOpenNetworkModal } from "../services/level.service.js";
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -651,9 +619,46 @@ const WS_GEN = `${API_BASE}/generation`;
 
 export default {
   name: "GenerativeVideo",
-  components: { AccessRequirements },
+  components: { AccessRequirements, MintModal },
   props: { existingImageBase64: { type: String, default: "" } },
   setup(props) {
+    // ------------ NFT Minting ---------
+    const mintTarget = ref(null);
+
+    const openMint = async (inference) => {
+      const videoPath = inference.answer?.data?.video_path;
+      let content = null;
+      if (videoPath && window.electronAPI?.readFileAsBase64) {
+        try {
+          content = await window.electronAPI.readFileAsBase64(videoPath);
+        } catch (e) {
+          console.warn('[GenerativeVideo] Could not read video file:', e);
+        }
+      }
+      mintTarget.value = {
+        inferenceType: 'video',
+        inferenceId: inference.id,
+        content,
+        contentType: 'video/mp4',
+        prompt: inference.question,
+        generation: {
+          type: 'text-to-video',
+          model: inference.model || 'ltx-2',
+          timestamp: inference.timestamp,
+          elapsedMs: inference.elapsedMs || null,
+        },
+      };
+    };
+
+    const onMinted = (result) => {
+      // Trigger re-render for shallowRef
+      const arr = [...inferences.value];
+      const inf = arr.find(i => i.id === mintTarget.value?.inferenceId);
+      if (inf) inf.nft = result;
+      inferences.value = arr;
+      mintTarget.value = null;
+    };
+
     const mode = ref("i2v"); // "t2v" (text-to-video) or "i2v" (image-to-video)
     const quality = ref("480p");  // 480p, 540p, 720p, 1080p, 4k (default 480p for quality)
     const duration = ref(5);       // seconds: 5 or 10 (default 5s for good motion)
@@ -673,13 +678,63 @@ export default {
     const showScrollTop = ref(false);
     const scrollContainer = ref(null);
 
+    // Get video path from any format
+    const getVideoPath = (item) => {
+      // Component format: answer.data.video_path or video_url
+      if (item.answer?.data?.video_path) return item.answer.data.video_path;
+      if (item.answer?.data?.video_url) return item.answer.data.video_url;
+      // Unified store format: videoPath
+      if (item.videoPath) return item.videoPath;
+      // Direct properties
+      if (item.video_path) return item.video_path;
+      if (item.video_url) return item.video_url;
+      if (item.data?.video_path) return item.data.video_path;
+      return null;
+    };
+
+    // Normalize inference to component format
+    const normalizeInference = (item) => {
+      const videoPath = getVideoPath(item);
+      if (!videoPath) return null;
+
+      // Already in component format with valid data
+      if (item.answer?.data?.video_path || item.answer?.data?.video_url) {
+        return item;
+      }
+
+      // Convert any other format to component format
+      return {
+        ...item,
+        question: item.prompt || item.question || '',
+        answer: {
+          status: item.answer?.status || 200,
+          data: {
+            video_path: videoPath,
+            ...(item.answer?.data || {}),
+          },
+        },
+      };
+    };
+
     // Reversed inferences (most recent first) with original index
+    // Filter out invalid entries and normalize data structure
     const reversedInferences = computed(() => {
-      return inferences.value
-        .map((item, idx) => ({
-          ...item,
-          _originalIndex: idx,
-        }))
+      const normalized = inferences.value
+        .map((item, idx) => {
+          const norm = normalizeInference(item);
+          if (!norm) {
+            console.warn('[GenerativeVideo] Skipping invalid inference:', item);
+            return null;
+          }
+          return {
+            ...norm,
+            _originalIndex: idx,
+          };
+        })
+        .filter((item) => item && (item.answer?.data?.video_path || item.answer?.data?.video_url));
+
+      console.log(`[GenerativeVideo] ${inferences.value.length} total, ${normalized.length} valid`);
+      return normalized
         .reverse();
     });
 
@@ -751,8 +806,14 @@ export default {
     // Debounced persistence
     const persistInferences = debounce(async (data) => {
       try {
-        await window.electronAPI?.store?.set?.("videoInferences", data);
-      } catch {}
+        // Use JSON.parse/stringify to ensure proper serialization
+        await window.electronAPI?.store?.set?.(
+          "videoInferences",
+          JSON.parse(JSON.stringify(data))
+        );
+      } catch (e) {
+        console.error("[GenerativeVideo] Failed to persist inferences:", e);
+      }
     }, 500);
 
     // ------------ access control -----------
@@ -1443,15 +1504,19 @@ export default {
 
       ensureGenerationSocket();
       startGeneration("video"); // Initialize generation state
+      const _genStart = Date.now();
       const onSuccess = async (response) => {
         // UPDATED: Check for video_url OR video_path
         if (response?.data?.video_path || response?.data?.video_url) {
+          const elapsedMs = Date.now() - _genStart;
           // Update shallowRef by replacing array
           // Save only response.data (JSON body) - full axios response is not serializable
           const newInference = {
             question: `${mode.value}-i2v`,
             answer: { data: response.data },
             id: uuid(),
+            model: 'ltx-2',
+            elapsedMs,
           };
           inferences.value = [...inferences.value, newInference];
           hasCopy.value = [...hasCopy.value, false];
@@ -1717,6 +1782,10 @@ export default {
       getVideoUrl,
       // Network modal
       requestOpenNetworkModal,
+      // NFT Minting
+      mintTarget,
+      openMint,
+      onMinted,
     };
   },
 };
@@ -1780,6 +1849,11 @@ export default {
   backdrop-filter: blur(32px);
   border-radius: 4px !important;
 }
+.models__activity--payouts h2 {
+  font-size: 48px;
+  color: #fff;
+  text-align: right;
+}
 h1 {
   margin-top: 0 !important;
   font-size: 64px;
@@ -1810,7 +1884,14 @@ div.question {
 hr {
   margin: 12px 0;
   width: 100%;
-  background-color: rgba(255, 255, 255, 0.015);
+  border: none;
+  height: 1px;
+  background: linear-gradient(
+    to right,
+    transparent,
+    rgba(255, 255, 255, 1),
+    transparent
+  );
 }
 .input {
   color: #fff;

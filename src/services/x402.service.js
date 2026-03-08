@@ -1,131 +1,314 @@
 /**
- * x402 Payment Validation Service
+ * x402 Payment Service (ETH-Only)
  *
- * Implements HTTP 402 Payment Required flow for distributed inference.
- * Uses EIP-712 typed signatures for secure, verifiable payments.
+ * Simplified HTTP 402 Payment Required flow using native ETH.
+ * No USDC, no ERC-3009, no complexity - just ETH transfers.
  *
  * Payment Flow:
- * 1. Consumer requests inference from provider
- * 2. Provider returns 402 with payment requirements
- * 3. Consumer signs payment authorization
- * 4. Consumer resubmits request with signed payment
- * 5. Provider validates signature and processes request
+ * 1. Consumer requests service from provider
+ * 2. Provider returns 402 with payment requirements (ETH amount + address)
+ * 3. Consumer sends ETH payment
+ * 4. Consumer resubmits request with tx hash
+ * 5. Provider validates tx and processes request
+ *
+ * Supported Chain: Base (8453) - cheap gas, fast finality
  */
 
 import { ethers } from 'ethers';
 
-// EIP-712 Domain for BonzAI x402 payments
-const EIP712_DOMAIN = {
-  name: 'BonzAI x402',
-  version: '1',
-  chainId: 42161, // Arbitrum
+// ═══════════════════════════════════════════════════════════════════════════
+// CONFIGURATION
+// ═══════════════════════════════════════════════════════════════════════════
+
+// Base is the primary chain - cheap gas (~$0.001)
+const BASE_CONFIG = {
+  chainId: 8453,
+  name: 'Base',
+  rpc: 'https://base.llamarpc.com',
+  explorer: 'https://basescan.org',
 };
 
-// EIP-712 Types
+// EIP-712 domain for signed payment authorizations
+const EIP712_DOMAIN = {
+  name: 'BonzAI x402',
+  version: '2',
+  chainId: BASE_CONFIG.chainId,
+};
+
+// Payment authorization types
 const PAYMENT_TYPES = {
   Payment: [
-    { name: 'providerId', type: 'address' },
+    { name: 'provider', type: 'address' },
     { name: 'amount', type: 'uint256' },
     { name: 'nonce', type: 'uint256' },
     { name: 'expiry', type: 'uint256' },
-    { name: 'pipeline', type: 'string' },
+    { name: 'service', type: 'string' },
   ],
 };
 
-// Used nonces to prevent replay attacks (in-memory, reset on restart)
-// In production, this should be persisted or use on-chain nonces
-const usedNonces = new Set();
+// ── Persistent nonce store (replay-attack prevention) ────────────────────
+// Nonces are stored as {key, ts} objects in Electron Store under 'x402-used-nonces'.
+// On load, entries older than 24 hours are discarded. Capped at 10,000 entries.
+//
+// Works in both Electron contexts:
+//   Renderer process  → window.electronAPI.store.get / .set  (async IPC)
+//   Main process      → electron-store instance               (sync)
+const NONCE_STORE_KEY = 'x402-used-nonces';
+const NONCE_TTL_MS = 24 * 60 * 60 * 1000; // 24 hours
+const NONCE_MAX_ENTRIES = 10_000;
+
+// In-memory mirror; lazily hydrated from Electron Store on first access.
+let _nonceEntries = null; // Array<{key: string, ts: number}> | null
+let _nonceSet = null;     // Set<string> | null  (fast lookup mirror)
+let _loadPromise = null;  // deduplicates concurrent init calls
+let _mainProcessStore = null; // electron-store instance (main process only)
 
 /**
- * Create a payment request (402 response)
- *
- * @param {Object} options Payment options
- * @param {string} options.providerId Provider's wallet address
- * @param {string} options.amount Amount in smallest unit (e.g., USDC with 6 decimals)
- * @param {string} options.pipeline Pipeline being requested
- * @param {number} options.chainId Chain ID (default: 42161 Arbitrum)
- * @returns {Object} Payment request to return in 402 response
+ * Resolve a reference to the Electron Store, regardless of process context.
+ * - In the main process: dynamically imports electron-store.
+ * - In the renderer: uses window.electronAPI.store (IPC bridge).
+ * Returns { get, set } with async-compatible methods, or null if unavailable.
  */
-export function createPaymentRequest({ providerId, amount, pipeline, chainId = 42161 }) {
-  return {
-    version: 'x402/1.0',
-    providerId,
-    amount,
-    pipeline,
-    chainId,
-    domain: {
-      name: EIP712_DOMAIN.name,
-      version: EIP712_DOMAIN.version,
-      chainId,
-    },
-    types: PAYMENT_TYPES,
-  };
+async function _getStoreBackend() {
+  // Renderer process
+  if (typeof window !== 'undefined' && window.electronAPI?.store) {
+    return {
+      get: (key, def) => window.electronAPI.store.get(key, def),
+      set: (key, val) => window.electronAPI.store.set(key, val),
+    };
+  }
+
+  // Main process — import electron-store (singleton)
+  if (_mainProcessStore) {
+    return {
+      get: (key, def) => Promise.resolve(_mainProcessStore.get(key, def)),
+      set: (key, val) => Promise.resolve(_mainProcessStore.set(key, val)),
+    };
+  }
+
+  try {
+    const StoreModule = await import('electron-store');
+    const Store = StoreModule.default || StoreModule;
+    _mainProcessStore = new Store();
+    return {
+      get: (key, def) => Promise.resolve(_mainProcessStore.get(key, def)),
+      set: (key, val) => Promise.resolve(_mainProcessStore.set(key, val)),
+    };
+  } catch {
+    // Not in Electron at all (e.g. tests) — no persistence
+    return null;
+  }
 }
 
 /**
- * Create a signed payment (consumer side)
+ * Hydrate the in-memory nonce cache from Electron Store.
+ * Filters out entries older than 24 hours on load.
+ * Safe to call repeatedly — only the first call does real work.
+ */
+async function _loadNonces() {
+  if (_nonceEntries !== null) return; // already loaded
+
+  if (_loadPromise) {
+    await _loadPromise;
+    return;
+  }
+
+  _loadPromise = (async () => {
+    let raw = null;
+    try {
+      const backend = await _getStoreBackend();
+      if (backend) {
+        raw = await backend.get(NONCE_STORE_KEY, null);
+      }
+    } catch (err) {
+      console.warn('[x402] Failed to load persisted nonces:', err.message);
+    }
+
+    const now = Date.now();
+    const entries = Array.isArray(raw)
+      ? raw.filter((e) => e && typeof e.key === 'string' && typeof e.ts === 'number' && now - e.ts < NONCE_TTL_MS)
+      : [];
+
+    _nonceEntries = entries;
+    _nonceSet = new Set(entries.map((e) => e.key));
+  })();
+
+  await _loadPromise;
+}
+
+/**
+ * Persist the current nonce list to Electron Store.
+ * Fire-and-forget; errors are logged but do not propagate.
+ */
+async function _persistNonces() {
+  try {
+    const backend = await _getStoreBackend();
+    if (backend) {
+      await backend.set(NONCE_STORE_KEY, _nonceEntries);
+    }
+  } catch (err) {
+    console.warn('[x402] Failed to persist nonces:', err.message);
+  }
+}
+
+/**
+ * Prune expired nonces (older than 24 h) and enforce the 10,000-entry cap
+ * by evicting the oldest entries first.
+ */
+function _pruneNonces() {
+  const now = Date.now();
+
+  // Remove expired
+  _nonceEntries = _nonceEntries.filter((e) => now - e.ts < NONCE_TTL_MS);
+
+  // Enforce cap — keep the newest entries
+  if (_nonceEntries.length > NONCE_MAX_ENTRIES) {
+    // Entries are appended chronologically, so oldest are at the front
+    _nonceEntries = _nonceEntries.slice(_nonceEntries.length - NONCE_MAX_ENTRIES);
+  }
+
+  // Rebuild the lookup set
+  _nonceSet = new Set(_nonceEntries.map((e) => e.key));
+}
+
+/**
+ * Check whether a nonce key has already been used.
+ * Must call `await _loadNonces()` before using this.
+ */
+function _hasNonce(key) {
+  return _nonceSet !== null && _nonceSet.has(key);
+}
+
+/**
+ * Record a nonce as used, prune stale entries, and persist.
+ * Must call `await _loadNonces()` before using this.
+ */
+function _addNonce(key) {
+  const entry = { key, ts: Date.now() };
+  _nonceEntries.push(entry);
+  _nonceSet.add(key);
+
+  _pruneNonces();
+  _persistNonces();
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// PAYMENT REQUEST (Provider Side)
+// ═══════════════════════════════════════════════════════════════════════════
+
+/**
+ * Create a payment request for 402 response
  *
- * @param {ethers.Signer} signer Ethers signer (wallet)
- * @param {Object} paymentRequest Payment request from provider
- * @param {string} paymentRequest.providerId Provider's wallet address
- * @param {string} paymentRequest.amount Amount in smallest unit
- * @param {string} paymentRequest.pipeline Pipeline being requested
- * @returns {Promise<Object>} Signed payment to include in request
+ * @param {Object} options
+ * @param {string} options.provider - Provider's ETH address
+ * @param {string} options.amount - Amount in wei (use ethers.parseEther)
+ * @param {string} options.service - Service/endpoint being requested
+ * @returns {Object} Payment request to include in 402 response
+ */
+export function createPaymentRequest({ provider, amount, service }) {
+  return {
+    version: 'x402-eth/1.0',
+    provider,
+    amount,
+    amountEth: ethers.formatEther(amount),
+    service,
+    chainId: BASE_CONFIG.chainId,
+    chainName: BASE_CONFIG.name,
+  };
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// PAYMENT SIGNING (Consumer Side)
+// ═══════════════════════════════════════════════════════════════════════════
+
+/**
+ * Sign a payment authorization
+ * This creates a signed message that authorizes payment, but doesn't send ETH yet.
+ *
+ * @param {ethers.Wallet} signer - Wallet to sign with
+ * @param {Object} paymentRequest - Payment request from provider
+ * @returns {Promise<Object>} Signed payment authorization
  */
 export async function signPayment(signer, paymentRequest) {
-  const { providerId, amount, pipeline, chainId = 42161 } = paymentRequest;
+  const { provider, amount, service } = paymentRequest;
 
-  // Generate nonce and expiry
-  const nonce = Date.now().toString() + Math.random().toString(36).slice(2);
+  const nonce = Date.now();
   const expiry = Math.floor(Date.now() / 1000) + 300; // 5 minutes
 
-  const domain = {
-    name: EIP712_DOMAIN.name,
-    version: EIP712_DOMAIN.version,
-    chainId,
-  };
-
   const message = {
-    providerId,
-    amount,
-    nonce: BigInt(ethers.keccak256(ethers.toUtf8Bytes(nonce))),
-    expiry,
-    pipeline,
+    provider,
+    amount: BigInt(amount),
+    nonce: BigInt(nonce),
+    expiry: BigInt(expiry),
+    service,
   };
 
-  // Sign with EIP-712
-  const signature = await signer.signTypedData(domain, PAYMENT_TYPES, message);
+  const signature = await signer.signTypedData(EIP712_DOMAIN, PAYMENT_TYPES, message);
 
   return {
-    version: 'x402/1.0',
+    version: 'x402-eth/1.0',
     consumer: await signer.getAddress(),
-    providerId,
+    provider,
     amount,
+    amountEth: ethers.formatEther(amount),
     nonce,
-    nonceHash: message.nonce.toString(),
     expiry,
-    pipeline,
-    chainId,
+    service,
+    chainId: BASE_CONFIG.chainId,
     signature,
   };
 }
 
 /**
- * Validate a signed payment (provider side)
+ * Send ETH payment directly
+ * Simpler alternative to signed authorization - just send the ETH.
  *
- * @param {Object} payment Signed payment from consumer
- * @param {Object} options Validation options
- * @param {string} options.expectedProviderId Expected provider address
- * @param {string} options.minAmount Minimum required amount
- * @param {string} options.pipeline Expected pipeline
- * @returns {Object} Validation result { valid: boolean, error?: string, consumer?: string }
+ * @param {ethers.Wallet} signer - Wallet to send from (must be connected to provider)
+ * @param {string} to - Recipient address
+ * @param {string} amount - Amount in wei
+ * @returns {Promise<Object>} Transaction result
  */
-export function validatePayment(payment, options = {}) {
-  const { expectedProviderId, minAmount = '0', pipeline: expectedPipeline } = options;
+export async function sendPayment(signer, to, amount) {
+  const tx = await signer.sendTransaction({
+    to,
+    value: BigInt(amount),
+  });
+
+  const receipt = await tx.wait();
+
+  return {
+    success: true,
+    txHash: receipt.hash,
+    from: await signer.getAddress(),
+    to,
+    amount,
+    amountEth: ethers.formatEther(amount),
+    blockNumber: receipt.blockNumber,
+  };
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// PAYMENT VALIDATION (Provider Side)
+// ═══════════════════════════════════════════════════════════════════════════
+
+/**
+ * Validate a signed payment authorization
+ *
+ * @param {Object} payment - Signed payment from consumer
+ * @param {Object} options - Validation options
+ * @param {string} options.expectedProvider - Expected provider address
+ * @param {string} options.minAmount - Minimum required amount in wei
+ * @returns {Promise<Object>} Validation result
+ */
+export async function validateSignedPayment(payment, options = {}) {
+  const { expectedProvider, minAmount = '0' } = options;
 
   try {
+    // Ensure persistent nonce store is loaded
+    await _loadNonces();
+
     // Check version
-    if (payment.version !== 'x402/1.0') {
+    if (payment.version !== 'x402-eth/1.0') {
       return { valid: false, error: 'invalid_version' };
     }
 
@@ -135,19 +318,14 @@ export function validatePayment(payment, options = {}) {
       return { valid: false, error: 'payment_expired' };
     }
 
-    // Check expiry isn't too far in the future (max 1 hour)
-    if (payment.expiry > now + 3600) {
-      return { valid: false, error: 'expiry_too_far' };
-    }
-
     // Check nonce hasn't been used
     const nonceKey = `${payment.consumer}:${payment.nonce}`;
-    if (usedNonces.has(nonceKey)) {
+    if (_hasNonce(nonceKey)) {
       return { valid: false, error: 'nonce_reused' };
     }
 
-    // Check provider ID matches
-    if (expectedProviderId && payment.providerId.toLowerCase() !== expectedProviderId.toLowerCase()) {
+    // Check provider matches
+    if (expectedProvider && payment.provider.toLowerCase() !== expectedProvider.toLowerCase()) {
       return { valid: false, error: 'wrong_provider' };
     }
 
@@ -156,33 +334,17 @@ export function validatePayment(payment, options = {}) {
       return { valid: false, error: 'insufficient_amount' };
     }
 
-    // Check pipeline matches
-    if (expectedPipeline && payment.pipeline !== expectedPipeline) {
-      return { valid: false, error: 'wrong_pipeline' };
-    }
-
-    // Check chain ID
-    if (payment.chainId !== 42161) {
-      return { valid: false, error: 'wrong_chain' };
-    }
-
     // Verify EIP-712 signature
-    const domain = {
-      name: EIP712_DOMAIN.name,
-      version: EIP712_DOMAIN.version,
-      chainId: payment.chainId,
-    };
-
     const message = {
-      providerId: payment.providerId,
-      amount: payment.amount,
-      nonce: BigInt(payment.nonceHash),
-      expiry: payment.expiry,
-      pipeline: payment.pipeline,
+      provider: payment.provider,
+      amount: BigInt(payment.amount),
+      nonce: BigInt(payment.nonce),
+      expiry: BigInt(payment.expiry),
+      service: payment.service,
     };
 
     const recoveredAddress = ethers.verifyTypedData(
-      domain,
+      EIP712_DOMAIN,
       PAYMENT_TYPES,
       message,
       payment.signature
@@ -192,19 +354,14 @@ export function validatePayment(payment, options = {}) {
       return { valid: false, error: 'invalid_signature' };
     }
 
-    // Mark nonce as used
-    usedNonces.add(nonceKey);
-
-    // Clean up old nonces periodically (keep last 10000)
-    if (usedNonces.size > 10000) {
-      const entries = Array.from(usedNonces);
-      entries.slice(0, 5000).forEach((n) => usedNonces.delete(n));
-    }
+    // Mark nonce as used (persists to Electron Store + prunes stale/overflow)
+    _addNonce(nonceKey);
 
     return {
       valid: true,
       consumer: recoveredAddress,
       amount: payment.amount,
+      amountEth: ethers.formatEther(payment.amount),
     };
   } catch (err) {
     console.error('[x402] Validation error:', err.message);
@@ -213,22 +370,61 @@ export function validatePayment(payment, options = {}) {
 }
 
 /**
- * Check if a peer is the local node (self-inference)
+ * Verify an ETH transaction was received
  *
- * @param {string} remotePeerId Remote peer ID
- * @param {string} localPeerId Local node's peer ID
- * @returns {boolean} True if same peer
+ * @param {string} txHash - Transaction hash to verify
+ * @param {Object} options - Verification options
+ * @param {string} options.expectedTo - Expected recipient
+ * @param {string} options.minAmount - Minimum amount in wei
+ * @param {ethers.Provider} options.provider - Ethers provider (optional)
+ * @returns {Promise<Object>} Verification result
  */
-export function isSelfInference(remotePeerId, localPeerId) {
-  if (!remotePeerId || !localPeerId) return false;
-  return remotePeerId === localPeerId;
+export async function verifyTransaction(txHash, options = {}) {
+  const { expectedTo, minAmount = '0', provider } = options;
+
+  try {
+    const rpcProvider = provider || new ethers.JsonRpcProvider(BASE_CONFIG.rpc);
+    const receipt = await rpcProvider.getTransactionReceipt(txHash);
+
+    if (!receipt) {
+      return { valid: false, error: 'tx_not_found' };
+    }
+
+    if (receipt.status !== 1) {
+      return { valid: false, error: 'tx_failed' };
+    }
+
+    const tx = await rpcProvider.getTransaction(txHash);
+
+    if (expectedTo && tx.to?.toLowerCase() !== expectedTo.toLowerCase()) {
+      return { valid: false, error: 'wrong_recipient' };
+    }
+
+    if (BigInt(tx.value) < BigInt(minAmount)) {
+      return { valid: false, error: 'insufficient_amount' };
+    }
+
+    return {
+      valid: true,
+      from: tx.from,
+      to: tx.to,
+      amount: tx.value.toString(),
+      amountEth: ethers.formatEther(tx.value),
+      blockNumber: receipt.blockNumber,
+    };
+  } catch (err) {
+    console.error('[x402] TX verification error:', err.message);
+    return { valid: false, error: 'verification_error', detail: err.message };
+  }
 }
 
+// ═══════════════════════════════════════════════════════════════════════════
+// UTILITIES
+// ═══════════════════════════════════════════════════════════════════════════
+
 /**
- * Calculate token count for pricing
- * Simple heuristic: ~4 characters per token
- *
- * @param {string} text Input text
+ * Estimate tokens for pricing (simple heuristic)
+ * @param {string} text - Input text
  * @returns {number} Estimated token count
  */
 export function estimateTokens(text) {
@@ -237,14 +433,15 @@ export function estimateTokens(text) {
 }
 
 /**
- * Calculate payment amount for a request
+ * Calculate ETH amount for a request
  *
- * @param {Object} request Inference request
- * @param {string} pricePerToken Price per 1000 tokens in USDC (6 decimals)
- * @returns {string} Total amount in smallest unit
+ * @param {Object} request - Inference request
+ * @param {string} pricePerToken - Price per 1000 tokens in wei
+ * @returns {string} Total amount in wei
  */
-export function calculatePaymentAmount(request, pricePerToken = '100000') {
-  // Estimate tokens from request
+export function calculateAmount(request, pricePerToken = '1000000000000') {
+  // Default: 0.000001 ETH per 1000 tokens (~$0.002 at $2000/ETH)
+
   let tokens = 0;
 
   if (request.params?.prompt) {
@@ -256,23 +453,111 @@ export function calculatePaymentAmount(request, pricePerToken = '100000') {
     }
   }
 
-  // Minimum 100 tokens for any request
+  // Minimum 100 tokens
   tokens = Math.max(tokens, 100);
 
-  // Add estimated output tokens (assume 2x input for generation)
+  // Estimate output tokens (2x input)
   const totalTokens = tokens * 3;
 
-  // Calculate amount: (tokens / 1000) * pricePerToken
+  // Calculate: (tokens / 1000) * pricePerToken
   const amount = BigInt(Math.ceil(totalTokens / 1000)) * BigInt(pricePerToken);
 
   return amount.toString();
 }
 
-export default {
+/**
+ * Format wei to ETH string
+ * @param {string|bigint} wei - Amount in wei
+ * @returns {string} Formatted ETH amount
+ */
+export function formatEth(wei) {
+  return ethers.formatEther(wei);
+}
+
+/**
+ * Parse ETH string to wei
+ * @param {string} eth - Amount in ETH
+ * @returns {string} Amount in wei
+ */
+export function parseEth(eth) {
+  return ethers.parseEther(eth).toString();
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// P2P NETWORK HELPERS
+// ═══════════════════════════════════════════════════════════════════════════
+
+/**
+ * Check if this is self-inference (consumer === provider)
+ * Self-inference is FREE - no payment required
+ *
+ * @param {string} remotePeer - Remote peer ID
+ * @param {string} localPeerId - Local peer ID
+ * @returns {boolean} True if self-inference
+ */
+export function isSelfInference(remotePeer, localPeerId) {
+  return remotePeer === localPeerId;
+}
+
+/**
+ * Validate a payment for P2P inference
+ * Wrapper for validateSignedPayment with P2P-specific parameter names
+ *
+ * @param {Object} payment - Payment object from request
+ * @param {Object} options - Validation options
+ * @param {string} options.expectedProviderId - Expected provider address
+ * @param {string} options.minAmount - Minimum required amount in wei
+ * @param {string} options.pipeline - Pipeline being requested
+ * @returns {Object} Validation result
+ */
+export async function validatePayment(payment, options = {}) {
+  const { expectedProviderId, minAmount, pipeline } = options;
+
+  // Map P2P options to validateSignedPayment options
+  return validateSignedPayment(payment, {
+    expectedProvider: expectedProviderId,
+    minAmount,
+  });
+}
+
+/**
+ * Calculate payment amount for a P2P inference request
+ * Alias for calculateAmount with P2P-specific naming
+ *
+ * @param {Object} request - Inference request
+ * @param {string} pricePerToken - Price per 1000 tokens in wei
+ * @returns {string} Total amount in wei
+ */
+export function calculatePaymentAmount(request, pricePerToken) {
+  return calculateAmount(request, pricePerToken);
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// EXPORTS
+// ═══════════════════════════════════════════════════════════════════════════
+
+export const x402Service = {
+  // Config
+  BASE_CONFIG,
+  EIP712_DOMAIN,
+
+  // Payment flow
   createPaymentRequest,
   signPayment,
-  validatePayment,
-  isSelfInference,
+  sendPayment,
+  validateSignedPayment,
+  verifyTransaction,
+
+  // Utilities
   estimateTokens,
+  calculateAmount,
+  formatEth,
+  parseEth,
+
+  // P2P helpers
+  isSelfInference,
+  validatePayment,
   calculatePaymentAmount,
 };
+
+export default x402Service;

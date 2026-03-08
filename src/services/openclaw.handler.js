@@ -172,6 +172,9 @@ const ROLEPLAY_LLM = {
   modelname: 'MythoMax L2 13B',
   filename: 'mythomax-l2-13b.q4_k_m.gguf',
   url: 'https://huggingface.co/TheBloke/MythoMax-L2-13B-GGUF/resolve/main/mythomax-l2-13b.Q4_K_M.gguf',
+  filesizeBytes: 7.87e9,
+  parameters: 13000000000,
+  context: 4096,
 };
 
 // Track the model before roleplay so we can restore it
@@ -243,10 +246,13 @@ async function restorePreRoleplayLLM() {
     );
 
     if (modelKey && MODEL_REQUIREMENTS[modelKey]) {
+      const req = MODEL_REQUIREMENTS[modelKey];
+      // Pass full model config including filesizeBytes for accurate context calculation
       const loadResult = await window.electronAPI.loadModel({
-        modelname: MODEL_REQUIREMENTS[modelKey].name,
-        filename: MODEL_REQUIREMENTS[modelKey].filename,
-        url: MODEL_REQUIREMENTS[modelKey].url,
+        modelname: req.name,
+        filename: req.filename,
+        url: req.url,
+        filesizeBytes: req.filesizeBytes,
       });
       if (loadResult?.success) {
         networkSettings.currentModel = modelKey;
@@ -823,19 +829,43 @@ async function generateMusic(channelId, prompt, options = {}) {
 
 /**
  * Generate video
+ * @param {string} channelId - Channel ID
+ * @param {string} prompt - Video prompt
+ * @param {Object} options - Options
+ * @param {string} options.image - Base64 image for i2v mode
+ * @param {string} options.image_url - Image URL for i2v mode
  */
 async function generateVideo(channelId, prompt, options = {}) {
   try {
+    // Determine mode: i2v if image provided, otherwise t2v
+    const hasImage = options.image || options.image_url;
+    const mode = hasImage ? 'i2v' : 't2v';
+
+    // Default settings match GenerativeVideo.vue for memory efficiency
+    // LTX-2 distilled model: steps=10, guidance=1, fps=12, duration=5s
+    const fps = options.fps || 12;
+    const duration = options.duration || 5;
+    const frames = options.frames || (fps * duration + 1); // LTX-2 requires 8n+1 frames
+
     const params = {
       prompt,
-      height: options.height || 480,
-      width: options.width || 768,
-      num_frames: options.frames || 81,
-      fps: options.fps || 24,
-      num_inference_steps: options.steps || 30,
-      guidance_scale: options.guidance || 3.5,
-      image_base64: options.image || null,
+      mode,
+      height: options.height || 448,      // 480p safe dimensions for tiled VAE
+      width: options.width || 640,
+      frames: frames,                      // Parameter name is 'frames' not 'num_frames'
+      frame_rate: fps,                     // Parameter name is 'frame_rate' not 'fps'
+      steps: options.steps || 10,          // Distilled model: 10 steps
+      guidance_scale: options.guidance || 1, // Distilled model: CFG=1
+      auto_download: true,
     };
+
+    // Only include image params for i2v mode
+    if (options.image) {
+      params.image_base64 = options.image;
+    } else if (options.image_url) {
+      params.image_url = options.image_url;
+    }
+
     const result = await executeInference(channelId, 'video_fast', params);
     return result.result;
   } catch (error) {
@@ -1884,20 +1914,29 @@ async function handleChat(channelId, message) {
   }
   session.sceneState.recentEmotions.push(emotion);
 
+  // Build result with messages array for sequential delivery
+  // Text message is sent first (order: 0), media follows (order: 1, 2, 3...)
+  // This allows the OpenClaw gateway to send messages in proper order
   const result = {
+    // Primary text message - should be sent immediately
     text: textResponse,
     companion: { id: companion.id, name: companion.name },
     scenario: scenario ? { id: scenario.id, name: scenario.name } : null,
     sessionKey,
+    // Messages array for sequential delivery (new format)
+    messages: [
+      { type: 'text', content: textResponse, order: 0 },
+    ],
   };
 
-  // Run media generation in PARALLEL for much faster response times
-  // Instead of text → audio → image → video sequentially (5-10+ min)
-  // We do text → [audio, image, video in parallel] (2-3 min)
+  // Run media generation in PARALLEL for faster response times
+  // Media messages are added to the messages array with order > 0
   const mediaPromises = [];
+  let mediaOrder = 1;
 
-  // Generate audio if enabled
+  // Generate audio if enabled (order: 1)
   if (mapping.settings.enableAudio) {
+    const audioOrder = mediaOrder++;
     const voice = companion.gender === 'female' ? 'af_heart' : 'am_adam';
     mediaPromises.push(
       generateAudio(channelId, textResponse, { voice })
@@ -1906,6 +1945,7 @@ async function handleChat(channelId, message) {
           if (audioPath) {
             result.audioPath = audioPath;
             assistantMessage.audio = audioPath;
+            result.messages.push({ type: 'audio', path: audioPath, order: audioOrder });
             console.log(`[OpenClaw] Chat audio saved: ${audioPath}`);
           }
         })
@@ -1913,8 +1953,9 @@ async function handleChat(channelId, message) {
     );
   }
 
-  // Generate image if enabled
+  // Generate image if enabled (order: 2)
   if (mapping.settings.enableImage) {
+    const imageOrder = mediaOrder++;
     const imagePrompt = `${companion.imagePromptBase || companion.appearance}, ${emotion} expression, ${scenario?.imagePromptBase || ''}, high quality`;
     mediaPromises.push(
       generateImage(channelId, imagePrompt)
@@ -1924,9 +1965,11 @@ async function handleChat(channelId, message) {
             const imagePath = await saveBase64ImageToFile(imageData, 'chat');
             if (imagePath) {
               result.imagePath = imagePath;
+              result.messages.push({ type: 'image', path: imagePath, order: imageOrder });
               console.log(`[OpenClaw] Chat image saved to: ${imagePath}`);
             } else {
               result.imageBase64 = imageData;
+              result.messages.push({ type: 'image', base64: imageData, order: imageOrder });
             }
             assistantMessage.image = imageData;
             session.sceneState.lastImageAt = session.history.length - 1;
@@ -1936,8 +1979,9 @@ async function handleChat(channelId, message) {
     );
   }
 
-  // Generate video if enabled (less frequent - every 5 messages)
+  // Generate video if enabled (order: 3, less frequent - every 5 messages)
   if (mapping.settings.enableVideo && session.history.length % 5 === 0) {
+    const videoOrder = mediaOrder++;
     const videoPrompt = `${companion.appearance}, ${emotion}, ${scenario?.setting || ''}, cinematic`;
     mediaPromises.push(
       generateVideo(channelId, videoPrompt)
@@ -1945,6 +1989,7 @@ async function handleChat(channelId, message) {
           if (videoResult?.video_path) {
             result.videoPath = videoResult.video_path;
             assistantMessage.video = videoResult.video_path;
+            result.messages.push({ type: 'video', path: videoResult.video_path, order: videoOrder });
             console.log(`[OpenClaw] Chat video saved: ${videoResult.video_path}`);
           }
         })
@@ -1960,12 +2005,15 @@ async function handleChat(channelId, message) {
     console.log(`[OpenClaw] All media generation complete in ${((Date.now() - mediaStart) / 1000).toFixed(1)}s`);
   }
 
+  // Sort messages by order for proper delivery sequence
+  result.messages.sort((a, b) => a.order - b.order);
+
   // Persist
   await saveSessions();
   await saveChannelMappings();
 
   const totalTime = ((Date.now() - chatStartTime) / 1000).toFixed(1);
-  console.log(`[OpenClaw] Chat complete in ${totalTime}s (text: ${result.text?.length || 0} chars, audio: ${result.audioPath ? 'yes' : 'no'}, image: ${result.imagePath ? 'yes' : 'no'})`);
+  console.log(`[OpenClaw] Chat complete in ${totalTime}s (text: ${result.text?.length || 0} chars, messages: ${result.messages.length})`);
 
   return result;
 }

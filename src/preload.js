@@ -3,6 +3,8 @@
 const { contextBridge, ipcRenderer } = require("electron");
 
 contextBridge.exposeInMainWorld("electronAPI", {
+  // App version for window title
+  getAppVersion: () => ipcRenderer.invoke("get-app-version"),
   startServer: () => ipcRenderer.invoke("start-server"),
   stopServer: () => ipcRenderer.invoke("stop-server"),
   restartServer: () => ipcRenderer.invoke("restart-server"),
@@ -15,7 +17,14 @@ contextBridge.exposeInMainWorld("electronAPI", {
   deleteModel: (modelname) => ipcRenderer.invoke("model-delete", modelname),
   loadModel: (modelname) => ipcRenderer.invoke("model-load", modelname),
   unloadModel: () => ipcRenderer.invoke("model-unload"),
-  chat: (userMessage) => ipcRenderer.invoke("model-chat", userMessage),
+  chat: (userMessage, options = {}) => ipcRenderer.invoke("model-chat", { message: userMessage, ...options }),
+  resetChat: () => ipcRenderer.invoke("model-reset-chat"),
+  chatStream: (userMessage, options = {}) => ipcRenderer.invoke("model-chat-stream", { message: userMessage, ...options }),
+  onChatToken: (cb) => {
+    const handler = (_event, chunk) => cb(chunk);
+    ipcRenderer.on("chat-token", handler);
+    return () => ipcRenderer.removeListener("chat-token", handler);
+  },
   // Vision chat for multimodal models (MiniCPM-V, etc.)
   chatVision: (message, imageBase64) =>
     ipcRenderer.invoke("model-chat-vision", { message, imageBase64 }),
@@ -30,6 +39,9 @@ contextBridge.exposeInMainWorld("electronAPI", {
     set: (key, value) => ipcRenderer.invoke("store-set", key, value),
     delete: (key) => ipcRenderer.invoke("store-delete", key),
   },
+  // Agent wallet transaction confirmation (P0 Security)
+  confirmTransaction: (details) =>
+    ipcRenderer.invoke("confirm-transaction", details),
   saveImage: (defaultName, base64Data) =>
     ipcRenderer.invoke("agent-save-image", defaultName, base64Data),
   saveAudio: (defaultName, sourcePath) =>
@@ -45,6 +57,8 @@ contextBridge.exposeInMainWorld("electronAPI", {
     ipcRenderer.invoke("save-base64-to-file", filePath, base64Data),
   // Fix history paths after MODEL_DIR migration
   fixHistoryPaths: (oldDir, newDir) => ipcRenderer.invoke("fix-history-paths", oldDir, newDir),
+  // Force migrate all history paths to current MODEL_DIR (auto-detects old paths)
+  forceMigrateHistory: () => ipcRenderer.invoke("force-migrate-history"),
   // Open URL in default browser
   openExternal: (url) => ipcRenderer.invoke("open-external", url),
   // Server status events (for self-healing notifications)
@@ -83,6 +97,28 @@ contextBridge.exposeInMainWorld("electronAPI", {
   openclawGetEnabled: () => ipcRenderer.invoke("openclaw-get-enabled"),
   openclawSetEnabled: (enabled) => ipcRenderer.invoke("openclaw-set-enabled", enabled),
   openclawIsInstalled: () => ipcRenderer.invoke("openclaw-is-installed"),
+
+  // ─────────────────────────────────────────────────────────────────────────────
+  // Irys / Arweave Upload (proxied through main process for Node.js compat)
+  // ─────────────────────────────────────────────────────────────────────────────
+  irys: {
+    init: (opts) => ipcRenderer.invoke("irys-init", opts),
+    upload: (opts) => ipcRenderer.invoke("irys-upload", opts),
+    uploadJson: (opts) => ipcRenderer.invoke("irys-upload-json", opts),
+    balance: () => ipcRenderer.invoke("irys-balance"),
+    fund: (opts) => ipcRenderer.invoke("irys-fund", opts),
+    price: (opts) => ipcRenderer.invoke("irys-price", opts),
+    disconnect: () => ipcRenderer.invoke("irys-disconnect"),
+  },
+
+  // ─────────────────────────────────────────────────────────────────────────────
+  // Dataset Studio (simple CRUD + LLM describe)
+  // ─────────────────────────────────────────────────────────────────────────────
+  synthExamplesList: () => ipcRenderer.invoke("synth-examples-list"),
+  synthExampleSave: (ex) => ipcRenderer.invoke("synth-example-save", ex),
+  synthExampleDelete: (id) => ipcRenderer.invoke("synth-example-delete", id),
+  synthDescribe: (opts) => ipcRenderer.invoke("synth-describe", opts),
+  synthExport: (opts) => ipcRenderer.invoke("synth-export", opts),
 
   // ─────────────────────────────────────────────────────────────────────────────
   // P2P Network (libp2p) - Distributed Inference
@@ -138,6 +174,48 @@ contextBridge.exposeInMainWorld("electronAPI", {
    * @returns {Promise<{ok: boolean, peerId?: string, error?: string}>}
    */
   p2pLocalPeerId: () => ipcRenderer.invoke("p2p-local-peer-id"),
+
+  /**
+   * Read file as base64 (for NFT minting of audio/video files)
+   * @param {string} filePath - Absolute path to the file
+   * @returns {Promise<string>} Base64-encoded file content
+   */
+  readFileAsBase64: (filePath) =>
+    ipcRenderer.invoke("read-file-as-base64", filePath),
+
+  // ─────────────────────────────────────────────────────────────────────────
+  // Social Platform Integration (Instagram, TikTok, X)
+  // ─────────────────────────────────────────────────────────────────────────
+
+  social: {
+    /** Start OAuth flow for a platform */
+    oauthStart: ({ platform, companionId }) =>
+      ipcRenderer.invoke("social:oauth-start", { platform, companionId }),
+
+    /** Get stored credentials */
+    getCredentials: ({ platform, companionId }) =>
+      ipcRenderer.invoke("social:get-credentials", { platform, companionId }),
+
+    /** Refresh OAuth token */
+    refreshToken: ({ platform, companionId }) =>
+      ipcRenderer.invoke("social:refresh-token", { platform, companionId }),
+
+    /** Make authenticated API call through main process */
+    apiCall: ({ platform, url, method, headers, body, formData }) =>
+      ipcRenderer.invoke("social:api-call", { platform, url, method, headers, body, formData }),
+
+    /** Upload media (binary) through main process */
+    mediaUpload: ({ platform, url, accessToken, file, fields }) =>
+      ipcRenderer.invoke("social:media-upload", { platform, url, accessToken, file, fields }),
+
+    /** Disconnect a platform for a companion */
+    disconnect: ({ platform, companionId }) =>
+      ipcRenderer.invoke("social:disconnect", { platform, companionId }),
+
+    /** Get all connected platforms for a companion */
+    getConnected: ({ companionId }) =>
+      ipcRenderer.invoke("social:get-connected", { companionId }),
+  },
 });
 
 // ─────────────────────────────────────────────────────────────────────────────

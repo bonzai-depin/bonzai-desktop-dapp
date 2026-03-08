@@ -3,7 +3,7 @@
   <div class="models__deployment column is-8 is-paddingless">
     <div class="models__deployment-install">
       <div class="columns">
-        <div class="column is-12 p-5">
+        <div class="column is-12">
           <div class="level">
             <div class="level-left">
               <div class="level-item">
@@ -890,46 +890,12 @@
 
                 <hr class="mt-5" />
 
-                <!-- PAYOUT HISTORY -->
-                <div class="models__activity--payouts mt-5 pt-5">
-                  <div class="level">
-                    <div class="level-left">
-                      <div class="level-item">
-                        <h2 class="fira-sans-condensed-black-italic has-text-left mt-0">
-                          <span class="material-symbols-outlined is-size-1 mr-2">
-                            trophy
-                          </span>
-                          Payout History
-                        </h2>
-                      </div>
-                    </div>
-                    <div class="level-right">
-                      <div class="level-item">
-                        <button
-                          class="button is-info is-outlined is-medium"
-                          @click="requestOpenNetworkModal()"
-                          title="Configure Peer-to-Peer Network"
-                        >
-                          <span class="material-symbols-outlined">
-                            settings
-                          </span>
-                        </button>
-                      </div>
-                    </div>
-                  </div>
-                  <p>
-                    Configure P2P mode to serve Audio Generation to peers and earn x402 USDC.
-                  </p>
-                </div>
-
-                <hr class="mt-5" />
-
                 <!-- GENERATION HISTORY HEADER -->
                 <div class="level pt-5 mt-5">
                   <div class="level-left">
                     <div class="level-item">
                       <h2
-                        class="fira-sans-condensed-black-italic has-text-white is-size-2"
+                        class="fira-sans-condensed-black-italic has-text-white is-size-1"
                       >
                         <span class="material-symbols-outlined is-size-1 mr-2">
                           history
@@ -1052,13 +1018,14 @@
                         Restore
                       </button>
                       <button
-                        disabled
                         class="button is-medium is-warning copy is-pulled-left ml-5 pl-2"
+                        @click="openMint(inference)"
+                        :disabled="!!inference.nft"
                       >
                         <span class="material-symbols-outlined is-size-2 mr-1">
-                          token
+                          {{ inference.nft ? 'check_circle' : 'token' }}
                         </span>
-                        Mint
+                        {{ inference.nft ? 'Minted' : 'Mint' }}
                       </button>
                     </div>
                   </li>
@@ -1074,16 +1041,6 @@
                     Loading more...
                   </span>
                 </div>
-
-                <!-- SCROLL TO TOP BUTTON -->
-                <button
-                  v-if="showScrollTop"
-                  class="scroll-to-top-btn"
-                  @click="scrollToTop"
-                  title="Scroll to top"
-                >
-                  <span class="material-symbols-outlined">arrow_upward</span>
-                </button>
               </div>
             </div>
           </div>
@@ -1091,6 +1048,15 @@
       </div>
     </div>
   </div>
+
+  <!-- Mint Modal -->
+  <MintModal
+    v-if="mintTarget"
+    :visible="!!mintTarget"
+    v-bind="mintTarget"
+    @close="mintTarget = null"
+    @minted="onMinted"
+  />
 </template>
 
 <script>
@@ -1117,6 +1083,7 @@ import {
   clearError,
 } from "../stores/generationStore";
 import AccessRequirements from "./AccessRequirements.vue";
+import MintModal from "./MintModal.vue";
 import { requestOpenNetworkModal } from "../services/level.service.js";
 
 const DEMO_PROMPT = "Hello, welcome to sovereign AI.";
@@ -1133,8 +1100,47 @@ export default {
   name: "GenerativeAudio",
   components: {
     AccessRequirements,
+    MintModal,
   },
   setup() {
+    // ------------ NFT Minting ---------
+    const mintTarget = ref(null);
+
+    const openMint = async (inference) => {
+      // Prefer MP3 for minting (smaller, universally playable)
+      const mp3Path = inference.answer?.data?.audio_path_mp3;
+      const wavPath = inference.answer?.data?.audio_path;
+      const audioPath = mp3Path || wavPath;
+      const isMp3 = !!mp3Path;
+      let content = null;
+      if (audioPath && window.electronAPI?.readFileAsBase64) {
+        try {
+          content = await window.electronAPI.readFileAsBase64(audioPath);
+        } catch (e) {
+          console.warn('[GenerativeAudio] Could not read audio file:', e);
+        }
+      }
+      mintTarget.value = {
+        inferenceType: 'audio',
+        inferenceId: inference.id,
+        content,
+        contentType: isMp3 ? 'audio/mpeg' : 'audio/wav',
+        prompt: inference.question,
+        generation: {
+          type: inference.isMusic ? 'music' : 'text-to-speech',
+          model: inference.model || 'kokoro',
+          timestamp: inference.timestamp,
+          elapsedMs: inference.elapsedMs || null,
+        },
+      };
+    };
+
+    const onMinted = (result) => {
+      const inf = inferences.value.find(i => i.id === mintTarget.value?.inferenceId);
+      if (inf) inf.nft = result;
+      mintTarget.value = null;
+    };
+
     // ------------ basic state -------------
     const selectedModel = ref("multilingual");
     const mode = ref("tts"); // 'tts', 'clone', or 'music'
@@ -1317,13 +1323,61 @@ export default {
     const showScrollTop = ref(false);
     const scrollContainer = ref(null);
 
+    // Get audio path from any format
+    const getAudioPath = (item) => {
+      // Component format: answer.data.audio_path
+      if (item.answer?.data?.audio_path) return item.answer.data.audio_path;
+      // Unified store format: audioPath
+      if (item.audioPath) return item.audioPath;
+      // Direct properties
+      if (item.audio_path) return item.audio_path;
+      if (item.data?.audio_path) return item.data.audio_path;
+      return null;
+    };
+
+    // Normalize inference to component format
+    const normalizeInference = (item) => {
+      const audioPath = getAudioPath(item);
+      if (!audioPath) return null;
+
+      // Already in component format with valid data
+      if (item.answer?.data?.audio_path) {
+        return item;
+      }
+
+      // Convert any other format to component format
+      return {
+        ...item,
+        question: item.prompt || item.question || '',
+        answer: {
+          status: item.answer?.status || 200,
+          data: {
+            audio_path: audioPath,
+            ...(item.answer?.data || {}),
+          },
+        },
+      };
+    };
+
     // Reversed inferences (most recent first) with original index
+    // Normalize data structure for compatibility
     const reversedInferences = computed(() => {
-      return inferences.value
-        .map((item, idx) => ({
-          ...item,
-          _originalIndex: idx,
-        }))
+      const normalized = inferences.value
+        .map((item, idx) => {
+          const norm = normalizeInference(item);
+          if (!norm) {
+            console.warn('[GenerativeAudio] Skipping invalid inference:', item);
+            return null;
+          }
+          return {
+            ...norm,
+            _originalIndex: idx,
+          };
+        })
+        .filter((item) => item && item.answer?.data?.audio_path);
+
+      console.log(`[GenerativeAudio] ${inferences.value.length} total, ${normalized.length} valid`);
+      return normalized
         .reverse();
     });
 
@@ -1718,6 +1772,7 @@ export default {
       modelname: "Meta Llama 3.1 8B Instruct",
       filename: "meta-llama-3.1-8b-instruct-q4_k_m.gguf",
       url: "https://huggingface.co/lmstudio-community/Meta-Llama-3.1-8B-Instruct-GGUF/resolve/main/Meta-Llama-3.1-8B-Instruct-Q4_K_M.gguf",
+      filesizeBytes: 4.92e9,
       parameters: 8000000000,
       context: 8192,
     };
@@ -2546,6 +2601,7 @@ Remember: 6-10 syllables per line, use all appropriate structure tags. Write in 
 
       ensureGenerationSocket();
       startGeneration("audio"); // Initialize generation state
+      const _genStart = Date.now();
 
       const onSuccess = async (response) => {
         // Check for audio_path in response data
@@ -2562,6 +2618,7 @@ Remember: 6-10 syllables per line, use all appropriate structure tags. Write in 
 
           // Only store serializable data - axios response contains non-serializable properties
           // Build inference record with all parameters for restoration
+          const elapsedMs = Date.now() - _genStart;
           const newInference = {
             question: prompt,
             answer: {
@@ -2574,6 +2631,7 @@ Remember: 6-10 syllables per line, use all appropriate structure tags. Write in 
             hasClone: mode.value === "clone",
             isMusic: mode.value === "music",
             voiceGender: voiceGender.value,
+            elapsedMs,
             // Store all music parameters for restoration
             ...(mode.value === "music" && {
               songName: songName.value.trim() || null,
@@ -2939,6 +2997,10 @@ Remember: 6-10 syllables per line, use all appropriate structure tags. Write in 
       DEMO_PROMPT,
       // Network modal
       requestOpenNetworkModal,
+      // NFT Minting
+      mintTarget,
+      openMint,
+      onMinted,
     };
   },
 };
@@ -2998,6 +3060,11 @@ Remember: 6-10 syllables per line, use all appropriate structure tags. Write in 
   backdrop-filter: blur(32px);
   border-radius: 4px !important;
 }
+.models__activity--payouts h2 {
+  font-size: 48px;
+  color: #fff;
+  text-align: right;
+}
 h1 {
   margin-top: 0 !important;
   font-size: 64px;
@@ -3028,17 +3095,18 @@ div.question {
   display: flex;
   flex-direction: column;
   gap: 0.5rem;
+  background: #fff;
 }
 
 .audio-player {
   width: 100%;
   height: 40px;
   border-radius: 4px;
-  background: rgba(97, 55, 142, 0.3);
+  /* background: rgba(97, 55, 142, 0.3); */
 }
 
 .audio-player::-webkit-media-controls-panel {
-  background: rgba(97, 55, 142, 0.5);
+  /* background: rgba(97, 55, 142, 0.5); */
 }
 
 .song-name {

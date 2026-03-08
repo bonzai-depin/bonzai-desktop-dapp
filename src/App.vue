@@ -16,10 +16,7 @@
     <p class="is-size-6" style="opacity: 0.8">
       Please sign the message in your wallet to authenticate.
     </p>
-    <progress
-      class="progress is-small is-warning"
-      max="100"
-    ></progress>
+    <progress class="progress is-small is-warning" max="100"></progress>
   </div>
 
   <!-- Autonomous Companion Away Notification -->
@@ -32,17 +29,30 @@
     <button class="delete" @click.stop="skillStore.updateActivity()"></button>
     <p class="mb-2">
       <span class="fira-sans-condensed-black-italic is-size-4">
-        <span class="material-symbols-outlined mr-2" style="vertical-align: middle">self_improvement</span>
+        <span
+          class="material-symbols-outlined mr-2"
+          style="vertical-align: middle"
+        >
+          self_improvement
+        </span>
         Companion active
       </span>
       <span class="is-pulled-right">
-        <span class="material-symbols-outlined" style="vertical-align: middle; opacity: 0.7">arrow_forward</span>
+        <span
+          class="material-symbols-outlined"
+          style="vertical-align: middle; opacity: 0.7"
+        >
+          arrow_forward
+        </span>
       </span>
     </p>
     <p class="is-size-6" style="opacity: 0.8">
-      {{ skillStore.autonomousSession?.companion?.name || 'Your companion' }} is continuing their day while you're away.
+      {{ skillStore.autonomousSession?.companion?.name || "Your companion" }} is
+      continuing their day while you're away.
       <span v-if="skillStore.missedMessages > 0" class="has-text-weight-bold">
-        ({{ skillStore.missedMessages }} new message{{ skillStore.missedMessages > 1 ? 's' : '' }})
+        ({{ skillStore.missedMessages }} new message{{
+          skillStore.missedMessages > 1 ? "s" : ""
+        }})
       </span>
     </p>
     <progress
@@ -57,17 +67,22 @@
     v-else-if="serverStatus.show"
     class="server-notification notification"
     :class="{
-      'is-info': serverStatus.type === 'restarting' || serverStatus.type === 'starting',
+      'is-info':
+        serverStatus.type === 'restarting' || serverStatus.type === 'starting',
       'is-success': serverStatus.type === 'ready',
-      'is-danger': serverStatus.type === 'crashed' || serverStatus.type === 'error',
-      'is-warning': serverStatus.type === 'stopped'
+      'is-danger':
+        serverStatus.type === 'crashed' || serverStatus.type === 'error',
+      'is-warning': serverStatus.type === 'stopped',
     }"
   >
     <button class="delete" @click="serverStatus.show = false"></button>
     <p class="mb-2">
       <span class="fira-sans-condensed-black-italic is-size-4">
         <button
-          v-if="serverStatus.type === 'restarting' || serverStatus.type === 'starting'"
+          v-if="
+            serverStatus.type === 'restarting' ||
+            serverStatus.type === 'starting'
+          "
           disabled
           class="button is-loading is-info is-small mr-2 p-4"
         ></button>
@@ -86,25 +101,23 @@
         </span>
         {{ serverStatus.message }}
       </span>
-      <span
-        v-if="serverStatus.canRetry"
-        class="is-pulled-right"
-      >
-        <button
-          class="button is-small is-warning"
-          @click="handleServerRestart"
-        >
-          <span class="material-symbols-outlined mr-1" style="font-size: 16px">refresh</span>
+      <span v-if="serverStatus.canRetry" class="is-pulled-right">
+        <button class="button is-small is-warning" @click="handleServerRestart">
+          <span class="material-symbols-outlined mr-1" style="font-size: 16px">
+            refresh
+          </span>
           Retry
         </button>
       </span>
     </p>
     <progress
-      v-if="serverStatus.type === 'restarting' || serverStatus.type === 'starting'"
+      v-if="
+        serverStatus.type === 'restarting' || serverStatus.type === 'starting'
+      "
       class="progress is-small"
       :class="{
         'is-info': serverStatus.type === 'starting',
-        'is-warning': serverStatus.type === 'restarting'
+        'is-warning': serverStatus.type === 'restarting',
       }"
       max="100"
     ></progress>
@@ -223,9 +236,7 @@
           >
             <a>
               <h1>
-                <span class="material-symbols-outlined is-size-1">
-                  hub
-                </span>
+                <span class="material-symbols-outlined is-size-1">automation</span>
                 Agents
               </h1>
             </a>
@@ -234,13 +245,17 @@
       </div>
     </div>
     <!-- Each component has inline access requirements with demo mode -->
-    <GenerativeText v-if="modelMode == 'chat'" />
-    <GenerativeAudio v-if="modelMode == 'music'" />
-    <GenerativeImage v-if="modelMode == 'image'" />
-    <GenerativeVideo v-if="modelMode == 'video'" :existingImageBase64="videoImageBase64" />
-    <Generative3D v-if="modelMode == '3D'" />
-    <GenerativeTraining v-if="modelMode == 'robot'" />
-    <SmartAgent v-if="modelMode == 'agent'" />
+    <GenerativeText v-if="modelMode == 'chat'" key="chat" />
+    <GenerativeAudio v-if="modelMode == 'music'" key="music" />
+    <GenerativeImage v-if="modelMode == 'image'" key="image" />
+    <GenerativeVideo
+      v-if="modelMode == 'video'"
+      key="video"
+      :existingImageBase64="videoImageBase64"
+    />
+    <Generative3D v-if="modelMode == '3D'" key="3D" />
+    <GenerativeTraining v-if="modelMode == 'robot'" key="robot" />
+    <SmartAgent v-if="modelMode == 'agent'" key="agent" />
   </div>
   <BonzaiBottomBar />
 </template>
@@ -297,7 +312,7 @@ export default {
 
     // Navigate directly to companion chat
     const goToCompanionChat = () => {
-      skillStore.requestSkillNavigation('roleplay-companion-v1.0.0');
+      skillStore.requestSkillNavigation("roleplay-companion-v1.0.0");
       skillStore.clearMissedMessages();
       skillStore.updateActivity();
       modelMode.value = "agent";
@@ -339,10 +354,13 @@ export default {
       const loadSystemInfo = async () => {
         try {
           const timeoutPromise = new Promise((_, reject) =>
-            setTimeout(() => reject(new Error("System info timeout")), 5000)
+            setTimeout(() => reject(new Error("System info timeout")), 5000),
           );
           const infoPromise = window.electronAPI.systemInformation();
-          const mySystemValues = await Promise.race([infoPromise, timeoutPromise]);
+          const mySystemValues = await Promise.race([
+            infoPromise,
+            timeoutPromise,
+          ]);
           systemValues.value = mySystemValues;
           console.log("System info loaded:", systemValues.value);
         } catch (e) {
@@ -351,6 +369,16 @@ export default {
         }
       };
       loadSystemInfo(); // Fire and forget - don't block mount
+
+      // Set window title with version
+      window.electronAPI
+        .getAppVersion()
+        .then((version) => {
+          document.title = `BonzAI v${version}`;
+        })
+        .catch(() => {
+          document.title = "BonzAI";
+        });
 
       // Initialize OpenClaw webhook handler
       initOpenClawHandler();
@@ -502,10 +530,9 @@ body {
    ═══════════════════════════════════════════════════════════════════════════ */
 
 .system {
-  height: 9.5vh !important;
   position: absolute;
-  right: 18px;
-  top: 32px;
+  right: 0.5em;
+  top: 0.85em;
   z-index: 777;
 }
 
@@ -526,6 +553,14 @@ body {
   cursor: pointer;
   transform: translate3d(0, 0, 0);
   transition: 400ms ease-in;
+}
+
+.tabs.menu ul li .notification {
+  position: absolute;
+  top: 1em;
+  right: 1em;
+  padding: 0.5em 1em;
+  width: 100px;
 }
 
 .tabs.menu li + li {

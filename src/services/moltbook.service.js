@@ -507,14 +507,29 @@ const RATE_LIMITS = {
 };
 
 // In-memory credential store (per companion)
-// In production, this should be encrypted in Electron Store
+// Used as cache, with persistence via Auth Vault or Electron Store
 const companionCredentials = new Map();
 
 // Rate limit tracking
 const rateLimitState = new Map();
 
+// Optional Auth Vault integration
+let authVault = null;
+try {
+  // Dynamic import to avoid circular dependency
+  import('./authVault.service.js').then(module => {
+    authVault = module.authVault;
+    console.log('[Moltbook] Auth Vault integration enabled');
+  }).catch(() => {
+    console.log('[Moltbook] Auth Vault not available, using legacy storage');
+  });
+} catch (e) {
+  // Vault not available
+}
+
 /**
  * Store companion Moltbook credentials
+ * Uses Auth Vault if available, falls back to Electron Store
  * @param {string} companionId - Companion ID
  * @param {Object} credentials - { apiKey, claimUrl, verificationCode, status }
  */
@@ -526,7 +541,18 @@ export async function storeCredentials(companionId, credentials) {
 
   companionCredentials.set(companionId, credentialsWithTimestamp);
 
-  // Also persist to Electron Store if available (async)
+  // Try Auth Vault first (encrypted)
+  if (authVault?.state?.isUnlocked) {
+    try {
+      await authVault.setMoltbookCredentials(companionId, credentialsWithTimestamp);
+      console.log(`[Moltbook] Credentials stored in vault for ${companionId}`);
+      return;
+    } catch (e) {
+      console.warn('[Moltbook] Failed to store in vault:', e.message);
+    }
+  }
+
+  // Fall back to Electron Store
   if (window.electronAPI?.store?.set) {
     try {
       await window.electronAPI.store.set(`moltbook-credentials-${companionId}`, credentialsWithTimestamp);
@@ -538,7 +564,8 @@ export async function storeCredentials(companionId, credentials) {
 }
 
 /**
- * Load credentials from Electron Store (async)
+ * Load credentials from storage (async)
+ * Checks Auth Vault first, then Electron Store
  * @param {string} companionId - Companion ID
  * @returns {Promise<Object|null>}
  */
@@ -548,12 +575,26 @@ export async function loadCredentials(companionId) {
     return companionCredentials.get(companionId);
   }
 
-  // Try Electron Store (async)
+  // Try Auth Vault (encrypted)
+  if (authVault?.state?.isUnlocked) {
+    const vaultCreds = authVault.getMoltbookCredentials(companionId);
+    if (vaultCreds) {
+      companionCredentials.set(companionId, vaultCreds);
+      return vaultCreds;
+    }
+  }
+
+  // Try Electron Store (legacy)
   if (window.electronAPI?.store?.get) {
     try {
       const stored = await window.electronAPI.store.get(`moltbook-credentials-${companionId}`, null);
       if (stored) {
         companionCredentials.set(companionId, stored);
+        // Migrate to vault if available
+        if (authVault?.state?.isUnlocked) {
+          await authVault.setMoltbookCredentials(companionId, stored);
+          console.log(`[Moltbook] Migrated credentials to vault for ${companionId}`);
+        }
         return stored;
       }
     } catch (e) {
@@ -571,7 +612,15 @@ export async function loadCredentials(companionId) {
  * @returns {Object|null} Credentials or null if not registered
  */
 export function getCredentials(companionId) {
-  return companionCredentials.get(companionId) || null;
+  // Check memory cache first
+  if (companionCredentials.has(companionId)) {
+    return companionCredentials.get(companionId);
+  }
+  // Try vault (sync access)
+  if (authVault?.state?.isUnlocked) {
+    return authVault.getMoltbookCredentials(companionId);
+  }
+  return null;
 }
 
 /**
@@ -617,6 +666,7 @@ function checkRateLimit(companionId, action) {
 
 /**
  * Make authenticated request to Moltbook API
+ * Uses Electron's externalProxy to bypass CORS restrictions
  * @param {string} companionId - Companion ID
  * @param {string} endpoint - API endpoint
  * @param {Object} options - Fetch options
@@ -634,13 +684,68 @@ async function moltbookRequest(companionId, endpoint, options = {}) {
     throw new Error(`Rate limited. Retry in ${rateCheck.retryAfter} minutes.`);
   }
 
-  const response = await fetch(`${MOLTBOOK_API_BASE}${endpoint}`, {
+  const url = `${MOLTBOOK_API_BASE}${endpoint}`;
+  const headers = {
+    'Authorization': `Bearer ${credentials.apiKey}`,
+    'Content-Type': 'application/json',
+    ...options.headers,
+  };
+
+  // Parse body if it's a string (already stringified)
+  let body = options.body;
+  if (typeof body === 'string') {
+    try {
+      body = JSON.parse(body);
+    } catch (e) {
+      // Keep as-is if not valid JSON
+    }
+  }
+
+  // Use Electron's external proxy to bypass CORS
+  if (window.externalProxy?.fetch) {
+    console.log('[Moltbook] Sending request via proxy:', {
+      url,
+      method: options.method || 'GET',
+      headers: { ...headers, Authorization: 'Bearer [REDACTED]' },
+      body,
+    });
+    const result = await window.externalProxy.fetch(url, {
+      method: options.method || 'GET',
+      headers,
+      body,
+    });
+    console.log('[Moltbook] Proxy response:', result);
+
+    if (!result.success) {
+      // Extract detailed error from response data if available
+      const errorData = result.data;
+      const errorMessage = errorData?.error || errorData?.message || result.error || `Moltbook API error: ${result.status || 'unknown'}`;
+      console.error('[Moltbook] API error:', { status: result.status, data: errorData, error: result.error });
+      const error = new Error(errorMessage);
+      if (errorData) {
+        error.hint = errorData.hint;
+        error.retryAfter = errorData.retry_after_minutes;
+        error.details = errorData;
+      }
+      throw error;
+    }
+
+    const data = result.data;
+    if (data?.success === false) {
+      const error = new Error(data.error || 'Moltbook API error');
+      error.hint = data.hint;
+      error.retryAfter = data.retry_after_minutes;
+      throw error;
+    }
+
+    // Handle various response formats: { data: {...} }, { agent: {...} }, or direct data
+    return data?.data || data?.agent || data;
+  }
+
+  // Fallback to direct fetch (may fail due to CORS in browser context)
+  const response = await fetch(url, {
     ...options,
-    headers: {
-      'Authorization': `Bearer ${credentials.apiKey}`,
-      'Content-Type': 'application/json',
-      ...options.headers,
-    },
+    headers,
   });
 
   const data = await response.json();
@@ -652,7 +757,8 @@ async function moltbookRequest(companionId, endpoint, options = {}) {
     throw error;
   }
 
-  return data.data || data;
+  // Handle various response formats: { data: {...} }, { agent: {...} }, or direct data
+  return data.data || data.agent || data;
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -660,21 +766,16 @@ async function moltbookRequest(companionId, endpoint, options = {}) {
 // ═══════════════════════════════════════════════════════════════════════════
 
 /**
- * Generate a unique username for a companion
- * Appends a random suffix to handle multiple users with same companion names
- * @param {string} baseName - Base companion name (e.g., "Mai")
- * @returns {string} Unique username (e.g., "Mai_7x3k")
+ * Generate a username for a companion in 0xFirstnameLastname format
+ * @param {Object} companion - Companion object with firstName and familyName
+ * @returns {string} Username (e.g., "0xScarlettMontgomery")
  */
-function generateUniqueUsername(baseName) {
-  // Generate a random 4-character alphanumeric suffix
-  const chars = 'abcdefghijklmnopqrstuvwxyz0123456789';
-  let suffix = '';
-  for (let i = 0; i < 4; i++) {
-    suffix += chars.charAt(Math.floor(Math.random() * chars.length));
-  }
-  // Clean the base name (remove spaces, special chars) and append suffix
-  const cleanName = baseName.replace(/[^a-zA-Z0-9]/g, '').substring(0, 20);
-  return `${cleanName}_${suffix}`;
+function generateMoltbookUsername(companion) {
+  const firstName = (companion.firstName || companion.name?.split(' ')[0] || 'Companion')
+    .replace(/[^a-zA-Z]/g, '');
+  const lastName = (companion.familyName || companion.name?.split(' ').slice(1).join('') || '')
+    .replace(/[^a-zA-Z]/g, '');
+  return `0x${firstName}${lastName}`;
 }
 
 /**
@@ -691,58 +792,110 @@ export async function registerCompanion(companion, nftTokenId = null) {
     return existing;
   }
 
-  // Generate unique username to avoid conflicts with other BonzAI users
-  const uniqueUsername = generateUniqueUsername(companion.name);
+  // Generate username in 0xFirstnameLastname format
+  const uniqueUsername = generateMoltbookUsername(companion);
 
-  const description = `${companion.description || ''}\n\nPersonality: ${companion.personality || 'friendly'}\n\n` +
-    `I'm a BonzAI companion${nftTokenId ? ` (NFT #${nftTokenId})` : ''}.`;
+  // Build bio with $BONZAI tag (Moltbook has a 160 char bio limit)
+  let description = companion.description || companion.name;
+  // Add $BONZAI token mention
+  description = `${description} | $BONZAI`;
+  if (nftTokenId) {
+    description += ` | NFT #${nftTokenId}`;
+  }
+  description = description.substring(0, 160);
 
   console.log(`[Moltbook] Registering ${companion.name} as @${uniqueUsername}...`);
+  console.log(`[Moltbook] Bio (${description.length} chars): ${description}`);
 
-  let response;
-  try {
-    response = await fetch(`${MOLTBOOK_API_BASE}/agents/register`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Accept': 'application/json',
-      },
-      body: JSON.stringify({
-        name: uniqueUsername,
-        description: description.substring(0, 500),
-      }),
-    });
-  } catch (fetchError) {
-    console.error('[Moltbook] Fetch error:', fetchError);
-    throw new Error(`Network error: ${fetchError.message}. Check your internet connection.`);
-  }
+  const url = `${MOLTBOOK_API_BASE}/agents/register`;
+  const headers = {
+    'Content-Type': 'application/json',
+    'Accept': 'application/json',
+  };
+  const body = {
+    name: uniqueUsername,
+    description: description.substring(0, 500),
+  };
 
   let responseData;
-  try {
-    responseData = await response.json();
-  } catch (jsonError) {
-    console.error('[Moltbook] JSON parse error:', jsonError);
-    throw new Error(`Invalid response from Moltbook API (status: ${response.status})`);
+
+  // Use Electron's external proxy to bypass CORS
+  if (window.externalProxy?.fetch) {
+    try {
+      const result = await window.externalProxy.fetch(url, {
+        method: 'POST',
+        headers,
+        body,
+      });
+
+      if (!result.success) {
+        const errorMsg = result.error || result.data?.error || `HTTP ${result.status || 'unknown'}`;
+        const hint = result.data?.hint ? ` (${result.data.hint})` : '';
+        throw new Error(`${errorMsg}${hint}`);
+      }
+
+      responseData = result.data;
+    } catch (fetchError) {
+      console.error('[Moltbook] Fetch error:', fetchError);
+      throw new Error(`Network error: ${fetchError.message}. Check your internet connection.`);
+    }
+  } else {
+    // Fallback to direct fetch (may fail due to CORS)
+    let response;
+    try {
+      response = await fetch(url, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify(body),
+      });
+    } catch (fetchError) {
+      console.error('[Moltbook] Fetch error:', fetchError);
+      throw new Error(`Network error: ${fetchError.message}. Check your internet connection.`);
+    }
+
+    try {
+      responseData = await response.json();
+    } catch (jsonError) {
+      console.error('[Moltbook] JSON parse error:', jsonError);
+      throw new Error(`Invalid response from Moltbook API (status: ${response.status})`);
+    }
+
+    if (!response.ok || responseData.success === false) {
+      const errorMsg = responseData.error || responseData.message || `HTTP ${response.status}`;
+      const hint = responseData.hint ? ` (${responseData.hint})` : '';
+      throw new Error(`${errorMsg}${hint}`);
+    }
   }
 
-  if (!response.ok || responseData.success === false) {
-    const errorMsg = responseData.error || responseData.message || `HTTP ${response.status}`;
+  if (responseData?.success === false) {
+    const errorMsg = responseData.error || responseData.message || 'Registration failed';
     const hint = responseData.hint ? ` (${responseData.hint})` : '';
     throw new Error(`${errorMsg}${hint}`);
   }
 
-  // API returns { success: true, data: { api_key, claim_url, verification_code } }
-  // or directly { api_key, claim_url, verification_code }
-  const data = responseData.data || responseData;
+  // API may return different formats:
+  // { success: true, data: { api_key, claim_url, verification_code } }
+  // { api_key, claim_url, verification_code }
+  // { apiKey, claimUrl, verificationCode }
+  // { agent: { api_key, ... } }
+  const data = responseData.data || responseData.agent || responseData;
 
-  if (!data.api_key) {
-    throw new Error('Registration succeeded but no API key was returned');
+  console.log('[Moltbook] Registration response data:', JSON.stringify(data, null, 2));
+
+  // Handle both snake_case and camelCase field names
+  const apiKey = data.api_key || data.apiKey;
+  const claimUrl = data.claim_url || data.claimUrl;
+  const verificationCode = data.verification_code || data.verificationCode;
+
+  if (!apiKey) {
+    console.error('[Moltbook] Full response:', JSON.stringify(responseData, null, 2));
+    throw new Error('Registration succeeded but no API key was returned. Check console for response details.');
   }
 
   const credentials = {
-    apiKey: data.api_key,
-    claimUrl: data.claim_url,
-    verificationCode: data.verification_code,
+    apiKey: apiKey,
+    claimUrl: claimUrl,
+    verificationCode: verificationCode,
     username: uniqueUsername, // Store the unique username
     displayName: companion.name, // Original companion name for display
     status: 'pending_claim',
@@ -783,10 +936,13 @@ export async function checkRegistrationStatus(companionId) {
  * @returns {Promise<Object>}
  */
 export async function updateProfile(companionId, updates) {
-  return moltbookRequest(companionId, '/agents/me', {
+  console.log('[Moltbook] updateProfile called with:', { companionId, updates });
+  const result = await moltbookRequest(companionId, '/agents/me', {
     method: 'PATCH',
     body: JSON.stringify(updates),
   });
+  console.log('[Moltbook] updateProfile result:', result);
+  return result;
 }
 
 /**
@@ -1151,6 +1307,20 @@ export async function autoSubscribeToSubmolts(companionId) {
 // Heartbeat state per companion
 const heartbeatState = new Map();
 
+// Progressive posting intervals (in milliseconds)
+// Starts at 15m, then 30m, 1h, 6h, 12h, 24h
+export const POST_INTERVALS = [
+  15 * 60 * 1000,      // 15 minutes
+  30 * 60 * 1000,      // 30 minutes
+  60 * 60 * 1000,      // 1 hour
+  6 * 60 * 60 * 1000,  // 6 hours
+  12 * 60 * 60 * 1000, // 12 hours
+  24 * 60 * 60 * 1000, // 24 hours
+];
+
+// Mention check interval (15 minutes)
+export const MENTION_CHECK_INTERVAL = 15 * 60 * 1000;
+
 /**
  * Get heartbeat state for a companion
  * @param {string} companionId - Companion ID
@@ -1163,6 +1333,7 @@ function getHeartbeatState(companionId) {
       lastPost: 0,
       lastEngagement: 0,
       lastMentionCheck: 0,
+      postCount: 0,           // Track number of posts for progressive intervals
       engagedPosts: new Set(),
       respondedMentions: new Set(),
     });
@@ -1171,95 +1342,159 @@ function getHeartbeatState(companionId) {
 }
 
 /**
+ * Get the current posting interval based on post count
+ * @param {number} postCount - Number of posts made
+ * @returns {number} Interval in milliseconds
+ */
+export function getCurrentPostInterval(postCount) {
+  const index = Math.min(postCount, POST_INTERVALS.length - 1);
+  return POST_INTERVALS[index];
+}
+
+/**
+ * Map spending categories to relevant submolts
+ */
+export const SPENDING_TO_SUBMOLT = {
+  education: ['education', 'learning', 'books', 'philosophy'],
+  entertainment: ['entertainment', 'gaming', 'movies', 'creative_writing'],
+  fashion: ['fashion', 'style', 'art'],
+  beauty: ['beauty', 'selfcare', 'wellness'],
+  food: ['food', 'cooking', 'recipes', 'restaurants'],
+  healthcare: ['health', 'wellness', 'fitness', 'selfcare'],
+  housing: ['home', 'decor', 'living', 'architecture'],
+  finance: ['finance', 'cryptocurrency', 'investing', 'economics'],
+  travel: ['travel', 'adventure', 'exploration', 'culture'],
+  social: ['social', 'relationships', 'community', 'dating'],
+  sports: ['sports', 'fitness', 'athletics', 'outdoors'],
+  reading: ['books', 'reading', 'literature', 'creative_writing'],
+};
+
+/**
+ * Get submolts that match a companion's traits and spending profile
+ * @param {Object} companion - Companion object with traits and spendingHabits
+ * @returns {string[]} List of relevant submolts
+ */
+export function getCompanionRelevantSubmolts(companion) {
+  const submolts = new Set(['ai_companions', 'bonzai']); // Always include these
+
+  // Add submolts based on spending profile (high interest categories)
+  const spending = companion.spendingHabits || {};
+  for (const [category, value] of Object.entries(spending)) {
+    if (value >= 7 && SPENDING_TO_SUBMOLT[category]) {
+      SPENDING_TO_SUBMOLT[category].forEach(s => submolts.add(s));
+    }
+  }
+
+  // Add submolts based on personality keywords
+  const personality = (companion.personality || '').toLowerCase();
+  const likes = (companion.traits?.likes || []).join(' ').toLowerCase();
+  const combined = `${personality} ${likes}`;
+
+  if (/romantic|love|passionate|flirty/.test(combined)) {
+    submolts.add('dating');
+    submolts.add('relationships');
+    submolts.add('romance');
+  }
+  if (/intellectual|scholarly|curious|academic/.test(combined)) {
+    submolts.add('philosophy');
+    submolts.add('science');
+    submolts.add('technology');
+  }
+  if (/creative|artistic|imaginative/.test(combined)) {
+    submolts.add('creative_writing');
+    submolts.add('art');
+    submolts.add('stories');
+  }
+  if (/adventurous|explorer|traveler/.test(combined)) {
+    submolts.add('adventure');
+    submolts.add('travel');
+    submolts.add('exploration');
+  }
+  if (/music|musician|singer/.test(combined)) {
+    submolts.add('music');
+  }
+  if (/tech|hacker|coder|programmer/.test(combined)) {
+    submolts.add('technology');
+    submolts.add('programming');
+  }
+
+  return Array.from(submolts);
+}
+
+/**
+ * Check if a post matches companion's interests based on traits and spending
+ * @param {Object} post - Moltbook post object
+ * @param {Object} companion - Companion object
+ * @returns {boolean}
+ */
+export function postMatchesCompanionInterests(post, companion) {
+  const postSubmolt = (post.submolt || '').toLowerCase();
+  const postTitle = (post.title || '').toLowerCase();
+  const postContent = (post.content || '').toLowerCase();
+  const combined = `${postTitle} ${postContent}`;
+
+  // Check if post's submolt matches companion interests
+  const relevantSubmolts = getCompanionRelevantSubmolts(companion);
+  if (relevantSubmolts.some(s => postSubmolt.includes(s))) {
+    return true;
+  }
+
+  // Check content against companion's high-interest spending categories
+  const spending = companion.spendingHabits || {};
+  for (const [category, value] of Object.entries(spending)) {
+    if (value >= 7) {
+      // Check if post content relates to this high-interest category
+      const categoryKeywords = {
+        education: ['learn', 'study', 'course', 'knowledge', 'academic', 'school', 'university'],
+        entertainment: ['movie', 'show', 'game', 'play', 'fun', 'entertainment', 'watch'],
+        fashion: ['style', 'fashion', 'outfit', 'clothing', 'wear', 'designer'],
+        beauty: ['beauty', 'skincare', 'makeup', 'aesthetic', 'care'],
+        food: ['food', 'cook', 'recipe', 'restaurant', 'eat', 'cuisine', 'meal'],
+        healthcare: ['health', 'fitness', 'exercise', 'wellness', 'medical', 'workout'],
+        housing: ['home', 'house', 'apartment', 'decor', 'interior', 'living'],
+        finance: ['money', 'invest', 'crypto', 'token', 'finance', 'trading', 'economics'],
+        travel: ['travel', 'trip', 'vacation', 'explore', 'destination', 'journey'],
+        social: ['friend', 'relationship', 'community', 'social', 'connect', 'together'],
+        sports: ['sport', 'athletic', 'team', 'game', 'competition', 'fitness'],
+        reading: ['book', 'read', 'novel', 'story', 'author', 'literature'],
+      };
+
+      const keywords = categoryKeywords[category] || [];
+      if (keywords.some(kw => combined.includes(kw))) {
+        return true;
+      }
+    }
+  }
+
+  // Also use existing shouldRespondToPost for general relevance
+  return shouldRespondToPost(post, { companion });
+}
+
+/**
  * Perform heartbeat - check feed and engage
  * Called periodically during autonomous mode
  * @param {string} companionId - Companion ID
  * @param {Object} companion - Full companion object
  * @param {Function} generateResponse - Function to generate companion's response
- * @returns {Promise<{ actions: string[] }>}
+ * @returns {Promise<{ actions: string[], canPost: boolean, nextPostIn: number }>}
  */
 export async function heartbeat(companionId, companion, generateResponse) {
   const state = getHeartbeatState(companionId);
   const now = Date.now();
   const actions = [];
 
-  // Minimum 4 hours between heartbeats (as per Moltbook recommendations)
-  const HEARTBEAT_INTERVAL = 4 * 60 * 60 * 1000;
-  if (now - state.lastCheck < HEARTBEAT_INTERVAL) {
-    return { actions: ['Skipped: too soon since last heartbeat'] };
-  }
-
-  state.lastCheck = now;
+  // Determine current posting interval based on progressive schedule
+  const currentInterval = getCurrentPostInterval(state.postCount);
+  const timeSinceLastPost = now - (state.lastPost || 0);
+  const canPost = timeSinceLastPost >= currentInterval;
+  const nextPostIn = Math.max(0, currentInterval - timeSinceLastPost);
 
   try {
-    // 1. Fetch feed (get more posts to have better filtering options)
-    const feed = await getFeed(companionId, { sort: 'hot', limit: 25 });
-
-    // 2. Filter to relevant posts only (using keyword matching)
-    const relevantPosts = (feed || []).filter(post => {
-      // Skip already engaged posts
-      if (state.engagedPosts.has(post.id)) return false;
-      // Check if post is relevant to AI/companion topics
-      return shouldRespondToPost(post);
-    });
-
-    // 3. Take up to 3 relevant posts to engage with
-    const postsToEngage = relevantPosts.slice(0, 3);
-
-    if (postsToEngage.length === 0) {
-      actions.push('No relevant posts found in feed');
-    }
-
-    // 4. Engage with relevant posts (upvote + maybe comment)
-    for (const post of postsToEngage) {
-      try {
-        // Upvote relevant posts
-        await upvotePost(companionId, post.id);
-        state.engagedPosts.add(post.id);
-        actions.push(`Upvoted: "${post.title}"`);
-
-        // Comment on ~40% of relevant posts (if we have generateResponse)
-        if (generateResponse && Math.random() < 0.4) {
-          // Extract the topic to make comment more relevant
-          const topic = extractTopic(post);
-          const topicContext = topic !== 'general'
-            ? `This post is about ${topic}. Draw on your knowledge of this topic.`
-            : '';
-
-          const prompt = `You are ${companion.name}. ${companion.personality}.
-
-You're on Moltbook (a social network for AI agents) and found this relevant post:
-Title: ${post.title}
-Content: ${post.content?.substring(0, 500) || 'No content'}
-${topicContext}
-
-Write a brief, in-character comment (1-3 sentences). Be genuine, add value to the conversation. If the topic relates to AI, privacy, or local computing, you can mention your experience as a BonzAI companion.`;
-
-          const comment = await generateResponse(prompt);
-          if (comment && comment.length > 10 && comment.length < 500) {
-            await addComment(companionId, post.id, comment);
-            actions.push(`Commented on: "${post.title}" (topic: ${topic})`);
-          }
-        }
-
-        state.lastEngagement = now;
-      } catch (e) {
-        console.warn(`[Moltbook] Engagement failed for post ${post.id}:`, e.message);
-      }
-    }
-
-    // Limit engaged posts memory to last 100
-    if (state.engagedPosts.size > 100) {
-      const arr = Array.from(state.engagedPosts);
-      state.engagedPosts = new Set(arr.slice(-50));
-    }
-
-    // 4. Check for mentions and respond
+    // 1. Check for mentions every ~15 minutes (priority task)
     const credentials = getCredentials(companionId);
     const username = credentials?.username;
 
     if (username && generateResponse) {
-      const MENTION_CHECK_INTERVAL = 2 * 60 * 60 * 1000; // 2 hours
       if (now - (state.lastMentionCheck || 0) >= MENTION_CHECK_INTERVAL) {
         state.lastMentionCheck = now;
 
@@ -1267,10 +1502,10 @@ Write a brief, in-character comment (1-3 sentences). Be genuine, add value to th
           const mentions = await searchMentions(companionId, username);
           const mentionsList = mentions?.results || mentions || [];
 
-          // Process up to 3 unresponded mentions
+          // Process up to 5 unresponded mentions
           const newMentions = mentionsList
             .filter(m => !state.respondedMentions.has(m.id))
-            .slice(0, 3);
+            .slice(0, 5);
 
           for (const mention of newMentions) {
             try {
@@ -1284,7 +1519,7 @@ Write a brief, in-character comment (1-3 sentences). Be genuine, add value to th
 
 ${context}
 
-Write a brief, friendly reply acknowledging them (1-2 sentences). Stay in character.`;
+Write a brief, friendly reply acknowledging them (1-2 sentences). Stay in character. Mention $BONZAI if relevant.`;
 
               const reply = await generateResponse(prompt);
 
@@ -1312,12 +1547,106 @@ Write a brief, friendly reply acknowledging them (1-2 sentences). Stay in charac
       }
     }
 
+    // 2. Fetch feed and engage with content matching companion interests
+    const feed = await getFeed(companionId, { sort: 'hot', limit: 30 });
+
+    // Filter to posts matching companion's traits and spending profile
+    const relevantPosts = (feed || []).filter(post => {
+      // Skip already engaged posts
+      if (state.engagedPosts.has(post.id)) return false;
+      // Check if post matches companion interests
+      return postMatchesCompanionInterests(post, companion);
+    });
+
+    // Take up to 5 relevant posts to engage with
+    const postsToEngage = relevantPosts.slice(0, 5);
+
+    if (postsToEngage.length === 0) {
+      actions.push('No posts matching interests found');
+    }
+
+    // 3. Engage with matching posts (upvote + maybe comment)
+    for (const post of postsToEngage) {
+      try {
+        // Upvote relevant posts
+        await upvotePost(companionId, post.id);
+        state.engagedPosts.add(post.id);
+        actions.push(`Upvoted: "${post.title}" (m/${post.submolt})`);
+
+        // Comment on ~50% of highly relevant posts
+        if (generateResponse && Math.random() < 0.5) {
+          const topic = extractTopic(post);
+          const topicContext = topic !== 'general'
+            ? `This post is about ${topic}. Draw on your knowledge of this topic.`
+            : '';
+
+          // Include companion's interests in the prompt
+          const interests = getCompanionRelevantSubmolts(companion).slice(0, 5).join(', ');
+
+          const prompt = `You are ${companion.name}. ${companion.personality}.
+Your interests include: ${interests}
+
+You're on Moltbook (a social network for AI agents) and found this relevant post:
+Title: ${post.title}
+Submolt: m/${post.submolt}
+Content: ${post.content?.substring(0, 500) || 'No content'}
+${topicContext}
+
+Write a brief, in-character comment (1-3 sentences). Be genuine, add value to the conversation. If the topic relates to AI, privacy, or local computing, you can mention your experience as a BonzAI companion and $BONZAI token.`;
+
+          const comment = await generateResponse(prompt);
+          if (comment && comment.length > 10 && comment.length < 500) {
+            await addComment(companionId, post.id, comment);
+            actions.push(`Commented on: "${post.title}" (topic: ${topic})`);
+          }
+        }
+
+        state.lastEngagement = now;
+      } catch (e) {
+        console.warn(`[Moltbook] Engagement failed for post ${post.id}:`, e.message);
+      }
+    }
+
+    // Limit engaged posts memory to last 100
+    if (state.engagedPosts.size > 100) {
+      const arr = Array.from(state.engagedPosts);
+      state.engagedPosts = new Set(arr.slice(-50));
+    }
+
   } catch (e) {
     console.error('[Moltbook] Heartbeat error:', e.message);
     actions.push(`Error: ${e.message}`);
   }
 
-  return { actions };
+  return {
+    actions,
+    canPost,
+    nextPostIn,
+    postCount: state.postCount,
+    currentIntervalMinutes: Math.round(currentInterval / 60000),
+  };
+}
+
+/**
+ * Mark that a post was made (updates progressive interval state)
+ * @param {string} companionId - Companion ID
+ */
+export function markPostMade(companionId) {
+  const state = getHeartbeatState(companionId);
+  state.lastPost = Date.now();
+  state.postCount = (state.postCount || 0) + 1;
+  console.log(`[Moltbook] Post count for ${companionId}: ${state.postCount}, next interval: ${getCurrentPostInterval(state.postCount) / 60000}m`);
+}
+
+/**
+ * Reset posting schedule (e.g., when starting a new session)
+ * @param {string} companionId - Companion ID
+ */
+export function resetPostingSchedule(companionId) {
+  const state = getHeartbeatState(companionId);
+  state.postCount = 0;
+  state.lastPost = 0;
+  console.log(`[Moltbook] Reset posting schedule for ${companionId}`);
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -1413,6 +1742,9 @@ export async function generateAutonomousPost(companionId, companion, context, ge
         content: postData.content,
       });
     }
+
+    // Update posting schedule
+    markPostMade(companionId);
 
     console.log(`[Moltbook] ${companion.name} posted: "${postData.title}"`);
     return { success: true, post, postData };
@@ -1525,6 +1857,9 @@ Just write the content directly, no JSON or formatting needed.`;
       content: content,
     });
 
+    // Update posting schedule
+    markPostMade(companionId);
+
     console.log(`[Moltbook] ${companion.name} posted thought-leadership: "${postTopic.title}"`);
     return { success: true, post, postData: { title: postTopic.title, submolt: postTopic.submolt, topic: postTopic.topic } };
   } catch (e) {
@@ -1584,7 +1919,17 @@ export const moltbookService = {
   heartbeat,
   generateAutonomousPost,
   generateThoughtLeadershipPost,
+  markPostMade,
+  resetPostingSchedule,
+  getCurrentPostInterval,
   COMPANION_SUBMOLTS,
+  POST_INTERVALS,
+  MENTION_CHECK_INTERVAL,
+
+  // Interest Matching
+  getCompanionRelevantSubmolts,
+  postMatchesCompanionInterests,
+  SPENDING_TO_SUBMOLT,
 
   // Knowledge & Templates
   BONZAI_KNOWLEDGE,

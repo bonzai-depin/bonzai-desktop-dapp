@@ -76,7 +76,6 @@ export async function initializeSkills() {
 export async function loadSkillFromIPFS(ipfsHash) {
   const gateways = [
     `https://gateway.irys.xyz/${ipfsHash}`,
-    `https://arweave.net/${ipfsHash}`,
     `https://ipfs.io/ipfs/${ipfsHash}`,
     `https://cloudflare-ipfs.com/ipfs/${ipfsHash}`,
   ];

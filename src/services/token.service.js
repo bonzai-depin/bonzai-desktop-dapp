@@ -82,6 +82,10 @@ const state = reactive({
   dslaEthPrice: null,
   dslaEthPriceUpdatedAt: null,
 
+  // ETH/USD price
+  ethUsdPrice: null,
+  ethUsdPriceUpdatedAt: null,
+
   // Loading states
   isDeploying: false,
   isCreatingPool: false,
@@ -157,6 +161,34 @@ const fetchDslaEthPrice = async () => {
     return state.dslaEthPrice;
   } finally {
     state.isFetchingPrice = false;
+  }
+};
+
+/**
+ * Fetch current ETH/USD price from CoinGecko
+ */
+const fetchEthUsdPrice = async () => {
+  try {
+    if (window.externalProxy?.get) {
+      const result = await window.externalProxy.get(
+        'https://api.coingecko.com/api/v3/simple/price?ids=ethereum&vs_currencies=usd'
+      );
+
+      if (result.success && result.data?.ethereum?.usd) {
+        state.ethUsdPrice = result.data.ethereum.usd;
+        state.ethUsdPriceUpdatedAt = Date.now();
+        return state.ethUsdPrice;
+      }
+    }
+    // Fallback
+    console.warn('[Token] Using mock ETH/USD price');
+    state.ethUsdPrice = 3000; // Mock price
+    state.ethUsdPriceUpdatedAt = Date.now();
+    return state.ethUsdPrice;
+  } catch (e) {
+    console.error('[Token] Failed to fetch ETH/USD price:', e);
+    state.ethUsdPrice = 3000; // Mock price on error
+    return state.ethUsdPrice;
   }
 };
 
@@ -538,6 +570,7 @@ const getTransactionHistory = () => {
 const initialize = () => {
   loadIssuedTokens();
   fetchDslaEthPrice();
+  fetchEthUsdPrice();
 };
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -549,6 +582,7 @@ export const tokenService = {
 
   // Price
   fetchDslaEthPrice,
+  fetchEthUsdPrice,
   ethToDsla,
   dslaToEth,
 

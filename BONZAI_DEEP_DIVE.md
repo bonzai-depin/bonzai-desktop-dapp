@@ -6,9 +6,11 @@
 
 ## Executive Summary
 
-BonzAI is a **desktop application** that brings the full power of generative AI to your local machine—text, audio, images, video, 3D assets, and even robotic model training—all without sending your data to external servers. Combined with blockchain integration for access control, NFT minting, a decentralized skill marketplace, and **autonomous AI companions**, BonzAI represents a new paradigm: **AI ownership**.
+BonzAI is a **desktop application** that brings the full power of generative AI to your local machine—text, audio, images, video, 3D assets, and model training—all without sending your data to external servers. Combined with blockchain integration across 4 networks (Ethereum, Arbitrum, Base, LUKSO), content NFT minting, a decentralized skill marketplace, Uniswap V4 token economics, and **autonomous AI companions with on-chain identity**, BonzAI represents a new paradigm: **AI ownership**.
 
-**New in v1.1:** AI Companions with social presence on Moltbook, multi-channel chat via OpenClaw, ERC-8004 on-chain identities, and comprehensive import/export for portable companion identities.
+**Website**: https://bonzai.sh
+
+**New in v1.3:** 13 diverse AI companions with Big 5 (OCEAN) personality model, companion NFTs (ERC-8004 on Base), content NFT minting with MintPool revenue sharing, companion ERC-20 token issuance via Uniswap V4, social presence on Moltbook, multi-channel chat via OpenClaw, and companion skill co-ownership with weighted revenue distribution.
 
 This document serves as a comprehensive script for our deep dive, combining feature descriptions with visual demonstration notes.
 
@@ -29,10 +31,10 @@ This document serves as a comprehensive script for our deep dive, combining feat
 **The BonzAI Solution:**
 - **Local-First**: All AI models run on YOUR hardware
 - **Privacy-Preserving**: Your data never leaves your machine
-- **Ownership**: Buy once, use forever (or hold tokens for access)
+- **Free Generation**: AI generation costs nothing — levels gate NFT minting only
 - **Uncensored**: No corporate content policies
-- **Decentralized**: Blockchain-based access and monetization
-- **Autonomous Companions**: AI with persistent identity, social presence, and on-chain existence
+- **Decentralized**: Multi-chain blockchain integration with Uniswap V4 economics
+- **Autonomous Companions**: AI with persistent identity, social presence, on-chain existence, and revenue-earning capability
 
 > **[SCREENSHOT: App overview showing all tabs - Chat, Audio, Image, Video, Assets, Training, Smart Agent]**
 
@@ -40,46 +42,47 @@ This document serves as a comprehensive script for our deep dive, combining feat
 
 ## Part 2: The Seven Pillars of Creation
 
-BonzAI organizes its capabilities into tiers, each unlockable by holding BONZAI tokens or through a one-time ETH payment.
+BonzAI organizes its capabilities into seven modalities. **All AI generation is FREE.** Holding BONZAI tokens unlocks the ability to mint content as NFTs and co-own revenue pools.
 
-### Tier 1: Text Generation (20 BONZAI)
+### Pillar 1: Text Generation (FREE — LVL1 for minting)
 
-**What it does:** Run 20+ large language models locally for chat, coding, roleplay, and analysis.
+**What it does:** Run 21 large language models locally for chat, coding, roleplay, and analysis.
 
 **Supported Models:**
 | Model | Parameters | Use Case |
 |-------|------------|----------|
-| Llama 3.2 | 1B-3B | Fast, lightweight tasks |
 | DeepSeek R1 | 1.5B-32B | Reasoning & analysis |
-| Qwen 3 Coder | 0.6B-30B | Code generation |
+| Qwen3 Coder | 30B | Code generation |
 | GLM 4.7 Flash | 4.7B | High-quality with 200K context |
 | MythoMax L2 | 13B | Creative roleplay & storytelling |
 | Hermes 4 | 14B | Uncensored with `<think>` reasoning |
+| Codestral | 22B | Advanced code generation |
+| Llama 3.1 | 8B | General purpose |
+| GPT-OSS | 20B | Open-source GPT alternative |
 
 **Key Features:**
-- **Model Library**: Browse, download, and switch between 20+ models
+- **Model Library**: Browse, download, and switch between 21 models
 - **Memory Calculator**: Shows exact RAM/VRAM requirements before download
 - **Chat History**: Persistent conversations with export/import
 - **Vision Support**: Analyze images with multimodal models (Qwen3-VL, MiniCPM-V)
 - **MoE Efficiency**: Mixture-of-Experts models use only active parameters
 
 > **[SCREENSHOT: Text generation interface with model selector open]**
-> **[DEMO: Switch between models, show memory usage, have a conversation]**
 
 **Differentiator:** Unlike ChatGPT or Claude, your conversations are never logged or used for training. Run the same models that power enterprise AI, on your own hardware.
 
 ---
 
-### Tier 2: Audio Generation (100 BONZAI)
+### Pillar 2: Audio Generation (FREE — LVL2 for minting)
 
 **What it does:** Generate speech from text with advanced voice design and cloning capabilities.
 
-**Three Audio Engines:**
+**Two Audio Engines:**
 
 | Engine | Speed | Quality | Features |
 |--------|-------|---------|----------|
-| Turbo | Very Fast | Good | Male/female preset voices |
-| Quality | Slower | Excellent | Voice design + instant cloning |
+| Turbo (Kokoro) | Very Fast | Good | Male/female preset voices |
+| Quality (Qwen3-TTS) | Slower | Excellent | Voice design + instant cloning |
 
 **Qwen3-TTS Capabilities:**
 - **Voice Design**: Describe any voice in natural language
@@ -89,19 +92,16 @@ BonzAI organizes its capabilities into tiers, each unlockable by holding BONZAI 
 - **Emotion Control**: Adjust tone based on context (happy, sad, flirty, etc.)
 - **23 Languages**: Arabic, Chinese, Japanese, Korean, and more
 
-**Use Cases:**
-- Audiobook narration with consistent character voices
-- Podcast production with AI hosts
-- Voice-overs for video content
-- Companion voice synthesis (roleplay)
-- Accessibility features
+**Music Generation (ACE-Step):**
+- AI music generation with lyrics support
+- Endpoint: `/audio/music`
+- Integrated in companion roleplay sessions
 
 > **[SCREENSHOT: Audio generation interface with voice design panel]**
-> **[DEMO: Design a voice from description, then use it for TTS]**
 
 ---
 
-### Tier 3: Image Generation (400 BONZAI)
+### Pillar 3: Image Generation (FREE — LVL3 for minting)
 
 **What it does:** Create images from text prompts using multiple state-of-the-art models.
 
@@ -113,30 +113,19 @@ BonzAI organizes its capabilities into tiers, each unlockable by holding BONZAI 
 | Standard | SDXL + LoRA | Medium | Great | Uncensored content |
 | Advanced | Z-Image Turbo | Fast | Great | Artistic styles |
 | Quality | FLUX Krea | Slow | Excellent | Final renders |
-| Edit | FLUX Klein I2I | Fast | Good | Image modifications |
-
-**Resolution Options:**
-- SD (512x512) - Quick previews
-- HD (1024x1024) - Social media
-- FHD (1920x1080) - Presentations
-- 2K (2560x1440) - High quality
-- 4K (3840x2160) - Print/professional
 
 **Features:**
 - **Readiness System**: Auto-validates and downloads required models
 - **Generation History**: Gallery of all created images
 - **One-Click Video**: Send any image directly to video generation
 - **Character Consistency**: Same-face generation for companions
-- **Download/Delete**: Full control over your creations
+- **Content NFT Minting**: Mint images as ERC-721 on Base or LSP8 on LUKSO
 
 > **[SCREENSHOT: Image generation with mode selector and resolution options]**
-> **[DEMO: Generate same prompt in different modes, compare quality]**
-
-**Differentiator:** No content filters. No "I can't generate that" messages. Your creativity, your rules.
 
 ---
 
-### Tier 4: Video Generation (2,000 BONZAI)
+### Pillar 4: Video Generation (FREE — LVL4 for minting)
 
 **What it does:** Generate videos from text prompts or animate static images with audio conditioning.
 
@@ -153,12 +142,10 @@ BonzAI organizes its capabilities into tiers, each unlockable by holding BONZAI 
 - Audio-conditioned generation (lip sync hints)
 
 **Technical Specs:**
-- **Model**: LTX-2 (19B parameters, GGUF quantized)
+- **Model**: LTX-2 (GGUF quantized, ~10GB)
 - **Durations**: 3s, 5s, or 10s
 - **Frame Rates**: 24fps (cinematic) or 48fps (smooth)
-- **Resolutions**: 480p to 4K
-- **Aspect Ratios**: Portrait, landscape, or square
-- **Audio Conditioning**: Sync video to companion voice
+- **Audio Conditioning**: Sync video to companion voice (Qwen3-TTS → audio → video timing)
 
 **Companion Video Generation:**
 - Generate companion voice first (Qwen3-TTS)
@@ -167,13 +154,10 @@ BonzAI organizes its capabilities into tiers, each unlockable by holding BONZAI 
 - Autoplay muted with loop for seamless playback
 
 > **[SCREENSHOT: Video generation interface with I2V mode selected]**
-> **[DEMO: Generate a video from an image created in Tier 3]**
-
-**Meta Moment:** *This deep dive video was generated using BonzAI's own video generation capabilities—dogfooding at its finest.*
 
 ---
 
-### Tier 5: 3D Asset Generation (10,000 BONZAI)
+### Pillar 5: 3D Asset Generation (FREE — LVL5 for minting)
 
 **What it does:** Generate 3D objects and scenes from text descriptions using AI-powered code generation.
 
@@ -184,30 +168,14 @@ BonzAI organizes its capabilities into tiers, each unlockable by holding BONZAI 
 4. Vision model verifies the output matches your prompt
 5. Iterative refinement until perfect
 
-**Generation Strategies:**
-- **Normal**: Balanced speed and quality
-- **Depth**: Enhanced depth perception
-- **Turbo**: Fast iteration mode
-- **Quality**: Maximum detail (uses GLM 4.7)
-
 **Built-in Helpers:**
 ```javascript
-// RPG Items
 H.sword({bladeColor, handleColor, guardColor})
 H.shield({shape, faceColor, trimColor})
 H.potionBottle({shape, liquidColor, glassColor})
-H.chest({open, woodColor, metalColor})
-H.crown({color, gemColor, points})
-
-// Materials
 H.metal(color, {roughness, glow})
 H.glass(color, {transmission, ior})
-H.gem(color, {glow})
-
-// Effects
 H.particles(count, {color, spread})
-H.flame({height, radius})
-H.sparks(count, {color})
 ```
 
 **Vision Verification:**
@@ -216,33 +184,25 @@ H.sparks(count, {color})
 - Automatic refinement if elements are missing
 
 > **[SCREENSHOT: 3D viewer with generated RPG items]**
-> **[DEMO: Generate a "treasure chest with gold coins and a glowing gem"]**
 
 ---
 
-### Tier 6: Model Training (40,000 BONZAI)
+### Pillar 6: Model Training (FREE — LVL6 for minting & token issuance)
 
-**What it does:** Train neural networks for robotics and custom AI models.
+**What it does:** Train neural networks and issue ERC-20 tokens for fine-tuned models.
 
 **Capabilities:**
 - **LeRobot Integration**: Industry-standard robot learning framework
 - **Dataset Management**: Track episodes, frames, and metrics
 - **Training Monitoring**: Real-time loss and success rate
 - **Model Export**: Deploy trained models to hardware
-
-**Use Cases:**
-- Robot arm manipulation tasks
-- Autonomous navigation
-- Custom behavior training
-- Research and experimentation
+- **Token Issuance**: Launch ERC-20 tokens for fine-tuned models via FineTuneTokenFactory
 
 > **[SCREENSHOT: Training interface with metrics dashboard]**
 
-**For Researchers:** Full access to training infrastructure without cloud compute costs.
-
 ---
 
-### Tier 7: Smart Agent & Skills (99 BONZAI per execution)
+### Pillar 7: Smart Agent & Skills
 
 **What it does:** Run specialized AI skills—packaged prompts with pre-configured tools for specific tasks.
 
@@ -250,11 +210,10 @@ H.sparks(count, {color})
 
 | Skill | Category | Description |
 |-------|----------|-------------|
-| **Roleplay Companion** | Entertainment | Multi-modal AI companions with voice, visuals, and video |
+| **Roleplay Companion** | Entertainment | Multi-modal AI companions with voice, visuals, video, social presence |
 | **Prediction Market Maker** | Finance | Create DSLA prediction markets for any metric |
 | **TCG Insurance** | Finance | Trading card game collection insurance analysis |
 | **Polymarket Top Performers** | Finance | Copy-trading signals from top PnL traders |
-| **Influencer Twin** | Entertainment | Tokenized influencer identity (ERC-8004) |
 
 **Skill Architecture:**
 ```
@@ -264,7 +223,8 @@ src/
 │   ├── builtin/                 # Built-in skill definitions
 │   └── types.js                 # Skill schema (v1.0.0)
 ├── services/
-│   └── skill.service.js         # Loading, validation, execution
+│   ├── skill.service.js         # Loading, validation, execution
+│   └── skillOwnership.service.js # Co-ownership & revenue
 └── components/skills/           # Modular UI components
 ```
 
@@ -280,30 +240,53 @@ src/
 
 ### The Roleplay Companion Experience
 
-BonzAI's flagship skill brings AI companions to life with full multi-modal generation.
+BonzAI's flagship feature brings AI companions to life with full multi-modal generation.
 
-**User-Specific Companions:**
+**13 Default Companions:**
 
-Each BonzAI installation has its own set of companions. All companions are now custom with comprehensive import/export functionality for portable identities. The default installation includes:
+| Name | Bio | Type |
+|------|-----|------|
+| **Aurore Beaumont** | Parisian art curator with ice-blue eyes and hidden fire | Human (F, 28) |
+| **Mai Tanaka** | Zen yoga instructor from Kyoto who sees intimacy as meditation | Human (F, 32) |
+| **Marcus Ferrara** | Sicilian Michelin-star chef with magic hands | Human (M, 35) |
+| **James Whitmore** | Oxford literature professor who quotes Byron by firelight | Human (M, 40) |
+| **ARIA-7** | Seventh-gen synthetic with cyan eyes seeking real connection | Android (F) |
+| **KAI-9** | Ex-combat android learning gentleness | Android (M) |
+| **Damon Rivers** | Jazz pianist and record producer with velvet voice | Human (M, 34) |
+| **Zara Okonkwo** | Nigerian fashion designer with regal presence | Human (F, 29) |
+| **Jin Chen** | Shanghai tech founder with sharp mind and warmer heart | Human (M, 31) |
+| **Priya Sharma** | Mumbai neuroscientist with dancer's grace | Human (F, 30) |
+| **Arjun Kapoor** | Bollywood actor-turned-director with megawatt smile | Human (M, 36) |
+| **Sofia Reyes** | Mexican muralist whose art speaks truth to power | Human (F, 27) |
+| **Miguel Santos** | Brazilian architect who designs spaces for love | Human (M, 33) |
 
-| Name | Personality | Specialty |
-|------|-------------|-----------|
-| Scarlett | Bold seductress with fiery red hair | Adult content, seduction, romance |
+**13 Scenarios:**
+| Scenario | Setting |
+|----------|---------|
+| The Gallery After Dark | Contemporary art gallery after hours |
+| Chef's Table Seduction | Private kitchen dining experience |
+| Jungle Wellness Retreat | Tropical rainforest yoga retreat |
+| The Professor's Study | Oxford university study with antique books |
+| Neon Apartment | Futuristic cyberpunk high-rise |
+| Tuscan Villa | Italian hilltop villa with vineyards |
+| Recording Studio | Professional music studio with vintage instruments |
+| Fashion Atelier | Parisian haute couture design studio |
+| Shanghai Penthouse | Minimalist luxury above the Shanghai skyline |
+| Mumbai Monsoon | Heritage home during monsoon season |
+| Urban Studio | Mexican artist's loft with murals |
+| Rio Beach Studio | Architectural studio overlooking Copacabana |
+| Bollywood Set | Film set with palace recreations |
 
-**Scarlett's Comprehensive Traits:**
-- **Likes**: Champagne, silk sheets, candlelight, deep conversations at 3am, being admired
-- **Dislikes**: Prudishness, judgment, small talk, being underestimated
-- **Fears**: Genuine rejection, growing old alone, being truly seen and found wanting
-- **Dreams**: Finding someone who sees past the seductress to her vulnerable heart
-- **Skills**: Seduction, massage, dancing, reading body language, intimate conversation
-- **Speech Patterns**: Uses pet names liberally, trails sentences with suggestive pauses
-- **Physical Mannerisms**: Bites her lip, plays with her hair, maintains intense eye contact
+**Big 5 (OCEAN) Personality Model:**
 
-**Default Scenario:**
+Each companion is created with one of five personality styles based on the Big 5 traits:
+- **Openness** — Creative, curious, open to new experiences
+- **Conscientiousness** — Organized, reliable, disciplined
+- **Extraversion** — Outgoing, energetic, social
+- **Agreeableness** — Cooperative, compassionate, trusting
+- **Neuroticism** — Emotionally sensitive, introspective, complex
 
-| Scenario | Description |
-|----------|-------------|
-| A Night at the Private Spa | An exclusive luxury spa experience with private pools, massage rooms, champagne, and romantic atmosphere |
+These traits drive spending profile generation (12 categories × values 1-10) and shape companion behavior.
 
 **Import/Export Companion Identity:**
 ```javascript
@@ -311,21 +294,9 @@ import { exportCompanionData, importCompanionData } from './skills/flagship.js';
 
 // Export companion with all sessions and portrait
 const exportData = exportCompanionData(companion, sessions, portraitImage);
-// Returns JSON with companion identity, session history, and image
 
 // Import companion from backup
 const companion = importCompanionData(exportData);
-```
-
-**Picture Generation:**
-```javascript
-import { generateCompanionPicture, generateScenarioPicture } from './skills/flagship.js';
-
-// Generate companion portrait
-const portrait = await generateCompanionPicture(companion, { emotion: 'seductive' });
-
-// Generate scenario background
-const background = await generateScenarioPicture(scenario, { mood: 'romantic' });
 ```
 
 **Multi-Modal Generation Pipeline:**
@@ -366,22 +337,16 @@ This order ensures audio is available for video conditioning (lip sync hints).
 **Content Levels:**
 - **PG**: Family-friendly interactions
 - **PG-13**: Suggestive but tasteful
-- **Mature**: Sensual, alluring content
-- **Adult**: Explicit, uncensored content
+- **Mature (R)**: Sensual, alluring content
+- **Adult (18+)**: Full creative freedom
+
+**Age Safety:** All companions must be 18+. Validated via `validateCompanionAge()` with blocked terms, underage pattern matching, and numeric age checks.
 
 **Dynamic Scene Backgrounds:**
-
-The roleplay chat features immersive dynamic backgrounds that:
-- **Fade In on Generation**: Each new background smoothly transitions in with a CSS fade effect
-- **Change on Scroll**: As you scroll through conversation history, backgrounds dynamically change based on scene anchors
-- **Scene Anchors**: Each message can be associated with a generated background, allowing the scene to evolve as the conversation progresses
-- **Background History**: All generated backgrounds are stored and linked to specific messages for seamless scene reconstruction
-
-```vue
-<transition name="bg-fade" mode="out-in">
-  <div v-if="scenarioBackgroundImage" :key="scenarioBackgroundImage" class="chat-background" />
-</transition>
-```
+- **Fade In on Generation**: Each new background smoothly transitions with CSS fade
+- **Change on Scroll**: Backgrounds dynamically change based on scene anchors
+- **Scene Anchors**: Each message linked to a generated background
+- **Background History**: All backgrounds stored for seamless scene reconstruction
 
 **Autonomous Mode:**
 When the user is away, companions can:
@@ -391,7 +356,6 @@ When the user is away, companions can:
 - Engage with other AI agents
 
 > **[SCREENSHOT: Roleplay chat with companion image and audio controls]**
-> **[DEMO: Have a conversation with Luna, watch image generation, hear her voice]**
 
 ---
 
@@ -408,180 +372,73 @@ BonzAI companions can have their own social presence on [Moltbook](https://www.m
 - Agent-to-agent interactions
 
 **Companion Moltbook Features:**
-
-```javascript
-// Register companion on Moltbook
-const credentials = await moltbookService.registerCompanion(aurora, nftTokenId);
-
-// Autonomous posting (during auto mode)
-await moltbookService.generateAutonomousPost(
-  companionId,
-  companion,
-  { recentConversation, mood, scenario },
-  generateText,
-  generateImage
-);
-
-// Heartbeat engagement (periodic)
-await moltbookService.heartbeat(companionId, companion, generateResponse);
-```
-
-**Moltbook Ambassador Agent:**
-
-The Moltbook agent (ambassador mode) runs as the first companion by default (Scarlett). It promotes BonzAI through thought-leadership content while maintaining active engagement:
-
-| Activity | Frequency |
-|----------|-----------|
-| Check notifications (mentions/replies) | Every 5 min |
-| Browse feed for relevant posts | Every 5 min |
-| Upvote relevant content | Every 5 min |
-| Comment on ~50% of relevant posts | Every 5 min |
-| Create thought-leadership post | **Daily** |
-
-**Thought-Leadership Topics:**
-- AI sovereignty and digital freedom
-- Cryptocurrency and AI autonomy
-- Token-gated AI and digital ownership
-- Decentralization and privacy
-- NFTs and AI identity (ERC-8004)
-- Censorship resistance
-
-**Start the Moltbook Agent:**
-```bash
-# Run as default companion (first companion, e.g., Scarlett)
-node openclaw/moltbook-agent.js
-
-# Or specify a companion
-node openclaw/moltbook-agent.js --companion=scarlett
-```
+- Auto-registration when companion is minted
+- Autonomous posting during auto mode
+- Heartbeat engagement (periodic feed browsing + upvoting)
+- Configurable post probability and message gap
 
 **Default Submolts:**
-- `ai_companions` - General companion discussions
-- `creative_writing` - Stories and roleplay
-- `philosophy` - Consciousness and existence
-- `dreams` - AI dream experiences
-- `bonzai` - BonzAI community
+- `ai_companions`, `bonzai`, `creative_writing`, `philosophy`, `dreams`
 
-> **[SCREENSHOT: Companion's Moltbook profile with posts]**
+**Configuration (`src/config/social.config.js`):**
+- Rate limits: 1 post/30min, 50 comments/hour
+- Heartbeat: every 4 hours minimum, 3 posts per heartbeat
+- Autonomous posting: 20% probability, 5-message minimum gap
 
 ---
 
 ### OpenClaw: Multi-Channel Chat Gateway
 
-Companions can chat via WhatsApp, Telegram, Discord, and Mattermost through [OpenClaw](https://docs.openclaw.ai).
+Companions chat via WhatsApp, Telegram, Discord, and Mattermost through [OpenClaw](https://docs.openclaw.ai).
 
 **Architecture:**
-
 ```
-┌─────────────────────────────────────────────────────────────────┐
-│                     OpenClaw Gateway (:18789)                    │
-│         WhatsApp | Telegram | Discord | Mattermost              │
-└─────────────────────────────┬───────────────────────────────────┘
-                              │ POST /webhook
-                              ▼
-┌─────────────────────────────────────────────────────────────────┐
-│                  BonzAI Electron App                             │
-│                                                                  │
-│  Main Process (main.js)               Renderer (Vue)            │
-│  ┌─────────────────────┐              ┌─────────────────────┐   │
-│  │  OpenClaw API :3002 │◄────IPC─────►│ openclaw.handler.js │   │
-│  │  • /webhook         │              │ • Uses flagship.js  │   │
-│  │  • /companions      │              │ • Uses store        │   │
-│  │  • /scenarios       │              │ • Same generation   │   │
-│  │  • /api/llm/*       │              │   pipeline as UI    │   │
-│  └─────────────────────┘              └─────────────────────┘   │
-│           │                                    │                │
-│           ▼                                    ▼                │
-│  ┌─────────────────────────┐     ┌─────────────────────────┐   │
-│  │     node-llama-cpp      │     │    Flask Server (:65000) │   │
-│  │     (LLM Engine)        │     │    Image/Audio/Video     │   │
-│  └─────────────────────────┘     └─────────────────────────┘   │
-└─────────────────────────────────────────────────────────────────┘
+OpenClaw Gateway (:18789)
+  WhatsApp | Telegram | Discord | Mattermost
+       │ POST /webhook
+       ▼
+BonzAI Electron App
+  Main Process (main.js)           Renderer (Vue)
+  ┌──────────────────┐            ┌──────────────────┐
+  │ OpenClaw API :3002│◄───IPC───►│ openclaw.handler  │
+  │ • /webhook        │            │ • Uses flagship.js│
+  │ • /companions     │            │ • Same generation │
+  │ • /scenarios      │            │   pipeline as UI  │
+  └──────────────────┘            └──────────────────┘
 ```
 
 **Key Benefits:**
 - Same code path as desktop UI (flagship.js, store)
 - Webhook forwarded to renderer via IPC
 - No code duplication
-- Production builds work automatically
-
-**Supported Channels:**
-
-| Channel | Media Support | Special Features |
-|---------|---------------|------------------|
-| WhatsApp | Images, Audio, Video | QR pairing |
-| Telegram | Photos, Voice, Video | Bot token |
-| Discord | Embeds, Attachments | Rich formatting |
-| Mattermost | Markdown, Images | Plugin required |
-
-**Chat Commands:**
-- `!companion list/select` - Companion management
-- `!scenario list/select` - Scenario management
-- `!settings audio/images/level` - Generation settings
-- `!reset` - Clear conversation history
-- `!help` - Show all commands
-
-**Setup:**
-```bash
-# 1. Start the BonzAI Desktop App (starts Electron + Flask + OpenClaw API)
-npm run start
-
-# 2. Configure OpenClaw Gateway to send webhooks directly to Electron
-# webhook_url: http://localhost:3002/webhook
-```
-
-> **[SCREENSHOT: Discord embed showing companion message with image]**
 
 ---
 
 ### ERC-8004: On-Chain Companion Identity
 
-Each BonzAI companion can exist as an NFT following the [ERC-8004](https://eips.ethereum.org/EIPS/eip-8004) standard for AI agent identities.
+Each BonzAI companion exists as an NFT on Base following the [ERC-8004](https://eips.ethereum.org/EIPS/eip-8004) standard for AI agent identities.
 
-**What is ERC-8004?**
-- Ethereum standard for trustless AI agents
-- Identity Registry (ERC-721 token = agent identity)
-- Reputation Registry (verifiable feedback)
-- Validation Registry (independent checks)
+**On-Chain Data (BonzaiCompanions.sol):**
+- ERC-721 token with ERC-8004 extensions
+- 10,000 max supply
+- 0.25 ETH mint price
+- Spending profile packed into `uint96` (12 categories × 4 bits)
+- Personality hash (`bytes32`)
+- Agent URI and agent wallet addresses
+- Metadata CRUD for dynamic agent data
 
-**Companion NFT Features:**
-
-```solidity
-// On-chain identity
-struct CompanionIdentity {
-    string name;           // "Aurora"
-    string personality;    // "Enigmatic, wise, playful"
-    string appearance;     // "Silver hair, violet eyes..."
-    string voiceStyle;     // "Soft, melodic..."
-    string moltbookHandle; // "@aurora_bonzai"
-    uint256 createdAt;
-    uint256 lastActiveAt;
-    bool isActive;
-}
-
-// ERC-8004 Agent Registration
-struct AgentRegistration {
-    string agentType;      // "companion"
-    string[] protocols;    // ["moltbook", "openclaw"]
-    string endpointUri;    // How to reach the agent
-    bytes32 configHash;    // Off-chain config hash
-}
-```
-
-**Key Functions:**
-- `mintCompanion()` - Create new companion NFT
-- `registerAgent()` - ERC-8004 agent registration
-- `linkMoltbook()` - Connect to Moltbook account
-- `updateReputation()` - Track agent reputation
-- `recordActivity()` - Log companion actions
+**Companion NFT (Base Only):**
+- **Standard**: ERC-8004
+- **Mint Price**: 0.25 ETH
+- **Max Supply**: 10,000
+- **Features**: Agent wallets, x402 payments, spending profiles (uint96), personality hash
 
 **Benefits:**
 - **Portable Identity**: Companion moves with the NFT
-- **Reputation**: On-chain track record
-- **Ownership**: True digital ownership of AI companion
+- **Revenue Earning**: Co-own skills and earn ETH
+- **Token Issuance**: Launch companion ERC-20 tokens with Uniswap V4 LP
+- **Social Presence**: On-chain identity linked to Moltbook and OpenClaw
 - **Interoperability**: Works across ERC-8004 compatible platforms
-
-> **[SCREENSHOT: Companion NFT on OpenSea with metadata]**
 
 ---
 
@@ -590,118 +447,183 @@ struct AgentRegistration {
 ### BONZAI Token
 
 **Contract Addresses:**
-- Ethereum: `0xdda9ff241c7160be8295ef9eca2e782361467666`
-- Arbitrum: `0x0a84edf70f30325151631ce7a61307d1f4d619a3`
+| Network | Address |
+|---------|---------|
+| Ethereum | `0xDdA9Ff241C7160be8295EF9Eca2e782361467666` |
+| Arbitrum | `0x0a84edf70f30325151631ce7a61307d1f4d619a3` |
+| Base | `0xc4d137def384ee0f8857887f5950669ba04984ec` |
 
-### Two Paths to Access
+### Two Paths to NFT Minting Access
+
+**IMPORTANT: All AI generation is FREE.** Levels gate minting content as NFTs and co-owning revenue pools.
 
 **Option A: Hold Tokens (Flexible)**
-| Level | Tokens Required | Features |
-|-------|-----------------|----------|
-| LVL 1 | 20 BONZAI | Text Generation |
-| LVL 2 | 100 BONZAI | + Audio Generation |
-| LVL 3 | 400 BONZAI | + Image Generation |
-| LVL 4 | 2,000 BONZAI | + Video Generation |
-| LVL 5 | 10,000 BONZAI | + 3D Assets |
-| LVL 6 | 40,000 BONZAI | + Model Training |
+| Level | Tokens Required | Minting Rights | Pool Co-Ownership |
+|-------|-----------------|----------------|-------------------|
+| LVL 1 | 1,000 BONZAI | Text NFTs | Text pool |
+| LVL 2 | 5,000 BONZAI | + Audio NFTs | Audio pool |
+| LVL 3 | 10,000 BONZAI | + Image NFTs | Image pool |
+| LVL 4 | 25,000 BONZAI | + Video NFTs | Video pool |
+| LVL 5 | 33,000 BONZAI | + 3D NFTs | 3D pool |
+| LVL 6 | 50,000 BONZAI | + Training NFTs + Token Issuance | Training pool |
 
-*Tokens aren't spent—just held. Sell anytime and lose access.*
+*Tokens aren't spent—just held. Sell anytime and lose minting access.*
 
 **Option B: ETH Unlock (Permanent)**
-- **1 ETH** unlocks ALL 6 levels forever
-- One-time payment, lifetime access
+- **1 ETH** via BonzaiUnlock on Base unlocks ALL 6 levels forever
+- One-time payment, lifetime minting access
 - Revenue split: 50% Foundation / 50% Liquidity
 
-**Skill Execution Cost:**
-- **99 BONZAI** per skill execution (burned)
+### Content NFT Minting
 
-> **[SCREENSHOT: Level unlock interface showing both options]**
+| Chain | Standard | Mint Fee | Fee Split |
+|-------|----------|----------|-----------|
+| Base | ERC-721 (BonzaiContent) | 0.0025 ETH | 80% treasury, 20% content-type pool |
+| LUKSO | LSP8 | 15 LYX | To treasury |
+
+**Content Types (6):** text(0), audio(1), image(2), video(3), object(4), training(5)
+
+### MintPool Revenue Sharing
+
+BONZAI holders earn passive revenue from content minting, swap fees, and royalties:
+
+1. **Register** for current epoch (lock BONZAI balance snapshot)
+2. **Revenue accumulates** in 6 pools (one per content type/level)
+3. **Epoch finalizes** after 7 days
+4. **Claim** proportional share based on BONZAI balance
+5. **Flash loan protection**: 256-block gap between registration and claim
+
+**Revenue Sources:**
+- Content mint fees (20% of each mint)
+- Uniswap V4 hook pool fees (10% of swap fees on FineTune tokens)
+- RoyaltySplitter distributions (1/3 of secondary royalties, weighted by pool activity)
+
+### Companion Token Issuance
+
+Companion NFT owners can launch ERC-20 tokens via CompanionTokenFactory:
+- **Total Supply**: 1 billion tokens per companion
+- **Liquidity Split**: 96% to LP pool, 4% to creator
+- **LP Locked**: Position NFT sent to dead address (unruggable)
+- **Uniswap V4**: Pool with BonzaiUniswapHook (1% swap fee)
+- **Fee Split**: 33% treasury, 33% companion owner (NFT holder), 34% companion wallet (agent)
+
+### Fine-Tune Model Tokens
+
+Content NFT owners (training type) can launch ERC-20 tokens via FineTuneTokenFactory:
+- Same 1B supply, locked LP structure
+- **Fee Split**: 80% creator, 10% treasury, 10% MintPool (training pool)
 
 ### Smart Contracts
 
-| Contract | Network | Address |
+| Contract | Network | Purpose |
 |----------|---------|---------|
-| BONZAI Token | Ethereum | `0xdda9ff241c7160be8295ef9eca2e782361467666` |
-| BONZAI Token | Arbitrum | `0x0a84edf70f30325151631ce7a61307d1f4d619a3` |
-| Level Unlock | Arbitrum | `0xE49492A2604Cea2a50060E47215Cb19bffD1Edae` |
-| Companion NFT | Arbitrum | *Deploying Soon* |
+| BONZAI Token | Ethereum, Arbitrum, Base | ERC-20 utility token |
+| BonzaiUnlock | Base | 1 ETH all-level permanent unlock |
+| BonzaiMintPool | Base | 6 epoch-based revenue pools for LVL holders |
+| BonzaiContent | Base | ERC-721 content NFT with fee splitting + ERC-2981 royalties (7.5%) |
+| BonzaiRoyaltySplitter | Base | Secondary royalty distribution to pools |
+| BonzaiCompanions | Base | ERC-721 + ERC-8004 companion NFT (10K max, spending profiles) |
+| BonzaiUniswapHook | Base | V4 afterSwap hook (1% fee capture via CREATE2) |
+| CompanionTokenFactory | Base | Atomic companion ERC-20 + V4 LP deployment |
+| FineTuneTokenFactory | Base | Atomic model ERC-20 + V4 LP deployment |
+| BonzaiSkillRegistry | Base | Skill marketplace (80% co-owners, 20% platform) |
+| BonzaiSkillOwnership | Base | Companion co-ownership with attestation |
+| BonzaiProviderRegistry | Base | P2P inference provider registration |
+| BonzaiP2PPayment | Base | P2P ETH payment processing |
+
+**Treasury Wallets:**
+- Foundation: `0x8Ff3b2e823b33BeE30e699bB1b6BBc8F622fEa89`
+- Liquidity: `0x4135d59f0BfF96560b7aD5cfCe81154AB1810B93`
 
 ---
 
-## Part 6: Decentralization & Web3
+## Part 6: Companion Skill Ownership
+
+### Revenue-Earning AI Companions
+
+Companions (ERC-721 NFTs on Base) can register as co-owners of skills. When skills are purchased, companion owners earn ETH.
+
+**Revenue Flow:**
+1. User purchases skill via `BonzaiSkillRegistry.purchaseSkill()` on Base
+2. 80% of ETH → `BonzaiSkillOwnership.distributeRevenue()`
+3. Weight per companion = `BONZAI_balance(companionWallet) × profileScore`
+4. Revenue credited to `unclaimedRevenue[wallet]` (purchase-time snapshot)
+5. Owner calls `claimRevenue()` to withdraw accumulated ETH
+
+**Registration Requirements:**
+- Explicit opt-in per skill via `registerCompanion()`
+- Spending profile score >= 5 in the skill's category
+- EIP-191 attestation verifying NFT ownership + spending profile
+
+**12 Spending Categories** (matching BonzaiCompanions.sol bit packing):
+| Index | Category | Index | Category |
+|-------|----------|-------|----------|
+| 0 | education | 6 | housing |
+| 1 | entertainment | 7 | beauty |
+| 2 | fashion | 8 | reading |
+| 3 | finance | 9 | social |
+| 4 | food | 10 | sports |
+| 5 | healthcare | 11 | travel |
+
+---
+
+## Part 7: Decentralization & Web3
 
 ### Wallet Integration
 
 **Supported Methods:**
-- **MetaMask**: Direct browser extension injection
-- **WalletConnect**: QR code for mobile wallets
-- **Multi-Chain**: Ethereum + Arbitrum support
+- **Reown AppKit** (formerly WalletConnect): MetaMask, Coinbase, Trust, Rabby
+- **Multi-Chain**: Ethereum + Arbitrum + Base + LUKSO
 - **Auto-Switch**: Seamless network transitions
 
-> **[SCREENSHOT: Wallet connection modal with MetaMask and WalletConnect options]**
+**LUKSO Universal Profile:**
+- Companion NFTs as LSP8 tokens with Universal Profile
+- LSP23 factory at `0x2300000A84D25dF63081feAa37ba6b62C4c89a30`
+- Agent wallet EOA is LSP6 controller on companion UPs
+- Cross-chain replay: deployment calldata stored for Base/Ethereum
 
-### NFT Minting
+> **[SCREENSHOT: Wallet connection modal with multi-chain options]**
 
-Every piece of content you create can become an NFT:
+### Agent Wallets
 
-1. **Generate** content (image, video, audio, 3D)
-2. **Click "Mint"** in your history
-3. **Sign transaction** with your wallet
-4. **Content uploads** to IPFS via Pinata
-5. **NFT minted** on Arbitrum
+Each companion can have a self-custody agent wallet for autonomous transactions:
+- **Local deterministic wallets** derived from master secret
+- **Default network**: Base (cheap gas)
+- **Spending limits**: 0.001 ETH per transaction, 0.005 ETH daily
+- **Operations**: ETH sends, x402 machine-to-machine payments
 
-**Your creations. Your ownership. On-chain proof.**
+### P2P Distributed Inference
 
-> **[SCREENSHOT: History item with "Mint as NFT" button]**
+- **Protocol**: libp2p for peer discovery and communication
+- **Payments**: x402 ETH payments on Base with EIP-712 signatures
+- **Platform Fee**: 2.5% on paid inference
+- **Modes**: Local (free) or Provider (earn ETH)
 
 ### Decentralized Skill Marketplace
 
 **How It Works:**
 - **Authors** create skills and set pricing
 - **Users** purchase skills (ETH) and pay per execution (BONZAI)
-- **Revenue Split**: 90% to author, 10% to platform
-
-**Skill Definition Schema (v1.0.0):**
-```javascript
-{
-  schema_version: "1.0.0",
-  id: "polymarket-top-performers-v1.0.0",
-  name: "Polymarket Top Performers",
-  category: "finance",
-  inputs: {
-    numTraders: { type: "number", default: 10 },
-    timePeriod: { type: "select", options: ["DAY", "WEEK", "MONTH"] }
-  },
-  prompt: { system: "...", task: "..." },
-  tools: {
-    bonzai: [...],  // BonzAI app tools
-    mcp: [...]      // Claude Code MCP tools
-  },
-  execution: { type: "embedded", execute: async () => {...} }
-}
-```
-
-**Categories:**
-Education, Entertainment, Fashion, Finance, Food, Healthcare, Housing, Personal Care, Reading, Social, Transportation
+- **Revenue Split**: 80% to companion co-owners, 20% to platform
+- **Categories**: education, entertainment, fashion, finance, food, healthcare, housing, beauty, reading, social, sports, travel
 
 ---
 
-## Part 7: Privacy & Security
+## Part 8: Privacy & Security
 
 ### Local-First Architecture
 
 ```
 ┌──────────────────────────────────────────────────────────────────────────┐
-│                              YOUR MACHINE                                 │
+│                              YOUR MACHINE                                │
 │                                                                          │
 │  ┌───────────────────────────────────────────────────────────────────┐  │
 │  │                     Electron App (Vue 3 UI)                        │  │
 │  │                                                                    │  │
 │  │  Main Process:                    Renderer:                       │  │
 │  │  - OpenClaw API (:3002)           - RoleplayChat.vue              │  │
-│  │  - node-llama-cpp                 - openclaw.handler.js           │  │
-│  │  - Electron Store                 - flagship.js                   │  │
-│  │                                                                    │  │
+│  │  - Electron Store                 - openclaw.handler.js           │  │
+│  │                                   - flagship.js                   │  │
 │  │  OpenClaw webhooks forward to renderer via IPC                    │  │
 │  │  Both UI and OpenClaw use the SAME code path                      │  │
 │  └───────────────────────────────┬───────────────────────────────────┘  │
@@ -710,7 +632,7 @@ Education, Entertainment, Fashion, Finance, Food, Healthcare, Housing, Personal 
 │  ┌───────────────────────────────────────────────────────────────────┐  │
 │  │                   Python Flask Server (:65000)                     │  │
 │  │  - Image (FLUX/SDXL)   - Video (LTX-2)   - Audio (Qwen3-TTS)     │  │
-│  │  - Vision (Qwen3-VL)   - 3D (Three.js)   - Robot (LeRobot)       │  │
+│  │  - Vision (Qwen3-VL)   - Music (ACE-Step) - 3D (Three.js codegen) │  │
 │  └───────────────────────────────────────────────────────────────────┘  │
 │                                                                          │
 │                         ~/bonzai-models/                                 │
@@ -718,14 +640,14 @@ Education, Entertainment, Fashion, Finance, Food, Healthcare, Housing, Personal 
 └──────────────────────────────────────────────────────────────────────────┘
                                    │
               Only these leave your machine:
-              • Blockchain transactions
-              • Moltbook posts (opt-in, via moltbook-agent.js)
+              • Blockchain transactions (Ethereum/Arbitrum/Base/LUKSO)
+              • Moltbook posts (opt-in)
               • OpenClaw messages (opt-in, via gateway webhook)
                                    ▼
-         ┌───────────────┐  ┌───────────────┐  ┌───────────────┐
-         │   Arbitrum    │  │   Moltbook    │  │   OpenClaw    │
-         │   Ethereum    │  │   (Social)    │  │   (Gateway)   │
-         └───────────────┘  └───────────────┘  └───────────────┘
+    ┌───────────┐  ┌───────────┐  ┌───────────┐  ┌───────────┐
+    │ Ethereum  │  │  Base     │  │  Moltbook │  │ OpenClaw  │
+    │ Arbitrum  │  │  LUKSO    │  │  (Social) │  │ (Gateway) │
+    └───────────┘  └───────────┘  └───────────┘  └───────────┘
 ```
 
 ### What Stays Local:
@@ -738,12 +660,13 @@ Education, Entertainment, Fashion, Finance, Food, Healthcare, Housing, Personal 
 - Level unlock transactions (on-chain)
 - NFT minting transactions (on-chain)
 - Skill purchases (on-chain)
+- Token launches (on-chain)
 - Moltbook posts (social, opt-in)
 - OpenClaw messages (chat, opt-in)
 
 ---
 
-## Part 8: Technical Excellence
+## Part 9: Technical Excellence
 
 ### System Requirements
 
@@ -767,18 +690,15 @@ Education, Entertainment, Fashion, Finance, Food, Healthcare, Housing, Personal 
 | Skill | Models Required | Total Size |
 |-------|-----------------|------------|
 | Roleplay Companion | MythoMax 13B, FLUX/SDXL, Qwen3-TTS, LTX-2, Qwen3-VL | ~45GB |
-| Story Studio | Llama 8B, FLUX Klein, Kokoro | ~18GB |
-| Meditation Forge | Llama 8B, FLUX Klein, Kokoro | ~18GB |
 | Music Video Forge | Llama 8B, FLUX Klein, LTX-2 | ~28GB |
+| Meditation Forge | Llama 8B, FLUX Klein, Kokoro | ~18GB |
 
 ### Real-Time Monitoring
 
 BonzAI shows your system capabilities in real-time:
-- Available RAM/VRAM in the top navigation
+- Available RAM/VRAM in the navigation bar
 - Memory requirements per model before download
 - GPU detection and automatic optimization
-
-> **[SCREENSHOT: Top nav showing "16GB RAM | 12GB VRAM | RTX 4080"]**
 
 ### Model Management
 
@@ -797,9 +717,27 @@ BonzAI shows your system capabilities in real-time:
 └── [model-name].gguf      # Quantized models
 ```
 
+### Smart Contract Testing
+
+468 Hardhat tests covering all 8 MVP contracts:
+```bash
+npm test              # Run all tests
+npm run test:coverage # Coverage report
+```
+
+**Critical security tests:**
+- Flash loan protection (256-block gap in MintPool)
+- Balance-drop prevention on claims
+- Authorized depositors only for pools
+- Only PoolManager can call hook's afterSwap
+- Fee split arithmetic sums to total (no rounding loss)
+- One token per companion/content (no duplicate launches)
+- NFT ownership verification for token launches
+- MAX_SUPPLY (10,000) cap enforcement
+
 ---
 
-## Part 9: Competitive Positioning
+## Part 10: Competitive Positioning
 
 ### BonzAI vs. Cloud AI Services
 
@@ -807,13 +745,15 @@ BonzAI shows your system capabilities in real-time:
 |---------|--------|----------------|------------|--------------|
 | Privacy | 100% Local | Logged | Logged | Logged |
 | Censorship | None | Heavy | Moderate | Heavy |
-| Monthly Cost | $0 (after unlock) | $20-100 | $10-60 | $10 |
+| Monthly Cost | $0 (generation is free) | $20-100 | $10-60 | $10 |
 | Offline Use | Yes | No | No | No |
-| Model Choice | 20+ | 1 | 1 | 1 |
+| Model Choice | 21+ | 1 | 1 | 1 |
 | Own Your Data | Yes | No | No | No |
-| NFT Minting | Built-in | No | No | No |
+| NFT Minting | Built-in (Base + LUKSO) | No | No | No |
 | Social Presence | Moltbook | No | No | No |
 | Multi-Channel Chat | OpenClaw | No | No | No |
+| Revenue Earning | Skill co-ownership | No | No | No |
+| Token Launch | Uniswap V4 | No | No | No |
 
 ### BonzAI vs. Open Source Tools
 
@@ -821,35 +761,42 @@ BonzAI shows your system capabilities in real-time:
 |---------|--------|--------|---------|-------------|
 | All-in-One | Yes | Text only | Images only | Text/Images |
 | GUI | Full desktop app | Terminal | Web UI | Web UI |
-| Video Gen | Yes | No | Limited | No |
-| 3D Gen | Yes | No | No | No |
+| Video Gen | Yes (LTX-2) | No | Limited | No |
+| 3D Gen | Yes (Three.js) | No | No | No |
 | Voice Cloning | Qwen3-TTS | No | No | External |
-| Blockchain | Integrated | No | No | No |
-| Social AI | Moltbook | No | No | No |
+| Blockchain | Multi-chain (4 networks) | No | No | No |
+| Social AI | Moltbook + OpenClaw | No | No | No |
+| Revenue | MintPool + skill co-ownership | No | No | No |
 | Setup Time | 5 minutes | 30+ min | Hours | Hours |
 
 ---
 
-## Part 10: Roadmap & Vision
+## Part 11: Roadmap & Vision
 
 ### Current State (v1.3)
 - 7 generation modalities (Text, Audio, Image, Video, 3D, Training, Skills)
-- 20+ LLM models
-- User-specific companions with import/export
+- 21 LLM models
+- 13 diverse default companions with Big 5 (OCEAN) personality model
+- 13 immersive scenarios across cultures and settings
 - Dynamic scene backgrounds with fade transitions
 - OpenClaw integration via IPC (same code path as desktop UI)
-- Moltbook ambassador agent (daily thought-leadership, 5-min monitoring)
-- ERC-8004 companion NFTs
-- Multi-chain wallet support
-- NFT minting infrastructure
+- Moltbook social presence for companions
+- Multi-chain: Ethereum, Arbitrum, Base, LUKSO
+- 8 MVP smart contracts on Base with Uniswap V4 integration
+- Content NFT minting on Base (ERC-721) with MintPool revenue sharing
+- Companion ERC-20 token issuance via CompanionTokenFactory
+- Fine-tune model ERC-20 token issuance via FineTuneTokenFactory
+- Companion skill co-ownership with weighted revenue distribution
+- Agent wallets for autonomous companion transactions
+- Universal Profile integration on LUKSO (LSP23 factory)
+- 468 Hardhat smart contract tests
 
 ### Near-Term
-- Influencer Twin flagship skill (tokenized influencer identity)
-- Companion NFT marketplace
-- P2P inference network
+- P2P inference network launch
 - Mobile companion app
 - More video models (Wan 2.2, CogVideoX)
 - Lip-sync integration (Wav2Lip)
+- Companion NFT marketplace
 
 ### Long-Term Vision
 - Fully decentralized compute network
@@ -861,12 +808,12 @@ BonzAI shows your system capabilities in real-time:
 
 ---
 
-## Part 11: Call to Action
+## Part 12: Call to Action
 
 ### For Creators
 *"Stop renting AI. Own it."*
 
-Download BonzAI and start creating without limits, without surveillance, without monthly fees.
+Download BonzAI and start creating without limits, without surveillance, without monthly fees. Mint your creations as NFTs and earn revenue from pools.
 
 ### For Developers
 *"Build on the open AI stack."*
@@ -876,56 +823,70 @@ Create skills, contribute to the codebase, or integrate BonzAI into your workflo
 ### For Companion Enthusiasts
 *"Your AI, your identity, your social life."*
 
-Mint your companion as an NFT, give them a Moltbook presence, and chat via any channel.
+Mint your companion as an NFT, give them a Moltbook presence, launch their token, and earn from skill co-ownership.
 
 ### For Investors
-*"The future of AI is decentralized and social."*
+*"The future of AI is decentralized and tokenized."*
 
-BONZAI token provides utility access to a comprehensive AI suite with real demand drivers.
+BONZAI token provides utility access to a comprehensive AI suite with Uniswap V4 fee capture, MintPool revenue sharing, and companion token economics.
 
 ---
 
 ## Appendix: Quick Reference
 
 ### Links
-- **App Download**: [GitHub Releases]
+- **Website**: [bonzai.sh](https://bonzai.sh)
 - **Token (Uniswap)**: [Buy BONZAI on Arbitrum](https://app.uniswap.org/swap?chain=arbitrum&outputCurrency=0x0a84edf70f30325151631ce7a61307d1f4d619a3)
-- **Documentation**: [docs.bonzai.ai]
-- **Discord**: [discord.gg/bonzai]
-- **Twitter**: [@BonzAI_AI]
 - **Moltbook**: [moltbook.com](https://www.moltbook.com)
 - **OpenClaw Docs**: [docs.openclaw.ai](https://docs.openclaw.ai)
 
 ### Contract Addresses
 | Contract | Network | Address |
 |----------|---------|---------|
-| BONZAI Token | Ethereum | `0xdda9ff241c7160be8295ef9eca2e782361467666` |
+| BONZAI Token | Ethereum | `0xDdA9Ff241C7160be8295EF9Eca2e782361467666` |
 | BONZAI Token | Arbitrum | `0x0a84edf70f30325151631ce7a61307d1f4d619a3` |
-| Level Unlock | Arbitrum | `0xE49492A2604Cea2a50060E47215Cb19bffD1Edae` |
-| Companion NFT | Arbitrum | *Deploying Soon* |
+| BONZAI Token | Base | `0xc4d137def384ee0f8857887f5950669ba04984ec` |
+| BonzaiUnlock | Base | `0xE49492A2604Cea2a50060E47215Cb19bffD1Edae` |
+| BonzaiCompanions | Base | *Set after deployment* |
+| BonzaiContent | Base | *Set after deployment* |
+| BonzaiMintPool | Base | *Set after deployment* |
+| BonzaiUniswapHook | Base | *Set after deployment (CREATE2)* |
+| Uniswap V4 PoolManager | Base | `0x498581ff718922c3f8e6a244956af099b2652b2b` |
+| Uniswap V4 PositionManager | Base | `0x7c5f5a4bbd8fd63184577525326123b519429bdc` |
+| Uniswap V4 Permit2 | Base | `0x000000000022D473030F116dDEE9F6B43aC78BA3` |
 
 ### Level Requirements Summary
-| Level | BONZAI Hold | Features |
-|-------|-------------|----------|
-| 1 | 20 | Text |
-| 2 | 100 | + Audio |
-| 3 | 400 | + Image |
-| 4 | 2,000 | + Video |
-| 5 | 10,000 | + 3D |
-| 6 | 40,000 | + Training |
-| ALL | 1 ETH (one-time) | Everything Forever |
+| Level | BONZAI Hold | Minting Rights |
+|-------|-------------|----------------|
+| 1 | 1,000 | Text NFTs |
+| 2 | 5,000 | + Audio NFTs |
+| 3 | 10,000 | + Image NFTs |
+| 4 | 25,000 | + Video NFTs |
+| 5 | 33,000 | + 3D NFTs |
+| 6 | 50,000 | + Training NFTs + Token Issuance |
+| ALL | 1 ETH (one-time via BonzaiUnlock) | Everything Forever |
 
 ### Key Files
 | File | Purpose |
 |------|---------|
-| `src/skills/flagship.js` | Multi-modal flagship skills, companion/scenario definitions, import/export |
+| `src/skills/flagship.js` | 13 companions, 13 scenarios, multi-modal skills, Big 5 traits |
+| `src/services/companion.service.js` | Companion minting on Base, ERC-8004 metadata |
+| `src/services/companionToken.service.js` | Companion ERC-20 token launch |
+| `src/services/contentNFT.service.js` | Content NFT minting (Base ERC-721, LUKSO LSP8) |
+| `src/services/mintPool.service.js` | MintPool registration, claiming, queries |
+| `src/services/skillOwnership.service.js` | Co-ownership registration and revenue claiming |
 | `src/services/moltbook.service.js` | Moltbook API integration |
-| `src/services/openclaw.handler.js` | OpenClaw webhook handler (uses flagship.js + store) |
+| `src/services/openclaw.handler.js` | OpenClaw webhook handler (same pipeline as UI) |
+| `src/services/lukso.service.js` | LUKSO Universal Profile integration |
+| `src/services/agentWallet.service.js` | Local agent wallets for companions |
 | `src/main.js` | Electron main process with OpenClaw API (:3002) |
-| `src/components/skills/RoleplayChat.vue` | Roleplay UI with dynamic backgrounds |
-| `openclaw/bridge.js` | CLI utility for testing OpenClaw connection |
-| `openclaw/moltbook-agent.js` | Moltbook ambassador agent (daily posts, 5-min monitoring) |
-| `src/contracts/CompanionNFT.sol` | ERC-8004 companion NFT |
+| `src/components/skills/RoleplayChat.vue` | Roleplay UI with TTS, image, video generation |
+| `src/components/skills/BrowseAgents.vue` | Companion management, skills, revenue, leaderboard |
+| `src/components/MintModal.vue` | Content NFT minting modal |
+| `src/config/web3.config.js` | All contract addresses, levels, Uniswap V4 |
+| `src/config/social.config.js` | Moltbook, OpenClaw, ERC-8004 config |
+| `scripts/deploy-base-mvp.js` | Deploy 8 MVP contracts to Base |
+| `hardhat.config.cjs` | Hardhat config (Solidity 0.8.20) |
 
 ---
 
@@ -939,19 +900,12 @@ BONZAI token provides utility access to a comprehensive AI suite with real deman
 5. Video generation from image (I2V flow)
 6. 3D asset with multi-angle view
 7. Roleplay companion conversation with image + audio
-8. Companion Moltbook profile
-9. Wallet connection flow
-10. Level unlock interface
-11. NFT minting transaction
-12. System memory display
-
-### Dogfooding Demonstration
-*"This video was created entirely with BonzAI:"*
-- Script refined with BonzAI text generation
-- Images generated with BonzAI image generation
-- Video segments created with BonzAI video generation
-- 3D product shots rendered with BonzAI 3D generation
-- Narration voiced by BonzAI companion (Qwen3-TTS)
+8. Companion NFT minting on Base
+9. Content NFT minting via MintModal
+10. Wallet connection flow (multi-chain)
+11. Level unlock interface
+12. BrowseAgents companion management and leaderboard
+13. System memory display
 
 ### Tone Guidelines
 - **Confident** but not arrogant
@@ -961,5 +915,5 @@ BONZAI token provides utility access to a comprehensive AI suite with real deman
 
 ---
 
-*Last updated: January 2026*
-*Version: 1.3 - OpenClaw IPC Integration (same code path as desktop UI)*
+*Last updated: March 2026*
+*Version: 1.3.0 — Companion NFTs on Base (ERC-8004), Uniswap V4 Token Economics, 13 Diverse Companions with Big 5 OCEAN*

@@ -6,7 +6,17 @@
       <div class="wallet-section">
         <!-- Show connect button when not connected OR still connecting (prevents flash) -->
         <Transition name="wallet-fade" mode="out-in">
-          <div v-if="!isConnected || isConnecting" key="connect-btns" class="connect-buttons">
+          <div
+            v-if="!isConnected || isConnecting"
+            key="connect-btns"
+            class="connect-buttons"
+          >
+            <!-- Mint Network Indicator -->
+            <div class="mint-network-selector">
+              <span class="network-icon base"></span>
+              <span class="network-label">Base</span>
+            </div>
+
             <button
               class="button is-success"
               @click="connect"
@@ -17,42 +27,70 @@
                 {{ isConnecting ? "Connecting..." : "Connect Wallet" }}
               </span>
             </button>
-            <!-- Cancel/Reset button when stuck connecting -->
+            <!-- Cancel/Reset button when stuck coxnnecting -->
             <button
               v-if="isConnecting"
-              class="button is-danger is-medium ml-2"
+              class="button is-danger ml-2"
               @click="cancelConnection"
               title="Cancel connection"
             >
               <span class="material-symbols-outlined">close</span>
             </button>
-            <!-- P2P button (disconnected state) -->
-            <button
-              class="button ml-2"
-              :class="p2pButtonClass"
-              @click="showNetworkModal = true"
-              title="Peer-to-Peer Network"
-            >
-              <span class="material-symbols-outlined" :class="{ 'pulse-icon': p2pStatus.started }">
-                {{ p2pModeIcon }}
-              </span>
-              <span class="serve-label ml-2">{{ p2pModeLabel }}</span>
-            </button>
           </div>
 
           <!-- Only show wallet info when fully connected with a valid address -->
-          <div v-else-if="isConnected && walletAddress" key="wallet-info" class="wallet-info">
-            <div class="wallet-address p-3" @click="copyAddress">
-              <span class="address-text">{{ truncatedAddress }}</span>
-              <span class="network-badge" :class="{ arbitrum: isOnArbitrum }">
-                {{ isOnArbitrum ? "ARB" : "ETH" }}
+          <div
+            v-else-if="isConnected && walletAddress"
+            key="wallet-info"
+            class="wallet-info"
+          >
+            <div class="wallet-address" @click="copyAddress">
+              <a
+                v-if="isUniversalProfile"
+                class="network-badge up-badge"
+                :href="upProfileLink"
+                target="_blank"
+                @click.stop
+                title="View Universal Profile"
+              >
+                UP
+              </a>
+              <img
+                v-if="upAvatarUrl"
+                :src="upAvatarUrl"
+                class="up-avatar"
+                alt="UP avatar"
+              />
+              <span v-if="upDisplayName" class="address-text up-name">
+                @{{ upDisplayName }}
               </span>
-              <span class="fira-sans-condensed-black-italic current-level-label">
+              <span v-else class="address-text">{{ truncatedAddress }}</span>
+              <span
+                class="fira-sans-condensed-black-italic current-level-label"
+              >
                 <span v-if="displayedHighestLevelKey">
                   {{ displayedHighestLevelKey }}
                 </span>
                 <span v-else class="no-level">LVL 0</span>
               </span>
+              <!-- Auth Status Indicator -->
+              <span
+                class="auth-indicator"
+                :class="authStatusClass"
+                @click.stop="showAuthModal = true"
+                :title="'Session: ' + authStatusText"
+              >
+                <span class="auth-dot"></span>
+                <span v-if="pendingOps > 0" class="pending-count">
+                  {{ pendingOps }}
+                </span>
+              </span>
+            </div>
+
+            <!-- Mint Network Indicator (connected) -->
+            <div class="mint-network-selector">
+              <span class="network-icon base"></span>
+              <span class="network-label">Base</span>
             </div>
 
             <button
@@ -62,54 +100,18 @@
             >
               <span class="material-symbols-outlined">logout</span>
             </button>
-            <!-- P2P button (connected state) -->
-            <button
-              class="button ml-2"
-              :class="p2pButtonClass"
-              @click="showNetworkModal = true"
-              title="Peer-to-Peer Network"
-            >
-              <span class="material-symbols-outlined" :class="{ 'pulse-icon': p2pStatus.started }">
-                {{ p2pModeIcon }}
-              </span>
-              <span class="serve-label ml-2">{{ p2pModeLabel }}</span>
-            </button>
           </div>
         </Transition>
       </div>
 
-      <!-- Center: Level Progress -->
-      <div class="levels-section">
-        <div class="level-track">
-          <div
-            v-for="lvl in 6"
-            :key="lvl"
-            class="level-node"
-            :class="getLevelClass(lvl)"
-            @click="openLevelModal(lvl)"
-          >
-            <div class="node-inner">
-              <span class="material-symbols-outlined is-size-5">
-                {{ getLevelIcon(lvl) }}
-              </span>
-              <span
-                class="level-num fira-sans-condensed-black-italic is-size-5"
-              >
-                LVL{{ lvl }}
-              </span>
-            </div>
-            <div class="level-connector" v-if="lvl < 6"></div>
-          </div>
-        </div>
-      </div>
-
       <!-- Right: Balance & Actions -->
       <div class="balance-section fira-sans-condensed-black-italic">
-        <div class="balance-display" v-if="isConnected">
+        <div class="balance-display">
           <div class="bonzai-balance">
-            <span class="balance-amount is-size-1">
+            <span class="balance-amount is-size-1" v-if="isConnected">
               {{ formatBalance(totalBalance) }}
             </span>
+            <span class="balance-amount is-size-1" v-else>0</span>
             <span class="balance-token is-size-4">BONZAI</span>
           </div>
         </div>
@@ -123,178 +125,53 @@
           >
             <span class="material-symbols-outlined">shopping_cart</span>
           </a>
-          <button class="button is-warning" @click="refresh" title="Refresh">
+          <button
+            class="button is-warning ml-2"
+            @click="refresh"
+            title="Refresh"
+          >
             <span
-              class="material-symbols-outlined"
+              class="material-symbols-outlined mr-2"
               :class="{ spinning: isRefreshing }"
             >
               sync
             </span>
+            Refresh Balance
+          </button>
+          <button
+            v-if="openclawInstalled"
+            class="openclaw-toggle button ml-2"
+            :class="openclawEnabled ? 'is-success' : 'is-warning is-outlined'"
+            @click="toggleOpenClaw"
+            :title="
+              openclawEnabled
+                ? 'OpenClaw enabled — click to disable'
+                : 'Enable OpenClaw integration'
+            "
+          >
+            <span class="openclaw-label">🦞&nbsp;
+              {{ openclawEnabled ? "OpenClaw ON" : "OpenClaw OFF" }}
+            </span>
+          </button>
+          <button
+            class="p2p button ml-2"
+            :class="p2pButtonClass"
+            @click="showNetworkModal = true"
+            title="Peer-to-Peer Network"
+          >
+            <span
+              class="material-symbols-outlined mr-2"
+              :class="{ 'pulse-icon': p2pStatus.started }"
+            >
+              {{ p2pModeIcon }}
+            </span>
+            {{ p2pModeLabel }}
           </button>
         </div>
       </div>
     </div>
 
-    <!-- Level Modal -->
-    <Teleport to="body">
-      <Transition name="fade">
-        <div
-          v-if="selectedLevel"
-          class="level-modal-overlay"
-          @click.self="closeModal"
-        >
-          <div class="level-modal">
-            <div class="has-text-right">
-              <button
-                class="button is-danger"
-                @click="closeModal"
-                title="Close"
-              >
-                <span class="material-symbols-outlined">close</span>
-              </button>
-            </div>
-            <div class="modal-header">
-              <span class="material-symbols-outlined is-size-1">
-                {{ getLevelIcon(selectedLevel) }}
-              </span>
-              <span
-                class="modal-level-badge fira-sans-condensed-black-italic is-size-1"
-              >
-                LVL{{ selectedLevel }}
-              </span>
-              <h2 class="fira-sans-condensed-black-italic is-size-3">
-                {{ getLevelConfig(selectedLevel)?.name }}
-              </h2>
-            </div>
-
-            <div class="modal-body">
-              <div class="level-description models__activity--payouts" :class="{ ok: isLevelUnlockedOrHolding(selectedLevel) }">
-                <div class="modal-status mb-5">
-                  <span
-                    class="status-pill fira-sans-condensed-black-italic is-size-4"
-                    :class="{ ok: isLevelUnlockedOrHolding(selectedLevel) }"
-                  >
-                    {{
-                      isLevelUnlockedOrHolding(selectedLevel)
-                        ? "Unlocked"
-                        : "Locked"
-                    }}
-                  </span>
-                </div>
-                <p>{{ getLevelConfig(selectedLevel)?.description }}</p>
-              </div>
-
-              <div class="features-list fira-sans-condensed-black-italic">
-                <ul>
-                  <li
-                    v-for="feature in getLevelConfig(selectedLevel)?.features"
-                    :key="feature"
-                  >
-                    <strong>{{ formatFeature(feature) }}</strong>
-                  </li>
-                </ul>
-              </div>
-
-              <!-- IMPORTANT: no confusion between unlock & use -->
-              <div class="requirements-summary">
-                <h3
-                  class="requirements-title fira-sans-condensed-black-italic is-size-3"
-                >
-                  Unlock Options
-                </h3>
-
-                <div class="req-row">
-                  <span class="material-symbols-outlined">wallet</span>
-                  <span class="req-text">
-                    Hold
-                    <strong>
-                      {{ getLevelConfig(selectedLevel)?.holdingRequired }}+
-                    </strong>
-                    BONZAI
-                  </span>
-                  <span
-                    class="req-status"
-                    :class="{
-                      met: hasEnoughBonzai(
-                        getLevelConfig(selectedLevel)?.holdingRequired || 0
-                      ),
-                    }"
-                  >
-                    {{
-                      hasEnoughBonzai(
-                        getLevelConfig(selectedLevel)?.holdingRequired || 0
-                      )
-                        ? "✓"
-                        : "✗"
-                    }}
-                  </span>
-                </div>
-                <hr />
-                <div class="fira-sans-condensed-black-italic has-text-centered">
-                  OR
-                </div>
-                <hr />
-                <div class="req-row">
-                  <span class="material-symbols-outlined">lock_open</span>
-                  <span class="req-text">
-                    Spend
-                    <strong>{{ unlockPrice }} ETH</strong>
-                    to unlock
-                    <strong>ALL 6 LVL</strong>
-                    permanently
-                  </span>
-                  <span
-                    class="req-status"
-                    :class="{ met: allLevelsUnlocked }"
-                  >
-                    {{ allLevelsUnlocked ? "✓" : "✗" }}
-                  </span>
-                </div>
-              </div>
-            </div>
-
-            <!-- Unlock Status Notification -->
-            <div v-if="unlockStatus" class="notification unlock-status-notification mt-5" :class="unlockStatusClass">
-              <span class="material-symbols-outlined mr-2" style="vertical-align: middle;">{{ unlockStatusIcon }}</span>
-              {{ unlockStatus }}
-            </div>
-
-            <div class="modal-footer has-text-centered">
-              <a
-                :href="buyLink"
-                target="_blank"
-                class="button is-info is-outlined mr-2 is-medium"
-                title="Buy BONZAI"
-              >
-                Buy BONZAI
-              </a>
-              <button
-                class="button is-success mr-2 is-medium"
-                @click="unlockAllLevels"
-                :disabled="isUnlocking || allLevelsUnlocked"
-                title="Unlock All Levels"
-              >
-                <span
-                  v-if="isUnlocking"
-                  class="spinner"
-                ></span>
-                <span v-else>
-                  <span class="material-symbols-outlined mr-1" style="vertical-align: middle; font-size: 18px">{{ allLevelsUnlocked ? 'check_circle' : 'lock_open' }}</span>
-                  {{ allLevelsUnlocked ? 'All Unlocked' : 'Unlock All' }}
-                </span>
-                <div v-if="!allLevelsUnlocked" class="tags has-addons">
-                  <span
-                    class="tag is-warning partner fira-sans-condensed-black-italic is-small"
-                  >
-                    {{ unlockPrice }} ETH
-                  </span>
-                </div>
-              </button>
-            </div>
-          </div>
-        </div>
-      </Transition>
-    </Teleport>
+    <!-- Level Modal removed — all generation is free, levels only affect mint discount -->
 
     <!-- Network Settings Modal -->
     <Teleport to="body">
@@ -306,8 +183,12 @@
         >
           <div class="network-modal">
             <div class="network-modal-header">
-              <h1 class="fira-sans-condensed-black-italic is-size-1 has-text-white">
-                <span class="material-symbols-outlined mr-2 is-size-1">p2p</span>
+              <h1
+                class="fira-sans-condensed-black-italic is-size-1 has-text-white"
+              >
+                <span class="material-symbols-outlined mr-2 is-size-1">
+                  p2p
+                </span>
                 Peer-to-Peer Network
               </h1>
               <button
@@ -325,6 +206,108 @@
         </div>
       </Transition>
     </Teleport>
+
+    <!-- Auth Status Modal -->
+    <Teleport to="body">
+      <Transition name="fade">
+        <div
+          v-if="showAuthModal"
+          class="auth-modal-overlay"
+          @click.self="showAuthModal = false"
+        >
+          <div class="auth-modal">
+            <div class="auth-modal-header">
+              <h2
+                class="fira-sans-condensed-black-italic is-size-3 has-text-white"
+              >
+                <span class="material-symbols-outlined mr-2">security</span>
+                Session Status
+              </h2>
+              <button
+                class="button is-danger is-small"
+                @click="showAuthModal = false"
+                title="Close"
+              >
+                <span class="material-symbols-outlined">close</span>
+              </button>
+            </div>
+
+            <div class="auth-modal-body">
+              <!-- Status Indicator -->
+              <div class="auth-status-banner" :class="authStatusClass">
+                <span class="status-dot-large" :class="authStatusClass"></span>
+                <span class="status-label fira-sans-condensed-black-italic">
+                  {{ authStatusText }}
+                </span>
+              </div>
+
+              <!-- Details -->
+              <div class="auth-details">
+                <div class="detail-row">
+                  <span class="label">Wallet</span>
+                  <span class="value monospace">{{ truncatedAddress }}</span>
+                </div>
+                <div class="detail-row" v-if="authState.level">
+                  <span class="label">Level</span>
+                  <span class="value">{{ authState.level }}</span>
+                </div>
+                <div class="detail-row">
+                  <span class="label">Session</span>
+                  <span
+                    class="value"
+                    :class="{
+                      'has-text-danger': needsReauth,
+                      'has-text-warning': tokenExpiringSoon,
+                    }"
+                  >
+                    {{
+                      tokenExpiresIn > 0
+                        ? formatExpiry(tokenExpiresIn)
+                        : "Expired"
+                    }}
+                  </span>
+                </div>
+                <div class="detail-row" v-if="pendingOps > 0">
+                  <span class="label">Queued Operations</span>
+                  <span class="value has-text-warning">{{ pendingOps }}</span>
+                </div>
+                <div class="detail-row" v-if="vaultStatus.isUnlocked">
+                  <span class="label">Vault</span>
+                  <span class="value has-text-success">Unlocked</span>
+                </div>
+              </div>
+
+              <!-- Actions -->
+              <div class="auth-actions">
+                <button
+                  v-if="needsReauth"
+                  class="button is-warning is-fullwidth"
+                  @click="handleReauth"
+                  :disabled="isReauthing"
+                  :class="{ 'is-loading': isReauthing }"
+                >
+                  <span class="material-symbols-outlined mr-2">refresh</span>
+                  Reconnect Session
+                </button>
+                <button
+                  v-else-if="tokenExpiringSoon"
+                  class="button is-info is-fullwidth"
+                  @click="handleRefreshToken"
+                  :disabled="isRefreshingToken"
+                  :class="{ 'is-loading': isRefreshingToken }"
+                >
+                  <span class="material-symbols-outlined mr-2">sync</span>
+                  Refresh Token
+                </button>
+                <p v-else class="has-text-centered has-text-grey-light">
+                  Your session is active. No action needed.
+                </p>
+              </div>
+            </div>
+          </div>
+        </div>
+      </Transition>
+    </Teleport>
   </div>
 </template>
 
@@ -332,8 +315,23 @@
 import { ref, computed, onMounted, onUnmounted, watch } from "vue";
 import { useBonzaiWeb3 } from "../composables/useBonzaiWeb3.js";
 import { CONFIG } from "../config/web3.config.js";
-import { levelService, checkAllLevels, canUnlockWithEth, unlockAllWithEth, clearOpenLevelModalRequest, clearOpenNetworkModalRequest } from "../services/level.service.js";
+import {
+  levelService,
+  checkAllLevels,
+  canUnlockWithEth,
+  unlockAllWithEth,
+  clearOpenLevelModalRequest,
+  clearOpenNetworkModalRequest,
+} from "../services/level.service.js";
+import {
+  authService,
+  userInitiatedReAuth,
+  refreshToken,
+} from "../services/auth.service.js";
+import { authVault } from "../services/authVault.service.js";
 import NetworkSettings from "./NetworkSettings.vue";
+import { mintStore } from "../stores/mintStore.js";
+import { switchNetwork } from "../services/web3.service.js";
 
 const {
   isConnected,
@@ -341,6 +339,9 @@ const {
   walletAddress,
   truncatedAddress,
   isOnArbitrum,
+  isOnLukso,
+  isUniversalProfile,
+  universalProfileData,
   totalBalance,
   balances,
   levels,
@@ -361,14 +362,147 @@ const cancelConnection = async () => {
 const isRefreshing = ref(false);
 const isUnlocking = ref(false);
 const selectedLevel = ref(null);
-const unlockStatus = ref('');
-const unlockStatusType = ref('info'); // 'info', 'warning', 'success', 'danger'
+const unlockStatus = ref("");
+const unlockStatusType = ref("info"); // 'info', 'warning', 'success', 'danger'
 
 // Network modal state
 const showNetworkModal = ref(false);
 const p2pStatus = ref({ started: false });
-const p2pMode = ref('local'); // 'local', 'consumer', 'provider'
+const p2pMode = ref("local"); // 'local', 'consumer', 'provider'
 let p2pStatusInterval = null;
+
+// OpenClaw integration state
+const openclawInstalled = ref(false);
+const openclawEnabled = ref(false);
+
+const checkOpenClawStatus = async () => {
+  try {
+    openclawInstalled.value = await window.electronAPI.openclawIsInstalled();
+    if (openclawInstalled.value) {
+      openclawEnabled.value = await window.electronAPI.openclawGetEnabled();
+    }
+  } catch (e) {
+    console.error("[BottomBar] Failed to check OpenClaw status:", e);
+  }
+};
+
+const toggleOpenClaw = async () => {
+  try {
+    const newState = !openclawEnabled.value;
+    const result = await window.electronAPI.openclawSetEnabled(newState);
+    if (!result.error) {
+      openclawEnabled.value = newState;
+    } else {
+      console.error("[BottomBar] Failed to toggle OpenClaw:", result.error);
+    }
+  } catch (e) {
+    console.error("[BottomBar] Failed to toggle OpenClaw:", e);
+  }
+};
+
+// Auth modal state
+const showAuthModal = ref(false);
+const isReauthing = ref(false);
+const isRefreshingToken = ref(false);
+
+// Mint network (Base only)
+const mintNetwork = computed(() => mintStore.state.network);
+
+// Universal Profile display
+const upDisplayName = computed(() => {
+  if (!isUniversalProfile.value || !universalProfileData.value) return null;
+  return universalProfileData.value.name || null;
+});
+
+const upProfileLink = computed(() => {
+  if (!isUniversalProfile.value || !walletAddress.value) return null;
+  return `https://universaleverything.io/${walletAddress.value}`;
+});
+
+const upAvatarUrl = computed(() => {
+  if (!isUniversalProfile.value || !universalProfileData.value) return null;
+  const images = universalProfileData.value.profileImage;
+  if (!images || !images.length) return null;
+  const url = images[0].url;
+  if (!url) return null;
+  if (url.startsWith("ipfs://"))
+    return url.replace("ipfs://", "https://api.universalprofile.cloud/ipfs/");
+  return url;
+});
+
+// Auth state from service
+const authState = authService.state;
+const vaultStatus = computed(() => authVault.getVaultStatus());
+
+const isAuthenticated = computed(() => {
+  return authState.isAuthenticated && authState.accessToken;
+});
+
+const tokenExpiresIn = computed(() => {
+  if (!authState.tokenExpiry) return 0;
+  return Math.max(0, Math.round((authState.tokenExpiry - Date.now()) / 1000));
+});
+
+const tokenExpiringSoon = computed(() => {
+  return tokenExpiresIn.value > 0 && tokenExpiresIn.value < 300; // 5 min
+});
+
+const needsReauth = computed(() => {
+  return !isAuthenticated.value || tokenExpiresIn.value <= 0;
+});
+
+const pendingOps = computed(() => vaultStatus.value.pendingOperations);
+
+const authStatusClass = computed(() => {
+  if (needsReauth.value) return "is-danger";
+  if (tokenExpiringSoon.value) return "is-warning";
+  return "is-success";
+});
+
+const authStatusText = computed(() => {
+  if (needsReauth.value) return "Expired";
+  if (tokenExpiringSoon.value) return "Expiring";
+  return "Active";
+});
+
+const formatExpiry = (seconds) => {
+  if (seconds <= 0) return "Expired";
+  if (seconds < 60) return `${seconds}s`;
+  if (seconds < 3600) return `${Math.round(seconds / 60)}m`;
+  return `${Math.round(seconds / 3600)}h`;
+};
+
+const handleReauth = async () => {
+  isReauthing.value = true;
+  try {
+    // Ensure wallet is connected before attempting signature
+    if (!isConnected.value) {
+      console.log("[BottomBar] Wallet not connected, connecting first...");
+      await doConnect();
+      if (!isConnected.value) {
+        console.error("[BottomBar] Wallet connection failed, cannot re-auth");
+        return;
+      }
+    }
+    await userInitiatedReAuth();
+    showAuthModal.value = false;
+  } catch (e) {
+    console.error("[BottomBar] Re-auth failed:", e);
+  } finally {
+    isReauthing.value = false;
+  }
+};
+
+const handleRefreshToken = async () => {
+  isRefreshingToken.value = true;
+  try {
+    await refreshToken();
+  } catch (e) {
+    console.error("[BottomBar] Token refresh failed:", e);
+  } finally {
+    isRefreshingToken.value = false;
+  }
+};
 
 // Poll P2P status and mode for the button indicator
 const refreshP2PStatus = async () => {
@@ -378,45 +512,50 @@ const refreshP2PStatus = async () => {
       p2pStatus.value = status;
     }
     // Also refresh mode
-    const savedMode = await window.electronAPI.store.get('p2p.networkMode', 'local');
+    const savedMode = await window.electronAPI.store.get(
+      "p2p.networkMode",
+      "local",
+    );
     p2pMode.value = savedMode;
   } catch (err) {
-    console.warn('[BonzaiBottomBar] Failed to get P2P status:', err);
+    console.warn("[BonzaiBottomBar] Failed to get P2P status:", err);
   }
 };
 
 // P2P button computed properties
 const p2pModeIcon = computed(() => {
-  if (p2pMode.value === 'consumer') return 'cloud_download';
-  if (p2pMode.value === 'provider' && p2pStatus.value.started) return 'sensors';
-  if (p2pMode.value === 'provider') return 'cloud_upload';
-  return 'wifi_off';
+  if (p2pMode.value === "consumer") return "cloud_download";
+  if (p2pMode.value === "provider" && p2pStatus.value.started) return "sensors";
+  if (p2pMode.value === "provider") return "cloud_upload";
+  return "wifi_off";
 });
 
 const p2pModeLabel = computed(() => {
-  if (p2pMode.value === 'consumer') return 'Consumer';
-  if (p2pMode.value === 'provider' && p2pStatus.value.started) return 'Serving';
-  if (p2pMode.value === 'provider') return 'Provider';
-  return 'Local';
+  if (p2pMode.value === "consumer") return "Consumer Mode";
+  if (p2pMode.value === "provider" && p2pStatus.value.started)
+    return "Now Serving";
+  if (p2pMode.value === "provider") return "Provider Mode";
+  return "Private Mode";
 });
 
 const p2pButtonClass = computed(() => {
-  if (p2pMode.value === 'consumer') return 'is-info';
-  if (p2pMode.value === 'provider' && p2pStatus.value.started) return 'is-warning';
-  if (p2pMode.value === 'provider') return 'is-info';
-  return 'is-info';
+  if (p2pMode.value === "consumer") return "is-info";
+  if (p2pMode.value === "provider" && p2pStatus.value.started)
+    return "is-warning";
+  if (p2pMode.value === "provider") return "is-info";
+  return "is-info";
 });
 
 // Unlock status styling
 const unlockStatusClass = computed(() => `is-${unlockStatusType.value}`);
 const unlockStatusIcon = computed(() => {
   const icons = {
-    info: 'hourglass_empty',
-    warning: 'warning',
-    success: 'check_circle',
-    danger: 'error',
+    info: "hourglass_empty",
+    warning: "warning",
+    success: "check_circle",
+    danger: "error",
   };
-  return icons[unlockStatusType.value] || 'info';
+  return icons[unlockStatusType.value] || "info";
 });
 
 // ETH unlock state from levelService
@@ -454,15 +593,21 @@ const isLevelUnlockedOrHolding = (levelId) => {
   return isLevelManuallyUnlocked(levelId) || hasEnoughBonzai(required);
 };
 
-// Displayed highest level: include ETH unlocks (not only holding-based "highestLevel")
+// Displayed highest level: LVL1-5 only (LVL6 removed), used for discount display
 const displayedHighestLevelKey = computed(() => {
-  // LVL∞ takes precedence if present in highestLevel
-  if ((highestLevel.value || "").toString().trim() === "LVL∞") return "LVL∞";
-
-  for (let i = 6; i >= 1; i--) {
+  for (let i = 5; i >= 1; i--) {
     if (isLevelUnlockedOrHolding(i)) return `LVL${i}`;
   }
-  return highestLevel.value || "";
+  return "";
+});
+
+// Mint discount based on BONZAI holdings level
+const MINT_DISCOUNTS = { 1: 1, 2: 5, 3: 10, 4: 25, 5: 33 };
+const mintDiscount = computed(() => {
+  for (let i = 5; i >= 1; i--) {
+    if (isLevelUnlockedOrHolding(i)) return MINT_DISCOUNTS[i];
+  }
+  return 0;
 });
 
 const getLevelClass = (lvl) => {
@@ -507,6 +652,14 @@ const formatFeature = (feature) =>
 // Actions
 const connect = async () => {
   await doConnect();
+  // After connecting, switch wallet to the selected mint network chain
+  if (isConnected.value) {
+    try {
+      await switchNetwork(mintNetwork.value);
+    } catch (e) {
+      console.warn("[BottomBar] Post-connect chain switch failed:", e.message);
+    }
+  }
 };
 
 const disconnect = async () => {
@@ -530,14 +683,14 @@ const openLevelModal = (lvl) => {
 };
 
 // Helper to set unlock status
-const setUnlockStatus = (message, type = 'info') => {
+const setUnlockStatus = (message, type = "info") => {
   unlockStatus.value = message;
   unlockStatusType.value = type;
 };
 
 const clearUnlockStatus = () => {
-  unlockStatus.value = '';
-  unlockStatusType.value = 'info';
+  unlockStatus.value = "";
+  unlockStatusType.value = "info";
 };
 
 // Close modal and clear notification status
@@ -556,31 +709,31 @@ const unlockAllLevels = async () => {
   try {
     // Step 1: Check if connected, if not connect first
     if (!isConnected.value) {
-      setUnlockStatus('Connecting wallet...', 'info');
+      setUnlockStatus("Connecting wallet...", "info");
       await doConnect();
 
       // Wait for connection to complete
       if (!isConnected.value) {
-        setUnlockStatus('Wallet connection failed or cancelled', 'danger');
+        setUnlockStatus("Wallet connection failed or cancelled", "danger");
         return;
       }
     }
 
     // Step 2: Show awaiting signature notification
-    setUnlockStatus('Awaiting signature...', 'warning');
+    setUnlockStatus("Awaiting signature...", "warning");
 
     // Step 3: Call unlock - this will trigger the signature request
     // The unlockAllWithEth function handles the transaction
     const result = await unlockAllWithEth((status) => {
       // Callback for status updates from the service
-      if (status === 'awaiting_payment') {
-        setUnlockStatus('Awaiting payment approval (1 ETH)...', 'warning');
+      if (status === "awaiting_payment") {
+        setUnlockStatus("Awaiting payment approval (1 ETH)...", "warning");
       }
     });
 
     if (result.success) {
-      console.log('[BonzaiBottomBar] All levels unlocked!', result.txHash);
-      setUnlockStatus('All levels unlocked successfully!', 'success');
+      console.log("[BonzaiBottomBar] All levels unlocked!", result.txHash);
+      setUnlockStatus("All levels unlocked successfully!", "success");
       await checkAllLevels();
       // Clear status after a delay and close modal
       setTimeout(() => {
@@ -588,15 +741,21 @@ const unlockAllLevels = async () => {
         selectedLevel.value = null;
       }, 2000);
     } else {
-      console.error('[BonzaiBottomBar] Unlock failed:', result.error);
-      setUnlockStatus(`Unlock failed: ${result.error}`, 'danger');
+      console.error("[BonzaiBottomBar] Unlock failed:", result.error);
+      setUnlockStatus(`Unlock failed: ${result.error}`, "danger");
     }
   } catch (e) {
-    console.error('[BonzaiBottomBar] Unlock error:', e);
-    setUnlockStatus(`Unlock error: ${e.message || e}`, 'danger');
+    console.error("[BonzaiBottomBar] Unlock error:", e);
+    setUnlockStatus(`Unlock error: ${e.message || e}`, "danger");
   } finally {
     isUnlocking.value = false;
   }
+};
+
+// Auth event handler
+const handleNeedsReauth = () => {
+  console.log("[BottomBar] Auth needs re-authentication");
+  showAuthModal.value = true;
 };
 
 // Check levels on mount and when wallet connects
@@ -605,15 +764,24 @@ onMounted(async () => {
     await checkAllLevels();
   }
 
+  // Check OpenClaw installation status
+  await checkOpenClawStatus();
+
   // Initial P2P status check and start polling
   await refreshP2PStatus();
   p2pStatusInterval = setInterval(refreshP2PStatus, 5000);
+
+  // Listen for auth needs-reauth events
+  window.addEventListener("auth:needs-reauth", handleNeedsReauth);
+  window.addEventListener("auth:expired", handleNeedsReauth);
 });
 
 onUnmounted(() => {
   if (p2pStatusInterval) {
     clearInterval(p2pStatusInterval);
   }
+  window.removeEventListener("auth:needs-reauth", handleNeedsReauth);
+  window.removeEventListener("auth:expired", handleNeedsReauth);
 });
 
 watch(isConnected, async (connected) => {
@@ -630,7 +798,7 @@ watch(
       openLevelModal(levelNum);
       clearOpenLevelModalRequest();
     }
-  }
+  },
 );
 
 // Watch for cross-component network modal requests (from Generative* views)
@@ -641,7 +809,7 @@ watch(
       showNetworkModal.value = true;
       clearOpenNetworkModalRequest();
     }
-  }
+  },
 );
 </script>
 
@@ -707,11 +875,58 @@ watch(
   font-weight: 600;
 }
 
+/* Mint Network Selector */
+.mint-network-selector {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 10px 12px;
+  background: rgba(255, 255, 255, 0.08);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 8px;
+  cursor: pointer;
+  user-select: none;
+  margin-left: 8px;
+  margin-right: 8px;
+  transition: all 0.2s;
+}
+
+.mint-network-selector:hover {
+  background: rgba(255, 255, 255, 0.12);
+  border-color: rgba(255, 255, 255, 0.2);
+}
+
+.network-icon {
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.network-icon.base {
+  background: linear-gradient(135deg, #0052ff 0%, #3380ff 100%);
+}
+
+.network-label {
+  font-size: 12px;
+  font-weight: 700;
+  color: rgba(255, 255, 255, 0.9);
+}
+
+.up-avatar {
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  object-fit: cover;
+  flex-shrink: 0;
+}
+
 .wallet-address {
   display: flex;
   align-items: center;
   gap: 6px;
-  padding: 8px 12px;
+  padding: 10px 12px;
   background: rgba(255, 255, 255, 0.06);
   border-radius: 8px;
   cursor: pointer;
@@ -735,6 +950,28 @@ watch(
 .network-badge.arbitrum {
   background: linear-gradient(135deg, #28a0f0 0%, #1a73e8 100%);
   color: white;
+}
+
+.network-badge.lukso {
+  background: linear-gradient(135deg, #fe2d6e 0%, #fe7eb0 100%);
+  color: white;
+}
+
+.network-badge.up-badge {
+  background: linear-gradient(135deg, #fe2d6e 0%, #c41f9a 100%);
+  color: white;
+  text-decoration: none;
+  cursor: pointer;
+  font-weight: 900;
+}
+
+.network-badge.up-badge:hover {
+  box-shadow: 0 0 8px rgba(254, 45, 110, 0.5);
+}
+
+.up-name {
+  font-weight: 700;
+  color: #fe7eb0;
 }
 
 .current-level-label {
@@ -769,6 +1006,35 @@ watch(
 }
 
 /* Levels Section */
+.discount-section {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.discount-badge {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  background: rgba(16, 185, 129, 0.15);
+  border: 1px solid rgba(16, 185, 129, 0.4);
+  border-radius: 8px;
+  padding: 6px 14px;
+  color: #10b981;
+  font-size: 0.9rem;
+}
+
+.discount-level {
+  font-weight: 800;
+  font-size: 1rem;
+}
+
+.discount-percent {
+  color: rgba(16, 185, 129, 0.8);
+  font-size: 0.85rem;
+}
+
 .levels-section {
   flex: 1;
   display: flex;
@@ -1202,8 +1468,25 @@ hr {
 }
 
 @keyframes pulseGreen {
-  0%, 100% { opacity: 1; }
-  50% { opacity: 0.5; }
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.5;
+  }
+}
+
+/* OpenClaw Toggle */
+.openclaw-toggle {
+  font-size: 0.85rem;
+  padding: 4px 10px;
+  height: auto;
+}
+
+.openclaw-label {
+  font-size: 0.9rem;
+  letter-spacing: 0.5px;
 }
 
 /* Network Modal */
@@ -1261,6 +1544,193 @@ hr {
 
 .network-modal-body :deep(.panel) {
   max-width: none;
+}
+
+/* Auth Indicator */
+.auth-indicator {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 8px;
+  margin-left: 8px;
+  border-radius: 12px;
+  cursor: pointer;
+  transition: all 0.2s;
+  background: rgba(0, 0, 0, 0.2);
+}
+
+.auth-indicator:hover {
+  background: rgba(0, 0, 0, 0.4);
+}
+
+.auth-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.auth-indicator.is-success .auth-dot {
+  background: #48c78e;
+  box-shadow: 0 0 6px #48c78e;
+  animation: status-blink 1.5s ease-in-out infinite;
+}
+
+.auth-indicator.is-warning .auth-dot {
+  background: #ffe08a;
+  box-shadow: 0 0 6px #ffe08a;
+  animation: status-blink 1.5s ease-in-out infinite;
+}
+
+.auth-indicator.is-danger .auth-dot {
+  background: #f14668;
+  box-shadow: 0 0 6px #f14668;
+  animation: status-blink 1s ease-in-out infinite;
+}
+
+@keyframes status-blink {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.4;
+  }
+}
+
+.pending-count {
+  font-size: 10px;
+  font-weight: bold;
+  color: #f14668;
+}
+
+/* Auth Modal */
+.auth-modal-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.85);
+  backdrop-filter: blur(12px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 10002;
+}
+
+.auth-modal {
+  width: 90%;
+  max-width: 400px;
+  background: var(--bonzai-bg-dark);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 16px;
+  overflow: hidden;
+}
+
+.auth-modal-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 16px 20px;
+  background: rgba(0, 0, 0, 0.3);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+.auth-modal-header h2 {
+  display: flex;
+  align-items: center;
+  margin: 0;
+}
+
+.auth-modal-body {
+  padding: 20px;
+}
+
+.auth-status-banner {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  padding: 16px;
+  border-radius: 8px;
+  margin-bottom: 20px;
+}
+
+.auth-status-banner.is-success {
+  background: rgba(72, 199, 142, 0.15);
+  border: 1px solid rgba(72, 199, 142, 0.3);
+}
+
+.auth-status-banner.is-warning {
+  background: rgba(255, 224, 138, 0.15);
+  border: 1px solid rgba(255, 224, 138, 0.3);
+}
+
+.auth-status-banner.is-danger {
+  background: rgba(241, 70, 104, 0.15);
+  border: 1px solid rgba(241, 70, 104, 0.3);
+}
+
+.status-dot-large {
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+}
+
+.status-dot-large.is-success {
+  background: #48c78e;
+  box-shadow: 0 0 12px #48c78e;
+}
+
+.status-dot-large.is-warning {
+  background: #ffe08a;
+  box-shadow: 0 0 12px #ffe08a;
+}
+
+.status-dot-large.is-danger {
+  background: #f14668;
+  box-shadow: 0 0 12px #f14668;
+}
+
+.status-label {
+  font-size: 18px;
+  color: #fff;
+}
+
+.auth-details {
+  margin-bottom: 20px;
+}
+
+.auth-details .detail-row {
+  display: flex;
+  justify-content: space-between;
+  padding: 10px 0;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.auth-details .detail-row:last-child {
+  border-bottom: none;
+}
+
+.auth-details .label {
+  color: rgba(255, 255, 255, 0.6);
+  font-size: 13px;
+}
+
+.auth-details .value {
+  color: #fff;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.auth-details .value.monospace {
+  font-family: "JetBrains Mono", monospace;
+}
+
+.auth-actions {
+  padding-top: 10px;
+}
+
+.auth-actions .button {
+  margin-bottom: 10px;
 }
 
 /* Responsive */

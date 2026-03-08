@@ -1,3 +1,6 @@
+# Deploy state (resume file for deploy-base-mvp.js)
+.deploy-state.json
+
 # Logs
 *.swp
 logs

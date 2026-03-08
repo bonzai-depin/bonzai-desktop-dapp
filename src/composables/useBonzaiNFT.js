@@ -349,7 +349,7 @@ export function useBonzaiNFT() {
               transactionId: contentReceipt.transactionId,
               timestamp: contentReceipt.timestamp,
               signature: contentReceipt.signature,
-              gateway: "https://arweave.net",
+              gateway: "https://gateway.irys.xyz",
             },
 
             generation: {
@@ -561,7 +561,7 @@ export function useBonzaiNFT() {
         onChain,
         irysProvenance,
         contentHash,
-        arweaveUrl: `https://arweave.net/${onChain.irysTransactionId}`,
+        arweaveUrl: `https://gateway.irys.xyz/${onChain.irysTransactionId}`,
       };
     } catch (err) {
       console.error("[BonzaiNFT] Verification failed:", err);

@@ -17,6 +17,7 @@
 import { computed, onMounted } from "vue";
 import { useWeb3Store } from "../stores/web3.store.js";
 import { CONFIG } from "../config/web3.config.js";
+import { web3Service } from "../services/web3.service.js";
 
 /**
  * Level key constants
@@ -90,6 +91,11 @@ export function useBonzaiWeb3(options = {}) {
   const isOnArbitrum = computed(() => store.isOnArbitrum);
   const networkName = computed(() => store.networkName);
 
+  // Universal Profile (LUKSO)
+  const isUniversalProfile = computed(() => web3Service.state.isUniversalProfile);
+  const universalProfileData = computed(() => web3Service.state.universalProfileData);
+  const isOnLukso = computed(() => web3Service.state.currentChainId === 42);
+
   // ═══════════════════════════════════════════════════════════════════════════
   // BALANCE STATE
   // ═══════════════════════════════════════════════════════════════════════════
@@ -119,21 +125,8 @@ export function useBonzaiWeb3(options = {}) {
    * Check if user has access to the required level/feature
    * Uses reactive levels.value directly to ensure Vue tracks dependencies properly
    */
-  const hasAccess = computed(() => {
-    if (!isConnected.value) return false;
-
-    if (requiredLevel) {
-      // Access levels.value directly for proper Vue reactivity tracking
-      const levelStatus = levels.value?.[requiredLevel];
-      return levelStatus?.active ?? false;
-    }
-
-    if (feature) {
-      return store.canAccess(feature);
-    }
-
-    return true;
-  });
+  // All generation is free — hasAccess always returns true
+  const hasAccess = computed(() => true);
 
   /**
    * Get the reason why access is blocked
@@ -228,6 +221,11 @@ export function useBonzaiWeb3(options = {}) {
     truncatedAddress,
     isOnArbitrum,
     networkName,
+
+    // Universal Profile (LUKSO)
+    isUniversalProfile,
+    universalProfileData,
+    isOnLukso,
 
     // Balance state
     totalBalance,

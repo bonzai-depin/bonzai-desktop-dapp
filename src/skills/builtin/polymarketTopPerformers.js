@@ -35,6 +35,7 @@ export const skill = {
   },
 
   category: 'finance',
+  purchasePrice: '0.1', // 0.1 ETH one-time purchase fee
 
   // ═══════════════════════════════════════════════════════════════════════════
   // REQUIREMENTS

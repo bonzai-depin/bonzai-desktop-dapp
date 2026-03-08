@@ -180,7 +180,7 @@
           <div v-else class="buttons is-centered">
             <button
               v-if="!isPlaying"
-              class="button is-success is-large"
+              class="button is-success is-large mr-5"
               :disabled="isGenerating || !meditationData"
               @click="playMeditation"
             >
@@ -286,8 +286,9 @@ const STORAGE_KEY = 'meditation-forge-sessions';
 // Default LLM config - matches GenerativeText.vue structure
 const DEFAULT_LLM = {
   filename: 'meta-llama-3.1-8b-instruct-q4_k_m.gguf',
-  parameters: {},
-  context: 4096,
+  filesizeBytes: 4.92e9,
+  parameters: 8000000000,
+  context: 131072,
 };
 
 // Load LLM model before generating text

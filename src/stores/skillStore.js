@@ -15,6 +15,24 @@ import { levelService } from '../services/level.service.js';
 import { authService, isAuthenticated, refreshToken, reAuthenticate } from '../services/auth.service.js';
 import { SKILL_CATEGORIES, SKILL_CATEGORY_META } from '../skills/types.js';
 import { roleplayCompanion } from '../skills/flagship.js';
+import { x402ExecutorService } from '../services/x402Executor.service.js';
+import { purchaseExecutorService } from '../services/purchaseExecutor.service.js';
+import { CONFIG } from '../config/web3.config.js';
+import { ethers } from 'ethers';
+
+// Parse a cost string (from LLM purchaseIntent) into an ETH amount
+function parsePurchaseCost(costString) {
+  if (!costString) return 0;
+  const s = costString.toString().toLowerCase();
+  const ethMatch = s.match(/([\d.]+)\s*eth/i);
+  if (ethMatch) return parseFloat(ethMatch[1]) || 0;
+  const usdMatch = s.match(/\$?([\d.]+)/);
+  if (usdMatch) {
+    const usd = parseFloat(usdMatch[1]) || 0;
+    return usd > 0 ? usd / 2000 : 0;
+  }
+  return 0;
+}
 
 // Debounce helper for search performance
 function debounce(fn, delay) {
@@ -221,22 +239,11 @@ export const useSkillStore = defineStore('skill', () => {
   /**
    * Check if user can run a skill based on their level
    */
+  // All skills are free — no level gating
   const canRunSkill = (skillId) => {
     const skill = getSkillById(skillId);
     if (!skill) return { canRun: false, reason: 'Skill not found' };
-
     const requiredLevel = getRequiredLevel(skill);
-    const hasAccess = levelService.isLevelActive(requiredLevel);
-
-    if (!hasAccess) {
-      const blockReason = levelService.getLevelBlockReason(requiredLevel);
-      return {
-        canRun: false,
-        reason: blockReason,
-        requiredLevel,
-      };
-    }
-
     return { canRun: true, requiredLevel };
   };
 
@@ -780,20 +787,25 @@ export const useSkillStore = defineStore('skill', () => {
 
     // Ensure authentication is valid before generating (tokens may have expired during idle)
     // This is critical because setTimeout can be unreliable when system is idle/sleeping
+    // IMPORTANT: We NEVER request wallet signatures automatically - this breaks autonomous mode
     if (!isAuthenticated()) {
       console.log('[SkillStore] Token expired during idle, attempting refresh...');
       try {
         await refreshToken();
         console.log('[SkillStore] Token refreshed successfully');
       } catch (refreshError) {
-        console.log('[SkillStore] Token refresh failed, attempting re-authentication...');
-        const reAuthSuccess = await reAuthenticate();
-        if (!reAuthSuccess) {
-          console.error('[SkillStore] Re-authentication failed, stopping autonomous mode');
-          stopAutonomousMode();
-          return;
-        }
-        console.log('[SkillStore] Re-authentication successful');
+        // Token refresh failed - PAUSE autonomous mode until user re-authenticates
+        // We don't fall back to demo mode - autonomous mode requires full auth
+        console.log('[SkillStore] Token refresh failed - pausing autonomous mode');
+        console.log('[SkillStore] User must manually re-authenticate to resume');
+
+        // Notify user that re-auth is needed
+        window.dispatchEvent(new CustomEvent('auth:needs-reauth'));
+
+        // Pause autonomous mode (keep the session, just stop generating)
+        // The timer will continue checking, but we'll skip generation until auth is restored
+        isGeneratingAutonomous.value = false;
+        return;
       }
     }
 
@@ -936,6 +948,23 @@ REQUIREMENTS:
         isAutonomous: true,
         autonomousActivity: activity.type,
       };
+
+      // Handle autonomous purchase intent
+      if (responseData.purchaseIntent && session.settings.autonomous?.enablePurchases) {
+        assistantMsg.purchaseIntent = responseData.purchaseIntent;
+        const payResult = await purchaseExecutorService.executePurchase(
+          session.companion.id,
+          responseData.purchaseIntent,
+          session.settings.autonomous,
+          session.companion,
+          session
+        );
+        assistantMsg.purchaseApproved = true;
+        assistantMsg.purchaseExecuted = payResult.success;
+        assistantMsg.purchaseTxHash = payResult.txHash || null;
+        assistantMsg.purchaseType = payResult.type || null;
+        assistantMsg.purchaseDetails = payResult.details || null;
+      }
 
       session.history.push(assistantMsg);
       missedMessages.value++;

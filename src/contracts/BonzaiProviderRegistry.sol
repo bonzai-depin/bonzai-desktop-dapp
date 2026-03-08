@@ -29,8 +29,16 @@ contract BonzaiProviderRegistry is Ownable, ReentrancyGuard {
         bool isRelay;             // Acts as a relay node
     }
 
-    // Pipeline categories (providers register which categories they support)
-    // Each category maps to multiple specific models/pipelines
+    /**
+     * Pipeline categories (0-10): AI inference capabilities offered by providers.
+     * Each category maps to a specific ML pipeline endpoint.
+     *
+     * NOTE: These are DIFFERENT from the 12 spending profile categories (0-11)
+     * in BonzaiCompanions.sol, which represent consumer spending habits
+     * (education, entertainment, fashion, etc.). Pipeline categories describe
+     * what a provider CAN DO; spending categories describe what a companion LIKES.
+     * They serve unrelated purposes and are intentionally different enums.
+     */
     enum PipelineCategory {
         LLM,            // 0: Text generation (21 models via OpenClaw)
         IMAGE_TURBO,    // 1: Fast image gen
@@ -67,6 +75,9 @@ contract BonzaiProviderRegistry is Ownable, ReentrancyGuard {
     // Platform treasury
     address public treasury;
 
+    // Authorized payment contract (only caller for recordEarnings)
+    address public paymentContract;
+
     // ═══════════════════════════════════════════════════════════════════════════
     // EVENTS
     // ═══════════════════════════════════════════════════════════════════════════
@@ -89,6 +100,7 @@ contract BonzaiProviderRegistry is Ownable, ReentrancyGuard {
     event ProviderActivated(address indexed wallet);
     event ProviderSlashed(address indexed wallet, uint256 amount, string reason);
     event EarningsRecorded(address indexed wallet, uint256 amount);
+    event StakeWithdrawn(address indexed wallet, uint256 amount);
 
     // ═══════════════════════════════════════════════════════════════════════════
     // CONSTRUCTOR
@@ -99,6 +111,7 @@ contract BonzaiProviderRegistry is Ownable, ReentrancyGuard {
         uint256 _minStakeAmount,
         uint256 _platformFeeBps
     ) Ownable(msg.sender) {
+        require(_treasury != address(0), "Invalid treasury");
         treasury = _treasury;
         minStakeAmount = _minStakeAmount;
         platformFeeBps = _platformFeeBps;
@@ -175,6 +188,7 @@ contract BonzaiProviderRegistry is Ownable, ReentrancyGuard {
      */
     function deactivate() external {
         require(providers[msg.sender].wallet != address(0), "Not registered");
+        delete peerIdToWallet[providers[msg.sender].peerId];
         providers[msg.sender].isActive = false;
         emit ProviderDeactivated(msg.sender);
     }
@@ -186,6 +200,7 @@ contract BonzaiProviderRegistry is Ownable, ReentrancyGuard {
         require(providers[msg.sender].wallet != address(0), "Not registered");
         providers[msg.sender].isActive = true;
         providers[msg.sender].lastSeenAt = block.timestamp;
+        peerIdToWallet[providers[msg.sender].peerId] = msg.sender;
         emit ProviderActivated(msg.sender);
     }
 
@@ -202,12 +217,12 @@ contract BonzaiProviderRegistry is Ownable, ReentrancyGuard {
     // ═══════════════════════════════════════════════════════════════════════════
 
     /**
-     * @notice Record completed job earnings (called by payment contract)
+     * @notice Record completed job earnings (called by payment contract only)
      * @param provider Provider address
      * @param amount Earnings amount in USDC
      */
     function recordEarnings(address provider, uint256 amount) external {
-        // TODO: Restrict to payment contract only
+        require(msg.sender == paymentContract, "Only payment contract");
         require(providers[provider].wallet != address(0), "Provider not registered");
 
         providers[provider].totalEarnings += amount;
@@ -215,6 +230,24 @@ contract BonzaiProviderRegistry is Ownable, ReentrancyGuard {
         providers[provider].lastSeenAt = block.timestamp;
 
         emit EarningsRecorded(provider, amount);
+    }
+
+    /**
+     * @notice Withdraw staked ETH (provider must deactivate first)
+     * @param amount Amount of stake to withdraw
+     */
+    function withdrawStake(uint256 amount) external nonReentrant {
+        require(providers[msg.sender].wallet != address(0), "Not registered");
+        require(!providers[msg.sender].isActive, "Deactivate before withdrawing stake");
+        require(amount > 0, "Amount must be positive");
+        require(providers[msg.sender].stakedAmount >= amount, "Insufficient stake");
+
+        providers[msg.sender].stakedAmount -= amount;
+
+        (bool success, ) = msg.sender.call{value: amount}("");
+        require(success, "ETH transfer failed");
+
+        emit StakeWithdrawn(msg.sender, amount);
     }
 
     // ═══════════════════════════════════════════════════════════════════════════
@@ -340,9 +373,18 @@ contract BonzaiProviderRegistry is Ownable, ReentrancyGuard {
     }
 
     /**
+     * @notice Set the authorized payment contract for recordEarnings
+     */
+    function setPaymentContract(address _paymentContract) external onlyOwner {
+        require(_paymentContract != address(0), "Invalid payment contract");
+        paymentContract = _paymentContract;
+    }
+
+    /**
      * @notice Slash a provider's stake (for misbehavior)
      */
     function slashProvider(address provider, uint256 amount, string calldata reason) external onlyOwner {
+        require(amount > 0, "Amount must be positive");
         require(providers[provider].stakedAmount >= amount, "Insufficient stake");
 
         providers[provider].stakedAmount -= amount;
