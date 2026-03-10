@@ -3,6 +3,10 @@ const {
   UNLOCK_PRICE,
   POOL_THRESHOLDS,
   EPOCH_DURATION,
+  PLATFORM_FEE_BPS,
+  MIN_STAKE,
+  SKILL_PURCHASE_PRICE,
+  SKILL_RUNNING_FEE,
 } = require("./constants");
 
 /**
@@ -181,6 +185,88 @@ async function deployFineTuneTokenFactory() {
   return { factory, poolManager, positionManager, permit2, feeHook, mockContent, owner, user1, creator };
 }
 
+/**
+ * Deploy BonzaiPayment with MockERC20 (USDC) and treasury
+ */
+async function deployPayment() {
+  const [owner, treasury, provider1, provider2, consumer1, consumer2] = await ethers.getSigners();
+
+  const MockERC20 = await ethers.getContractFactory("MockERC20");
+  const usdc = await MockERC20.deploy("USDC", "USDC");
+
+  const BonzaiPayment = await ethers.getContractFactory("BonzaiPayment");
+  const payment = await BonzaiPayment.deploy(
+    await usdc.getAddress(),
+    treasury.address,
+    PLATFORM_FEE_BPS
+  );
+
+  return { payment, usdc, owner, treasury, provider1, provider2, consumer1, consumer2 };
+}
+
+/**
+ * Deploy BonzaiProviderRegistry with treasury
+ */
+async function deployProviderRegistry() {
+  const [owner, treasury, provider1, provider2, provider3, paymentContract] = await ethers.getSigners();
+
+  const BonzaiProviderRegistry = await ethers.getContractFactory("BonzaiProviderRegistry");
+  const registry = await BonzaiProviderRegistry.deploy(
+    treasury.address,
+    MIN_STAKE,
+    PLATFORM_FEE_BPS
+  );
+
+  return { registry, owner, treasury, provider1, provider2, provider3, paymentContract };
+}
+
+/**
+ * Deploy BonzaiSkillRegistry with MockERC20 (BONZAI) and mock ownership contract
+ */
+async function deploySkillRegistry() {
+  const [owner, treasury, author1, author2, buyer1, buyer2] = await ethers.getSigners();
+
+  const MockERC20 = await ethers.getContractFactory("MockERC20");
+  const bonzaiToken = await MockERC20.deploy("BONZAI", "BONZAI");
+
+  // Deploy a simple mock ownership contract that accepts ETH
+  const MockSkillOwnership = await ethers.getContractFactory("MockSkillOwnership");
+  const mockOwnership = await MockSkillOwnership.deploy();
+
+  const BonzaiSkillRegistry = await ethers.getContractFactory("BonzaiSkillRegistry");
+  const registry = await BonzaiSkillRegistry.deploy(
+    await bonzaiToken.getAddress(),
+    treasury.address,
+    await mockOwnership.getAddress()
+  );
+
+  return { registry, bonzaiToken, mockOwnership, owner, treasury, author1, author2, buyer1, buyer2 };
+}
+
+/**
+ * Deploy BonzaiSkillOwnership with all dependencies
+ */
+async function deploySkillOwnership() {
+  const [owner, treasury, attestationSigner, registrar1, registrar2, skillRegistryWallet] = await ethers.getSigners();
+
+  const MockERC20 = await ethers.getContractFactory("MockERC20");
+  const bonzaiToken = await MockERC20.deploy("BONZAI", "BONZAI");
+
+  const MockBonzaiCompanions = await ethers.getContractFactory("MockBonzaiCompanions");
+  const companionNFT = await MockBonzaiCompanions.deploy();
+
+  const BonzaiSkillOwnership = await ethers.getContractFactory("BonzaiSkillOwnership");
+  const ownership = await BonzaiSkillOwnership.deploy(
+    skillRegistryWallet.address,
+    await bonzaiToken.getAddress(),
+    treasury.address,
+    attestationSigner.address,
+    await companionNFT.getAddress()
+  );
+
+  return { ownership, bonzaiToken, companionNFT, owner, treasury, attestationSigner, registrar1, registrar2, skillRegistryWallet };
+}
+
 module.exports = {
   deployUnlock,
   deployMockERC20,
@@ -191,4 +277,8 @@ module.exports = {
   deployHook,
   deployCompanionTokenFactory,
   deployFineTuneTokenFactory,
+  deployPayment,
+  deployProviderRegistry,
+  deploySkillRegistry,
+  deploySkillOwnership,
 };

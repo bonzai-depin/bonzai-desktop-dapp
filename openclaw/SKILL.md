@@ -23,14 +23,14 @@ Access decentralized AI inference through BonzAI. Generate images, audio, music,
 | Mode | Description | Cost |
 |------|-------------|------|
 | **Local** | User runs BonzAI Desktop | Free |
-| **Remote** | Connect to P2P providers | Paid (USDC) |
+| **Remote** | Connect to P2P providers | Paid (ETH on Base) |
 
 ```
 LOCAL MODE
   OpenClaw ───HTTP (free)───► localhost:3002 (BonzAI Desktop)
 
 REMOTE MODE
-  OpenClaw ───► Arbitrum Contract ───► libp2p dial to provider (pay USDC)
+  OpenClaw ───► Base Contract ───► libp2p dial to provider (pay ETH)
 ```
 
 ## Switching Modes
@@ -95,8 +95,8 @@ Response:
 ```json
 {
   "ok": true,
-  "version": "1.1.0",
-  "pipelines": ["llm", "image_turbo", "audio", "music", "video_fast", "vision"]
+  "version": "1.3.0",
+  "pipelines": ["llm", "image_turbo", "image_quality", "audio", "music", "video_fast", "vision"]
 }
 ```
 
@@ -112,17 +112,21 @@ Response:
 | `/auth/challenge` | 65000 | POST | None | Get auth challenge |
 | `/auth/verify` | 65000 | POST | None | Verify signature, get JWT |
 | `/auth/demo-token` | 65000 | POST | None | Get demo access token |
-| `/image/turbo` | 65000 | POST | Bearer/Demo | Fast image generation |
-| `/image/quality` | 65000 | POST | Bearer/Demo | High quality image generation |
-| `/image/standard` | 65000 | POST | Bearer/Demo | Standard image generation |
-| `/image/advanced` | 65000 | POST | Bearer/Demo | Advanced image generation |
-| `/audio/turbo` | 65000 | POST | Bearer/Demo | Fast TTS |
-| `/audio/quality/persona` | 65000 | POST | Bearer/Demo | Persona-based TTS |
+| `/image/turbo` | 65000 | POST | Bearer/Demo | Fast image generation (FLUX Klein) |
+| `/image/quality` | 65000 | POST | Bearer/Demo | High quality image (FLUX Krea) |
+| `/image/standard` | 65000 | POST | Bearer/Demo | Standard image (SDXL, uncensored) |
+| `/image/advanced` | 65000 | POST | Bearer/Demo | Advanced image (Z-Image Turbo) |
+| `/image/image/turbo` | 65000 | POST | Bearer/Demo | Image-to-image editing |
+| `/audio/turbo` | 65000 | POST | Bearer/Demo | Fast TTS (Kokoro) |
+| `/audio/quality/persona` | 65000 | POST | Bearer/Demo | Persona-based TTS (Qwen3-TTS) |
 | `/audio/quality/design` | 65000 | POST | Bearer/Demo | Voice design from description |
 | `/audio/quality/clone` | 65000 | POST | Bearer/Demo | Voice cloning from audio |
-| `/audio/music` | 65000 | POST | Bearer/Demo | Music generation |
-| `/video` | 65000 | POST | Bearer/Demo | Video generation |
-| `/vision/analyze` | 65000 | POST | Bearer/Demo | Image analysis |
+| `/audio/music` | 65000 | POST | Bearer/Demo | Music generation (ACE-Step) |
+| `/video` | 65000 | POST | Bearer/Demo | Video generation (LTX-2) |
+| `/vision/analyze` | 65000 | POST | Bearer/Demo | Image analysis (Qwen3-VL) |
+| `/training/datasets` | 65000 | GET | Bearer | List training datasets |
+| `/training/start` | 65000 | POST | Bearer | Start model training |
+| `/training/models` | 65000 | GET | Bearer | List trained models |
 
 **Auth column legend:**
 - `None` - No authentication required
@@ -140,7 +144,8 @@ Content-Type: application/json
   "platform": "openclaw",
   "channelId": "user-session-id",
   "message": "!companion list",
-  "userId": "user-wallet-address"
+  "userId": "user-wallet-address",
+  "imageBase64": null
 }
 ```
 
@@ -153,11 +158,23 @@ Content-Type: application/json
 - `!scenario select <name>` - Select a scenario
 
 **Generation:**
-- `!generate image <prompt>` - Generate image (fast)
-- `!generate image_quality <prompt>` - High quality image
-- `!generate music <prompt>` - Generate music
-- `!generate video <prompt>` - Generate video
-- `!generate audio <text>` - Text-to-speech
+- `!generate image <prompt>` - Fast image (FLUX Klein)
+- `!generate image_quality <prompt>` - Quality image (FLUX Krea)
+- `!generate image_standard <prompt>` - Standard image (SDXL, uncensored)
+- `!generate image_advanced <prompt>` - Advanced image (Z-Image)
+- `!generate video <prompt>` - Video (LTX-2)
+- `!generate audio <text>` - Fast TTS (Kokoro)
+- `!generate audio_quality <text>` - Quality TTS (Qwen3-TTS)
+- `!generate music <prompt>` - Music (ACE-Step)
+- `!generate vision` - Image analysis (Qwen3-VL, requires image attachment)
+
+**Autonomous Mode:**
+- `!autonomous on` - Enable autonomous companion mode
+- `!autonomous off` - Disable autonomous mode
+- `!autonomous status` - Show status & config
+- `!autonomous config idle <minutes>` - Idle timeout (1-60, default 5)
+- `!autonomous config interval <minutes>` - Message interval (1-120, default 15)
+- `!autonomous config max <count>` - Max messages (1-100, default 12)
 
 **Settings (all enabled by default):**
 - `!settings audio on|off` - Toggle voice generation (default: on)
@@ -171,6 +188,26 @@ Content-Type: application/json
 - `!reset` - Clear history
 - `!models` - List LLM models
 - `!help` - Show all commands
+
+**Model:**
+- `!model <name>` - Load specific model
+- `!model restore` - Restore model before companion chat
+
+**Network (P2P):**
+- `!network status` - Show P2P status
+- `!network start` - Start P2P node
+- `!network stop` - Stop P2P node
+- `!network providers [pipeline]` - Discover providers
+- `!network use <local|auto|peerId>` - Select provider
+- `!network mode [local|remote]` - Set network mode
+- `!network pipelines` - List available pipelines
+
+**Skills:**
+- `!skill list [category]` - List available skills
+- `!skill info <id>` - Show skill details
+- `!skill run <id> [key=value ...]` - Execute a skill
+- `!skill search <query>` - Search skills
+- `!skill categories` - Show categories
 
 **Chat:** Any message without `!` prefix chats with the selected companion.
 
@@ -245,7 +282,7 @@ Content-Type: application/json
 {
   "platform": "openclaw",
   "channelId": "chat1",
-  "message": "Hello Scarlett, you look beautiful tonight.",
+  "message": "Hello Aurore, you look beautiful tonight.",
   "userId": "user1"
 }
 ```
@@ -253,9 +290,9 @@ Content-Type: application/json
 Response:
 ```json
 {
-  "text": "*Scarlett looks up with a warm smile* Why thank you, darling...",
-  "companion": {"id": "scarlett", "name": "Scarlett"},
-  "scenario": {"id": "jazz_club", "name": "The Blue Note Jazz Club"},
+  "text": "*Aurore looks up with a warm smile* Why thank you, darling...",
+  "companion": {"id": "aurore", "name": "Aurore Beaumont"},
+  "scenario": {"id": "art_gallery_after_dark", "name": "Art Gallery After Dark"},
   "audioPath": "/path/to/voice.mp3",
   "imagePath": "/path/to/generated/image.png",
   "videoPath": "/path/to/video.mp4"
@@ -292,46 +329,71 @@ To restore your original model:
 - Use `!reset` to clear chat history and restore model
 - Or use `!model <name>` to load any specific model
 
-## Compact Models (< 4 GB)
+## Compact Models (< 3 GB)
 
 | Model Key | Name | Size | VRAM |
 |-----------|------|------|------|
 | `gemma_3_1b` | Gemma 3 1B | 0.8 GB | 2 GB |
-| `deepseek_r1_1_5b` | DeepSeek R1 1.5B | 1.1 GB | 2 GB |
-| `qwen_2_5_3b` | Qwen 2.5 3B | 2 GB | 4 GB |
+| `deepseek_r1_1_5b` | DeepSeek R1 Distill 1.5B | 1.1 GB | 2 GB |
+| `ministral_3b_q4` | Ministral 3B | 2.2 GB | 4 GB |
 | `phi_3_mini` | Phi-3 Mini 4K | 2.4 GB | 4 GB |
+| `nanbeige_4_1_3b` | Nanbeige 4.1 3B | 2.4 GB | 4 GB |
 | `phi_4_mini` | Phi-4 Mini | 2.5 GB | 4 GB |
+| `qwen3_5_4b` | Qwen3.5 4B | 2.8 GB | 4 GB |
 
-## Standard Models (4-8 GB)
+## Standard Models (3-8 GB)
 
 | Model Key | Name | Size | VRAM |
 |-----------|------|------|------|
 | `llama_2_7b` | LLaMA 2 7B Chat | 4 GB | 6 GB |
 | `mistral_7b` | Mistral 7B Instruct | 4.4 GB | 6 GB |
-| `deepseek_r1_7b` | DeepSeek R1 7B | 4.7 GB | 6 GB |
-| `qwen_coder_7b` | Qwen 2.5 Coder 7B | 4.7 GB | 6 GB |
-| `llama_3_1_8b` | LLaMA 3.1 8B | 4.92 GB | 6 GB |
-| `glm_4_7_flash` | GLM 4.7 Flash | 5 GB | 6 GB |
+| `deepseek_r1_7b` | DeepSeek R1 Distill 7B | 4.7 GB | 6 GB |
+| `llama_3_1_8b` | LLaMA 3.1 8B | 4.9 GB | 6 GB |
 | `qwen3_coder_next` | Qwen3 Coder Next | 5 GB | 6 GB |
+| `ministral_8b_q4` | Ministral 8B | 5.3 GB | 8 GB |
 | `yi_coder_9b` | Yi Coder 9B | 5.7 GB | 8 GB |
-| `mythomax_13b` | MythoMax L2 13B | 7.87 GB | 10 GB |
+| `qwen3_5_9b_q4` | Qwen3.5 9B Q4 | 6 GB | 8 GB |
+| `mythomax_13b` | MythoMax L2 13B | 7.9 GB | 10 GB |
 
-## Large Models (8-14 GB)
+## Large Models (8-15 GB)
 
 | Model Key | Name | Size | VRAM |
 |-----------|------|------|------|
-| `qwen_coder_14b` | Qwen 2.5 Coder 14B | 8.9 GB | 10 GB |
-| `hermes_4_14b` | Hermes 4 14B | 8.99 GB | 10 GB |
+| `hermes_4_14b` | Hermes 4 14B | 9 GB | 10 GB |
+| `devstral_24b_q2` | Devstral 24B Q2 | 9.3 GB | 12 GB |
+| `qwen3_5_27b` | Qwen3.5 27B (Q2_K) | 10.5 GB | 14 GB |
 | `gpt_oss_20b` | GPT-OSS 20B | 12 GB | 14 GB |
+| `glm_4_7_q2` | GLM 4.7 Flash Q2 | 11.9 GB | 14 GB |
+| `qwen3_5_35b_a3b_q2` | Qwen3.5 35B A3B (Q2_K_XL) | 12.9 GB | 16 GB |
+| `qwen3_5_35b_a3b_iq3` | Qwen3.5 35B A3B IQ3 | 13.1 GB | 16 GB |
 | `codestral_22b` | Codestral 22B | 13 GB | 16 GB |
+| `devstral_24b_q4` | Devstral 24B Q4 | 14.5 GB | 18 GB |
 
-## Extra Large Models (16+ GB)
+## Extra Large Models (15-40 GB)
 
 | Model Key | Name | Size | VRAM |
 |-----------|------|------|------|
-| `deepseek_r1_32b` | DeepSeek R1 32B | 19 GB | 24 GB |
-| `qwen_coder_32b` | Qwen 2.5 Coder 32B | 19 GB | 24 GB |
-| `qwen3_coder_30b` | Qwen3 Coder 30B A3B | 20 GB | 24 GB |
+| `qwen3_5_27b_q4` | Qwen3.5 27B Q4 | 16.7 GB | 20 GB |
+| `glm_4_7_q4` | GLM 4.7 Flash Q4 | 17.5 GB | 20 GB |
+| `deepseek_r1_32b` | DeepSeek R1 Distill 32B | 19 GB | 24 GB |
+| `qwen3_5_35b_a3b_q4` | Qwen3.5 35B A3B Q4 | 20.6 GB | 24 GB |
+| `devstral_24b_q8` | Devstral 24B Q8 | 29 GB | 32 GB |
+| `qwen3_5_27b_q8` | Qwen3.5 27B Q8 | 32.4 GB | 36 GB |
+| `glm_4_7_q8` | GLM 4.7 Flash Q8 | 35.6 GB | 38 GB |
+| `qwen3_5_35b_a3b_q8` | Qwen3.5 35B A3B Q8 | 38.7 GB | 42 GB |
+
+## Massive Models (40+ GB, multi-GPU)
+
+| Model Key | Name | Size | VRAM |
+|-----------|------|------|------|
+| `qwen3_5_122b_a10b_q2` | Qwen3.5 122B A10B Q2 | 46.7 GB | 52 GB |
+| `qwen3_5_122b_a10b_q4` | Qwen3.5 122B A10B Q4 | 68.4 GB | 72 GB |
+| `minimax_m2_5_q4` | MiniMax M2.5 Q4 | 131 GB | 140 GB |
+| `qwen3_5_397b_a17b_q2` | Qwen3.5 397B A17B Q2 | 149 GB | 160 GB |
+| `qwen3_5_397b_a17b_q4` | Qwen3.5 397B A17B Q4 | 219 GB | 230 GB |
+| `kimi_k2_5_q4` | Kimi K2.5 Q4 | 622 GB | 640 GB |
+
+**Total: 38 LLM models**
 
 ---
 
@@ -341,23 +403,23 @@ To restore your original model:
 
 | Pipeline | Endpoint | Description |
 |----------|----------|-------------|
-| `llm` | via electronAPI | Local LLM inference (21 models available) |
+| `llm` | via electronAPI | Local LLM inference (38 models available) |
 
 ## Image Generation
 
 | Pipeline | Endpoint | Speed | Quality |
 |----------|----------|-------|---------|
-| `image_turbo` | `/image/turbo` | Fast | Good |
-| `image_standard` | `/image/standard` | Medium | Good |
-| `image_advanced` | `/image/advanced` | Medium | High |
-| `image_quality` | `/image/quality` | Slower | Excellent |
+| `image_turbo` | `/image/turbo` | Fast | Good (FLUX Klein) |
+| `image_standard` | `/image/standard` | Medium | Good (SDXL, uncensored) |
+| `image_advanced` | `/image/advanced` | Medium | High (Z-Image Turbo) |
+| `image_quality` | `/image/quality` | Slower | Excellent (FLUX Krea) |
 
 ## Audio Generation
 
 | Pipeline | Endpoint | Features |
 |----------|----------|----------|
-| `audio_turbo` | `/audio/turbo` | Fast, high-quality TTS |
-| `audio_quality_persona` | `/audio/quality/persona` | Persona-based TTS with voice design |
+| `audio_turbo` | `/audio/turbo` | Fast TTS (Kokoro) |
+| `audio_quality` | `/audio/quality/persona` | Persona-based TTS (Qwen3-TTS) |
 | `audio_quality_design` | `/audio/quality/design` | Create voice from text description |
 | `audio_quality_clone` | `/audio/quality/clone` | Clone voice from reference audio |
 
@@ -365,19 +427,19 @@ To restore your original model:
 
 | Pipeline | Endpoint | Features |
 |----------|----------|----------|
-| `music` | `/audio/music` | Lyrics support, genre tags, 30-240s |
+| `music` | `/audio/music` | Lyrics support, genre tags, 30-240s (ACE-Step) |
 
 ## Video Generation
 
 | Pipeline | Endpoint | Features |
 |----------|----------|----------|
-| `video_fast` | `/video` | Text-to-video, image-to-video |
+| `video_fast` | `/video` | Text-to-video, image-to-video (LTX-2) |
 
 ## Vision Analysis
 
 | Pipeline | Endpoint | Features |
 |----------|----------|----------|
-| `vision` | `/vision/analyze` | Image analysis, description, OCR |
+| `vision` | `/vision/analyze` | Image analysis, description, OCR (Qwen3-VL) |
 
 ---
 
@@ -416,7 +478,7 @@ To restore your original model:
 }
 ```
 
-**Resolutions:** 512×512 (SD), 768×768 (HD), 1024×1024 (FHD), 1536×1536 (2K), 2048×2048 (4K)
+**Resolutions:** 512x512 (SD), 768x768 (HD), 1024x1024 (FHD), 1536x1536 (2K), 2048x2048 (4K)
 
 ### Audio (TTS)
 
@@ -464,31 +526,33 @@ All audio endpoints return both WAV and MP3 paths. Use `audio_path_mp3` for smal
 **Duration:** 30-240 seconds
 **Steps:** 27 (fast) or 60 (quality)
 
-### Video
+### Video (Fast - LTX-2)
 
 ```json
 {
   "pipeline": "video_fast",
   "params": {
     "prompt": "A cat playing with yarn",
-    "height": 480,
-    "width": 768,
-    "num_frames": 81,
-    "fps": 24,
-    "num_inference_steps": 30,
-    "guidance_scale": 3.5,
+    "mode": "t2v",
+    "height": 448,
+    "width": 640,
+    "frames": 61,
+    "frame_rate": 12,
+    "steps": 10,
+    "guidance_scale": 1,
     "image_base64": null
   }
 }
 ```
 
-**Modes:**
-- Text-to-Video: Omit `image_base64`
-- Image-to-Video: Include `image_base64` (base64-encoded image)
-
-**Resolutions:** 480p, 540p, 720p, 1080p, 4K
-**Duration:** 5s or 10s
-**FPS:** 12, 24, 48
+**Video Notes:**
+- `frames` (not `num_frames`) - LTX requires 8n+1 frames
+- `frame_rate` (not `fps`) - Frames per second
+- `steps` (not `num_inference_steps`) - Inference steps (10 for distilled model)
+- **Modes:** `t2v` (text-to-video) or `i2v` (image-to-video, provide `image_base64`)
+- **Resolutions:** 448x640 (default), 480x768, 720p, 1080p
+- **Duration:** 5s or 10s
+- **FPS:** 12, 24, 48
 
 ### Vision
 
@@ -504,15 +568,94 @@ All audio endpoints return both WAV and MP3 paths. Use `audio_path_mp3` for smal
 
 ---
 
+# Autonomous Mode
+
+Companions can act independently when the user is idle, generating messages, exploring their scenario, and engaging in activities.
+
+## How It Works
+
+1. User enables autonomous mode via `!autonomous on`
+2. When the user goes idle (default: 5 minutes of inactivity), the companion starts generating messages
+3. Messages are generated at regular intervals (default: every 15 minutes)
+4. After reaching the max message count (default: 12), autonomous mode auto-stops
+5. When the user returns, they see all missed messages
+
+## Configuration
+
+| Setting | Default | Range | Description |
+|---------|---------|-------|-------------|
+| `idle` | 5 min | 1-60 | Minutes before user is considered idle |
+| `interval` | 15 min | 1-120 | Minutes between autonomous messages |
+| `max` | 12 | 1-100 | Maximum autonomous messages before stopping |
+
+## Commands
+
+```
+!autonomous on          # Enable autonomous mode
+!autonomous off         # Disable autonomous mode
+!autonomous status      # Show status, config, message count
+!autonomous config idle 10       # Set idle timeout to 10 minutes
+!autonomous config interval 20   # Set message interval to 20 minutes
+!autonomous config max 50        # Allow up to 50 autonomous messages
+```
+
+## Activity Variety
+
+Companions cycle through different activity types for narrative variety:
+- **Routine** - Daily activities and habits
+- **Explore** - Discovering something new
+- **Hobby** - Engaging in personal interests
+- **Reflect** - Quiet reflection or daydreaming
+- **Social** - Interacting with others in the scenario
+- **Adventure** - Small adventures or unexpected situations
+- **Creative** - Creative or expressive activities
+- **Relax** - Self-care and relaxation
+
+---
+
+# Available Skills
+
+BonzAI includes built-in skills that combine multiple AI pipelines for complex tasks.
+
+## Commands
+
+```
+!skill list [category]           # List available skills
+!skill info <id>                 # Show skill details and inputs
+!skill run <id> [key=value ...]  # Execute a skill
+!skill search <query>            # Search skills by name/description
+!skill categories                # Show skill categories
+```
+
+## Built-in Skills
+
+| Skill ID | Name | Category | Level | Description |
+|----------|------|----------|-------|-------------|
+| `story-studio-v1.0.0` | Story Studio | entertainment | 3 | Illustrated, narrated stories with original artwork and audio |
+| `meditation-forge-v1.0.0` | Meditation Forge | healthcare | 3 | Personalized guided meditations with calming visuals and ASMR |
+| `virtual-staging-pro-v1.0.0` | Virtual Staging Pro | housing | 3 | Transform empty rooms into beautifully staged interiors |
+| `virtual-try-on-v1.0.0` | Virtual Try-On | fashion | 3 | Visualize clothes and styles before buying |
+| `chefs-table-v1.0.0` | Chef's Table | food | 3 | Restaurant-quality recipes with professional food photography |
+| `eli5-v1.0.0` | ELI5 | education | 3 | Break down complex topics into simple visual explanations |
+| `music-video-forge-v1.0.0` | Music Video Forge | entertainment | 4 | Music video visuals with AI imagery and animations |
+| `game-maker-v1.0.0` | Game Maker | entertainment | 5 | Complete 2D/3D game concepts with characters and environments |
+| `manga-to-anime-v1.0.0` | Manga to Anime | entertainment | 4 | Transform manga panels into animated anime sequences |
+| `hairstyle-studio-v1.0.0` | Hairstyle Studio | personal-care | 3 | Visualize different hairstyles and colors on your photo |
+| `roleplay-companion-v1.0.0` | Roleplay Companion | entertainment | 4 | Immersive roleplay with text, audio, images, and video |
+
+**Level Note:** Levels gate NFT minting, not skill access. All AI generation is free (LVL0).
+
+---
+
 # Remote Mode
 
 Use when connecting to BonzAI providers on the P2P network.
 
 ## Step 1: Discover Providers
 
-Query the BonzAI contract on Arbitrum to find available providers:
+Query the BonzAI contract on Base to find available providers:
 
-**Contract:** `BonzAINetwork` on Arbitrum One (42161)
+**Contract:** `BonzaiProviderRegistry` on Base (8453)
 **Address:** See https://bonzai.sh for current deployment
 
 ```javascript
@@ -546,7 +689,7 @@ await stream.sink([JSON.stringify({ pipeline: "image_turbo" })]);
 
 // Provider returns pricing without requiring payment
 const response = await readStream(stream);
-// { "pipeline": "image_turbo", "price": "10000", "unit": "image", "currency": "USDC" }
+// { "pipeline": "image_turbo", "price": "10000000000000", "unit": "image", "currency": "ETH" }
 ```
 
 Or query multiple pipelines at once:
@@ -557,9 +700,9 @@ await stream.sink([JSON.stringify({ pipelines: ["llm", "image_turbo", "companion
 // Response
 {
   "pricing": {
-    "llm": { "price": "100", "unit": "1K tokens" },
-    "image_turbo": { "price": "10000", "unit": "image" },
-    "companions": { "price": "20000", "unit": "message" }
+    "llm": { "price": "100000000000", "unit": "1K tokens" },
+    "image_turbo": { "price": "10000000000000", "unit": "image" },
+    "companions": { "price": "20000000000000", "unit": "message" }
   }
 }
 ```
@@ -601,14 +744,14 @@ Provider responds with **402 Payment Required** including pipeline-specific pric
   "error": "payment_required",
   "payment": {
     "pipeline": "image_turbo",
-    "amount": "10000",
+    "amount": "10000000000000",
     "unit": "image",
-    "currency": "USDC",
-    "decimals": 6,
-    "humanAmount": "0.01",
+    "currency": "ETH",
+    "decimals": 18,
+    "humanAmount": "0.00001",
     "providerId": "0xabc123...",
     "relayProviderId": "0xdef456...",
-    "chainId": 42161,
+    "chainId": 8453,
     "contract": "0x...",
     "validFor": 300
   }
@@ -619,26 +762,26 @@ Provider responds with **402 Payment Required** including pipeline-specific pric
 
 Each pipeline type has its own pricing unit:
 
-| Pipeline | Unit | Example Price |
-|----------|------|---------------|
-| `llm` | per 1K tokens | $0.0001 |
-| `image_*` | per image | $0.01 |
-| `audio_*` | per second | $0.001 |
-| `music` | per second | $0.05 |
-| `video_fast` | per second | $0.10 |
-| `vision` | per image | $0.005 |
-| `companions` | per message | $0.02 |
+| Pipeline | Unit | Example Price (ETH) |
+|----------|------|---------------------|
+| `llm` | per 1K tokens | 0.0000001 |
+| `image_*` | per image | 0.00001 |
+| `audio_*` | per second | 0.000001 |
+| `music` | per second | 0.00005 |
+| `video_fast` | per second | 0.0001 |
+| `vision` | per image | 0.000005 |
+| `companions` | per message | 0.00002 |
 
 ### Sign and Retry
 
-After reviewing the price, sign an ERC-3009 USDC authorization:
+After reviewing the price, sign an EIP-712 ETH payment authorization:
 
 ```javascript
-// Sign USDC transfer authorization (EIP-712)
+// Sign ETH payment authorization (EIP-712)
 const signature = await wallet.signTypedData({
-  domain: { name: "USD Coin", version: "2", chainId: 42161, verifyingContract: USDC_ADDRESS },
+  domain: { name: "BonzaiP2PPayment", version: "1", chainId: 8453, verifyingContract: PAYMENT_CONTRACT },
   types: {
-    TransferWithAuthorization: [
+    PaymentAuthorization: [
       { name: "from", type: "address" },
       { name: "to", type: "address" },
       { name: "value", type: "uint256" },
@@ -690,11 +833,12 @@ await stream.sink([JSON.stringify({
 
 # Payment (Remote Mode Only)
 
-### USDC on Arbitrum
+### ETH on Base
 
-- **Token:** Native USDC on Arbitrum One
-- **Address:** `0xaf88d065e77c8cC2239327C5EDb3A432268e5831`
-- **Decimals:** 6 (1000000 = $1.00)
+- **Chain:** Base (8453)
+- **Currency:** ETH (native)
+- **Decimals:** 18
+- **Gas:** ~$0.001 per transaction
 
 ### Fee Distribution
 
@@ -719,10 +863,11 @@ Generation times vary significantly based on hardware (GPU vs CPU, VRAM). The ga
 | `llm` | 2-10s | 10-60s | Depends on model size |
 | `image_turbo` | 5-15s | 30-120s | Fast model, 4 steps |
 | `image_quality` | 15-45s | 2-5 min | High quality, more steps |
-| `audio_turbo` | 2-5s | 10-30s | Fast TTS |
+| `audio_turbo` | 2-5s | 10-30s | Fast TTS (Kokoro) |
+| `audio_quality` | 5-15s | 30-90s | Persona TTS (Qwen3-TTS) |
 | `music` | 30-120s | 3-10 min | 60s audio at 27 steps |
-| `video_fast` | 1-3 min | 5-15 min | 81 frames at 24fps |
-| `vision` | 5-15s | 30-60s | Image analysis |
+| `video_fast` | 1-3 min | 5-15 min | LTX-2, 61 frames |
+| `vision` | 5-15s | 30-60s | Image analysis (Qwen3-VL) |
 
 **IMPORTANT:** The webhook endpoint (`/webhook` on port 3002) handles requests synchronously. The gateway MUST wait for the full response before sending to the user. A premature timeout will result in the user receiving an error even though generation succeeds.
 
@@ -737,7 +882,7 @@ First-time generation for any pipeline may take longer due to model download (se
 | Connection refused | Local | BonzAI Desktop not running | Start the desktop app |
 | 401 Unauthorized | Local | Missing or invalid auth | Add `Authorization: Bearer <token>` or `X-Demo-Mode: true` |
 | 403 Forbidden | Local | Insufficient level for feature | Upgrade BONZAI token holdings |
-| `payment_required` | Remote | Provider requires payment | Sign ERC-3009 USDC authorization and retry |
+| `payment_required` | Remote | Provider requires payment | Sign EIP-712 ETH authorization and retry |
 | `insufficient_level` | Remote | Provider can't serve this pipeline | Try different provider or upgrade |
 | `provider_offline` | Remote | Provider not responding | Try different provider |
 

@@ -166,9 +166,8 @@
 
                 <div class="skill-footer">
                   <div class="skill-actions">
-                    <!-- Free skill or already purchased → Run -->
+                    <!-- All skills runnable until marketplace contracts are deployed -->
                     <button
-                      v-if="!skill.purchasePrice || parseFloat(skill.purchasePrice) === 0 || isSkillPurchased(skill.id)"
                       class="button is-info is-medium"
                       @click="runSkill(skill)"
                     >
@@ -176,19 +175,6 @@
                         play_arrow
                       </span>
                       Run
-                    </button>
-                    <!-- Paid skill, not purchased → Purchase -->
-                    <button
-                      v-else
-                      class="button is-warning is-medium"
-                      :class="{ 'is-loading': purchasingSkillId === skill.id }"
-                      :disabled="purchasingSkillId === skill.id"
-                      @click="handlePurchaseSkill(skill)"
-                    >
-                      <span class="material-symbols-outlined mr-1">
-                        shopping_cart
-                      </span>
-                      Purchase ({{ skill.purchasePrice }} ETH)
                     </button>
                   </div>
                 </div>

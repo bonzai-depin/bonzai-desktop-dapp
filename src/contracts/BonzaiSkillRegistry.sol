@@ -99,6 +99,9 @@ contract BonzaiSkillRegistry is Ownable, ReentrancyGuard, Pausable {
     /// @notice Array of all skill IDs (for enumeration)
     bytes32[] public allSkillIds;
 
+    /// @notice Valid spending profile category names (matching BonzaiCompanions.sol 12 categories)
+    mapping(string => bool) public validCategories;
+
     /// @notice Total platform fees collected (ETH)
     uint256 public totalPlatformFeesETH;
 
@@ -182,6 +185,12 @@ contract BonzaiSkillRegistry is Ownable, ReentrancyGuard, Pausable {
         address indexed newToken
     );
 
+    /// @notice Emitted when skill ownership contract is updated
+    event SkillOwnershipContractUpdated(
+        address indexed oldContract,
+        address indexed newContract
+    );
+
     // ═══════════════════════════════════════════════════════════════════════════
     // ERRORS
     // ═══════════════════════════════════════════════════════════════════════════
@@ -224,6 +233,12 @@ contract BonzaiSkillRegistry is Ownable, ReentrancyGuard, Pausable {
 
     /// @notice Thrown when ETH transfer fails
     error TransferFailed(address recipient);
+
+    /// @notice Thrown when category index is out of range (0-11)
+    error InvalidCategory(string category);
+
+    /// @notice Thrown when direct ETH transfer is attempted
+    error UseCorrectFunction();
 
     // ═══════════════════════════════════════════════════════════════════════════
     // MODIFIERS
@@ -284,6 +299,20 @@ contract BonzaiSkillRegistry is Ownable, ReentrancyGuard, Pausable {
         bonzaiToken = IERC20(_bonzaiToken);
         treasury = _treasury;
         skillOwnershipContract = _skillOwnershipContract;
+
+        // Initialize valid categories (12 spending profile categories)
+        validCategories["education"] = true;
+        validCategories["entertainment"] = true;
+        validCategories["fashion"] = true;
+        validCategories["finance"] = true;
+        validCategories["food"] = true;
+        validCategories["healthcare"] = true;
+        validCategories["housing"] = true;
+        validCategories["beauty"] = true;
+        validCategories["reading"] = true;
+        validCategories["social"] = true;
+        validCategories["travel"] = true;
+        validCategories["sports"] = true;
     }
 
     // ═══════════════════════════════════════════════════════════════════════════
@@ -309,6 +338,7 @@ contract BonzaiSkillRegistry is Ownable, ReentrancyGuard, Pausable {
     ) external nonReentrant whenNotPaused returns (bytes32 skillId) {
         // Validate inputs
         if (bytes(name).length == 0 || bytes(version).length == 0 || bytes(category).length == 0) revert EmptyString();
+        if (!validCategories[category]) revert InvalidCategory(category);
         if (bytes(ipfsHash).length < 10) revert InvalidIPFSHash();
         if (runningFee > MAX_RUNNING_FEE) revert RunningFeeTooHigh(runningFee, MAX_RUNNING_FEE);
 
@@ -658,7 +688,9 @@ contract BonzaiSkillRegistry is Ownable, ReentrancyGuard, Pausable {
         onlyOwner
         notZeroAddress(_skillOwnershipContract)
     {
+        address old = skillOwnershipContract;
         skillOwnershipContract = _skillOwnershipContract;
+        emit SkillOwnershipContractUpdated(old, _skillOwnershipContract);
     }
 
     /**
@@ -789,13 +821,13 @@ contract BonzaiSkillRegistry is Ownable, ReentrancyGuard, Pausable {
      * @notice Reject direct ETH transfers - must use purchaseSkill()
      */
     receive() external payable {
-        revert("Use purchaseSkill()");
+        revert UseCorrectFunction();
     }
 
     /**
      * @notice Reject calls to non-existent functions
      */
     fallback() external payable {
-        revert("Function does not exist");
+        revert UseCorrectFunction();
     }
 }

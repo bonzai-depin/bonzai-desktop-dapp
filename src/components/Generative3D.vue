@@ -358,33 +358,6 @@
             </div>
           </div>
 
-          <!-- Import NFT -->
-          <div class="field has-addons mb-3" style="max-width: 400px">
-            <div class="control has-icons-left is-expanded">
-              <input
-                class="input is-small"
-                type="text"
-                v-model="importTokenId"
-                placeholder="Token ID to import from NFT..."
-                @keyup.enter="importFromNFT"
-              />
-              <span class="icon is-small is-left">
-                <span class="material-symbols-outlined" style="font-size: 16px">token</span>
-              </span>
-            </div>
-            <div class="control">
-              <button
-                class="button is-info is-small"
-                @click="importFromNFT"
-                :disabled="!importTokenId || isImportingNFT"
-                :class="{ 'is-loading': isImportingNFT }"
-              >
-                <span class="material-symbols-outlined mr-1" style="font-size: 16px">cloud_download</span>
-                Import NFT
-              </button>
-            </div>
-          </div>
-
           <!-- History -->
           <div v-if="objectInferences.length > 0">
             <ol class="chat">
@@ -1566,18 +1539,17 @@ export default {
     ]);
 
     const model = {
-        modelname: "Qwen3.5 35B A3B IQ3",
+        modelname: "GLM 4.7 Flash Q2",
         modeldesc:
-          "35B-parameter MoE Qwen3.5 model with only 3B active parameters per token and 262K context. IQ3_XXS quantization — compact 3-bit with superior accuracy via Unsloth Dynamic quant. Best for: high-quality 3D code generation and reasoning on consumer hardware.",
-        url: "https://huggingface.co/unsloth/Qwen3.5-35B-A3B-GGUF/resolve/main/Qwen3.5-35B-A3B-UD-IQ3_XXS.gguf",
-        filename: "qwen3.5-35b-a3b-ud-iq3_xxs.gguf",
-        filesize: "13.1 GB",
-        filesizeBytes: 13.1e9,
-        parameters: 35000000000,
+          "30B-parameter Mixture-of-Experts model from Zhipu AI with only 3B active parameters per forward pass and 200K context. Q2_K_XL quantization for fastest inference and lowest memory. Best for: uncensored creative writing, coding assistance, and general-purpose AI on consumer hardware.",
+        url: "https://huggingface.co/unsloth/GLM-4.7-Flash-GGUF/resolve/main/GLM-4.7-Flash-UD-Q2_K_XL.gguf",
+        filename: "glm-4.7-flash-ud-q2_k_xl.gguf",
+        filesize: "11.9 GB",
+        filesizeBytes: 11.9e9,
+        parameters: 30000000000,
         activeParameters: 3000000000,
         isMoE: true,
-        context: 262144,
-        thinking: true,
+        context: 200000,
     };
 
     const reasoningEnabled = ref(false);
@@ -1749,11 +1721,12 @@ TASK: "${userText}"
 
 ═══ AVAILABLE API (pre-declared, do NOT redeclare) ═══
 THREE, root (Group — add meshes here), setObjectInfo({title, description})
-MAT.gold/silver/bronze/copper/iron/steel/ruby/emerald/sapphire/amethyst/diamond/glass/obsidian/bone/flesh/leaf/bark/clay/marble/lava/ice/sand/snow
+MAT.gold/silver/bronze/copper/iron/steel/ruby/emerald/sapphire/amethyst/diamond/glass/obsidian/bone/flesh/leaf/bark/clay/marble/lava/ice/sand/snow — pre-built materials, use directly (e.g. MAT.gold, NOT H.gold)
 TEX.wood(color?)/stone(color?)/metal(color?)/fabric(color?)/leather(color?) → CanvasTexture
-H.glass(c,o)/gem(c,o)/metal(c,o)/matte(c,o)/glow(c,o)/liquid(c,o)/fire(o)/ice(c,o)/lava(o)/leather(c,o)/velvet(c,o)
+H.glass(c,{transmission,thickness,ior,roughness})/gem(c,o)/metal(c,o)/matte(c,o)/glow(c,o)/liquid(c,o)/fire(o)/ice(c,o)/lava(o)/leather(c,o)/velvet(c,o)
 H.fillLiquid(containerMesh, color, {fillLevel, inset, opacity}) → Group (opaque colored liquid body + surface disc, NO glow)
 H.light(c,i,d)/spot(c,i,o)/sparks(n,o)/dust(n,o)/bubbles(n,o)/smoke(n,o)
+NOTE: H.glass uses 'transmission' NOT 'transparency'. For gold/silver/iron use MAT.gold etc., NOT H.gold (does not exist)
 
 ═══ LIQUID IN CONTAINER — MANDATORY PATTERN ═══
 // Build glass container first:
@@ -1807,6 +1780,8 @@ ${recipeHint ? `\n═══ PATTERN HINT ═══\n${recipeHint}\n` : ''}
 - MAT is FLAT: use MAT.ruby, MAT.gold, MAT.emerald directly. NO MAT.gems, NO MAT.metals, NO nested objects
 - MAT has ONLY: gold/silver/bronze/copper/iron/steel/ruby/emerald/sapphire/amethyst/diamond/glass/obsidian/bone/flesh/leaf/bark/clay/marble/lava/ice/sand/snow — NO topaz, NO velvet, NO crystal, NO fabric
 - For velvet/leather/fabric: use H.velvet(color), H.leather(color), TEX.fabric(color) — NOT MAT.velvet
+- NO H.gold, NO H.silver, NO H.bronze, NO H.iron, NO H.steel — metals are MAT.gold, MAT.silver etc. H.metal(color,opts) is for custom metal colors only
+- MeshPhysicalMaterial has NO 'transparency' property — use 'transmission' for see-through glass/gem materials. 'transparency' CRASHES
 - NO H.updateParticleSystem — dust/sparks/bubbles animate automatically
 - NO addUpdateCallback — the scene is STATIC, no animation loops. Particles (H.sparks/dust/bubbles) self-animate, everything else is static
 - NO requestAnimationFrame, NO setInterval, NO setTimeout
@@ -1863,9 +1838,10 @@ PARTICLES: H.sparks(count,opts), H.dust(count,opts), H.bubbles(count,opts), H.sm
 - Do NOT declare THREE, scene, root, H, MAT, TEX, setObjectInfo — they are pre-declared
 - H.dust(), H.bubbles(), H.sparks() — call ONCE, root.add() result. They self-animate
 - TubeGeometry REQUIRES a Curve3 (CatmullRomCurve3, QuadraticBezierCurve3), NEVER an array of points
-- MeshStandardMaterial/MeshPhysicalMaterial have NO specular property — use metalness/roughness
+- MeshStandardMaterial/MeshPhysicalMaterial have NO specular property — use metalness/roughness. NO 'transparency' property — use 'transmission' for glass/gems
 - MAT is FLAT: MAT.ruby, MAT.gold etc. NO MAT.gems, NO nested objects. NO MAT.velvet/topaz/crystal/fabric
 - For velvet/leather/fabric: use H.velvet(color), H.leather(color), TEX.fabric(color)
+- NO H.gold/silver/bronze/iron/steel — use MAT.gold, MAT.silver etc. for metal materials
 - NO H.updateParticleSystem — dust/sparks/bubbles animate automatically
 - SPATIAL: compute sub-part positions from geometry bounding boxes — lids at container top, bases below body. Never hardcode Y positions
 - Output complete modified code starting with setObjectInfo()

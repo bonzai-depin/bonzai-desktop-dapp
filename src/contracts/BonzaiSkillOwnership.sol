@@ -7,6 +7,7 @@ import "@openzeppelin/contracts/utils/Pausable.sol";
 import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import "@openzeppelin/contracts/utils/cryptography/ECDSA.sol";
 import "@openzeppelin/contracts/utils/cryptography/MessageHashUtils.sol";
+import "@openzeppelin/contracts/token/ERC721/IERC721.sol";
 
 /**
  * @title BonzaiSkillOwnership
@@ -64,6 +65,9 @@ contract BonzaiSkillOwnership is Ownable, ReentrancyGuard, Pausable {
     // ═══════════════════════════════════════════════════════════════════════════
     // STATE VARIABLES
     // ═══════════════════════════════════════════════════════════════════════════
+
+    /// @notice BonzaiCompanions NFT contract (for on-chain ownership verification)
+    IERC721 public companionNFT;
 
     /// @notice BonzaiSkillRegistry contract (only caller for distributeRevenue)
     address public skillRegistry;
@@ -143,6 +147,8 @@ contract BonzaiSkillOwnership is Ownable, ReentrancyGuard, Pausable {
     event AttestationSignerUpdated(address indexed oldSigner, address indexed newSigner);
     event SkillRegistryUpdated(address indexed oldRegistry, address indexed newRegistry);
     event TreasuryUpdated(address indexed oldTreasury, address indexed newTreasury);
+    event BonzaiTokenUpdated(address indexed oldToken, address indexed newToken);
+    event CompanionNFTUpdated(address indexed oldNFT, address indexed newNFT);
 
     // ═══════════════════════════════════════════════════════════════════════════
     // ERRORS
@@ -159,6 +165,9 @@ contract BonzaiSkillOwnership is Ownable, ReentrancyGuard, Pausable {
     error AttestationExpired();
     error NoRevenueToClaim();
     error TransferFailed(address recipient);
+    error NotNFTOwner(address caller, uint256 tokenId);
+    error NoSurplusETH();
+    error BonzaiTokenUpdated_TransferFailed();
 
     // ═══════════════════════════════════════════════════════════════════════════
     // MODIFIERS
@@ -182,17 +191,20 @@ contract BonzaiSkillOwnership is Ownable, ReentrancyGuard, Pausable {
         address _skillRegistry,
         address _bonzaiToken,
         address _treasury,
-        address _attestationSigner
+        address _attestationSigner,
+        address _companionNFT
     ) Ownable(msg.sender) {
         if (_skillRegistry == address(0)) revert ZeroAddress();
         if (_bonzaiToken == address(0)) revert ZeroAddress();
         if (_treasury == address(0)) revert ZeroAddress();
         if (_attestationSigner == address(0)) revert ZeroAddress();
+        if (_companionNFT == address(0)) revert ZeroAddress();
 
         skillRegistry = _skillRegistry;
         bonzaiToken = IERC20(_bonzaiToken);
         treasury = _treasury;
         attestationSigner = _attestationSigner;
+        companionNFT = IERC721(_companionNFT);
 
         // Initialize category index mapping (matches BonzaiCompanions.sol bit packing order)
         categoryToIndex["education"] = 0;
@@ -240,6 +252,11 @@ contract BonzaiSkillOwnership is Ownable, ReentrancyGuard, Pausable {
             revert InvalidProfileScore(profileScore, MIN_PROFILE_SCORE);
         }
         if (block.timestamp > attestationDeadline) revert AttestationExpired();
+
+        // On-chain NFT ownership verification
+        if (companionNFT.ownerOf(companionTokenId) != msg.sender) {
+            revert NotNFTOwner(msg.sender, companionTokenId);
+        }
 
         // Check not already registered
         if (_companionSkillIndex[companionTokenId][skillId] != 0) {
@@ -334,7 +351,7 @@ contract BonzaiSkillOwnership is Ownable, ReentrancyGuard, Pausable {
     function distributeRevenue(
         bytes32 skillId,
         uint256 /* amount */
-    ) external payable onlySkillRegistry nonReentrant {
+    ) external payable onlySkillRegistry nonReentrant whenNotPaused {
         CompanionRegistration[] storage companions = skillCompanions[skillId];
 
         // Fallback: no co-owners, send to treasury
@@ -524,7 +541,7 @@ contract BonzaiSkillOwnership is Ownable, ReentrancyGuard, Pausable {
         returns (CompanionRegistration memory)
     {
         uint256 indexPlusOne = _companionSkillIndex[companionTokenId][skillId];
-        require(indexPlusOne != 0, "Not registered");
+        if (indexPlusOne == 0) revert CompanionNotRegistered(companionTokenId, skillId);
         return skillCompanions[skillId][indexPlusOne - 1];
     }
 
@@ -611,7 +628,23 @@ contract BonzaiSkillOwnership is Ownable, ReentrancyGuard, Pausable {
         onlyOwner
         notZeroAddress(_token)
     {
+        address old = address(bonzaiToken);
         bonzaiToken = IERC20(_token);
+        emit BonzaiTokenUpdated(old, _token);
+    }
+
+    /**
+     * @notice Update the companion NFT contract address
+     * @param _companionNFT New companion NFT address
+     */
+    function setCompanionNFT(address _companionNFT)
+        external
+        onlyOwner
+        notZeroAddress(_companionNFT)
+    {
+        address old = address(companionNFT);
+        companionNFT = IERC721(_companionNFT);
+        emit CompanionNFTUpdated(old, _companionNFT);
     }
 
     /**
@@ -636,11 +669,11 @@ contract BonzaiSkillOwnership is Ownable, ReentrancyGuard, Pausable {
     function withdrawSurplus() external onlyOwner {
         uint256 accountable = totalRevenueDistributed - totalRevenueClaimed;
         uint256 balance = address(this).balance;
-        require(balance > accountable, "No surplus ETH");
+        if (balance <= accountable) revert NoSurplusETH();
 
         uint256 surplus = balance - accountable;
         (bool success, ) = owner().call{value: surplus}("");
-        require(success, "Transfer failed");
+        if (!success) revert TransferFailed(owner());
     }
 
     // ═══════════════════════════════════════════════════════════════════════════

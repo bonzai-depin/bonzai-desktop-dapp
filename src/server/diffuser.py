@@ -232,6 +232,7 @@ LTX2_GGUF_URL = "https://huggingface.co/3ndetz/LTX2-Rapid-Merges-GGUF/resolve/ma
 LTX2_I2V_LORA_REPO = "MachineDelusions/LTX-2_Image2Video_Adapter_LoRa"
 LTX2_I2V_LORA_FILENAME = "LTX-2-Image2Vid-Adapter.safetensors"
 
+
 # Kokoro TTS - Fast, lightweight TTS with multiple voices (ONNX)
 # Supports male and female voices with style control
 KOKORO_REPO = "hexgrad/Kokoro-82M"
@@ -1516,7 +1517,7 @@ def _plan_for(pipeline: str) -> Dict[str, Any]:
     - audio_turbo: Kokoro TTS
     - audio_quality: Qwen3-TTS
     - video_fast: LTX2 GGUF (fast video)
-    - vision: Qwen3 VL (image analysis)
+    - vision: Qwen 3 VL (image analysis)
     """
     pipeline = pipeline.strip().lower()
 
@@ -1547,7 +1548,7 @@ def _plan_for(pipeline: str) -> Dict[str, Any]:
 
     # Video pipelines
     if pipeline in ("video_fast", "ltx2_video_gguf"):
-        # LTX-2 (19B DiT) with Q4_0 GGUF quantization
+        # LTX-2 (19B DiT) with Q3_K_S GGUF quantization
         # Note: I2V Adapter LoRA is downloaded on-demand by load_lora_weights()
         return {
             "repos_to_fetch": [LTX2_REPO],
@@ -4528,6 +4529,17 @@ def ltx2_gguf_video():
         else:
             os.environ["TRANSFORMERS_OFFLINE"] = _ltx_old_transformers_offline
 
+
+        # Restore offline mode
+        if _ltx_old_hf_offline is None:
+            os.environ.pop("HF_HUB_OFFLINE", None)
+        else:
+            os.environ["HF_HUB_OFFLINE"] = _ltx_old_hf_offline
+        if _ltx_old_transformers_offline is None:
+            os.environ.pop("TRANSFORMERS_OFFLINE", None)
+        else:
+            os.environ["TRANSFORMERS_OFFLINE"] = _ltx_old_transformers_offline
+
 # =============================================================================
 # REST API: TRAINING - DATASET MANAGEMENT
 # =============================================================================
@@ -5678,7 +5690,7 @@ def memory_clear():
             _kokoro_pipeline = None
             unloaded.append("kokoro_tts")
 
-        # Always unload Qwen3 TTS models (large VRAM consumers)
+        # Always unload Qwen 3 TTS models (large VRAM consumers)
         # Voice cache is preserved separately when preserve_tts=True
         global _qwen3_tts_base, _qwen3_tts_design
         if _qwen3_tts_base is not None:
@@ -5700,7 +5712,7 @@ def memory_clear():
             _qwen3_tts_design = None
             unloaded.append("qwen3_tts_design")
 
-        # Unload Qwen3 Vision model
+        # Unload Qwen 3 Vision model
         global _qwen3_vl_model, _qwen3_vl_processor
         if _qwen3_vl_model is not None:
             try:

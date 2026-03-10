@@ -3383,7 +3383,8 @@ function computeMaxContextForModel(currentModel, sysInfo) {
   // 3. Reserve for GPU compute scratch buffers
   //    Metal (unified memory) needs ~2GB for compute graphs and intermediate
   //    tensors; discrete GPUs with separate VRAM need less host-side reserve.
-  const computeReserveGB = isUnified ? 2.0 : 1.5;
+  //    MoE models need extra for expert routing/gating buffers.
+  const computeReserveGB = isUnified ? (isMoE ? 2.5 : 2.0) : 1.5;
 
   // 4. Available memory for KV cache
   const availableForKvGB = Math.max(0, memBudgetGB - modelWeightGB - computeReserveGB);
@@ -3405,10 +3406,13 @@ function computeMaxContextForModel(currentModel, sysInfo) {
   kvBytesPerToken = Math.round(kvBytesPerToken * kvScale);
 
   // 6. Compute max context, snap down to nearest standard size
+  //    Apply 15% safety margin — createContext() can succeed but inference
+  //    SIGSEGVs when Metal runtime allocations exceed what's actually free.
   const STANDARD_SIZES = [131072, 65536, 32768, 16384, 8192, 4096, 2048, 1024, 512];
   let baseCtx = 512;
   if (availableForKvGB > 0) {
-    const maxTokens = Math.floor((availableForKvGB * 1e9) / kvBytesPerToken);
+    const safeKvGB = availableForKvGB * 0.85;
+    const maxTokens = Math.floor((safeKvGB * 1e9) / kvBytesPerToken);
     for (const size of STANDARD_SIZES) {
       if (maxTokens >= size) {
         baseCtx = size;
@@ -3448,13 +3452,11 @@ const MODEL_SPECS = {
   "nousresearch_hermes-4-14b":      { parameters: 14e9, context: 131072 },
   "phi-3-mini-4k-instruct":         { parameters: 3.8e9, context: 4096 },
   "phi-4-mini-instruct":            { parameters: 3.8e9, context: 128000 },
-  "qwen2.5-3b-instruct":            { parameters: 3e9, context: 32768 },
   "qwen2.5-coder-7b-instruct":      { parameters: 7e9, context: 131072 },
-  "qwen2.5-coder-14b-instruct":     { parameters: 14e9, context: 131072 },
-  "qwen2.5-coder-32b-instruct":     { parameters: 32e9, context: 131072 },
-  "qwen3-coder-30b-a3b":     { parameters: 30e9, activeParameters: 3e9, isMoE: true, context: 131072 },
   "yi-coder-9b-chat":               { parameters: 9e9, context: 131072 },
-  "glm-4.7-flash":           { parameters: 30e9, activeParameters: 3e9, isMoE: true, context: 200000 },
+  "glm-4.7-flash-q2_k_xl":  { parameters: 30e9, activeParameters: 3e9, isMoE: true, context: 200000 },
+  "glm-4.7-flash-ud-q4_k_xl": { parameters: 30e9, activeParameters: 3e9, isMoE: true, context: 200000 },
+  "glm-4.7-flash-ud-q8_k_xl": { parameters: 30e9, activeParameters: 3e9, isMoE: true, context: 200000 },
   "qwen3-coder-next":        { parameters: 80e9, activeParameters: 3e9, isMoE: true, context: 131072 },
   "nanbeige4.1-3b":                 { parameters: 3e9, context: 32768 },
   "qwen3.5-9b":                     { parameters: 9e9, context: 262144 },

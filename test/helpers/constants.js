@@ -92,6 +92,32 @@ const POOL_SHARE_BPS = 9600n;
 const AGENT_SHARE_BPS = 400n;
 const DEAD_ADDRESS = "0x000000000000000000000000000000000000dEaD";
 
+// ═══════════════════════════════════════════════════════════════════════════
+// P2P / PAYMENT
+// ═══════════════════════════════════════════════════════════════════════════
+
+const PLATFORM_FEE_BPS = 250n; // 2.5%
+const MIN_STAKE = ethers.parseEther("0.1");
+const PAYMENT_AMOUNT = ethers.parseUnits("100", 6); // 100 USDC (6 decimals)
+const PAYMENT_AMOUNT_ETH = ethers.parseEther("0.05");
+
+// ═══════════════════════════════════════════════════════════════════════════
+// SKILL REGISTRY / OWNERSHIP
+// ═══════════════════════════════════════════════════════════════════════════
+
+const SKILL_PURCHASE_PRICE = ethers.parseEther("0.01"); // 0.01 ETH
+const SKILL_RUNNING_FEE = ethers.parseEther("10"); // 10 BONZAI
+const SKILL_AUTHOR_SHARE_BPS = 8000n;
+const SKILL_PLATFORM_SHARE_BPS = 2000n;
+const MIN_PROFILE_SCORE = 5;
+const MAX_COMPANIONS_PER_SKILL = 100;
+
+// Valid spending profile category names
+const VALID_CATEGORIES = [
+  "education", "entertainment", "fashion", "finance", "food", "healthcare",
+  "housing", "beauty", "reading", "social", "travel", "sports"
+];
+
 module.exports = {
   UNLOCK_PRICE,
   MINT_FEE,
@@ -126,4 +152,15 @@ module.exports = {
   POOL_SHARE_BPS,
   AGENT_SHARE_BPS,
   DEAD_ADDRESS,
+  PLATFORM_FEE_BPS,
+  MIN_STAKE,
+  PAYMENT_AMOUNT,
+  PAYMENT_AMOUNT_ETH,
+  SKILL_PURCHASE_PRICE,
+  SKILL_RUNNING_FEE,
+  SKILL_AUTHOR_SHARE_BPS,
+  SKILL_PLATFORM_SHARE_BPS,
+  MIN_PROFILE_SCORE,
+  MAX_COMPANIONS_PER_SKILL,
+  VALID_CATEGORIES,
 };

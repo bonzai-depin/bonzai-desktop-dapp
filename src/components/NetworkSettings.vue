@@ -100,12 +100,69 @@
               <strong>Provider Mode</strong>
               <p>
                 Run generation locally and serve remote requests from other
-                users. Earn USDC for each completed request.
+                users. Earn USDC or ETH for each completed request.
               </p>
             </div>
           </div>
         </div>
       </div>
+
+      <hr />
+
+      <!-- OpenClaw Integration -->
+      <div class="openclaw-section mt-5 mb-5">
+        <h2 class="section-title fira-sans-condensed-black-italic">
+          OpenClaw Extension
+        </h2>
+
+        <div class="description-card openclaw">
+          <span class="material-symbols-outlined">info</span>
+          <div>
+            <strong>Multi-Channel Smart Agent</strong>
+            <p>
+              OpenClaw provides an OpenAI-compatible API on port 3002 for orchestrating BonzAI media generation and BonzAI companions from your favourite messaging applications
+              (iMessage, WhatsApp, Telegram, Discord).
+            </p>
+          </div>
+        </div>
+
+        <div class="openclaw-controls mt-4">
+          <div v-if="!openclawInstalled" class="openclaw-status not-installed">
+            <span class="material-symbols-outlined mr-2">info</span>
+            <span>OpenClaw is not installed. Install it to enable multi-channel smart agent support.</span>
+          </div>
+
+          <div v-else class="openclaw-toggle-row">
+            <div class="openclaw-status-info">
+              <span
+                class="material-symbols-outlined mr-2"
+                :class="openclawEnabled ? 'icon-success' : 'icon-muted'"
+              >
+                {{ openclawEnabled ? "check_circle" : "cancel" }}
+              </span>
+              <span>
+                {{ openclawEnabled ? "OpenClaw is running on port 3002" : "OpenClaw is disabled" }}
+              </span>
+            </div>
+            <button
+              class="button is-small"
+              :class="openclawEnabled ? 'is-danger' : 'is-success'"
+              :disabled="openclawToggling"
+              @click="toggleOpenClaw"
+            >
+              <span
+                v-if="openclawToggling"
+                class="material-symbols-outlined mr-1 spinning"
+              >
+                progress_activity
+              </span>
+              {{ openclawEnabled ? "Disable" : "Enable" }}
+            </button>
+          </div>
+        </div>
+      </div>
+
+      <hr />
 
       <!-- Consumer Mode: Provider Selection -->
       <div class="consumer-section mt-5" v-if="networkMode === 'consumer'">
@@ -115,14 +172,14 @@
 
         <div class="provider-list">
           <div v-if="availableProviders.length === 0" class="no-providers">
-            <span class="material-symbols-outlined">search_off</span>
+            <span class="material-symbols-outlined is-size-1 mb-5">search_off</span>
             <p>
-              No providers found in the registry. Check back later or switch to
-              Local mode.
+              No providers found in the registry. Please check back later or switch to
+              Local Mode.
             </p>
             <hr />
             <button
-              class="button is-info is-medium mt-3"
+              class="button is-warning is-medium mt-3"
               @click="refreshProviders"
               :disabled="isRefreshingProviders"
             >
@@ -132,7 +189,7 @@
               >
                 refresh
               </span>
-              Refresh
+              Refresh Providers
             </button>
           </div>
 
@@ -162,7 +219,7 @@
               </div>
               <div class="provider-pricing">
                 <div class="price-row" v-if="provider.pricing?.llm">
-                  <span>LLM:</span>
+                  <span>Chat:</span>
                   <span>${{ provider.pricing.llm }}/1K tokens</span>
                 </div>
                 <div class="price-row" v-if="provider.pricing?.image">
@@ -305,7 +362,7 @@
           </button>
 
           <button
-            class="button is-info is-medium ml-2"
+            class="button is-warning is-medium ml-2"
             @click="refreshStatus"
             :disabled="isRefreshing"
           >
@@ -446,7 +503,7 @@
           <!-- Companions -->
           <div class="pricing-item">
             <div class="pricing-header">
-              <span class="material-symbols-outlined">self_improvement</span>
+              <span class="material-symbols-outlined">person_pin</span>
               <span class="pricing-name">Companions</span>
             </div>
             <div class="pricing-input">
@@ -746,6 +803,39 @@ const isSelfTesting = ref(false);
 const availableProviders = ref([]);
 const selectedProvider = ref(null);
 const isRefreshingProviders = ref(false);
+
+// OpenClaw integration state
+const openclawInstalled = ref(false);
+const openclawEnabled = ref(false);
+const openclawToggling = ref(false);
+
+const checkOpenClawStatus = async () => {
+  try {
+    openclawInstalled.value = await window.electronAPI.openclawIsInstalled();
+    if (openclawInstalled.value) {
+      openclawEnabled.value = await window.electronAPI.openclawGetEnabled();
+    }
+  } catch (e) {
+    console.error("[NetworkSettings] Failed to check OpenClaw status:", e);
+  }
+};
+
+const toggleOpenClaw = async () => {
+  openclawToggling.value = true;
+  try {
+    const newState = !openclawEnabled.value;
+    const result = await window.electronAPI.openclawSetEnabled(newState);
+    if (!result.error) {
+      openclawEnabled.value = newState;
+    } else {
+      console.error("[NetworkSettings] Failed to toggle OpenClaw:", result.error);
+    }
+  } catch (e) {
+    console.error("[NetworkSettings] Failed to toggle OpenClaw:", e);
+  } finally {
+    openclawToggling.value = false;
+  }
+};
 
 // Per-pipeline pricing (USDC)
 const pipelinePricing = ref({
@@ -1066,6 +1156,7 @@ watch(networkMode, async (newMode) => {
 onMounted(async () => {
   await loadSettings();
   await refreshStatus();
+  await checkOpenClawStatus();
 
   // Refresh providers if in consumer mode
   if (networkMode.value === "consumer") {
@@ -1264,6 +1355,53 @@ hr {
   color: var(--bonzai-green);
 }
 
+/* OpenClaw Section */
+.description-card.openclaw {
+  border-color: rgba(168, 85, 247, 0.3);
+  background: rgba(168, 85, 247, 0.08);
+}
+
+.description-card.openclaw .material-symbols-outlined {
+  color: #a855f7;
+}
+
+.openclaw-controls {
+  padding: 12px 16px;
+  border: 1px solid var(--bonzai-border);
+  border-radius: 10px;
+    background: rgba(255, 255, 255, 0.04);
+  border: 1px dashed var(--bonzai-border);
+}
+
+.openclaw-controls .button {
+  box-shadow: none;
+}
+
+.openclaw-toggle-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.openclaw-status-info {
+  display: flex;
+  align-items: center;
+  color: rgba(255, 255, 255, 1);
+  /* font-size: 0.9rem; */
+  font-weight: 700;
+}
+
+.openclaw-status.not-installed {
+  display: flex;
+  align-items: center;
+  color: rgba(255, 255, 255, 0.5);
+  font-size: 0.9rem;
+}
+
+.icon-muted {
+  color: rgba(255, 255, 255, 0.3);
+}
+
 /* Consumer Mode - Provider Selection */
 .consumer-section {
   margin-bottom: 32px;
@@ -1278,10 +1416,7 @@ hr {
 }
 
 .no-providers .material-symbols-outlined {
-  font-size: 48px;
-  color: rgba(255, 255, 255, 0.3);
   display: block;
-  margin-bottom: 12px;
 }
 
 .no-providers p {

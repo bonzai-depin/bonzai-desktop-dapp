@@ -55,7 +55,7 @@
           <div class="models__activity--payouts">
             <div class="columns">
               <div class="column is-12">
-                <!-- MODE SELECTOR (Text-to-Video / Image-to-Video) -->
+                <!-- MODE / DURATION / FPS / RESOLUTION OPTIONS -->
                 <div class="control mb-5 has-text-left">
                   <input
                     v-model="mode"
@@ -642,7 +642,7 @@ export default {
         contentType: 'video/mp4',
         prompt: inference.question,
         generation: {
-          type: 'text-to-video',
+          type: inference.question?.startsWith('i2v') ? 'image-to-video' : 'text-to-video',
           model: inference.model || 'ltx-2',
           timestamp: inference.timestamp,
           elapsedMs: inference.elapsedMs || null,
@@ -660,6 +660,7 @@ export default {
     };
 
     const mode = ref("i2v"); // "t2v" (text-to-video) or "i2v" (image-to-video)
+    const videoModel = ref("fast"); // LTX-2 (~10GB)
     const quality = ref("480p");  // 480p, 540p, 720p, 1080p, 4k (default 480p for quality)
     const duration = ref(5);       // seconds: 5 or 10 (default 5s for good motion)
     const fps = ref(12);           // 12 or 24 (default 12fps for memory efficiency)
@@ -874,10 +875,10 @@ export default {
     );
 
     const endpointForMode = () => {
-      return "/video"; // LTX-2 video endpoint (supports t2v and i2v)
+      return "/video";
     };
     const pipelineForMode = () => {
-      return "video_fast"; // LTX-2 video pipeline
+      return "video_fast";
     };
 
     const normalizeFramesForLTX2 = (frames) => {
@@ -1728,8 +1729,13 @@ export default {
       { immediate: true }
     );
 
+    watch(videoModel, () => {
+      probeCurrentMode();
+    });
+
     return {
       mode,
+      videoModel,
       quality,
       duration,
       fps,

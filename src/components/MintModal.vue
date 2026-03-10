@@ -36,6 +36,57 @@
               >
                 <img :src="previewSrc" alt="Content preview" />
               </div>
+              <div v-else-if="contentType?.startsWith('audio/')" class="preview-audio">
+                <img :src="customBgSrc || audioBgSrc" class="audio-bg" :class="{ blurred: !customBgSrc }" alt="" />
+                <div class="preview-shade"></div>
+                <div class="audio-overlay">
+                  <img v-if="!customBgSrc" :src="logoSrc" class="preview-logo" alt="BonzAI" />
+                  <span class="preview-type">{{ generationType }}</span>
+                  <audio controls preload="metadata" :src="audioPreviewSrc"></audio>
+                </div>
+                <button class="shuffle-bg-btn" @click="generateBackground" :disabled="isGeneratingBg" title="Shuffle Background">
+                  <span v-if="isGeneratingBg" class="material-symbols-outlined rotating">progress_activity</span>
+                  <span v-else class="material-symbols-outlined">auto_fix_high</span>
+                </button>
+              </div>
+              <div v-else-if="contentType?.startsWith('video/')" class="preview-video">
+                <img :src="customBgSrc || videoPosterSrc" class="video-bg" :class="{ blurred: !customBgSrc }" alt="" />
+                <div class="preview-shade"></div>
+                <div class="video-overlay">
+                  <img v-if="!customBgSrc" :src="logoSrc" class="preview-logo" alt="BonzAI" />
+                  <video
+                    controls
+                    preload="metadata"
+                    :poster="customBgSrc || videoPosterSrc"
+                    :src="videoPreviewSrc"
+                  ></video>
+                </div>
+                <span class="preview-type">{{ generationType }}</span>
+                <button class="shuffle-bg-btn" @click="generateBackground" :disabled="isGeneratingBg" title="Shuffle Background">
+                  <span v-if="isGeneratingBg" class="material-symbols-outlined rotating">progress_activity</span>
+                  <span v-else class="material-symbols-outlined">auto_fix_high</span>
+                </button>
+              </div>
+              <div v-else-if="contentType?.startsWith('text/')" class="preview-text">
+                <img :src="customBgSrc || textBgSrc" class="text-bg" :class="{ blurred: !customBgSrc }" alt="" />
+                <div class="preview-shade"></div>
+                <img v-if="!customBgSrc" :src="logoSrc" class="text-logo" alt="BonzAI" />
+                <p class="text-snippet">{{ textSnippet }}</p>
+                <span class="preview-type text-type-label">{{ generationType }}</span>
+                <button class="shuffle-bg-btn" @click="generateBackground" :disabled="isGeneratingBg" title="Shuffle Background">
+                  <span v-if="isGeneratingBg" class="material-symbols-outlined rotating">progress_activity</span>
+                  <span v-else class="material-symbols-outlined">auto_fix_high</span>
+                </button>
+              </div>
+              <div v-else-if="contentType?.startsWith('model/')" class="preview-3d">
+                <iframe
+                  v-if="threeDPreviewUrl"
+                  :src="threeDPreviewUrl"
+                  sandbox="allow-scripts allow-same-origin"
+                  class="three-iframe"
+                ></iframe>
+                <span class="preview-type">{{ generationType }}</span>
+              </div>
               <div v-else class="preview-icon">
                 <span
                   class="material-symbols-outlined"
@@ -257,12 +308,16 @@
 </template>
 
 <script setup>
-import { ref, computed, watch } from "vue";
+import { ref, computed, watch, onBeforeUnmount } from "vue";
 import { mintStore } from "../stores/mintStore.js";
-import { mintContent } from "../services/contentNFT.service.js";
+import { mintContent, extractUserCode, buildInteractive3DViewer } from "../services/contentNFT.service.js";
 import { canMintContentType, checkAllLevels } from "../services/level.service.js";
 import { useWeb3Store } from "../stores/web3.store.js";
 import { web3Service } from "../services/web3.service.js";
+import audioBgSrc from "../assets/bonzai_music.webp";
+import videoPosterSrc from "../assets/bonzai_video.webp";
+import textBgSrc from "../assets/bonzai_chat.webp";
+import logoSrc from "../assets/bonzai_logo-full.png";
 
 const props = defineProps({
   visible: { type: Boolean, default: false },
@@ -344,6 +399,93 @@ const previewSrc = computed(() => {
   return "";
 });
 
+const audioPreviewSrc = computed(() => {
+  if (!props.content || !props.contentType?.startsWith("audio/")) return "";
+  if (typeof props.content === "string") {
+    if (props.content.startsWith("data:")) return props.content;
+    return `data:${props.contentType};base64,${props.content}`;
+  }
+  return "";
+});
+
+const textSnippet = computed(() => {
+  if (!props.content || !props.contentType?.startsWith("text/")) return "";
+  const raw = typeof props.content === "string" ? props.content : "";
+  const clean = raw.replace(/[#*_`~\[\]]/g, "").trim();
+  if (clean.length <= 100) return clean;
+  return clean.substring(0, 100) + "...";
+});
+
+const videoPreviewSrc = computed(() => {
+  if (!props.content || !props.contentType?.startsWith("video/")) return "";
+  if (typeof props.content === "string") {
+    if (props.content.startsWith("data:")) return props.content;
+    return `data:${props.contentType};base64,${props.content}`;
+  }
+  return "";
+});
+
+// 3D interactive preview via iframe blob URL
+let currentBlobUrl = null;
+const threeDPreviewUrl = computed(() => {
+  if (!props.content || !props.contentType?.startsWith("model/")) return null;
+  // Revoke old blob URL
+  if (currentBlobUrl) {
+    URL.revokeObjectURL(currentBlobUrl);
+    currentBlobUrl = null;
+  }
+  try {
+    const code = typeof props.content === "string" ? props.content : "";
+    const userCode = extractUserCode(code);
+    const html = buildInteractive3DViewer(userCode);
+    currentBlobUrl = URL.createObjectURL(new Blob([html], { type: "text/html" }));
+    return currentBlobUrl;
+  } catch (e) {
+    console.warn("[MintModal] 3D preview failed:", e);
+    return null;
+  }
+});
+
+onBeforeUnmount(() => {
+  if (currentBlobUrl) {
+    URL.revokeObjectURL(currentBlobUrl);
+    currentBlobUrl = null;
+  }
+});
+
+// Background generation for audio/video minting
+const isGeneratingBg = ref(false);
+const customBgSrc = ref(null);
+
+async function generateBackground() {
+  if (isGeneratingBg.value) return;
+  isGeneratingBg.value = true;
+  try {
+    const bgPrompt = `artistic abstract background for ${generationType.value}, ${props.prompt || 'digital art'}, vibrant colors, cinematic lighting, no text, no people`;
+    const port = window.BONZAI_SERVER_PORT || 65000;
+    const res = await fetch(`http://localhost:${port}/image/turbo`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        prompt: bgPrompt,
+        negative_prompt: "text, watermark, low quality, blurry, people, person, face, letters, words",
+        width: 512,
+        height: 512,
+        steps: 4,
+      }),
+    });
+    if (!res.ok) throw new Error(`Server returned ${res.status}`);
+    const data = await res.json();
+    if (data.image) {
+      customBgSrc.value = `data:image/webp;base64,${data.image}`;
+    }
+  } catch (e) {
+    console.warn("[MintModal] Background generation failed:", e.message);
+  } finally {
+    isGeneratingBg.value = false;
+  }
+}
+
 // Reset state when modal opens
 watch(
   () => props.visible,
@@ -356,6 +498,8 @@ watch(
       currentStage.value = "upload";
       mintResult.value = {};
       errorMessage.value = "";
+      customBgSrc.value = null;
+      isGeneratingBg.value = false;
 
       // Refresh balances + level status (await to ensure mint button reflects reality)
       if (isWalletConnected.value) {
@@ -394,6 +538,7 @@ async function startMint() {
     description: mintDescription.value,
     inferenceType: props.inferenceType,
     inferenceId: props.inferenceId,
+    customThumbnail: customBgSrc.value || undefined,
     onProgress: (stageKey, message, percent) => {
       currentStage.value = stageKey;
       progressMessage.value = message;
@@ -445,10 +590,11 @@ function handleClose() {
 .mint-modal {
   width: 90%;
   max-width: 640px;
-  /* background: #0a0a0f; */
+  max-height: 90vh;
   border: 1px solid rgba(255, 255, 255, 0.1);
   border-radius: 16px;
-  overflow: hidden;
+  overflow-y: auto;
+  overflow-x: hidden;
 }
 
 .mint-modal-header {
@@ -506,6 +652,9 @@ hr {
 /* Content Preview */
 .content-preview {
   margin-bottom: 16px;
+  max-width: 50%;
+  margin-left: auto;
+  margin-right: auto;
   border-radius: 4px !important;
   overflow: hidden;
   background: rgba(255, 255, 255, 0.03);
@@ -523,6 +672,253 @@ hr {
 .preview-image img {
   max-width: 100%;
   object-fit: contain;
+}
+
+.preview-shade {
+  position: absolute;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.6);
+  z-index: 1;
+  pointer-events: none;
+}
+
+.preview-audio {
+  position: relative;
+  width: 100%;
+  padding-top: 100%;
+  overflow: hidden;
+  border-radius: 4px;
+}
+
+.preview-audio .audio-bg {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.preview-audio .audio-bg.blurred {
+  filter: blur(12px);
+  transform: scale(1.08);
+}
+
+.preview-audio .audio-overlay {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: flex-end;
+  padding: 24px;
+  z-index: 2;
+}
+
+.preview-audio audio {
+  width: 90%;
+  max-width: 360px;
+  margin-bottom: 8px;
+}
+
+.preview-audio .preview-type {
+  color: #fff;
+  font-size: 13px;
+  text-transform: uppercase;
+  margin-bottom: 12px;
+  opacity: 0.8;
+}
+
+.preview-video {
+  position: relative;
+  width: 100%;
+  padding-top: 75%;
+  background: #000;
+  border-radius: 4px;
+  overflow: hidden;
+}
+
+.preview-video .video-bg {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.preview-video .video-bg.blurred {
+  filter: blur(12px);
+  transform: scale(1.08);
+}
+
+.preview-video .video-overlay {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: flex-end;
+  padding: 24px;
+  z-index: 2;
+}
+
+.preview-video video {
+  width: 90%;
+  max-height: 200px;
+  border-radius: 4px;
+}
+
+.preview-video .preview-type {
+  position: absolute;
+  top: 8px;
+  right: 10px;
+  color: #fff;
+  font-size: 11px;
+  text-transform: uppercase;
+  opacity: 0.7;
+  background: rgba(0, 0, 0, 0.5);
+  padding: 2px 8px;
+  border-radius: 3px;
+}
+
+.preview-3d {
+  position: relative;
+  width: 100%;
+  padding-top: 100%;
+  border-radius: 4px;
+  overflow: hidden;
+  background: #1a1a2e;
+}
+
+.preview-3d .three-iframe {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  border: none;
+}
+
+.preview-3d .preview-type {
+  position: absolute;
+  top: 8px;
+  right: 10px;
+  color: #fff;
+  font-size: 11px;
+  text-transform: uppercase;
+  opacity: 0.7;
+  background: rgba(0, 0, 0, 0.5);
+  padding: 2px 8px;
+  border-radius: 3px;
+  z-index: 1;
+}
+
+.preview-logo {
+  max-height: 50%;
+  width: auto;
+  object-fit: contain;
+  margin-bottom: auto;
+  margin-top: 0;
+  padding-top: 5%;
+  filter: drop-shadow(0 2px 8px rgba(0, 0, 0, 0.5));
+}
+
+.preview-text {
+  position: relative;
+  width: 100%;
+  padding-top: 100%;
+  overflow: hidden;
+  border-radius: 4px;
+}
+
+.preview-text .text-bg {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.preview-text .text-bg.blurred {
+  filter: blur(12px);
+  transform: scale(1.08);
+}
+
+.preview-text .text-logo {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -100%);
+  max-height: 45%;
+  width: auto;
+  z-index: 2;
+  filter: drop-shadow(0 2px 8px rgba(0, 0, 0, 0.5));
+}
+
+.preview-text .text-snippet {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, 0);
+  width: 80%;
+  color: rgba(255, 255, 255, 0.85);
+  font-size: 13px;
+  line-height: 1.5;
+  text-align: center;
+  word-break: break-word;
+  padding-top: 8px;
+  z-index: 2;
+}
+
+.preview-text .text-type-label {
+  position: absolute;
+  bottom: 12px;
+  left: 50%;
+  transform: translateX(-50%);
+  color: #fff;
+  font-size: 13px;
+  text-transform: uppercase;
+  opacity: 0.8;
+  z-index: 2;
+}
+
+.shuffle-bg-btn {
+  position: absolute;
+  bottom: 8px;
+  right: 8px;
+  background: rgba(138, 43, 226, 0.9);
+  border: none;
+  border-radius: 50%;
+  width: 28px;
+  height: 28px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  color: #fff;
+  z-index: 3;
+  transition: opacity 0.2s, transform 0.2s;
+}
+
+.shuffle-bg-btn .material-symbols-outlined {
+  font-size: 16px;
+}
+
+.shuffle-bg-btn:hover:not(:disabled) {
+  background: rgba(138, 43, 226, 1);
+  transform: scale(1.1);
+}
+
+.shuffle-bg-btn:disabled {
+  cursor: not-allowed;
+  opacity: 0.7;
+}
+
+.rotating {
+  animation: spin 1s linear infinite;
+}
+
+@keyframes spin {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
 }
 
 .preview-icon {

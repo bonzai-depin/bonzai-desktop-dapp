@@ -139,21 +139,6 @@
             Refresh Balance
           </button>
           <button
-            v-if="openclawInstalled"
-            class="openclaw-toggle button ml-2"
-            :class="openclawEnabled ? 'is-success' : 'is-warning is-outlined'"
-            @click="toggleOpenClaw"
-            :title="
-              openclawEnabled
-                ? 'OpenClaw enabled — click to disable'
-                : 'Enable OpenClaw integration'
-            "
-          >
-            <span class="openclaw-label">🦞&nbsp;
-              {{ openclawEnabled ? "OpenClaw ON" : "OpenClaw OFF" }}
-            </span>
-          </button>
-          <button
             class="p2p button ml-2"
             :class="p2pButtonClass"
             @click="showNetworkModal = true"
@@ -370,35 +355,6 @@ const showNetworkModal = ref(false);
 const p2pStatus = ref({ started: false });
 const p2pMode = ref("local"); // 'local', 'consumer', 'provider'
 let p2pStatusInterval = null;
-
-// OpenClaw integration state
-const openclawInstalled = ref(false);
-const openclawEnabled = ref(false);
-
-const checkOpenClawStatus = async () => {
-  try {
-    openclawInstalled.value = await window.electronAPI.openclawIsInstalled();
-    if (openclawInstalled.value) {
-      openclawEnabled.value = await window.electronAPI.openclawGetEnabled();
-    }
-  } catch (e) {
-    console.error("[BottomBar] Failed to check OpenClaw status:", e);
-  }
-};
-
-const toggleOpenClaw = async () => {
-  try {
-    const newState = !openclawEnabled.value;
-    const result = await window.electronAPI.openclawSetEnabled(newState);
-    if (!result.error) {
-      openclawEnabled.value = newState;
-    } else {
-      console.error("[BottomBar] Failed to toggle OpenClaw:", result.error);
-    }
-  } catch (e) {
-    console.error("[BottomBar] Failed to toggle OpenClaw:", e);
-  }
-};
 
 // Auth modal state
 const showAuthModal = ref(false);
@@ -763,9 +719,6 @@ onMounted(async () => {
   if (isConnected.value) {
     await checkAllLevels();
   }
-
-  // Check OpenClaw installation status
-  await checkOpenClawStatus();
 
   // Initial P2P status check and start polling
   await refreshP2PStatus();
@@ -1475,18 +1428,6 @@ hr {
   50% {
     opacity: 0.5;
   }
-}
-
-/* OpenClaw Toggle */
-.openclaw-toggle {
-  font-size: 0.85rem;
-  padding: 4px 10px;
-  height: auto;
-}
-
-.openclaw-label {
-  font-size: 0.9rem;
-  letter-spacing: 0.5px;
 }
 
 /* Network Modal */

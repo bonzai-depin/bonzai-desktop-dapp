@@ -1,0 +1,144 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8"/>
+<title>BonzAI Mint Thumbnail Preview</title>
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body { background: #111; color: #fff; font-family: system-ui, -apple-system, sans-serif; padding: 40px; }
+h1 { text-align: center; margin-bottom: 32px; font-size: 24px; }
+.grid { display: flex; flex-wrap: wrap; gap: 32px; justify-content: center; }
+.card { text-align: center; }
+.card h3 { margin-bottom: 12px; font-size: 16px; color: #aaa; text-transform: uppercase; letter-spacing: 1px; }
+canvas { border: 1px solid rgba(255,255,255,0.15); border-radius: 8px; }
+</style>
+</head>
+<body>
+<h1>Mint Collectible Thumbnail Preview (512x512)</h1>
+<div class="grid">
+  <div class="card"><h3>Text</h3><canvas id="c-text" width="512" height="512"></canvas></div>
+  <div class="card"><h3>Audio</h3><canvas id="c-audio" width="512" height="512"></canvas></div>
+  <div class="card"><h3>Video</h3><canvas id="c-video" width="512" height="512"></canvas></div>
+  <div class="card"><h3>3D / Object</h3><canvas id="c-object" width="512" height="512"></canvas></div>
+</div>
+<script>
+const ASSETS = './src/assets/';
+const BG = {
+  text:   ASSETS + 'bonzai_chat.webp',
+  audio:  ASSETS + 'bonzai_music.webp',
+  video:  ASSETS + 'bonzai_video.webp',
+  object: ASSETS + 'bonzai_3d.webp',
+};
+const LOGO = ASSETS + 'bonzai_logo-full.png';
+
+function loadImage(url) {
+  return new Promise((resolve, reject) => {
+    const img = new Image();
+    img.crossOrigin = 'anonymous';
+    img.onload = () => resolve(img);
+    img.onerror = reject;
+    img.src = url;
+  });
+}
+
+async function generate(canvasId, type, textContent) {
+  const SIZE = 512;
+  const canvas = document.getElementById(canvasId);
+  const ctx = canvas.getContext('2d');
+
+  // Draw blurred background (cover: crop to fill, preserve aspect ratio)
+  try {
+    const bgImg = await loadImage(BG[type]);
+    ctx.filter = 'blur(12px)';
+    const imgRatio = bgImg.width / bgImg.height;
+    const blurMargin = 1.1;
+    let dw, dh;
+    if (imgRatio > 1) {
+      dh = SIZE * blurMargin;
+      dw = dh * imgRatio;
+    } else {
+      dw = SIZE * blurMargin;
+      dh = dw / imgRatio;
+    }
+    const dx = (SIZE - dw) / 2;
+    const dy = (SIZE - dh) / 2;
+    ctx.drawImage(bgImg, dx, dy, dw, dh);
+    ctx.filter = 'none';
+  } catch {
+    const grad = ctx.createLinearGradient(0, 0, 0, SIZE);
+    grad.addColorStop(0, '#1a1a2e');
+    grad.addColorStop(1, '#0a0a1a');
+    ctx.fillStyle = grad;
+    ctx.fillRect(0, 0, SIZE, SIZE);
+  }
+
+  // Darken overlay
+  ctx.fillStyle = 'rgba(0, 0, 0, 0.6)';
+  ctx.fillRect(0, 0, SIZE, SIZE);
+
+  // Logo in upper half — 50% of canvas height, centered
+  try {
+    const logo = await loadImage(LOGO);
+    const logoMaxH = SIZE * 0.5;
+    const logoRatio = logo.width / logo.height;
+    let logoW = logoMaxH * logoRatio;
+    let logoH = logoMaxH;
+    if (logoW > SIZE * 0.8) {
+      logoW = SIZE * 0.8;
+      logoH = logoW / logoRatio;
+    }
+    const logoX = (SIZE - logoW) / 2;
+    const logoY = (SIZE / 2 - logoH) / 2;
+    ctx.drawImage(logo, logoX, logoY, logoW, logoH);
+  } catch (e) {
+    console.warn('Logo failed:', e);
+  }
+
+  // Text snippet (text type only)
+  if (type === 'text' && textContent) {
+    const clean = textContent.replace(/[#*_`~\[\]]/g, '').trim();
+    const snippet = clean.length > 100 ? clean.substring(0, 100) + '...' : clean;
+    if (snippet) {
+      const grad = ctx.createLinearGradient(0, SIZE * 0.45, 0, SIZE);
+      grad.addColorStop(0, 'rgba(0,0,0,0)');
+      grad.addColorStop(1, 'rgba(0,0,0,0.7)');
+      ctx.fillStyle = grad;
+      ctx.fillRect(0, SIZE * 0.45, SIZE, SIZE * 0.55);
+
+      ctx.fillStyle = 'rgba(255, 255, 255, 0.85)';
+      ctx.font = '14px system-ui, -apple-system, sans-serif';
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'top';
+
+      const maxW = SIZE - 60;
+      const lineHeight = 20;
+      const words = snippet.split(/\s+/);
+      const lines = [];
+      let line = '';
+      for (const word of words) {
+        const test = line ? `${line} ${word}` : word;
+        if (ctx.measureText(test).width > maxW && line) {
+          lines.push(line);
+          line = word;
+        } else {
+          line = test;
+        }
+      }
+      if (line) lines.push(line);
+
+      const startY = SIZE / 2 + 8;
+      for (let i = 0; i < lines.length; i++) {
+        ctx.fillText(lines[i], SIZE / 2, startY + i * lineHeight, maxW);
+      }
+    }
+  }
+}
+
+const sampleText = "The BonzAI protocol enables decentralized AI inference with on-chain provenance, allowing creators to mint their AI-generated content as collectible NFTs on Base.";
+generate('c-text', 'text', sampleText);
+generate('c-audio', 'audio', null);
+generate('c-video', 'video', null);
+generate('c-object', 'object', null);
+</script>
+</body>
+</html>

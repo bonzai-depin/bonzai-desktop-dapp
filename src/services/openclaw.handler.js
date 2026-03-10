@@ -7,7 +7,7 @@
  * Features:
  * - All 11 pipeline categories (LLM, Image, Audio, Music, Video, Vision)
  * - Provider discovery from BonzAI network registry
- * - Remote inference with x402 USDC payments
+ * - Remote inference with x402 ETH payments
  * - Self-inference detection (free when consumer === provider)
  * - Zero-knowledge mode for remote requests
  */
@@ -44,6 +44,8 @@ import {
   addAudioInference,
   addVideoInference,
 } from '../stores/inferenceStore.js';
+
+import { useSkillStore } from '../stores/skillStore.js';
 
 // ═══════════════════════════════════════════════════════════════════════════
 // CONSTANTS
@@ -287,7 +289,7 @@ const PIPELINES = {
   // Music pipeline
   music: { type: 'music', endpoint: '/audio/music', description: 'Music generation' },
 
-  // Video pipeline
+  // Video pipelines
   video_fast: { type: 'video', endpoint: '/video', description: 'Video generation' },
 
   // Vision pipeline
@@ -312,7 +314,7 @@ let networkSettings = {
   mode: 'local', // 'local' | 'remote'
   preferredProviders: {}, // pipeline → peerId
   autoSelectProvider: true,
-  maxPricePerToken: '1000000', // 1 USDC max
+  maxPricePerToken: '1000000000000000000', // 1 ETH max
   currentModel: null, // Currently loaded LLM model
 };
 let loaded = false;
@@ -866,7 +868,7 @@ async function generateVideo(channelId, prompt, options = {}) {
       params.image_url = options.image_url;
     }
 
-    const result = await executeInference(channelId, 'video_fast', params);
+    const result = await executeInference(channelId, options.pipeline || 'video_fast', params);
     return result.result;
   } catch (error) {
     console.error('[OpenClaw] Video error:', error);
@@ -1028,7 +1030,7 @@ Current Provider: ${mapping.network.provider || 'local'}`,
           text: `**No Providers Found**
 ${pipeline ? `No providers available for pipeline: ${pipeline}` : 'No providers registered on the network.'}
 
-Note: Provider discovery requires deployed contracts on Arbitrum.`,
+Note: Provider discovery requires deployed contracts on Base.`,
         };
       }
 
@@ -1077,7 +1079,7 @@ Use \`!network use <peerId>\` to select a provider.`,
 
 Available modes:
 - \`local\` - Use local BonzAI Desktop (free)
-- \`remote\` - Use remote P2P providers (paid with USDC)
+- \`remote\` - Use remote P2P providers (paid with ETH)
 
 Use \`!network mode <mode>\` to change.`,
         };
@@ -1205,19 +1207,24 @@ async function storeGenerationInHistory(channelId, type, prompt, result) {
 /**
  * Handle !generate commands for direct pipeline access
  */
-async function handleGenerateCommand(channelId, args) {
+async function handleGenerateCommand(channelId, args, webhookData = {}) {
   const pipeline = args[0]?.toLowerCase();
   const prompt = args.slice(1).join(' ');
+  const options = { imageBase64: webhookData.imageBase64 };
 
-  if (!pipeline || !prompt) {
+  if (!pipeline || (!prompt && pipeline !== 'vision')) {
     return {
       text: `**Generate Commands**
 
-\`!generate image <prompt>\` - Generate image
-\`!generate music <prompt>\` - Generate music
-\`!generate video <prompt>\` - Generate video
-\`!generate audio <text>\` - Generate speech
-\`!generate vision\` - Analyze attached image
+\`!generate image <prompt>\` - Fast image (FLUX Klein)
+\`!generate image_quality <prompt>\` - Quality image (FLUX Krea)
+\`!generate image_standard <prompt>\` - Standard image (SDXL)
+\`!generate image_advanced <prompt>\` - Advanced image (Z-Image)
+\`!generate video <prompt>\` - Video (LTX-2)
+\`!generate audio <text>\` - Fast TTS (Kokoro)
+\`!generate audio_quality <text>\` - Quality TTS (Qwen)
+\`!generate music <prompt>\` - Music (ACE-Step)
+\`!generate vision\` - Analyze attached image (Qwen3-VL)
 
 Pipelines: ${Object.keys(PIPELINES).filter(p => p !== 'llm').join(', ')}`,
     };
@@ -1280,6 +1287,19 @@ Pipelines: ${Object.keys(PIPELINES).filter(p => p !== 'llm').join(', ')}`,
         return { text: `**Video Generated**`, videoPath: result.video_path };
       }
       return { text: '**Video generation failed**' };
+    }
+
+    case 'vision': {
+      if (!prompt && !options?.imageBase64) {
+        return { text: '**Vision Analysis** requires an image attachment or base64 data.\n\nAttach an image and send `!generate vision <optional prompt>`' };
+      }
+      const imageData = options?.imageBase64 || prompt;
+      const visionPrompt = options?.imageBase64 ? (prompt || 'Describe this image in detail') : 'Describe this image in detail';
+      const result = await analyzeVision(channelId, imageData, visionPrompt);
+      if (result?.text || result?.description) {
+        return { text: `**Vision Analysis**\n\n${result.text || result.description}` };
+      }
+      return { text: '**Vision analysis failed** - ensure an image is attached' };
     }
 
     case 'audio':
@@ -1566,9 +1586,123 @@ ${getAllSkills().length > 3 ? `... and ${getAllSkills().length - 3} more` : ''}`
 }
 
 /**
+ * Handle !autonomous commands for companion autonomous mode
+ */
+async function handleAutonomousCommand(channelId, args) {
+  const subcommand = args[0]?.toLowerCase();
+  const skillStore = useSkillStore();
+
+  switch (subcommand) {
+    case 'on':
+    case 'start': {
+      // Get or create a companion session for autonomous mode
+      const companions = await getCompanions();
+      const scenarios = await getScenarios();
+      const data = await getOrCreateSession(channelId, companions, scenarios);
+
+      if (!data) {
+        return { text: 'No companion selected. Use `!companion select <name>` first.' };
+      }
+
+      const { session, companion, scenario } = data;
+      const mapping = getChannelMapping(channelId);
+
+      // Start autonomous session with companion data
+      skillStore.startAutonomousSession({
+        companion,
+        scenario,
+        settings: { ...mapping.settings },
+        history: session.history || [],
+        sceneState: session.sceneState || {},
+        backgroundImage: session.backgroundImage || null,
+        backgroundHistory: [],
+      });
+
+      skillStore.toggleAutonomousMode(true);
+
+      return {
+        text: `**Autonomous Mode: ON**
+Companion: ${companion.name}
+Scenario: ${scenario.name}
+
+${companion.name} will act independently when you're idle.
+Use \`!autonomous status\` to check or \`!autonomous off\` to stop.`,
+      };
+    }
+
+    case 'off':
+    case 'stop': {
+      skillStore.stopAutonomousMode();
+      return { text: '**Autonomous Mode: OFF**\nCompanion will wait for your messages.' };
+    }
+
+    case 'status': {
+      const config = skillStore.autonomousConfig;
+      return {
+        text: `**Autonomous Mode: ${skillStore.autonomousMode ? 'ON' : 'OFF'}**
+User Idle: ${skillStore.isIdle ? 'Yes' : 'No'}
+Messages Generated: ${skillStore.autonomousMessageCount}
+Missed Messages: ${skillStore.missedMessages || 0}
+
+**Config**
+Idle Timeout: ${config.idleTimeout || 5} min
+Message Interval: ${config.messageInterval || 15} min
+Max Messages: ${config.maxMessages || 12}`,
+      };
+    }
+
+    case 'config': {
+      const setting = args[1]?.toLowerCase();
+      const value = parseInt(args[2], 10);
+
+      if (!setting || isNaN(value)) {
+        return {
+          text: `**Autonomous Config**
+
+\`!autonomous config idle <minutes>\` - Idle timeout (1-60, default 5)
+\`!autonomous config interval <minutes>\` - Message interval (1-120, default 15)
+\`!autonomous config max <count>\` - Max messages (1-100, default 12)`,
+        };
+      }
+
+      const config = { ...skillStore.autonomousConfig };
+
+      switch (setting) {
+        case 'idle':
+          config.idleTimeout = Math.max(1, Math.min(60, value));
+          break;
+        case 'interval':
+          config.messageInterval = Math.max(1, Math.min(120, value));
+          break;
+        case 'max':
+          config.maxMessages = Math.max(1, Math.min(100, value));
+          break;
+        default:
+          return { text: `Unknown config: ${setting}. Options: idle, interval, max` };
+      }
+
+      skillStore.autonomousConfig = config;
+      return { text: `**Config Updated:** ${setting} = ${value}` };
+    }
+
+    default:
+      return {
+        text: `**Autonomous Mode Commands**
+
+\`!autonomous on\` - Enable autonomous mode
+\`!autonomous off\` - Disable autonomous mode
+\`!autonomous status\` - Show status & config
+\`!autonomous config idle <minutes>\` - Idle timeout (1-60)
+\`!autonomous config interval <minutes>\` - Message interval (1-120)
+\`!autonomous config max <count>\` - Max messages (1-100)`,
+      };
+  }
+}
+
+/**
  * Handle all commands
  */
-async function handleCommand(channelId, cmd) {
+async function handleCommand(channelId, cmd, webhookData = {}) {
   const companions = await getCompanions();
   const scenarios = await getScenarios();
   const mapping = getChannelMapping(channelId);
@@ -1579,11 +1713,15 @@ async function handleCommand(channelId, cmd) {
 
     case 'generate':
     case 'gen':
-      return handleGenerateCommand(channelId, cmd.args);
+      return handleGenerateCommand(channelId, cmd.args, webhookData);
 
     case 'skill':
     case 'skills':
       return handleSkillCommand(channelId, cmd.args);
+
+    case 'autonomous':
+    case 'auto':
+      return handleAutonomousCommand(channelId, cmd.args);
 
     case 'mode': {
       const mode = cmd.args[0]?.toLowerCase();
@@ -1815,7 +1953,7 @@ Total: ${Object.keys(MODEL_REQUIREMENTS).filter(k => MODEL_REQUIREMENTS[k].type 
 
 **Mode**
 \`!mode local\` - Use local BonzAI (free)
-\`!mode remote\` - Use remote providers (paid)
+\`!mode remote\` - Use remote providers (paid with ETH)
 \`!model <name>\` - Load specific LLM model
 
 **Roleplay**
@@ -1826,10 +1964,20 @@ Total: ${Object.keys(MODEL_REQUIREMENTS).filter(k => MODEL_REQUIREMENTS[k].type 
 \`!reset\` - Clear history
 
 **Generation**
-\`!generate image <prompt>\` - Generate image
-\`!generate music <prompt>\` - Generate music
-\`!generate video <prompt>\` - Generate video
-\`!generate audio <text>\` - Text-to-speech
+\`!generate image <prompt>\` - Fast image (FLUX Klein)
+\`!generate image_quality <prompt>\` - Quality image (FLUX Krea)
+\`!generate image_standard <prompt>\` - Standard image (SDXL)
+\`!generate image_advanced <prompt>\` - Advanced image (Z-Image)
+\`!generate video <prompt>\` - Video (LTX-2)
+\`!generate audio <text>\` - Fast TTS (Kokoro)
+\`!generate audio_quality <text>\` - Quality TTS (Qwen)
+\`!generate music <prompt>\` - Music (ACE-Step)
+\`!generate vision\` - Image analysis (Qwen3-VL)
+
+**Autonomous**
+\`!autonomous on|off\` - Toggle autonomous mode
+\`!autonomous status\` - Current status & config
+\`!autonomous config <setting> <value>\` - Configure (idle, interval, max)
 
 **Skills**
 \`!skill list [category]\` - List BonzAI skills
@@ -2023,14 +2171,14 @@ async function handleChat(channelId, message) {
 // ═══════════════════════════════════════════════════════════════════════════
 
 async function handleWebhook(data) {
-  const { channelId, message, platform } = data;
+  const { channelId, message, platform, imageBase64 } = data;
   console.log(`[OpenClaw] ${platform}/${channelId}: ${message}`);
 
   try {
     // Check for commands
     const cmd = parseCommand(message);
     if (cmd) {
-      const cmdResult = await handleCommand(channelId, cmd);
+      const cmdResult = await handleCommand(channelId, cmd, { imageBase64 });
       if (cmdResult) return cmdResult;
     }
 

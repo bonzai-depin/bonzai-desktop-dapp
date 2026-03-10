@@ -1008,14 +1008,13 @@
                         </span>
                       </button>
                       <button
-                        class="button is-medium is-info copy is-pulled-left p-0 pl-1 pr-4"
+                        class="button is-medium is-success copy is-pulled-left p-0 pl-1 pr-1"
                         @click="restoreFromHistory(inference)"
                         title="Restore all parameters from this generation"
                       >
-                        <span class="material-symbols-outlined is-size-2 mr-1">
-                          replay
+                        <span class="material-symbols-outlined is-size-2">
+                          content_copy
                         </span>
-                        Restore
                       </button>
                       <button
                         class="button is-medium is-warning copy is-pulled-left ml-5 pl-2"
@@ -1127,7 +1126,7 @@ export default {
         contentType: isMp3 ? 'audio/mpeg' : 'audio/wav',
         prompt: inference.question,
         generation: {
-          type: inference.isMusic ? 'music' : 'text-to-speech',
+          type: inference.isMusic ? 'music' : inference.hasClone ? 'voice-clone' : 'text-to-speech',
           model: inference.model || 'kokoro',
           timestamp: inference.timestamp,
           elapsedMs: inference.elapsedMs || null,
@@ -3095,7 +3094,6 @@ div.question {
   display: flex;
   flex-direction: column;
   gap: 0.5rem;
-  background: #fff;
 }
 
 .audio-player {
