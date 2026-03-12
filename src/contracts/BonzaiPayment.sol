@@ -377,6 +377,7 @@ contract BonzaiPayment is Ownable, ReentrancyGuard, Pausable, EIP712 {
      * @notice Set provider registry address
      */
     function setProviderRegistry(address _providerRegistry) external onlyOwner {
+        if (_providerRegistry == address(0)) revert ZeroAddress();
         address old = address(providerRegistry);
         providerRegistry = IBonzaiProviderRegistry(_providerRegistry);
         emit ProviderRegistryUpdated(old, _providerRegistry);

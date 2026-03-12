@@ -109,31 +109,33 @@
 
       <hr />
 
-      <!-- OpenClaw Integration -->
-      <div class="openclaw-section mt-5 mb-5">
+      <!-- Agentic Orchestration -->
+      <div class="orchestration-section mt-5 mb-5">
         <h2 class="section-title fira-sans-condensed-black-italic">
-          OpenClaw Extension
+          Agentic Orchestration
         </h2>
 
-        <div class="description-card openclaw">
+        <div class="description-card orchestration">
           <span class="material-symbols-outlined">info</span>
           <div>
             <strong>Multi-Channel Smart Agent</strong>
             <p>
-              OpenClaw provides an OpenAI-compatible API on port 3002 for orchestrating BonzAI media generation and BonzAI companions from your favourite messaging applications
-              (iMessage, WhatsApp, Telegram, Discord).
+              Connect BonzAI to agentic orchestration platforms via an OpenAI-compatible API on port 3002.
+              Orchestrate media generation and companion interactions from your favourite messaging applications
+              (iMessage, WhatsApp, Telegram, Discord) through OpenClaw or Hermes Agent.
             </p>
           </div>
         </div>
 
-        <div class="openclaw-controls mt-4">
-          <div v-if="!openclawInstalled" class="openclaw-status not-installed">
+        <!-- OpenClaw Toggle -->
+        <div class="orchestration-controls mt-4">
+          <div class="orchestration-label">OpenClaw</div>
+          <div v-if="!openclawInstalled" class="orchestration-status not-installed">
             <span class="material-symbols-outlined mr-2">info</span>
-            <span>OpenClaw is not installed. Install it to enable multi-channel smart agent support.</span>
+            <span>Not installed</span>
           </div>
-
-          <div v-else class="openclaw-toggle-row">
-            <div class="openclaw-status-info">
+          <div v-else class="orchestration-toggle-row">
+            <div class="orchestration-status-info">
               <span
                 class="material-symbols-outlined mr-2"
                 :class="openclawEnabled ? 'icon-success' : 'icon-muted'"
@@ -141,7 +143,7 @@
                 {{ openclawEnabled ? "check_circle" : "cancel" }}
               </span>
               <span>
-                {{ openclawEnabled ? "OpenClaw is running on port 3002" : "OpenClaw is disabled" }}
+                {{ openclawEnabled ? "Enabled" : "Disabled" }}
               </span>
             </div>
             <button
@@ -157,6 +159,42 @@
                 progress_activity
               </span>
               {{ openclawEnabled ? "Disable" : "Enable" }}
+            </button>
+          </div>
+        </div>
+
+        <!-- Hermes Agent Toggle -->
+        <div class="orchestration-controls mt-3">
+          <div class="orchestration-label">Hermes</div>
+          <div v-if="!hermesInstalled" class="orchestration-status not-installed">
+            <span class="material-symbols-outlined mr-2">info</span>
+            <span>Not installed</span>
+          </div>
+          <div v-else class="orchestration-toggle-row">
+            <div class="orchestration-status-info">
+              <span
+                class="material-symbols-outlined mr-2"
+                :class="hermesEnabled ? 'icon-success' : 'icon-muted'"
+              >
+                {{ hermesEnabled ? "check_circle" : "cancel" }}
+              </span>
+              <span>
+                {{ hermesEnabled ? "Enabled" : "Disabled" }}
+              </span>
+            </div>
+            <button
+              class="button is-small"
+              :class="hermesEnabled ? 'is-danger' : 'is-success'"
+              :disabled="hermesToggling"
+              @click="toggleHermes"
+            >
+              <span
+                v-if="hermesToggling"
+                class="material-symbols-outlined mr-1 spinning"
+              >
+                progress_activity
+              </span>
+              {{ hermesEnabled ? "Disable" : "Enable" }}
             </button>
           </div>
         </div>
@@ -220,15 +258,19 @@
               <div class="provider-pricing">
                 <div class="price-row" v-if="provider.pricing?.llm">
                   <span>Chat:</span>
-                  <span>${{ provider.pricing.llm }}/1K tokens</span>
+                  <span>{{ provider.pricing.llm }} {{ provider.currency || 'ETH' }}/1K tokens</span>
                 </div>
                 <div class="price-row" v-if="provider.pricing?.image">
                   <span>Image:</span>
-                  <span>${{ provider.pricing.image }}/image</span>
+                  <span>{{ provider.pricing.image }} {{ provider.currency || 'ETH' }}/image</span>
+                </div>
+                <div class="price-row" v-if="provider.pricing?.audio">
+                  <span>Audio:</span>
+                  <span>{{ provider.pricing.audio }} {{ provider.currency || 'ETH' }}/sec</span>
                 </div>
                 <div class="price-row" v-if="provider.pricing?.video">
                   <span>Video:</span>
-                  <span>${{ provider.pricing.video }}/sec</span>
+                  <span>{{ provider.pricing.video }} {{ provider.currency || 'ETH' }}/sec</span>
                 </div>
               </div>
               <div class="provider-pipelines" v-if="provider.pipelines?.length">
@@ -382,15 +424,44 @@
         v-if="networkMode === 'provider' && p2pStatus.started"
       >
         <h2 class="section-title fira-sans-condensed-black-italic">
-          Pipeline Pricing (USDC)
+          Pipeline Pricing
         </h2>
+
+        <div class="pricing-currency-selector mb-4">
+          <label class="setting-label">
+            <span class="material-symbols-outlined">payments</span>
+            Payment Currency
+          </label>
+          <div class="currency-toggle">
+            <button
+              class="button is-small"
+              :class="pricingCurrency === 'ETH' ? 'is-success' : ''"
+              @click="pricingCurrency = 'ETH'"
+            >
+              ETH
+            </button>
+            <button
+              class="button is-small"
+              :class="pricingCurrency === 'USDC' ? 'is-success' : ''"
+              @click="pricingCurrency = 'USDC'"
+            >
+              USDC
+            </button>
+          </div>
+          <span class="setting-hint">
+            {{ pricingCurrency === 'ETH'
+              ? 'Accept native ETH — no token approval needed'
+              : 'Accept USDC stablecoin — stable pricing'
+            }}
+          </span>
+        </div>
 
         <div class="pricing-grid">
           <!-- LLM -->
           <div class="pricing-item">
             <div class="pricing-header">
               <span class="material-symbols-outlined">chat</span>
-              <span class="pricing-name">LLM</span>
+              <span class="pricing-name">Chat</span>
             </div>
             <div class="pricing-input">
               <input
@@ -401,7 +472,7 @@
                 min="0"
                 placeholder="0.0001"
               />
-              <span class="pricing-unit">/ 1K tokens</span>
+              <span class="pricing-unit">{{ pricingCurrency }} / 1K tokens</span>
             </div>
           </div>
 
@@ -420,7 +491,7 @@
                 min="0"
                 placeholder="0.01"
               />
-              <span class="pricing-unit">/ image</span>
+              <span class="pricing-unit">{{ pricingCurrency }} / image</span>
             </div>
           </div>
 
@@ -439,7 +510,7 @@
                 min="0"
                 placeholder="0.001"
               />
-              <span class="pricing-unit">/ second</span>
+              <span class="pricing-unit">{{ pricingCurrency }} / second</span>
             </div>
           </div>
 
@@ -458,7 +529,7 @@
                 min="0"
                 placeholder="0.05"
               />
-              <span class="pricing-unit">/ second</span>
+              <span class="pricing-unit">{{ pricingCurrency }} / second</span>
             </div>
           </div>
 
@@ -477,7 +548,7 @@
                 min="0"
                 placeholder="0.10"
               />
-              <span class="pricing-unit">/ second</span>
+              <span class="pricing-unit">{{ pricingCurrency }} / second</span>
             </div>
           </div>
 
@@ -496,7 +567,7 @@
                 min="0"
                 placeholder="0.005"
               />
-              <span class="pricing-unit">/ image</span>
+              <span class="pricing-unit">{{ pricingCurrency }} / image</span>
             </div>
           </div>
 
@@ -515,7 +586,7 @@
                 min="0"
                 placeholder="0.02"
               />
-              <span class="pricing-unit">/ message</span>
+              <span class="pricing-unit">{{ pricingCurrency }} / message</span>
             </div>
             <span class="pricing-note">
               Includes LLM + optional audio/image
@@ -637,7 +708,7 @@
                 success: selfTestResults.openclaw?.ok,
                 error: !selfTestResults.openclaw?.ok,
                 warning:
-                  selfTestResults.openclaw?.error === 'OpenClaw not enabled',
+                  selfTestResults.openclaw?.error === 'No orchestrator enabled',
               }"
             >
               <span
@@ -645,7 +716,7 @@
                 :class="
                   selfTestResults.openclaw?.ok
                     ? 'icon-success'
-                    : selfTestResults.openclaw?.error === 'OpenClaw not enabled'
+                    : selfTestResults.openclaw?.error === 'No orchestrator enabled'
                       ? 'icon-warning'
                       : 'icon-error'
                 "
@@ -653,13 +724,13 @@
                 {{
                   selfTestResults.openclaw?.ok
                     ? "check_circle"
-                    : selfTestResults.openclaw?.error === "OpenClaw not enabled"
+                    : selfTestResults.openclaw?.error === "No orchestrator enabled"
                       ? "info"
                       : "error"
                 }}
               </span>
               <div class="test-result-content">
-                <strong>OpenClaw Server (Port 3002)</strong>
+                <strong>Orchestration Server (Port 3002)</strong>
                 <span class="test-result-detail">
                   {{
                     selfTestResults.openclaw?.ok
@@ -837,7 +908,43 @@ const toggleOpenClaw = async () => {
   }
 };
 
-// Per-pipeline pricing (USDC)
+// Hermes Agent integration state
+const hermesInstalled = ref(false);
+const hermesEnabled = ref(false);
+const hermesToggling = ref(false);
+
+const checkHermesStatus = async () => {
+  try {
+    hermesInstalled.value = await window.electronAPI.hermesIsInstalled();
+    if (hermesInstalled.value) {
+      hermesEnabled.value = await window.electronAPI.hermesGetEnabled();
+    }
+  } catch (e) {
+    console.error("[NetworkSettings] Failed to check Hermes status:", e);
+  }
+};
+
+const toggleHermes = async () => {
+  hermesToggling.value = true;
+  try {
+    const newState = !hermesEnabled.value;
+    const result = await window.electronAPI.hermesSetEnabled(newState);
+    if (!result.error) {
+      hermesEnabled.value = newState;
+    } else {
+      console.error("[NetworkSettings] Failed to toggle Hermes:", result.error);
+    }
+  } catch (e) {
+    console.error("[NetworkSettings] Failed to toggle Hermes:", e);
+  } finally {
+    hermesToggling.value = false;
+  }
+};
+
+// Payment currency (ETH or USDC)
+const pricingCurrency = ref("ETH");
+
+// Per-pipeline pricing
 const pipelinePricing = ref({
   llm: 0.0001, // per 1K tokens
   image: 0.01, // per image
@@ -915,11 +1022,12 @@ const startP2P = async () => {
       console.log("[NetworkSettings] P2P node started:", result.peerId);
       await refreshStatus();
 
-      // Save pipeline pricing
+      // Save pipeline pricing and currency
       await window.electronAPI.store.set(
         "p2p.pipelinePricing",
         JSON.stringify(pipelinePricing.value),
       );
+      await window.electronAPI.store.set("p2p.pricingCurrency", pricingCurrency.value);
       await window.electronAPI.store.set("p2p.enableRelay", enableRelay.value);
       await window.electronAPI.store.set("p2p.relayFee", relayFee.value);
     } else {
@@ -1033,20 +1141,21 @@ const runSelfTest = async () => {
       : err.message;
   }
 
-  // Test 2: OpenClaw Server (port 3002) - check if enabled first
+  // Test 2: Orchestration Server (port 3002) - check if any orchestrator is enabled
   try {
-    const openclawEnabled = await window.electronAPI.openclawGetEnabled();
-    if (openclawEnabled) {
-      const openclawResponse = await fetch("http://127.0.0.1:3002/health", {
+    const ocEnabled = await window.electronAPI.openclawGetEnabled();
+    const hermEnabled = await window.electronAPI.hermesGetEnabled();
+    if (ocEnabled || hermEnabled) {
+      const orchResponse = await fetch("http://127.0.0.1:3002/health", {
         method: "GET",
       });
-      if (openclawResponse.ok) {
+      if (orchResponse.ok) {
         results.openclaw.ok = true;
       } else {
-        results.openclaw.error = `HTTP ${openclawResponse.status}`;
+        results.openclaw.error = `HTTP ${orchResponse.status}`;
       }
     } else {
-      results.openclaw.error = "OpenClaw not enabled";
+      results.openclaw.error = "No orchestrator enabled";
     }
   } catch (err) {
     results.openclaw.error = err.message?.includes("fetch")
@@ -1070,7 +1179,7 @@ const runSelfTest = async () => {
   const issues = [];
   if (!results.flask.ok) issues.push("Flask server");
   if (!results.p2p.ok) issues.push("P2P node");
-  // OpenClaw is optional for provider mode
+  // Orchestration (OpenClaw/Hermes) is optional for provider mode
 
   if (issues.length === 0) {
     results.ready = true;
@@ -1099,12 +1208,14 @@ const loadSettings = async () => {
       false,
     );
     const savedRelayFee = await window.electronAPI.store.get("p2p.relayFee", 5);
+    const savedCurrency = await window.electronAPI.store.get("p2p.pricingCurrency", "ETH");
     const savedProvider = await window.electronAPI.store.get(
       "p2p.selectedProvider",
       null,
     );
 
     networkMode.value = savedMode;
+    pricingCurrency.value = savedCurrency;
 
     // Load pipeline pricing (merge with defaults to handle new pipelines)
     if (savedPricing) {
@@ -1157,6 +1268,7 @@ onMounted(async () => {
   await loadSettings();
   await refreshStatus();
   await checkOpenClawStatus();
+  await checkHermesStatus();
 
   // Refresh providers if in consumer mode
   if (networkMode.value === "consumer") {
@@ -1355,43 +1467,70 @@ hr {
   color: var(--bonzai-green);
 }
 
-/* OpenClaw Section */
-.description-card.openclaw {
+/* Currency Selector */
+.pricing-currency-selector {
+  padding: 12px 16px;
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px dashed var(--bonzai-border);
+}
+
+.currency-toggle {
+  display: flex;
+  gap: 8px;
+  margin-top: 8px;
+  margin-bottom: 4px;
+}
+
+.currency-toggle .button {
+  box-shadow: none;
+  min-width: 60px;
+}
+
+/* Agentic Orchestration Section */
+.description-card.orchestration {
   border-color: rgba(168, 85, 247, 0.3);
   background: rgba(168, 85, 247, 0.08);
 }
 
-.description-card.openclaw .material-symbols-outlined {
+.description-card.orchestration .material-symbols-outlined {
   color: #a855f7;
 }
 
-.openclaw-controls {
+.orchestration-controls {
   padding: 12px 16px;
-  border: 1px solid var(--bonzai-border);
   border-radius: 10px;
-    background: rgba(255, 255, 255, 0.04);
+  background: rgba(255, 255, 255, 0.04);
   border: 1px dashed var(--bonzai-border);
 }
 
-.openclaw-controls .button {
+.orchestration-controls .button {
   box-shadow: none;
 }
 
-.openclaw-toggle-row {
+.orchestration-label {
+  font-weight: 700;
+  font-size: 0.85rem;
+  color: rgba(255, 255, 255, 0.6);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  margin-bottom: 8px;
+}
+
+.orchestration-toggle-row {
   display: flex;
   align-items: center;
   justify-content: space-between;
 }
 
-.openclaw-status-info {
+.orchestration-status-info {
   display: flex;
   align-items: center;
   color: rgba(255, 255, 255, 1);
-  /* font-size: 0.9rem; */
   font-weight: 700;
 }
 
-.openclaw-status.not-installed {
+.orchestration-status.not-installed {
   display: flex;
   align-items: center;
   color: rgba(255, 255, 255, 0.5);

@@ -674,6 +674,118 @@ ipcMain.handle("confirm-transaction", async (_event, details) => {
   return { approved: result.response === 0, autoApproved: false };
 });
 
+// ─────────────────────────────────────────────────────────────────────────────
+// Privy Server Wallet IPC Handlers
+// All Privy API calls go through main process to keep App Secret secure.
+// The PRIVY_APP_SECRET env var is never exposed to the renderer.
+// ─────────────────────────────────────────────────────────────────────────────
+
+const PRIVY_API_BASE = "https://api.privy.io/v1";
+
+function getPrivyHeaders() {
+  const appId = process.env.VITE_PRIVY_APP_ID;
+  const appSecret = process.env.PRIVY_APP_SECRET;
+  if (!appId || !appSecret) {
+    throw new Error("Privy credentials not configured (VITE_PRIVY_APP_ID + PRIVY_APP_SECRET)");
+  }
+  const basicAuth = Buffer.from(`${appId}:${appSecret}`).toString("base64");
+  return {
+    "Content-Type": "application/json",
+    "Authorization": `Basic ${basicAuth}`,
+    "privy-app-id": appId,
+  };
+}
+
+async function privyFetch(endpoint, options = {}) {
+  const url = `${PRIVY_API_BASE}${endpoint}`;
+  const headers = getPrivyHeaders();
+  const response = await fetch(url, { ...options, headers: { ...headers, ...options.headers } });
+  const data = await response.json();
+  if (!response.ok) {
+    const msg = data?.message || data?.error || `Privy API error ${response.status}`;
+    throw new Error(msg);
+  }
+  return data;
+}
+
+ipcMain.handle("privy:create-server-wallet", async (_event, { companionId }) => {
+  try {
+    const data = await privyFetch("/wallets", {
+      method: "POST",
+      body: JSON.stringify({
+        chain_type: "ethereum",
+        // Tag with companion ID for traceability
+        idempotency_key: `bonzai-agent-${companionId}-${Date.now()}`,
+      }),
+    });
+    return { walletId: data.id, address: data.address };
+  } catch (err) {
+    console.error("[Privy] Create wallet failed:", err.message);
+    return { error: err.message };
+  }
+});
+
+ipcMain.handle("privy:send-transaction", async (_event, { walletId, tx }) => {
+  try {
+    const data = await privyFetch(`/wallets/${walletId}/rpc`, {
+      method: "POST",
+      body: JSON.stringify({
+        method: tx.method || "eth_sendTransaction",
+        caip2: tx.caip2 || "eip155:8453",
+        params: tx.params,
+      }),
+    });
+    return { hash: data.data?.hash || data.hash || data.result };
+  } catch (err) {
+    console.error("[Privy] Send transaction failed:", err.message);
+    return { error: err.message };
+  }
+});
+
+ipcMain.handle("privy:sign-typed-data", async (_event, { walletId, typedData }) => {
+  try {
+    const data = await privyFetch(`/wallets/${walletId}/rpc`, {
+      method: "POST",
+      body: JSON.stringify({
+        method: typedData.method || "eth_signTypedData_v4",
+        caip2: typedData.caip2 || "eip155:8453",
+        params: {
+          typed_data: {
+            domain: typedData.params?.domain || typedData.domain,
+            types: typedData.params?.types || typedData.types,
+            message: typedData.params?.message || typedData.message,
+          },
+        },
+      }),
+    });
+    return { signature: data.data?.signature || data.signature || data.result };
+  } catch (err) {
+    console.error("[Privy] Sign typed data failed:", err.message);
+    return { error: err.message };
+  }
+});
+
+ipcMain.handle("privy:get-wallet", async (_event, walletId) => {
+  try {
+    return await privyFetch(`/wallets/${walletId}`);
+  } catch (err) {
+    console.error("[Privy] Get wallet failed:", err.message);
+    return { error: err.message };
+  }
+});
+
+ipcMain.handle("privy:set-policy", async (_event, { walletId, policy }) => {
+  try {
+    return await privyFetch(`/wallets/${walletId}/policy`, {
+      method: "PUT",
+      body: JSON.stringify(policy),
+    });
+  } catch (err) {
+    console.error("[Privy] Set policy failed:", err.message);
+    return { error: err.message };
+  }
+});
+
 ipcMain.handle("store-get", (_event, key, def) => store.get(key, def));
 ipcMain.handle("store-set", (_event, key, value) => {
   store.set(key, value);
@@ -748,10 +860,9 @@ ipcMain.handle("p2p-start", async (_event, options = {}) => {
 
         // Return 402 Payment Required with x402 payment request
         const paymentRequest = createPaymentRequest({
-          providerId,
+          provider: providerId,
           amount: requiredAmount,
-          pipeline: request.pipeline,
-          chainId: 42161,
+          service: request.pipeline,
         });
 
         return {
@@ -1797,6 +1908,93 @@ ipcMain.handle("openclaw-is-installed", async () => {
   // Check if OpenClaw is installed by looking for the config directory
   const openclawDir = path.join(os.homedir(), ".openclaw");
   return fs.existsSync(openclawDir);
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Hermes Agent Integration Config
+// ─────────────────────────────────────────────────────────────────────────────
+const HERMES_CONFIG_PATH = path.join(os.homedir(), ".hermes", "config.yaml");
+const HERMES_SKILLS_DIR = path.join(os.homedir(), ".hermes", "skills");
+const HERMES_ENV_PATH = path.join(os.homedir(), ".hermes", ".env");
+const HERMES_BONZAI_SKILL_DIR = path.join(HERMES_SKILLS_DIR, "ai", "bonzai");
+
+ipcMain.handle("hermes-is-installed", async () => {
+  const hermesDir = path.join(os.homedir(), ".hermes");
+  return fs.existsSync(hermesDir);
+});
+
+ipcMain.handle("hermes-get-enabled", async () => {
+  try {
+    // Check if bonzai skill is installed in Hermes skills directory
+    const skillPath = path.join(HERMES_BONZAI_SKILL_DIR, "SKILL.md");
+    return fs.existsSync(skillPath);
+  } catch {
+    return false;
+  }
+});
+
+ipcMain.handle("hermes-set-enabled", async (_event, enabled) => {
+  try {
+    if (enabled) {
+      // 1. Install BonzAI skill into Hermes skills directory
+      if (!fs.existsSync(HERMES_BONZAI_SKILL_DIR)) {
+        fs.mkdirSync(HERMES_BONZAI_SKILL_DIR, { recursive: true });
+      }
+
+      // Copy SKILL.md from our hermes/ directory
+      const sourceSkill = path.join(__dirname, "..", "hermes", "SKILL.md");
+      const destSkill = path.join(HERMES_BONZAI_SKILL_DIR, "SKILL.md");
+      if (fs.existsSync(sourceSkill)) {
+        fs.copyFileSync(sourceSkill, destSkill);
+      }
+
+      // 2. Add BonzAI as custom OpenAI-compatible endpoint in .env
+      let envContent = "";
+      if (fs.existsSync(HERMES_ENV_PATH)) {
+        envContent = fs.readFileSync(HERMES_ENV_PATH, "utf8");
+      }
+
+      // Add/update BONZAI endpoint variables if not present
+      if (!envContent.includes("BONZAI_BASE_URL")) {
+        const bonzaiEnv = [
+          "",
+          "# BonzAI Decentralized AI - Local inference endpoint",
+          `BONZAI_BASE_URL=http://127.0.0.1:${OPENCLAW_API_PORT}/v1`,
+          "BONZAI_API_KEY=bonzai-local",
+        ].join("\n");
+        envContent += bonzaiEnv + "\n";
+        fs.writeFileSync(HERMES_ENV_PATH, envContent);
+      }
+
+      console.log("[Hermes] Integration enabled — skill installed and env configured");
+    } else {
+      // Remove bonzai skill directory
+      if (fs.existsSync(HERMES_BONZAI_SKILL_DIR)) {
+        fs.rmSync(HERMES_BONZAI_SKILL_DIR, { recursive: true });
+      }
+
+      // Remove BonzAI env vars from .env
+      if (fs.existsSync(HERMES_ENV_PATH)) {
+        let envContent = fs.readFileSync(HERMES_ENV_PATH, "utf8");
+        envContent = envContent
+          .split("\n")
+          .filter(line =>
+            !line.includes("BONZAI_BASE_URL") &&
+            !line.includes("BONZAI_API_KEY") &&
+            !line.includes("# BonzAI Decentralized AI")
+          )
+          .join("\n");
+        fs.writeFileSync(HERMES_ENV_PATH, envContent);
+      }
+
+      console.log("[Hermes] Integration disabled — skill removed");
+    }
+
+    return { success: true };
+  } catch (error) {
+    console.error("[Hermes] Failed to update config:", error);
+    return { success: false, error: error.message };
+  }
 });
 
 // Open URL in default browser

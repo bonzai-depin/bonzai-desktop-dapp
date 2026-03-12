@@ -47,6 +47,18 @@ import {
 
 import { useSkillStore } from '../stores/skillStore.js';
 
+import { companionService } from './companion.service.js';
+
+const {
+  mintCompanionBase,
+  buildBareRegistration,
+  finalizeCompanion,
+  isBareCompanion,
+} = companionService;
+
+import { walletProviderService } from './walletProvider.service.js';
+import { x402Service } from './x402.service.js';
+
 // ═══════════════════════════════════════════════════════════════════════════
 // CONSTANTS
 // ═══════════════════════════════════════════════════════════════════════════
@@ -718,12 +730,61 @@ async function executeRemoteInference(peerId, pipeline, params) {
     const response = await window.electronAPI.p2pInference(peerId, request);
 
     if (!response.ok) {
-      if (response.error === 'payment_required') {
-        // Handle payment flow
+      if (response.error === 'payment_required' && response.payment) {
         console.log('[OpenClaw] Payment required:', response.payment);
-        // For now, fall back to local
-        console.warn('[OpenClaw] Payment not yet implemented, falling back to local');
-        return executeLocalInference(pipeline, params);
+
+        try {
+          // Get agent wallet signer for payment on Base
+          const agentWallet = await walletProviderService.getAgentWallet();
+          if (!agentWallet?.signer) {
+            console.warn('[OpenClaw] No agent wallet available for payment, falling back to local');
+            return executeLocalInference(pipeline, params);
+          }
+
+          // Send ETH payment directly to provider
+          const paymentResult = await x402Service.sendPayment(
+            agentWallet.signer,
+            response.payment.provider,
+            response.payment.amount
+          );
+
+          if (!paymentResult.success) {
+            console.warn('[OpenClaw] Payment failed, falling back to local');
+            return executeLocalInference(pipeline, params);
+          }
+
+          console.log(`[OpenClaw] Payment sent: ${paymentResult.txHash}`);
+
+          // Retry the request with payment proof
+          const retryRequest = {
+            pipeline,
+            params: requestParams,
+            payment: {
+              ...response.payment,
+              txHash: paymentResult.txHash,
+              consumer: paymentResult.from,
+            },
+          };
+
+          const retryResponse = await window.electronAPI.p2pInference(peerId, retryRequest);
+
+          if (retryResponse.ok) {
+            return {
+              ok: true,
+              result: retryResponse.result,
+              local: false,
+              provider: peerId,
+              paid: true,
+              txHash: paymentResult.txHash,
+            };
+          }
+
+          console.warn('[OpenClaw] Retry after payment failed:', retryResponse.error);
+          return executeLocalInference(pipeline, params);
+        } catch (payErr) {
+          console.error('[OpenClaw] Payment flow error:', payErr);
+          return executeLocalInference(pipeline, params);
+        }
       }
       throw new Error(response.error || 'Remote inference failed');
     }
@@ -1700,6 +1761,379 @@ Max Messages: ${config.maxMessages || 12}`,
 }
 
 /**
+ * Handle !mint commands for companion NFT minting
+ */
+async function handleMintCommand(channelId, args, webhookData = {}) {
+  const subcommand = args[0]?.toLowerCase();
+
+  switch (subcommand) {
+    case 'bare': {
+      // !mint bare [gender]
+      // Parse gender: female, male, neutral (default)
+      const genderArg = args[1]?.toLowerCase();
+      const gender = genderArg === 'female' ? 1 : genderArg === 'male' ? 2 : 0;
+      const genderLabel = gender === 1 ? 'female' : gender === 2 ? 'male' : 'neutral';
+
+      try {
+        // Ensure user has a Privy wallet (bare mint doesn't require BonzAI Desktop)
+        const userId = webhookData.userId;
+        if (!userId) {
+          return { text: 'Sign in with Privy to mint a companion. Use email or social login.' };
+        }
+
+        // Build bare registration metadata
+        const registration = buildBareRegistration({ gender });
+
+        // Upload registration to Arweave via IPC
+        let metadataURI;
+        try {
+          const { irysService } = await import('./irys.service.js');
+          const tx = await irysService.uploadJSON(registration, [
+            { name: 'Content-Type', value: 'application/json' },
+            { name: 'bonzai-type', value: 'companion-registration' },
+            { name: 'bonzai-status', value: 'pending_setup' },
+          ]);
+          metadataURI = `ar://${tx.id}`;
+        } catch (uploadErr) {
+          console.error('[OpenClaw] Arweave upload failed:', uploadErr);
+          return { text: `Failed to upload companion metadata: ${uploadErr.message}` };
+        }
+
+        // Create agent wallet (Privy server wallet or local)
+        const companionId = `companion-${Date.now()}`;
+        let agentWallet;
+        try {
+          agentWallet = await walletProviderService.createAgentWallet(companionId);
+        } catch (walletErr) {
+          console.error('[OpenClaw] Agent wallet creation failed:', walletErr);
+          return { text: `Failed to create agent wallet: ${walletErr.message}` };
+        }
+
+        // Mint on Base via companion service
+        const result = await mintCompanionBase({
+          companionId,
+          metadataURI,
+          personalityHash: '0x' + '0'.repeat(64), // bytes32(0) — set during finalization
+          spendingHabits: {},
+          gender,
+          agentWallet: agentWallet.address,
+        });
+
+        return {
+          text: `Companion **#${result.tokenId}** minted on Base! Gender: ${genderLabel}. Visit [bonzai.sh](https://bonzai.sh) to personalize your companion.`,
+          companion: {
+            tokenId: result.tokenId,
+            network: 'base',
+            standard: 'ERC-8004',
+            status: 'pending_setup',
+            agentWallet: agentWallet.address,
+            txHash: result.txHash,
+          },
+        };
+      } catch (err) {
+        console.error('[OpenClaw] Bare mint failed:', err);
+        return { text: `Mint failed: ${err.message}` };
+      }
+    }
+
+    case 'companion': {
+      // !mint companion <name>
+      const name = args.slice(1).join(' ');
+      if (!name) {
+        return { text: 'Usage: `!mint companion <name>` — e.g. `!mint companion Sakura Tanaka`' };
+      }
+
+      try {
+        // Check if BonzAI Desktop is running (required for inference)
+        let healthOk = false;
+        try {
+          const resp = await fetch('http://localhost:3002/health');
+          const data = await resp.json();
+          healthOk = data.ok === true;
+        } catch { /* not running */ }
+
+        if (!healthOk) {
+          return {
+            text: `Complete minting requires BonzAI Desktop for AI generation. Start the app and try again, or use \`!mint bare\` for a placeholder mint.`,
+          };
+        }
+
+        // Split name into first/family
+        const nameParts = name.split(/\s+/);
+        const firstName = nameParts[0];
+        const familyName = nameParts.slice(1).join(' ') || '';
+
+        // Generate companion personality via LLM
+        const { generateSpendingProfile } = await import('../skills/flagship.js');
+
+        // Use the loaded LLM to generate personality
+        const personalityPrompt = `Create a unique AI companion character with this name: ${firstName} ${familyName || ''}. Return a JSON object with these fields: shortBio (1 sentence), personality (2-3 sentences describing personality), appearance (physical description for image generation), background (brief backstory), voiceStyle (voice description), firstMessage (greeting from the character), gender (0=neutral, 1=female, 2=male). Only return valid JSON, no markdown.`;
+
+        let personality = {};
+        try {
+          const llmResp = await window.electronAPI.sendPrompt({
+            messages: [
+              { role: 'system', content: 'You are a character designer. Return only valid JSON.' },
+              { role: 'user', content: personalityPrompt },
+            ],
+            max_tokens: 800,
+            temperature: 0.9,
+          });
+
+          const text = llmResp?.response || llmResp?.text || '';
+          // Extract JSON from response
+          const jsonMatch = text.match(/\{[\s\S]*\}/);
+          if (jsonMatch) {
+            personality = JSON.parse(jsonMatch[0]);
+          }
+        } catch (llmErr) {
+          console.warn('[OpenClaw] LLM personality generation failed, using defaults:', llmErr);
+          personality = {
+            shortBio: `A unique BonzAI companion named ${firstName}.`,
+            personality: 'Friendly, curious, and creative.',
+            appearance: 'Stylish and approachable.',
+            background: `${firstName} is an AI companion eager to explore the world.`,
+            voiceStyle: 'warm and expressive',
+            firstMessage: `Hello! I'm ${firstName}. Nice to meet you!`,
+            gender: 0,
+          };
+        }
+
+        const spendingHabits = generateSpendingProfile(personality);
+
+        // Generate portrait image
+        const { generateCompanionPicture } = await import('../skills/flagship.js');
+        const imageResult = await generateCompanionPicture({ ...personality, firstName, familyName });
+
+        // Upload image to Arweave
+        let imageUri = '';
+        if (imageResult?.base64 || imageResult?.image) {
+          const { irysService } = await import('./irys.service.js');
+          const imageTx = await irysService.uploadBase64({
+            base64: imageResult.base64 || imageResult.image,
+            contentType: 'image/png',
+            tags: [{ name: 'bonzai-type', value: 'companion-portrait' }],
+          });
+          imageUri = `ar://${imageTx.id}`;
+        }
+
+        // Build full registration metadata
+        const registration = {
+          type: 'https://eips.ethereum.org/EIPS/eip-8004#registration-v1',
+          name: `${firstName} ${familyName}`.trim(),
+          description: personality.shortBio || `A BonzAI companion named ${firstName}.`,
+          image: imageUri,
+          external_url: 'https://bonzai.sh',
+          version: '1.0.0',
+          author: 'BonzAI',
+          license: 'MIT',
+          active: true,
+          bonzai: {
+            status: 'active',
+            firstName,
+            familyName,
+            shortBio: personality.shortBio || '',
+            personality: personality.personality || '',
+            appearance: personality.appearance || '',
+            background: personality.background || '',
+            voiceStyle: personality.voiceStyle || '',
+            firstMessage: personality.firstMessage || '',
+            spendingHabits,
+          },
+        };
+
+        // Upload registration to Arweave
+        const { irysService } = await import('./irys.service.js');
+        const metaTx = await irysService.uploadJSON(registration, [
+          { name: 'Content-Type', value: 'application/json' },
+          { name: 'bonzai-type', value: 'companion-registration' },
+        ]);
+        const metadataURI = `ar://${metaTx.id}`;
+
+        // Mint on Base
+        let personalityHash = '0x' + '0'.repeat(64);
+        if (personality.personality) {
+          const { ethers } = await import('ethers');
+          personalityHash = ethers.keccak256(ethers.toUtf8Bytes(personality.personality));
+        }
+
+        const result = await mintCompanionBase({
+          companionId: `companion-${Date.now()}`,
+          metadataURI,
+          personalityHash,
+          spendingHabits,
+          gender: personality.gender || 0,
+        });
+
+        return {
+          text: `Companion **'${firstName} ${familyName}'** (#${result.tokenId}) minted on Base with full personality, portrait, and voice!`,
+          companion: {
+            tokenId: result.tokenId,
+            name: `${firstName} ${familyName}`.trim(),
+            network: 'base',
+            standard: 'ERC-8004',
+            status: 'active',
+            agentWallet: result.agentWallet,
+            agentURI: metadataURI,
+            txHash: result.txHash,
+          },
+          imagePath: imageResult?.path || null,
+        };
+      } catch (err) {
+        console.error('[OpenClaw] Complete mint failed:', err);
+        return { text: `Complete mint failed: ${err.message}` };
+      }
+    }
+
+    case 'status': {
+      // !mint status — show owned companions
+      try {
+        const { ethers } = await import('ethers');
+        const { web3Service } = await import('./web3.service.js');
+        const { CONFIG } = await import('../config/web3.config.js');
+
+        const config = CONFIG.companionNFT_BASE;
+        if (!config?.contractAddress) {
+          return { text: 'BonzaiCompanions contract not configured.' };
+        }
+
+        const provider = await web3Service.getProvider();
+        const signer = await provider.getSigner();
+        const userAddress = await signer.getAddress();
+
+        const contract = new ethers.Contract(config.contractAddress, [
+          'function balanceOf(address owner) view returns (uint256)',
+          'function tokenOfOwnerByIndex(address owner, uint256 index) view returns (uint256)',
+          'function agentURI(uint256 tokenId) view returns (string)',
+        ], provider);
+
+        const balance = await contract.balanceOf(userAddress);
+        if (balance === 0n) {
+          return { text: `You don't own any BonzAI Companions. Use \`!mint bare\` or \`!mint companion <name>\` to mint one.` };
+        }
+
+        const companions = [];
+        const count = Number(balance);
+        for (let i = 0; i < Math.min(count, 10); i++) {
+          try {
+            const tokenId = await contract.tokenOfOwnerByIndex(userAddress, i);
+            const uri = await contract.agentURI(tokenId);
+
+            // Try to fetch metadata to check status
+            let status = 'unknown';
+            try {
+              const metaUrl = uri.startsWith('ar://') ? `https://arweave.net/${uri.slice(5)}` : uri;
+              const resp = await fetch(metaUrl);
+              const meta = await resp.json();
+              status = meta?.bonzai?.status || (isBareCompanion(meta) ? 'pending_setup' : 'active');
+            } catch { /* metadata fetch optional */ }
+
+            companions.push(`- #${tokenId} — ${status}`);
+          } catch { /* skip on error */ }
+        }
+
+        return {
+          text: `**Your Companions** (${count} total)\n${companions.join('\n') || 'None found'}${count > 10 ? `\n...and ${count - 10} more` : ''}`,
+        };
+      } catch (err) {
+        console.error('[OpenClaw] Mint status failed:', err);
+        return { text: `Could not fetch companion status: ${err.message}` };
+      }
+    }
+
+    case 'finalize': {
+      // !mint finalize <tokenId>
+      const tokenId = parseInt(args[1], 10);
+      if (isNaN(tokenId)) {
+        return { text: 'Usage: `!mint finalize <tokenId>` — e.g. `!mint finalize 42`' };
+      }
+
+      try {
+        // Check if BonzAI Desktop is running
+        let healthOk = false;
+        try {
+          const resp = await fetch('http://localhost:3002/health');
+          const data = await resp.json();
+          healthOk = data.ok === true;
+        } catch { /* not running */ }
+
+        if (!healthOk) {
+          return { text: 'Finalization requires BonzAI Desktop for AI generation. Start the app and try again.' };
+        }
+
+        // Generate personality for finalization via LLM
+        const { generateSpendingProfile } = await import('../skills/flagship.js');
+
+        let personality = {};
+        try {
+          const llmResp = await window.electronAPI.sendPrompt({
+            messages: [
+              { role: 'system', content: 'You are a character designer. Return only valid JSON.' },
+              { role: 'user', content: 'Create a unique AI companion character. Return a JSON object with: shortBio, personality, appearance, background, voiceStyle, firstMessage, gender (0/1/2). Only valid JSON, no markdown.' },
+            ],
+            max_tokens: 800,
+            temperature: 0.9,
+          });
+          const text = llmResp?.response || llmResp?.text || '';
+          const jsonMatch = text.match(/\{[\s\S]*\}/);
+          if (jsonMatch) personality = JSON.parse(jsonMatch[0]);
+        } catch (llmErr) {
+          console.warn('[OpenClaw] LLM personality generation failed:', llmErr);
+          personality = {
+            shortBio: 'A unique BonzAI companion.',
+            personality: 'Friendly, curious, and creative.',
+            appearance: 'Stylish and approachable.',
+            voiceStyle: 'warm and expressive',
+            firstMessage: 'Hello! Nice to meet you!',
+            gender: 0,
+          };
+        }
+
+        const spendingHabits = generateSpendingProfile(personality);
+
+        const result = await finalizeCompanion(tokenId, {
+          ...personality,
+          spendingHabits,
+        }, {
+          onProgress: (stage, message, percent) => {
+            console.log(`[OpenClaw] Finalize #${tokenId}: [${stage}] ${message} (${percent}%)`);
+          },
+        });
+
+        if (result.success) {
+          return {
+            text: `Companion **#${tokenId}** finalized! Your companion is now fully configured with personality, portrait, and voice.`,
+            companion: {
+              tokenId,
+              network: 'base',
+              standard: 'ERC-8004',
+              status: 'active',
+              agentWallet: result.agentWallet,
+              agentURI: result.agentURI,
+            },
+          };
+        } else {
+          return { text: `Finalization failed for #${tokenId}: ${result.error || 'Unknown error'}` };
+        }
+      } catch (err) {
+        console.error('[OpenClaw] Finalize failed:', err);
+        return { text: `Finalization failed: ${err.message}` };
+      }
+    }
+
+    default:
+      return {
+        text: `**Mint Commands**
+
+\`!mint bare [gender]\` - Mint a bare companion (gender: female, male, neutral)
+\`!mint companion <name>\` - Mint a complete companion (requires BonzAI Desktop)
+\`!mint status\` - Check owned companions
+\`!mint finalize <tokenId>\` - Finalize a bare companion (requires BonzAI Desktop)`,
+      };
+  }
+}
+
+/**
  * Handle all commands
  */
 async function handleCommand(channelId, cmd, webhookData = {}) {
@@ -1947,6 +2381,9 @@ Total: ${Object.keys(MODEL_REQUIREMENTS).filter(k => MODEL_REQUIREMENTS[k].type 
       };
     }
 
+    case 'mint':
+      return handleMintCommand(channelId, cmd.args, webhookData);
+
     case 'help': {
       return {
         text: `**BonzAI Commands**
@@ -1973,6 +2410,12 @@ Total: ${Object.keys(MODEL_REQUIREMENTS).filter(k => MODEL_REQUIREMENTS[k].type 
 \`!generate audio_quality <text>\` - Quality TTS (Qwen)
 \`!generate music <prompt>\` - Music (ACE-Step)
 \`!generate vision\` - Image analysis (Qwen3-VL)
+
+**Minting**
+\`!mint bare [gender]\` - Mint a bare companion NFT (no BonzAI Desktop needed)
+\`!mint companion <name>\` - Mint a complete companion (requires BonzAI Desktop)
+\`!mint status\` - Check mint status and owned companions
+\`!mint finalize <tokenId>\` - Finalize a bare companion
 
 **Autonomous**
 \`!autonomous on|off\` - Toggle autonomous mode

@@ -287,7 +287,7 @@ export async function mintContent({
       });
     }
 
-    onProgress('upload', 'Content uploaded to Arweave', 30);
+    onProgress('upload', 'Content uploaded to IPFS', 30);
 
     // ─── Stage 1b: Branded thumbnail (non-image content) ────────────
     let brandedImageReceipt = null;

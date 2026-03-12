@@ -1217,11 +1217,11 @@ describe("BonzaiPayment", function () {
           .withArgs(provider1.address, provider2.address);
       });
 
-      it("should allow setting registry to zero address (clearing it)", async function () {
-        const { payment, owner, provider1 } = await loadFixture(deployPayment);
-        await payment.connect(owner).setProviderRegistry(provider1.address);
-        await payment.connect(owner).setProviderRegistry(ethers.ZeroAddress);
-        expect(await payment.providerRegistry()).to.equal(ethers.ZeroAddress);
+      it("should revert when setting registry to zero address", async function () {
+        const { payment, owner } = await loadFixture(deployPayment);
+        await expect(
+          payment.connect(owner).setProviderRegistry(ethers.ZeroAddress)
+        ).to.be.revertedWithCustomError(payment, "ZeroAddress");
       });
 
       it("should revert when called by non-owner", async function () {

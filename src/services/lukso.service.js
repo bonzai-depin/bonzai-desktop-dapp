@@ -10,6 +10,7 @@ import { ERC725 } from "@erc725/erc725.js";
 import { CONFIG } from "../config/web3.config.js";
 import { getEip1193Provider, switchNetwork } from "./web3.service.js";
 import { agentWalletService } from "./agentWallet.service.js";
+import { walletProviderService } from "./walletProvider.service.js";
 
 // ═══════════════════════════════════════════════════════════════════════════
 // CONFIGURATION
@@ -654,7 +655,7 @@ export async function deployCompanionUniversalProfile(params) {
   // Get a signer: prefer agent wallet for self-deployment, fall back to user signer
   let deploymentSigner;
   try {
-    deploymentSigner = await agentWalletService.getAgentWalletSignerForChain(companionId, 42);
+    deploymentSigner = await walletProviderService.getAgentWalletSigner(companionId, 42);
   } catch {
     deploymentSigner = await ensureSigner();
   }
@@ -738,7 +739,7 @@ export async function deployCompanionUniversalProfile(params) {
  */
 async function setCompanionProfileMetadata(upAddress, params) {
   const agentSigner = params.companionId
-    ? await agentWalletService.getAgentWalletSignerForChain(params.companionId, 42).catch(() => null)
+    ? await walletProviderService.getAgentWalletSigner(params.companionId, 42).catch(() => null)
     : null;
   const signerToUse = agentSigner || await ensureSigner();
 
@@ -785,7 +786,7 @@ export async function executeViaUP(companionId, target, value, calldata, chainId
   const upData = await agentWalletService.getCompanionUP(companionId);
   if (!upData?.upAddress) throw new Error("Companion has no UP deployed");
 
-  const agentSigner = await agentWalletService.getAgentWalletSignerForChain(companionId, chainId);
+  const agentSigner = await walletProviderService.getAgentWalletSigner(companionId, chainId);
 
   const up = new ethers.Contract(upData.upAddress, LSP0_ABI, agentSigner);
 
@@ -814,7 +815,7 @@ export async function deployCompanionUPCrossChain(companionId, targetChainId) {
     throw new Error(`Companion UP already deployed on chain ${targetChainId}`);
   }
 
-  const agentSigner = await agentWalletService.getAgentWalletSignerForChain(companionId, targetChainId);
+  const agentSigner = await walletProviderService.getAgentWalletSigner(companionId, targetChainId);
 
   // Replay same calldata to same factory address
   const tx = await agentSigner.sendTransaction({

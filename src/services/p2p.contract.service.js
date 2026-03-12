@@ -3,6 +3,9 @@
  *
  * Interacts with the on-chain provider registry and payment contracts
  * for the distributed inference network.
+ *
+ * Uses BonzaiPayment.sol (ETH + USDC dual-token support) and
+ * BonzaiProviderRegistry.sol on Base (chainId 8453).
  */
 
 import { ethers } from "ethers";
@@ -10,7 +13,7 @@ import { CONFIG } from "../config/web3.config.js";
 import { web3Service } from "./web3.service.js";
 
 // ═══════════════════════════════════════════════════════════════════════════
-// CONTRACT ABIs (minimal interfaces)
+// CONTRACT ABIs (minimal interfaces matching BonzaiPayment.sol)
 // ═══════════════════════════════════════════════════════════════════════════
 
 const PROVIDER_REGISTRY_ABI = [
@@ -37,28 +40,38 @@ const PROVIDER_REGISTRY_ABI = [
   "event ProviderActivated(address indexed wallet)",
 ];
 
+// BonzaiPayment ABI — supports both ETH and USDC
 const PAYMENT_CONTRACT_ABI = [
-  // Deposits & Withdrawals
+  // ETH Deposits & Withdrawals
+  "function depositETH() payable",
+  "function withdrawETH(uint256 amount)",
+  "function withdrawETHEarnings()",
+
+  // USDC Deposits & Withdrawals
   "function deposit(uint256 amount)",
   "function withdraw(uint256 amount)",
   "function withdrawEarnings()",
 
   // Payments
-  "function processPayment(address consumer, address provider, uint256 amount, uint256 nonce, uint256 expiry, string pipeline, bytes signature)",
+  "function processPayment(address consumer, address provider, uint256 amount, uint256 nonce, uint256 expiry, string service, uint8 paymentToken, bytes signature)",
   "function payDirect(address provider, uint256 amount, string pipeline)",
+  "function payDirectETH(address provider, string pipeline) payable",
   "function payFromBalance(address provider, uint256 amount, string pipeline)",
+  "function payFromETHBalance(address provider, uint256 amount, string pipeline)",
 
   // Views
   "function getBalance(address consumer) view returns (uint256)",
+  "function getETHBalance(address consumer) view returns (uint256)",
   "function getPendingWithdrawals(address provider) view returns (uint256)",
+  "function getPendingETHWithdrawals(address provider) view returns (uint256)",
   "function isNonceUsed(address consumer, uint256 nonce) view returns (bool)",
   "function domainSeparator() view returns (bytes32)",
   "function platformFeeBps() view returns (uint256)",
 
   // Events
-  "event Deposited(address indexed consumer, uint256 amount)",
-  "event Withdrawn(address indexed user, uint256 amount)",
-  "event PaymentProcessed(address indexed consumer, address indexed provider, uint256 amount, uint256 platformFee, string pipeline)",
+  "event Deposited(address indexed consumer, uint256 amount, uint8 token)",
+  "event Withdrawn(address indexed user, uint256 amount, uint8 token)",
+  "event PaymentProcessed(address indexed consumer, address indexed provider, uint256 amount, uint256 platformFee, string service, uint8 token)",
 ];
 
 const ERC20_ABI = [
@@ -67,17 +80,19 @@ const ERC20_ABI = [
   "function balanceOf(address account) view returns (uint256)",
 ];
 
+// Payment token enum (matches BonzaiPayment.sol)
+export const PaymentToken = { ETH: 0, USDC: 1 };
+
 // Pipeline category IDs (matches BonzaiProviderRegistry.sol PipelineCategory enum)
 export const PIPELINE_CATEGORY_IDS = {
-  // LLM category covers all 21 models via OpenClaw
+  // LLM category covers all models via OpenClaw
   llm: 0,
   // Image pipelines
   image_turbo: 1,
   image_quality: 2,
   image_standard: 3,
   image_advanced: 4,
-  // Audio pipelines
-  audio: 5,
+  // Audio pipelines (5 is deprecated)
   audio_turbo: 6,
   audio_quality: 7,
   // Music pipeline (ACE-Step)
@@ -115,14 +130,6 @@ export const MODEL_TO_CATEGORY = {
 
 // Legacy alias
 export const PIPELINE_IDS = PIPELINE_CATEGORY_IDS;
-
-// ═══════════════════════════════════════════════════════════════════════════
-// SERVICE STATE
-// ═══════════════════════════════════════════════════════════════════════════
-
-let registryContract = null;
-let paymentContract = null;
-let usdcContract = null;
 
 // ═══════════════════════════════════════════════════════════════════════════
 // CONTRACT INITIALIZATION
@@ -165,10 +172,13 @@ async function getPaymentContract(needsSigner = false) {
 }
 
 /**
- * Get the USDC contract
+ * Get the USDC contract (only needed for USDC payments)
  */
 async function getUsdcContract(needsSigner = false) {
   const config = CONFIG.p2pNetwork;
+  if (!config.usdcAddress) {
+    throw new Error("USDC address not configured");
+  }
 
   if (needsSigner) {
     const signer = await web3Service.getSigner();
@@ -189,8 +199,8 @@ async function getUsdcContract(needsSigner = false) {
  * @param {Object} options Registration options
  * @param {string} options.peerId libp2p peer ID
  * @param {string[]} options.multiaddrs libp2p multiaddresses
- * @param {string[]} options.pipelines Supported pipelines (e.g., ["llm_chat", "image_flux"])
- * @param {string} options.pricePerToken Price per 1000 tokens in USDC
+ * @param {string[]} options.pipelines Supported pipeline names
+ * @param {string} options.pricePerToken Price per 1000 tokens in wei
  * @param {boolean} options.isRelay Whether to act as a relay
  * @param {string} options.stakeAmount ETH to stake (optional)
  * @returns {Promise<{success: boolean, txHash?: string, error?: string}>}
@@ -364,7 +374,111 @@ export async function getProviderStats() {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
-// PAYMENT OPERATIONS
+// ETH PAYMENT OPERATIONS
+// ═══════════════════════════════════════════════════════════════════════════
+
+/**
+ * Deposit ETH for faster payments
+ */
+export async function depositETH(amount) {
+  try {
+    const amountWei = ethers.parseEther(amount);
+    const payment = await getPaymentContract(true);
+    const tx = await payment.depositETH({ value: amountWei });
+    await tx.wait();
+    return { success: true };
+  } catch (err) {
+    return { success: false, error: err.message };
+  }
+}
+
+/**
+ * Withdraw deposited ETH
+ */
+export async function withdrawETH(amount) {
+  try {
+    const amountWei = ethers.parseEther(amount);
+    const payment = await getPaymentContract(true);
+    const tx = await payment.withdrawETH(amountWei);
+    await tx.wait();
+    return { success: true };
+  } catch (err) {
+    return { success: false, error: err.message };
+  }
+}
+
+/**
+ * Withdraw provider ETH earnings
+ */
+export async function withdrawETHEarnings() {
+  try {
+    const payment = await getPaymentContract(true);
+    const tx = await payment.withdrawETHEarnings();
+    await tx.wait();
+    return { success: true };
+  } catch (err) {
+    return { success: false, error: err.message };
+  }
+}
+
+/**
+ * Get consumer's deposited ETH balance
+ */
+export async function getDepositedETHBalance(address) {
+  try {
+    const payment = await getPaymentContract(false);
+    const balance = await payment.getETHBalance(address);
+    return ethers.formatEther(balance);
+  } catch (err) {
+    return "0";
+  }
+}
+
+/**
+ * Get provider's pending ETH withdrawals
+ */
+export async function getPendingETHWithdrawals(address) {
+  try {
+    const payment = await getPaymentContract(false);
+    const pending = await payment.getPendingETHWithdrawals(address);
+    return ethers.formatEther(pending);
+  } catch (err) {
+    return "0";
+  }
+}
+
+/**
+ * Pay provider directly in ETH
+ */
+export async function payProviderETH(providerAddress, amount, pipeline) {
+  try {
+    const amountWei = ethers.parseEther(amount);
+    const payment = await getPaymentContract(true);
+    const tx = await payment.payDirectETH(providerAddress, pipeline, { value: amountWei });
+    const receipt = await tx.wait();
+    return { success: true, txHash: receipt.hash };
+  } catch (err) {
+    return { success: false, error: err.message };
+  }
+}
+
+/**
+ * Pay from deposited ETH balance
+ */
+export async function payFromETHBalance(providerAddress, amount, pipeline) {
+  try {
+    const amountWei = ethers.parseEther(amount);
+    const payment = await getPaymentContract(true);
+    const tx = await payment.payFromETHBalance(providerAddress, amountWei, pipeline);
+    const receipt = await tx.wait();
+    return { success: true, txHash: receipt.hash };
+  } catch (err) {
+    return { success: false, error: err.message };
+  }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// USDC PAYMENT OPERATIONS
 // ═══════════════════════════════════════════════════════════════════════════
 
 /**
@@ -407,9 +521,9 @@ export async function withdrawUSDC(amount) {
 }
 
 /**
- * Withdraw provider earnings
+ * Withdraw provider USDC earnings
  */
-export async function withdrawEarnings() {
+export async function withdrawUSDCEarnings() {
   try {
     const payment = await getPaymentContract(true);
     const tx = await payment.withdrawEarnings();
@@ -421,9 +535,9 @@ export async function withdrawEarnings() {
 }
 
 /**
- * Get consumer's deposited balance
+ * Get consumer's deposited USDC balance
  */
-export async function getDepositedBalance(address) {
+export async function getDepositedUSDCBalance(address) {
   try {
     const payment = await getPaymentContract(false);
     const balance = await payment.getBalance(address);
@@ -434,9 +548,9 @@ export async function getDepositedBalance(address) {
 }
 
 /**
- * Get provider's pending withdrawals
+ * Get provider's pending USDC withdrawals
  */
-export async function getPendingWithdrawals(address) {
+export async function getPendingUSDCWithdrawals(address) {
   try {
     const payment = await getPaymentContract(false);
     const pending = await payment.getPendingWithdrawals(address);
@@ -447,9 +561,9 @@ export async function getPendingWithdrawals(address) {
 }
 
 /**
- * Pay provider directly (for inference)
+ * Pay provider directly in USDC
  */
-export async function payProvider(providerAddress, amount, pipeline) {
+export async function payProviderUSDC(providerAddress, amount, pipeline) {
   try {
     const config = CONFIG.p2pNetwork;
     const amountWei = ethers.parseUnits(amount, 6);
@@ -478,9 +592,9 @@ export async function payProvider(providerAddress, amount, pipeline) {
 }
 
 /**
- * Pay from deposited balance
+ * Pay from deposited USDC balance
  */
-export async function payFromBalance(providerAddress, amount, pipeline) {
+export async function payFromUSDCBalance(providerAddress, amount, pipeline) {
   try {
     const amountWei = ethers.parseUnits(amount, 6);
     const payment = await getPaymentContract(true);
@@ -490,6 +604,35 @@ export async function payFromBalance(providerAddress, amount, pipeline) {
   } catch (err) {
     return { success: false, error: err.message };
   }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// UNIFIED PAYMENT (auto-select token)
+// ═══════════════════════════════════════════════════════════════════════════
+
+/**
+ * Pay provider using the specified payment token
+ *
+ * @param {string} providerAddress Provider wallet address
+ * @param {string} amount Amount (ETH in ether, USDC in USDC)
+ * @param {string} pipeline Pipeline/service name
+ * @param {number} paymentToken 0=ETH, 1=USDC
+ */
+export async function payProvider(providerAddress, amount, pipeline, paymentToken = PaymentToken.ETH) {
+  if (paymentToken === PaymentToken.USDC) {
+    return payProviderUSDC(providerAddress, amount, pipeline);
+  }
+  return payProviderETH(providerAddress, amount, pipeline);
+}
+
+/**
+ * Withdraw provider earnings for the specified token
+ */
+export async function withdrawEarnings(paymentToken = PaymentToken.ETH) {
+  if (paymentToken === PaymentToken.USDC) {
+    return withdrawUSDCEarnings();
+  }
+  return withdrawETHEarnings();
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -518,7 +661,7 @@ function formatProvider(provider) {
     pipelines,
     pricePerToken: provider.pricePerToken.toString(),
     stakedAmount: ethers.formatEther(provider.stakedAmount),
-    totalEarnings: ethers.formatUnits(provider.totalEarnings, 6),
+    totalEarnings: ethers.formatEther(provider.totalEarnings),
     completedJobs: Number(provider.completedJobs),
     registeredAt: new Date(Number(provider.registeredAt) * 1000),
     lastSeenAt: new Date(Number(provider.lastSeenAt) * 1000),
@@ -540,6 +683,10 @@ export function areContractsDeployed() {
 // ═══════════════════════════════════════════════════════════════════════════
 
 export default {
+  // Constants
+  PaymentToken,
+  PIPELINE_IDS,
+
   // Registration
   registerProvider,
   activateProvider,
@@ -553,16 +700,28 @@ export default {
   getRelayNodes,
   getProviderStats,
 
-  // Payments
+  // ETH Payments
+  depositETH,
+  withdrawETH,
+  withdrawETHEarnings,
+  getDepositedETHBalance,
+  getPendingETHWithdrawals,
+  payProviderETH,
+  payFromETHBalance,
+
+  // USDC Payments
   depositUSDC,
   withdrawUSDC,
-  withdrawEarnings,
-  getDepositedBalance,
-  getPendingWithdrawals,
+  withdrawUSDCEarnings,
+  getDepositedUSDCBalance,
+  getPendingUSDCWithdrawals,
+  payProviderUSDC,
+  payFromUSDCBalance,
+
+  // Unified
   payProvider,
-  payFromBalance,
+  withdrawEarnings,
 
   // Utils
   areContractsDeployed,
-  PIPELINE_IDS,
 };

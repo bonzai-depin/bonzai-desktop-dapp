@@ -16,6 +16,7 @@ import { CONFIG } from "../config/web3.config.js";
 import { authService } from "./auth.service.js";
 import { authVault } from "./authVault.service.js";
 import { luksoService } from "./lukso.service.js";
+import { registerWeb3Service } from "./walletProvider.service.js";
 
 // Reown AppKit - official WalletConnect integration
 import { createAppKit } from "@reown/appkit/vue";
@@ -71,6 +72,9 @@ const state = reactive({
   // Wallet type
   walletType: null, // 'injected' | 'walletconnect' | null
 
+  // Auth provider: which login method was used
+  authProvider: null, // 'reown' | 'privy' | null
+
   // Universal Profile (LUKSO)
   isUniversalProfile: false,
   universalProfileData: null, // { name, description, avatar, tags, links }
@@ -95,6 +99,9 @@ const state = reactive({
   // Error handling
   error: null,
 });
+
+// Register state reference for walletProvider (breaks circular import)
+registerWeb3Service({ state });
 
 // ═══════════════════════════════════════════════════════════════════════════
 // PROVIDERS
@@ -357,6 +364,7 @@ export const connectWallet = async () => {
 
     state.walletAddress = accounts[0];
     state.isConnected = true;
+    state.authProvider = 'reown';
 
     // Get current chain
     const network = await browserProvider.getNetwork();
@@ -454,8 +462,18 @@ export const connectWallet = async () => {
  */
 export const disconnectWallet = async () => {
   try {
-    // Disconnect via AppKit
-    if (appKit) {
+    // Privy-specific logout
+    if (state.authProvider === 'privy') {
+      try {
+        const { privyService } = await import('./privy.service.js');
+        await privyService.logout();
+      } catch (e) {
+        console.warn('[Web3] Privy logout warning:', e.message);
+      }
+    }
+
+    // Disconnect via AppKit (Reown)
+    if (appKit && state.authProvider !== 'privy') {
       try {
         await appKit.disconnect();
       } catch (e) {
@@ -477,6 +495,7 @@ export const disconnectWallet = async () => {
     state.walletAddress = null;
     state.currentChainId = null;
     state.walletType = null;
+    state.authProvider = null;
     state.isUniversalProfile = false;
     state.universalProfileData = null;
     state.isAuthenticated = false;
@@ -741,6 +760,111 @@ export const currentNetworkName = computed(() => {
   return "Unknown Network";
 });
 
+// ═══════════════════════════════════════════════════════════════════════════
+// PRIVY CONNECTION
+// ═══════════════════════════════════════════════════════════════════════════
+
+/**
+ * Connect via Privy (email/social login).
+ * The Privy embedded wallet becomes the owner wallet, providing an EIP-1193
+ * provider that plugs into the same ethers BrowserProvider path as Reown.
+ *
+ * @param {Object} options
+ * @param {'email'|'google'|'apple'} options.method - Login method
+ * @param {string} [options.email] - Required if method === 'email'
+ * @param {string} [options.otpCode] - OTP code for email verification
+ * @returns {Promise<{success: boolean, address?: string, needsOtp?: boolean, error?: string}>}
+ */
+export const connectWithPrivy = async (options = {}) => {
+  if (state.isConnecting) return { success: false, error: "Connection in progress" };
+
+  state.isConnecting = true;
+  state._connectStartTime = Date.now();
+  state.error = null;
+
+  try {
+    const { privyService } = await import('./privy.service.js');
+    await privyService.initialize();
+
+    const { method, email, otpCode } = options;
+
+    // Step 1: Handle login flow
+    if (method === 'email' && !otpCode) {
+      // Send OTP — return early, user needs to provide code
+      const result = await privyService.loginWithEmail(email);
+      state.isConnecting = false;
+      state._connectStartTime = null;
+      return result;
+    }
+
+    let loginResult;
+    if (method === 'email' && otpCode) {
+      loginResult = await privyService.verifyOtp(email, otpCode);
+    } else if (method === 'google' || method === 'apple') {
+      loginResult = await privyService.loginWithSocial(method);
+    } else {
+      throw new Error(`Unsupported Privy login method: ${method}`);
+    }
+
+    if (!loginResult.success) {
+      throw new Error(loginResult.error || 'Privy login failed');
+    }
+
+    // Step 2: Get EIP-1193 provider from embedded wallet
+    const privyProvider = privyService.getEmbeddedProvider();
+    if (!privyProvider) {
+      throw new Error('Privy embedded wallet provider not available');
+    }
+
+    // Step 3: Plug into existing ethers flow
+    eip1193Provider = privyProvider;
+    browserProvider = new ethers.BrowserProvider(eip1193Provider);
+
+    state.walletAddress = loginResult.address;
+    state.isConnected = true;
+    state.authProvider = 'privy';
+    state.walletType = 'privy';
+
+    // Initialize RPC providers for balance checks
+    await initRpcProviders();
+
+    // Get current chain
+    try {
+      const network = await browserProvider.getNetwork();
+      state.currentChainId = Number(network.chainId);
+    } catch {
+      state.currentChainId = 8453; // Default to Base
+    }
+
+    // Fetch balances
+    await fetchAllBalances();
+
+    // Privy users are authenticated by default (Privy handles auth)
+    state.isAuthenticated = true;
+    state.authLevel = 'privy';
+    state.authLevelValue = 0;
+
+    console.log(`[Web3] Connected via Privy: ${state.walletAddress}`);
+
+    return {
+      success: true,
+      address: state.walletAddress,
+      chainId: state.currentChainId,
+      totalBalance: state.balances.total,
+      walletType: 'privy',
+      isAuthenticated: true,
+      authProvider: 'privy',
+    };
+  } catch (e) {
+    state.error = e.message;
+    console.error('[Web3] Privy connection failed:', e);
+    return { success: false, error: e.message };
+  } finally {
+    state.isConnecting = false;
+    state._connectStartTime = null;
+  }
+};
+
 /**
  * Get browser provider for signing transactions
  */
@@ -795,6 +919,7 @@ export const web3Service = {
   ensureWalletProvider,
   getEip1193Provider,
   connectWallet,
+  connectWithPrivy,
   disconnectWallet,
 
   // Balances

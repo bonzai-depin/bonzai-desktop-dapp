@@ -12,7 +12,7 @@
  */
 
 import { ethers } from 'ethers';
-import { agentWalletService } from './agentWallet.service.js';
+import { walletProviderService } from './walletProvider.service.js';
 import { x402Service } from './x402.service.js';
 
 // Storage keys
@@ -129,14 +129,14 @@ export async function canMakePurchase(companionId, amountWei, settings = {}) {
   }
 
   // Check wallet exists
-  const hasWallet = await agentWalletService.hasAgentWallet(companionId);
+  const hasWallet = await walletProviderService.hasAgentWallet(companionId);
   if (!hasWallet) {
     return { allowed: false, reason: 'No agent wallet - mint companion to blockchain first' };
   }
 
   // Check ETH balance
   try {
-    const balanceEth = await agentWalletService.getAgentWalletBalance(
+    const balanceEth = await walletProviderService.getAgentWalletBalance(
       companionId,
       settings.chainId || DEFAULT_CHAIN_ID
     );
@@ -183,7 +183,7 @@ export async function executePayment(companionId, paymentRequest, settings = {})
     console.log(`[x402Executor] Executing payment: ${service} - ${ethers.formatEther(amount)} ETH to ${provider}`);
 
     // Get agent wallet signer
-    const signer = await agentWalletService.getAgentWalletSignerForChain(companionId, chainId);
+    const signer = await walletProviderService.getAgentWalletSigner(companionId, chainId);
 
     // Send ETH directly
     const paymentResult = await x402Service.sendPayment(signer, provider, amount);

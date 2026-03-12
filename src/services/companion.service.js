@@ -11,6 +11,7 @@ import { CONFIG } from '../config/web3.config.js';
 import { web3Service } from './web3.service.js';
 import { luksoService } from './lukso.service.js';
 import { agentWalletService } from './agentWallet.service.js';
+import { walletProviderService } from './walletProvider.service.js';
 import { coinbaseAgentWalletService } from './coinbaseAgentWallet.service.js';
 import * as skillOwnershipService from './skillOwnership.service.js';
 import { flagshipSkills } from '../skills/flagship.js';
@@ -214,13 +215,12 @@ async function mintCompanionBase(params) {
     // Generate spending profile if not provided
     const spendingHabits = params.spendingHabits || coinbaseAgentWalletService.generateSpendingProfile(params);
 
-    // Create LOCAL self-custody agent wallet for this companion
+    // Create agent wallet for this companion (Privy server wallet or local deterministic)
     const companionId = params.companionId || `companion-${Date.now()}`;
-    console.log('[CompanionService] Creating local agent wallet for companion:', companionId);
+    console.log('[CompanionService] Creating agent wallet for companion:', companionId);
 
-    const agentWallet = await agentWalletService.generateAgentWallet(companionId);
-    await agentWalletService.storeAgentWalletCredentials(companionId, agentWallet);
-    console.log('[CompanionService] Local agent wallet created:', agentWallet.address);
+    const agentWallet = await walletProviderService.createAgentWallet(companionId);
+    console.log('[CompanionService] Agent wallet created:', agentWallet.address);
 
     // Ensure wallet is on Base network
     const currentChainId = web3Service.state.currentChainId;
@@ -341,7 +341,7 @@ async function mintCompanionBase(params) {
 
 /**
  * Build ERC-8004 agent registration file with spending profile (OASF v0.8.0).
- * This JSON is uploaded to Arweave as the agentURI.
+ * This JSON is uploaded to IPFS (Pinata) as the agentURI.
  */
 function buildERC8004RegistrationWithSpending(params, spendingHabits = {}) {
   const firstName = params.firstName || '';
@@ -442,10 +442,10 @@ const BARE_COMPANION_DEFAULT_IMAGE = 'companions/bonzai_companions.webp';
  * Sets `bonzai.status = 'pending_setup'` so the app detects it as unfinalized.
  *
  * @param {Object} opts
- * @param {string} opts.imageUri - Arweave/IPFS URI for the default companion image
+ * @param {string} opts.imageUri - IPFS URI for the default companion image
  * @param {number} [opts.gender=0] - 0=neutral, 1=female, 2=male
  * @param {Object} [opts.spendingHabits={}] - Optional initial spending profile
- * @returns {Object} ERC-8004 registration JSON ready for Arweave upload
+ * @returns {Object} ERC-8004 registration JSON ready for IPFS upload
  */
 function buildBareRegistration({ imageUri, gender = 0, spendingHabits = {} } = {}) {
   const genderLabel = gender === 1 ? 'female' : gender === 2 ? 'male' : 'neutral';
@@ -547,7 +547,7 @@ async function updateAgentWallet(tokenId, newWallet, network = 'base') {
 // ═══════════════════════════════════════════════════════════════════════════
 
 /**
- * Fetch metadata from IPFS/Irys (Arweave)
+ * Fetch metadata from IPFS (Pinata gateway)
  */
 async function fetchMetadata(uri) {
   try {
@@ -620,11 +620,11 @@ function mapBareCompanion(tokenId, onChainData) {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
-// NFT LOADING — Fetch owned companions from chain + Arweave metadata
+// NFT LOADING — Fetch owned companions from chain + IPFS metadata
 // ═══════════════════════════════════════════════════════════════════════════
 
 /**
- * Resolve ar:// / ipfs:// URIs to HTTP gateway URLs.
+ * Resolve ipfs:// (and legacy ar://) URIs to HTTP gateway URLs.
  */
 function resolveMediaUri(uri) {
   if (!uri) return null;
@@ -634,7 +634,7 @@ function resolveMediaUri(uri) {
 }
 
 /**
- * Map Arweave metadata JSON + on-chain struct to the companion shape expected by RoleplayChat.
+ * Map IPFS metadata JSON + on-chain struct to the companion shape expected by RoleplayChat.
  */
 function mapMetadataToCompanion(metadata, tokenId, onChainData) {
   const bonzai = metadata.bonzai || {};
@@ -800,7 +800,7 @@ async function finalizeCompanion(tokenId, companionData, options = {}) {
     const spendingHabits = companionData.spendingHabits || generateSpendingProfile(companionData);
 
     // Step 3: Generate image (or use provided)
-    let imageArweaveUri = '';
+    let imageIpfsUri = '';
     if (!skipImageGeneration) {
       progress('image', 'Generating companion portrait...', 20);
       const { generateCompanionPicture } = await import('../skills/flagship.js');
@@ -808,24 +808,24 @@ async function finalizeCompanion(tokenId, companionData, options = {}) {
       const imageBase64 = companionData.imageBase64 || imageResult?.base64 || imageResult?.image;
 
       if (imageBase64) {
-        progress('upload_image', 'Uploading portrait to Arweave...', 35);
+        progress('upload_image', 'Uploading portrait to IPFS...', 35);
         const { irysService } = await import('./irys.service.js');
-        const imageTx = await irysService.uploadBase64({
-          base64: imageBase64,
+        const imageReceipt = await irysService.uploadBase64({
+          base64Data: imageBase64,
           contentType: 'image/png',
-          tags: [{ name: 'companion-token-id', value: String(tokenId) }],
+          generation: { type: 'companion-portrait', tokenId: String(tokenId) },
         });
-        imageArweaveUri = `ar://${imageTx.id}`;
+        imageIpfsUri = imageReceipt.url;
       }
     } else if (companionData.imageBase64) {
-      progress('upload_image', 'Uploading provided image to Arweave...', 35);
+      progress('upload_image', 'Uploading provided image to IPFS...', 35);
       const { irysService } = await import('./irys.service.js');
-      const imageTx = await irysService.uploadBase64({
-        base64: companionData.imageBase64,
+      const imageReceipt = await irysService.uploadBase64({
+        base64Data: companionData.imageBase64,
         contentType: 'image/png',
-        tags: [{ name: 'companion-token-id', value: String(tokenId) }],
+        generation: { type: 'companion-portrait', tokenId: String(tokenId) },
       });
-      imageArweaveUri = `ar://${imageTx.id}`;
+      imageIpfsUri = imageReceipt.url;
     }
 
     // Step 4: Build ERC-8004 registration JSON
@@ -834,17 +834,17 @@ async function finalizeCompanion(tokenId, companionData, options = {}) {
       ...companionData,
       name: `${companionData.firstName} ${companionData.familyName}`.trim(),
       description: companionData.shortBio,
-      imageUri: imageArweaveUri,
+      imageUri: imageIpfsUri,
     }, spendingHabits);
 
-    // Step 5: Upload registration JSON to Arweave
-    progress('upload_metadata', 'Uploading metadata to Arweave...', 55);
+    // Step 5: Upload registration JSON to IPFS
+    progress('upload_metadata', 'Uploading metadata to IPFS...', 55);
     const { irysService } = await import('./irys.service.js');
-    const metadataTx = await irysService.uploadMetadata(registration, {
+    const metadataReceipt = await irysService.uploadMetadata(registration, {
       type: 'companion-finalization',
       tokenId: String(tokenId),
     });
-    const metadataUri = `ar://${metadataTx.id}`;
+    const metadataUri = metadataReceipt.url;
 
     // Step 6: setAgentURI on-chain
     progress('set_uri', 'Setting agent URI on-chain...', 65);
@@ -859,8 +859,7 @@ async function finalizeCompanion(tokenId, companionData, options = {}) {
       if (currentWallet === ethers.ZeroAddress) {
         progress('agent_wallet', 'Creating agent wallet...', 72);
         const companionId = `companion-${tokenId}`;
-        const agentWallet = await agentWalletService.generateAgentWallet(companionId);
-        await agentWalletService.storeAgentWalletCredentials(companionId, agentWallet);
+        const agentWallet = await walletProviderService.createAgentWallet(companionId);
         agentWalletAddress = agentWallet.address;
 
         const walletTx = await contract.setAgentWallet(tokenId, agentWalletAddress);
@@ -1000,10 +999,9 @@ async function getCompanionRevenue(companion) {
  */
 async function deployCompanionUP(companionId, companion) {
   // Ensure agent wallet exists
-  let agentWallet = await agentWalletService.getAgentWalletCredentials(companionId);
+  let agentWallet = await walletProviderService.getAgentWalletCredentials(companionId);
   if (!agentWallet) {
-    agentWallet = await agentWalletService.generateAgentWallet(companionId);
-    await agentWalletService.storeAgentWalletCredentials(companionId, agentWallet);
+    agentWallet = await walletProviderService.createAgentWallet(companionId);
   }
 
   return await luksoService.deployCompanionUniversalProfile({

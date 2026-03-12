@@ -429,11 +429,14 @@ export const CONFIG = {
   p2pNetwork: {
     // BonzaiProviderRegistry contract on Base (not yet deployed)
     providerRegistryAddress: null,
-    // BonzaiP2PPayment contract on Base (not yet deployed)
+    // BonzaiPayment contract on Base — supports ETH + USDC (not yet deployed)
     paymentContractAddress: null,
     chainId: 8453, // Base
 
-    // Payment token: Native ETH (no USDC)
+    // USDC on Base (Circle native)
+    usdcAddress: "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913",
+
+    // Default payment token: ETH (providers can also accept USDC)
     paymentToken: "ETH",
 
     // Default pricing (ETH in wei per 1000 tokens)

@@ -38,6 +38,7 @@ export const useWeb3Store = defineStore('web3', () => {
   const currentChainId = computed(() => web3Service.state.currentChainId);
   const isOnArbitrum = computed(() => web3Service.isOnArbitrum.value);
   const networkName = computed(() => web3Service.currentNetworkName.value);
+  const authProvider = computed(() => web3Service.state.authProvider); // 'reown' | 'privy' | null
 
   // Authentication state (JWT)
   const isAuthenticated = computed(() => web3Service.state.isAuthenticated);
@@ -117,6 +118,26 @@ export const useWeb3Store = defineStore('web3', () => {
         error.value = result.error;
       }
 
+      return result;
+    } catch (e) {
+      error.value = e.message;
+      return { success: false, error: e.message };
+    } finally {
+      isConnecting.value = false;
+    }
+  };
+
+  /**
+   * Connect via Privy (email/social login)
+   * @param {Object} options - { method: 'email'|'google'|'apple', email?, otpCode? }
+   */
+  const connectWithPrivy = async (options = {}) => {
+    isConnecting.value = true;
+    error.value = null;
+    try {
+      const result = await web3Service.connectWithPrivy(options);
+      if (result.success) await refreshAll();
+      else if (result.error) error.value = result.error;
       return result;
     } catch (e) {
       error.value = e.message;
@@ -330,6 +351,7 @@ export const useWeb3Store = defineStore('web3', () => {
     currentChainId,
     isOnArbitrum,
     networkName,
+    authProvider,
 
     // Authentication getters
     isAuthenticated,
@@ -356,6 +378,7 @@ export const useWeb3Store = defineStore('web3', () => {
     // Wallet actions
     initialize,
     connect,
+    connectWithPrivy,
     disconnect,
     cancelConnection,
     refreshBalances,

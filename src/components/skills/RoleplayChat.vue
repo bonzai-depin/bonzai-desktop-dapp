@@ -3421,6 +3421,7 @@ import { CONFIG } from "../../config/web3.config.js";
 import { io } from "socket.io-client";
 import { ethers } from "ethers";
 import { agentWalletService } from "../../services/agentWallet.service.js";
+import { walletProviderService } from "../../services/walletProvider.service.js";
 import { x402Service } from "../../services/x402.service.js";
 import { x402ExecutorService } from "../../services/x402Executor.service.js";
 import { purchaseExecutorService } from "../../services/purchaseExecutor.service.js";
@@ -5065,7 +5066,7 @@ export default {
 
       try {
         // Check if companion has a wallet stored
-        const credentials = await agentWalletService.getAgentWalletCredentials(
+        const credentials = await walletProviderService.getAgentWalletCredentials(
           selectedCompanion.value.id,
         );
 
@@ -5098,7 +5099,7 @@ export default {
 
       isRefreshingBalance.value = true;
       try {
-        const balance = await agentWalletService.getAgentWalletBalance(
+        const balance = await walletProviderService.getAgentWalletBalance(
           selectedCompanion.value.id,
           8453, // Base
         );
@@ -5233,7 +5234,7 @@ export default {
 
       try {
         // Get agent wallet signer
-        const signer = await agentWalletService.getAgentWalletSignerForChain(
+        const signer = await walletProviderService.getAgentWalletSigner(
           selectedCompanion.value.id,
           8453, // Base
         );
@@ -6326,6 +6327,23 @@ export default {
                 console.log(`[Roleplay] Migrating companion "${c.name}" age ${numAge} → 21`);
                 c.age = 21;
                 needsSave = true;
+              }
+
+              // Auto-migrate age references in text fields (18-20 → 21)
+              // so existing custom companions aren't silently filtered out
+              const textFields = ['description', 'appearance', 'personality'];
+              for (const field of textFields) {
+                if (c[field] && typeof c[field] === 'string') {
+                  const migrated = c[field].replace(
+                    /\b(1[89]|20)\s*(years?\s*old|yo\b|y\.o\.)/gi,
+                    '21 years old'
+                  );
+                  if (migrated !== c[field]) {
+                    console.log(`[Roleplay] Migrated age reference in ${c.name}'s ${field}`);
+                    c[field] = migrated;
+                    needsSave = true;
+                  }
+                }
               }
 
               const validation = validateCompanionAge(c);

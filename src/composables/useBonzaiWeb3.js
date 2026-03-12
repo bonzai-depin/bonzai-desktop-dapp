@@ -90,6 +90,7 @@ export function useBonzaiWeb3(options = {}) {
   const truncatedAddress = computed(() => store.truncatedAddress);
   const isOnArbitrum = computed(() => store.isOnArbitrum);
   const networkName = computed(() => store.networkName);
+  const authProvider = computed(() => store.authProvider); // 'reown' | 'privy' | null
 
   // Universal Profile (LUKSO)
   const isUniversalProfile = computed(() => web3Service.state.isUniversalProfile);
@@ -174,6 +175,7 @@ export function useBonzaiWeb3(options = {}) {
 
   // Wallet
   const connect = async () => store.connect();
+  const connectWithPrivy = async (options) => store.connectWithPrivy(options);
   const disconnect = async () => store.disconnect();
   const refresh = async () => store.refreshAll();
   const switchToArbitrum = async () => store.switchToArbitrum();
@@ -221,6 +223,7 @@ export function useBonzaiWeb3(options = {}) {
     truncatedAddress,
     isOnArbitrum,
     networkName,
+    authProvider,
 
     // Universal Profile (LUKSO)
     isUniversalProfile,
@@ -251,6 +254,7 @@ export function useBonzaiWeb3(options = {}) {
 
     // Wallet methods
     connect,
+    connectWithPrivy,
     disconnect,
     cancelConnection: () => store.cancelConnection(),
     refresh,

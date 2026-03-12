@@ -283,12 +283,21 @@ contract BonzaiProviderRegistry is Ownable, ReentrancyGuard, Pausable {
 
     /**
      * @notice Reactivate provider
+     * @dev Reverts if another provider has claimed this peerId while deactivated
      */
     function activate() external {
         if (providers[msg.sender].wallet == address(0)) revert NotRegistered();
+
+        // Prevent overwriting another provider's peerId mapping
+        string memory peerId = providers[msg.sender].peerId;
+        address currentHolder = peerIdToWallet[peerId];
+        if (currentHolder != address(0) && currentHolder != msg.sender) {
+            revert PeerIdTaken(peerId);
+        }
+
         providers[msg.sender].isActive = true;
         providers[msg.sender].lastSeenAt = block.timestamp;
-        peerIdToWallet[providers[msg.sender].peerId] = msg.sender;
+        peerIdToWallet[peerId] = msg.sender;
         emit ProviderActivated(msg.sender);
     }
 
@@ -481,17 +490,19 @@ contract BonzaiProviderRegistry is Ownable, ReentrancyGuard, Pausable {
     /**
      * @notice Slash a provider's stake (for misbehavior)
      */
-    function slashProvider(address provider, uint256 amount, string calldata reason) external onlyOwner {
+    function slashProvider(address provider, uint256 amount, string calldata reason) external onlyOwner nonReentrant {
+        if (providers[provider].wallet == address(0)) revert ProviderNotRegistered(provider);
         if (amount == 0) revert ZeroAmount();
         if (providers[provider].stakedAmount < amount) {
             revert InsufficientStakeBalance(amount, providers[provider].stakedAmount);
         }
 
-        providers[provider].stakedAmount -= amount;
-
-        // Transfer slashed amount to treasury
+        // Transfer slashed amount to treasury first (reverts on failure, preserving stake)
         (bool success, ) = treasury.call{value: amount}("");
         if (!success) revert TransferFailed(treasury);
+
+        // Only deduct stake after successful transfer
+        providers[provider].stakedAmount -= amount;
 
         emit ProviderSlashed(provider, amount, reason);
     }

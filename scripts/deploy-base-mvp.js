@@ -10,6 +10,8 @@
  *   6. CompanionTokenFactory  — Atomic companion ERC-20 + Uniswap V4 LP
  *   7. FineTuneTokenFactory   — Atomic model ERC-20 + Uniswap V4 LP
  *   8. BonzaiUnlock           — ETH payment to unlock all levels
+ *   9. BonzaiProviderRegistry — P2P inference provider registry
+ *  10. BonzaiPayment          — P2P ETH/USDC payment processing
  *
  * Cross-contract wiring is performed after all deployments.
  *
@@ -67,6 +69,13 @@ const DEPLOY_CONFIG = {
   // Hook permission flags: afterSwap (bit 7) + afterSwapReturnDelta (bit 4) = 0x0090
   hookFlags: 0x0090,
   hookFlagsMask: 0x3FFF, // last 14 bits
+
+  // P2P Provider Registry config
+  minStakeAmount: ethers.parseEther('0.01'), // 0.01 ETH minimum stake
+  p2pPlatformFeeBps: 250, // 2.5% platform fee
+
+  // USDC on Base (for BonzaiPayment)
+  usdcBase: '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913',
 };
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -338,6 +347,12 @@ async function main() {
   const unlockCompiled = compileContract('BonzaiUnlock.sol');
   console.log('  ✓ BonzaiUnlock.sol');
 
+  const providerRegistryCompiled = compileContract('BonzaiProviderRegistry.sol');
+  console.log('  ✓ BonzaiProviderRegistry.sol');
+
+  const paymentCompiled = compileContract('BonzaiPayment.sol');
+  console.log('  ✓ BonzaiPayment.sol');
+
   // ─── Step 2: Deploy contracts (dependency order) ────────────────────
   console.log('\n═══ Step 2: Deploying contracts ═══');
 
@@ -474,6 +489,30 @@ async function main() {
     'BonzaiUnlock (1 ETH all-level unlock)',
   );
 
+  // 2i. BonzaiProviderRegistry — P2P provider registration
+  const providerRegistry = await deployContract(
+    signer, 'BonzaiProviderRegistry',
+    providerRegistryCompiled.BonzaiProviderRegistry,
+    [
+      DEPLOY_CONFIG.treasury,
+      DEPLOY_CONFIG.minStakeAmount,
+      DEPLOY_CONFIG.p2pPlatformFeeBps,
+    ],
+    'BonzaiProviderRegistry (P2P provider registry)',
+  );
+
+  // 2j. BonzaiPayment — P2P ETH/USDC payment processing
+  const payment = await deployContract(
+    signer, 'BonzaiPayment',
+    paymentCompiled.BonzaiPayment,
+    [
+      DEPLOY_CONFIG.usdcBase,
+      DEPLOY_CONFIG.treasury,
+      DEPLOY_CONFIG.p2pPlatformFeeBps,
+    ],
+    'BonzaiPayment (P2P ETH/USDC payments)',
+  );
+
   // ─── Step 3: Cross-contract wiring ──────────────────────────────────
   console.log('\n═══ Step 3: Cross-contract wiring ═══');
 
@@ -536,6 +575,21 @@ async function main() {
     'FineTuneTokenFactory.setContentContract(content)',
   );
 
+  // Wire BonzaiPayment ↔ BonzaiProviderRegistry
+  const paymentAbi = paymentCompiled.BonzaiPayment.abi;
+  const providerRegistryAbi = providerRegistryCompiled.BonzaiProviderRegistry.abi;
+
+  await wireContract(
+    signer, deployedAddresses.BonzaiPayment, paymentAbi,
+    'setProviderRegistry', [deployedAddresses.BonzaiProviderRegistry],
+    'BonzaiPayment.setProviderRegistry(providerRegistry)',
+  );
+  await wireContract(
+    signer, deployedAddresses.BonzaiProviderRegistry, providerRegistryAbi,
+    'setPaymentContract', [deployedAddresses.BonzaiPayment],
+    'BonzaiProviderRegistry.setPaymentContract(payment)',
+  );
+
   // ─── Step 4: Summary ───────────────────────────────────────────────
   console.log('\n╔═══════════════════════════════════════════════════════════╗');
   console.log('║                DEPLOYMENT SUMMARY                        ║');
@@ -552,6 +606,7 @@ async function main() {
   console.log('║    Hook     → CompanionFactory, FineTuneFactory          ║');
   console.log('║    CompanionFactory → Companions                         ║');
   console.log('║    FineTuneFactory  → Content                            ║');
+  console.log('║    Payment ↔ ProviderRegistry                            ║');
   console.log('╚═══════════════════════════════════════════════════════════╝');
 
   // Output config snippet for web3.config.js
@@ -566,6 +621,10 @@ async function main() {
   fineTuneTokenFactory: { contractAddress: '${deployedAddresses.FineTuneTokenFactory}', chainId: 8453 },
   levelUnlock: { registryAddress: '${deployedAddresses.BonzaiUnlock}', chainId: 8453 },
   uniswap: { base: { feeHook: '${deployedAddresses.BonzaiUniswapHook}' } },
+  p2pNetwork: {
+    providerRegistryAddress: '${deployedAddresses.BonzaiProviderRegistry}',
+    paymentContractAddress: '${deployedAddresses.BonzaiPayment}',
+  },
   `);
 
   // ─── Step 5: Post-deploy checklist ──────────────────────────────────
@@ -584,6 +643,10 @@ async function main() {
   console.log('  [ ] Test: claim beneficiary fees from hook');
   console.log('  [ ] Test: claim treasury + pool fees from hook');
   console.log('  [ ] Test: launch fine-tune token, verify same flow');
+  console.log('  [ ] Test: register P2P provider with stake, verify activation');
+  console.log('  [ ] Test: deposit ETH/USDC into BonzaiPayment, process payment');
+  console.log('  [ ] Test: provider withdraw earnings (ETH + USDC)');
+  console.log('  [ ] Test: EIP-712 signed payment flow (x402)');
   console.log('  [ ] Transfer ownership of all contracts to multisig (gnosis safe)');
   console.log(`  [ ] Delete .deploy-state.json after verifying everything`);
 }

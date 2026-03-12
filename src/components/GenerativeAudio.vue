@@ -1135,8 +1135,11 @@ export default {
     };
 
     const onMinted = (result) => {
-      const inf = inferences.value.find(i => i.id === mintTarget.value?.inferenceId);
+      // Trigger re-render for shallowRef
+      const arr = [...inferences.value];
+      const inf = arr.find(i => i.id === mintTarget.value?.inferenceId);
       if (inf) inf.nft = result;
+      inferences.value = arr;
       mintTarget.value = null;
     };
 

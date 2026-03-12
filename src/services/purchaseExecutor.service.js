@@ -16,7 +16,7 @@
 
 import { ethers } from 'ethers';
 import { CONFIG } from '../config/web3.config.js';
-import { agentWalletService } from './agentWallet.service.js';
+import { walletProviderService } from './walletProvider.service.js';
 import { companionTokenService } from './companionToken.service.js';
 import { irysService } from './irys.service.js';
 import { x402ExecutorService } from './x402Executor.service.js';
@@ -138,7 +138,7 @@ async function handleContentNFTMint(companionId, companion, session) {
     const metadataUpload = await irysService.uploadMetadata(metadata);
 
     // Get agent wallet signer for Base
-    const signer = await agentWalletService.getAgentWalletSignerForChain(companionId, 8453);
+    const signer = await walletProviderService.getAgentWalletSigner(companionId, 8453);
 
     // Mint content NFT
     const contentContract = new ethers.Contract(contractAddress, BonzaiContentABI, signer);
@@ -272,7 +272,7 @@ async function executeV4Swap(companionId, tokenAddress, ethAmount, type) {
     return { success: false, error: 'Uniswap V4 Universal Router not configured for Base', type };
   }
 
-  const signer = await agentWalletService.getAgentWalletSignerForChain(companionId, 8453);
+  const signer = await walletProviderService.getAgentWalletSigner(companionId, 8453);
   const router = new ethers.Contract(routerAddress, UNIVERSAL_ROUTER_ABI, signer);
 
   const amountWei = ethers.parseEther(ethAmount);

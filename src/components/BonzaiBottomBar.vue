@@ -27,7 +27,20 @@
                 {{ isConnecting ? "Connecting..." : "Connect Wallet" }}
               </span>
             </button>
-            <!-- Cancel/Reset button when stuck coxnnecting -->
+
+            <span class="connect-divider">or</span>
+
+            <button
+              class="button is-info"
+              @click="showPrivyLogin = true"
+              :disabled="isConnecting"
+              title="Sign in with email — no crypto wallet needed"
+            >
+              <span class="material-symbols-outlined mr-2">login</span>
+              <span class="btn-text">Sign In</span>
+            </button>
+
+            <!-- Cancel/Reset button when stuck connecting -->
             <button
               v-if="isConnecting"
               class="button is-danger ml-2"
@@ -45,6 +58,13 @@
             class="wallet-info"
           >
             <div class="wallet-address" @click="copyAddress">
+              <span
+                v-if="authProvider === 'privy'"
+                class="network-badge privy-badge"
+                title="Signed in with Privy"
+              >
+                P
+              </span>
               <a
                 v-if="isUniversalProfile"
                 class="network-badge up-badge"
@@ -293,6 +313,102 @@
         </div>
       </Transition>
     </Teleport>
+
+    <!-- ═══ Privy Login Modal ═══ -->
+    <Teleport to="body">
+      <Transition name="modal-fade">
+        <div
+          v-if="showPrivyLogin"
+          class="modal is-active privy-modal-overlay"
+          @click.self="closePrivyLogin"
+        >
+          <div class="modal-content privy-modal">
+            <div class="privy-modal-header">
+              <h3>Sign In</h3>
+              <button class="delete" @click="closePrivyLogin"></button>
+            </div>
+
+            <div class="privy-modal-body">
+              <p class="privy-subtitle">No crypto wallet needed</p>
+
+              <!-- Email Step -->
+              <div v-if="privyStep === 'email'" class="privy-email-step">
+                <input
+                  v-model="privyEmail"
+                  type="email"
+                  class="input privy-input"
+                  placeholder="Enter your email"
+                  @keyup.enter="startPrivyEmail"
+                  autofocus
+                />
+                <button
+                  class="button is-info is-fullwidth mt-3"
+                  @click="startPrivyEmail"
+                  :disabled="isConnecting"
+                >
+                  {{ isConnecting ? "Sending..." : "Continue with Email" }}
+                </button>
+              </div>
+
+              <!-- OTP Step -->
+              <div v-else-if="privyStep === 'otp'" class="privy-otp-step">
+                <p class="privy-otp-hint">
+                  Check <strong>{{ privyEmail }}</strong> for a verification code
+                </p>
+                <input
+                  v-model="privyOtpCode"
+                  type="text"
+                  class="input privy-input"
+                  placeholder="Enter code"
+                  maxlength="6"
+                  @keyup.enter="verifyPrivyOtp"
+                  autofocus
+                />
+                <button
+                  class="button is-info is-fullwidth mt-3"
+                  @click="verifyPrivyOtp"
+                  :disabled="isConnecting"
+                >
+                  {{ isConnecting ? "Verifying..." : "Verify" }}
+                </button>
+                <button
+                  class="button is-ghost is-fullwidth mt-2"
+                  @click="privyStep = 'email'"
+                >
+                  Back
+                </button>
+              </div>
+
+              <!-- Divider -->
+              <div class="privy-divider">
+                <span>or</span>
+              </div>
+
+              <!-- Social Login -->
+              <div class="privy-social-buttons">
+                <button
+                  class="button is-dark is-fullwidth mb-2"
+                  @click="loginWithSocial('google')"
+                  :disabled="isConnecting"
+                >
+                  <span class="btn-text">Continue with Google</span>
+                </button>
+                <button
+                  class="button is-dark is-fullwidth"
+                  @click="loginWithSocial('apple')"
+                  :disabled="isConnecting"
+                >
+                  <span class="btn-text">Continue with Apple</span>
+                </button>
+              </div>
+
+              <!-- Error -->
+              <p v-if="privyError" class="privy-error mt-3">{{ privyError }}</p>
+            </div>
+          </div>
+        </div>
+      </Transition>
+    </Teleport>
   </div>
 </template>
 
@@ -332,9 +448,11 @@ const {
   levels,
   highestLevel,
   connect: doConnect,
+  connectWithPrivy: doConnectWithPrivy,
   disconnect: doDisconnect,
   cancelConnection: doCancelConnection,
   refresh: doRefresh,
+  authProvider,
   store,
 } = useBonzaiWeb3();
 
@@ -360,6 +478,13 @@ let p2pStatusInterval = null;
 const showAuthModal = ref(false);
 const isReauthing = ref(false);
 const isRefreshingToken = ref(false);
+
+// Privy login state
+const showPrivyLogin = ref(false);
+const privyEmail = ref("");
+const privyOtpCode = ref("");
+const privyStep = ref("email"); // 'email' | 'otp'
+const privyError = ref("");
 
 // Mint network (Base only)
 const mintNetwork = computed(() => mintStore.state.network);
@@ -620,6 +745,75 @@ const connect = async () => {
 
 const disconnect = async () => {
   await doDisconnect();
+};
+
+// ── Privy Login Flow ─────────────────────────────────────────────────────
+
+const startPrivyEmail = async () => {
+  privyError.value = "";
+  if (!privyEmail.value?.trim()) {
+    privyError.value = "Enter your email address";
+    return;
+  }
+  const result = await doConnectWithPrivy({
+    method: "email",
+    email: privyEmail.value.trim(),
+  });
+  if (result.needsOtp) {
+    privyStep.value = "otp";
+  } else if (result.error) {
+    privyError.value = result.error;
+  }
+};
+
+const verifyPrivyOtp = async () => {
+  privyError.value = "";
+  if (!privyOtpCode.value?.trim()) {
+    privyError.value = "Enter the verification code";
+    return;
+  }
+  const result = await doConnectWithPrivy({
+    method: "email",
+    email: privyEmail.value.trim(),
+    otpCode: privyOtpCode.value.trim(),
+  });
+  if (result.success) {
+    showPrivyLogin.value = false;
+    privyStep.value = "email";
+    privyEmail.value = "";
+    privyOtpCode.value = "";
+    // Post-connect chain switch
+    try {
+      await switchNetwork(mintNetwork.value);
+    } catch (e) {
+      console.warn("[BottomBar] Post-Privy chain switch:", e.message);
+    }
+  } else if (result.error) {
+    privyError.value = result.error;
+  }
+};
+
+const loginWithSocial = async (provider) => {
+  privyError.value = "";
+  const result = await doConnectWithPrivy({ method: provider });
+  if (result.success) {
+    showPrivyLogin.value = false;
+    try {
+      await switchNetwork(mintNetwork.value);
+    } catch (e) {
+      console.warn("[BottomBar] Post-Privy chain switch:", e.message);
+    }
+  } else if (result.error) {
+    privyError.value = result.error;
+  }
+};
+
+const closePrivyLogin = () => {
+  showPrivyLogin.value = false;
+  privyStep.value = "email";
+  privyEmail.value = "";
+  privyOtpCode.value = "";
+  privyError.value = "";
 };
 
 const refresh = async () => {
@@ -1695,5 +1889,105 @@ hr {
   .serve-label {
     display: none;
   }
+}
+
+/* ═══ Privy Integration ═══ */
+
+.connect-divider {
+  color: rgba(255, 255, 255, 0.4);
+  font-size: 12px;
+  margin: 0 8px;
+  user-select: none;
+}
+
+.network-badge.privy-badge {
+  background: linear-gradient(135deg, #6851ff 0%, #a855f7 100%);
+  color: white;
+  font-weight: 900;
+}
+
+.privy-modal-overlay {
+  z-index: 10000;
+}
+
+.privy-modal {
+  background: #1a1a2e;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 16px;
+  padding: 32px;
+  max-width: 380px;
+  width: 90vw;
+  margin: auto;
+}
+
+.privy-modal-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 8px;
+}
+
+.privy-modal-header h3 {
+  font-size: 20px;
+  font-weight: 700;
+  color: #fff;
+  margin: 0;
+}
+
+.privy-subtitle {
+  color: rgba(255, 255, 255, 0.5);
+  font-size: 13px;
+  margin-bottom: 20px;
+}
+
+.privy-input {
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  color: #fff;
+  border-radius: 8px;
+  padding: 12px 14px;
+  font-size: 15px;
+}
+
+.privy-input::placeholder {
+  color: rgba(255, 255, 255, 0.3);
+}
+
+.privy-input:focus {
+  border-color: #6851ff;
+  box-shadow: 0 0 0 2px rgba(104, 81, 255, 0.2);
+}
+
+.privy-otp-hint {
+  color: rgba(255, 255, 255, 0.6);
+  font-size: 13px;
+  margin-bottom: 12px;
+}
+
+.privy-divider {
+  display: flex;
+  align-items: center;
+  margin: 20px 0;
+  gap: 12px;
+}
+
+.privy-divider::before,
+.privy-divider::after {
+  content: "";
+  flex: 1;
+  height: 1px;
+  background: rgba(255, 255, 255, 0.1);
+}
+
+.privy-divider span {
+  color: rgba(255, 255, 255, 0.3);
+  font-size: 12px;
+  text-transform: uppercase;
+}
+
+.privy-error {
+  color: #ff6b6b;
+  font-size: 13px;
+  text-align: center;
 }
 </style>

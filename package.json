@@ -78,6 +78,7 @@
     "@libp2p/websockets": "^8.1.0",
     "@lukso/lsp-smart-contracts": "^0.16.7",
     "@openzeppelin/contracts": "^5.4.0",
+    "@privy-io/js-sdk-core": "^0.60.4",
     "@reown/appkit": "^1.8.17",
     "@reown/appkit-adapter-ethers": "^1.8.17",
     "@reown/walletkit": "^1.5.0",

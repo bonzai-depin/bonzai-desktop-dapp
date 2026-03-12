@@ -704,14 +704,14 @@ export default {
     };
 
     const onMinted = (result) => {
-      // Update the inference in the local array
-      const inf = inferences.value.find(
+      // Trigger re-render for shallowRef
+      const arr = [...inferences.value];
+      const inf = arr.find(
         (i) =>
           i.id === result.inferenceId || i.id === mintTarget.value?.inferenceId,
       );
-      if (inf) {
-        inf.nft = result;
-      }
+      if (inf) inf.nft = result;
+      inferences.value = arr;
       mintTarget.value = null;
     };
 

@@ -35,7 +35,7 @@ const EIP712_DOMAIN = {
   chainId: BASE_CONFIG.chainId,
 };
 
-// Payment authorization types
+// Payment authorization types (must match BonzaiPayment.sol PAYMENT_TYPEHASH)
 const PAYMENT_TYPES = {
   Payment: [
     { name: 'provider', type: 'address' },
@@ -43,8 +43,12 @@ const PAYMENT_TYPES = {
     { name: 'nonce', type: 'uint256' },
     { name: 'expiry', type: 'uint256' },
     { name: 'service', type: 'string' },
+    { name: 'paymentToken', type: 'uint8' },
   ],
 };
+
+// Payment token enum (matches BonzaiPayment.sol)
+const PaymentToken = { ETH: 0, USDC: 1 };
 
 // ── Persistent nonce store (replay-attack prevention) ────────────────────
 // Nonces are stored as {key, ts} objects in Electron Store under 'x402-used-nonces'.
@@ -203,15 +207,17 @@ function _addNonce(key) {
  * @param {string} options.provider - Provider's ETH address
  * @param {string} options.amount - Amount in wei (use ethers.parseEther)
  * @param {string} options.service - Service/endpoint being requested
+ * @param {number} options.paymentToken - 0=ETH, 1=USDC (default: ETH)
  * @returns {Object} Payment request to include in 402 response
  */
-export function createPaymentRequest({ provider, amount, service }) {
+export function createPaymentRequest({ provider, amount, service, paymentToken = PaymentToken.ETH }) {
   return {
     version: 'x402-eth/1.0',
     provider,
     amount,
     amountEth: ethers.formatEther(amount),
     service,
+    paymentToken,
     chainId: BASE_CONFIG.chainId,
     chainName: BASE_CONFIG.name,
   };
@@ -230,7 +236,7 @@ export function createPaymentRequest({ provider, amount, service }) {
  * @returns {Promise<Object>} Signed payment authorization
  */
 export async function signPayment(signer, paymentRequest) {
-  const { provider, amount, service } = paymentRequest;
+  const { provider, amount, service, paymentToken = PaymentToken.ETH } = paymentRequest;
 
   const nonce = Date.now();
   const expiry = Math.floor(Date.now() / 1000) + 300; // 5 minutes
@@ -241,6 +247,7 @@ export async function signPayment(signer, paymentRequest) {
     nonce: BigInt(nonce),
     expiry: BigInt(expiry),
     service,
+    paymentToken,
   };
 
   const signature = await signer.signTypedData(EIP712_DOMAIN, PAYMENT_TYPES, message);
@@ -254,6 +261,7 @@ export async function signPayment(signer, paymentRequest) {
     nonce,
     expiry,
     service,
+    paymentToken,
     chainId: BASE_CONFIG.chainId,
     signature,
   };
@@ -341,6 +349,7 @@ export async function validateSignedPayment(payment, options = {}) {
       nonce: BigInt(payment.nonce),
       expiry: BigInt(payment.expiry),
       service: payment.service,
+      paymentToken: payment.paymentToken ?? PaymentToken.ETH,
     };
 
     const recoveredAddress = ethers.verifyTypedData(
@@ -540,6 +549,7 @@ export const x402Service = {
   // Config
   BASE_CONFIG,
   EIP712_DOMAIN,
+  PaymentToken,
 
   // Payment flow
   createPaymentRequest,

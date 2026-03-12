@@ -42,6 +42,22 @@ contextBridge.exposeInMainWorld("electronAPI", {
   // Agent wallet transaction confirmation (P0 Security)
   confirmTransaction: (details) =>
     ipcRenderer.invoke("confirm-transaction", details),
+
+  // ─────────────────────────────────────────────────────────────────────────
+  // Privy Server Wallet (agent wallets via Privy API, secret stays in main)
+  // ─────────────────────────────────────────────────────────────────────────
+  privy: {
+    createServerWallet: (opts) =>
+      ipcRenderer.invoke("privy:create-server-wallet", opts),
+    sendTransaction: (walletId, tx) =>
+      ipcRenderer.invoke("privy:send-transaction", { walletId, tx }),
+    signTypedData: (walletId, typedData) =>
+      ipcRenderer.invoke("privy:sign-typed-data", { walletId, typedData }),
+    getWallet: (walletId) =>
+      ipcRenderer.invoke("privy:get-wallet", walletId),
+    setPolicy: (walletId, policy) =>
+      ipcRenderer.invoke("privy:set-policy", { walletId, policy }),
+  },
   saveImage: (defaultName, base64Data) =>
     ipcRenderer.invoke("agent-save-image", defaultName, base64Data),
   saveAudio: (defaultName, sourcePath) =>
@@ -97,6 +113,11 @@ contextBridge.exposeInMainWorld("electronAPI", {
   openclawGetEnabled: () => ipcRenderer.invoke("openclaw-get-enabled"),
   openclawSetEnabled: (enabled) => ipcRenderer.invoke("openclaw-set-enabled", enabled),
   openclawIsInstalled: () => ipcRenderer.invoke("openclaw-is-installed"),
+
+  // Hermes Agent integration toggle
+  hermesGetEnabled: () => ipcRenderer.invoke("hermes-get-enabled"),
+  hermesSetEnabled: (enabled) => ipcRenderer.invoke("hermes-set-enabled", enabled),
+  hermesIsInstalled: () => ipcRenderer.invoke("hermes-is-installed"),
 
   // ─────────────────────────────────────────────────────────────────────────────
   // Irys / Arweave Upload (proxied through main process for Node.js compat)
