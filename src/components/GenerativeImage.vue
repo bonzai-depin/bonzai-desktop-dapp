@@ -94,23 +94,6 @@
 
                   <input
                     v-model="mode"
-                    :value="'advanced'"
-                    id="mode_advanced"
-                    type="radio"
-                    name="mode"
-                  />
-                  <label for="mode_advanced" class="radio mr-2">
-                    <span
-                      class="material-symbols-outlined"
-                      style="font-size: 32px !important"
-                    >
-                      auto_awesome
-                    </span>
-                    Advanced
-                  </label>
-
-                  <input
-                    v-model="mode"
                     :value="'quality'"
                     id="mode_quality"
                     type="radio"
@@ -954,8 +937,7 @@ export default {
     };
     const pipelineForMode = (m) => {
       if (m === "turbo_edit") return "image_turbo";
-      if (m === "quality") return "image_quality";
-      if (m === "advanced") return "image_advanced";
+      if (m === "quality" || m === "advanced") return "image_quality";
       if (m === "standard") return "image_standard";
       if (m === "turbo") return "image_turbo";
       return "image_turbo"; // default
@@ -1184,8 +1166,6 @@ export default {
       "image_turbo",
       "flux_klein",
       "image_quality",
-      "flux_krea",
-      "image_advanced",
       "z_image_turbo",
     ];
 
@@ -1542,12 +1522,10 @@ export default {
             pipelineName === "image_turbo"
               ? "flux-klein"
               : pipelineName === "image_quality"
-                ? "flux-krea"
+                ? "z-image-turbo"
                 : pipelineName === "image_standard"
                   ? "sdxl"
-                  : pipelineName === "image_advanced"
-                    ? "z-image-turbo"
-                    : pipelineName;
+                  : pipelineName;
           const newInference = {
             question: prompt,
             answer: {

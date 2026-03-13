@@ -91,7 +91,7 @@ export const PIPELINE_CATEGORY_IDS = {
   image_turbo: 1,
   image_quality: 2,
   image_standard: 3,
-  image_advanced: 4,
+  image_advanced: 2, // deprecated: routes to image_quality
   // Audio pipelines (5 is deprecated)
   audio_turbo: 6,
   audio_quality: 7,

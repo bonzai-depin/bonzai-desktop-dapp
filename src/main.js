@@ -1069,13 +1069,11 @@ async function routeInferenceRequest(request) {
         endpoint = "/image/turbo";
         break;
       case "image_quality":
+      case "image_advanced":
         endpoint = "/image/quality";
         break;
       case "image_standard":
         endpoint = "/image/standard";
-        break;
-      case "image_advanced":
-        endpoint = "/image/advanced";
         break;
 
       // Audio pipelines

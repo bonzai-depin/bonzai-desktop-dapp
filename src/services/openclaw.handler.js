@@ -290,7 +290,6 @@ const PIPELINES = {
   image_turbo: { type: 'image', endpoint: '/image/turbo', description: 'Fast image generation' },
   image_quality: { type: 'image', endpoint: '/image/quality', description: 'High quality images' },
   image_standard: { type: 'image', endpoint: '/image/standard', description: 'Standard image generation' },
-  image_advanced: { type: 'image', endpoint: '/image/advanced', description: 'Advanced image generation' },
 
   // Audio pipelines
   audio_turbo: { type: 'audio', endpoint: '/audio/turbo', description: 'Fast TTS' },
@@ -1278,9 +1277,8 @@ async function handleGenerateCommand(channelId, args, webhookData = {}) {
       text: `**Generate Commands**
 
 \`!generate image <prompt>\` - Fast image (FLUX Klein)
-\`!generate image_quality <prompt>\` - Quality image (FLUX Krea)
+\`!generate image_quality <prompt>\` - Quality image (Z-Image Turbo)
 \`!generate image_standard <prompt>\` - Standard image (SDXL)
-\`!generate image_advanced <prompt>\` - Advanced image (Z-Image)
 \`!generate video <prompt>\` - Video (LTX-2)
 \`!generate audio <text>\` - Fast TTS (Kokoro)
 \`!generate audio_quality <text>\` - Quality TTS (Qwen)
@@ -1295,9 +1293,8 @@ Pipelines: ${Object.keys(PIPELINES).filter(p => p !== 'llm').join(', ')}`,
     case 'image':
     case 'image_turbo':
     case 'image_quality':
-    case 'image_standard':
-    case 'image_advanced': {
-      const actualPipeline = pipeline === 'image' ? 'image_turbo' : pipeline;
+    case 'image_standard': {
+      const actualPipeline = pipeline === 'image' ? 'image_turbo' : (pipeline === 'image_advanced' ? 'image_quality' : pipeline);
       const result = await generateImage(channelId, prompt, { pipeline: actualPipeline });
       // Flask returns 'image' not 'image_base64'
       const imageData = result?.image || result?.image_base64;
@@ -2402,9 +2399,8 @@ Total: ${Object.keys(MODEL_REQUIREMENTS).filter(k => MODEL_REQUIREMENTS[k].type 
 
 **Generation**
 \`!generate image <prompt>\` - Fast image (FLUX Klein)
-\`!generate image_quality <prompt>\` - Quality image (FLUX Krea)
+\`!generate image_quality <prompt>\` - Quality image (Z-Image Turbo)
 \`!generate image_standard <prompt>\` - Standard image (SDXL)
-\`!generate image_advanced <prompt>\` - Advanced image (Z-Image)
 \`!generate video <prompt>\` - Video (LTX-2)
 \`!generate audio <text>\` - Fast TTS (Kokoro)
 \`!generate audio_quality <text>\` - Quality TTS (Qwen)

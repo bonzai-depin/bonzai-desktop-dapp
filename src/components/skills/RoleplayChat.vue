@@ -3733,7 +3733,7 @@ export default {
     // Pipeline mapping (also used in checkModelAvailability)
     const PIPELINE_MAP = {
       image_turbo: "image_turbo",
-      image_advanced: "image_advanced",
+      image_advanced: "image_quality",
       image_standard: "image_standard",
       image_quality: "image_quality",
       audio_quality: "audio_quality_persona",
@@ -3753,9 +3753,9 @@ export default {
     };
 
     // Mandatory models — must be downloaded to start a session and mint companions
-    // LLM: roleplay text, image_advanced: companion avatars, image_turbo: scene illustration
+    // LLM: roleplay text, image_quality: companion avatars, image_turbo: scene illustration
     const mandatoryModels = computed(() => {
-      return [REQUIRED_LLM, "image_advanced", "image_turbo"];
+      return [REQUIRED_LLM, "image_quality", "image_turbo"];
     });
 
     // Optional selected models — downloadable but don't block session start
@@ -6901,7 +6901,7 @@ export default {
         // Sanitize age to ensure it's at least 18
         sanitizeCompanionAge(result);
 
-        // Generate companion portrait image using /image/advanced (square)
+        // Generate companion portrait image using /image/quality (square)
         try {
           if (generationCancelled.value) return;
           const { generateCompanionPicture } =
@@ -7203,7 +7203,7 @@ export default {
     };
 
     /**
-     * Regenerate companion portrait image (uses /image/advanced)
+     * Regenerate companion portrait image (uses /image/quality)
      */
     const regenerateCompanionImage = async (companion) => {
       if (!companion || isRegeneratingImage.value) return;

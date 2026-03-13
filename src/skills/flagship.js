@@ -582,14 +582,20 @@ export const MODEL_REQUIREMENTS = {
     description: 'Fast turbo image generation & i2i',
   },
   image_quality: {
-    name: 'FLUX Krea',
+    name: 'Z-Image Turbo',
     type: 'diffusion',
     pipeline: 'image_quality',
     endpoint: '/image/quality',
-    repo: 'black-forest-labs/FLUX.1-dev',
+    repo: 'Tongyi-MAI/Z-Image-Turbo',
     size: '~24 GB',
-    vram: '16 GB',
-    description: 'High-quality image generation',
+    vram: '10 GB',
+    description: 'High-quality image generation (GGUF Q4)',
+    additionalFiles: [{
+      name: 'z-image-turbo-q4_k_m.gguf',
+      url: 'https://huggingface.co/unsloth/Z-Image-Turbo-GGUF/resolve/main/z-image-turbo-Q4_K_M.gguf',
+      size: '~5 GB',
+      description: 'Z-Image Turbo Q4_K_M quantized transformer (GGUF)',
+    }],
   },
   image_standard: {
     name: 'SDXL 1.0',
@@ -607,23 +613,6 @@ export const MODEL_REQUIREMENTS = {
       description: 'SDXL LoRA for enhanced generation',
     }],
   },
-  image_advanced: {
-    name: 'Z Turbo',
-    type: 'diffusion',
-    pipeline: 'image_advanced',
-    endpoint: '/image/advanced',
-    repo: 'Tongyi-MAI/Z-Image-Turbo',
-    size: '~24 GB',
-    vram: '10 GB',
-    description: 'Advanced turbo generation (GGUF Q4)',
-    additionalFiles: [{
-      name: 'z-image-turbo-q4_k_m.gguf',
-      url: 'https://huggingface.co/unsloth/Z-Image-Turbo-GGUF/resolve/main/z-image-turbo-Q4_K_M.gguf',
-      size: '~5 GB',
-      description: 'Z-Image Turbo Q4_K_M quantized transformer (GGUF)',
-    }],
-  },
-
   // Audio Models
   audio_turbo: {
     name: 'Kokoro TTS',
@@ -2968,16 +2957,15 @@ function extractJSON(response) {
   throw new Error('Could not extract response from LLM output');
 }
 
-// Image generation - FLUX turbo (fast)
+// Image generation - quality (Z-Image Turbo) or turbo (FLUX Klein)
 async function generateImage(prompt, options = {}) {
-  // Endpoint selection: quality (FLUX Krea) > advanced (Z Turbo) > turbo (FLUX Klein)
-  const endpoint = options.quality ? '/image/quality' : (options.advanced ? '/image/advanced' : '/image/turbo');
+  const endpoint = (options.quality || options.advanced) ? '/image/quality' : '/image/turbo';
   return await callFlaskEndpoint(endpoint, {
     prompt,
     negative_prompt: options.negativePrompt || '',
     width: options.width || 1024,
     height: options.height || 1024,
-    steps: options.steps || (options.quality ? 20 : (options.advanced ? 9 : 4)),
+    steps: options.steps || ((options.quality || options.advanced) ? 9 : 4),
     guidance_scale: options.guidanceScale || 3.5,
   }, true); // Enable demo mode fallback
 }
@@ -3033,11 +3021,11 @@ export async function generateCompanionPicture(companion, options = {}) {
   const negativePrompt = options.negativePrompt || 'blurry, low quality, distorted, deformed, ugly, bad anatomy, watermark, text, signature';
 
   try {
-    console.log(`[Flagship] Generating portrait for companion: ${name} (using /image/advanced)`);
+    console.log(`[Flagship] Generating portrait for companion: ${name} (using /image/quality)`);
 
-    // Use advanced model (Z-Turbo) for companion portraits - square format
+    // Use quality model (Z-Image Turbo) for companion portraits - square format
     const result = await generateImage(prompt, {
-      advanced: true,  // Uses /image/advanced endpoint
+      quality: true,  // Uses /image/quality endpoint
       width: options.width || 768,
       height: options.height || 768,  // Square for portraits
       negativePrompt,
@@ -6113,15 +6101,12 @@ Output JSON:
           if (imageModel === 'image_standard') {
             // SDXL for explicit/NSFW scenes (uncensored)
             imageResult = await generateImageSDXL(prompt, { width: 1024, height: 768 });
-          } else if (imageModel === 'image_quality') {
-            // FLUX Krea for mature content (high quality)
+          } else if (imageModel === 'image_quality' || imageModel === 'image_advanced') {
+            // Z-Image Turbo for quality content
             imageResult = await generateImage(prompt, { width: 1024, height: 768, quality: true });
-          } else if (imageModel === 'image_advanced') {
-            // Z Turbo for general content (pg, pg13, adult non-explicit)
-            imageResult = await generateImage(prompt, { width: 1024, height: 768, advanced: true });
           } else {
-            // Fallback to Z Turbo (advanced) as default
-            imageResult = await generateImage(prompt, { width: 1024, height: 768, advanced: true });
+            // Fallback to Z-Image Turbo (quality) as default
+            imageResult = await generateImage(prompt, { width: 1024, height: 768, quality: true });
           }
           response.image = imageResult.image_base64 || imageResult.image;
 

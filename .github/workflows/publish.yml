@@ -285,6 +285,8 @@ jobs:
 
           # Create DMG with custom layout
           # Icons centered with 420px distance, white text
+          # create-dmg returns exit code 1 on hdiutil detach timeout (CI flake)
+          # but the DMG is still created successfully, so we check for the file after
           create-dmg \
             --volname "BonzAI" \
             --background "src/assets/background.png" \
@@ -296,7 +298,10 @@ jobs:
             --text-size 14 \
             --no-internet-enable \
             "out/make/BonzAI-${{ github.event.release.tag_name }}-arm64.dmg" \
-            "out/BonzAI-darwin-arm64/BonzAI.app"
+            "out/BonzAI-darwin-arm64/BonzAI.app" || true
+
+          # Force detach any lingering disk images from the CI flake
+          hdiutil detach /dev/disk* -force 2>/dev/null || true
 
           # Verify DMG was created
           DMG_PATH="out/make/BonzAI-${{ github.event.release.tag_name }}-arm64.dmg"

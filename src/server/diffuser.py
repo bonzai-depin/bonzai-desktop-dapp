@@ -132,8 +132,6 @@ from diffusers import (
     StableDiffusionXLPipeline,
     StableDiffusionXLImg2ImgPipeline,
     GGUFQuantizationConfig,
-    FluxPipeline,
-    FluxTransformer2DModel,
     Flux2KleinPipeline,
     ZImagePipeline,
     ZImageTransformer2DModel,
@@ -201,11 +199,6 @@ SDXL_BASE_REPO = "stabilityai/stable-diffusion-xl-base-1.0"
 SDXL_REFINER_REPO = "stabilityai/stable-diffusion-xl-refiner-1.0"
 SDXL_LORA_NAME = "sdxl-lora.safetensors"
 SDXL_LORA_URL = "https://pub-c63241af101045fb837462e5c4c67e33.r2.dev/sdxl-lora.safetensors"
-
-FLUX_KREA_REPO = "black-forest-labs/FLUX.1-Krea-dev"
-FLUX_KREA_GGUF_NAME = normalize_model_filename(os.getenv("FLUX_GGUF_FILENAME", "flux1-krea-dev-q5_k_m.gguf").strip())
-FLUX_KREA_GGUF_URL = os.getenv("FLUX_KREA_GGUF_URL",
-    "https://huggingface.co/QuantStack/FLUX.1-Krea-dev-GGUF/resolve/main/flux1-krea-dev-Q5_K_M.gguf").strip()
 
 # Flux Klein 4B - Fast turbo generation (standard HuggingFace loading)
 FLUX_KLEIN_REPO = "black-forest-labs/FLUX.2-klein-4b"
@@ -289,7 +282,6 @@ LLAMA_REPOS = {
 }
 
 EXPECTED_SIZES = {
-    "flux1-krea-dev-q5_k_m.gguf": 8_419_501_344,
     "z-image-turbo-q4_k_m.gguf": 4_650_000_000,
     "umt5-xxl-encoder-q3_k_m.gguf": 5_580_000_000,  # ~5.2GB GGUF text encoder
     "ltx-2-19b-distilled-q3_k_s.gguf": 8_667_234_304, #9_283_503_264,  # 9.28GB Q3_K_S distilled
@@ -1195,16 +1187,7 @@ def _sdxl_patterns() -> List[str]:
     ]
 
 
-def _flux_patterns() -> List[str]:
-    return [
-        "model_index.json", "scheduler/**", "tokenizer/**", "tokenizer_2/**",
-        "text_encoder/**", "text_encoder_2/**", "transformer/**", "vae/**",
-    ]
-
-
 def allow_patterns_for_repo(repo_id: str) -> Optional[List[str]]:
-    if repo_id in ("black-forest-labs/FLUX.1-dev", "black-forest-labs/FLUX.1-Krea-dev"):
-        return _flux_patterns()
     if repo_id in (SDXL_BASE_REPO, SDXL_REFINER_REPO):
         return _sdxl_patterns()
     if repo_id == Z_REPO:
@@ -1239,12 +1222,6 @@ def allow_patterns_for_repo(repo_id: str) -> Optional[List[str]]:
 
 
 REPO_SPECS = {
-    "black-forest-labs/FLUX.1-Krea-dev": {
-        "must_files": ["model_index.json"],
-        "must_tokenizers": ["tokenizer", "tokenizer_2"],
-        "must_weight_dirs": ["text_encoder", "text_encoder_2", "vae"],
-        "extra_dirs": ["scheduler"],
-    },
     "stabilityai/stable-diffusion-xl-base-1.0": {
         "must_files": ["model_index.json"],
         "must_weight_dirs": ["unet", "vae"],
@@ -1512,8 +1489,7 @@ def _plan_for(pipeline: str) -> Dict[str, Any]:
     Pipeline naming convention:
     - image_standard: SDXL base + refiner
     - image_turbo: FLUX Klein (fast generation, i2i)
-    - image_quality: FLUX Krea (high quality)
-    - image_advanced: Z turbo (advanced features)
+    - image_quality: Z-Image-Turbo (high quality)
     - audio_turbo: Kokoro TTS
     - audio_quality: Qwen3-TTS
     - video_fast: LTX2 GGUF (fast video)
@@ -1526,9 +1502,7 @@ def _plan_for(pipeline: str) -> Dict[str, Any]:
         return {"repos_to_fetch": [SDXL_BASE_REPO, SDXL_REFINER_REPO], "single_files": [_sf(SDXL_LORA_NAME, SDXL_LORA_URL)]}
     if pipeline in ("image_turbo", "flux_klein"):
         return {"repos_to_fetch": [FLUX_KLEIN_REPO], "single_files": []}
-    if pipeline in ("image_quality", "flux_krea"):
-        return {"repos_to_fetch": [FLUX_KREA_REPO], "single_files": [_sf(FLUX_KREA_GGUF_NAME, FLUX_KREA_GGUF_URL)]}
-    if pipeline in ("image_advanced", "z_image_turbo"):
+    if pipeline in ("image_quality", "image_advanced", "z_image_turbo"):
         return {"repos_to_fetch": [Z_REPO], "single_files": [_sf(Z_GGUF_NAME, Z_GGUF_URL)]}
 
     # Audio pipelines
@@ -2717,9 +2691,10 @@ def image_standard_sdxl():
 # REST API: IMAGE GENERATION - Z-IMAGE TURBO
 # =============================================================================
 
+@app.route("/image/quality", methods=["POST"])
 @app.route("/image/advanced", methods=["POST"])
-def z_image_advanced():
-    """Generate image using Z-Image-Turbo (advanced mode)."""
+def z_image_quality():
+    """Generate image using Z-Image-Turbo (quality mode)."""
     data = request.get_json(silent=True) or {}
     prompt = (data.get("prompt") or "").strip()
     negative_prompt = (data.get("negative_prompt") or "").strip() or (
@@ -2738,7 +2713,7 @@ def z_image_advanced():
     if guard:
         return guard
 
-    gen_id = genbus.new("z_image_advanced", {"endpoint": "/image/advanced", "w": W, "h": H, "steps": steps})
+    gen_id = genbus.new("z_image_quality", {"endpoint": "/image/quality", "w": W, "h": H, "steps": steps})
 
     try:
         genbus.progress(gen_id, "loading", 0, 3)
@@ -2794,7 +2769,7 @@ def z_image_advanced():
 
         # Save image to FILES_DIR for persistence
         try:
-            out_path = FILES_DIR / f"image_advanced_{gen_id}.webp"
+            out_path = FILES_DIR / f"image_quality_{gen_id}.webp"
             image.save(str(out_path), format="WEBP", quality=90)
             logger.info(f"[z-image] Image saved to {out_path}")
         except Exception as save_err:
@@ -3008,101 +2983,6 @@ def image_turbo_flux_klein_i2i():
         DeviceManager.free_memory()
 
 
-# =============================================================================
-# REST API: IMAGE GENERATION - FLUX KREA
-# =============================================================================
-
-@app.route("/image/quality", methods=["POST"])
-def image_quality_flux_krea():
-    """Generate image using FLUX Krea."""
-    data = request.json or {}
-    prompt = (data.get("prompt") or "").strip()
-    h = int(data.get("height", 512))
-    w = int(data.get("width", 768))
-    steps = int(data.get("steps", 35))
-    auto_dl = bool(data.get("auto_download", False))
-    
-    if not prompt:
-        return jsonify(_json_sanitize({"error": "Prompt is required"})), 400
-
-    guard = _ensure_files_present_or_start("flux_krea", auto_download=auto_dl)
-    if guard:
-        return guard
-
-    gen_id = genbus.new("flux_krea", {"endpoint": "/image/quality", "prompt": prompt})
-    
-    try:
-        genbus.progress(gen_id, "loading", 0, 3)
-        
-        device = DeviceManager.get_device()
-        if device.type == "cuda":
-            compute_dtype = torch.bfloat16
-        elif device.type == "mps":
-            compute_dtype = torch.float16
-        else:
-            compute_dtype = torch.float32
-
-        tr_cfg = repo_local_dir(FLUX_KREA_REPO) / "transformer" / "config.json"
-
-        # Use offline mode if pipeline is fully downloaded
-        with offline_mode_if_complete("flux_krea") as is_offline:
-            transformer = FluxTransformer2DModel.from_single_file(
-                str(MODEL_DIR / FLUX_KREA_GGUF_NAME),
-                config=str(tr_cfg),
-                quantization_config=GGUFQuantizationConfig(compute_dtype=compute_dtype),
-                dtype=compute_dtype,
-            ).to(device)
-
-            pipe = FluxPipeline.from_pretrained(
-                str(repo_local_dir(FLUX_KREA_REPO)),
-                transformer=transformer,
-                dtype=compute_dtype,
-                local_files_only=is_offline,
-            ).to(device)
-
-        pipe.text_encoder = pipe.text_encoder.to(dtype=compute_dtype)
-        pipe.text_encoder_2 = pipe.text_encoder_2.to(dtype=compute_dtype)
-        if hasattr(pipe, 'vae'):
-            pipe.vae = pipe.vae.to(dtype=compute_dtype)
-
-        genbus.progress(gen_id, "generating", 1, 3)
-
-        image = pipe(
-            prompt=prompt,
-            guidance_scale=3.5,
-            height=h,
-            width=w,
-            num_inference_steps=steps
-        ).images[0]
-
-        genbus.progress(gen_id, "finalizing", 2, 3)
-
-        b64 = encode_image_to_webp(image)
-
-        # Save image to FILES_DIR for persistence
-        try:
-            out_path = FILES_DIR / f"image_quality_{gen_id}.webp"
-            image.save(str(out_path), format="WEBP", quality=90)
-            logger.info(f"[flux-krea] Image saved to {out_path}")
-        except Exception as save_err:
-            logger.warning(f"[flux-krea] Failed to save image to disk: {save_err}")
-
-        genbus.progress(gen_id, "complete", 3, 3)
-        genbus.finish(gen_id, {"ok": True})
-
-        return jsonify(_json_sanitize({
-            "prompt": prompt, "image": b64,
-            "image_path": str(out_path) if 'out_path' in dir() else None,
-            "generation_id": gen_id,
-            "generation_websocket_url": generation_url()
-        })), 201
-
-    except Exception as e:
-        logger.exception("FLUX Krea generation failed")
-        genbus.error(gen_id, str(e))
-        return jsonify(_json_sanitize({"error": str(e)})), 500
-    finally:
-        DeviceManager.free_memory()
 
 
 # ACE-Step v1.5 handler cache (DiT handler only; LLM optional for low-VRAM)

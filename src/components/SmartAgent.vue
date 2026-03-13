@@ -1330,7 +1330,7 @@ export default {
         image_standard: "image_standard",
         image_turbo: "image_turbo",
         image_quality: "image_quality",
-        image_advanced: "image_advanced",
+        image_advanced: "image_quality",
         audio: "audio",
         audio_turbo: "audio_turbo",
         audio_quality: "audio_quality_persona",
