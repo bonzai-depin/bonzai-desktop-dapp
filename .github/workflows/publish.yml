@@ -14,10 +14,10 @@ jobs:
       HF_TOKEN: ${{ secrets.HF_TOKEN }}
       CI: true
     steps:
-      - uses: actions/checkout@v3
+      - uses: actions/checkout@v4
 
       - name: Set up Python (macOS ARM64)
-        uses: actions/setup-python@v4
+        uses: actions/setup-python@v5
         with:
           python-version: '3.11'
 
@@ -115,7 +115,7 @@ jobs:
           codesign --verify --verbose "$BINARY_PATH"
 
       - name: Set up Node.js
-        uses: actions/setup-node@v3
+        uses: actions/setup-node@v4
         with:
           node-version: 24.14.0
 
@@ -283,10 +283,11 @@ jobs:
           # Install create-dmg for better customization options
           brew install create-dmg
 
-          # Create DMG with custom layout
-          # Icons centered with 420px distance, white text
-          # create-dmg returns exit code 1 on hdiutil detach timeout (CI flake)
-          # but the DMG is still created successfully, so we check for the file after
+          DMG_PATH="out/make/BonzAI-${{ github.event.release.tag_name }}-arm64.dmg"
+
+          # create-dmg often fails on CI due to hdiutil detach timeout (DiskArbitration flake).
+          # When this happens, the temp read-write DMG exists but was never converted to
+          # the final compressed read-only DMG. We recover by force-detaching and converting manually.
           create-dmg \
             --volname "BonzAI" \
             --background "src/assets/background.png" \
@@ -297,21 +298,34 @@ jobs:
             --app-drop-link 540 200 \
             --text-size 14 \
             --no-internet-enable \
-            "out/make/BonzAI-${{ github.event.release.tag_name }}-arm64.dmg" \
-            "out/BonzAI-darwin-arm64/BonzAI.app" || true
+            "$DMG_PATH" \
+            "out/BonzAI-darwin-arm64/BonzAI.app" && exit 0
 
-          # Force detach any lingering disk images from the CI flake
-          hdiutil detach /dev/disk* -force 2>/dev/null || true
+          # create-dmg failed — recover from hdiutil detach timeout
+          echo "create-dmg failed, attempting recovery..."
 
-          # Verify DMG was created
-          DMG_PATH="out/make/BonzAI-${{ github.event.release.tag_name }}-arm64.dmg"
+          # Force detach the stuck volume
+          for disk in /dev/disk*; do
+            hdiutil detach "$disk" -force 2>/dev/null || true
+          done
+
+          # Find the temp read-write DMG that create-dmg left behind
+          RW_DMG=$(ls out/make/rw.*.dmg 2>/dev/null | head -1)
+          if [ -z "$RW_DMG" ]; then
+            echo "ERROR: No temporary DMG found to recover"
+            ls -la out/make/
+            exit 1
+          fi
+
+          echo "Found temp DMG: $RW_DMG — converting to final compressed DMG..."
+          hdiutil convert "$RW_DMG" -format UDZO -imagekey zlib-level=9 -o "$DMG_PATH"
+          rm -f "$RW_DMG"
+
           if [ -f "$DMG_PATH" ]; then
-            echo "DMG created successfully at: $DMG_PATH"
+            echo "DMG recovered successfully at: $DMG_PATH"
             ls -lh "$DMG_PATH"
           else
-            echo "ERROR: DMG not found at expected path: $DMG_PATH"
-            echo "Contents of out/make:"
-            ls -la out/make/
+            echo "ERROR: DMG recovery failed"
             exit 1
           fi
 
