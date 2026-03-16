@@ -176,7 +176,7 @@
       </div>
     </div>
 
-    <!-- Level Modal removed — all generation is free, levels only affect mint discount -->
+    <!-- Level Modal removed — all generation is free, levels only gate minting -->
 
     <!-- Network Settings Modal -->
     <Teleport to="body">
@@ -674,21 +674,12 @@ const isLevelUnlockedOrHolding = (levelId) => {
   return isLevelManuallyUnlocked(levelId) || hasEnoughBonzai(required);
 };
 
-// Displayed highest level: LVL1-5 only (LVL6 removed), used for discount display
+// Displayed highest level: LVL1-6
 const displayedHighestLevelKey = computed(() => {
-  for (let i = 5; i >= 1; i--) {
+  for (let i = 6; i >= 1; i--) {
     if (isLevelUnlockedOrHolding(i)) return `LVL${i}`;
   }
   return "";
-});
-
-// Mint discount based on BONZAI holdings level
-const MINT_DISCOUNTS = { 1: 1, 2: 5, 3: 10, 4: 25, 5: 33 };
-const mintDiscount = computed(() => {
-  for (let i = 5; i >= 1; i--) {
-    if (isLevelUnlockedOrHolding(i)) return MINT_DISCOUNTS[i];
-  }
-  return 0;
 });
 
 const getLevelClass = (lvl) => {
@@ -1153,35 +1144,6 @@ watch(
 }
 
 /* Levels Section */
-.discount-section {
-  flex: 1;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-}
-
-.discount-badge {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  background: rgba(16, 185, 129, 0.15);
-  border: 1px solid rgba(16, 185, 129, 0.4);
-  border-radius: 8px;
-  padding: 6px 14px;
-  color: #10b981;
-  font-size: 0.9rem;
-}
-
-.discount-level {
-  font-weight: 800;
-  font-size: 1rem;
-}
-
-.discount-percent {
-  color: rgba(16, 185, 129, 0.8);
-  font-size: 0.85rem;
-}
-
 .levels-section {
   flex: 1;
   display: flex;

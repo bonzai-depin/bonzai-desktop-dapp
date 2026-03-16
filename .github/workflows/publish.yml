@@ -150,6 +150,8 @@ jobs:
           done
 
       - name: Build Vite bundles
+        env:
+          VITE_PINATA_JWT: ${{ secrets.PINATA_JWT }}
         run: npm run build:vite
 
       - name: Package Electron app

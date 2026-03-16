@@ -42,26 +42,6 @@
                   </span>
                   Clear
                 </button>
-                <!-- <button
-                  class="button is-medium is-success mr-5"
-                  @click="toggleAutoRotate"
-                  title="Toggle rotation"
-                >
-                  <span class="material-symbols-outlined mr-1">
-                    {{ autoRotate ? "pause_circle" : "3d_rotation" }}
-                  </span>
-                  {{ autoRotate ? "Stop" : "Rotate" }}
-                </button>
-                <button
-                  class="button is-medium is-danger ml-2"
-                  @click="togglePhysics"
-                  title="Toggle physics"
-                >
-                  <span class="material-symbols-outlined mr-1">
-                    {{ enablePhysics ? "sports_basketball" : "architecture" }}
-                  </span>
-                  {{ enablePhysics ? "Physics: On" : "Physics: Off" }}
-                </button> -->
               </div>
             </div>
           </div>
@@ -78,7 +58,7 @@
                   disabled
                   class="button is-loading is-info is-small mr-2 p-4"
                 ></button>
-                {{ lastStatus }}
+                Crafting...
               </span>
             </p>
             <progress class="progress is-success" max="100">
@@ -199,10 +179,7 @@
                 <AccessRequirements
                   ref="accessRef"
                   level="LVL5"
-                  :demo-prompt="DEMO_PROMPT"
-                  :is-generating="isLoading"
                   @access-changed="onAccessChanged"
-                  @demo-generate="onDemoGenerate"
                 />
 
                 <form ref="promptForm" @submit.prevent="onSubmit">
@@ -595,23 +572,6 @@ const SERVER_URL =
   "http://127.0.0.1:65000";
 
 const WS_DL = `${SERVER_URL}/downloads`;
-
-// Array of impressive demo prompts for variety
-const DEMO_PROMPTS = [
-  "A floating ancient spellbook with leather cover (ExtrudeGeometry from Shape), glowing rune page texture (Canvas procedural), orbiting particle sigils (H.sparks).",
-  "A dragon egg (LatheGeometry profile) with iridescent scale pattern (ShaderMaterial with procedural voronoi). Cracks reveal inner lava glow (emissive MeshPhysicalMaterial). Sitting in a nest of gold coins (MAT.gold CylinderGeometry). H.sparks ember particles rising.",
-  "A steampunk mechanical heart with brass gear chambers (ExtrudeGeometry gear teeth from Shape, MAT.bronze). Glowing glass tubes (MeshPhysicalMaterial transmission + ior). H.sparks from exhaust vents. Copper pipe details (TubeGeometry + MAT.copper).",
-  "A crystal tree growing from a stone base (TEX.stone). Trunk via TubeGeometry along CatmullRomCurve3. Branches as smaller TubeGeometry curves. Crystal leaves (IcosahedronGeometry + MeshPhysicalMaterial transmission). H.dust fairy particles.",
-  "An enchanted hourglass with golden frame (ExtrudeGeometry + MAT.gold). Glass bulbs (MeshPhysicalMaterial transmission 0.9, ior 1.5). Sand particles between chambers (BufferGeometry points with ShaderMaterial). Tiny star sparks (H.sparks).",
-  "A wizard's tower music box on an ornate base (LatheGeometry + Canvas engraved texture). Miniature spiral staircase (ExtrudeGeometry helix Shape). Holographic note particles (H.sparks, additive blending). Clockwork gears visible through glass panel.",
-];
-
-// Get a random demo prompt
-const getRandomDemoPrompt = () => {
-  return DEMO_PROMPTS[Math.floor(Math.random() * DEMO_PROMPTS.length)];
-};
-
-const DEMO_PROMPT = getRandomDemoPrompt();
 
 function uuid() {
   return "xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx".replace(/[xy]/g, function (c) {
@@ -1023,7 +983,6 @@ export default {
       () => inferenceStore.state.objectInferences,
     );
     const hasCopy = reactive([]);
-    const autoRotate = ref(true);
     const enablePhysics = ref(true);
     const currentTime = ref("day");
     const currentWeather = ref("sunny");
@@ -1043,12 +1002,6 @@ export default {
 
     const onAccessChanged = (access) => {
       hasAccess.value = access;
-    };
-
-    const onDemoGenerate = (demoPrompt) => {
-      form.prompt = demoPrompt;
-      // Will be called after onSubmit is defined, uses closure
-      setTimeout(() => onSubmit(true), 0);
     };
 
     const downloadStatus = ref("");
@@ -1539,17 +1492,16 @@ export default {
     ]);
 
     const model = {
-        modelname: "GLM 4.7 Flash Q2",
+        modelname: "Qwen3.5 27B Q2",
         modeldesc:
-          "30B-parameter Mixture-of-Experts model from Zhipu AI with only 3B active parameters per forward pass and 200K context. Q2_K_XL quantization for fastest inference and lowest memory. Best for: uncensored creative writing, coding assistance, and general-purpose AI on consumer hardware.",
-        url: "https://huggingface.co/unsloth/GLM-4.7-Flash-GGUF/resolve/main/GLM-4.7-Flash-UD-Q2_K_XL.gguf",
-        filename: "glm-4.7-flash-ud-q2_k_xl.gguf",
-        filesize: "11.9 GB",
-        filesizeBytes: 11.9e9,
-        parameters: 30000000000,
-        activeParameters: 3000000000,
-        isMoE: true,
-        context: 200000,
+          "27B-parameter hybrid attention model from Alibaba with Gated DeltaNet + Gated Attention and 262K context. Q2_K_XL quantization fits 32GB unified memory. Best for: code generation, creative writing, reasoning, and general-purpose AI on consumer hardware.",
+        url: "https://huggingface.co/unsloth/Qwen3.5-27B-GGUF/resolve/main/Qwen3.5-27B-UD-Q2_K_XL.gguf",
+        filename: "qwen3.5-27b-ud-q2_k_xl.gguf",
+        filesize: "11.2 GB",
+        filesizeBytes: 11.2e9,
+        parameters: 27000000000,
+        isMoE: false,
+        context: 262000,
     };
 
     const reasoningEnabled = ref(false);
@@ -1892,15 +1844,6 @@ OUTPUT:`;
     const setLightIntensity = (intensity) => {
       lightIntensity.value = intensity;
       threeViewer.value?.setLightIntensity(intensity);
-    };
-
-    const toggleAutoRotate = () => {
-      autoRotate.value = !autoRotate.value;
-      threeViewer.value?.setAutoRotate(autoRotate.value);
-    };
-
-    const togglePhysics = () => {
-      enablePhysics.value = !enablePhysics.value;
     };
 
     const clearScene = () => {
@@ -2362,9 +2305,9 @@ OUTPUT:`;
 
     // ═══════════════════════════════════════════════════════════════════════
     // MAIN SUBMIT HANDLER
-    const onSubmit = async (isDemo = false) => {
+    const onSubmit = async () => {
       if (!form.prompt.trim()) return;
-      if (!isDemo && !canSubmitWithAccess.value) return;
+      if (!canSubmitWithAccess.value) return;
 
       if (!isModel.value) {
         lastStatus.value = "Please download the AI model first";
@@ -2564,7 +2507,6 @@ OUTPUT:`;
       showScrollTop,
       scrollToTop,
       hasCopy,
-      autoRotate,
       currentTime,
       currentWeather,
       lightIntensity,
@@ -2589,9 +2531,6 @@ OUTPUT:`;
       setTimeOfDay,
       setWeather,
       setLightIntensity,
-      toggleAutoRotate,
-      enablePhysics,
-      togglePhysics,
       copyPrompt,
       clearScene,
       handleSuccess,
@@ -2612,9 +2551,7 @@ OUTPUT:`;
       accessRef,
       hasAccess,
       onAccessChanged,
-      onDemoGenerate,
       canSubmitWithAccess,
-      DEMO_PROMPT,
       // Model management
       reasoningEnabled,
       currentModel,

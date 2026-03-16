@@ -3,21 +3,20 @@
  *
  * Manages the 6-tier level system with DUAL access paths:
  *
- * IMPORTANT: Basic generation (text, audio, image, video, 3D, training) is FREE.
- * Levels ONLY gate SMART AGENT SKILLS that use these capabilities.
+ * IMPORTANT: All AI generation is FREE. Levels ONLY gate MINTING content as NFTs.
  *
  * A level is ACTIVE when EITHER:
  *   1. User holds >= required BONZAI tokens (across Ethereum + Base)
  *   OR
  *   2. User has paid 1 ETH one-time payment to unlock ALL levels via BonzaiUnlock
  *
- * Levels (BONZAI holding requirements divided by 5):
- *   - LVL1: Text in Smart Agents (20 BONZAI or 1 ETH for all)
- *   - LVL2: Audio in Smart Agents (100 BONZAI or 1 ETH for all)
- *   - LVL3: Image in Smart Agents (400 BONZAI or 1 ETH for all)
- *   - LVL4: Video in Smart Agents (2,000 BONZAI or 1 ETH for all)
- *   - LVL5: 3D in Smart Agents (10,000 BONZAI or 1 ETH for all)
- *   - LVL6: Training in Smart Agents (40,000 BONZAI or 1 ETH for all)
+ * Levels (BONZAI holding requirements):
+ *   - LVL1: Mint Text NFTs (1,000 BONZAI or 1 ETH for all)
+ *   - LVL2: Mint Audio NFTs (5,000 BONZAI or 1 ETH for all)
+ *   - LVL3: Mint Image NFTs (10,000 BONZAI or 1 ETH for all)
+ *   - LVL4: Mint Video NFTs (25,000 BONZAI or 1 ETH for all)
+ *   - LVL5: Mint 3D NFTs (33,000 BONZAI or 1 ETH for all)
+ *   - LVL6: Mint Training NFTs + Token Issuance (50,000 BONZAI or 1 ETH for all)
  */
 
 import { ethers } from 'ethers';

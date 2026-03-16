@@ -961,27 +961,26 @@ export function buildLSP4Metadata(companion) {
   };
 
   if (companion.imageUri) {
+    const imageHash = companion.imageHash || null;
+    const verification = imageHash
+      ? { method: "keccak256(bytes)", data: imageHash }
+      : undefined;
+
     metadata.LSP4Metadata.icon = [
       {
         width: 256,
         height: 256,
         url: companion.imageUri,
-        verification: {
-          method: "keccak256(bytes)",
-          data: "0x0000000000000000000000000000000000000000000000000000000000000000",
-        },
+        ...(verification && { verification }),
       },
     ];
     metadata.LSP4Metadata.images = [
       [
         {
-          width: 1024,
-          height: 1024,
+          width: 768,
+          height: 768,
           url: companion.imageUri,
-          verification: {
-            method: "keccak256(bytes)",
-            data: "0x0000000000000000000000000000000000000000000000000000000000000000",
-          },
+          ...(verification && { verification }),
         },
       ],
     ];

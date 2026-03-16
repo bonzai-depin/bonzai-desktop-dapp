@@ -164,7 +164,6 @@ export function sanitizeCompanionAge(companion) {
 
 // Finance skills (formerly builtin)
 import { skill as polymarketTopPerformers } from './builtin/polymarketTopPerformers.js';
-import { skill as tcgPredictionMarket } from './builtin/tcgPredictionMarket.js';
 import { skill as dslaSmartMarket } from './builtin/dslaSmartMarket.js';
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -2298,7 +2297,7 @@ function getFlaskPort() {
   return window.BONZAI_SERVER_PORT || 65000;
 }
 
-async function callFlaskEndpoint(endpoint, payload, useDemo = false) {
+async function callFlaskEndpoint(endpoint, payload) {
   const port = getFlaskPort();
 
   // Proactively ensure auth token is valid before making the request
@@ -2307,15 +2306,11 @@ async function callFlaskEndpoint(endpoint, payload, useDemo = false) {
 
   const authHeaders = getAuthHeaders();
 
-  // Use demo mode if no auth token available or explicitly requested
   const headers = {
     'Content-Type': 'application/json',
   };
 
-  // If no auth token and demo mode allowed, use demo header
-  if (!authHeaders.Authorization && useDemo) {
-    headers['X-Demo-Mode'] = 'true';
-  } else if (authHeaders.Authorization) {
+  if (authHeaders.Authorization) {
     headers['Authorization'] = authHeaders.Authorization;
   }
 
@@ -2967,7 +2962,7 @@ async function generateImage(prompt, options = {}) {
     height: options.height || 1024,
     steps: options.steps || ((options.quality || options.advanced) ? 9 : 4),
     guidance_scale: options.guidanceScale || 3.5,
-  }, true); // Enable demo mode fallback
+  });
 }
 
 // SDXL generation - for uncensored/adult content
@@ -2979,7 +2974,7 @@ async function generateImageSDXL(prompt, options = {}) {
     height: options.height || 1024,
     steps: options.steps || 25,
     guidance_scale: options.guidanceScale || 7.5,
-  }, true); // Enable demo mode fallback
+  });
 }
 
 // Image-to-Image transformation
@@ -3206,51 +3201,6 @@ export function exportCompanionData(companion, sessions = [], portraitImage = nu
  * @param {string} sceneImage - Base64 scene image (optional)
  * @returns {Object} Complete export data
  */
-export function exportScenarioData(scenario, sessions = [], sceneImage = null) {
-  if (!scenario) throw new Error('Scenario required for export');
-
-  const exportData = {
-    version: '2.0',
-    type: 'scenario',
-    exportedAt: new Date().toISOString(),
-
-    // Scenario definition
-    scenario: {
-      ...scenario,
-      id: scenario.id,
-      name: scenario.name,
-      description: scenario.description,
-      setting: scenario.setting,
-      mood: scenario.mood,
-      suggestedCompanions: scenario.suggestedCompanions || [],
-      metadata: scenario.metadata || {},
-      imagePromptBase: scenario.imagePromptBase || '',
-    },
-
-    // Scene image if available
-    sceneImage: sceneImage || scenario.sceneImage || null,
-
-    // Related sessions
-    sessions: sessions.map(session => ({
-      ...session,
-      history: session.history || [],
-      sceneState: session.sceneState || {},
-      backgroundImage: session.backgroundImage || null,
-      backgroundHistory: session.backgroundHistory || [],
-      settings: session.settings || {},
-      createdAt: session.createdAt,
-      updatedAt: session.updatedAt,
-    })),
-
-    stats: {
-      totalSessions: sessions.length,
-      totalMessages: sessions.reduce((acc, s) => acc + (s.history?.length || 0), 0),
-    },
-  };
-
-  return exportData;
-}
-
 /**
  * Import companion data from export file
  * @param {Object} importData - Data from exportCompanionData
@@ -3286,42 +3236,6 @@ export function importCompanionData(importData) {
     companion,
     sessions,
     portraitImage: importData.portraitImage || null,
-    stats: importData.stats || {},
-  };
-}
-
-/**
- * Import scenario data from export file
- * @param {Object} importData - Data from exportScenarioData
- * @returns {Object} { scenario, sessions, sceneImage }
- */
-export function importScenarioData(importData) {
-  if (!importData || importData.type !== 'scenario') {
-    throw new Error('Invalid scenario import data');
-  }
-
-  const version = importData.version || '1.0';
-  if (!['1.0', '2.0'].includes(version)) {
-    console.warn(`[Flagship] Unknown import version: ${version}, attempting import anyway`);
-  }
-
-  const scenario = {
-    ...importData.scenario,
-    id: importData.scenario.id || `custom_${importData.scenario.name?.toLowerCase().replace(/\s+/g, '_')}_${Date.now()}`,
-    importedAt: new Date().toISOString(),
-    originalExportedAt: importData.exportedAt,
-  };
-
-  const sessions = (importData.sessions || []).map(session => ({
-    ...session,
-    scenario: scenario,
-    importedAt: new Date().toISOString(),
-  }));
-
-  return {
-    scenario,
-    sessions,
-    sceneImage: importData.sceneImage || null,
     stats: importData.stats || {},
   };
 }
@@ -3465,7 +3379,7 @@ async function generateNarration(text, options = {}) {
       text,
       persona,
       language: options.language || 'English',
-    }, true); // Enable demo mode fallback
+    });
   }
 
   // Use Kokoro /audio/turbo for fast TTS with gender (fallback)
@@ -3627,7 +3541,7 @@ async function generateVideo(imageBase64OrNull, prompt, options = {}) {
     frame_rate: options.frameRate || 24,
     steps: options.steps || 10,
     guidance_scale: options.guidanceScale || 1.0,
-  }, true); // Enable demo mode fallback
+  });
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -6318,11 +6232,6 @@ Write ONLY the video description paragraph, nothing else:`;
             'Content-Type': 'application/json',
             ...authHeaders,
           };
-          // Use demo mode if no auth token available
-          if (!authHeaders.Authorization) {
-            videoHeaders['X-Demo-Mode'] = 'true';
-          }
-
           // Extract audio base64 for video conditioning (companion voice sync)
           let audioBase64ForVideo = null;
           if (response.audio) {
@@ -6993,7 +6902,6 @@ export const flagshipSkills = [
   polymarketTopPerformers,  // Polymarket Top Performers
   dslaSmartMarket,          // Prediction Market Maker
   roleplayCompanion,        // Roleplay Companion
-  tcgPredictionMarket,      // Trading Card Game Insurance
   meditationForge,          // Meditation Forge
 ];
 

@@ -245,7 +245,7 @@
                     target="_blank"
                     class="value link"
                   >
-                    View on Arweave
+                    View on IPFS
                     <span
                       class="material-symbols-outlined"
                       style="font-size: 14px"

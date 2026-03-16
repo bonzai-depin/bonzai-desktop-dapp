@@ -8,25 +8,12 @@
 import {
   SKILL_SCHEMA_VERSION,
   validateSkillDefinition,
-  createSkillDefinition,
 } from '../skills/types.js';
 
 import { flagshipSkills } from '../skills/flagship.js';
 
 // Skill cache by ID
 const skillCache = new Map();
-
-// Registered skill loaders for different sources
-const skillLoaders = new Map();
-
-/**
- * Register a skill loader for a specific source type
- * @param {string} source - Source identifier (e.g., 'local', 'ipfs', 'onchain')
- * @param {Function} loader - Async function that loads skill definition
- */
-export function registerSkillLoader(source, loader) {
-  skillLoaders.set(source, loader);
-}
 
 /**
  * Load all flagship skills
@@ -66,40 +53,6 @@ export async function initializeSkills() {
   console.log(`[SkillService] Initialization complete: ${skills.length} skills`);
 
   return { skills };
-}
-
-/**
- * Load a skill from IPFS by hash
- * @param {string} ipfsHash - IPFS CID of the skill definition
- * @returns {Promise<SkillDefinition|null>}
- */
-export async function loadSkillFromIPFS(ipfsHash) {
-  const gateways = [
-    `https://gateway.irys.xyz/${ipfsHash}`,
-    `https://ipfs.io/ipfs/${ipfsHash}`,
-    `https://cloudflare-ipfs.com/ipfs/${ipfsHash}`,
-  ];
-
-  for (const url of gateways) {
-    try {
-      const response = await fetch(url, { timeout: 10000 });
-      if (!response.ok) continue;
-
-      const skillDef = await response.json();
-      const validation = validateSkillDefinition(skillDef);
-
-      if (validation.valid) {
-        skillCache.set(skillDef.id, skillDef);
-        return skillDef;
-      } else {
-        console.warn(`[SkillService] Invalid skill from ${url}:`, validation.errors);
-      }
-    } catch (e) {
-      console.warn(`[SkillService] Failed to fetch from ${url}:`, e.message);
-    }
-  }
-
-  return null;
 }
 
 /**
@@ -404,45 +357,10 @@ export async function executeSkill(skillId, inputs = {}, context = {}) {
   };
 }
 
-/**
- * Get featured skills (flagship skills marked as featured)
- * @param {number} limit - Maximum number of skills to return
- * @returns {SkillDefinition[]}
- */
-export function getFeaturedSkills(limit = 10) {
-  const featured = flagshipSkills.filter(s => skillCache.has(s.id));
-  return featured.slice(0, limit);
-}
-
-/**
- * Clear the skill cache
- */
-export function clearSkillCache() {
-  skillCache.clear();
-}
-
-/**
- * Register a skill manually (for testing or dynamic registration)
- * @param {SkillDefinition} skill - Skill definition
- * @returns {boolean} - Whether registration succeeded
- */
-export function registerSkill(skill) {
-  const validation = validateSkillDefinition(skill);
-  if (!validation.valid) {
-    console.error('[SkillService] Cannot register invalid skill:', validation.errors);
-    return false;
-  }
-
-  skillCache.set(skill.id, skill);
-  return true;
-}
-
 // Export service object
 export const skillService = {
   // Loaders
-  registerSkillLoader,
   loadFlagshipSkills,
-  loadSkillFromIPFS,
   initializeSkills,
 
   // Getters
@@ -467,12 +385,6 @@ export const skillService = {
   prepareSkillExecution,
   executeSkill,
 
-  // Discovery
-  getFeaturedSkills,
-
-  // Management
-  clearSkillCache,
-  registerSkill,
 };
 
 export default skillService;

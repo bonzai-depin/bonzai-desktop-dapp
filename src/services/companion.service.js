@@ -152,8 +152,8 @@ function getAvailableNetworks() {
       available: !!CONFIG.companionNFT_BASE?.contractAddress,
       x402Support: true,
       agentWalletProvider: 'local',
-      description: 'Trustless Agent NFT — 0.25 ETH base (BONZAI holders get up to 33% off)',
-      features: ['Self-custody agent wallet', 'Spending profile on-chain', 'Native x402', 'BONZAI holder discounts'],
+      description: 'Trustless Agent NFT — 0.25 ETH flat',
+      features: ['Self-custody agent wallet', 'Spending profile on-chain', 'Native x402'],
     },
   ];
 }
@@ -199,7 +199,7 @@ function packSpendingProfile(habits) {
 
 /**
  * Mint companion on Base with local self-custody agent wallet.
- * Base price 0.25 ETH, discounted by BONZAI holding level (0-5).
+ * Flat 0.25 ETH mint price.
  */
 async function mintCompanionBase(params) {
   try {
@@ -357,8 +357,8 @@ function buildERC8004RegistrationWithSpending(params, spendingHabits = {}) {
   // Build rich attributes for OpenSea trait display
   const attributes = [
     { trait_type: 'Gender', value: genderLabel },
-    { trait_type: 'Age', value: params.age || 25 },
-    { trait_type: 'Style', value: params.style || 'romantic' },
+    { trait_type: 'Age', value: params.age != null ? params.age : 25 },
+    { trait_type: 'Style', value: params.style || 'openness' },
   ];
 
   // Add spending categories as numeric traits (OpenSea shows bar charts)
@@ -407,14 +407,13 @@ function buildERC8004RegistrationWithSpending(params, spendingHabits = {}) {
     ],
     x402Support: true,
     active: true,
-    registrations: [],
     supportedTrust: ['reputation', 'validation'],
     attributes,
     bonzai: {
       firstName,
       familyName,
       shortBio,
-      personality: params.personality || params.personalityHash || '',
+      personality: params.personality || '',
       appearance: params.appearance || '',
       background: params.background || '',
       voiceStyle: params.voiceStyle || '',
@@ -459,7 +458,10 @@ function buildBareRegistration({ imageUri, gender = 0, spendingHabits = {} } = {
     version: '1.0.0',
     author: 'BonzAI',
     license: 'MIT',
+    services: [],
+    x402Support: false,
     active: false,
+    supportedTrust: [],
     attributes: [
       { trait_type: 'Gender', value: genderLabel },
       { trait_type: 'Status', value: 'Pending Setup' },
@@ -654,7 +656,7 @@ function mapMetadataToCompanion(metadata, tokenId, onChainData) {
 
   // Resolve style from attributes
   const styleAttr = (metadata.attributes || []).find(a => a.trait_type === 'Style');
-  const style = styleAttr?.value || 'romantic';
+  const style = styleAttr?.value || 'openness';
 
   // Build spending habits from bonzai section or attributes
   let spendingHabits = bonzai.spendingHabits || {};

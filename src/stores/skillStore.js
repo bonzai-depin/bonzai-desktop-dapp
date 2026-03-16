@@ -795,7 +795,7 @@ export const useSkillStore = defineStore('skill', () => {
         console.log('[SkillStore] Token refreshed successfully');
       } catch (refreshError) {
         // Token refresh failed - PAUSE autonomous mode until user re-authenticates
-        // We don't fall back to demo mode - autonomous mode requires full auth
+        // Autonomous mode requires full auth
         console.log('[SkillStore] Token refresh failed - pausing autonomous mode');
         console.log('[SkillStore] User must manually re-authenticate to resume');
 

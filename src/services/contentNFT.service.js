@@ -22,11 +22,12 @@ import brand3DUrl from '../assets/bonzai_3d.webp';
 import logoUrl from '../assets/bonzai_logo-full.png';
 
 const BRAND_IMAGE_URLS = {
-  text:   brandTextUrl,
-  image:  brandImageUrl,
-  audio:  brandAudioUrl,
-  video:  brandVideoUrl,
-  object: brand3DUrl,
+  text:     brandTextUrl,
+  image:    brandImageUrl,
+  audio:    brandAudioUrl,
+  video:    brandVideoUrl,
+  object:   brand3DUrl,
+  training: brandTextUrl,
 };
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -365,49 +366,53 @@ export async function mintContent({
 
     // Standard ERC-721 JSON metadata
     // animation_url priority: 3D viewer > media player > raw audio/video
+    // Use ipfs:// URIs (not HTTP gateway URLs) so metadata is gateway-agnostic
     const animationUrl = viewerReceipt
-      ? viewerReceipt.gatewayUrl
+      ? viewerReceipt.url
       : mediaPlayerReceipt
-        ? mediaPlayerReceipt.gatewayUrl
+        ? mediaPlayerReceipt.url
         : undefined;
 
     // image priority: actual image content > branded fallback
     const imageUrl = contentType.startsWith('image/')
-      ? contentReceipt.gatewayUrl
-      : brandedImageReceipt?.gatewayUrl || undefined;
+      ? contentReceipt.url
+      : brandedImageReceipt?.url || undefined;
 
     console.log(`[ContentNFT] Metadata name: "${title}", type: "${generation.type}"`);
     const metadata = {
       name: title || `${generation.type || 'Untitled'} #${Date.now().toString(36)}`,
-      description: description || `AI-generated content by BonzAI. Prompt: ${(prompt || '').substring(0, 200)}`,
+      description: description || `AI-generated ${generation.type || 'content'} by BonzAI`,
       image: imageUrl,
       animation_url: animationUrl,
-      external_url: 'https://bonzai.sh',
+      external_url: generation.hfRepo
+        ? `https://huggingface.co/${generation.hfRepo}`
+        : 'https://bonzai.sh',
       attributes: [
         { trait_type: 'Generation Type', value: generation.type || 'unknown' },
         { trait_type: 'Model', value: modelSlug },
         { trait_type: 'Platform', value: 'BonzAI' },
         ...(generation.tokensPerSecond ? [{ trait_type: 'Tokens Per Second', value: String(generation.tokensPerSecond) }] : []),
         ...(generation.elapsedMs ? [{ trait_type: 'Generation Time (ms)', value: String(generation.elapsedMs) }] : []),
+        ...(generation.hfRepo ? [{ trait_type: 'HuggingFace Repository', value: generation.hfRepo }] : []),
       ],
       properties: {
         provenance: {
           transactionId: contentReceipt.transactionId,
-          contentUrl: contentReceipt.gatewayUrl,
+          contentUrl: contentReceipt.url,
           promptHash,
           model: modelSlug,
           generationType: generation.type,
           timestamp: generation.timestamp || Date.now(),
           ...(generation.tokensPerSecond ? { tokensPerSecond: String(generation.tokensPerSecond) } : {}),
           ...(generation.elapsedMs ? { elapsedMs: generation.elapsedMs } : {}),
-          ...(generation.threeCode ? { threeCode: generation.threeCode } : {}),
+          ...(generation.hfRepo ? { hfRepo: generation.hfRepo } : {}),
         },
       },
     };
 
     // Fallback: if no image and no animation, use content URL directly
     if (!metadata.image && !metadata.animation_url) {
-      metadata.image = contentReceipt.gatewayUrl;
+      metadata.image = contentReceipt.url;
     }
 
     const metadataReceipt = await irysService.uploadMetadata(metadata, {

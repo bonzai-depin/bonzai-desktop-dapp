@@ -124,7 +124,7 @@ async function saveBase64ImageToFile(base64Data, prefix = 'openclaw') {
 /**
  * Ensure authentication token is valid before making Flask API calls.
  * Proactively refreshes token if it's expired or about to expire.
- * Returns true if authenticated (or demo mode available), false if auth failed.
+ * Returns true if authenticated, false if auth failed.
  */
 async function ensureValidAuth() {
   // Check if we have an access token and it's still valid
@@ -175,8 +175,8 @@ async function ensureValidAuth() {
     }
   }
 
-  // No valid auth - will fall back to demo mode
-  console.log('[OpenClaw] No valid auth, will use demo mode');
+  // No valid auth
+  console.log('[OpenClaw] No valid auth');
   return false;
 }
 
@@ -664,17 +664,14 @@ async function executeLocalInference(pipeline, params) {
     'Content-Type': 'application/json',
   };
 
-  // If no auth token available, use demo mode header
-  if (!authHeaders.Authorization) {
-    headers['X-Demo-Mode'] = 'true';
-  } else {
-    // Add auth header to the request
+  // Add auth header if available
+  if (authHeaders.Authorization) {
     headers['Authorization'] = authHeaders.Authorization;
   }
 
   // No timeout for local inference - generation can take a long time
   // especially for video, music, and high-quality images
-  console.log(`[OpenClaw] Calling Flask endpoint: ${pipelineInfo.endpoint} (auth: ${authHeaders.Authorization ? 'token' : 'demo'})`);
+  console.log(`[OpenClaw] Calling Flask endpoint: ${pipelineInfo.endpoint} (auth: ${authHeaders.Authorization ? 'token' : 'none'})`);
   const startTime = Date.now();
 
   const response = await authFetch(`${FLASK_URL}${pipelineInfo.endpoint}`, {

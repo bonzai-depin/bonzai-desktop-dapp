@@ -32,10 +32,7 @@
                   disabled
                   class="button is-loading is-info is-small mr-2 p-4"
                 ></button>
-                Generating Audio
-                <span class="ml-1" v-if="generation.stage">
-                  ({{ generation.stage }})
-                </span>
+                Crafting...
               </span>
               <span
                 class="fira-sans-condensed-black-italic is-pulled-right is-size-4"
@@ -167,10 +164,7 @@
                 <AccessRequirements
                   ref="accessRef"
                   level="LVL2"
-                  :demo-prompt="DEMO_PROMPT"
-                  :is-generating="isLoading"
                   @access-changed="onAccessChanged"
-                  @demo-generate="onDemoGenerate"
                   class="mt-5"
                 />
 
@@ -1085,8 +1079,6 @@ import AccessRequirements from "./AccessRequirements.vue";
 import MintModal from "./MintModal.vue";
 import { requestOpenNetworkModal } from "../services/level.service.js";
 
-const DEMO_PROMPT = "Hello, welcome to sovereign AI.";
-
 const API_BASE =
   (typeof process !== "undefined" && process.env?.VITE_API_BASE) ||
   (window?.electronAPI?.env && window.electronAPI.env.API_BASE) ||
@@ -1460,11 +1452,6 @@ export default {
     const onAccessChanged = (val) => {
       hasAccess.value = val;
     };
-    const onDemoGenerate = (demoPrompt) => {
-      form.prompt = demoPrompt;
-      sendMessage(demoPrompt, true); // true = isDemo
-    };
-
     const canGenerateWithAccess = computed(() => {
       return canGenerate.value && hasAccess.value;
     });
@@ -2530,10 +2517,9 @@ Remember: 6-10 syllables per line, use all appropriate structure tags. Write in 
     const voiceGender = ref("female");
 
     // ------------ actions -----------------
-    const sendMessage = async (prompt, isDemo = false) => {
+    const sendMessage = async (prompt) => {
       if (!prompt) return;
-      // Allow demo generation even without access
-      if (!isDemo && !canGenerateWithAccess.value) return;
+      if (!canGenerateWithAccess.value) return;
 
       let payload;
 
@@ -2677,7 +2663,7 @@ Remember: 6-10 syllables per line, use all appropriate structure tags. Write in 
         }
       };
 
-      await requestWithDownloadTracking(url, payload, onSuccess, isDemo);
+      await requestWithDownloadTracking(url, payload, onSuccess);
     };
 
     // ------------ request wrapper ---------
@@ -2685,11 +2671,10 @@ Remember: 6-10 syllables per line, use all appropriate structure tags. Write in 
       url,
       payload,
       onSuccess,
-      isDemo = false,
     ) => {
       try {
         isLoading.value = true;
-        const headers = isDemo ? { "X-Demo-Mode": "true" } : {};
+        const headers = {};
         const res = await axios.post(url, payload, {
           headers,
           validateStatus: () => true,
@@ -2994,9 +2979,7 @@ Remember: 6-10 syllables per line, use all appropriate structure tags. Write in 
       accessRef,
       hasAccess,
       onAccessChanged,
-      onDemoGenerate,
       canGenerateWithAccess,
-      DEMO_PROMPT,
       // Network modal
       requestOpenNetworkModal,
       // NFT Minting

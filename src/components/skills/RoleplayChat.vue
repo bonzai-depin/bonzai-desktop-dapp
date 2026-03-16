@@ -574,11 +574,7 @@
                     :disabled="
                       isMintingNFT && mintingCompanionId === companion.id
                     "
-                    :title="
-                      mintDiscountPercent > 0
-                        ? `Mint with ${mintDiscountPercent}% BONZAI discount`
-                        : 'Mint companion NFT on Base'
-                    "
+                    title="Mint companion NFT on Base"
                   >
                     <span
                       v-if="
@@ -588,7 +584,7 @@
                     >
                       token
                     </span>
-                    Mint {{ mintPriceDisplay }}
+                    Mint 0.25 ETH
                   </button>
                 </div>
               </div>
@@ -3503,24 +3499,6 @@ export default {
       "movie",
       "visibility",
     ];
-
-    // BONZAI discount for minting
-    const MINT_DISCOUNT_MAP = { 1: 1, 2: 5, 3: 10, 4: 25, 5: 33 };
-    const mintDiscountPercent = computed(() => {
-      const lvl = parseInt((highestLevel.value || "").replace("LVL", "")) || 0;
-      return MINT_DISCOUNT_MAP[lvl] || 0;
-    });
-    const mintPriceDisplay = computed(() => {
-      const discount = mintDiscountPercent.value;
-      if (discount > 0) {
-        const price = (0.25 * (1 - discount / 100))
-          .toFixed(4)
-          .replace(/0+$/, "")
-          .replace(/\.$/, "");
-        return `${price} ETH (-${discount}%)`;
-      }
-      return "0.25 ETH";
-    });
 
     // Open unlock modal for LVL4
     const openUnlockModal = () => {
@@ -8466,7 +8444,6 @@ export default {
             method: "POST",
             headers: {
               "Content-Type": "application/json",
-              "X-Demo-Mode": "true",
             },
             body: JSON.stringify({
               image_base64: uploadedImageBase64.value,
@@ -9235,8 +9212,6 @@ export default {
       mintResult,
       mintNetwork,
       mintCompanionNFT,
-      mintDiscountPercent,
-      mintPriceDisplay,
       deployUPForCompanion,
       deployingUPForCompanionId,
       openExternal,

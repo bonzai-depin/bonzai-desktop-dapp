@@ -431,7 +431,7 @@ CORS(app, supports_credentials=True, resources={
     r"/*": {
         "origins": "*",
         "methods": ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
-        "allow_headers": ["Content-Type", "Authorization", "X-Requested-With", "X-Demo-Mode"],
+        "allow_headers": ["Content-Type", "Authorization", "X-Requested-With"],
     }
 })
 
@@ -466,18 +466,6 @@ LEVEL_REQUIREMENTS = {
     "3d": 5,
     "training": 6,
 }
-
-# Demo mode configuration
-DEMO_PROMPTS = {
-    "text": "Explain what makes a bonsai tree special in exactly 3 sentences.",
-    "image": "A serene bonsai tree on a wooden table, soft natural lighting, minimalist",
-    "video": "A bonsai tree gently swaying in a soft breeze, peaceful atmosphere",
-    "audio": "peaceful japanese garden ambient sounds with gentle wind chimes",
-}
-
-# Rate limiting for demo mode
-DEMO_RATE_LIMITS: Dict[str, Dict[str, int]] = {}  # IP -> {date: count}
-
 
 def _create_jwt_token(payload: dict, expiry_seconds: int) -> str:
     """Create a simple JWT-like token (base64 encoded JSON + HMAC signature)."""
@@ -575,37 +563,16 @@ def _get_wallet_level(address: str) -> Tuple[str, int]:
     return ("LVL6", 6)
 
 
-def _check_demo_rate_limit(ip: str) -> bool:
-    """
-    Rate limiting disabled for desktop app.
-    Previously limited to 3 demos per IP per day.
-    """
-    # Desktop app - no rate limiting needed
-    return True
-
-
-def require_auth(min_level: int = 0, allow_demo: bool = False):
+def require_auth(min_level: int = 0):
     """
     Decorator to require valid JWT with minimum level.
 
     Args:
         min_level: Minimum level required (1-6)
-        allow_demo: Whether to allow demo mode for this endpoint
     """
     def decorator(f):
         @functools.wraps(f)
         def decorated(*args, **kwargs):
-            # Check for demo mode
-            if allow_demo and request.headers.get("X-Demo-Mode") == "true":
-                ip = request.remote_addr or "unknown"
-                if not _check_demo_rate_limit(ip):
-                    return jsonify({"error": "Demo rate limit exceeded (3 per day)"}), 429
-
-                # Set demo context
-                request.auth_user = {"sub": "demo", "level": "DEMO", "level_value": 0, "demo_only": True}
-                request.is_demo = True
-                return f(*args, **kwargs)
-
             # Get authorization header
             auth_header = request.headers.get("Authorization", "")
 
@@ -632,7 +599,6 @@ def require_auth(min_level: int = 0, allow_demo: bool = False):
 
             # Set auth context
             request.auth_user = claims
-            request.is_demo = False
             return f(*args, **kwargs)
         return decorated
     return decorator
@@ -754,31 +720,6 @@ def auth_logout():
     response = jsonify({"ok": True})
     response.delete_cookie("refresh_token", path="/")
     return response
-
-
-@app.route("/auth/demo-token", methods=["POST"])
-def auth_demo_token():
-    """Get a limited demo token for trying the service."""
-    ip = request.remote_addr or "unknown"
-
-    if not _check_demo_rate_limit(ip):
-        return jsonify({"error": "Demo rate limit exceeded (3 per day)"}), 429
-
-    # Create demo token (5 minute expiry)
-    demo_payload = {
-        "sub": "demo",
-        "level": "DEMO",
-        "level_value": 0,
-        "type": "demo",
-        "demo_only": True,
-    }
-    demo_token = _create_jwt_token(demo_payload, 300)
-
-    return jsonify({
-        "demo_token": demo_token,
-        "expires_in": 300,
-        "allowed_prompts": DEMO_PROMPTS,
-    })
 
 
 @app.route("/auth/status", methods=["GET"])

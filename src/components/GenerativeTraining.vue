@@ -32,10 +32,7 @@
                   disabled
                   class="button is-loading is-info is-small mr-2 p-4"
                 ></button>
-                Training {{ training.type === "llm" ? "LLM" : "SDXL LoRA" }}
-                <span class="ml-1" v-if="training.stage">
-                  ({{ training.stage }})
-                </span>
+                Crafting...
               </span>
               <span
                 class="fira-sans-condensed-black-italic is-pulled-right is-size-4"
@@ -50,21 +47,13 @@
             >
               {{ Math.round(training.pct) }}%
             </progress>
-            <div class="mt-2" style="font-size: 14px">
-              <div>Epoch: {{ training.epoch }}/{{ training.total_epochs }}</div>
-              <div>Loss: {{ training.loss?.toFixed(4) || "N/A" }}</div>
-              <div v-if="training.eta">ETA: {{ training.eta }}</div>
-            </div>
           </div>
 
           <!-- ACCESS REQUIREMENTS -->
           <AccessRequirements
             ref="accessRef"
             level="LVL6"
-            :is-generating="training.active"
-            :demo-prompt="DEMO_PROMPT"
             @access-changed="onAccessChanged"
-            @demo-generate="onDemoGenerate"
           />
 
           <!-- ═══════════════════════════════════════════════════════════ -->
@@ -805,6 +794,13 @@
                       {{ model.base_model }} • Loss:
                       {{ model.final_loss?.toFixed(4) }}
                     </p>
+                    <input
+                      v-model="model.hf_repo"
+                      class="input is-small mt-1"
+                      type="text"
+                      placeholder="HuggingFace repo (e.g. username/model-name)"
+                      style="max-width: 320px; background: rgba(255,255,255,0.06); border: 1px solid rgba(255,255,255,0.12); color: #fff; font-size: 11px;"
+                    />
                   </div>
                 </div>
                 <div class="buttons">
@@ -1148,9 +1144,6 @@ const API_BASE =
   "http://127.0.0.1:65000";
 
 const WS_TRAINING = `${API_BASE}/training`;
-
-// Demo prompt for unauthenticated users
-const DEMO_PROMPT = "Train a custom LoRA model on your own data";
 
 export default {
   name: "GenerativeTraining",
@@ -1526,13 +1519,27 @@ export default {
     const mintTarget = ref(null);
 
     const mintModelNFT = async (model) => {
+      const modelLabel = model.type === 'llm_lora' ? 'LLM' : 'SDXL';
       mintTarget.value = {
         inferenceType: 'training',
         inferenceId: model.id,
-        content: JSON.stringify({ id: model.id, type: model.type, base_model: model.base_model }),
+        content: JSON.stringify({
+          id: model.id,
+          type: model.type,
+          base_model: model.base_model,
+          final_loss: model.final_loss,
+          dataset_id: model.dataset_id,
+          created_at: model.created_at,
+          hf_repo: model.hf_repo || null,
+        }),
         contentType: 'application/json',
-        prompt: `Fine-tuned ${model.type === 'llm_lora' ? 'LLM' : 'SDXL'} model: ${model.id}`,
-        generation: { type: 'training', model: model.base_model, timestamp: Date.now() },
+        prompt: `Fine-tuned ${modelLabel} model: ${model.id}`,
+        generation: {
+          type: 'training',
+          model: model.base_model,
+          timestamp: Date.now(),
+          hfRepo: model.hf_repo || null,
+        },
       };
       showMintModal.value = true;
     };
@@ -1595,49 +1602,6 @@ export default {
       } finally {
         isLaunchingToken.value = false;
       }
-    };
-
-    // Demo generation handler - simulates training progress
-    const onDemoGenerate = async () => {
-      training.active = true;
-      training.type = trainingType.value;
-      training.error = null;
-      training.pct = 0;
-      training.stage = "initializing";
-      training.epoch = 0;
-      training.total_epochs = 3;
-      training.loss = null;
-
-      // Simulate training stages
-      const stages = [
-        { stage: "loading model", pct: 5, delay: 800 },
-        { stage: "preparing dataset", pct: 15, delay: 600 },
-        { stage: "training", pct: 25, epoch: 1, loss: 2.45, delay: 1000 },
-        { stage: "training", pct: 50, epoch: 2, loss: 1.82, delay: 1000 },
-        { stage: "training", pct: 75, epoch: 3, loss: 1.24, delay: 1000 },
-        { stage: "saving model", pct: 90, loss: 0.89, delay: 600 },
-        { stage: "complete", pct: 100, delay: 400 },
-      ];
-
-      for (const step of stages) {
-        await new Promise((r) => setTimeout(r, step.delay));
-        training.stage = step.stage;
-        training.pct = step.pct;
-        if (step.epoch) training.epoch = step.epoch;
-        if (step.loss) training.loss = step.loss;
-      }
-
-      training.active = false;
-
-      // Add a demo trained model to the list
-      trainedModels.value.unshift({
-        id: `demo-${trainingType.value}-${Date.now()}`,
-        type: trainingType.value === "llm" ? "llm_lora" : "sdxl_lora",
-        base_model: trainingType.value === "llm" ? "llama-3.2-1b" : "sdxl",
-        final_loss: 0.89,
-        created_at: new Date().toISOString(),
-        isDemo: true,
-      });
     };
 
     // Watch training type to update dataset type for new datasets
@@ -1875,9 +1839,6 @@ export default {
       accessRef,
       hasAccess,
       onAccessChanged,
-      // Demo
-      DEMO_PROMPT,
-      onDemoGenerate,
       // Studio
       GAME_TIERS,
       studio,

@@ -148,95 +148,12 @@ export const OPENCLAW_CONFIG = {
 };
 
 // ═══════════════════════════════════════════════════════════════════════════
-// ERC-8004 COMPANION NFT CONFIGURATION
-// ═══════════════════════════════════════════════════════════════════════════
-
-export const COMPANION_NFT_CONFIG = {
-  // Contract Addresses (to be populated after deployment)
-  contracts: {
-    mainnet: null,
-    arbitrum: null,
-    base: null,
-    sepolia: '0x0000000000000000000000000000000000000000',  // Testnet placeholder
-  },
-
-  // Mint Configuration
-  mint: {
-    price: '0.01',  // ETH
-    currency: 'ETH',
-  },
-
-  // Agent Registration (ERC-8004)
-  agentRegistration: {
-    defaultType: 'companion',
-    supportedProtocols: ['moltbook', 'openclaw', 'bonzai'],
-    endpointTemplate: 'https://bonzai.sh/api/companions/{tokenId}',
-  },
-
-  // Metadata Configuration
-  metadata: {
-    baseUri: 'https://bonzai.sh/api/companions/',
-    ipfsGateway: 'https://gateway.pinata.cloud/ipfs/',
-  },
-
-  // Predefined Companions (to be minted initially)
-  predefinedCompanions: [
-    { id: 'aurora', name: 'Aurora' },
-    { id: 'kai', name: 'Kai' },
-    { id: 'nova', name: 'Nova' },
-    { id: 'dante', name: 'Dante' },
-    { id: 'luna', name: 'Luna' },
-    { id: 'rex', name: 'Rex' },
-    { id: 'scarlett', name: 'Scarlett' },
-  ],
-};
-
-// ═══════════════════════════════════════════════════════════════════════════
-// COMPANION IDENTITY CONFIGURATION
-// ═══════════════════════════════════════════════════════════════════════════
-
-export const COMPANION_IDENTITY = {
-  // Fields stored on-chain (ERC-8004)
-  onChainFields: [
-    'name',
-    'personality',
-    'appearance',
-    'voiceStyle',
-    'moltbookHandle',
-  ],
-
-  // Fields stored off-chain (IPFS metadata)
-  offChainFields: [
-    'description',
-    'background',
-    'avatar',
-    'gender',
-    'voiceSample',
-    'customPrompts',
-  ],
-
-  // Social Presence
-  socialPresence: {
-    moltbook: {
-      enabled: true,
-      autoRegister: true,  // Auto-register when companion is minted
-    },
-    openclaw: {
-      enabled: true,
-      channels: ['whatsapp', 'telegram', 'discord'],
-    },
-  },
-};
-
-// ═══════════════════════════════════════════════════════════════════════════
 // EXPORT ALL
 // ═══════════════════════════════════════════════════════════════════════════
 
 export const socialConfig = {
   moltbook: MOLTBOOK_CONFIG,
   openclaw: OPENCLAW_CONFIG,
-  companionNft: COMPANION_NFT_CONFIG,
-  companionIdentity: COMPANION_IDENTITY,
 };
 
 export default socialConfig;

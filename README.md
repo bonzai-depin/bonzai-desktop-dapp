@@ -302,7 +302,7 @@ npm run dev
 8. Mint any output as an NFT
 ```
 
-**Note**: Skills automatically manage memory by loading/unloading models between phases. Demo mode allows 10 free runs before purchase.
+**Note**: Skills automatically manage memory by loading/unloading models between phases.
 
 ### Training a Robot Model
 1. Navigate to **Robot** tab

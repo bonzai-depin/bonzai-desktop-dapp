@@ -789,10 +789,6 @@ Output ONLY the meditation script text, nothing else.`;
           'Content-Type': 'application/json',
           ...authHeaders,
         };
-        if (!authHeaders.Authorization) {
-          headers['X-Demo-Mode'] = 'true';
-        }
-
         // Generate calming image with FLUX Klein
         try {
           const imageResponse = await fetch(`http://localhost:${port}/image/turbo`, {

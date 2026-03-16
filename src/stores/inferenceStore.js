@@ -13,8 +13,6 @@ const STORE_KEYS = {
   videoInferences: 'videoInferences',
   audioInferences: 'audioInferences',
   objectInferences: 'objectInferences',
-  gameInferences: 'gameInferences',
-  roboticDatasets: 'roboticDatasets',
 };
 
 const state = reactive({
@@ -23,8 +21,6 @@ const state = reactive({
   videoInferences: [],
   audioInferences: [],
   objectInferences: [],
-  gameInferences: [],
-  roboticDatasets: [],
 
   // Aggregated stats
   totalInferences: 0,
@@ -101,9 +97,7 @@ export const initializeStore = async () => {
     state.imageInferences.length +
     state.videoInferences.length +
     state.audioInferences.length +
-    state.objectInferences.length +
-    state.gameInferences.length +
-    state.roboticDatasets.length;
+    state.objectInferences.length;
     
   console.log(`[InferenceStore] Initialized with ${state.totalInferences} total inferences`);
 };
@@ -320,57 +314,6 @@ export const clearObjectInferences = async () => {
   await persist(STORE_KEYS.objectInferences);
 };
 
-// ==================== Game Inferences ====================
-
-export const addGameInference = async (prompt, code, metadata = {}) => {
-  const record = createInferenceRecord('game', {
-    prompt,
-    code,
-    renderMode: metadata.renderMode || '3d',
-    sceneMode: metadata.sceneMode || 'replace',
-    title: metadata.title,
-    success: metadata.success ?? true,
-    ...metadata,
-  });
-  
-  state.gameInferences.push(record);
-  state.totalInferences++;
-  await persist(STORE_KEYS.gameInferences);
-  return record;
-};
-
-export const loadGameInferences = async () => {
-  state.gameInferences = await load(STORE_KEYS.gameInferences);
-  return state.gameInferences;
-};
-
-// ==================== Robotic Datasets ====================
-
-export const addRoboticDataset = async (datasetInfo) => {
-  const record = createInferenceRecord('robotic', {
-    name: datasetInfo.name || `dataset_${Date.now()}`,
-    robot: datasetInfo.robot,
-    task: datasetInfo.task,
-    architecture: datasetInfo.architecture,
-    numEpisodes: datasetInfo.numEpisodes || 0,
-    totalFrames: datasetInfo.totalFrames || 0,
-    finalLoss: datasetInfo.finalLoss,
-    successRate: datasetInfo.successRate,
-    modelPath: datasetInfo.modelPath,
-    ...datasetInfo,
-  });
-  
-  state.roboticDatasets.push(record);
-  state.totalInferences++;
-  await persist(STORE_KEYS.roboticDatasets);
-  return record;
-};
-
-export const loadRoboticDatasets = async () => {
-  state.roboticDatasets = await load(STORE_KEYS.roboticDatasets);
-  return state.roboticDatasets;
-};
-
 // ==================== NFT Minting Support ====================
 
 /**
@@ -398,139 +341,6 @@ export const markAsMinted = async (type, inferenceId, nftData) => {
   return false;
 };
 
-// ==================== ZK Privacy Support ====================
-
-/**
- * Mark an inference as having ZK privacy proof
- */
-export const markWithZKProof = async (type, inferenceId, zkProofData) => {
-  const storeKey = STORE_KEYS[`${type}Inferences`] || STORE_KEYS[`${type}Datasets`];
-  const stateKey = `${type}Inferences` in state ? `${type}Inferences` : `${type}Datasets`;
-  
-  const items = state[stateKey];
-  const item = items.find(i => i.id === inferenceId);
-  
-  if (item) {
-    item.zkProof = {
-      proofHash: zkProofData.proofHash,
-      verificationKey: zkProofData.verificationKey,
-      generatedAt: Date.now(),
-      proverType: zkProofData.proverType || 'sp1',
-    };
-    await persist(storeKey);
-    return true;
-  }
-  return false;
-};
-
-// ==================== Peer Offloading Support ====================
-
-/**
- * Mark an inference as having been offloaded to a peer
- */
-export const markAsPeerOffloaded = async (type, inferenceId, peerData) => {
-  const storeKey = STORE_KEYS[`${type}Inferences`] || STORE_KEYS[`${type}Datasets`];
-  const stateKey = `${type}Inferences` in state ? `${type}Inferences` : `${type}Datasets`;
-  
-  const items = state[stateKey];
-  const item = items.find(i => i.id === inferenceId);
-  
-  if (item) {
-    item.peerId = peerData.peerId;
-    item.peerWallet = peerData.walletAddress;
-    item.bidAmount = peerData.bidAmount;
-    item.offloadedAt = Date.now();
-    await persist(storeKey);
-    return true;
-  }
-  return false;
-};
-
-// ==================== Media Validation ====================
-
-/**
- * Check if a media file exists (for file:// paths or local paths)
- */
-const checkMediaExists = async (path) => {
-  if (!path) return false;
-
-  // For base64 data URLs, they're embedded so always "exist"
-  if (path.startsWith('data:')) return true;
-
-  // For file paths, check via electronAPI
-  if (window.electronAPI?.fileExists) {
-    try {
-      return await window.electronAPI.fileExists(path);
-    } catch {
-      return false;
-    }
-  }
-
-  // For http/https URLs, do a HEAD request
-  if (path.startsWith('http://') || path.startsWith('https://')) {
-    try {
-      const response = await fetch(path, { method: 'HEAD' });
-      return response.ok;
-    } catch {
-      return false;
-    }
-  }
-
-  // Fallback: assume exists if we can't check
-  return true;
-};
-
-/**
- * Validate a single inference's media and return whether it's valid
- */
-export const validateInferenceMedia = async (inference) => {
-  if (!inference) return false;
-
-  switch (inference.type) {
-    case 'video':
-      return await checkMediaExists(inference.videoPath);
-    case 'audio':
-      return await checkMediaExists(inference.audioPath);
-    case 'image':
-      // Images are stored as base64, always valid
-      return !!inference.imageData;
-    default:
-      return true;
-  }
-};
-
-/**
- * Remove inferences with missing/invalid media files
- * Returns array of removed inference IDs
- */
-export const cleanupInvalidMedia = async () => {
-  const removed = [];
-
-  // Check videos
-  for (const video of [...state.videoInferences]) {
-    const exists = await checkMediaExists(video.videoPath);
-    if (!exists) {
-      await removeInference('video', video.id);
-      removed.push({ type: 'video', id: video.id, path: video.videoPath });
-    }
-  }
-
-  // Check audio
-  for (const audio of [...state.audioInferences]) {
-    const exists = await checkMediaExists(audio.audioPath);
-    if (!exists) {
-      await removeInference('audio', audio.id);
-      removed.push({ type: 'audio', id: audio.id, path: audio.audioPath });
-    }
-  }
-
-  if (removed.length > 0) {
-    console.log(`[InferenceStore] Cleaned up ${removed.length} invalid media entries:`, removed);
-  }
-
-  return removed;
-};
-
 // ==================== Removal ====================
 
 export const removeInference = async (type, inferenceId) => {
@@ -556,20 +366,10 @@ export const allInferences = computed(() => [
   ...state.imageInferences,
   ...state.videoInferences,
   ...state.audioInferences,
-  ...state.gameInferences,
-  ...state.roboticDatasets,
 ].sort((a, b) => b.timestamp - a.timestamp));
 
 export const mintedInferences = computed(() => 
   allInferences.value.filter(i => i.nft !== null)
-);
-
-export const zkProtectedInferences = computed(() =>
-  allInferences.value.filter(i => i.zkProof !== null)
-);
-
-export const peerOffloadedInferences = computed(() =>
-  allInferences.value.filter(i => i.peerId !== null)
 );
 
 export const inferenceStore = {
@@ -600,33 +400,15 @@ export const inferenceStore = {
   removeObjectInference,
   clearObjectInferences,
 
-  // Game
-  addGameInference,
-  loadGameInferences,
-
-  // Robotic
-  addRoboticDataset,
-  loadRoboticDatasets,
-
   // NFT
   markAsMinted,
 
-  // ZK
-  markWithZKProof,
-
-  // Peer
-  markAsPeerOffloaded,
-
-  // Removal & Validation
+  // Removal
   removeInference,
-  validateInferenceMedia,
-  cleanupInvalidMedia,
 
   // Computed
   allInferences,
   mintedInferences,
-  zkProtectedInferences,
-  peerOffloadedInferences,
 };
 
 export default inferenceStore;

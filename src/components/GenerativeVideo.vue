@@ -32,10 +32,7 @@
                   disabled
                   class="button is-loading is-info is-small mr-2 p-4"
                 ></button>
-                Generating Media
-                <span class="ml-1" v-if="generation.stage">
-                  ({{ generation.stage }})
-                </span>
+                Crafting...
               </span>
               <span
                 class="fira-sans-condensed-black-italic is-pulled-right is-size-4"
@@ -356,10 +353,7 @@
                 <AccessRequirements
                   ref="accessRef"
                   level="LVL4"
-                  :demo-prompt="DEMO_PROMPT"
-                  :is-generating="isLoading"
                   @access-changed="onAccessChanged"
-                  @demo-generate="onDemoGenerate"
                 />
 
                 <form ref="promptForm" @submit.prevent>
@@ -606,9 +600,6 @@ import {
   clearError,
 } from "../stores/generationStore";
 
-const DEMO_PROMPT =
-  "A bonsai tree gently swaying in a soft breeze, leaves rustling";
-
 const API_BASE =
   (typeof process !== "undefined" && process.env?.VITE_API_BASE) ||
   (window?.electronAPI?.env && window.electronAPI.env.API_BASE) ||
@@ -823,10 +814,6 @@ export default {
 
     const onAccessChanged = (access) => {
       hasAccess.value = access;
-    };
-
-    const onDemoGenerate = (demoPrompt) => {
-      sendMessage(demoPrompt, true);
     };
 
     const canGenerateWithAccess = computed(
@@ -1352,10 +1339,10 @@ export default {
 
     // Socket is managed by the shared generationStore
 
-    const requestWithDownloadTracking = async (url, payload, onSuccess, isDemo = false) => {
+    const requestWithDownloadTracking = async (url, payload, onSuccess) => {
       try {
         isLoading.value = true;
-        const headers = isDemo ? { "X-Demo-Mode": "true" } : {};
+        const headers = {};
         const res = await axios.post(url, payload, {
           headers,
           validateStatus: () => true,
@@ -1444,12 +1431,11 @@ export default {
         reader.readAsDataURL(file);
       });
 
-    const sendMessage = async (prompt, isDemo = false) => {
+    const sendMessage = async (prompt) => {
       if (!prompt) return;
       // For i2v mode, require an image
       if (mode.value === "i2v" && !hasAnyImage.value) return;
-      // Allow demo generation even without access
-      if (!isDemo && !hasAccess.value) return;
+      if (!hasAccess.value) return;
 
       // LTX-2 size mappings - SAFE VALUES for tiled VAE decoder
       // These dimensions produce latent sizes that divide evenly by the tile stride
@@ -1527,7 +1513,7 @@ export default {
           resetToFirstPage();
         }
       };
-      await requestWithDownloadTracking(url, payload, onSuccess, isDemo);
+      await requestWithDownloadTracking(url, payload, onSuccess);
     };
 
     const { toClipboard } = useClipboard();
@@ -1767,10 +1753,8 @@ export default {
       accessRef,
       hasAccess,
       onAccessChanged,
-      onDemoGenerate,
       canGenerateWithAccess,
       canGenerate,
-      DEMO_PROMPT,
       // actions
       sendMessage,
       copy,

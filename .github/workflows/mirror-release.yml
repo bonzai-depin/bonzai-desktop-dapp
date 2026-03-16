@@ -1,0 +1,85 @@
+# .github/workflows/mirror-release.yml
+# Place this in bonzai-desktop-dapp
+#
+# Required setup:
+# 1. Create a GitHub Fine-Grained PAT with:
+#    - Resource owner: bonzai-depin
+#    - Repository access: bonzai-releases (only)
+#    - Permissions: Contents (read/write)
+# 2. Add it as a repository secret named RELEASES_PAT
+#    in bonzai-desktop-dapp → Settings → Secrets → Actions
+
+name: Mirror Release to bonzai-releases
+
+on:
+  release:
+    types: [published]
+
+permissions:
+  contents: read
+
+jobs:
+  mirror:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download release assets
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          mkdir -p assets
+          gh release download "${{ github.event.release.tag_name }}" \
+            --repo "${{ github.repository }}" \
+            --dir assets \
+            --skip-existing || true
+          ls -lh assets/
+
+      - name: Create release in bonzai-releases
+        env:
+          GH_TOKEN: ${{ secrets.RELEASES_PAT }}
+        run: |
+          TAG="${{ github.event.release.tag_name }}"
+          TITLE="${{ github.event.release.name }}"
+          PRERELEASE="${{ github.event.release.prerelease }}"
+          DRAFT="${{ github.event.release.draft }}"
+
+          # Build flags
+          FLAGS=""
+          if [ "$PRERELEASE" = "true" ]; then
+            FLAGS="$FLAGS --prerelease"
+          fi
+          if [ "$DRAFT" = "true" ]; then
+            FLAGS="$FLAGS --draft"
+          fi
+
+          # Build release notes — use body if available, else auto-generate
+          BODY='${{ github.event.release.body }}'
+          if [ -n "$BODY" ]; then
+            NOTES_FLAG="--notes-file -"
+          else
+            NOTES_FLAG="--notes 'Release ${TAG}'"
+          fi
+
+          # Delete existing release with same tag if re-publishing
+          gh release delete "$TAG" \
+            --repo bonzai-depin/bonzai-releases \
+            --yes 2>/dev/null || true
+
+          # Create new release with assets
+          ASSET_FILES=$(find assets -maxdepth 1 -type f)
+          if [ -n "$BODY" ]; then
+            echo "$BODY" | gh release create "$TAG" \
+              --repo bonzai-depin/bonzai-releases \
+              --title "$TITLE" \
+              --notes-file - \
+              $FLAGS \
+              $ASSET_FILES
+          else
+            gh release create "$TAG" \
+              --repo bonzai-depin/bonzai-releases \
+              --title "$TITLE" \
+              --notes "Release ${TAG}" \
+              $FLAGS \
+              $ASSET_FILES
+          fi
+
+          echo "✅ Mirrored $TAG to bonzai-depin/bonzai-releases"

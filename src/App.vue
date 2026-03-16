@@ -244,7 +244,7 @@
         </ul>
       </div>
     </div>
-    <!-- Each component has inline access requirements with demo mode -->
+    <!-- Each component has inline access requirements -->
     <GenerativeText v-if="modelMode == 'chat'" key="chat" />
     <GenerativeAudio v-if="modelMode == 'music'" key="music" />
     <GenerativeImage v-if="modelMode == 'image'" key="image" />

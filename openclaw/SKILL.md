@@ -65,17 +65,6 @@ Authorization: Bearer <jwt_token>
 3. `POST /auth/verify` with signature → receive JWT access token
 4. Use `Authorization: Bearer <token>` header for all requests
 
-### Option 2: Demo Mode (No Wallet)
-
-For unauthenticated access (limited features), use the demo mode header:
-
-```
-Content-Type: application/json
-X-Demo-Mode: true
-```
-
-Demo mode allows basic generation but may have restrictions on certain pipelines.
-
 ### Endpoint Authentication Summary
 
 | Port | Endpoint | Auth Required |
@@ -83,7 +72,7 @@ Demo mode allows basic generation but may have restrictions on certain pipelines
 | 3002 | `/webhook` | No (internal session management) |
 | 3002 | `/health`, `/companions`, `/scenarios` | No |
 | 3002 | `/v1/chat/completions` | No (LLM via electronAPI) |
-| 65000 | All Flask endpoints | Yes (Bearer token or X-Demo-Mode) |
+| 65000 | All Flask endpoints | Yes (Bearer token) |
 
 ## Check Availability
 
@@ -111,26 +100,25 @@ Response:
 | `/v1/chat/completions` | 3002 | POST | None | OpenAI-compatible LLM |
 | `/auth/challenge` | 65000 | POST | None | Get auth challenge |
 | `/auth/verify` | 65000 | POST | None | Verify signature, get JWT |
-| `/auth/demo-token` | 65000 | POST | None | Get demo access token |
-| `/image/turbo` | 65000 | POST | Bearer/Demo | Fast image generation (FLUX Klein) |
-| `/image/quality` | 65000 | POST | Bearer/Demo | High quality image (FLUX Krea) |
-| `/image/standard` | 65000 | POST | Bearer/Demo | Standard image (SDXL, uncensored) |
-| `/image/advanced` | 65000 | POST | Bearer/Demo | Advanced image (Z-Image Turbo) |
-| `/image/image/turbo` | 65000 | POST | Bearer/Demo | Image-to-image editing |
-| `/audio/turbo` | 65000 | POST | Bearer/Demo | Fast TTS (Kokoro) |
-| `/audio/quality/persona` | 65000 | POST | Bearer/Demo | Persona-based TTS (Qwen3-TTS) |
-| `/audio/quality/design` | 65000 | POST | Bearer/Demo | Voice design from description |
-| `/audio/quality/clone` | 65000 | POST | Bearer/Demo | Voice cloning from audio |
-| `/audio/music` | 65000 | POST | Bearer/Demo | Music generation (ACE-Step) |
-| `/video` | 65000 | POST | Bearer/Demo | Video generation (LTX-2) |
-| `/vision/analyze` | 65000 | POST | Bearer/Demo | Image analysis (Qwen3-VL) |
+| `/image/turbo` | 65000 | POST | Bearer | Fast image generation (FLUX Klein) |
+| `/image/quality` | 65000 | POST | Bearer | High quality image (FLUX Krea) |
+| `/image/standard` | 65000 | POST | Bearer | Standard image (SDXL, uncensored) |
+| `/image/advanced` | 65000 | POST | Bearer | Advanced image (Z-Image Turbo) |
+| `/image/image/turbo` | 65000 | POST | Bearer | Image-to-image editing |
+| `/audio/turbo` | 65000 | POST | Bearer | Fast TTS (Kokoro) |
+| `/audio/quality/persona` | 65000 | POST | Bearer | Persona-based TTS (Qwen3-TTS) |
+| `/audio/quality/design` | 65000 | POST | Bearer | Voice design from description |
+| `/audio/quality/clone` | 65000 | POST | Bearer | Voice cloning from audio |
+| `/audio/music` | 65000 | POST | Bearer | Music generation (ACE-Step) |
+| `/video` | 65000 | POST | Bearer | Video generation (LTX-2) |
+| `/vision/analyze` | 65000 | POST | Bearer | Image analysis (Qwen3-VL) |
 | `/training/datasets` | 65000 | GET | Bearer | List training datasets |
 | `/training/start` | 65000 | POST | Bearer | Start model training |
 | `/training/models` | 65000 | GET | Bearer | List trained models |
 
 **Auth column legend:**
 - `None` - No authentication required
-- `Bearer/Demo` - Requires either `Authorization: Bearer <token>` or `X-Demo-Mode: true`
+- `Bearer` - Requires `Authorization: Bearer <token>`
 
 ## Webhook Interface
 
@@ -232,12 +220,12 @@ Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...
 }
 ```
 
-### Example: Direct Flask API Call (Demo Mode)
+### Example: Direct Flask API Call
 
 ```http
 POST http://localhost:65000/image/turbo
 Content-Type: application/json
-X-Demo-Mode: true
+Authorization: Bearer <token>
 
 {
   "prompt": "A sunset over the ocean, oil painting style",
@@ -1040,7 +1028,7 @@ First-time generation for any pipeline may take longer due to model download (se
 | Error | Mode | Description | Solution |
 |-------|------|-------------|----------|
 | Connection refused | Local | BonzAI Desktop not running | Start the desktop app |
-| 401 Unauthorized | Local | Missing or invalid auth | Add `Authorization: Bearer <token>` or `X-Demo-Mode: true` |
+| 401 Unauthorized | Local | Missing or invalid auth | Add `Authorization: Bearer <token>` |
 | 403 Forbidden | Local | Insufficient level for feature | Upgrade BONZAI token holdings |
 | `payment_required` | Remote | Provider requires payment | Sign EIP-712 ETH authorization and retry |
 | `insufficient_level` | Remote | Provider can't serve this pipeline | Try different provider or upgrade |

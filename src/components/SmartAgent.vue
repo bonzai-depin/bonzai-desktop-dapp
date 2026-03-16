@@ -356,19 +356,6 @@
                 />
               </div>
 
-              <!-- TCG SKILL (modular component) -->
-              <div
-                v-else-if="selectedSkillId === 'tcg-insurance-v1.0.0'"
-                class="tcg-interface"
-              >
-                <TCGSkill
-                  :skill="selectedSkill"
-                  @market-created="
-                    showNotification('Prediction market created!', 'success')
-                  "
-                />
-              </div>
-
               <!-- DSLA SKILL (modular component) -->
               <div
                 v-else-if="selectedSkillId === 'prediction-market-maker-v1.0.0'"
@@ -540,212 +527,6 @@
           <button
             class="button is-danger is-medium"
             @click="closePositionModal"
-          >
-            Cancel
-          </button>
-        </div>
-      </div>
-    </div>
-
-    <!-- TCG Market Creation Modal -->
-    <div
-      v-if="tcgMarketModal.show"
-      class="tcg-modal-overlay"
-      @click.self="closeTcgMarketModal"
-    >
-      <div class="tcg-modal">
-        <div class="has-text-right">
-          <button
-            class="button is-danger"
-            @click="closeTcgMarketModal"
-            title="Close"
-          >
-            <span class="material-symbols-outlined">close</span>
-          </button>
-        </div>
-
-        <div class="tcg-modal-header has-text-center">
-          <span class="material-symbols-outlined is-size-1">
-            online_prediction
-          </span>
-          <h2
-            class="fira-sans-condensed-black-italic is-size-3 has-text-centered"
-          >
-            New Prediction Market
-          </h2>
-        </div>
-
-        <div class="tcg-modal-body">
-          <div v-if="tcgMarketModal.card" class="tcg-card-preview">
-            <div class="tcg-modal-status mb-4">
-              <span
-                class="tcg-status-pill fira-sans-condensed-black-italic is-size-5"
-              >
-                {{ tcgMarketModal.card.name }}
-              </span>
-            </div>
-            <div class="tcg-card-tags">
-              <span class="tcg-tag fira-sans-condensed-black-italic">
-                {{ tcgMarketModal.card.set }}
-              </span>
-              <span class="tcg-tag is-price fira-sans-condensed-black-italic">
-                ${{ tcgMarketModal.card.price }}
-              </span>
-            </div>
-          </div>
-
-          <div class="tcg-form-section has-text-left">
-            <div class="tcg-field">
-              <label class="tcg-label fira-sans-condensed-black-italic">
-                Price Condition
-              </label>
-              <div class="tcg-select-wrapper">
-                <select v-model="tcgMarketModal.operator" class="tcg-select">
-                  <option value=">">&gt; (greater than)</option>
-                  <option value="<">&lt; (less than)</option>
-                  <option value=">=">&gt;= (at least)</option>
-                  <option value="<=">&lt;= (at most)</option>
-                  <option value="=">= (exactly)</option>
-                </select>
-              </div>
-            </div>
-
-            <div class="tcg-field mt-5">
-              <label class="tcg-label fira-sans-condensed-black-italic">
-                Target Price (USD)
-              </label>
-              <input
-                class="tcg-input"
-                type="number"
-                v-model="tcgMarketModal.targetPrice"
-                min="0"
-                step="0.01"
-                placeholder="Enter target price"
-              />
-            </div>
-
-            <div class="tcg-field mt-5">
-              <label class="tcg-label fira-sans-condensed-black-italic">
-                Target Date
-              </label>
-              <input
-                class="tcg-input"
-                type="date"
-                v-model="tcgMarketModal.targetDate"
-              />
-            </div>
-
-            <!-- Data Sources Section -->
-            <div class="tcg-field mt-5">
-              <label class="tcg-label fira-sans-condensed-black-italic">
-                <span
-                  class="material-symbols-outlined mr-1"
-                  style="font-size: 18px; vertical-align: middle"
-                >
-                  database
-                </span>
-                Data Sources
-              </label>
-              <p class="has-text-grey-light is-size-7 mb-3">
-                API endpoints used to verify the market outcome
-              </p>
-
-              <div
-                v-for="(source, idx) in tcgMarketModal.dataSources"
-                :key="idx"
-                class="data-source-item mb-3"
-              >
-                <div class="columns is-mobile is-vcentered mb-0">
-                  <div class="column is-4">
-                    <input
-                      class="tcg-input is-small"
-                      v-model="source.name"
-                      placeholder="Source name"
-                    />
-                  </div>
-                  <div class="column">
-                    <input
-                      class="tcg-input is-small"
-                      v-model="source.endpoint"
-                      placeholder="https://api.example.com/..."
-                    />
-                  </div>
-                  <div class="column is-narrow">
-                    <button
-                      class="button is-small is-danger"
-                      @click="removeDataSource(idx)"
-                      :disabled="tcgMarketModal.dataSources.length <= 1"
-                    >
-                      <span
-                        class="material-symbols-outlined"
-                        style="font-size: 14px"
-                      >
-                        delete
-                      </span>
-                    </button>
-                  </div>
-                </div>
-                <input
-                  class="tcg-input is-small"
-                  v-model="source.description"
-                  placeholder="Description (optional)"
-                />
-              </div>
-
-              <button class="button is-small is-info" @click="addDataSource">
-                <span
-                  class="material-symbols-outlined mr-1"
-                  style="font-size: 14px"
-                >
-                  add
-                </span>
-                Add Data Source
-              </button>
-            </div>
-          </div>
-
-          <div class="tcg-preview-box">
-            <p class="tcg-preview-text p-0 m-0 has-text-centered">
-              Will
-              <strong>{{ tcgMarketModal.card?.name }}</strong>
-              's market price
-              {{
-                tcgMarketModal.operator === ">"
-                  ? "exceed"
-                  : tcgMarketModal.operator === "<"
-                    ? "fall below"
-                    : tcgMarketModal.operator === ">="
-                      ? "reach at least"
-                      : tcgMarketModal.operator === "<="
-                        ? "stay at or below"
-                        : "equal exactly"
-              }}
-              <strong>${{ tcgMarketModal.targetPrice || "0.00" }}</strong>
-              by
-              <strong>{{ tcgMarketModal.targetDate || "TBD" }}</strong>
-              ?
-            </p>
-          </div>
-        </div>
-
-        <div class="tcg-modal-footer mb-5">
-          <button
-            class="button tcg-primary-btn is-medium fira-sans-condensed-black-italic"
-            @click="createTcgMarket"
-            :disabled="
-              !tcgMarketModal.targetPrice ||
-              !tcgMarketModal.targetDate ||
-              !tcgMarketModal.dataSources.some((s) => s.name && s.endpoint)
-            "
-          >
-            <span class="material-symbols-outlined mr-2">
-              online_prediction
-            </span>
-            Issue Market
-          </button>
-          <button
-            class="button is-danger is-medium"
-            @click="closeTcgMarketModal"
           >
             Cancel
           </button>
@@ -1094,7 +875,6 @@ import SkillRunner from "./skills/SkillRunner.vue";
 import RoleplayChat from "./skills/RoleplayChat.vue";
 import SkillDownloader from "./skills/SkillDownloader.vue";
 import PolymarketSkill from "./skills/PolymarketSkill.vue";
-import TCGSkill from "./skills/TCGSkill.vue";
 import DSLASkill from "./skills/DSLASkill.vue";
 import MeditationForgeSkill from "./skills/MeditationForgeSkill.vue";
 import BrowseAgents from "./skills/BrowseAgents.vue";
@@ -1165,7 +945,6 @@ export default {
     RoleplayChat,
     SkillDownloader,
     PolymarketSkill,
-    TCGSkill,
     DSLASkill,
     MeditationForgeSkill,
     BrowseAgents,
@@ -1964,30 +1743,6 @@ Return ONLY the JSON, no explanation.`;
     const analysisHistory = ref([]);
     const investmentTheses = ref({});
 
-    // TCG state
-    const tcgCollections = ref([
-      { id: "pokemon", name: "Pokemon", icon: "amp_stories" },
-      { id: "mtg", name: "Magic: The Gathering", icon: "amp_stories" },
-      { id: "yugioh", name: "Yu-Gi-Oh!", icon: "amp_stories" },
-      { id: "onepiece", name: "One Piece", icon: "amp_stories" },
-      { id: "lorcana", name: "Lorcana", icon: "amp_stories" },
-    ]);
-    const selectedTcgCollection = ref("pokemon");
-    const tcgTopCards = ref([]);
-    const tcgSearchQuery = ref("");
-    const tcgSearchResults = ref([]);
-    const userTcgPortfolio = ref([]);
-    const tcgMarkets = ref([]);
-    const isTcgLoading = ref(false);
-    const tcgMarketModal = reactive({
-      show: false,
-      card: null,
-      operator: ">",
-      targetPrice: null,
-      targetDate: "",
-      dataSources: [],
-    });
-
     // DSLA state
     const dslaUseCases = [
       {
@@ -2273,10 +2028,6 @@ Return ONLY the JSON, no explanation.`;
           skillInputs[key] = field.default;
         });
 
-        // Auto-load data for specific skills
-        if (skillId === "tcg-insurance-v1.0.0") {
-          loadTcgTopCards();
-        }
       }
     };
 
@@ -2432,232 +2183,6 @@ Provide a concise analysis covering:
       if (window.electronAPI?.openExternal) {
         window.electronAPI.openExternal(`https://polymarket.com/event/${slug}`);
       }
-    };
-
-    // TCG methods
-    const loadTcgTopCards = async () => {
-      isTcgLoading.value = true;
-      tcgSearchResults.value = [];
-
-      try {
-        // Mock data for development
-        const mockCards = {
-          pokemon: [
-            {
-              id: "p1",
-              name: "Charizard VMAX",
-              set: "Champion's Path",
-              rarity: "Ultra Rare",
-              price: 350,
-              priceChange: 15,
-            },
-            {
-              id: "p2",
-              name: "Pikachu VMAX",
-              set: "Vivid Voltage",
-              rarity: "Ultra Rare",
-              price: 180,
-              priceChange: 8,
-            },
-            {
-              id: "p3",
-              name: "Umbreon VMAX",
-              set: "Evolving Skies",
-              rarity: "Alternate Art",
-              price: 420,
-              priceChange: -5,
-            },
-          ],
-          mtg: [
-            {
-              id: "m1",
-              name: "Black Lotus",
-              set: "Alpha",
-              rarity: "Rare",
-              price: 150000,
-              priceChange: 5,
-            },
-            {
-              id: "m2",
-              name: "Mox Sapphire",
-              set: "Beta",
-              rarity: "Rare",
-              price: 8500,
-              priceChange: -3,
-            },
-          ],
-          yugioh: [
-            {
-              id: "y1",
-              name: "Blue-Eyes White Dragon",
-              set: "LOB",
-              rarity: "1st Edition",
-              price: 2500,
-              priceChange: 10,
-            },
-            {
-              id: "y2",
-              name: "Dark Magician",
-              set: "LOB",
-              rarity: "1st Edition",
-              price: 1200,
-              priceChange: 5,
-            },
-          ],
-          onepiece: [
-            {
-              id: "o1",
-              name: "Monkey D. Luffy",
-              set: "OP01",
-              rarity: "Leader",
-              price: 45,
-              priceChange: 20,
-            },
-            {
-              id: "o2",
-              name: "Roronoa Zoro",
-              set: "OP01",
-              rarity: "Super Rare",
-              price: 85,
-              priceChange: 12,
-            },
-          ],
-          lorcana: [
-            {
-              id: "l1",
-              name: "Elsa, Snow Queen",
-              set: "The First Chapter",
-              rarity: "Enchanted",
-              price: 450,
-              priceChange: -10,
-            },
-            {
-              id: "l2",
-              name: "Mickey Mouse, True Friend",
-              set: "The First Chapter",
-              rarity: "Enchanted",
-              price: 280,
-              priceChange: 5,
-            },
-          ],
-        };
-
-        tcgTopCards.value = mockCards[selectedTcgCollection.value] || [];
-      } catch (e) {
-        console.error("[SmartAgent] TCG load error:", e);
-      } finally {
-        isTcgLoading.value = false;
-      }
-    };
-
-    const searchTcgCards = async () => {
-      if (!tcgSearchQuery.value) {
-        tcgSearchResults.value = [];
-        return;
-      }
-
-      isTcgLoading.value = true;
-
-      try {
-        // Mock search
-        const query = tcgSearchQuery.value.toLowerCase();
-        tcgSearchResults.value = tcgTopCards.value.filter((c) =>
-          c.name.toLowerCase().includes(query),
-        );
-      } catch (e) {
-        console.error("[SmartAgent] TCG search error:", e);
-      } finally {
-        isTcgLoading.value = false;
-      }
-    };
-
-    const addToPortfolio = (card) => {
-      if (!userTcgPortfolio.value.some((c) => c.id === card.id)) {
-        userTcgPortfolio.value.push({
-          ...card,
-          collection: selectedTcgCollection.value,
-        });
-      }
-    };
-
-    const removeFromPortfolio = (cardId) => {
-      userTcgPortfolio.value = userTcgPortfolio.value.filter(
-        (c) => c.id !== cardId,
-      );
-    };
-
-    const openTcgMarketModal = (card) => {
-      tcgMarketModal.show = true;
-      tcgMarketModal.card = card;
-      tcgMarketModal.operator = ">";
-      tcgMarketModal.targetPrice = Math.round(card.price * 1.2);
-      tcgMarketModal.targetDate = "";
-      // Initialize with default data source for TCG pricing
-      tcgMarketModal.dataSources = [
-        {
-          name: "TCGPlayer",
-          endpoint: `https://api.tcgplayer.com/pricing/product/${card.id}`,
-          description: "Primary market price data",
-        },
-      ];
-    };
-
-    const closeTcgMarketModal = () => {
-      tcgMarketModal.show = false;
-      tcgMarketModal.card = null;
-      tcgMarketModal.dataSources = [];
-    };
-
-    const addDataSource = () => {
-      tcgMarketModal.dataSources.push({
-        name: "",
-        endpoint: "",
-        description: "",
-      });
-    };
-
-    const removeDataSource = (idx) => {
-      tcgMarketModal.dataSources.splice(idx, 1);
-    };
-
-    const createTcgMarket = () => {
-      if (!tcgMarketModal.targetPrice || !tcgMarketModal.targetDate) return;
-
-      // Validate at least one data source
-      const validSources = tcgMarketModal.dataSources.filter(
-        (s) => s.name && s.endpoint,
-      );
-      if (validSources.length === 0) {
-        showNotification(
-          "Please add at least one data source with name and endpoint",
-          "warning",
-        );
-        return;
-      }
-
-      const operatorText = {
-        ">": "exceed",
-        "<": "fall below",
-        ">=": "reach at least",
-        "<=": "stay at or below",
-        "=": "equal exactly",
-      };
-
-      const market = {
-        id: `tcg-${Date.now()}`,
-        cardId: tcgMarketModal.card.id,
-        cardName: tcgMarketModal.card.name,
-        question: `Will ${tcgMarketModal.card.name}'s market price ${operatorText[tcgMarketModal.operator]} $${tcgMarketModal.targetPrice} by ${tcgMarketModal.targetDate}?`,
-        operator: tcgMarketModal.operator,
-        targetPrice: tcgMarketModal.targetPrice,
-        targetDate: tcgMarketModal.targetDate,
-        dataSources: validSources.map((s) => ({ ...s })),
-        createdAt: new Date().toISOString(),
-      };
-
-      tcgMarkets.value.push(market);
-      closeTcgMarketModal();
-      showNotification("Market created successfully!", "success");
     };
 
     // DSLA methods
@@ -3160,26 +2685,6 @@ Provide a concise analysis covering:
       getThesis,
       openPolymarket,
       formatNumber,
-
-      // TCG
-      tcgCollections,
-      selectedTcgCollection,
-      tcgTopCards,
-      tcgSearchQuery,
-      tcgSearchResults,
-      userTcgPortfolio,
-      tcgMarkets,
-      isTcgLoading,
-      tcgMarketModal,
-      loadTcgTopCards,
-      searchTcgCards,
-      addToPortfolio,
-      removeFromPortfolio,
-      openTcgMarketModal,
-      closeTcgMarketModal,
-      createTcgMarket,
-      addDataSource,
-      removeDataSource,
 
       // DSLA Skill Factory
       dslaUseCases,
@@ -3909,41 +3414,6 @@ input:checked + .slider:before {
   align-items: flex-start;
 }
 
-/* TCG styles */
-.tcg-section {
-  min-height: 300px;
-}
-
-.tcg-cards {
-  max-height: 400px;
-  overflow-y: auto;
-}
-
-.tcg-card-item {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  padding: 0.75em;
-  background: rgba(255, 255, 255, 0.05);
-  border-radius: 4px;
-  margin-bottom: 0.5em;
-}
-
-.tcg-card-info strong {
-  color: #fff;
-}
-
-.tcg-portfolio-card {
-  background: rgba(255, 255, 255, 0.05);
-  border-radius: 4px;
-  padding: 1em;
-  margin-bottom: 0.5em;
-}
-
-.portfolio-card-header strong {
-  color: #fff;
-}
-
 /* SLA market card */
 .sla-market-card {
   background: rgba(255, 255, 255, 0.05);
@@ -4111,11 +3581,6 @@ input:checked + .slider:before {
   border-radius: 4px;
   color: #fff;
   font-size: 1em;
-}
-
-.tcg-input.is-small {
-  padding: 0.5em;
-  font-size: 0.9em;
 }
 
 .data-source-item {

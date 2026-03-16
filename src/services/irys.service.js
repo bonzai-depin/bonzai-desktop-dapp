@@ -139,7 +139,7 @@ function extFromMime(contentType) {
  * Build Pinata keyvalues from generation + attribution tags.
  */
 function buildKeyValues(generation = {}, attribution = {}) {
-  const kv = { "App-Name": "BonzAI", "App-Version": "1.0.0" };
+  const kv = { "App-Name": "BonzAI", "App-Version": "2.0.0" };
   if (generation.type) kv["Generation-Type"] = generation.type;
   if (generation.model) kv["Model-ID"] = generation.model;
   if (generation.modelVersion) kv["Model-Version"] = generation.modelVersion;

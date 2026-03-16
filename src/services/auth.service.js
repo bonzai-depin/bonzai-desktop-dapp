@@ -333,21 +333,6 @@ export const refreshToken = async () => {
   return data;
 };
 
-/**
- * Get demo token for unauthenticated users
- */
-export const getDemoToken = async () => {
-  const res = await fetch(`${API_BASE}/auth/demo-token`, {
-    method: "POST",
-  });
-
-  if (!res.ok) {
-    throw new Error("Failed to get demo token");
-  }
-
-  return res.json();
-};
-
 // ═══════════════════════════════════════════════════════════════════════════
 // UTILITIES
 // ═══════════════════════════════════════════════════════════════════════════
@@ -365,14 +350,6 @@ export const getAuthHeaders = () => {
  */
 export const isAuthenticated = () => {
   return state.isAuthenticated && state.accessToken && Date.now() < state.tokenExpiry;
-};
-
-/**
- * Check if user has minimum level access
- */
-// All generation is free — level checks always pass
-export const hasMinLevel = (minLevel) => {
-  return true;
 };
 
 /**
@@ -523,10 +500,9 @@ export const authFetch = async (url, options = {}) => {
  * Call this before video/music/image generation to avoid mid-operation token expiry.
  *
  * IMPORTANT: This function NEVER requests wallet signatures automatically.
- * If auth can't be refreshed, it falls back to demo mode gracefully.
  *
  * @param {number} bufferMinutes - Refresh if token expires within this many minutes (default: 5)
- * @returns {Promise<boolean>} - true if authenticated, false if using demo mode
+ * @returns {Promise<boolean>} - true if authenticated, false otherwise
  */
 export const ensureAuth = async (bufferMinutes = 5) => {
   const now = Date.now();
@@ -552,10 +528,9 @@ export const ensureAuth = async (bufferMinutes = 5) => {
 
   // No valid token or refresh failed
   // DO NOT try wallet signature - this breaks autonomous mode
-  // Just notify and fall back to demo mode
   if (state.accessToken) {
     // Had a token but it's expired - notify user
-    console.log("[Auth] Token expired, will use demo mode");
+    console.log("[Auth] Token expired, needs re-authentication");
     window.dispatchEvent(new CustomEvent("auth:needs-reauth"));
   }
   return false;
@@ -639,7 +614,6 @@ export const authService = {
   authenticate,
   authenticateWithVault, // Combined auth + vault (ONE signature)
   refreshToken,
-  getDemoToken,
   logout,
   reAuthenticate,
   userInitiatedReAuth, // For UI buttons
@@ -651,7 +625,6 @@ export const authService = {
   getAuthHeaders,
   getHttpErrorMessage,
   isAuthenticated,
-  hasMinLevel,
   authFetch,
 };
 

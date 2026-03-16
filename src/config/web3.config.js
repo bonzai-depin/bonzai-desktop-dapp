@@ -205,7 +205,6 @@ export const CONFIG = {
     // Built-in skills (bundled with app, available for purchase)
     builtinSkills: [
       "polymarket-top-performers-v1.0.0",
-      "tcg-insurance-v1.0.0",
       "prediction-market-maker-v1.0.0",
     ],
 
@@ -285,25 +284,6 @@ export const CONFIG = {
     mintPoolIndex: 5, // LVL6 / training pool
 
     description: 'Launch burnable ERC-20 tokens for fine-tuned models with V4 LP (unruggable, hook fees)',
-  },
-
-  // ═══════════════════════════════════════════════════════════════════════════
-  // COMPANION NFT CONTRACT (ARBITRUM - ERC-721)
-  // ═══════════════════════════════════════════════════════════════════════════
-  companionNFT: {
-    // BonzaiCompanion ERC-721 contract on Arbitrum (to be deployed)
-    contractAddress: null, // Will be set after deployment
-    chainId: 42161, // Arbitrum One
-    standard: 'ERC-721',
-
-    // Mint price in ETH (flat fee, no rarity tiers)
-    mintPrice: "0.01", // 0.01 ETH
-
-    // Platform fee on marketplace sales (basis points, 250 = 2.5%)
-    platformFeeBps: 250,
-
-    // Metadata gateway (Irys/Arweave)
-    metadataGateway: "https://gateway.irys.xyz/",
   },
 
   // ═══════════════════════════════════════════════════════════════════════════
@@ -497,20 +477,6 @@ export const CONFIG = {
         "vision",           // Qwen3-VL 2B - /vision/analyze
       ],
     },
-  },
-
-  // ═══════════════════════════════════════════════════════════════════════════
-  // MARKETPLACE CONFIGURATION
-  // ═══════════════════════════════════════════════════════════════════════════
-  marketplace: {
-    enabled: true,
-    requiresHolding: false, // No holding requirements for marketplace access
-    paymentToken: "wTAO",
-    orderBookDepth: 50, // Max orders per side
-    minOrderSize: 0.001, // Minimum wTAO per order
-    maxOrderSize: 1000, // Maximum wTAO per order
-    // Sales model
-    capturesFullProceeds: true, // BonzAI receives 100% of prediction market & agent sales
   },
 
   // ═══════════════════════════════════════════════════════════════════════════

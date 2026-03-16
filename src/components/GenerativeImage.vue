@@ -32,10 +32,7 @@
                   disabled
                   class="button is-loading is-info is-small mr-2 p-4"
                 ></button>
-                Generating Media
-                <span class="ml-1" v-if="generation.stage">
-                  ({{ generation.stage }})
-                </span>
+                Crafting...
               </span>
               <span
                 class="fira-sans-condensed-black-italic is-pulled-right is-size-4"
@@ -343,10 +340,7 @@
                 <AccessRequirements
                   ref="accessRef"
                   level="LVL3"
-                  :demo-prompt="DEMO_PROMPT"
-                  :is-generating="isLoading"
                   @access-changed="onAccessChanged"
-                  @demo-generate="onDemoGenerate"
                 />
 
                 <!-- IMAGE PICKER (Edit modes only) -->
@@ -642,9 +636,6 @@ import AccessRequirements from "./AccessRequirements.vue";
 import MintModal from "./MintModal.vue";
 import { requestOpenNetworkModal } from "../services/level.service.js";
 
-const DEMO_PROMPT =
-  "A majestic bonsai tree on a floating island, sunset lighting, digital art";
-
 const API_BASE =
   (typeof process !== "undefined" && process.env?.VITE_API_BASE) ||
   (window?.electronAPI?.env && window.electronAPI.env.API_BASE) ||
@@ -874,11 +865,6 @@ export default {
 
     const onAccessChanged = (access) => {
       hasAccess.value = access;
-    };
-
-    const onDemoGenerate = (demoPrompt) => {
-      form.prompt = demoPrompt;
-      sendMessage(demoPrompt, true); // true = isDemo
     };
 
     // controller for abortable /plan calls (parity w/ Video view)
@@ -1462,10 +1448,9 @@ export default {
     // Socket is managed by the shared generationStore
 
     // ------------ actions -----------------
-    const sendMessage = async (prompt, isDemo = false) => {
+    const sendMessage = async (prompt) => {
       if (!prompt) return;
-      // Allow demo generation even without access
-      if (!isDemo && !canGenerateWithAccess.value) return;
+      if (!canGenerateWithAccess.value) return;
 
       // Edit modes require an input image
       if (isEditMode.value && !uploadedImageBase64.value) return;
@@ -1553,7 +1538,7 @@ export default {
         }
       };
 
-      await requestWithDownloadTracking(url, payload, onSuccess, isDemo);
+      await requestWithDownloadTracking(url, payload, onSuccess);
     };
 
     // ------------ request wrapper ---------
@@ -1561,11 +1546,10 @@ export default {
       url,
       payload,
       onSuccess,
-      isDemo = false,
     ) => {
       try {
         isLoading.value = true;
-        const headers = isDemo ? { "X-Demo-Mode": "true" } : {};
+        const headers = {};
         const res = await axios.post(url, payload, {
           headers,
           validateStatus: () => true,
@@ -1848,9 +1832,7 @@ export default {
       accessRef,
       hasAccess,
       canGenerateWithAccess,
-      DEMO_PROMPT,
       onAccessChanged,
-      onDemoGenerate,
       // actions
       sendMessage,
       copy,

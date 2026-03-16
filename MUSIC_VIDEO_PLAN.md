@@ -83,7 +83,7 @@ A single endpoint that chains both steps server-side, avoiding a large base64 ro
 
 ```python
 @app.route("/audio/music-video", methods=["POST"])
-@require_auth(min_level=LEVEL_REQUIREMENTS["video"], allow_demo=True)
+@require_auth(min_level=LEVEL_REQUIREMENTS["video"])
 def audio_music_video():
     """
     Generate a music video: ACE-Step audio → LTX-2 audio-conditioned video.

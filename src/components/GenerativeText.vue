@@ -494,10 +494,7 @@
           <AccessRequirements
             ref="accessRef"
             level="LVL1"
-            :demo-prompt="DEMO_PROMPT"
-            :is-generating="isLoading"
             @access-changed="onAccessChanged"
-            @demo-generate="onDemoGenerate"
           />
 
           <form ref="promptForm" @submit.prevent>
@@ -851,9 +848,6 @@ import GenerativeImage from "./GenerativeImage.vue";
 import AccessRequirements from "./AccessRequirements.vue";
 import { requestOpenNetworkModal } from "../services/level.service.js";
 
-const DEMO_PROMPT =
-  "Explain what makes a bonsai tree special in exactly 3 sentences.";
-
 export default {
   name: "GenerativeText",
   components: {
@@ -920,11 +914,6 @@ export default {
 
     const onAccessChanged = (access) => {
       hasAccess.value = access;
-    };
-
-    const onDemoGenerate = (demoPrompt) => {
-      form.prompt = demoPrompt;
-      sendMessage(demoPrompt, true); // true = isDemo
     };
 
     const availableModels = ref({
@@ -2025,9 +2014,8 @@ export default {
     const streamingText = ref("");
     const streamingInferenceId = ref(null);
 
-    const sendMessage = async (prompt, isDemo = false) => {
-      // Allow demo generation even without access
-      if (!isDemo && !hasAccess.value) return;
+    const sendMessage = async (prompt) => {
+      if (!hasAccess.value) return;
 
       isLoading.value = true;
       streamingText.value = "";
@@ -2245,8 +2233,6 @@ export default {
       accessRef,
       hasAccess,
       onAccessChanged,
-      onDemoGenerate,
-      DEMO_PROMPT,
       // memory requirements computation
       computeMemoryRequirements,
       // multimodal/vision support

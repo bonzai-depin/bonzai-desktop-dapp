@@ -73,17 +73,6 @@
           {{ isUnlocking ? (unlockStatus || "Unlocking...") : `Unlock Everything` }}
         </button>
 
-        <!-- Generate Demo - directly triggers generation -->
-        <button
-          v-if="demoPrompt"
-          class="button is-warning demo"
-          @click="generateDemo"
-          :disabled="isGenerating"
-          :title="`Generate demo: ${demoPromptShort}`"
-        >
-          <span class="material-symbols-outlined mr-1">experiment</span>
-          {{ isGenerating ? "Generating..." : "Run Demo" }}
-        </button>
       </div>
     </div>
   </div>
@@ -107,24 +96,15 @@ const props = defineProps({
     validator: (v) =>
       ["LVL1", "LVL2", "LVL3", "LVL4", "LVL5", "LVL6"].includes(v),
   },
-  demoPrompt: {
-    type: String,
-    default: "",
-  },
-  isGenerating: {
-    type: Boolean,
-    default: false,
-  },
 });
 
-const emit = defineEmits(["access-changed", "demo-generate"]);
+const emit = defineEmits(["access-changed"]);
 
 const {
   hasAccess: hasTokenAccess,
   isConnected,
   isConnecting,
   connect: doConnect,
-  totalBalance,
   levelConfig,
   levels,
 } = useBonzaiWeb3({
@@ -132,7 +112,6 @@ const {
 });
 
 // Level info
-const levelName = computed(() => levelConfig.value?.name || props.level);
 const holdingRequired = computed(() => levelConfig.value?.holdingRequired || 0);
 const levelStatus = computed(() => levels.value[props.level] || {});
 const holdingMet = computed(() => levelStatus.value.holdingMet);
@@ -152,26 +131,12 @@ const hasAccess = computed(
   () => hasTokenAccess.value || allLevelsUnlocked.value
 );
 
-// Truncated demo prompt for display
-const demoPromptShort = computed(() => {
-  if (!props.demoPrompt) return "";
-  return props.demoPrompt.length > 40
-    ? props.demoPrompt.slice(0, 40) + "..."
-    : props.demoPrompt;
-});
-
 // Links
 const buyLink = CONFIG.links.buyBonzai;
 
 // Actions
 const connect = async () => {
   await doConnect();
-};
-
-const generateDemo = () => {
-  if (props.demoPrompt && !props.isGenerating) {
-    emit("demo-generate", props.demoPrompt);
-  }
 };
 
 // Unlock status message
@@ -257,16 +222,11 @@ watch(isConnected, async (connected) => {
 // Expose for parent components
 defineExpose({
   hasAccess,
-  demoPrompt: computed(() => props.demoPrompt),
 });
 </script>
 
 <style scoped>
 /* Requirements panel */
-
-/* .button.demo {
-  border: 1px solid rgba(255, 255, 255, 0.15);
-} */
 
 .requirements-panel {
   display: flex;
@@ -290,26 +250,6 @@ defineExpose({
   gap: 2px;
 }
 
-/* Balance info */
-.balance-info {
-  font-size: 11px;
-  color: rgba(255, 255, 255, 0.5);
-  margin-left: auto;
-}
-
-.balance-info .current {
-  color: #10b981;
-  font-weight: 600;
-}
-
-.balance-info .separator {
-  margin: 0 4px;
-}
-
-.balance-info .required {
-  color: rgba(255, 255, 255, 0.6);
-}
-
 /* Responsive */
 @media (max-width: 600px) {
   .requirements-panel {
@@ -319,12 +259,6 @@ defineExpose({
 
   .requirements-actions {
     width: 100%;
-  }
-
-  .balance-info {
-    margin-left: 0;
-    width: 100%;
-    text-align: center;
   }
 }
 </style>
