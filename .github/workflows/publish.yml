@@ -1,5 +1,7 @@
 name: Release
 on:
+  release:
+    types: [created]
   workflow_dispatch:
     inputs:
       tag:
@@ -16,9 +18,19 @@ jobs:
       ARCH_KEY: arm64
       HF_TOKEN: ${{ secrets.HF_TOKEN }}
       GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      # TAG without leading v — works for both triggers:
+      # release: tag_name may be "v2.0.0" or "2.0.0", strip leading v
+      # workflow_dispatch: inputs.tag is always bare "2.0.0"
+      RELEASE_TAG: ${{ inputs.tag || github.event.release.tag_name }}
       CI: true
     steps:
       - uses: actions/checkout@v4
+
+      - name: Resolve tag
+        run: |
+          # Strip leading 'v' if present so TAG is always bare (e.g. "2.0.0")
+          RAW="${{ env.RELEASE_TAG }}"
+          echo "TAG=${RAW#v}" >> "$GITHUB_ENV"
 
       - name: Set up Python (macOS ARM64)
         uses: actions/setup-python@v5
@@ -289,7 +301,7 @@ jobs:
           # Install create-dmg for better customization options
           brew install create-dmg
 
-          TAG="${{ inputs.tag }}"
+          TAG="${{ env.TAG }}"
           DMG_PATH="out/make/BonzAI-${TAG}-arm64.dmg"
 
           # create-dmg often fails on CI due to hdiutil detach timeout (DiskArbitration flake).
@@ -342,7 +354,7 @@ jobs:
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
           APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
         run: |
-          TAG="${{ inputs.tag }}"
+          TAG="${{ env.TAG }}"
           DMG_PATH="out/make/BonzAI-${TAG}-arm64.dmg"
 
           # Submit and capture output
@@ -371,7 +383,7 @@ jobs:
 
       - name: Create Release & Upload DMG
         run: |
-          TAG="${{ inputs.tag }}"
+          TAG="${{ env.TAG }}"
           DMG_PATH="out/make/BonzAI-${TAG}-arm64.dmg"
 
           # Create the GitHub release (or upload to existing)
@@ -384,10 +396,16 @@ jobs:
 
       - name: Mirror to bonzai-releases
         env:
-          GH_TOKEN: ${{ secrets.RELEASES_PAT }}
+          MIRROR_TOKEN: ${{ secrets.RELEASES_PAT }}
         run: |
-          TAG="v${{ inputs.tag }}"
-          DMG_PATH="out/make/BonzAI-${{ inputs.tag }}-arm64.dmg"
+          if [ -z "$MIRROR_TOKEN" ]; then
+            echo "RELEASES_PAT not configured, skipping mirror"
+            exit 0
+          fi
+          export GH_TOKEN="$MIRROR_TOKEN"
+
+          TAG="v${{ env.TAG }}"
+          DMG_PATH="out/make/BonzAI-${{ env.TAG }}-arm64.dmg"
 
           # Delete existing release with same tag if re-publishing
           gh release delete "$TAG" \
