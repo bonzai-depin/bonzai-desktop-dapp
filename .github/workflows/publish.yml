@@ -381,3 +381,23 @@ jobs:
             || gh release upload "v${TAG}" "$DMG_PATH" --clobber
 
           echo "Released: BonzAI v${TAG}"
+
+      - name: Mirror to bonzai-releases
+        env:
+          GH_TOKEN: ${{ secrets.RELEASES_PAT }}
+        run: |
+          TAG="v${{ inputs.tag }}"
+          DMG_PATH="out/make/BonzAI-${{ inputs.tag }}-arm64.dmg"
+
+          # Delete existing release with same tag if re-publishing
+          gh release delete "$TAG" \
+            --repo bonzai-depin/bonzai-releases \
+            --yes 2>/dev/null || true
+
+          # Create release with the DMG in the mirror repo
+          gh release create "$TAG" "$DMG_PATH" \
+            --repo bonzai-depin/bonzai-releases \
+            --title "BonzAI ${TAG}" \
+            --generate-notes
+
+          echo "Mirrored ${TAG} to bonzai-depin/bonzai-releases"
