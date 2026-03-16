@@ -4436,18 +4436,11 @@ export default {
         return;
       }
 
-      // Convert Vue reactive proxies to plain objects for Electron IPC
-      // Use JSON.parse(JSON.stringify()) to deep clone and remove non-serializable data
-      const plainCompanion = JSON.parse(
-        JSON.stringify(toRaw(selectedCompanion.value)),
-      );
-      const plainScenario = JSON.parse(
-        JSON.stringify(toRaw(selectedScenario.value)),
-      );
-      const plainSettings = JSON.parse(JSON.stringify(toRaw(settings.value)));
-      const plainSceneState = JSON.parse(
-        JSON.stringify(toRaw(sceneState.value)),
-      );
+      // Deep clone Vue reactive proxies to plain objects for Electron IPC
+      const plainCompanion = structuredClone(toRaw(selectedCompanion.value));
+      const plainScenario = structuredClone(toRaw(selectedScenario.value));
+      const plainSettings = structuredClone(toRaw(settings.value));
+      const plainSceneState = structuredClone(toRaw(sceneState.value));
 
       // Add responseMode string to settings for backward compatibility
       const settingsWithMode = {
@@ -4460,7 +4453,7 @@ export default {
         scenario: plainScenario,
         settings: settingsWithMode,
         history: chatHistory.value.map((msg) => {
-          const plainMsg = JSON.parse(JSON.stringify(toRaw(msg)));
+          const plainMsg = structuredClone(toRaw(msg));
           // Persist all media (image, audio, video) for full session restoration
           return plainMsg;
         }),
@@ -4565,7 +4558,7 @@ export default {
     const saveUserProfile = async () => {
       try {
         if (window.electronAPI?.store?.set) {
-          const plain = JSON.parse(JSON.stringify(toRaw(userProfile.value)));
+          const plain = structuredClone(toRaw(userProfile.value));
           await window.electronAPI.store.set(USER_PROFILE_KEY, plain);
         }
       } catch (e) {
@@ -4748,7 +4741,7 @@ export default {
 
       // Generate a unique ID if not present
       const companionToSave = {
-        ...JSON.parse(JSON.stringify(toRaw(customCompanion.value))),
+        ...structuredClone(toRaw(customCompanion.value)),
         id: customCompanion.value.id || `companion_${Date.now()}`,
         createdAt: Date.now(),
         isCustom: true,
@@ -4839,7 +4832,7 @@ export default {
 
       // Generate a unique ID if not present
       const scenarioToSave = {
-        ...JSON.parse(JSON.stringify(toRaw(customScenario.value))),
+        ...structuredClone(toRaw(customScenario.value)),
         id: customScenario.value.id || `scenario_${Date.now()}`,
         createdAt: Date.now(),
       };
@@ -4913,12 +4906,9 @@ export default {
             "[Roleplay] Waiting for scene setup to complete before enabling autonomous mode...",
           );
           await new Promise((resolve) => {
-            const checkInterval = setInterval(() => {
-              if (!isInitializingSession.value) {
-                clearInterval(checkInterval);
-                resolve();
-              }
-            }, 500);
+            const unwatch = watch(isInitializingSession, (val) => {
+              if (!val) { unwatch(); resolve(); }
+            }, { immediate: true });
           });
           console.log(
             "[Roleplay] Scene setup complete, now enabling autonomous mode",
@@ -4930,14 +4920,12 @@ export default {
           console.log(
             "[Roleplay] Waiting for current generation to finish before enabling autonomous mode...",
           );
-          // Poll until generation is complete
           await new Promise((resolve) => {
-            const checkInterval = setInterval(() => {
-              if (!isProcessingMessage.value && !isTyping.value) {
-                clearInterval(checkInterval);
-                resolve();
-              }
-            }, 500);
+            const unwatch = watch(
+              () => isProcessingMessage.value || isTyping.value,
+              (busy) => { if (!busy) { unwatch(); resolve(); } },
+              { immediate: true },
+            );
           });
           console.log(
             "[Roleplay] Current generation finished, now enabling autonomous mode",
@@ -6208,8 +6196,8 @@ export default {
 
     const exportAllSessions = () => {
       const exportData = {
-        sessions: JSON.parse(JSON.stringify(toRaw(savedSessions.value))),
-        customCompanions: JSON.parse(JSON.stringify(toRaw(companions.value))),
+        sessions: structuredClone(toRaw(savedSessions.value)),
+        customCompanions: structuredClone(toRaw(companions.value)),
         exportedAt: new Date().toISOString(),
         version: "1.0",
       };
@@ -6238,9 +6226,7 @@ export default {
         nextTick(() => {
           chatInput.value?.focus();
           scrollToBottom();
-          // Delayed scroll to account for images loading
-          setTimeout(() => scrollToBottom(), 300);
-          setTimeout(() => scrollToBottom(), 1000);
+          setTimeout(() => scrollToBottom(), 500);
         });
       }
     };
@@ -6623,7 +6609,7 @@ export default {
           const localCompanions = companions.value.filter((c) => !c.isNFT);
           await window.electronAPI.store.set(
             COMPANIONS_KEY,
-            JSON.parse(JSON.stringify(toRaw(localCompanions))),
+            structuredClone(toRaw(localCompanions)),
           );
           console.log(
             `[Roleplay] Saved ${localCompanions.length} companions (${companions.value.length - localCompanions.length} NFT excluded)`,
@@ -6640,7 +6626,7 @@ export default {
         if (window.electronAPI?.store?.set) {
           await window.electronAPI.store.set(
             SCENARIOS_KEY,
-            JSON.parse(JSON.stringify(toRaw(scenarios.value))),
+            structuredClone(toRaw(scenarios.value)),
           );
           console.log(`[Roleplay] Saved ${scenarios.value.length} scenarios`);
         }
@@ -7994,9 +7980,7 @@ export default {
         nextTick(() => {
           chatInput.value?.focus();
           scrollToBottom();
-          // Delayed scroll to account for images loading
-          setTimeout(() => scrollToBottom(), 300);
-          setTimeout(() => scrollToBottom(), 1000);
+          setTimeout(() => scrollToBottom(), 500);
         });
       }
     };
@@ -8985,11 +8969,10 @@ export default {
             // Clear missed messages since we're viewing them now
             skillStore.clearMissedMessages();
 
-            // Scroll to see new messages (with delayed retries for image loading)
+            // Scroll to see new messages
             nextTick(() => {
               scrollToBottom();
-              setTimeout(() => scrollToBottom(), 300);
-              setTimeout(() => scrollToBottom(), 1000);
+              setTimeout(() => scrollToBottom(), 500);
             });
           } else {
             console.warn(

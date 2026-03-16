@@ -361,14 +361,24 @@ export const removeInference = async (type, inferenceId) => {
 
 // ==================== Computed & Readonly State ====================
 
-export const allInferences = computed(() => [
-  ...state.textInferences,
-  ...state.imageInferences,
-  ...state.videoInferences,
-  ...state.audioInferences,
-].sort((a, b) => b.timestamp - a.timestamp));
+// Cache key: total count across all types — only re-sort when items are added/removed
+const _inferenceCount = computed(() =>
+  state.textInferences.length +
+  state.imageInferences.length +
+  state.videoInferences.length +
+  state.audioInferences.length
+);
 
-export const mintedInferences = computed(() => 
+export const allInferences = computed(() => {
+  // Depend on count to trigger recomputation only when items change
+  void _inferenceCount.value;
+  const merged = state.textInferences
+    .concat(state.imageInferences, state.videoInferences, state.audioInferences);
+  merged.sort((a, b) => b.timestamp - a.timestamp);
+  return merged;
+});
+
+export const mintedInferences = computed(() =>
   allInferences.value.filter(i => i.nft !== null)
 );
 

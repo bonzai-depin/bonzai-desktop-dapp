@@ -746,26 +746,19 @@ export default {
     };
 
     // Reversed inferences (most recent first) with original index
-    // Filter out invalid entries and normalize data structure
+    // Single-pass: normalize, filter, and collect in reverse order
     const reversedInferences = computed(() => {
-      const normalized = inferences.value
-        .map((item, idx) => {
-          const norm = normalizeInference(item);
-          if (!norm) {
-            console.warn("[GenerativeImage] Skipping invalid inference:", item);
-            return null;
-          }
-          return {
-            ...norm,
-            _originalIndex: idx,
-          };
-        })
-        .filter((item) => item && item.answer?.data?.image);
-
-      console.log(
-        `[GenerativeImage] ${inferences.value.length} total, ${normalized.length} valid`,
-      );
-      return normalized.reverse();
+      const items = inferences.value;
+      const result = [];
+      // Iterate backwards to build reversed order in one pass
+      for (let i = items.length - 1; i >= 0; i--) {
+        const norm = normalizeInference(items[i]);
+        if (norm && norm.answer?.data?.image) {
+          norm._originalIndex = i;
+          result.push(norm);
+        }
+      }
+      return result;
     });
 
     // Displayed inferences (lazy loaded subset)

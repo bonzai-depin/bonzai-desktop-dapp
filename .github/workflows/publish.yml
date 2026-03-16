@@ -1,8 +1,11 @@
 name: Release
 on:
-  release:
-    types:
-      - created
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Release tag (e.g. 2.0.0)'
+        required: true
+        type: string
 
 jobs:
   publish_on_mac:
@@ -12,6 +15,7 @@ jobs:
       OS_KEY: macos
       ARCH_KEY: arm64
       HF_TOKEN: ${{ secrets.HF_TOKEN }}
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       CI: true
     steps:
       - uses: actions/checkout@v4
@@ -285,7 +289,8 @@ jobs:
           # Install create-dmg for better customization options
           brew install create-dmg
 
-          DMG_PATH="out/make/BonzAI-${{ github.event.release.tag_name }}-arm64.dmg"
+          TAG="${{ inputs.tag }}"
+          DMG_PATH="out/make/BonzAI-${TAG}-arm64.dmg"
 
           # create-dmg often fails on CI due to hdiutil detach timeout (DiskArbitration flake).
           # When this happens, the temp read-write DMG exists but was never converted to
@@ -337,7 +342,8 @@ jobs:
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
           APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
         run: |
-          DMG_PATH="out/make/BonzAI-${{ github.event.release.tag_name }}-arm64.dmg"
+          TAG="${{ inputs.tag }}"
+          DMG_PATH="out/make/BonzAI-${TAG}-arm64.dmg"
 
           # Submit and capture output
           SUBMIT_OUTPUT=$(xcrun notarytool submit "$DMG_PATH" \
@@ -363,10 +369,15 @@ jobs:
 
           xcrun stapler staple "$DMG_PATH"
 
-      - name: Upload DMG to Release
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - name: Create Release & Upload DMG
         run: |
-          DMG_PATH="out/make/BonzAI-${{ github.event.release.tag_name }}-arm64.dmg"
-          gh release upload "${{ github.event.release.tag_name }}" "$DMG_PATH" --clobber
-          echo "Uploaded: $DMG_PATH"
+          TAG="${{ inputs.tag }}"
+          DMG_PATH="out/make/BonzAI-${TAG}-arm64.dmg"
+
+          # Create the GitHub release (or upload to existing)
+          gh release create "v${TAG}" "$DMG_PATH" \
+            --title "BonzAI v${TAG}" \
+            --generate-notes \
+            || gh release upload "v${TAG}" "$DMG_PATH" --clobber
+
+          echo "Released: BonzAI v${TAG}"

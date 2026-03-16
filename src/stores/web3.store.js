@@ -327,10 +327,12 @@ export const useWeb3Store = defineStore('web3', () => {
   // WATCHERS
   // ═══════════════════════════════════════════════════════════════════════════
 
-  // Auto-refresh levels when balance changes
-  watch(totalBalance, async (newBalance, oldBalance) => {
+  // Auto-refresh levels when balance changes (debounced to avoid RPC spam)
+  let levelRefreshTimer = null;
+  watch(totalBalance, (newBalance, oldBalance) => {
     if (newBalance !== oldBalance && isConnected.value) {
-      await refreshLevels();
+      clearTimeout(levelRefreshTimer);
+      levelRefreshTimer = setTimeout(() => refreshLevels(), 2000);
     }
   });
 

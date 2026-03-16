@@ -249,13 +249,9 @@ export const useSkillStore = defineStore('skill', () => {
 
   /**
    * Get skills the user can currently access
+   * All skills are free (canRunSkill always returns true), so this is just skills.value
    */
-  const accessibleSkills = computed(() => {
-    return skills.value.filter(skill => {
-      const { canRun } = canRunSkill(skill.id);
-      return canRun;
-    });
-  });
+  const accessibleSkills = computed(() => skills.value);
 
   /**
    * Get skills grouped by required level
