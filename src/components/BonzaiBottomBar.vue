@@ -124,25 +124,6 @@
         </Transition>
       </div>
 
-      <!-- Center: Current LLM -->
-      <div
-        class="model-section"
-        @click="openBrowseModels"
-        title="Click to browse models"
-      >
-        <span class="material-symbols-outlined model-icon">neurology</span>
-        <span class="model-name fira-sans-condensed-black-italic">
-          {{ currentModelName || 'No model loaded' }}
-        </span>
-        <span
-          v-if="alwaysLoaded"
-          class="always-loaded-badge"
-          title="Always loaded"
-        >
-          <span class="material-symbols-outlined" style="font-size: 14px">lock</span>
-        </span>
-      </div>
-
       <!-- Right: Balance & Actions -->
       <div class="balance-section fira-sans-condensed-black-italic">
         <div class="balance-display">
@@ -191,6 +172,34 @@
             </span>
             {{ p2pModeLabel }}
           </button>
+        </div>
+        <div
+          class="model-section"
+          @click="openBrowseModels"
+          title="Click to browse models"
+        >
+          <span class="material-symbols-outlined model-icon">neurology</span>
+          <span
+            class="model-name fira-sans-condensed-black-italic is-size-6"
+            v-if="currentModelName"
+            style="height: 30px; line-height: 30px; text-transform: uppercase"
+          >
+            {{ currentModelName }}
+          </span>
+          <button
+            style="border: none; background: transparent; box-shadow: none"
+            class="button is-loading is-small"
+            v-else
+          ></button>
+          <span
+            v-if="alwaysLoaded"
+            class="always-loaded-badge"
+            title="Always loaded"
+          >
+            <span class="material-symbols-outlined" style="font-size: 20px">
+              lock
+            </span>
+          </span>
         </div>
       </div>
     </div>
@@ -372,7 +381,9 @@
               <!-- OTP Step -->
               <div v-else-if="privyStep === 'otp'" class="privy-otp-step">
                 <p class="privy-otp-hint">
-                  Check <strong>{{ privyEmail }}</strong> for a verification code
+                  Check
+                  <strong>{{ privyEmail }}</strong>
+                  for a verification code
                 </p>
                 <input
                   v-model="privyOtpCode"
@@ -428,7 +439,6 @@
         </div>
       </Transition>
     </Teleport>
-
   </div>
 </template>
 
@@ -508,11 +518,13 @@ const privyStep = ref("email"); // 'email' | 'otp'
 const privyError = ref("");
 
 // Model state from shared store
-const currentModelName = computed(() => modelStore.state.current?.modelname || null);
+const currentModelName = computed(
+  () => modelStore.state.current?.modelname || null,
+);
 const alwaysLoaded = computed(() => modelStore.state.alwaysLoaded);
 
 const openBrowseModels = () => {
-  window.dispatchEvent(new CustomEvent('bonzai:open-browse-models'));
+  window.dispatchEvent(new CustomEvent("bonzai:open-browse-models"));
 };
 
 // Mint network (Base only)
@@ -1042,7 +1054,7 @@ watch(
 }
 
 .model-icon {
-  font-size: 20px !important;
+  font-size: 24px !important;
   opacity: 0.8;
 }
 
@@ -1055,9 +1067,11 @@ watch(
 .always-loaded-badge {
   display: inline-flex;
   align-items: center;
-  background: rgba(16, 185, 129, 0.25);
+  background: rgba(16, 185, 129, 0.5);
+  border: 1px solid rgba(16, 185, 129, 1);
   border-radius: 4px;
-  padding: 1px 3px;
+  padding: 3px 5px;
+  animation: pulse 1.6s ease-in-out infinite;
 }
 
 /* Wallet Section */
