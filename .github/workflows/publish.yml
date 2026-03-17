@@ -387,10 +387,11 @@ jobs:
           DMG_PATH="out/make/BonzAI-${TAG}-arm64.dmg"
 
           # Create the GitHub release (or upload to existing)
-          gh release create "v${TAG}" "$DMG_PATH" \
+          # Tag is bare (e.g. "2.1.1"), title has the "v" prefix
+          gh release create "${TAG}" "$DMG_PATH" \
             --title "BonzAI v${TAG}" \
             --generate-notes \
-            || gh release upload "v${TAG}" "$DMG_PATH" --clobber
+            || gh release upload "${TAG}" "$DMG_PATH" --clobber
 
           echo "Released: BonzAI v${TAG}"
 
@@ -404,8 +405,8 @@ jobs:
           fi
           export GH_TOKEN="$MIRROR_TOKEN"
 
-          TAG="v${{ env.TAG }}"
-          DMG_PATH="out/make/BonzAI-${{ env.TAG }}-arm64.dmg"
+          TAG="${{ env.TAG }}"
+          DMG_PATH="out/make/BonzAI-${TAG}-arm64.dmg"
 
           # Delete existing release with same tag if re-publishing
           gh release delete "$TAG" \
@@ -413,9 +414,10 @@ jobs:
             --yes 2>/dev/null || true
 
           # Create release with the DMG in the mirror repo
+          # Tag is bare (e.g. "2.1.1"), title has the "v" prefix
           gh release create "$TAG" "$DMG_PATH" \
             --repo bonzai-depin/bonzai-releases \
-            --title "BonzAI ${TAG}" \
+            --title "BonzAI v${TAG}" \
             --generate-notes
 
           echo "Mirrored ${TAG} to bonzai-depin/bonzai-releases"

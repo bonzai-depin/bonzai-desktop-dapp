@@ -2585,7 +2585,7 @@ ipcMain.handle("model-get-loaded", () => {
   if (!currentLoadedModel) return null;
   return {
     filename: currentLoadedModel.filename,
-    modelname: currentLoadedModel.modelname || currentLoadedModel.filename,
+    modelname: currentLoadedModel.modelname || resolveModelName(currentLoadedModel.filename),
     parameters: currentLoadedModel.parameters,
     context: currentLoadedModel.context,
     isMultimodal: currentLoadedModel.isMultimodal || false,
@@ -3686,6 +3686,60 @@ const MODEL_SPECS = {
   "ministral-3-8b":                 { parameters: 8e9, context: 256000 },
 };
 
+// Display name lookup — filename substring → human-readable model name
+const MODEL_NAMES = {
+  "codestral-22b":                  "Codestral 22B",
+  "deepseek-r1-distill-qwen-1.5b": "DeepSeek R1 1.5B",
+  "deepseek-r1-distill-qwen-7b":   "DeepSeek R1 7B",
+  "deepseek-r1-distill-qwen-32b":  "DeepSeek R1 32B",
+  "gemma-3-1b-it":                  "Gemma 3 1B",
+  "gemma-3-12b-it":                 "Gemma 3 12B",
+  "gpt-oss-20b":                    "GPT-OSS 20B",
+  "nousresearch_hermes-4-14b":      "Hermes 4 14B",
+  "llama-2-7b-chat":               "LLaMA 2 7B",
+  "meta-llama-3.1-8b-instruct":    "LLaMA 3.1 8B",
+  "mistral-7b-instruct":           "Mistral 7B",
+  "mythomax-l2-13b":               "MythoMax L2 13B",
+  "phi-3-mini-4k-instruct":        "Phi-3 Mini 3.8B",
+  "phi-4-mini-instruct":           "Phi-4 Mini 3.8B",
+  "yi-coder-9b-chat":              "Yi-Coder 9B",
+  "yi1.5-coder-9b":                "Yi-Coder 1.5 9B",
+  "glm-4.7-flash-ud-q2":           "GLM 4.7 Flash Q2",
+  "glm-4.7-flash-ud-q4":           "GLM 4.7 Flash Q4",
+  "glm-4.7-flash-ud-q8":           "GLM 4.7 Flash Q8",
+  "qwen3-coder-next":              "Qwen 3 Coder Next 80B",
+  "qwen3.5-27b-ud-q2":             "Qwen 3.5 27B",
+  "qwen3.5-27b-ud-q4":             "Qwen 3.5 27B Q4",
+  "qwen3.5-27b-ud-q8":             "Qwen 3.5 27B Q8",
+  "qwen3.5-9b":                    "Qwen 3.5 9B Q4",
+  "qwen3.5-4b":                    "Qwen 3.5 4B",
+  "qwen3.5-35b-a3b-ud-iq3":        "Qwen 3.5 35B A3B IQ3",
+  "qwen3.5-35b-a3b-ud-q2":         "Qwen 3.5 35B A3B",
+  "qwen3.5-35b-a3b-ud-q4":         "Qwen 3.5 35B A3B Q4",
+  "qwen3.5-35b-a3b-ud-q8":         "Qwen 3.5 35B A3B Q8",
+  "qwen3.5-122b-a10b-ud-q2":       "Qwen 3.5 122B A10B",
+  "qwen3.5-122b-a10b-ud-q4":       "Qwen 3.5 122B A10B Q4",
+  "qwen3.5-397b-a17b-ud-q2":       "Qwen 3.5 397B A17B",
+  "qwen3.5-397b-a17b-ud-q4":       "Qwen 3.5 397B A17B Q4",
+  "kimi-k2.5":                     "Kimi K2.5 Q4",
+  "minimax-m2.5":                  "MiniMax M2.5 Q4",
+  "devstral-small-2-24b":          "Devstral 24B",
+  "ministral-3-3b":                "Ministral 3B",
+  "ministral-3-8b":                "Ministral 8B",
+  "nanbeige4.1-3b":                "Nanbeige 4.1 3B",
+  "qwen2.5-coder-7b":              "Qwen Coder 7B",
+};
+
+function resolveModelName(filename) {
+  if (!filename) return "Unknown";
+  const lower = filename.toLowerCase();
+  for (const [key, name] of Object.entries(MODEL_NAMES)) {
+    if (lower.includes(key)) return name;
+  }
+  // Fallback: strip extension and quantization suffix
+  return filename.replace(/\.gguf$/i, "").replace(/-q\d.*$/i, "");
+}
+
 async function loadModel(_event, currentModel) {
   if (!llama) {
     throw new Error("LLM engine not initialized. Please restart the application.");
@@ -3877,7 +3931,7 @@ async function loadModel(_event, currentModel) {
   if (mainWindow && !mainWindow.isDestroyed()) {
     mainWindow.webContents.send("model-changed", {
       filename: currentModel.filename,
-      modelname: currentModel.modelname || currentModel.filename,
+      modelname: currentModel.modelname || resolveModelName(currentModel.filename),
       parameters: currentModel.parameters,
       context: currentModel.context,
       isMultimodal: !!mmprojPath,

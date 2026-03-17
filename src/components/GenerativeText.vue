@@ -323,12 +323,13 @@
                   class="always-loaded-toggle"
                   :class="{ active: alwaysLoaded }"
                   title="Keep the loaded LLM in memory at all times (still allows hot-swapping)"
+                  style="height: 60px"
                 >
-                  <span class="material-symbols-outlined mr-1" style="font-size: 20px; vertical-align: middle">
+                  <span class="material-symbols-outlined" style="font-size: 24x; vertical-align: middle">
                     {{ alwaysLoaded ? 'lock' : 'lock_open' }}
                   </span>
-                  <span class="fira-sans-condensed-black-italic" style="font-size: 16px">
-                    Always loaded
+                  <span class="fira-sans-condensed-black-italic" style="font-size: 24px">
+                    Always On
                   </span>
                   <input
                     type="checkbox"
@@ -1689,6 +1690,7 @@ export default {
 
       const payload = {
         filename: model.filename,
+        modelname: model.modelname,
         parameters: model.parameters,
         context: model.context,
         filesizeBytes: model.filesizeBytes,
