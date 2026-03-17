@@ -309,12 +309,12 @@ jobs:
           # the final compressed read-only DMG. We recover by force-detaching and converting manually.
           create-dmg \
             --volname "BonzAI" \
-            --background "src/assets/background.png" \
+            --background "src/assets/dmg-background.tiff" \
             --window-pos 200 120 \
-            --window-size 660 400 \
-            --icon-size 80 \
-            --icon "BonzAI.app" 120 200 \
-            --app-drop-link 540 200 \
+            --window-size 512 512 \
+            --icon-size 100 \
+            --icon "BonzAI.app" 140 256 \
+            --app-drop-link 372 256 \
             --text-size 14 \
             --no-internet-enable \
             "$DMG_PATH" \

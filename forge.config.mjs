@@ -142,17 +142,17 @@ export default {
       name: "@electron-forge/maker-dmg",
       config: {
         name: "BonzAI",
-        background: "./src/assets/background.png",
+        background: "./src/assets/dmg-background.tiff",
         format: "ULFO",
         iconSize: 100,
-        // Window size should be half of background dimensions for Retina (1000x560 -> 500x280)
-        window: { width: 500, height: 280 },
+        // 1024x1024 @144dpi background → 512x512pt square window (Retina-ready)
+        window: { width: 512, height: 512 },
         contents: [
-          { x: 140, y: 140, type: "file", path: "" }, // App icon position
-          { x: 360, y: 140, type: "link", path: "/Applications" }, // Applications folder
+          { x: 140, y: 256, type: "file", path: "" }, // App icon — vertical center
+          { x: 372, y: 256, type: "link", path: "/Applications" }, // Applications — vertical center
         ],
         additionalDMGOptions: {
-          "window-position": "center", // Center window on screen
+          "window-position": "center",
         },
       },
     },
