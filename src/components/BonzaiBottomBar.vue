@@ -124,6 +124,25 @@
         </Transition>
       </div>
 
+      <!-- Center: Current LLM -->
+      <div
+        class="model-section"
+        @click="openBrowseModels"
+        title="Click to browse models"
+      >
+        <span class="material-symbols-outlined model-icon">neurology</span>
+        <span class="model-name fira-sans-condensed-black-italic">
+          {{ currentModelName || 'No model loaded' }}
+        </span>
+        <span
+          v-if="alwaysLoaded"
+          class="always-loaded-badge"
+          title="Always loaded"
+        >
+          <span class="material-symbols-outlined" style="font-size: 14px">lock</span>
+        </span>
+      </div>
+
       <!-- Right: Balance & Actions -->
       <div class="balance-section fira-sans-condensed-black-italic">
         <div class="balance-display">
@@ -409,6 +428,7 @@
         </div>
       </Transition>
     </Teleport>
+
   </div>
 </template>
 
@@ -433,6 +453,7 @@ import { authVault } from "../services/authVault.service.js";
 import NetworkSettings from "./NetworkSettings.vue";
 import { mintStore } from "../stores/mintStore.js";
 import { switchNetwork } from "../services/web3.service.js";
+import { modelStore } from "../stores/modelStore.js";
 
 const {
   isConnected,
@@ -485,6 +506,14 @@ const privyEmail = ref("");
 const privyOtpCode = ref("");
 const privyStep = ref("email"); // 'email' | 'otp'
 const privyError = ref("");
+
+// Model state from shared store
+const currentModelName = computed(() => modelStore.state.current?.modelname || null);
+const alwaysLoaded = computed(() => modelStore.state.alwaysLoaded);
+
+const openBrowseModels = () => {
+  window.dispatchEvent(new CustomEvent('bonzai:open-browse-models'));
+};
 
 // Mint network (Base only)
 const mintNetwork = computed(() => mintStore.state.network);
@@ -990,6 +1019,45 @@ watch(
   gap: 24px;
   width: 100%;
   height: 100%;
+}
+
+/* Model Section */
+.model-section {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  cursor: pointer;
+  padding: 4px 12px;
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.08);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  transition: all 0.2s ease;
+  white-space: nowrap;
+  max-width: 280px;
+}
+
+.model-section:hover {
+  background: rgba(255, 255, 255, 0.15);
+  border-color: rgba(255, 255, 255, 0.25);
+}
+
+.model-icon {
+  font-size: 20px !important;
+  opacity: 0.8;
+}
+
+.model-name {
+  font-size: 13px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.always-loaded-badge {
+  display: inline-flex;
+  align-items: center;
+  background: rgba(16, 185, 129, 0.25);
+  border-radius: 4px;
+  padding: 1px 3px;
 }
 
 /* Wallet Section */

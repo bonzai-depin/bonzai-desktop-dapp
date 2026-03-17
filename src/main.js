@@ -2571,6 +2571,7 @@ let modelContext = undefined;
 let modelSession = undefined;
 let loadedModel = undefined; // The actual llama model object (holds GPU memory)
 let currentLoadedModel = null; // Track currently loaded model for multimodal support
+let alwaysLoadedEnabled = false; // When true, LLM stays in memory (still allows hot-swap)
 
 // DEPRECATED: MiniCPM-V vision model is now handled server-side via diffuser.py
 // These constants are kept for backwards compatibility only
@@ -2578,6 +2579,24 @@ const MINICPM_V_MODEL = {
   filename: "minicpm-v-4_5-q4_k_m.gguf",
   mmproj: "mmproj-model-f16.gguf",
 };
+
+// Query current loaded model and always-loaded setting
+ipcMain.handle("model-get-loaded", () => {
+  if (!currentLoadedModel) return null;
+  return {
+    filename: currentLoadedModel.filename,
+    modelname: currentLoadedModel.modelname || currentLoadedModel.filename,
+    parameters: currentLoadedModel.parameters,
+    context: currentLoadedModel.context,
+    isMultimodal: currentLoadedModel.isMultimodal || false,
+  };
+});
+ipcMain.handle("model-get-always-loaded", () => alwaysLoadedEnabled);
+ipcMain.handle("model-set-always-loaded", (_event, enabled) => {
+  alwaysLoadedEnabled = !!enabled;
+  console.log(`[LLM] Always-loaded: ${alwaysLoadedEnabled}`);
+  return alwaysLoadedEnabled;
+});
 
 ipcMain.handle("model-check", checkModel);
 ipcMain.handle("model-download", downloadModel);
@@ -3709,7 +3728,7 @@ async function loadModel(_event, currentModel) {
   // This is critical to free GPU memory, especially for large models like GLM
   if (loadedModel || modelContext || modelSession) {
     console.log("[LLM] Cleaning up existing model before loading new one...");
-    await unloadModel();
+    await unloadModel(null, { force: true });
   }
 
   // Normalize filename to lowercase
@@ -3854,6 +3873,17 @@ async function loadModel(_event, currentModel) {
 
   console.log(`Model loaded: ${currentModel.filename}, multimodal: ${!!mmprojPath}`);
 
+  // Notify renderer of model change
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    mainWindow.webContents.send("model-changed", {
+      filename: currentModel.filename,
+      modelname: currentModel.modelname || currentModel.filename,
+      parameters: currentModel.parameters,
+      context: currentModel.context,
+      isMultimodal: !!mmprojPath,
+    });
+  }
+
   return true;
 }
 
@@ -3985,7 +4015,12 @@ async function chatStream(event, input) {
   return assistantMessage;
 }
 
-async function unloadModel() {
+async function unloadModel(_event, { force } = {}) {
+  // "Always loaded" guard: skip unload unless forced (hot-swap) or user-initiated
+  if (!force && alwaysLoadedEnabled && loadedModel) {
+    console.log("[LLM] Skipping unload — always-loaded is enabled. Use force=true to hot-swap.");
+    return false;
+  }
   if (modelSession) {
     console.log("[LLM] Unloading model session...");
     modelSession = undefined;
@@ -4017,6 +4052,12 @@ async function unloadModel() {
   await new Promise(resolve => setTimeout(resolve, 500));
 
   console.log("[LLM] Model unloaded successfully");
+
+  // Notify renderer of model unload
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    mainWindow.webContents.send("model-changed", null);
+  }
+
   return true;
 }
 

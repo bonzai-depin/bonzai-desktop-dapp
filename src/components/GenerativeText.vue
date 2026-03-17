@@ -318,6 +318,27 @@
               </div>
             </div>
             <div class="level-right">
+              <div class="level-item mr-4">
+                <label
+                  class="always-loaded-toggle"
+                  :class="{ active: alwaysLoaded }"
+                  title="Keep the loaded LLM in memory at all times (still allows hot-swapping)"
+                >
+                  <span class="material-symbols-outlined mr-1" style="font-size: 20px; vertical-align: middle">
+                    {{ alwaysLoaded ? 'lock' : 'lock_open' }}
+                  </span>
+                  <span class="fira-sans-condensed-black-italic" style="font-size: 16px">
+                    Always loaded
+                  </span>
+                  <input
+                    type="checkbox"
+                    :checked="alwaysLoaded"
+                    @change="toggleAlwaysLoaded"
+                    style="display: none"
+                  />
+                  <span class="toggle-switch"></span>
+                </label>
+              </div>
               <div class="level-item">
                 <button
                   class="button is-danger is-large"
@@ -662,11 +683,14 @@ import {
   computed,
   watch,
   nextTick,
+  onMounted,
+  onUnmounted,
 } from "vue";
 import { v4 as uuid } from "uuid";
 import VueMarkdown from "vue-markdown-render";
 import useClipboard from "vue-clipboard3";
 import MintModal from "./MintModal.vue";
+import { modelStore } from "../stores/modelStore.js";
 
 // Debounce utility for persistence
 const debounce = (fn, delay) => {
@@ -2182,6 +2206,46 @@ export default {
     // Also re-inject on streaming updates (answer text changes)
     watch(streamingText, () => nextTick(injectCodeCopyButtons));
 
+    // Always loaded toggle state (from shared store)
+    const alwaysLoaded = computed(() => modelStore.state.alwaysLoaded);
+    const toggleAlwaysLoaded = () => {
+      modelStore.setAlwaysLoaded(!alwaysLoaded.value);
+    };
+
+    // Sync modelStore when user picks a model locally
+    watch(currentModel, (model) => {
+      if (model?.filename) {
+        modelStore.setCurrent(model);
+      }
+    });
+
+    // Sync local state when model changes externally (hot-swap)
+    watch(
+      () => modelStore.state.current,
+      (storeModel) => {
+        if (storeModel && storeModel.filename !== currentModel.value.filename) {
+          // Find matching model in available models
+          const match = Object.values(availableModels.value).find(
+            (m) => m.filename === storeModel.filename,
+          );
+          if (match) {
+            currentModel.value = { ...match };
+          }
+        }
+      },
+    );
+
+    // Listen for bottom bar "browse models" event
+    const handleShowBrowseModels = () => {
+      openModel.value = true;
+    };
+    onMounted(() => {
+      window.addEventListener("bonzai:show-browse-models", handleShowBrowseModels);
+    });
+    onUnmounted(() => {
+      window.removeEventListener("bonzai:show-browse-models", handleShowBrowseModels);
+    });
+
     return {
       downloadProgress,
       isLoading,
@@ -2252,6 +2316,9 @@ export default {
       mintTarget,
       openMint,
       onMinted,
+      // Always loaded
+      alwaysLoaded,
+      toggleAlwaysLoaded,
     };
   },
   async mounted() {
@@ -2865,6 +2932,59 @@ ol.chat li {
 
 .model-card:hover .model-card__tip {
   display: block;
+}
+
+/* Always Loaded Toggle */
+.always-loaded-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  cursor: pointer;
+  padding: 6px 14px;
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.08);
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  color: rgba(255, 255, 255, 0.7);
+  transition: all 0.2s ease;
+}
+
+.always-loaded-toggle:hover {
+  background: rgba(255, 255, 255, 0.12);
+}
+
+.always-loaded-toggle.active {
+  background: rgba(16, 185, 129, 0.15);
+  border-color: rgba(16, 185, 129, 0.4);
+  color: #10b981;
+}
+
+.always-loaded-toggle .toggle-switch {
+  position: relative;
+  width: 36px;
+  height: 20px;
+  background: rgba(255, 255, 255, 0.2);
+  border-radius: 10px;
+  transition: background 0.2s;
+}
+
+.always-loaded-toggle .toggle-switch::after {
+  content: '';
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: #fff;
+  transition: transform 0.2s;
+}
+
+.always-loaded-toggle.active .toggle-switch {
+  background: #10b981;
+}
+
+.always-loaded-toggle.active .toggle-switch::after {
+  transform: translateX(16px);
 }
 
 /* ── Markdown answer body ─────────────────────────────────────────── */

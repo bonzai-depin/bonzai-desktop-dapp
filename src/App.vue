@@ -273,6 +273,7 @@ import BonzaiBottomBar from "./components/BonzaiBottomBar.vue";
 import { authService } from "./services/auth.service.js";
 import { useSkillStore } from "./stores/skillStore.js";
 import { initOpenClawHandler } from "./services/openclaw.handler.js";
+import { modelStore } from "./stores/modelStore.js";
 
 export default {
   name: "App",
@@ -316,6 +317,15 @@ export default {
       skillStore.clearMissedMessages();
       skillStore.updateActivity();
       modelMode.value = "agent";
+    };
+
+    // Open Browse Models from bottom bar → switch to chat tab and signal GenerativeText
+    const openBrowseModels = () => {
+      modelMode.value = "chat";
+      // Short delay to let GenerativeText mount if not already
+      setTimeout(() => {
+        window.dispatchEvent(new CustomEvent("bonzai:show-browse-models"));
+      }, 50);
     };
 
     // Provide goAnimateToVideo so child components can use it
@@ -370,6 +380,9 @@ export default {
       };
       loadSystemInfo(); // Fire and forget - don't block mount
 
+      // Initialize model store (query current model + start listening for changes)
+      modelStore.initialize().then(() => modelStore.startListening());
+
       // Set window title with version
       window.electronAPI
         .getAppVersion()
@@ -382,6 +395,9 @@ export default {
 
       // Initialize OpenClaw webhook handler
       initOpenClawHandler();
+
+      // Listen for bottom bar → browse models request
+      window.addEventListener("bonzai:open-browse-models", openBrowseModels);
 
       // Subscribe to server status events
       unsubscribeServerStatus = window.electronAPI.onServerStatus((data) => {
@@ -414,6 +430,8 @@ export default {
       if (autoHideTimeout) {
         clearTimeout(autoHideTimeout);
       }
+      modelStore.stopListening();
+      window.removeEventListener("bonzai:open-browse-models", openBrowseModels);
     });
 
     return {

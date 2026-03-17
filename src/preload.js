@@ -17,6 +17,14 @@ contextBridge.exposeInMainWorld("electronAPI", {
   deleteModel: (modelname) => ipcRenderer.invoke("model-delete", modelname),
   loadModel: (modelname) => ipcRenderer.invoke("model-load", modelname),
   unloadModel: () => ipcRenderer.invoke("model-unload"),
+  getLoadedModel: () => ipcRenderer.invoke("model-get-loaded"),
+  getAlwaysLoaded: () => ipcRenderer.invoke("model-get-always-loaded"),
+  setAlwaysLoaded: (enabled) => ipcRenderer.invoke("model-set-always-loaded", enabled),
+  onModelChanged: (cb) => {
+    const handler = (_event, model) => cb(model);
+    ipcRenderer.on("model-changed", handler);
+    return () => ipcRenderer.removeListener("model-changed", handler);
+  },
   chat: (userMessage, options = {}) => ipcRenderer.invoke("model-chat", { message: userMessage, ...options }),
   resetChat: () => ipcRenderer.invoke("model-reset-chat"),
   chatStream: (userMessage, options = {}) => ipcRenderer.invoke("model-chat-stream", { message: userMessage, ...options }),

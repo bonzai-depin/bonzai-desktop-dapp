@@ -721,11 +721,11 @@ export const useSkillStore = defineStore('skill', () => {
 
         // Create plain session object
         const plainSession = {
-          companion: JSON.parse(JSON.stringify(toRaw(session.companion))),
-          scenario: JSON.parse(JSON.stringify(toRaw(session.scenario))),
-          settings: JSON.parse(JSON.stringify(toRaw(session.settings))),
-          history: session.history.map(msg => JSON.parse(JSON.stringify(toRaw(msg)))),
-          sceneState: JSON.parse(JSON.stringify(toRaw(session.sceneState))),
+          companion: structuredClone(toRaw(session.companion)),
+          scenario: structuredClone(toRaw(session.scenario)),
+          settings: structuredClone(toRaw(session.settings)),
+          history: session.history.map(msg => structuredClone(toRaw(msg))),
+          sceneState: structuredClone(toRaw(session.sceneState)),
           backgroundImage: session.backgroundImage,
           // Save background history for scroll-based switching
           backgroundHistory: session.backgroundHistory ? session.backgroundHistory.map(entry => ({
