@@ -132,31 +132,58 @@ jobs:
           echo "Python runtime copied:"
           ls -lh "$APP_RESOURCES/server/python-runtime/linux-x64/"
 
-      - name: Create distributable
+      - name: Build .deb package
         run: |
-          mkdir -p out/make
           TAG="${{ env.TAG }}"
+          mkdir -p out/make
 
-          # Create tar.gz — universal, no root needed, works on all distros
-          cd out
-          tar -czf "make/BonzAI-${TAG}-linux-x64.tar.gz" BonzAI-linux-x64/
-          cd ..
+          npx electron-installer-debian \
+            --src out/BonzAI-linux-x64 \
+            --dest out/make \
+            --arch amd64 \
+            --options.name bonzai \
+            --options.productName BonzAI \
+            --options.genericName "AI Desktop Application" \
+            --options.description "1-click Sovereign AI deployment, training & serving" \
+            --options.maintainer "BonzAI Foundation <team@bonzai.sh>" \
+            --options.homepage "https://bonzai.sh" \
+            --options.icon src/assets/logo.png \
+            --options.categories "Utility;Science;ArtificialIntelligence" \
+            --options.section misc
+
+          # Rename to include version and arch
+          DEB=$(ls out/make/*.deb | head -1)
+          if [ -n "$DEB" ]; then
+            mv "$DEB" "out/make/BonzAI-${TAG}-linux-amd64.deb"
+          fi
 
           echo "Package created:"
           ls -lh out/make/
 
+      # Also create tar.gz for non-Debian distros (Fedora, Arch, etc.)
+      - name: Create tar.gz fallback
+        run: |
+          TAG="${{ env.TAG }}"
+          cd out
+          tar -czf "make/BonzAI-${TAG}-linux-x64.tar.gz" BonzAI-linux-x64/
+          cd ..
+
       - name: Create Release & Upload
         run: |
           TAG="${{ env.TAG }}"
-          ASSET="out/make/BonzAI-${TAG}-linux-x64.tar.gz"
 
-          echo "Uploading: $ASSET"
-          gh release upload "${TAG}" "$ASSET" --clobber \
-            || gh release create "${TAG}" "$ASSET" \
-              --title "BonzAI v${TAG}" \
-              --generate-notes
+          # Upload both .deb and .tar.gz
+          for ASSET in out/make/BonzAI-${TAG}-linux-amd64.deb out/make/BonzAI-${TAG}-linux-x64.tar.gz; do
+            if [ -f "$ASSET" ]; then
+              echo "Uploading: $ASSET"
+              gh release upload "${TAG}" "$ASSET" --clobber \
+                || gh release create "${TAG}" "$ASSET" \
+                  --title "BonzAI v${TAG}" \
+                  --generate-notes
+            fi
+          done
 
-          echo "Released Linux build for v${TAG}"
+          echo "Released Linux builds for v${TAG}"
 
       - name: Mirror to bonzai-releases
         env:
@@ -169,8 +196,11 @@ jobs:
           export GH_TOKEN="$MIRROR_TOKEN"
 
           TAG="${{ env.TAG }}"
-          ASSET="out/make/BonzAI-${TAG}-linux-x64.tar.gz"
 
-          gh release upload "$TAG" "$ASSET" --clobber \
-            --repo bonzai-depin/bonzai-releases \
-            || echo "Mirror upload skipped (release may not exist yet)"
+          for ASSET in out/make/BonzAI-${TAG}-linux-amd64.deb out/make/BonzAI-${TAG}-linux-x64.tar.gz; do
+            if [ -f "$ASSET" ]; then
+              gh release upload "$TAG" "$ASSET" --clobber \
+                --repo bonzai-depin/bonzai-releases \
+                || echo "Mirror upload skipped for $ASSET"
+            fi
+          done

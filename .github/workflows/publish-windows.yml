@@ -140,28 +140,32 @@ jobs:
           echo "Python runtime copied:"
           ls -lh "$APP_RESOURCES/server/python-runtime/windows-x64/"
 
-      - name: Create distributable
+      - name: Install Inno Setup
+        run: choco install innosetup -y
+
+      - name: Build installer (.exe)
         shell: bash
         run: |
-          mkdir -p out/make
           TAG="${{ env.TAG }}"
+          mkdir -p out/make
 
-          # Create zip — unsigned, no installer needed
-          cd out
-          powershell -Command "Compress-Archive -Path 'BonzAI-win32-x64' -DestinationPath 'make/BonzAI-${TAG}-windows-x64.zip'"
-          cd ..
+          # Inno Setup compiler (iscc) is installed to Program Files
+          "/c/Program Files (x86)/Inno Setup 6/ISCC.exe" \
+            /DMyAppVersion="${TAG}" \
+            /F"BonzAI-${TAG}-windows-x64-setup" \
+            installer/windows/setup.iss
 
-          echo "Package created:"
+          echo "Installer created:"
           ls -lh out/make/
 
       - name: Create Release & Upload
         shell: bash
         run: |
           TAG="${{ env.TAG }}"
-          ASSET="out/make/BonzAI-${TAG}-windows-x64.zip"
+          ASSET="out/make/BonzAI-${TAG}-windows-x64-setup.exe"
 
           if [ ! -f "$ASSET" ]; then
-            echo "ERROR: No build artifact found"
+            echo "ERROR: No installer found"
             ls -la out/make/
             exit 1
           fi
@@ -172,7 +176,7 @@ jobs:
               --title "BonzAI v${TAG}" \
               --generate-notes
 
-          echo "Released Windows build for v${TAG}"
+          echo "Released Windows installer for v${TAG}"
 
       - name: Mirror to bonzai-releases
         shell: bash
@@ -186,7 +190,7 @@ jobs:
           export GH_TOKEN="$MIRROR_TOKEN"
 
           TAG="${{ env.TAG }}"
-          ASSET="out/make/BonzAI-${TAG}-windows-x64.zip"
+          ASSET="out/make/BonzAI-${TAG}-windows-x64-setup.exe"
 
           gh release upload "$TAG" "$ASSET" --clobber \
             --repo bonzai-depin/bonzai-releases \
