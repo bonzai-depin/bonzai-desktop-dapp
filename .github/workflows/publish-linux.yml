@@ -21,6 +21,19 @@ jobs:
       RELEASE_TAG: ${{ inputs.tag || github.event.release.tag_name }}
       CI: true
     steps:
+      # Free ~30GB by removing pre-installed tools we don't need.
+      # CUDA PyTorch + PyInstaller + Electron need significant disk space.
+      - name: Free disk space
+        uses: jlumbroso/free-disk-space@main
+        with:
+          tool-cache: false
+          android: true
+          dotnet: true
+          haskell: true
+          large-packages: true
+          docker-images: true
+          swap-storage: false
+
       - uses: actions/checkout@v4
 
       - name: Resolve tag
