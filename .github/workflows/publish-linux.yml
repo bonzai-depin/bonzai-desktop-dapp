@@ -162,6 +162,7 @@ jobs:
             --dest out/make \
             --arch amd64 \
             --options.name bonzai \
+            --options.bin BonzAI \
             --options.productName BonzAI \
             --options.genericName "AI Desktop Application" \
             --options.description "1-click Sovereign AI deployment, training & serving" \

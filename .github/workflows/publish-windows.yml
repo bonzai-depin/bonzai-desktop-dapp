@@ -154,16 +154,20 @@ jobs:
         shell: pwsh
         run: |
           $TAG = "${{ env.TAG }}"
-          New-Item -ItemType Directory -Force -Path out/make
+          $ROOT = (Get-Location).Path
+          New-Item -ItemType Directory -Force -Path "$ROOT\out\make"
 
-          # Inno Setup compiler — use pwsh to avoid bash path-splitting issues
+          # Pass absolute paths to avoid relative path resolution issues
           & "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" `
             /DMyAppVersion="$TAG" `
+            /DMySourceDir="$ROOT\out\BonzAI-win32-x64" `
+            /DMyOutputDir="$ROOT\out\make" `
+            /DMyIconFile="$ROOT\src\assets\logo.ico" `
             /F"BonzAI-$TAG-windows-x64-setup" `
-            installer\windows\setup.iss
+            "$ROOT\installer\windows\setup.iss"
 
           Write-Host "Installer created:"
-          Get-ChildItem out/make/ | Format-Table Name, Length
+          Get-ChildItem "$ROOT\out\make\" | Format-Table Name, Length
 
       - name: Create Release & Upload
         shell: bash

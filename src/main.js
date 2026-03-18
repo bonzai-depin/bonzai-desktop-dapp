@@ -1126,10 +1126,16 @@ async function routeInferenceRequest(request) {
         endpoint = "/video";
         break;
 
-      // Vision pipeline (Qwen3-VL)
+      // Vision pipeline (Qwen3.5-0.8B 4-bit MLX)
       case "vision":
-      case "qwen3_vision":
+      case "qwen35_vision":
         endpoint = "/vision/analyze";
+        break;
+
+      // OCR pipeline (GLM-OCR 4-bit MLX)
+      case "ocr":
+      case "glm_ocr":
+        endpoint = "/vision/ocr";
         break;
 
       default:

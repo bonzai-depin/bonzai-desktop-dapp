@@ -398,6 +398,21 @@
                 />
               </div>
 
+              <!-- TCG CARD SCANNER SKILL (modular component) -->
+              <div
+                v-else-if="selectedSkillId === 'tcg-scanner-v1.0.0'"
+                class="meditation-interface"
+              >
+                <TCGScannerSkill
+                  :skill="selectedSkill"
+                  :model-available="isModelAvailable"
+                  @card-scanned="
+                    showNotification('Card scanned successfully!', 'success')
+                  "
+                  @status-update="loadingMessage = $event"
+                />
+              </div>
+
               <!-- Roleplay Companion - Special Chat Interface -->
               <div
                 v-else-if="selectedSkillId === 'roleplay-companion-v1.0.0' && selectedSkill"
@@ -893,6 +908,7 @@ import PolymarketSkill from "./skills/PolymarketSkill.vue";
 import DSLASkill from "./skills/DSLASkill.vue";
 import MeditationForgeSkill from "./skills/MeditationForgeSkill.vue";
 import VideoCaptioningSkill from "./skills/VideoCaptioningSkill.vue";
+import TCGScannerSkill from "./skills/TCGScannerSkill.vue";
 import BrowseAgents from "./skills/BrowseAgents.vue";
 import {
   getSkillModelRequirements,
@@ -964,6 +980,7 @@ export default {
     DSLASkill,
     MeditationForgeSkill,
     VideoCaptioningSkill,
+    TCGScannerSkill,
     BrowseAgents,
   },
   setup() {

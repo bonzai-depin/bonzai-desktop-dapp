@@ -694,28 +694,39 @@ export const MODEL_REQUIREMENTS = {
     description: '3D mesh generation from images',
   },
 
-  // Vision Models
+  // Vision / Captioning (Apple Silicon — mlx_vlm, single shared model)
   vision: {
-    name: 'Qwen3-VL 2B',
+    name: 'Qwen3.5 0.8B 4-bit (MLX)',
     type: 'vision',
-    pipeline: 'qwen3_vision',
+    pipeline: 'vision',
     endpoint: '/vision/analyze',
-    repo: 'Qwen/Qwen3-VL-2B-Instruct',
-    size: '~4 GB',
-    vram: '6 GB',
-    description: 'Vision-language model for image analysis',
+    repo: 'mlx-community/Qwen3.5-0.8B-MLX-4bit',
+    size: '~0.5 GB',
+    vram: '2 GB',
+    description: 'Vision-language model for image analysis (Apple Silicon)',
   },
 
-  // MLX Vision (Apple Silicon) — auto-downloaded by mlx_vlm
   vision_mlx: {
-    name: 'Qwen3.5 0.8B (MLX)',
+    name: 'Qwen3.5 0.8B 4-bit (MLX)',
     type: 'vision',
     pipeline: 'vision_mlx',
     endpoint: '/vision/caption',
-    repo: 'mlx-community/Qwen3.5-0.8B-MLX-8bit',
-    size: '~1 GB',
+    repo: 'mlx-community/Qwen3.5-0.8B-MLX-4bit',
+    size: '~0.5 GB',
     vram: '2 GB',
-    description: 'Lightweight vision-language model for video captioning (Apple Silicon)',
+    description: 'Vision-language model for video captioning (Apple Silicon)',
+  },
+
+  // OCR (Apple Silicon — mlx_vlm)
+  ocr: {
+    name: 'GLM-OCR 4-bit (MLX)',
+    type: 'ocr',
+    pipeline: 'ocr',
+    endpoint: '/vision/ocr',
+    repo: 'mlx-community/GLM-OCR-4bit',
+    size: '~1.25 GB',
+    vram: '2 GB',
+    description: 'State-of-the-art OCR for documents, tables, formulas, and TCG cards (Apple Silicon)',
   },
 };
 
@@ -727,6 +738,7 @@ export const SKILL_MODEL_REQUIREMENTS = {
   'story-studio-v1.0.0': ['llm_llama_3_1_8b', 'image_turbo', 'audio'],
   'meditation-forge-v1.0.0': ['llm_llama_3_1_8b', 'image_turbo', 'audio_turbo'],
   'video-captioning-v1.0.0': ['vision_mlx'],
+  'tcg-scanner-v1.0.0': ['ocr'],
   'virtual-staging-pro-v1.0.0': ['llm_llama_3_1_8b', 'image_turbo'],
   'virtual-try-on-v1.0.0': ['llm_llama_3_1_8b', 'image_turbo'],
   'chefs-table-v1.0.0': ['llm_llama_3_1_8b', 'image_quality'],
@@ -4698,6 +4710,42 @@ export const videoCaptioning = createSkillDefinition({
 });
 
 // ═══════════════════════════════════════════════════════════════════════════
+// 2b. TCG CARD SCANNER (Productivity — OCR agentic skill)
+// ═══════════════════════════════════════════════════════════════════════════
+
+export const tcgCardScanner = createSkillDefinition({
+  id: 'tcg-scanner-v1.0.0',
+  name: 'TCG Card Scanner',
+  description: 'Scan and analyze Trading Card Game cards using AI-powered OCR. Extract card names, stats, abilities, flavor text, set info, and estimated market value from photos of Pokémon, Magic: The Gathering, Yu-Gi-Oh!, and other TCG cards.',
+  version: '1.0.0',
+  author: { address: '0x8Ff3b2e823b33BeE30e699bB1b6BBc8F622fEa89', name: 'BonzAI', verified: true },
+  category: 'productivity',
+  purchasePrice: '0.1',
+  tags: ['tcg', 'cards', 'ocr', 'scanner', 'pokemon', 'mtg', 'yugioh', 'collector'],
+  hasCustomUI: true,
+  platform: { os: 'darwin', arch: 'arm64' }, // Apple Silicon only (mlx_vlm)
+  requirements: {
+    minLevel: 3,
+    requiredApis: ['ocr'],
+    requiredPermissions: [],
+  },
+  inputs: {
+    image: { type: 'string', default: '', label: 'Card Image', description: 'Card image file path (handled by custom UI)' },
+  },
+  prompt: { system: 'You are a TCG card scanner assistant.', task: 'Extract card information from images.', outputFormat: { type: 'text' } },
+  tools: { bonzai: [], mcp: [] },
+  execution: {
+    type: 'custom',
+    entrypoint: 'TCGScannerSkill',
+    async execute(inputs, context) {
+      context.updateStatus?.('TCG card scanning is handled by the custom UI component.');
+      return { success: true };
+    },
+  },
+  metadata: { createdAt: '2025-07-18T00:00:00Z', updatedAt: '2025-07-18T00:00:00Z', license: 'MIT' },
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
 // 3. VIRTUAL STAGING PRO (Housing)
 // ═══════════════════════════════════════════════════════════════════════════
 
@@ -6964,6 +7012,7 @@ export const flagshipSkills = [
   roleplayCompanion,        // Roleplay Companion
   meditationForge,          // Meditation Forge
   videoCaptioning,          // Video Captioning
+  tcgCardScanner,           // TCG Card Scanner
 ];
 
 // Export memory management functions for use by components

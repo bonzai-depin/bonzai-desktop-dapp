@@ -3,6 +3,18 @@
 #define MyAppURL "https://bonzai.sh"
 #define MyAppExeName "BonzAI.exe"
 
+; Paths passed as absolute defines from CI via /D flags.
+; Defaults use relative paths for local builds from installer/windows/.
+#ifndef MySourceDir
+  #define MySourceDir "..\..\out\BonzAI-win32-x64"
+#endif
+#ifndef MyOutputDir
+  #define MyOutputDir "..\..\out\make"
+#endif
+#ifndef MyIconFile
+  #define MyIconFile "..\..\src\assets\logo.ico"
+#endif
+
 [Setup]
 AppId={{B0NZAI-D3SK-T0P-APP1-CAT10N000001}
 AppName={#MyAppName}
@@ -14,10 +26,10 @@ AppUpdatesURL={#MyAppURL}
 DefaultDirName={autopf}\{#MyAppName}
 DefaultGroupName={#MyAppName}
 DisableProgramGroupPage=yes
-OutputDir=..\..\out\make
+OutputDir={#MyOutputDir}
 Compression=lzma2
 SolidCompression=yes
-SetupIconFile=..\..\src\assets\logo.ico
+SetupIconFile={#MyIconFile}
 UninstallDisplayIcon={app}\{#MyAppExeName}
 ArchitecturesInstallIn64BitMode=x64compatible
 ArchitecturesAllowed=x64compatible
@@ -32,7 +44,7 @@ Name: "english"; MessagesFile: "compiler:Default.isl"
 Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{cm:AdditionalIcons}"
 
 [Files]
-Source: "..\..\out\BonzAI-win32-x64\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
+Source: "{#MySourceDir}\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
 
 [Icons]
 Name: "{group}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"
