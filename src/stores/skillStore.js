@@ -162,10 +162,26 @@ export const useSkillStore = defineStore('skill', () => {
     }));
   });
 
-  // Skills filtered by category
+  // Current platform info (from Electron preload)
+  const currentPlatform = window.electronAPI?.platform || process?.platform || 'unknown';
+  const currentArch = window.electronAPI?.arch || process?.arch || 'unknown';
+
+  // Skills filtered by category (and platform restrictions)
   const skillsByCategory = computed(() => {
-    if (!selectedCategory.value) return skills.value;
-    return skills.value.filter(s => s.category === selectedCategory.value);
+    let result = skills.value;
+
+    // Filter out skills restricted to a specific platform/arch
+    result = result.filter(s => {
+      if (!s.platform) return true;
+      if (s.platform.os && s.platform.os !== currentPlatform) return false;
+      if (s.platform.arch && s.platform.arch !== currentArch) return false;
+      return true;
+    });
+
+    if (selectedCategory.value) {
+      result = result.filter(s => s.category === selectedCategory.value);
+    }
+    return result;
   });
 
   // Skills filtered by search query (debounced), with featured skills first
@@ -677,10 +693,11 @@ export const useSkillStore = defineStore('skill', () => {
     }
   };
 
-  /**
-   * Track mouse movement for activity detection
-   */
+  let _mouseMoveLastCall = 0;
   const onMouseMove = (e) => {
+    const now = Date.now();
+    if (now - _mouseMoveLastCall < 5000) return;
+    _mouseMoveLastCall = now;
     const pos = lastMousePosition.value;
     if (Math.abs(e.clientX - pos.x) > 5 || Math.abs(e.clientY - pos.y) > 5) {
       lastMousePosition.value = { x: e.clientX, y: e.clientY };
@@ -1075,7 +1092,7 @@ REQUIREMENTS:
       autonomousMessageCount.value = 0;
 
       // Start idle checking
-      idleCheckInterval.value = setInterval(checkIdle, 5000);
+      idleCheckInterval.value = setInterval(checkIdle, 30000);
 
       // Start autonomous message generation
       autonomousInterval.value = setInterval(generateAutonomousMessage, AUTONOMOUS_MESSAGE_INTERVAL.value);

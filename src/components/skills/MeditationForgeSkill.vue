@@ -316,8 +316,8 @@ export default {
       default: null,
     },
     modelAvailable: {
-      type: Function,
-      default: () => true,
+      type: [Function, Boolean],
+      default: true,
     },
   },
   emits: ['meditation-created', 'status-update'],

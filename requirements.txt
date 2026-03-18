@@ -79,6 +79,9 @@ MarkupSafe==3.0.2
 matplotlib-inline==0.1.7
 mdurl==0.1.2
 misaki==0.9.4
+# mlx-vlm must be installed SEPARATELY with --no-deps to avoid transformers>=5.x conflict.
+# Do NOT add mlx-vlm to this file — pip install -r ignores comments and will pull transformers 5.x.
+# Install manually: pip install --no-deps mlx-vlm mlx-lm mlx mlx-metal
 mpmath==1.3.0
 murmurhash==1.0.12
 networkx==3.4.2

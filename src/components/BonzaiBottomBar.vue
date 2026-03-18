@@ -181,16 +181,11 @@
           <span class="material-symbols-outlined model-icon">neurology</span>
           <span
             class="model-name fira-sans-condensed-black-italic is-size-6"
-            v-if="currentModelName"
+            
             style="height: 30px; line-height: 30px; text-transform: uppercase"
           >
-            {{ currentModelName }}
+            {{ currentModelName || "No Active Chat Model" }}
           </span>
-          <button
-            style="border: none; background: transparent; box-shadow: none"
-            class="button is-loading is-small"
-            v-else
-          ></button>
           <span
             v-if="alwaysLoaded"
             class="always-loaded-badge"
@@ -948,7 +943,7 @@ onMounted(async () => {
 
   // Initial P2P status check and start polling
   await refreshP2PStatus();
-  p2pStatusInterval = setInterval(refreshP2PStatus, 5000);
+  p2pStatusInterval = setInterval(refreshP2PStatus, 30000);
 
   // Listen for auth needs-reauth events
   window.addEventListener("auth:needs-reauth", handleNeedsReauth);

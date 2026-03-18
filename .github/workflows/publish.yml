@@ -1,4 +1,4 @@
-name: Release
+name: Release (macOS)
 on:
   release:
     types: [created]
@@ -51,6 +51,8 @@ jobs:
           # Install packages with --no-deps to avoid pulling in gradio/fastapi/sox
           pip install -U qwen-tts --no-deps
           pip install git+https://github.com/ace-step/ACE-Step-1.5.git --no-deps
+          # mlx-vlm for Apple Silicon vision — must use --no-deps to avoid transformers 5.x
+          pip install --no-deps mlx-vlm mlx-lm mlx mlx-metal
 
       - name: Build Python binary (macOS ARM64)
         run: |
@@ -72,6 +74,9 @@ jobs:
             --collect-submodules=qwen_tts \
             --collect-submodules=qwen_vl_utils \
             --collect-submodules=acestep \
+            --collect-submodules=mlx_vlm \
+            --collect-submodules=mlx_lm \
+            --hidden-import=mlx \
             --hidden-import=pytorch_lightning \
             --hidden-import=torchaudio \
             --hidden-import=torchaudio.functional \

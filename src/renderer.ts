@@ -87,13 +87,17 @@ axios.interceptors.response.use(
 
 // Forward server logs to browser console
 if (window.electronAPI?.onServerLog) {
-  window.electronAPI.onServerLog(({ type, text }) => {
+  window.electronAPI.onServerLog((data) => {
     const prefix = "%c[Server]";
     const style = "color: #10b981; font-weight: bold;";
-    if (type === "error") {
-      console.error(prefix, style, text);
-    } else {
-      console.log(prefix, style, text);
+    // Support both batched format { batch: [...] } and legacy { type, text }
+    const entries = data.batch || [data];
+    for (const { type, text } of entries) {
+      if (type === "error") {
+        console.error(prefix, style, text);
+      } else {
+        console.log(prefix, style, text);
+      }
     }
   });
 }

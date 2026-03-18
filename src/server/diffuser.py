@@ -15,7 +15,6 @@ from __future__ import annotations
 # eventlet was removed due to incompatibility with PyInstaller + numpy
 
 import os
-os.environ["TRANSFORMERS_ATTN_IMPLEMENTATION"] = "eager"
 
 import re
 import io
@@ -267,6 +266,9 @@ KOKORO_DEFAULT_VOICE = {
 # Qwen3-VL 2B - Vision-language model with good cross-platform support
 QWEN3_VL_REPO = "Qwen/Qwen3-VL-2B-Instruct"
 
+# Qwen3.5-0.8B MLX - Lightweight VLM for video captioning (Apple Silicon, mlx_vlm)
+QWEN35_MLX_MODEL_ID = "mlx-community/Qwen3.5-0.8B-MLX-8bit"
+
 # Qwen3-TTS - High-quality TTS with voice cloning and voice design
 QWEN3_TTS_BASE_REPO = "Qwen/Qwen3-TTS-12Hz-1.7B-Base"  # For voice cloning
 QWEN3_TTS_DESIGN_REPO = "Qwen/Qwen3-TTS-12Hz-1.7B-VoiceDesign"  # For voice design from description
@@ -462,6 +464,7 @@ LEVEL_REQUIREMENTS = {
     "audio": 2,
     "image": 3,
     "vision": 3,  # Vision analysis uses same level as image
+    "vision_mlx": 3,  # MLX vision (Qwen3.5-0.8B) for video captioning
     "video": 4,
     "3d": 5,
     "training": 6,
@@ -1224,6 +1227,14 @@ REPO_SPECS = {
         "must_weight_dirs": ["vae"],
         "extra_dirs": ["acestep-v15-turbo", "Qwen3-Embedding-0.6B"],
     },
+    # Qwen3.5-0.8B MLX: Vision-language model for video captioning (Apple Silicon)
+    "mlx-community/Qwen3.5-0.8B-MLX-8bit": {
+        "must_files": ["config.json"],
+        "must_tokenizers": [],
+        "must_weight_dirs": [],
+        "extra_dirs": [],
+        "fallback_any_weights": True,
+    },
 }
 
 DEFAULT_SPEC = {"must_files": ["model_index.json"], "must_weight_dirs": [], "must_tokenizers": [], "fallback_any_weights": True}
@@ -1325,6 +1336,22 @@ def _repo_readiness(repo_id: str) -> Dict[str, Any]:
         return _repo_completeness(repo_id)
     except Exception as e:
         return {"repo": repo_id, "ok": False, "missing": [f"error: {str(e)}"]}
+
+
+_readiness_cache: Dict[str, tuple] = {}
+_READINESS_TTL = 30  # seconds
+
+
+def _cached_repo_readiness(repo_id: str) -> Dict[str, Any]:
+    """TTL-cached wrapper around _repo_readiness to avoid repeated filesystem checks."""
+    now = time.time()
+    if repo_id in _readiness_cache:
+        result, ts = _readiness_cache[repo_id]
+        if (now - ts) < _READINESS_TTL:
+            return result
+    result = _repo_readiness(repo_id)
+    _readiness_cache[repo_id] = (result, now)
+    return result
 
 
 def _is_pipeline_complete(pipeline: str) -> bool:
@@ -1480,6 +1507,10 @@ def _plan_for(pipeline: str) -> Dict[str, Any]:
     if pipeline in ("vision", "qwen3_vision"):
         return {"repos_to_fetch": [QWEN3_VL_REPO], "single_files": []}
 
+    # MLX Vision (Qwen3.5-0.8B) for video captioning (Apple Silicon)
+    if pipeline in ("vision_mlx", "qwen35_mlx"):
+        return {"repos_to_fetch": [QWEN35_MLX_MODEL_ID], "single_files": []}
+
     raise ValueError(f"Unknown pipeline: {pipeline}")
 
 
@@ -1508,7 +1539,7 @@ def _single_file_status(entry: Dict[str, Any]) -> Dict[str, Any]:
 def _repos_ready_or_resp(*repo_ids: str):
     missing = []
     for rid in repo_ids:
-        st = _repo_readiness(rid)
+        st = _cached_repo_readiness(rid)
         if not st.get("ok", False):
             missing.append({"repo": rid, "missing": st.get("missing", [])})
     if not missing:
@@ -1524,7 +1555,7 @@ def _ensure_files_present_or_start(pipeline: str, auto_download: bool = False):
     plan = _cached_plan_for(pipeline)
     missing_repos = []
     for rid in plan.get("repos_to_fetch", []):
-        st = _repo_readiness(rid)
+        st = _cached_repo_readiness(rid)
         if not st.get("ok", False):
             missing_repos.append({"repo": rid, "missing": st.get("missing", [])})
     missing_files = []
@@ -2117,7 +2148,7 @@ def pipelines_plan():
     
     repos_status = []
     for rid in plan.get("repos_to_fetch", []):
-        repos_status.append(_repo_readiness(rid))
+        repos_status.append(_cached_repo_readiness(rid))
     required_files = [_single_file_status(f) for f in plan.get("single_files", [])]
     ok_repos = all(r.get("ok") for r in repos_status) if repos_status else True
     ok_files = all(s.get("ok") for s in required_files) if required_files else True
@@ -3085,6 +3116,14 @@ _qwen3_tts_lock = threading.Lock()
 
 # Voice prompt cache for reusing designed voices
 _voice_prompt_cache = {}
+_VOICE_CACHE_MAX = 100
+
+
+def _voice_cache_evict():
+    """Evict oldest entry if cache is at capacity."""
+    if len(_voice_prompt_cache) >= _VOICE_CACHE_MAX:
+        oldest_key = next(iter(_voice_prompt_cache))
+        del _voice_prompt_cache[oldest_key]
 
 
 def _load_qwen3_tts_base():
@@ -3248,6 +3287,7 @@ def audio_quality_design():
             ref_audio=(wavs[0], sr),
             ref_text=text,
         )
+        _voice_cache_evict()
         _voice_prompt_cache[voice_id] = {
             "prompt": voice_prompt,
             "ref_audio_path": out_path,
@@ -3361,6 +3401,7 @@ def audio_quality_clone():
 
             # Cache if voice_id provided
             if voice_id:
+                _voice_cache_evict()
                 _voice_prompt_cache[voice_id] = {
                     "prompt": voice_prompt,
                     "ref_audio_path": ref_audio_path,
@@ -3514,6 +3555,7 @@ def audio_quality_persona():
                     )
 
                     # Cache the prompt
+                    _voice_cache_evict()
                     _voice_prompt_cache[voice_id] = {
                         "prompt": voice_prompt,
                         "ref_audio_path": ref_path,
@@ -3560,6 +3602,7 @@ def audio_quality_persona():
                 )
 
                 # Cache the prompt
+                _voice_cache_evict()
                 _voice_prompt_cache[voice_id] = {
                     "prompt": voice_prompt,
                     "ref_audio_path": ref_path,
@@ -4102,13 +4145,9 @@ def ltx2_gguf_video():
             crop_y = (new_h - H) // 2
             pil_image = resized.crop((crop_x, crop_y, crop_x + W, crop_y + H))
 
-            # Motion fix: light preprocessing to help video models generate motion
+            # Motion fix: light noise preprocessing to help video models generate motion
             import numpy as _np
-            _buf = io.BytesIO()
-            pil_image.save(_buf, format="JPEG", quality=90)
-            _buf.seek(0)
-            pil_image = Image.open(_buf).convert("RGB")
-            _arr = _np.asarray(pil_image).astype(_np.float32)
+            _arr = _np.asarray(pil_image.convert("RGB")).astype(_np.float32)
             _arr += _np.random.normal(scale=0.1, size=_arr.shape)
             _arr = _np.clip(_arr, 0, 255).astype(_np.uint8)
             pil_image = Image.fromarray(_arr, "RGB")
@@ -5428,6 +5467,168 @@ def vision_unload():
     return jsonify({"success": True, "message": "Vision model unloaded"})
 
 
+# =============================================================================
+# VIDEO CAPTIONING (Qwen3.5-0.8B via mlx_vlm — Apple Silicon only)
+# =============================================================================
+
+_mlx_vlm_model = None
+_mlx_vlm_processor = None
+_mlx_vlm_lock = threading.Lock()
+
+
+def _load_mlx_vlm():
+    """Load Qwen3.5-0.8B via mlx_vlm for vision-language inference."""
+    global _mlx_vlm_model, _mlx_vlm_processor
+
+    with _mlx_vlm_lock:
+        if _mlx_vlm_model is not None:
+            return _mlx_vlm_model, _mlx_vlm_processor
+
+        from mlx_vlm import load
+
+        # Use local repo path if available (manual repo management), otherwise HuggingFace ID
+        local_dir = repo_local_dir(QWEN35_MLX_MODEL_ID)
+        model_path = str(local_dir) if local_dir.exists() else QWEN35_MLX_MODEL_ID
+
+        logger.info(f"[VisionMLX] Loading Qwen3.5-0.8B from {model_path}...")
+        model, processor = load(model_path)
+        _mlx_vlm_model = model
+        _mlx_vlm_processor = processor
+        logger.info("[VisionMLX] Qwen3.5-0.8B loaded successfully")
+        return model, processor
+
+
+def _unload_mlx_vlm():
+    """Unload mlx_vlm model to free memory."""
+    global _mlx_vlm_model, _mlx_vlm_processor
+
+    with _mlx_vlm_lock:
+        if _mlx_vlm_model is not None:
+            del _mlx_vlm_model
+            _mlx_vlm_model = None
+        if _mlx_vlm_processor is not None:
+            del _mlx_vlm_processor
+            _mlx_vlm_processor = None
+        gc.collect()
+        logger.info("[VisionMLX] Qwen3.5-0.8B model unloaded")
+
+
+@app.route("/vision/caption", methods=["POST"])
+def vision_caption():
+    """
+    Analyze a video frame using Qwen3.5-0.8B via mlx_vlm (Apple Silicon).
+
+    Request body:
+    {
+        "image_base64": "...",  # Base64-encoded JPEG frame (required)
+        "prompt": "...",        # Analysis prompt (optional)
+        "max_tokens": 200       # Max response tokens (optional)
+    }
+
+    Returns:
+    {
+        "success": true,
+        "response": "...",
+        "generation_id": "..."
+    }
+    """
+    data = request.get_json(silent=True) or {}
+
+    image_b64 = data.get("image_base64") or data.get("image")
+    if not image_b64:
+        return jsonify({"error": "image_base64 is required"}), 400
+
+    prompt = (data.get("prompt") or "Describe the current video frame concisely.").strip()
+    max_tokens = int(data.get("max_tokens", 200))
+
+    # Check if model is available (manual repo management)
+    auto_dl = bool(data.get("auto_download", False))
+    guard = _ensure_files_present_or_start("vision_mlx", auto_download=auto_dl)
+    if guard:
+        return guard
+
+    gen_id = genbus.new("vision_mlx", {"endpoint": "/vision/caption", "prompt": prompt[:100]})
+
+    try:
+        genbus.progress(gen_id, "Loading MLX vision model", 1, 10)
+
+        model, processor = _load_mlx_vlm()
+
+        genbus.progress(gen_id, "Processing frame", 3, 10)
+
+        # Decode base64 to temp file (mlx_vlm.generate accepts file paths or PIL images)
+        if image_b64.startswith("data:"):
+            _, b64_data = image_b64.split(",", 1)
+        else:
+            b64_data = image_b64
+
+        image_bytes = base64.b64decode(b64_data)
+        image = Image.open(io.BytesIO(image_bytes))
+        if image.mode != "RGB":
+            image = image.convert("RGB")
+
+        # Save to temp file for mlx_vlm
+        import tempfile
+        with tempfile.NamedTemporaryFile(suffix=".jpg", delete=False) as tmp:
+            image.save(tmp, format="JPEG", quality=90)
+            tmp_path = tmp.name
+
+        genbus.progress(gen_id, "Analyzing frame", 5, 10)
+
+        from mlx_vlm import generate
+        from mlx_vlm.prompt_utils import apply_chat_template
+
+        # Format prompt through chat template (injects image placeholder tokens)
+        formatted_prompt = apply_chat_template(
+            processor,
+            model.config,
+            prompt,
+            num_images=1,
+        )
+
+        response = generate(
+            model,
+            processor,
+            prompt=formatted_prompt,
+            image=tmp_path,
+            max_tokens=max_tokens,
+        )
+
+        # Clean up temp file
+        try:
+            os.unlink(tmp_path)
+        except Exception:
+            pass
+
+        genbus.progress(gen_id, "Complete", 10, 10)
+        genbus.finish(gen_id)
+
+        # response is a GenerationResult object
+        text = response.text if hasattr(response, 'text') else str(response)
+
+        return jsonify(_json_sanitize({
+            "success": True,
+            "response": text.strip(),
+            "generation_id": gen_id,
+        }))
+
+    except ImportError:
+        genbus.error(gen_id, "mlx-vlm not installed")
+        return jsonify({"error": "mlx-vlm is not installed. Install with: pip install mlx-vlm"}), 500
+
+    except Exception as e:
+        logger.exception(f"[VisionMLX] Caption failed: {e}")
+        genbus.error(gen_id, str(e))
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/vision/caption/unload", methods=["POST"])
+def vision_caption_unload():
+    """Unload the MLX vision caption model to free memory."""
+    _unload_mlx_vlm()
+    return jsonify({"success": True, "message": "MLX vision model unloaded"})
+
+
 @app.route("/")
 def root():
     return jsonify(_json_sanitize({
@@ -5565,19 +5766,12 @@ def memory_clear():
         global _GGUF_LOCKS_GUARD
         # Just trigger cleanup, don't delete the lock itself
 
-        # Force garbage collection - multiple passes to handle circular refs
-        for _ in range(5):
-            gc.collect()
+        # Garbage collection
+        gc.collect()
 
         # Clear PyTorch CUDA cache
         if torch.cuda.is_available():
             torch.cuda.empty_cache()
-            torch.cuda.synchronize()
-            # Also clear CUDA memory pools
-            try:
-                torch.cuda.memory.empty_cache()
-            except:
-                pass
 
         # Clear PyTorch MPS cache (Apple Silicon)
         if torch.backends.mps.is_available():
@@ -5586,15 +5780,6 @@ def memory_clear():
 
         # Call device manager cleanup
         DeviceManager.free_memory()
-
-        # More aggressive garbage collection after device cleanup
-        for _ in range(3):
-            gc.collect()
-
-        # Final MPS sync
-        if torch.backends.mps.is_available():
-            torch.mps.synchronize()
-            torch.mps.empty_cache()
 
         # Try to clear HuggingFace accelerate offload state if present
         try:

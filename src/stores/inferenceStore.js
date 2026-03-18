@@ -4,7 +4,7 @@
  * with persistence to Electron store and optional NFT minting capability
  */
 
-import { reactive, readonly, computed } from 'vue';
+import { shallowReactive, readonly, computed } from 'vue';
 import { v4 as uuid } from 'uuid';
 
 const STORE_KEYS = {
@@ -15,7 +15,7 @@ const STORE_KEYS = {
   objectInferences: 'objectInferences',
 };
 
-const state = reactive({
+const state = shallowReactive({
   textInferences: [],
   imageInferences: [],
   videoInferences: [],
@@ -42,7 +42,7 @@ const persist = async (key) => {
   try {
     // Deep clone via JSON to strip Vue reactivity proxies and ensure serializability
     // This is required because Electron IPC uses structured clone which can't handle proxies
-    const safeData = JSON.parse(JSON.stringify(state[key]));
+    const safeData = structuredClone(state[key]);
     await store.set(key, safeData);
     state.lastSyncTime = Date.now();
     return true;
@@ -127,6 +127,7 @@ export const addTextInference = async (question, answerText, metadata = {}) => {
 
   state.textInferences.push(record);
   state.totalInferences++;
+  _mergedVersion++;
   await persist(STORE_KEYS.textInferences);
   return record;
 };
@@ -165,6 +166,7 @@ export const addImageInference = async (prompt, imageData, metadata = {}) => {
 
   state.imageInferences.push(record);
   state.totalInferences++;
+  _mergedVersion++;
   await persist(STORE_KEYS.imageInferences);
   return record;
 };
@@ -203,6 +205,7 @@ export const addVideoInference = async (prompt, videoPath, metadata = {}) => {
 
   state.videoInferences.push(record);
   state.totalInferences++;
+  _mergedVersion++;
   await persist(STORE_KEYS.videoInferences);
   return record;
 };
@@ -239,6 +242,7 @@ export const addAudioInference = async (prompt, audioPath, metadata = {}) => {
 
   state.audioInferences.push(record);
   state.totalInferences++;
+  _mergedVersion++;
   await persist(STORE_KEYS.audioInferences);
   return record;
 };
@@ -268,14 +272,14 @@ export const addObjectInference = async (prompt, code, metadata = {}) => {
 
   // Deep clone to ensure serializability before storing
   try {
-    const safeRecord = JSON.parse(JSON.stringify(record));
+    const safeRecord = structuredClone(record);
     state.objectInferences.push(safeRecord);
     state.totalInferences++;
+    _mergedVersion++;
     await persist(STORE_KEYS.objectInferences);
     return safeRecord;
   } catch (e) {
     console.error('[InferenceStore] Failed to serialize record:', e);
-    // Fallback: store minimal record
     const minimalRecord = {
       id: record.id,
       type: 'object',
@@ -289,6 +293,7 @@ export const addObjectInference = async (prompt, code, metadata = {}) => {
     };
     state.objectInferences.push(minimalRecord);
     state.totalInferences++;
+    _mergedVersion++;
     await persist(STORE_KEYS.objectInferences);
     return minimalRecord;
   }
@@ -303,6 +308,7 @@ export const removeObjectInference = async (index) => {
   if (index < 0 || index >= state.objectInferences.length) return false;
   state.objectInferences.splice(index, 1);
   state.totalInferences--;
+  _mergedVersion++;
   await persist(STORE_KEYS.objectInferences);
   return true;
 };
@@ -311,6 +317,7 @@ export const clearObjectInferences = async () => {
   const count = state.objectInferences.length;
   state.objectInferences = [];
   state.totalInferences -= count;
+  _mergedVersion++;
   await persist(STORE_KEYS.objectInferences);
 };
 
@@ -353,6 +360,7 @@ export const removeInference = async (type, inferenceId) => {
   if (index !== -1) {
     items.splice(index, 1);
     state.totalInferences--;
+    _mergedVersion++;
     await persist(storeKey);
     return true;
   }
@@ -361,7 +369,10 @@ export const removeInference = async (type, inferenceId) => {
 
 // ==================== Computed & Readonly State ====================
 
-// Cache key: total count across all types — only re-sort when items are added/removed
+let _mergedCache = [];
+let _mergedVersion = 0;
+let _lastMergedVersion = -1;
+
 const _inferenceCount = computed(() =>
   state.textInferences.length +
   state.imageInferences.length +
@@ -370,12 +381,13 @@ const _inferenceCount = computed(() =>
 );
 
 export const allInferences = computed(() => {
-  // Depend on count to trigger recomputation only when items change
   void _inferenceCount.value;
-  const merged = state.textInferences
+  if (_mergedVersion === _lastMergedVersion) return _mergedCache;
+  _lastMergedVersion = _mergedVersion;
+  _mergedCache = state.textInferences
     .concat(state.imageInferences, state.videoInferences, state.audioInferences);
-  merged.sort((a, b) => b.timestamp - a.timestamp);
-  return merged;
+  _mergedCache.sort((a, b) => b.timestamp - a.timestamp);
+  return _mergedCache;
 });
 
 export const mintedInferences = computed(() =>

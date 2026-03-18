@@ -1229,6 +1229,18 @@ export default {
       },
 
       // ─── Qwen 3.5 Family (thinking models) ─────────────────────────────
+      qwen3_5_0_8_B: {
+        modelname: "Qwen 3.5 0.8B",
+        modeldesc:
+          "0.8B-parameter Qwen 3.5 ultra-compact hybrid model with Gated DeltaNet + Gated Attention and 131K context. The smallest Qwen3.5, ideal for fast captioning, lightweight assistants, and edge deployment. Best for: video captioning, quick summarization, and background agents on any hardware.",
+        url: "https://huggingface.co/unsloth/Qwen3.5-0.8B-GGUF/resolve/main/Qwen3.5-0.8B-Q4_K_M.gguf",
+        filename: "qwen3.5-0.8b-q4_k_m.gguf",
+        filesize: "600 MB",
+        filesizeBytes: 600e6,
+        parameters: 800000000,
+        context: 131072,
+      },
+
       qwen3_5_9_B_q4: {
         modelname: "Qwen 3.5 9B Q4",
         modeldesc:
@@ -1492,15 +1504,15 @@ export default {
     );
 
     const currentModel = ref({
-      modelname: "Gemma 3 1B",
+      modelname: "Qwen 3.5 0.8B",
       modeldesc:
-        "1B-parameter Gemma 3 instruction-tuned model from Google with a 32,768-token context window. A compact, efficient chat and reasoning model. Best for: lightweight multilingual assistants, summarization, and everyday QA on laptops or edge devices.",
-      url: "https://huggingface.co/unsloth/gemma-3-1b-it-GGUF/resolve/main/gemma-3-1b-it-Q4_K_M.gguf",
-      filename: "gemma-3-1b-it-q4_k_m.gguf",
-      filesize: "806 MB",
-      filesizeBytes: 806e6,
-      parameters: 1000000000,
-      context: 32768,
+        "0.8B-parameter Qwen 3.5 ultra-compact hybrid model with Gated DeltaNet + Gated Attention and 131K context. The smallest Qwen3.5, ideal for fast captioning, lightweight assistants, and edge deployment. Best for: video captioning, quick summarization, and background agents on any hardware.",
+      url: "https://huggingface.co/unsloth/Qwen3.5-0.8B-GGUF/resolve/main/Qwen3.5-0.8B-Q4_K_M.gguf",
+      filename: "qwen3.5-0.8b-q4_k_m.gguf",
+      filesize: "600 MB",
+      filesizeBytes: 600e6,
+      parameters: 800000000,
+      context: 131072,
     });
 
     const pickModel = async (model) => {

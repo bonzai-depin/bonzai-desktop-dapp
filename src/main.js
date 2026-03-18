@@ -440,12 +440,23 @@ const startPythonSubprocess = async () => {
   // Track if we've seen any output from the server
   let hasReceivedOutput = false;
 
-  // Forward server logs to renderer console
+  // Forward server logs to renderer console (throttled to max 2/sec)
+  let _logBuffer = [];
+  let _logFlushTimer = null;
+  const flushLogs = () => {
+    _logFlushTimer = null;
+    if (_logBuffer.length === 0) return;
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.webContents.send("server-log", { batch: _logBuffer });
+    }
+    _logBuffer = [];
+  };
   const forwardLog = (data, type = "log") => {
     const text = data.toString().trim();
     if (!text) return;
-    if (mainWindow && !mainWindow.isDestroyed()) {
-      mainWindow.webContents.send("server-log", { type, text });
+    _logBuffer.push({ type, text });
+    if (!_logFlushTimer) {
+      _logFlushTimer = setTimeout(flushLogs, 500);
     }
   };
 
@@ -532,7 +543,10 @@ const checkPythonServer = async (url, silent = false) => {
 
   while (Date.now() < deadlineMs) {
     try {
-      const res = await fetch(url);
+      const controller = new AbortController();
+      const fetchTimeout = setTimeout(() => controller.abort(), 5000);
+      const res = await fetch(url, { signal: controller.signal });
+      clearTimeout(fetchTimeout);
       if (res.ok) {
         const elapsedSec = ((Date.now() - startTime) / 1000).toFixed(1);
         console.log(`Python server ready after ${elapsedSec}s`);
@@ -590,12 +604,27 @@ const restartServerManually = async () => {
 // ─────────────────────────────────────────────────────────────────────────────
 protocol.registerSchemesAsPrivileged([
   { scheme: "app", privileges: { bypassCSP: true } },
+  { scheme: "local-video", privileges: { bypassCSP: true, stream: true, supportFetchAPI: true, corsEnabled: true } },
 ]);
 
 app.whenReady().then(() => {
   protocol.handle("app", (req) => {
     const { pathname } = new URL(req.url);
     return net.fetch(pathToFileURL(pathname).toString());
+  });
+
+  // Serve local video files safely via local-video:// protocol
+  // Usage: local-video:///path/to/video.mp4
+  protocol.handle("local-video", (req) => {
+    const { pathname } = new URL(req.url);
+    const decoded = decodeURIComponent(pathname);
+    // Only allow video file extensions
+    const ext = path.extname(decoded).toLowerCase();
+    const allowed = [".mp4", ".webm", ".mov", ".avi", ".mkv", ".ogv", ".m4v"];
+    if (!allowed.includes(ext)) {
+      return new Response("Forbidden", { status: 403 });
+    }
+    return net.fetch(pathToFileURL(decoded).toString());
   });
 });
 
@@ -1248,6 +1277,52 @@ const notifyMigrationProgress = (data) => {
   });
 };
 
+ipcMain.handle("download-video-to-temp", async (_event, url) => {
+  // Download a remote video to a temp file and return the local path
+  // This bypasses CORS restrictions for direct video URLs (.mp4, .webm, etc.)
+  const ext = path.extname(new URL(url).pathname).toLowerCase() || ".mp4";
+  const allowed = [".mp4", ".webm", ".mov", ".avi", ".mkv", ".ogv", ".m4v"];
+  if (!allowed.includes(ext)) {
+    throw new Error(`Unsupported video format: ${ext}`);
+  }
+
+  const tempDir = path.join(app.getPath("temp"), "bonzai-videos");
+  if (!fs.existsSync(tempDir)) fs.mkdirSync(tempDir, { recursive: true });
+  const tempPath = path.join(tempDir, `video-${Date.now()}${ext}`);
+
+  const response = await net.fetch(url);
+  if (!response.ok) throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+
+  const fileStream = fs.createWriteStream(tempPath);
+  const reader = response.body.getReader();
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      fileStream.write(Buffer.from(value));
+    }
+  } finally {
+    fileStream.end();
+  }
+
+  // Wait for file to be fully written
+  await new Promise((resolve) => fileStream.on("finish", resolve));
+  return tempPath;
+});
+
+ipcMain.handle("select-video-file", async () => {
+  const win = BrowserWindow.getFocusedWindow() || BrowserWindow.getAllWindows()[0];
+  const { canceled, filePaths } = await dialog.showOpenDialog(win, {
+    title: "Select Video File",
+    filters: [
+      { name: "Video Files", extensions: ["mp4", "webm", "mov", "avi", "mkv", "ogv"] },
+    ],
+    properties: ["openFile"],
+  });
+  if (canceled || !filePaths.length) return null;
+  return filePaths[0];
+});
+
 ipcMain.handle("select-model-dir", async () => {
   const win = BrowserWindow.getFocusedWindow() || BrowserWindow.getAllWindows()[0];
   const { canceled, filePaths } = await dialog.showOpenDialog(win, {
@@ -1690,7 +1765,7 @@ ipcMain.handle("get-home-dir", () => os.homedir());
 // Read file as base64 (for NFT minting of audio/video files)
 ipcMain.handle("read-file-as-base64", async (_event, filePath) => {
   try {
-    const data = fs.readFileSync(filePath);
+    const data = await fs.promises.readFile(filePath);
     return data.toString("base64");
   } catch (e) {
     console.error("[Main] Failed to read file as base64:", e.message);
@@ -2709,6 +2784,10 @@ app.on("ready", async () => {
   // This ensures companion images/audio work after MODEL_DIR changes
   // ─────────────────────────────────────────────────────────────────────────────
   try {
+    const migrationVersion = store.get("historyMigrationVersion", 0);
+    if (migrationVersion >= 1) {
+      console.log("[Startup] History path migration already completed, skipping.");
+    } else {
     const currentFilesDir = path.join(path.resolve(MODEL_DIR), "files");
     const historyKeys = ["audioInferences", "imageInferences", "videoInferences", "objectInferences"];
     let totalUpdated = 0;
@@ -2778,6 +2857,8 @@ app.on("ready", async () => {
     if (totalUpdated > 0) {
       console.log(`[Startup] Migrated ${totalUpdated} history paths to ${currentFilesDir}`);
     }
+    store.set("historyMigrationVersion", 1);
+    } // end else (migration not yet done)
   } catch (e) {
     console.warn(`[Startup] History path migration failed:`, e.message);
   }
@@ -3712,6 +3793,7 @@ const MODEL_NAMES = {
   "qwen3.5-27b-ud-q4":             "Qwen 3.5 27B Q4",
   "qwen3.5-27b-ud-q8":             "Qwen 3.5 27B Q8",
   "qwen3.5-9b":                    "Qwen 3.5 9B Q4",
+  "qwen3.5-0.8b":                   "Qwen 3.5 0.8B",
   "qwen3.5-4b":                    "Qwen 3.5 4B",
   "qwen3.5-35b-a3b-ud-iq3":        "Qwen 3.5 35B A3B IQ3",
   "qwen3.5-35b-a3b-ud-q2":         "Qwen 3.5 35B A3B",
@@ -4175,13 +4257,17 @@ function forwardToRenderer(data) {
       return;
     }
 
+    if (pendingWebhookRequests.size > 50) {
+      reject(new Error("Webhook queue full (>50 pending requests)"));
+      return;
+    }
+
     const requestId = ++webhookRequestId;
-    // 30 minute timeout for generation - video/music can take very long
-    // on slower hardware (especially first-time model downloads)
+    // 5 minute timeout for generation
     const timeout = setTimeout(() => {
       pendingWebhookRequests.delete(requestId);
-      reject(new Error("Webhook request timed out after 30 minutes"));
-    }, 30 * 60 * 1000);
+      reject(new Error("Webhook request timed out after 5 minutes"));
+    }, 5 * 60 * 1000);
 
     pendingWebhookRequests.set(requestId, {
       resolve: (result) => {
@@ -4236,8 +4322,13 @@ function startOpenClawAPIServer() {
     // ═══════════════════════════════════════════════════════════════════════
     if (req.method === "POST" && url.pathname === "/webhook") {
       let body = "";
-      req.on("data", (chunk) => (body += chunk));
+      let bodyTooLarge = false;
+      req.on("data", (chunk) => {
+        body += chunk;
+        if (body.length > 10 * 1024 * 1024) { bodyTooLarge = true; req.destroy(); }
+      });
       req.on("end", async () => {
+        if (bodyTooLarge) { res.writeHead(413); res.end("Request body too large"); return; }
         try {
           const data = JSON.parse(body);
           console.log(`[OpenClaw Webhook] ${data.platform}/${data.channelId}: ${data.message}`);
@@ -4341,8 +4432,13 @@ function startOpenClawAPIServer() {
     if (req.method === "POST" && url.pathname.match(/^\/api\/skills\/[^/]+\/execute$/)) {
       const skillId = url.pathname.split("/")[3];
       let body = "";
-      req.on("data", (chunk) => (body += chunk));
+      let bodyTooLarge = false;
+      req.on("data", (chunk) => {
+        body += chunk;
+        if (body.length > 10 * 1024 * 1024) { bodyTooLarge = true; req.destroy(); }
+      });
       req.on("end", async () => {
+        if (bodyTooLarge) { res.writeHead(413); res.end("Request body too large"); return; }
         try {
           const inputs = JSON.parse(body || "{}");
           const result = await forwardToRenderer({
@@ -4396,8 +4492,13 @@ function startOpenClawAPIServer() {
 
       console.log(`[OpenAI API] Incoming request headers:`, JSON.stringify(req.headers));
       let body = "";
-      req.on("data", (chunk) => (body += chunk));
+      let bodyTooLarge = false;
+      req.on("data", (chunk) => {
+        body += chunk;
+        if (body.length > 10 * 1024 * 1024) { bodyTooLarge = true; req.destroy(); }
+      });
       req.on("end", async () => {
+        if (bodyTooLarge) { res.writeHead(413); res.end("Request body too large"); return; }
         console.log(`[OpenAI API] req.on(end) triggered, body length: ${body.length}`);
         try {
           console.log(`[OpenAI API] Request body preview:`, body.substring(0, 500));
@@ -4571,8 +4672,13 @@ function startOpenClawAPIServer() {
     // ═══════════════════════════════════════════════════════════════════════
     if (req.method === "POST" && url.pathname === "/api/llm/chat") {
       let body = "";
-      req.on("data", (chunk) => (body += chunk));
+      let bodyTooLarge = false;
+      req.on("data", (chunk) => {
+        body += chunk;
+        if (body.length > 10 * 1024 * 1024) { bodyTooLarge = true; req.destroy(); }
+      });
       req.on("end", async () => {
+        if (bodyTooLarge) { res.writeHead(413); res.end("Request body too large"); return; }
         try {
           const { prompt } = JSON.parse(body);
 
@@ -4603,8 +4709,13 @@ function startOpenClawAPIServer() {
 
     if (req.method === "POST" && url.pathname === "/api/llm/load") {
       let body = "";
-      req.on("data", (chunk) => (body += chunk));
+      let bodyTooLarge = false;
+      req.on("data", (chunk) => {
+        body += chunk;
+        if (body.length > 10 * 1024 * 1024) { bodyTooLarge = true; req.destroy(); }
+      });
       req.on("end", async () => {
+        if (bodyTooLarge) { res.writeHead(413); res.end("Request body too large"); return; }
         try {
           const { modelname, filename, url: modelUrl } = JSON.parse(body);
           await loadModel(null, { modelname, filename, url: modelUrl });
@@ -4650,8 +4761,13 @@ function startOpenClawAPIServer() {
       try {
         if (req.method === "POST") {
           let body = "";
-          req.on("data", (chunk) => (body += chunk));
+          let bodyTooLarge = false;
+          req.on("data", (chunk) => {
+            body += chunk;
+            if (body.length > 10 * 1024 * 1024) { bodyTooLarge = true; req.destroy(); }
+          });
           req.on("end", async () => {
+            if (bodyTooLarge) { res.writeHead(413); res.end("Request body too large"); return; }
             const response = await fetch(flaskUrl, {
               method: "POST",
               headers: { "Content-Type": "application/json" },

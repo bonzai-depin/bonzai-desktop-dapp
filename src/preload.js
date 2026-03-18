@@ -5,6 +5,9 @@ const { contextBridge, ipcRenderer } = require("electron");
 contextBridge.exposeInMainWorld("electronAPI", {
   // App version for window title
   getAppVersion: () => ipcRenderer.invoke("get-app-version"),
+  // Platform info (exposed synchronously from preload context)
+  platform: process.platform,
+  arch: process.arch,
   startServer: () => ipcRenderer.invoke("start-server"),
   stopServer: () => ipcRenderer.invoke("stop-server"),
   restartServer: () => ipcRenderer.invoke("restart-server"),
@@ -111,6 +114,8 @@ contextBridge.exposeInMainWorld("electronAPI", {
   // Model directory management
   getModelDir: () => ipcRenderer.invoke("get-model-dir"),
   selectModelDir: () => ipcRenderer.invoke("select-model-dir"),
+  selectVideoFile: () => ipcRenderer.invoke("select-video-file"),
+  downloadVideoToTemp: (url) => ipcRenderer.invoke("download-video-to-temp", url),
   // Migration progress events (for MODEL_DIR file migration)
   onMigrationProgress: (callback) => {
     const handler = (_event, data) => callback(data);

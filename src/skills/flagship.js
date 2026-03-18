@@ -368,6 +368,17 @@ export const MODEL_REQUIREMENTS = {
     vram: '4 GB',
     description: 'Compact 3B reasoning model with code, math, and agentic capabilities',
   },
+  llm_qwen3_5_0_8b: {
+    name: 'Qwen3.5 0.8B',
+    type: 'llm',
+    filename: 'qwen3.5-0.8b-q4_k_m.gguf',
+    url: 'https://huggingface.co/unsloth/Qwen3.5-0.8B-GGUF/resolve/main/Qwen3.5-0.8B-Q4_K_M.gguf',
+    size: '0.6 GB',
+    filesizeBytes: 0.6e9,
+    vram: '2 GB',
+    description: 'Ultra-compact 0.8B Qwen3.5 hybrid model with 131K context — ideal for fast captioning and lightweight tasks',
+  },
+
   llm_qwen3_5_4b: {
     name: 'Qwen3.5 4B',
     type: 'llm',
@@ -694,6 +705,18 @@ export const MODEL_REQUIREMENTS = {
     vram: '6 GB',
     description: 'Vision-language model for image analysis',
   },
+
+  // MLX Vision (Apple Silicon) — auto-downloaded by mlx_vlm
+  vision_mlx: {
+    name: 'Qwen3.5 0.8B (MLX)',
+    type: 'vision',
+    pipeline: 'vision_mlx',
+    endpoint: '/vision/caption',
+    repo: 'mlx-community/Qwen3.5-0.8B-MLX-8bit',
+    size: '~1 GB',
+    vram: '2 GB',
+    description: 'Lightweight vision-language model for video captioning (Apple Silicon)',
+  },
 };
 
 /**
@@ -703,6 +726,7 @@ export const MODEL_REQUIREMENTS = {
 export const SKILL_MODEL_REQUIREMENTS = {
   'story-studio-v1.0.0': ['llm_llama_3_1_8b', 'image_turbo', 'audio'],
   'meditation-forge-v1.0.0': ['llm_llama_3_1_8b', 'image_turbo', 'audio_turbo'],
+  'video-captioning-v1.0.0': ['vision_mlx'],
   'virtual-staging-pro-v1.0.0': ['llm_llama_3_1_8b', 'image_turbo'],
   'virtual-try-on-v1.0.0': ['llm_llama_3_1_8b', 'image_turbo'],
   'chefs-table-v1.0.0': ['llm_llama_3_1_8b', 'image_quality'],
@@ -4638,6 +4662,42 @@ Return ONLY valid JSON.`;
 });
 
 // ═══════════════════════════════════════════════════════════════════════════
+// 2b. VIDEO CAPTIONING (Productivity)
+// ═══════════════════════════════════════════════════════════════════════════
+
+export const videoCaptioning = createSkillDefinition({
+  id: 'video-captioning-v1.0.0',
+  name: 'Video Captioning',
+  description: 'Generate real-time captions and transcripts from any video using AI vision analysis. Load local files or URLs, get frame-by-frame descriptions, and export SRT subtitles.',
+  version: '1.0.0',
+  author: { address: '0x8Ff3b2e823b33BeE30e699bB1b6BBc8F622fEa89', name: 'BonzAI', verified: true },
+  category: 'productivity',
+  purchasePrice: '0.1',
+  tags: ['video', 'captioning', 'transcription', 'subtitles', 'accessibility', 'vision'],
+  hasCustomUI: true,
+  platform: { os: 'darwin', arch: 'arm64' }, // Apple Silicon only (mlx_vlm)
+  requirements: {
+    minLevel: 3,
+    requiredApis: ['vision'],
+    requiredPermissions: [],
+  },
+  inputs: {
+    video: { type: 'string', default: '', label: 'Video Source', description: 'Video file path or URL (handled by custom UI)' },
+  },
+  prompt: { system: 'You are a video captioning assistant.', task: 'Describe video frames.', outputFormat: { type: 'text' } },
+  tools: { bonzai: [], mcp: [] },
+  execution: {
+    type: 'custom',
+    entrypoint: 'VideoCaptioningSkill',
+    async execute(inputs, context) {
+      context.updateStatus?.('Video captioning is handled by the custom UI component.');
+      return { success: true };
+    },
+  },
+  metadata: { createdAt: '2025-07-15T00:00:00Z', updatedAt: '2025-07-15T00:00:00Z', license: 'MIT' },
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
 // 3. VIRTUAL STAGING PRO (Housing)
 // ═══════════════════════════════════════════════════════════════════════════
 
@@ -6903,6 +6963,7 @@ export const flagshipSkills = [
   dslaSmartMarket,          // Prediction Market Maker
   roleplayCompanion,        // Roleplay Companion
   meditationForge,          // Meditation Forge
+  videoCaptioning,          // Video Captioning
 ];
 
 // Export memory management functions for use by components

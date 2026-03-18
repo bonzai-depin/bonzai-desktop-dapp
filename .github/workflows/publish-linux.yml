@@ -1,0 +1,176 @@
+name: Release (Linux)
+on:
+  release:
+    types: [created]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Release tag (e.g. 2.1.2)'
+        required: true
+        type: string
+
+jobs:
+  publish_on_linux:
+    runs-on: ubuntu-latest
+    env:
+      MAIN_PY_FILE: src/server/diffuser.py
+      OS_KEY: linux
+      ARCH_KEY: x64
+      HF_TOKEN: ${{ secrets.HF_TOKEN }}
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      RELEASE_TAG: ${{ inputs.tag || github.event.release.tag_name }}
+      CI: true
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Resolve tag
+        run: |
+          RAW="${{ env.RELEASE_TAG }}"
+          echo "TAG=${RAW#v}" >> "$GITHUB_ENV"
+
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y dpkg fakeroot libsndfile1
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      # Install CUDA-enabled PyTorch for full GPU performance on NVIDIA GPUs.
+      # cu124 = CUDA 12.4, compatible with drivers 525+. The PyInstaller binary
+      # will fall back to CPU if no NVIDIA GPU is present at runtime.
+      - name: Install PyTorch (CUDA 12.4)
+        run: |
+          pip install --no-cache-dir --upgrade \
+            torch torchvision torchaudio \
+            --index-url https://download.pytorch.org/whl/cu124
+
+      - name: Install Python deps
+        run: |
+          pip install git+https://github.com/huggingface/diffusers.git
+          pip install -r requirements.txt
+          pip install https://github.com/vBaiCai/python-pesq/archive/master.zip
+          pip install -U qwen-tts --no-deps
+          pip install git+https://github.com/ace-step/ACE-Step-1.5.git --no-deps
+
+      - name: Build Python binary (Linux x64)
+        run: |
+          mkdir -p binaries/${{ env.OS_KEY }}-${{ env.ARCH_KEY }}
+          pyinstaller \
+            --onefile \
+            --distpath binaries/${{ env.OS_KEY }}-${{ env.ARCH_KEY }} \
+            --workpath $RUNNER_TEMP/pybuild \
+            --specpath $RUNNER_TEMP \
+            --collect-submodules=engineio \
+            --collect-submodules=socketio \
+            --collect-submodules=diffusers \
+            --collect-submodules=transformers \
+            --collect-submodules=huggingface_hub \
+            --collect-submodules=accelerate \
+            --collect-submodules=safetensors \
+            --collect-submodules=peft \
+            --collect-submodules=datasets \
+            --collect-submodules=qwen_tts \
+            --collect-submodules=qwen_vl_utils \
+            --collect-submodules=acestep \
+            --collect-submodules=torch \
+            --hidden-import=pytorch_lightning \
+            --hidden-import=torchaudio \
+            --hidden-import=torchaudio.functional \
+            --hidden-import=torchvision \
+            --hidden-import=torchvision.transforms \
+            --hidden-import=soundfile \
+            --hidden-import=compel \
+            --hidden-import=onnxruntime \
+            --hidden-import=psutil \
+            --hidden-import=PIL \
+            --hidden-import=PIL.Image \
+            --hidden-import=torch.cuda \
+            --hidden-import=torch.backends.cudnn \
+            ${{ env.MAIN_PY_FILE }}
+
+      - name: Verify Python binary
+        run: |
+          BINARY="binaries/${{ env.OS_KEY }}-${{ env.ARCH_KEY }}/diffuser"
+          file "$BINARY"
+          # Ensure it's a proper 64-bit ELF
+          file "$BINARY" | grep -q "ELF 64-bit" || { echo "ERROR: Not a 64-bit binary!"; exit 1; }
+          ls -lh "$BINARY"
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24.14.0
+
+      - name: Install Node dependencies
+        run: npm ci
+
+      - name: Build Vite bundles
+        env:
+          VITE_PINATA_JWT: ${{ secrets.PINATA_JWT }}
+        run: npm run build:vite
+
+      - name: Package Electron app
+        run: |
+          npx electron-packager . BonzAI \
+            --platform=linux \
+            --arch=x64 \
+            --out=out \
+            --overwrite \
+            --icon=src/assets/logo.png \
+            --ignore="^/(dist|bonzai|binaries|out|\.venv|venv|build)$"
+
+      # main.js expects: resources/server/python-runtime/linux-x64/diffuser
+      - name: Copy Python runtime to app
+        run: |
+          APP_RESOURCES="out/BonzAI-linux-x64/resources"
+          mkdir -p "$APP_RESOURCES/server/python-runtime/linux-x64"
+          cp binaries/linux-x64/diffuser "$APP_RESOURCES/server/python-runtime/linux-x64/"
+          chmod +x "$APP_RESOURCES/server/python-runtime/linux-x64/diffuser"
+          echo "Python runtime copied:"
+          ls -lh "$APP_RESOURCES/server/python-runtime/linux-x64/"
+
+      - name: Create distributable
+        run: |
+          mkdir -p out/make
+          TAG="${{ env.TAG }}"
+
+          # Create tar.gz — universal, no root needed, works on all distros
+          cd out
+          tar -czf "make/BonzAI-${TAG}-linux-x64.tar.gz" BonzAI-linux-x64/
+          cd ..
+
+          echo "Package created:"
+          ls -lh out/make/
+
+      - name: Create Release & Upload
+        run: |
+          TAG="${{ env.TAG }}"
+          ASSET="out/make/BonzAI-${TAG}-linux-x64.tar.gz"
+
+          echo "Uploading: $ASSET"
+          gh release upload "${TAG}" "$ASSET" --clobber \
+            || gh release create "${TAG}" "$ASSET" \
+              --title "BonzAI v${TAG}" \
+              --generate-notes
+
+          echo "Released Linux build for v${TAG}"
+
+      - name: Mirror to bonzai-releases
+        env:
+          MIRROR_TOKEN: ${{ secrets.RELEASES_PAT }}
+        run: |
+          if [ -z "$MIRROR_TOKEN" ]; then
+            echo "RELEASES_PAT not configured, skipping mirror"
+            exit 0
+          fi
+          export GH_TOKEN="$MIRROR_TOKEN"
+
+          TAG="${{ env.TAG }}"
+          ASSET="out/make/BonzAI-${TAG}-linux-x64.tar.gz"
+
+          gh release upload "$TAG" "$ASSET" --clobber \
+            --repo bonzai-depin/bonzai-releases \
+            || echo "Mirror upload skipped (release may not exist yet)"

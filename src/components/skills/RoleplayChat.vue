@@ -6664,7 +6664,16 @@ export default {
     // Handle scroll to update visible background based on message anchors (debounced)
     // This creates an immersive experience where scenery changes as you scroll through history
     let scrollTimeout = null;
+    let _scrollRafId = 0;
     const onMessagesScroll = (event) => {
+      // RAF throttle to avoid firing on every scroll frame
+      if (_scrollRafId) return;
+      _scrollRafId = requestAnimationFrame(() => {
+        _scrollRafId = 0;
+        _onMessagesScrollInner(event);
+      });
+    };
+    const _onMessagesScrollInner = (event) => {
       // Debounce scroll handler to prevent excessive updates
       if (scrollTimeout) clearTimeout(scrollTimeout);
       scrollTimeout = setTimeout(() => {

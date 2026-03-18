@@ -383,6 +383,21 @@
                 />
               </div>
 
+              <!-- VIDEO CAPTIONING SKILL (modular component) -->
+              <div
+                v-else-if="selectedSkillId === 'video-captioning-v1.0.0'"
+                class="meditation-interface"
+              >
+                <VideoCaptioningSkill
+                  :skill="selectedSkill"
+                  :model-available="isModelAvailable"
+                  @caption-created="
+                    showNotification('Video captioning session saved!', 'success')
+                  "
+                  @status-update="loadingMessage = $event"
+                />
+              </div>
+
               <!-- Roleplay Companion - Special Chat Interface -->
               <div
                 v-else-if="selectedSkillId === 'roleplay-companion-v1.0.0' && selectedSkill"
@@ -877,6 +892,7 @@ import SkillDownloader from "./skills/SkillDownloader.vue";
 import PolymarketSkill from "./skills/PolymarketSkill.vue";
 import DSLASkill from "./skills/DSLASkill.vue";
 import MeditationForgeSkill from "./skills/MeditationForgeSkill.vue";
+import VideoCaptioningSkill from "./skills/VideoCaptioningSkill.vue";
 import BrowseAgents from "./skills/BrowseAgents.vue";
 import {
   getSkillModelRequirements,
@@ -947,6 +963,7 @@ export default {
     PolymarketSkill,
     DSLASkill,
     MeditationForgeSkill,
+    VideoCaptioningSkill,
     BrowseAgents,
   },
   setup() {
@@ -1079,7 +1096,12 @@ export default {
 
       // Check LLM models via electron API - PARALLEL checks
       if (window.electronAPI?.checkModel) {
-        const llmModelKeys = ["llm_llama_3_1_8b", "llm_hermes_4_14b", "llm_mythomax_13b"];
+        // Collect all unique LLM model keys referenced by any skill
+        const llmModelKeys = [...new Set(
+          Object.values(SKILL_MODEL_REQUIREMENTS)
+            .flat()
+            .filter(key => key.startsWith('llm_'))
+        )];
 
         // Run all LLM checks in parallel
         const llmChecks = llmModelKeys.map(async (key) => {
@@ -1115,6 +1137,7 @@ export default {
         audio_quality: "audio_quality_persona",
         video_fast: "video_fast",
         vision: "qwen3_vision",
+        vision_mlx: "vision_mlx",
         // 'trellis_3d': '3d', // Not defined in Flask yet
       };
 
