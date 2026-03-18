@@ -49,11 +49,13 @@ jobs:
           pip install -U qwen-tts --no-deps
           pip install git+https://github.com/ace-step/ACE-Step-1.5.git --no-deps
 
+      # Use --onedir instead of --onefile: CUDA PyTorch exceeds the 4GB
+      # uint32 limit for onefile CArchive. onedir produces an executable +
+      # _internal/ folder with shared libraries — no size limit.
       - name: Build Python binary (Windows x64)
         run: |
-          New-Item -ItemType Directory -Force -Path "binaries\${{ env.OS_KEY }}-${{ env.ARCH_KEY }}"
           pyinstaller `
-            --onefile `
+            --onedir `
             --distpath "binaries\${{ env.OS_KEY }}-${{ env.ARCH_KEY }}" `
             --workpath "$env:RUNNER_TEMP\pybuild" `
             --specpath "$env:RUNNER_TEMP" `
@@ -88,11 +90,13 @@ jobs:
       - name: Verify Python binary
         shell: bash
         run: |
-          BINARY="binaries/${{ env.OS_KEY }}-${{ env.ARCH_KEY }}/diffuser.exe"
+          # onedir produces: binaries/<os>-<arch>/diffuser/diffuser.exe + _internal/
+          BINARY="binaries/${{ env.OS_KEY }}-${{ env.ARCH_KEY }}/diffuser/diffuser.exe"
           file "$BINARY"
-          # Ensure it's a proper PE32+ (64-bit) executable
           file "$BINARY" | grep -q "PE32+" || { echo "ERROR: Not a 64-bit PE executable!"; exit 1; }
           ls -lh "$BINARY"
+          echo "Internal deps:"
+          ls binaries/${{ env.OS_KEY }}-${{ env.ARCH_KEY }}/diffuser/_internal/ | head -20
 
       # Convert PNG to ICO for Windows — electron-packager requires .ico on win32
       - name: Generate Windows icon
@@ -130,33 +134,36 @@ jobs:
             --icon=src/assets/logo.ico \
             --ignore="^/(dist|bonzai|binaries|out|\.venv|venv|build)$"
 
-      # main.js expects: resources/server/python-runtime/windows-x64/diffuser.exe
+      # main.js expects: resources/server/python-runtime/windows-x64/diffuser.exe + _internal/
       - name: Copy Python runtime to app
         shell: bash
         run: |
           APP_RESOURCES="out/BonzAI-win32-x64/resources"
-          mkdir -p "$APP_RESOURCES/server/python-runtime/windows-x64"
-          cp binaries/windows-x64/diffuser.exe "$APP_RESOURCES/server/python-runtime/windows-x64/"
+          DEST="$APP_RESOURCES/server/python-runtime/windows-x64"
+          mkdir -p "$DEST"
+          # onedir: copy executable + _internal/ folder
+          cp -r binaries/windows-x64/diffuser/* "$DEST/"
           echo "Python runtime copied:"
-          ls -lh "$APP_RESOURCES/server/python-runtime/windows-x64/"
+          ls -lh "$DEST/diffuser.exe"
+          echo "Internal deps: $(ls "$DEST/_internal/" | wc -l) items"
 
       - name: Install Inno Setup
         run: choco install innosetup -y
 
       - name: Build installer (.exe)
-        shell: bash
+        shell: pwsh
         run: |
-          TAG="${{ env.TAG }}"
-          mkdir -p out/make
+          $TAG = "${{ env.TAG }}"
+          New-Item -ItemType Directory -Force -Path out/make
 
-          # Inno Setup compiler (iscc) is installed to Program Files
-          "/c/Program Files (x86)/Inno Setup 6/ISCC.exe" \
-            /DMyAppVersion="${TAG}" \
-            /F"BonzAI-${TAG}-windows-x64-setup" \
-            installer/windows/setup.iss
+          # Inno Setup compiler — use pwsh to avoid bash path-splitting issues
+          & "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" `
+            /DMyAppVersion="$TAG" `
+            /F"BonzAI-$TAG-windows-x64-setup" `
+            installer\windows\setup.iss
 
-          echo "Installer created:"
-          ls -lh out/make/
+          Write-Host "Installer created:"
+          Get-ChildItem out/make/ | Format-Table Name, Length
 
       - name: Create Release & Upload
         shell: bash

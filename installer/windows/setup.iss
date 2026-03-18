@@ -6,7 +6,7 @@
 [Setup]
 AppId={{B0NZAI-D3SK-T0P-APP1-CAT10N000001}
 AppName={#MyAppName}
-AppVersion={#SetupSetting("AppVersion")}
+AppVersion={#MyAppVersion}
 AppPublisher={#MyAppPublisher}
 AppPublisherURL={#MyAppURL}
 AppSupportURL={#MyAppURL}
