@@ -738,7 +738,7 @@ export const SKILL_MODEL_REQUIREMENTS = {
   'story-studio-v1.0.0': ['llm_llama_3_1_8b', 'image_turbo', 'audio'],
   'meditation-forge-v1.0.0': ['llm_llama_3_1_8b', 'image_turbo', 'audio_turbo'],
   'video-captioning-v1.0.0': ['vision_mlx'],
-  'tcg-scanner-v1.0.0': ['ocr'],
+  'tcg-analysis-v1.0.0': ['ocr'],
   'virtual-staging-pro-v1.0.0': ['llm_llama_3_1_8b', 'image_turbo'],
   'virtual-try-on-v1.0.0': ['llm_llama_3_1_8b', 'image_turbo'],
   'chefs-table-v1.0.0': ['llm_llama_3_1_8b', 'image_quality'],
@@ -4710,18 +4710,18 @@ export const videoCaptioning = createSkillDefinition({
 });
 
 // ═══════════════════════════════════════════════════════════════════════════
-// 2b. TCG CARD SCANNER (Productivity — OCR agentic skill)
+// 2b. TRADING CARD GAME ANALYSIS (Productivity — OCR + vision + pricing agentic skill)
 // ═══════════════════════════════════════════════════════════════════════════
 
-export const tcgCardScanner = createSkillDefinition({
-  id: 'tcg-scanner-v1.0.0',
-  name: 'TCG Card Scanner',
-  description: 'Scan and analyze Trading Card Game cards using AI-powered OCR. Extract card names, stats, abilities, flavor text, set info, and estimated market value from photos of Pokémon, Magic: The Gathering, Yu-Gi-Oh!, and other TCG cards.',
+export const tcgAnalysis = createSkillDefinition({
+  id: 'tcg-analysis-v1.0.0',
+  name: 'Trading Card Game Analysis',
+  description: 'Analyze Trading Card Game cards with AI-powered OCR and vision. Extract card details, get live market prices from pokemontcg.io, and receive comprehensive condition grading (centering, corners, edges, surface) on a TAG-compatible 1000-point scale.',
   version: '1.0.0',
   author: { address: '0x8Ff3b2e823b33BeE30e699bB1b6BBc8F622fEa89', name: 'BonzAI', verified: true },
   category: 'productivity',
   purchasePrice: '0.1',
-  tags: ['tcg', 'cards', 'ocr', 'scanner', 'pokemon', 'mtg', 'yugioh', 'collector'],
+  tags: ['tcg', 'cards', 'ocr', 'grading', 'pokemon', 'mtg', 'yugioh', 'collector', 'pricing'],
   hasCustomUI: true,
   platform: { os: 'darwin', arch: 'arm64' }, // Apple Silicon only (mlx_vlm)
   requirements: {
@@ -4732,13 +4732,13 @@ export const tcgCardScanner = createSkillDefinition({
   inputs: {
     image: { type: 'string', default: '', label: 'Card Image', description: 'Card image file path (handled by custom UI)' },
   },
-  prompt: { system: 'You are a TCG card scanner assistant.', task: 'Extract card information from images.', outputFormat: { type: 'text' } },
+  prompt: { system: 'You are a TCG card analysis and grading assistant.', task: 'Analyze and grade trading cards from images.', outputFormat: { type: 'text' } },
   tools: { bonzai: [], mcp: [] },
   execution: {
     type: 'custom',
     entrypoint: 'TCGScannerSkill',
     async execute(inputs, context) {
-      context.updateStatus?.('TCG card scanning is handled by the custom UI component.');
+      context.updateStatus?.('TCG analysis is handled by the custom UI component.');
       return { success: true };
     },
   },
@@ -7012,7 +7012,7 @@ export const flagshipSkills = [
   roleplayCompanion,        // Roleplay Companion
   meditationForge,          // Meditation Forge
   videoCaptioning,          // Video Captioning
-  tcgCardScanner,           // TCG Card Scanner
+  tcgAnalysis,              // Trading Card Game Analysis
 ];
 
 // Export memory management functions for use by components

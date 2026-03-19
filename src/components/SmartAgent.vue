@@ -398,16 +398,16 @@
                 />
               </div>
 
-              <!-- TCG CARD SCANNER SKILL (modular component) -->
+              <!-- TRADING CARD GAME ANALYSIS (modular component) -->
               <div
-                v-else-if="selectedSkillId === 'tcg-scanner-v1.0.0'"
+                v-else-if="selectedSkillId === 'tcg-analysis-v1.0.0'"
                 class="meditation-interface"
               >
                 <TCGScannerSkill
                   :skill="selectedSkill"
                   :model-available="isModelAvailable"
                   @card-scanned="
-                    showNotification('Card scanned successfully!', 'success')
+                    showNotification('Card analysis complete!', 'success')
                   "
                   @status-update="loadingMessage = $event"
                 />

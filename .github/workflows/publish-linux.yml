@@ -116,6 +116,18 @@ jobs:
           echo "Internal deps:"
           ls binaries/${{ env.OS_KEY }}-${{ env.ARCH_KEY }}/diffuser/_internal/ | head -20
 
+      # PyInstaller has already bundled everything into the binary.
+      # Remove Python packages + CUDA libs to free ~10GB for Electron packaging.
+      - name: Free Python disk space
+        run: |
+          pip cache purge 2>/dev/null || true
+          rm -rf $RUNNER_TEMP/pybuild
+          SITE_PKGS=$(python -c "import site; print(site.getsitepackages()[0])")
+          echo "Removing $SITE_PKGS (~10GB of CUDA/torch packages)..."
+          rm -rf "$SITE_PKGS"
+          echo "Disk space after Python cleanup:"
+          df -h /
+
       - name: Set up Node.js
         uses: actions/setup-node@v4
         with:
@@ -181,30 +193,29 @@ jobs:
           echo "Package created:"
           ls -lh out/make/
 
-      # Also create tar.gz for non-Debian distros (Fedora, Arch, etc.)
-      - name: Create tar.gz fallback
+      # Free disk space before packaging: remove PyInstaller build cache
+      # and Python packages no longer needed (only the binary matters now)
+      - name: Reclaim disk space
         run: |
-          TAG="${{ env.TAG }}"
-          cd out
-          tar -czf "make/BonzAI-${TAG}-linux-x64.tar.gz" BonzAI-linux-x64/
-          cd ..
+          rm -rf $RUNNER_TEMP/pybuild
+          pip cache purge 2>/dev/null || true
+          echo "Disk space after cleanup:"
+          df -h /
 
       - name: Create Release & Upload
         run: |
           TAG="${{ env.TAG }}"
+          ASSET="out/make/BonzAI-${TAG}-linux-amd64.deb"
 
-          # Upload both .deb and .tar.gz
-          for ASSET in out/make/BonzAI-${TAG}-linux-amd64.deb out/make/BonzAI-${TAG}-linux-x64.tar.gz; do
-            if [ -f "$ASSET" ]; then
-              echo "Uploading: $ASSET"
-              gh release upload "${TAG}" "$ASSET" --clobber \
-                || gh release create "${TAG}" "$ASSET" \
-                  --title "BonzAI v${TAG}" \
-                  --generate-notes
-            fi
-          done
+          if [ -f "$ASSET" ]; then
+            echo "Uploading: $ASSET"
+            gh release upload "${TAG}" "$ASSET" --clobber \
+              || gh release create "${TAG}" "$ASSET" \
+                --title "BonzAI v${TAG}" \
+                --generate-notes
+          fi
 
-          echo "Released Linux builds for v${TAG}"
+          echo "Released Linux build for v${TAG}"
 
       - name: Mirror to bonzai-releases
         env:
@@ -217,11 +228,10 @@ jobs:
           export GH_TOKEN="$MIRROR_TOKEN"
 
           TAG="${{ env.TAG }}"
+          ASSET="out/make/BonzAI-${TAG}-linux-amd64.deb"
 
-          for ASSET in out/make/BonzAI-${TAG}-linux-amd64.deb out/make/BonzAI-${TAG}-linux-x64.tar.gz; do
-            if [ -f "$ASSET" ]; then
-              gh release upload "$TAG" "$ASSET" --clobber \
-                --repo bonzai-depin/bonzai-releases \
-                || echo "Mirror upload skipped for $ASSET"
-            fi
-          done
+          if [ -f "$ASSET" ]; then
+            gh release upload "$TAG" "$ASSET" --clobber \
+              --repo bonzai-depin/bonzai-releases \
+              || echo "Mirror upload skipped"
+          fi
