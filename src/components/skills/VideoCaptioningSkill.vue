@@ -212,15 +212,15 @@
       </div>
     </div>
 
-    <!-- Analyzing Notification (top-right toast) -->
-    <transition name="toast-slide">
-      <div v-if="isAnalyzing" class="analyzing-toast">
-        <span class="material-symbols-outlined rotating toast-spinner">
+    <!-- Analyzing Notification (top-right toast — matches SmartAgent notification style) -->
+    <Transition name="notification-slide">
+      <div v-if="isAnalyzing" class="status-notification is-info fira-sans-condensed-black-italic">
+        <span class="material-symbols-outlined rotating mr-2">
           progress_activity
         </span>
-        <span class="toast-text">Analyzing frame...</span>
+        Analyzing frame...
       </div>
-    </transition>
+    </Transition>
 
     <!-- Controls (visible only when video is loaded) -->
     <div class="controls-section mt-4" v-if="!isFullscreen && videoLoaded">
@@ -1311,48 +1311,28 @@ hr {
   text-align: center;
 }
 
-/* ─── Analyzing Toast (top-right notification) ───────────────────── */
-.analyzing-toast {
+/* ─── Status Notification (matches SmartAgent notification style) ── */
+.status-notification {
   position: fixed;
-  top: 1.5rem;
-  right: 1.5rem;
-  z-index: 10000;
+  top: 20px;
+  right: 20px;
+  z-index: 9999;
+  padding: 1em 1.5em;
+  border-radius: 8px;
   display: flex;
   align-items: center;
-  gap: 0.5rem;
-  padding: 0.6rem 1rem;
-  background: rgba(20, 10, 35, 0.92);
-  border: 1px solid rgba(155, 109, 200, 0.5);
-  border-radius: 10px;
-  backdrop-filter: blur(24px);
-  box-shadow: 0 4px 24px rgba(0, 0, 0, 0.4);
+  color: #fff;
+  backdrop-filter: blur(10px);
+  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.3);
 }
+.status-notification.is-info { background: rgba(62, 142, 208, 0.95); }
+.status-notification.is-success { background: rgba(57, 213, 130, 0.95); }
+.status-notification.is-danger { background: rgba(255, 56, 96, 0.95); }
 
-.toast-spinner {
-  font-size: 18px;
-  color: rgba(155, 109, 200, 0.9);
-}
-
-.toast-text {
-  font-size: 0.85rem;
-  color: rgba(255, 255, 255, 0.85);
-  font-weight: 500;
-}
-
-.toast-slide-enter-active {
-  transition: all 0.25s ease-out;
-}
-.toast-slide-leave-active {
-  transition: all 0.2s ease-in;
-}
-.toast-slide-enter-from {
-  opacity: 0;
-  transform: translateX(20px);
-}
-.toast-slide-leave-to {
-  opacity: 0;
-  transform: translateX(20px);
-}
+.notification-slide-enter-active { animation: notification-fade-slide-in 0.4s ease-out; }
+.notification-slide-leave-active { animation: notification-fade-slide-out 0.4s ease-in; }
+@keyframes notification-fade-slide-in { 0% { opacity: 0; transform: translateX(100px); } 100% { opacity: 1; transform: translateX(0); } }
+@keyframes notification-fade-slide-out { 0% { opacity: 1; transform: translateX(0); } 100% { opacity: 0; transform: translateX(100px); } }
 
 /* ─── Buttons Row ────────────────────────────────────────────────── */
 .buttons-row {

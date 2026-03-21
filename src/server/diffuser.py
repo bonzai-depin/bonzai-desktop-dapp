@@ -1234,6 +1234,14 @@ REPO_SPECS = {
         "extra_dirs": [],
         "fallback_any_weights": True,
     },
+    # GLM-OCR 4-bit MLX: OCR model for text extraction (Apple Silicon)
+    "mlx-community/GLM-OCR-4bit": {
+        "must_files": ["config.json"],
+        "must_tokenizers": [],
+        "must_weight_dirs": [],
+        "extra_dirs": [],
+        "fallback_any_weights": True,
+    },
 }
 
 DEFAULT_SPEC = {"must_files": ["model_index.json"], "must_weight_dirs": [], "must_tokenizers": [], "fallback_any_weights": True}
@@ -5796,23 +5804,37 @@ def memory_clear():
             _qwen3_tts_design = None
             unloaded.append("qwen3_tts_design")
 
-        # Unload Qwen 3 Vision model
-        global _qwen3_vl_model, _qwen3_vl_processor
-        if _qwen3_vl_model is not None:
+        # Unload MLX Vision model (Qwen3.5-0.8B)
+        global _mlx_vlm_model, _mlx_vlm_processor
+        if _mlx_vlm_model is not None:
             try:
-                if hasattr(_qwen3_vl_model, 'to'):
-                    _qwen3_vl_model.to('cpu')
-                del _qwen3_vl_model
+                del _mlx_vlm_model
             except:
                 pass
-            _qwen3_vl_model = None
-            unloaded.append("qwen3_vl")
-        if _qwen3_vl_processor is not None:
+            _mlx_vlm_model = None
+            unloaded.append("mlx_vlm")
+        if _mlx_vlm_processor is not None:
             try:
-                del _qwen3_vl_processor
+                del _mlx_vlm_processor
             except:
                 pass
-            _qwen3_vl_processor = None
+            _mlx_vlm_processor = None
+
+        # Unload GLM-OCR model
+        global _glm_ocr_model, _glm_ocr_processor
+        if _glm_ocr_model is not None:
+            try:
+                del _glm_ocr_model
+            except:
+                pass
+            _glm_ocr_model = None
+            unloaded.append("glm_ocr")
+        if _glm_ocr_processor is not None:
+            try:
+                del _glm_ocr_processor
+            except:
+                pass
+            _glm_ocr_processor = None
 
         # Voice prompt cache: preserve when preserve_tts=True (small, enables voice consistency)
         global _voice_prompt_cache
@@ -5877,8 +5899,10 @@ def memory_status():
             status["cached_models"].append("qwen3_tts_base")
         if _qwen3_tts_design is not None:
             status["cached_models"].append("qwen3_tts_design")
-        if _qwen3_vl_model is not None:
-            status["cached_models"].append("qwen3_vl")
+        if _mlx_vlm_model is not None:
+            status["cached_models"].append("mlx_vlm")
+        if _glm_ocr_model is not None:
+            status["cached_models"].append("glm_ocr")
         if _voice_prompt_cache:
             status["cached_models"].append(f"voice_cache({len(_voice_prompt_cache)})")
 

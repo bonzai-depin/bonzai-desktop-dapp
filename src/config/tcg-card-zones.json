@@ -1,0 +1,554 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "TCG Card Layout Zones — Era-Aware OCR Reference",
+  "description": "Normalized bounding box coordinates (0.0–1.0) for data fields on TCG cards, organized by era. Origin is top-left. All coordinates are [x, y, width, height]. The pipeline should detect the card era FIRST, then apply the correct zone map.",
+  "version": "2.0.0",
+
+  "era_detection": {
+    "description": "Run era detection (Phase 1.5) BEFORE zone extraction. Use a VLM call on the full card to classify era.",
+    "pokemon": {
+      "prompt": "Look at this Pokémon card and identify its era. Check: (1) Is the border SILVER/GRAY or YELLOW? (2) Is HP shown as 'HP 120' or '120 HP'? (3) Are there dot-code barcode strips on the right edge? (4) Is there a regulation mark letter (A-I) in the bottom bar? (5) What mechanic suffix does the name have (ex/EX/GX/V/VMAX/VSTAR)? Reply with ONLY one of: base_wotc, e_card, ex_ruby, diamond_pearl, black_white, xy, sun_moon, sword_shield, scarlet_violet, mega_evolution",
+      "rules": [
+        "silver/gray border → scarlet_violet or mega_evolution",
+        "yellow border + dot-code strips on right → e_card",
+        "yellow border + 'XX HP' (HP after number) → base_wotc",
+        "yellow border + GX in name → sun_moon",
+        "yellow border + V/VMAX/VSTAR in name → sword_shield",
+        "yellow border + EX (caps) or M-EX in name → black_white or xy",
+        "yellow border + ex (lowercase) + no regulation mark → ex_ruby",
+        "yellow border + LV.X → diamond_pearl",
+        "regulation mark present → sun_moon or later",
+        "expansion code box in bottom-left (not set symbol) → scarlet_violet+"
+      ]
+    },
+    "yugioh": {
+      "prompt": "Look at this Yu-Gi-Oh! card layout. Check: (1) Are ATK/DEF in two separate half-width boxes side by side, or one full-width area? (2) Is there a colored zone between the art and the effect text (Pendulum zone)? (3) Are there red triangular Link Arrow markers around the art frame? (4) Does the name box have sharp beveled corners or soft curved corners? Reply with ONLY one of: series1, series2_5, series6_8, series9_pendulum, series10_plus",
+      "rules": [
+        "split half-width ATK/DEF boxes → series1",
+        "pendulum zone between art and effect → series9_pendulum",
+        "link arrows around art frame → series10_plus",
+        "beveled name box corners → series10_plus",
+        "larger/lighter effect box, no pendulum → series6_8",
+        "default classic layout → series2_5"
+      ]
+    },
+    "mtg": {
+      "prompt": "Look at this Magic: The Gathering card. Check: (1) What font is the card name in — ornate serif (Goudy Medieval), modern serif (Matrix Bold), or clean sans-serif (Beleren)? (2) Is there a silver holofoil oval stamp at the bottom center? (3) Does the text box have a colored/textured background unique to the card color, or a uniform background? Reply with ONLY one of: alpha_original, modern_8th, m15_current",
+      "rules": [
+        "ornate serif font + textured text box → alpha_original",
+        "modern serif font + no holofoil stamp → modern_8th",
+        "clean font + holofoil stamp area → m15_current"
+      ]
+    },
+    "onepiece": {
+      "prompt": "This is a One Piece TCG card. Is the art black-and-white manga style (Manga Rare) or full-color? Reply: standard or manga_rare",
+      "rules": ["single consistent layout since launch, only rarity variants differ"]
+    },
+    "lorcana": {
+      "prompt": "Look at this Lorcana card. Check: (1) Is the ink banner behind the name split into two colors (dual-ink)? (2) Does it have a 'Move Cost' on the right edge instead of Strength? (3) Is it borderless/full-art (Enchanted)? Reply with ONLY one of: standard, location, dual_ink, enchanted",
+      "rules": ["base layout stable since launch, card type variants only"]
+    }
+  },
+
+  "tcgs": {
+    "pokemon_tcg": {
+      "display_name": "Pokémon TCG",
+      "card_aspect_ratio": "63:88",
+
+      "eras": {
+        "base_wotc": {
+          "years": "1996–2002",
+          "sets": "Base Set through Neo Destiny",
+          "border_color": "yellow",
+          "zones": {
+            "stage_badge": { "bbox": [0.03, 0.02, 0.18, 0.06], "data_type": "enum" },
+            "name": { "bbox": [0.15, 0.02, 0.50, 0.06], "priority": "critical" },
+            "hp": {
+              "bbox": [0.60, 0.02, 0.25, 0.06],
+              "ocr_hint": "Format 'XX HP' (number BEFORE 'HP'). Neo series began transitioning to 'HP XX'.",
+              "regex_pattern": "(\\d{2,3})\\s*HP|HP\\s*(\\d{2,3})",
+              "priority": "critical"
+            },
+            "type_icon": { "bbox": [0.87, 0.02, 0.10, 0.06], "extraction_method": "color_classification", "priority": "critical" },
+            "first_edition_stamp": {
+              "bbox": [0.04, 0.44, 0.08, 0.04],
+              "data_type": "boolean",
+              "ocr_hint": "Edition 1 stamp with circled 1. Bottom-left of art window. Absent on Unlimited.",
+              "priority": "critical"
+            },
+            "shadowless": {
+              "bbox": [0.88, 0.10, 0.06, 0.40],
+              "data_type": "boolean",
+              "ocr_hint": "Check right edge of art box: shadowless cards have NO drop shadow. Critical for grading value.",
+              "extraction_method": "shadow_detection"
+            },
+            "illustration": { "bbox": [0.06, 0.10, 0.88, 0.38] },
+            "pokedex_info": {
+              "bbox": [0.10, 0.48, 0.80, 0.05],
+              "ocr_hint": "Species, length (feet/inches), weight (lbs). Imperial units in English."
+            },
+            "attacks": { "bbox": [0.06, 0.53, 0.88, 0.20], "max_items": 2 },
+            "weakness": { "bbox": [0.06, 0.75, 0.28, 0.04], "ocr_hint": "×2 flat multiplier" },
+            "resistance": { "bbox": [0.34, 0.75, 0.28, 0.04], "ocr_hint": "−30" },
+            "retreat_cost": { "bbox": [0.66, 0.75, 0.28, 0.04] },
+            "set_symbol": {
+              "bbox": [0.82, 0.44, 0.10, 0.04],
+              "ocr_hint": "ON art frame border (not bottom bar). Base Set has NO set symbol."
+            },
+            "collector_number": { "bbox": [0.70, 0.90, 0.20, 0.04], "priority": "critical" },
+            "rarity_symbol": { "bbox": [0.64, 0.90, 0.06, 0.04] }
+          },
+          "notes": "No regulation mark. No expansion code. WotC logo present."
+        },
+
+        "e_card": {
+          "years": "2002–2003",
+          "sets": "Expedition, Aquapolis, Skyridge",
+          "border_color": "yellow",
+          "zones": {
+            "name": { "bbox": [0.06, 0.02, 0.55, 0.06], "priority": "critical" },
+            "hp": { "bbox": [0.55, 0.02, 0.20, 0.06], "priority": "critical" },
+            "type_icon": { "bbox": [0.78, 0.02, 0.10, 0.06], "priority": "critical" },
+            "illustration": {
+              "bbox": [0.04, 0.10, 0.55, 0.40],
+              "ocr_hint": "ART IS LEFT-ALIGNED. Right side has dot-code barcode strips."
+            },
+            "dot_code_strips": {
+              "bbox": [0.62, 0.10, 0.35, 0.40],
+              "data_type": "boolean",
+              "ocr_hint": "Two vertical barcode strips for e-Reader scanning. Unique to this era."
+            },
+            "attacks": { "bbox": [0.06, 0.54, 0.88, 0.20] },
+            "weakness": { "bbox": [0.06, 0.76, 0.28, 0.04] },
+            "resistance": { "bbox": [0.34, 0.76, 0.28, 0.04] },
+            "retreat_cost": { "bbox": [0.66, 0.76, 0.28, 0.04] },
+            "collector_number": { "bbox": [0.06, 0.88, 0.25, 0.04], "priority": "critical" }
+          },
+          "notes": "COMPLETELY DIFFERENT LAYOUT. Art left-aligned, dot-code strips on right."
+        },
+
+        "ex_ruby": {
+          "years": "2003–2007",
+          "sets": "EX Ruby & Sapphire through EX Power Keepers",
+          "border_color": "yellow",
+          "zones": {
+            "stage_badge": { "bbox": [0.03, 0.02, 0.18, 0.06] },
+            "name": { "bbox": [0.15, 0.02, 0.50, 0.06], "priority": "critical" },
+            "hp": { "bbox": [0.60, 0.02, 0.20, 0.06], "ocr_hint": "Format 'HP XX' (modern established)", "priority": "critical" },
+            "type_icon": { "bbox": [0.82, 0.02, 0.10, 0.06], "priority": "critical" },
+            "attacks": { "bbox": [0.06, 0.54, 0.88, 0.22] },
+            "weakness": { "bbox": [0.06, 0.78, 0.28, 0.04] },
+            "resistance": { "bbox": [0.34, 0.78, 0.28, 0.04] },
+            "retreat_cost": { "bbox": [0.66, 0.78, 0.28, 0.04] },
+            "collector_number": { "bbox": [0.06, 0.88, 0.20, 0.04], "priority": "critical" },
+            "rarity_symbol": { "bbox": [0.38, 0.88, 0.06, 0.04] }
+          },
+          "notes": "No regulation mark. No WotC logo. Set symbol in bottom bar."
+        },
+
+        "diamond_pearl": {
+          "years": "2007–2011",
+          "sets": "Diamond & Pearl through Call of Legends",
+          "border_color": "yellow",
+          "zones": {
+            "stage_badge": { "bbox": [0.03, 0.02, 0.18, 0.06] },
+            "name": { "bbox": [0.15, 0.02, 0.50, 0.06], "priority": "critical" },
+            "hp": { "bbox": [0.60, 0.02, 0.20, 0.06], "priority": "critical" },
+            "type_icon": { "bbox": [0.82, 0.02, 0.10, 0.06], "priority": "critical" },
+            "attacks": { "bbox": [0.06, 0.54, 0.88, 0.22] },
+            "weakness": { "bbox": [0.06, 0.78, 0.28, 0.04], "ocr_hint": "Changed to +XX format. HGSS reverted to ×2." },
+            "resistance": { "bbox": [0.34, 0.78, 0.28, 0.04] },
+            "retreat_cost": { "bbox": [0.66, 0.78, 0.28, 0.04] },
+            "collector_number": { "bbox": [0.06, 0.88, 0.20, 0.04], "priority": "critical" },
+            "rarity_symbol": { "bbox": [0.38, 0.88, 0.06, 0.04] }
+          },
+          "notes": "No regulation mark. LV.X cards have no stage badge, 'LEVEL X' text."
+        },
+
+        "black_white": {
+          "years": "2011–2013",
+          "sets": "Black & White through Legendary Treasures",
+          "border_color": "yellow",
+          "zones": {
+            "stage_badge": { "bbox": [0.03, 0.02, 0.18, 0.06] },
+            "name": { "bbox": [0.15, 0.02, 0.50, 0.06], "priority": "critical" },
+            "hp": { "bbox": [0.60, 0.02, 0.20, 0.06], "priority": "critical" },
+            "type_icon": { "bbox": [0.82, 0.02, 0.10, 0.06], "priority": "critical" },
+            "attacks": { "bbox": [0.06, 0.54, 0.88, 0.22] },
+            "weakness": { "bbox": [0.06, 0.78, 0.28, 0.04] },
+            "resistance": { "bbox": [0.34, 0.78, 0.28, 0.04] },
+            "retreat_cost": { "bbox": [0.66, 0.78, 0.28, 0.04] },
+            "collector_number": { "bbox": [0.06, 0.88, 0.20, 0.04], "priority": "critical" },
+            "rarity_symbol": { "bbox": [0.38, 0.88, 0.06, 0.04] }
+          },
+          "notes": "EX (caps) always Basic. Full-art cards introduced. Dragon type added."
+        },
+
+        "xy": {
+          "years": "2013–2016",
+          "sets": "XY through Evolutions",
+          "border_color": "yellow",
+          "zones": {
+            "stage_badge": { "bbox": [0.03, 0.02, 0.18, 0.06] },
+            "name": { "bbox": [0.15, 0.02, 0.50, 0.06], "priority": "critical" },
+            "hp": { "bbox": [0.60, 0.02, 0.20, 0.06], "priority": "critical" },
+            "type_icon": { "bbox": [0.82, 0.02, 0.10, 0.06], "priority": "critical" },
+            "attacks": { "bbox": [0.06, 0.54, 0.88, 0.22] },
+            "weakness": { "bbox": [0.06, 0.78, 0.28, 0.04] },
+            "resistance": { "bbox": [0.34, 0.78, 0.28, 0.04] },
+            "retreat_cost": { "bbox": [0.66, 0.78, 0.28, 0.04] },
+            "collector_number": { "bbox": [0.06, 0.88, 0.20, 0.04], "priority": "critical" },
+            "rarity_symbol": { "bbox": [0.38, 0.88, 0.06, 0.04] }
+          },
+          "notes": "Mega EX, Fairy type, BREAK cards (horizontal). No regulation mark."
+        },
+
+        "sun_moon": {
+          "years": "2017–2020",
+          "sets": "Sun & Moon through Cosmic Eclipse",
+          "border_color": "yellow",
+          "zones": {
+            "stage_badge": { "bbox": [0.03, 0.02, 0.18, 0.06] },
+            "name": { "bbox": [0.15, 0.02, 0.50, 0.06], "priority": "critical" },
+            "hp": { "bbox": [0.60, 0.02, 0.20, 0.06], "priority": "critical" },
+            "type_icon": { "bbox": [0.82, 0.02, 0.10, 0.06], "priority": "critical" },
+            "attacks": { "bbox": [0.06, 0.54, 0.88, 0.22] },
+            "gx_attack": {
+              "bbox": [0.06, 0.70, 0.88, 0.06],
+              "ocr_hint": "GX attack in separate section below regular attacks. 'GX' label. One per game."
+            },
+            "weakness": { "bbox": [0.06, 0.78, 0.28, 0.04] },
+            "resistance": { "bbox": [0.34, 0.78, 0.28, 0.04] },
+            "retreat_cost": { "bbox": [0.66, 0.78, 0.28, 0.04] },
+            "regulation_mark": { "bbox": [0.06, 0.92, 0.04, 0.03], "ocr_hint": "FIRST ERA with regulation mark. Letters A-D." },
+            "collector_number": { "bbox": [0.06, 0.88, 0.20, 0.04], "priority": "critical" },
+            "rarity_symbol": { "bbox": [0.38, 0.88, 0.06, 0.04] }
+          },
+          "notes": "GX mechanic. TAG TEAM (250-300 HP). Regulation marks introduced (A-D)."
+        },
+
+        "sword_shield": {
+          "years": "2020–2023",
+          "sets": "Sword & Shield through Crown Zenith",
+          "border_color": "yellow",
+          "zones": {
+            "stage_badge": { "bbox": [0.03, 0.02, 0.18, 0.06] },
+            "name": { "bbox": [0.15, 0.02, 0.50, 0.06], "priority": "critical" },
+            "hp": { "bbox": [0.60, 0.02, 0.20, 0.06], "priority": "critical" },
+            "type_icon": { "bbox": [0.82, 0.02, 0.10, 0.06], "priority": "critical" },
+            "attacks": { "bbox": [0.06, 0.54, 0.88, 0.22] },
+            "vstar_power": {
+              "bbox": [0.06, 0.70, 0.88, 0.06],
+              "ocr_hint": "VSTAR Power section (one per game). Similar position to GX attack.",
+              "conditional": "Only on VSTAR cards."
+            },
+            "weakness": { "bbox": [0.06, 0.78, 0.28, 0.04] },
+            "resistance": { "bbox": [0.34, 0.78, 0.28, 0.04] },
+            "retreat_cost": { "bbox": [0.66, 0.78, 0.28, 0.04] },
+            "regulation_mark": { "bbox": [0.44, 0.88, 0.06, 0.04] },
+            "collector_number": { "bbox": [0.06, 0.88, 0.20, 0.04], "priority": "critical" },
+            "rarity_symbol": { "bbox": [0.38, 0.88, 0.06, 0.04] }
+          },
+          "notes": "V, VMAX (300+ HP, 3 prizes), VSTAR. Regulation marks D-F."
+        },
+
+        "scarlet_violet": {
+          "years": "2023–2025",
+          "sets": "Scarlet & Violet through Prismatic Evolutions",
+          "border_color": "silver_gray",
+          "zones": {
+            "stage_badge": { "bbox": [0.03, 0.02, 0.18, 0.06] },
+            "evolves_from": { "bbox": [0.03, 0.08, 0.30, 0.04], "conditional": "Stage 1/2 only" },
+            "name": { "bbox": [0.15, 0.02, 0.50, 0.06], "priority": "critical" },
+            "hp": { "bbox": [0.60, 0.02, 0.20, 0.06], "regex_pattern": "HP\\s*\\d{2,4}", "priority": "critical" },
+            "type_icon": { "bbox": [0.82, 0.02, 0.10, 0.06], "extraction_method": "color_classification", "priority": "critical" },
+            "attacks": {
+              "bbox": [0.06, 0.54, 0.88, 0.22],
+              "items": {
+                "energy_cost": { "bbox_relative": [0.00, 0.00, 0.12, 1.00], "extraction_method": "color_classification_count" },
+                "attack_name": { "bbox_relative": [0.14, 0.00, 0.50, 0.50] },
+                "damage": { "bbox_relative": [0.85, 0.00, 0.15, 0.50], "regex_pattern": "\\d{1,3}[+×\\-]?" },
+                "effect_text": { "bbox_relative": [0.14, 0.50, 0.86, 0.50], "optional": true }
+              },
+              "max_items": 2
+            },
+            "weakness": { "bbox": [0.06, 0.78, 0.28, 0.04] },
+            "resistance": { "bbox": [0.34, 0.78, 0.28, 0.04], "optional": true },
+            "retreat_cost": { "bbox": [0.66, 0.78, 0.28, 0.04], "extraction_method": "circle_count" },
+            "collector_number": { "bbox": [0.06, 0.88, 0.20, 0.04], "regex_pattern": "\\d{1,3}/\\d{1,3}", "priority": "critical" },
+            "rarity_symbol": { "bbox": [0.38, 0.88, 0.06, 0.04], "extraction_method": "symbol_classification" },
+            "regulation_mark": { "bbox": [0.44, 0.88, 0.06, 0.04], "regex_pattern": "[A-I]" },
+            "expansion_code": { "bbox": [0.06, 0.92, 0.15, 0.03], "ocr_hint": "Text code in box (e.g. 'SVI'). Replaces set symbol." }
+          },
+          "notes": "SILVER border (not yellow). Expansion codes replace set symbols. ex (lowercase). Regulation marks G-H. New rarity symbols."
+        },
+
+        "mega_evolution": {
+          "years": "2025–present",
+          "sets": "Mega Evolution sets",
+          "border_color": "silver_gray",
+          "zones": "SAME AS scarlet_violet",
+          "notes": "Continuation of SV silver border. Mega Evolution ex. Regulation mark I+."
+        }
+      }
+    },
+
+    "yugioh_tcg": {
+      "display_name": "Yu-Gi-Oh! TCG",
+      "card_aspect_ratio": "59:86",
+
+      "eras": {
+        "series1": {
+          "years": "1999–2000",
+          "zones": {
+            "name": { "bbox": [0.06, 0.02, 0.72, 0.07], "priority": "critical" },
+            "attribute_icon": { "bbox": [0.82, 0.02, 0.14, 0.07], "priority": "critical" },
+            "level_stars": { "bbox": [0.30, 0.09, 0.66, 0.05] },
+            "illustration": { "bbox": [0.08, 0.14, 0.84, 0.36] },
+            "effect_text": { "bbox": [0.06, 0.52, 0.44, 0.26], "ocr_hint": "LEFT HALF of split box" },
+            "atk_def_box": { "bbox": [0.50, 0.52, 0.44, 0.26], "ocr_hint": "RIGHT HALF of split box. Full Japanese labels." }
+          },
+          "notes": "UNIQUE split layout — ATK/DEF in separate right-side box. Completely different from all other series."
+        },
+
+        "series2_5": {
+          "years": "2000–2008",
+          "zones": {
+            "name": { "bbox": [0.06, 0.02, 0.72, 0.07], "priority": "critical" },
+            "attribute_icon": { "bbox": [0.82, 0.02, 0.14, 0.07], "priority": "critical" },
+            "level_stars": { "bbox": [0.30, 0.09, 0.66, 0.05] },
+            "illustration": { "bbox": [0.08, 0.14, 0.84, 0.36] },
+            "type_ability_line": { "bbox": [0.06, 0.52, 0.88, 0.05], "priority": "critical" },
+            "effect_text": { "bbox": [0.06, 0.57, 0.88, 0.22] },
+            "atk": { "bbox": [0.06, 0.80, 0.40, 0.05], "priority": "critical" },
+            "def": { "bbox": [0.50, 0.80, 0.40, 0.05], "priority": "critical" },
+            "passcode": { "bbox": [0.04, 0.88, 0.30, 0.04], "priority": "critical" },
+            "set_id": { "bbox": [0.55, 0.88, 0.40, 0.04], "priority": "critical" },
+            "edition": { "bbox": [0.04, 0.92, 0.30, 0.03] }
+          },
+          "notes": "Classic English layout. Series 3 (2001) = first English release. Soft curved name box corners."
+        },
+
+        "series6_8": {
+          "years": "2008–2014",
+          "zones": {
+            "name": { "bbox": [0.06, 0.02, 0.72, 0.07], "priority": "critical" },
+            "attribute_icon": { "bbox": [0.82, 0.02, 0.14, 0.07], "priority": "critical" },
+            "level_stars": { "bbox": [0.30, 0.09, 0.66, 0.05] },
+            "illustration": { "bbox": [0.08, 0.13, 0.84, 0.37], "ocr_hint": "Enlarged in Series 8" },
+            "type_ability_line": { "bbox": [0.06, 0.51, 0.88, 0.05], "ocr_hint": "Shifted up from Series 7", "priority": "critical" },
+            "effect_text": { "bbox": [0.06, 0.56, 0.88, 0.23], "ocr_hint": "Taller and wider from Series 7" },
+            "atk": { "bbox": [0.06, 0.80, 0.40, 0.05], "priority": "critical" },
+            "def": { "bbox": [0.50, 0.80, 0.40, 0.05], "priority": "critical" },
+            "passcode": { "bbox": [0.04, 0.88, 0.30, 0.04], "priority": "critical" },
+            "set_id": { "bbox": [0.55, 0.88, 0.40, 0.04], "priority": "critical" },
+            "edition": { "bbox": [0.04, 0.92, 0.30, 0.03] }
+          },
+          "notes": "Synchro (white frame) Series 6. Xyz (black frame, yellow stars) Series 7. Effect box shifted up and enlarged."
+        },
+
+        "series9_pendulum": {
+          "years": "2014–2017",
+          "zones": {
+            "name": { "bbox": [0.06, 0.02, 0.68, 0.06], "ocr_hint": "NARROWER than other series", "priority": "critical" },
+            "attribute_icon": { "bbox": [0.82, 0.02, 0.14, 0.06], "priority": "critical" },
+            "level_stars": { "bbox": [0.30, 0.08, 0.66, 0.05] },
+            "illustration": { "bbox": [0.08, 0.14, 0.84, 0.36] },
+            "pendulum_scale_left": { "bbox": [0.04, 0.52, 0.08, 0.08], "data_type": "integer", "range": [0, 13] },
+            "pendulum_scale_right": { "bbox": [0.88, 0.52, 0.08, 0.08], "data_type": "integer", "range": [0, 13] },
+            "pendulum_effect": { "bbox": [0.12, 0.52, 0.76, 0.12], "ocr_hint": "Teal zone between art and main effect" },
+            "type_ability_line": { "bbox": [0.06, 0.64, 0.88, 0.04], "priority": "critical" },
+            "effect_text": { "bbox": [0.06, 0.68, 0.88, 0.11] },
+            "atk": { "bbox": [0.06, 0.80, 0.40, 0.05], "priority": "critical" },
+            "def": { "bbox": [0.50, 0.80, 0.40, 0.05], "priority": "critical" },
+            "passcode": { "bbox": [0.04, 0.88, 0.30, 0.04], "priority": "critical" },
+            "set_id": { "bbox": [0.55, 0.88, 0.40, 0.04], "priority": "critical" }
+          },
+          "notes": "Pendulum zone inserted between art and effect. Name box narrower. Non-Pendulum cards use series6_8 zones."
+        },
+
+        "series10_plus": {
+          "years": "2017–present",
+          "zones": {
+            "name": { "bbox": [0.06, 0.02, 0.72, 0.07], "ocr_hint": "Sharp beveled corners on name box", "priority": "critical" },
+            "attribute_icon": { "bbox": [0.82, 0.02, 0.14, 0.07], "priority": "critical" },
+            "level_stars": { "bbox": [0.30, 0.09, 0.66, 0.05] },
+            "link_arrows": {
+              "bbox": [0.04, 0.12, 0.92, 0.40],
+              "ocr_hint": "Red triangular markers at 8 compass points. Link monsters only.",
+              "conditional": "Link monsters only"
+            },
+            "illustration": { "bbox": [0.08, 0.14, 0.84, 0.36] },
+            "type_ability_line": { "bbox": [0.06, 0.52, 0.88, 0.05], "priority": "critical" },
+            "effect_text": { "bbox": [0.06, 0.57, 0.88, 0.22], "ocr_hint": "Series 11+: effects numbered with ①②③" },
+            "atk": { "bbox": [0.06, 0.80, 0.40, 0.05], "priority": "critical" },
+            "def": { "bbox": [0.50, 0.80, 0.40, 0.05], "ocr_hint": "Link monsters show 'LINK-X' instead of DEF", "priority": "critical" },
+            "passcode": { "bbox": [0.04, 0.88, 0.30, 0.04], "priority": "critical" },
+            "set_id": { "bbox": [0.55, 0.88, 0.40, 0.04], "priority": "critical" },
+            "edition": { "bbox": [0.04, 0.92, 0.30, 0.03] }
+          },
+          "notes": "Link monsters (dark blue frame). Beveled name box corners. Current default zones."
+        }
+      }
+    },
+
+    "magic_the_gathering": {
+      "display_name": "Magic: The Gathering",
+      "card_aspect_ratio": "63:88",
+
+      "eras": {
+        "alpha_original": {
+          "years": "1993–2003",
+          "sets": "Alpha through Scourge",
+          "zones": {
+            "name": { "bbox": [0.06, 0.02, 0.55, 0.07], "ocr_hint": "Goudy Medieval font", "priority": "critical" },
+            "mana_cost": { "bbox": [0.62, 0.02, 0.34, 0.07], "priority": "critical" },
+            "illustration": { "bbox": [0.06, 0.09, 0.88, 0.40] },
+            "type_line": { "bbox": [0.06, 0.50, 0.70, 0.05], "priority": "critical" },
+            "set_symbol": {
+              "bbox": [0.80, 0.50, 0.12, 0.05],
+              "ocr_hint": "Added with Exodus (1998). Monochrome initially, color-coded rarity from Exodus. Pre-Exodus: no set symbol."
+            },
+            "rules_text": { "bbox": [0.06, 0.56, 0.88, 0.26], "ocr_hint": "Textured background unique per card color" },
+            "power_toughness": {
+              "bbox": [0.78, 0.82, 0.16, 0.05],
+              "ocr_hint": "Integrated into frame edge (not a separate raised box)"
+            },
+            "collector_number": {
+              "bbox": [0.06, 0.90, 0.25, 0.04],
+              "ocr_hint": "Added with Exodus (1998). May be absent on earlier cards."
+            },
+            "artist": { "bbox": [0.30, 0.90, 0.40, 0.04] }
+          },
+          "notes": "Black border = expansion, white border = core set reprint. No holofoil stamp. Per-color textured text boxes."
+        },
+
+        "modern_8th": {
+          "years": "2003–2014",
+          "sets": "8th Edition through Journey into Nyx",
+          "zones": {
+            "name": { "bbox": [0.06, 0.02, 0.60, 0.07], "ocr_hint": "Matrix Bold font", "priority": "critical" },
+            "mana_cost": { "bbox": [0.60, 0.02, 0.36, 0.07], "priority": "critical" },
+            "illustration": { "bbox": [0.06, 0.09, 0.88, 0.38] },
+            "type_line": { "bbox": [0.06, 0.48, 0.76, 0.05], "priority": "critical" },
+            "set_symbol": { "bbox": [0.84, 0.48, 0.10, 0.05] },
+            "rules_text": { "bbox": [0.06, 0.54, 0.88, 0.28], "ocr_hint": "Uniform background (not textured per color)" },
+            "power_toughness": { "bbox": [0.78, 0.80, 0.16, 0.06], "ocr_hint": "Separate raised box (new)" },
+            "loyalty": { "bbox": [0.78, 0.80, 0.16, 0.06], "conditional": "Planeswalkers only (2007+)" },
+            "collector_number": { "bbox": [0.06, 0.88, 0.25, 0.04], "priority": "critical" },
+            "artist": { "bbox": [0.30, 0.88, 0.40, 0.04] }
+          },
+          "notes": "Major redesign. No holofoil stamp. Planeswalker frame added 2007. DFC added 2011."
+        },
+
+        "m15_current": {
+          "years": "2014–present",
+          "sets": "Magic 2015 onward",
+          "zones": {
+            "name": { "bbox": [0.06, 0.02, 0.60, 0.07], "ocr_hint": "Beleren font (proprietary)", "priority": "critical" },
+            "mana_cost": { "bbox": [0.60, 0.02, 0.36, 0.07], "extraction_method": "color_classification_sequence", "priority": "critical" },
+            "illustration": { "bbox": [0.06, 0.09, 0.88, 0.38] },
+            "type_line": { "bbox": [0.06, 0.48, 0.76, 0.05], "priority": "critical" },
+            "set_symbol": { "bbox": [0.84, 0.48, 0.10, 0.05], "extraction_method": "template_matching_and_color" },
+            "rules_text": { "bbox": [0.06, 0.54, 0.88, 0.28] },
+            "power_toughness": { "bbox": [0.78, 0.80, 0.16, 0.06], "regex_pattern": "[\\d*]+/[\\d*]+" },
+            "loyalty": { "bbox": [0.78, 0.80, 0.16, 0.06], "conditional": "Planeswalkers only" },
+            "holofoil_stamp": { "bbox": [0.44, 0.86, 0.12, 0.03], "ocr_hint": "Silver oval stamp. Rare/Mythic only." },
+            "collector_number": { "bbox": [0.06, 0.88, 0.25, 0.04], "regex_pattern": "\\d{1,3}/\\d{1,3}\\s*[CURM]", "priority": "critical" },
+            "set_code": { "bbox": [0.72, 0.88, 0.22, 0.04], "regex_pattern": "[A-Z]{3}\\s*·\\s*[A-Z]{2}" }
+          },
+          "notes": "Current default. Holofoil stamp on Rares+. Machine-readable collector info. Beleren font."
+        }
+      },
+
+      "special_frames": {
+        "planeswalker": { "loyalty_box": [0.42, 0.82, 0.16, 0.06], "ability_costs": "left margin +/−/0" },
+        "saga": { "chapters": "vertical segments, art left, chapters right" },
+        "adventure": { "split": "creature top, spell bottom-left" },
+        "dfc": { "note": "no standard back, sun/moon icon" },
+        "battle": { "note": "horizontal orientation, defense value (2023+)" }
+      }
+    },
+
+    "one_piece_tcg": {
+      "display_name": "One Piece TCG",
+      "card_aspect_ratio": "63:88",
+      "era_note": "Single consistent layout since launch (2022). No major redesigns. Only rarity variant frames differ.",
+
+      "eras": {
+        "standard": {
+          "years": "2022–present",
+          "zones": {
+            "cost": { "bbox": [0.03, 0.02, 0.10, 0.08], "priority": "critical" },
+            "name": { "bbox": [0.16, 0.02, 0.55, 0.06], "priority": "critical" },
+            "attribute_icon": { "bbox": [0.82, 0.02, 0.14, 0.06] },
+            "type_tags": { "bbox": [0.16, 0.08, 0.70, 0.04] },
+            "illustration": { "bbox": [0.04, 0.13, 0.92, 0.45] },
+            "card_type_banner": { "bbox": [0.04, 0.58, 0.30, 0.05], "priority": "critical" },
+            "effect_text": { "bbox": [0.06, 0.63, 0.88, 0.16] },
+            "power": { "bbox": [0.04, 0.80, 0.20, 0.06], "conditional": "CHARACTER/LEADER only", "priority": "critical" },
+            "counter": { "bbox": [0.26, 0.80, 0.16, 0.06], "optional": true },
+            "collector_number": { "bbox": [0.04, 0.88, 0.30, 0.04], "regex_pattern": "(OP|EB|PRB)\\d{2}-\\d{3}", "priority": "critical" },
+            "rarity": { "bbox": [0.38, 0.88, 0.15, 0.04], "priority": "critical" },
+            "color_identity": { "bbox": [0.00, 0.00, 1.00, 1.00], "extraction_method": "border_color_classification", "priority": "critical" }
+          }
+        }
+      },
+
+      "rarity_variants": {
+        "manga_rare": "Black-and-white manga art, borderless. Standard zones may shift.",
+        "sp": "Full-art illustration, minimal frame elements.",
+        "treasure_rare": "Textured foil. Standard zone positions maintained."
+      }
+    },
+
+    "disney_lorcana": {
+      "display_name": "Disney Lorcana",
+      "card_aspect_ratio": "63:88",
+      "era_note": "Single consistent base layout since launch (2023). Card type variants and dual-ink are the main differences.",
+
+      "eras": {
+        "standard": {
+          "years": "2023–present",
+          "zones": {
+            "ink_cost": { "bbox": [0.03, 0.02, 0.10, 0.09], "priority": "critical" },
+            "inkable": { "bbox": [0.01, 0.01, 0.14, 0.11], "extraction_method": "ring_fill_detection", "priority": "critical" },
+            "name": { "bbox": [0.16, 0.02, 0.55, 0.06], "priority": "critical" },
+            "subtitle": { "bbox": [0.16, 0.07, 0.55, 0.04], "priority": "critical" },
+            "illustration": { "bbox": [0.04, 0.12, 0.82, 0.42] },
+            "strength": { "bbox": [0.86, 0.20, 0.10, 0.08], "conditional": "Character only" },
+            "willpower": { "bbox": [0.86, 0.30, 0.10, 0.08], "conditional": "Character only" },
+            "card_type": { "bbox": [0.06, 0.55, 0.30, 0.05], "priority": "critical" },
+            "classifications": { "bbox": [0.06, 0.59, 0.88, 0.04], "separator": "·" },
+            "abilities_text": { "bbox": [0.06, 0.64, 0.88, 0.16] },
+            "lore_value": { "bbox": [0.06, 0.82, 0.10, 0.06], "conditional": "Character only" },
+            "collector_number": { "bbox": [0.06, 0.90, 0.25, 0.04], "regex_pattern": "\\d{1,3}/\\d{1,3}", "priority": "critical" },
+            "rarity": { "bbox": [0.35, 0.90, 0.15, 0.04], "extraction_method": "gem_color_classification" },
+            "ink_type": { "bbox": [0.00, 0.00, 1.00, 1.00], "extraction_method": "border_color_classification", "priority": "critical" }
+          }
+        }
+      },
+
+      "card_type_variants": {
+        "location": {
+          "note": "Set 3+. Has Move Cost (top-right) instead of Strength. Willpower present. Lore present. No Strength.",
+          "zone_overrides": {
+            "move_cost": { "bbox": [0.86, 0.20, 0.10, 0.08], "ocr_hint": "Replaces Strength position" }
+          }
+        },
+        "dual_ink": {
+          "note": "Set 7+. Split ink banner (two colors). Two ink icons below banner.",
+          "zone_overrides": {}
+        },
+        "enchanted": {
+          "note": "Full-art/borderless. Standard zones may shift. Use text box edge as anchor."
+        }
+      },
+
+      "rarities": {
+        "set1_8": ["Common", "Uncommon", "Rare", "Super Rare", "Legendary", "Enchanted"],
+        "set9_plus": ["Common", "Uncommon", "Rare", "Super Rare", "Legendary", "Enchanted", "Epic", "Iconic"]
+      }
+    }
+  }
+}

@@ -130,20 +130,11 @@
                       {{ getCategoryLabel(skill.category) }}
                     </span>
                     <span
-                      class="tag is-warning is-medium fira-sans-condensed-black-italic"
-                      :title="'Requires: ' + getSkillContentIcons(skill.id).join(', ')"
+                      v-if="skill.platform?.os === 'darwin'"
+                      class="tag is-dark is-medium fira-sans-condensed-black-italic"
                     >
-                      {{ getRequiredLevel(skill) }}
-                      <template v-if="getSkillContentIcons(skill.id).length > 0">
-                        <span
-                          v-for="icon in getSkillContentIcons(skill.id)"
-                          :key="icon"
-                          class="material-symbols-outlined ml-1"
-                          style="font-size: 18px"
-                        >
-                          {{ icon }}
-                        </span>
-                      </template>
+                      <span class="material-symbols-outlined mr-1" style="font-size: 16px">laptop_mac</span>
+                      For macOS
                     </span>
                     <span
                       v-if="skill.author?.verified"
@@ -166,8 +157,8 @@
 
                 <div class="skill-footer">
                   <div class="skill-actions">
-                    <!-- All skills runnable until marketplace contracts are deployed -->
                     <button
+                      v-if="!skill.platform || isAppleSilicon"
                       class="button is-info is-medium"
                       @click="runSkill(skill)"
                     >
@@ -176,6 +167,14 @@
                       </span>
                       Run
                     </button>
+                    <span
+                      v-else
+                      class="tag is-dark is-medium"
+                      style="opacity: 0.6"
+                    >
+                      <span class="material-symbols-outlined mr-1" style="font-size: 16px">laptop_mac</span>
+                      Requires Apple Silicon Mac
+                    </span>
                   </div>
                 </div>
               </div>
@@ -1907,6 +1906,7 @@ Return ONLY the JSON, no explanation.`;
     });
     const filteredSkills = computed(() => skillStore.filteredSkills);
     const accessibleSkills = computed(() => skillStore.accessibleSkills);
+    const isAppleSilicon = skillStore.isAppleSilicon;
 
     // Level-based access
     const canRunSkill = (skillId) => skillStore.canRunSkill(skillId);
@@ -2664,6 +2664,7 @@ Provide a concise analysis covering:
       handleImageUpload,
 
       // Skills
+      isAppleSilicon,
       accessibleSkills,
       canRunSkill,
       getRequiredLevel,

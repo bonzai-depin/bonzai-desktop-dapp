@@ -4716,7 +4716,7 @@ export const videoCaptioning = createSkillDefinition({
 export const tcgAnalysis = createSkillDefinition({
   id: 'tcg-analysis-v1.0.0',
   name: 'Trading Card Game Analysis',
-  description: 'Analyze Trading Card Game cards with AI-powered OCR and vision. Extract card details, get live market prices from pokemontcg.io, and receive comprehensive condition grading (centering, corners, edges, surface) on a TAG-compatible 1000-point scale.',
+  description: 'Analyze Trading Card Game cards with AI-powered OCR and vision. Supports Pokémon, Yu-Gi-Oh!, Magic: The Gathering, One Piece, Lorcana, and more. Get live market prices and PGT (Peer-to-Peer Grading Technology) condition grading on a 1000-point scale.',
   version: '1.0.0',
   author: { address: '0x8Ff3b2e823b33BeE30e699bB1b6BBc8F622fEa89', name: 'BonzAI', verified: true },
   category: 'productivity',

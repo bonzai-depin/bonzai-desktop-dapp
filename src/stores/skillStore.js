@@ -165,18 +165,11 @@ export const useSkillStore = defineStore('skill', () => {
   // Current platform info (from Electron preload)
   const currentPlatform = window.electronAPI?.platform || process?.platform || 'unknown';
   const currentArch = window.electronAPI?.arch || process?.arch || 'unknown';
+  const isAppleSilicon = currentPlatform === 'darwin' && currentArch === 'arm64';
 
-  // Skills filtered by category (and platform restrictions)
+  // Skills filtered by category (show ALL skills regardless of platform)
   const skillsByCategory = computed(() => {
     let result = skills.value;
-
-    // Filter out skills restricted to a specific platform/arch
-    result = result.filter(s => {
-      if (!s.platform) return true;
-      if (s.platform.os && s.platform.os !== currentPlatform) return false;
-      if (s.platform.arch && s.platform.arch !== currentArch) return false;
-      return true;
-    });
 
     if (selectedCategory.value) {
       result = result.filter(s => s.category === selectedCategory.value);
@@ -1252,6 +1245,9 @@ REQUIREMENTS:
 
     // Moltbook state
     moltbookState,
+
+    // Platform
+    isAppleSilicon,
 
     // Getters
     categories,
