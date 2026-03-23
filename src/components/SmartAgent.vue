@@ -987,7 +987,7 @@ export default {
     const skillStore = useSkillStore();
 
     // Tab state
-    const activeTab = ref("my-skills");
+    const activeTab = ref("browseSkills");
 
     // Notifications
     const statusNotification = ref({ show: false, message: "", type: "info" });

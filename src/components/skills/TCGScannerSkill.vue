@@ -112,56 +112,27 @@
       </span>
     </div>
 
-    <!-- File Selectors (front + back) -->
+    <!-- File Selector (front only) -->
     <div v-if="!scannedCard && modelReady && selectedMode === 'file'" class="mb-4">
-      <div class="columns is-variable is-4">
-        <div class="column is-6">
-          <button
-            class="button is-success is-large is-fullwidth"
-            @click="selectImageFile('front')"
-          >
-            <span
-              class="material-symbols-outlined mr-2"
-              style="font-size: 20px"
-            >
-              photo_library
-            </span>
-            Select Front
-          </button>
-          <div v-if="frontPreview" class="card-thumb-wrap mt-3">
-            <img :src="frontPreview" alt="Front" class="card-thumb-img" />
-            <button class="delete-thumb" @click.stop="clearImage('front')">
-              <span class="material-symbols-outlined" style="font-size: 14px">
-                close
-              </span>
-            </button>
-          </div>
-        </div>
-        <div class="column is-6">
-          <button
-            class="button is-info is-large is-fullwidth"
-            @click="selectImageFile('back')"
-          >
-            <span
-              class="material-symbols-outlined mr-2"
-              style="font-size: 20px"
-            >
-              flip_to_back
-            </span>
-            Select Back
-            <span class="ml-1" style="opacity: 0.5; font-size: 0.8rem">
-              (optional)
-            </span>
-          </button>
-          <div v-if="backPreview" class="card-thumb-wrap mt-3">
-            <img :src="backPreview" alt="Back" class="card-thumb-img" />
-            <button class="delete-thumb" @click.stop="clearImage('back')">
-              <span class="material-symbols-outlined" style="font-size: 14px">
-                close
-              </span>
-            </button>
-          </div>
-        </div>
+      <button
+        class="button is-success is-large is-fullwidth"
+        @click="selectImageFile('front')"
+      >
+        <span
+          class="material-symbols-outlined mr-2"
+          style="font-size: 20px"
+        >
+          photo_library
+        </span>
+        Select Card Image
+      </button>
+      <div v-if="frontPreview" class="card-thumb-wrap mt-3">
+        <img :src="frontPreview" alt="Card" class="card-thumb-img" />
+        <button class="delete-thumb" @click.stop="clearImage('front')">
+          <span class="material-symbols-outlined" style="font-size: 14px">
+            close
+          </span>
+        </button>
       </div>
     </div>
 
@@ -178,7 +149,7 @@
           class="mt-2"
           style="color: rgba(255, 255, 255, 0.4); font-size: 0.8rem"
         >
-          Capture {{ !frontBase64 ? "front" : "back" }} of card
+          Capture card
         </p>
       </div>
       <div v-else class="camera-container">
@@ -199,7 +170,7 @@
             >
               camera
             </span>
-            Capture {{ !frontBase64 ? "Front" : "Back" }}
+            Capture
           </button>
           <button class="button is-dark is-large" @click="stopCamera">
             <span
@@ -219,18 +190,8 @@
       <!-- Top row: Card image + Identification -->
       <div class="columns is-variable is-4 mb-0">
         <div class="column is-5">
-          <div class="card-flip-container" @mouseenter="showBack = true" @mouseleave="showBack = false">
-            <div class="card-preview-container">
-              <img :src="frontPreview" alt="Front" class="card-preview-image" />
-              <span class="card-side-label">Front</span>
-            </div>
-            <Transition name="card-flip">
-              <div v-if="backPreview && showBack" class="card-preview-container card-back-overlay">
-                <img :src="backPreview" alt="Back" class="card-preview-image" />
-                <span class="card-side-label">Back</span>
-              </div>
-            </Transition>
-            <span v-if="backPreview" class="flip-hint">Hover to see back</span>
+          <div class="card-preview-container">
+            <img :src="frontPreview" alt="Card" class="card-preview-image" />
           </div>
         </div>
         <div class="column is-7 has-text-left">
@@ -486,7 +447,6 @@ import { ref, computed, onMounted, onUnmounted } from "vue";
 import { v4 as uuid } from "uuid";
 import { getAuthHeaders } from "../../services/auth.service.js";
 import MintModal from "../MintModal.vue";
-import tcgZoneSchema from "../../config/tcg-card-zones.json";
 
 const API_BASE =
   (typeof process !== "undefined" && process.env?.VITE_API_BASE) ||
@@ -745,8 +705,6 @@ export default {
     const selectedCollection = ref("pokemon");
     const frontPreview = ref(null);
     const frontBase64 = ref(null);
-    const backPreview = ref(null);
-    const backBase64 = ref(null);
     const isScanning = ref(false);
     const scanStatus = ref("");
     const modelLoading = ref(false);
@@ -754,7 +712,6 @@ export default {
     const cameraActive = ref(false);
     const scannedCard = ref(null);
     const scanHistory = ref([]);
-    const showBack = ref(false);
 
     // Notification state (matches SmartAgent pattern)
     const notification = ref({ show: false, message: "", type: "info" });
@@ -783,11 +740,11 @@ export default {
     ];
 
     const collections = [
-      { id: "pokemon", label: "Pokémon", icon: "catching_pokemon" },
-      { id: "yugioh", label: "Yu-Gi-Oh!", icon: "auto_awesome" },
-      { id: "mtg", label: "Magic: The Gathering", icon: "bolt" },
-      { id: "onepiece", label: "One Piece", icon: "sailing" },
-      { id: "lorcana", label: "Lorcana", icon: "castle" },
+      { id: "pokemon", label: "Pokémon", icon: "" },
+      { id: "yugioh", label: "Yu-Gi-Oh!", icon: "" },
+      { id: "mtg", label: "Magic: The Gathering", icon: "" },
+      { id: "onepiece", label: "One Piece", icon: "" },
+      { id: "lorcana", label: "Lorcana", icon: "" },
     ];
 
     const formattedAnalysis = computed(() => {
@@ -879,7 +836,7 @@ export default {
     }
 
     // ─── File Selection ───────────────────────────────────────────────
-    function selectImageFile(side) {
+    function selectImageFile() {
       const input = document.createElement("input");
       input.type = "file";
       input.accept = "image/*";
@@ -889,33 +846,20 @@ export default {
         const reader = new FileReader();
         reader.onload = (ev) => {
           const dataUrl = ev.target.result;
-          if (side === "front") {
-            frontPreview.value = dataUrl;
-            frontBase64.value = dataUrl;
-            scannedCard.value = null;
-          } else {
-            backPreview.value = dataUrl;
-            backBase64.value = dataUrl;
-          }
-          // Auto-analyze once both front + back are provided
-          if (frontBase64.value && backBase64.value && !isScanning.value) {
-            analyzeCard();
-          }
+          frontPreview.value = dataUrl;
+          frontBase64.value = dataUrl;
+          scannedCard.value = null;
+          analyzeCard();
         };
         reader.readAsDataURL(file);
       };
       input.click();
     }
 
-    function clearImage(side) {
-      if (side === "front") {
-        frontPreview.value = null;
-        frontBase64.value = null;
-        scannedCard.value = null;
-      } else {
-        backPreview.value = null;
-        backBase64.value = null;
-      }
+    function clearImage() {
+      frontPreview.value = null;
+      frontBase64.value = null;
+      scannedCard.value = null;
     }
 
     // ─── Camera ───────────────────────────────────────────────────────
@@ -954,22 +898,11 @@ export default {
       canvas.getContext("2d").drawImage(video, 0, 0);
       const dataUrl = canvas.toDataURL("image/jpeg", 0.92);
 
-      if (!frontBase64.value) {
-        frontPreview.value = dataUrl;
-        frontBase64.value = dataUrl;
-        scannedCard.value = null;
-        showNotification(
-          "Front captured. Now capture the back of the card.",
-          "info",
-          3000,
-        );
-      } else {
-        backPreview.value = dataUrl;
-        backBase64.value = dataUrl;
-        stopCamera();
-        // Both sides captured — auto-analyze
-        analyzeCard();
-      }
+      frontPreview.value = dataUrl;
+      frontBase64.value = dataUrl;
+      scannedCard.value = null;
+      stopCamera();
+      analyzeCard();
     }
 
     // ─── pokemontcg.io Pricing ────────────────────────────────────────
@@ -1073,12 +1006,10 @@ export default {
       return scores;
     }
 
-    function parseGrading(frontText, backText) {
+    function parseGrading(frontText) {
       console.log("[PGT] Front grade response:", frontText);
-      console.log("[PGT] Back grade response:", backText);
 
       const frontScores = extractScores(frontText);
-      const backScores = backText ? extractScores(backText) : {};
 
       const subGrades = [];
       const cats = [
@@ -1090,12 +1021,7 @@ export default {
 
       for (const cat of cats) {
         if (frontScores[cat.key] !== undefined) {
-          subGrades.push({ name: "Front " + cat.label, score: frontScores[cat.key] });
-        }
-      }
-      for (const cat of cats) {
-        if (backScores[cat.key] !== undefined) {
-          subGrades.push({ name: "Back " + cat.label, score: backScores[cat.key] });
+          subGrades.push({ name: cat.label, score: frontScores[cat.key] });
         }
       }
 
@@ -1109,100 +1035,229 @@ export default {
       return { grade, label, score: avgScore, subGrades };
     }
 
-    // ─── Era Detection & Dynamic Zone Loading ─────────────────────────
-    // Maps JSON schema zone keys (snake_case) to code keys (camelCase)
-    const ZONE_KEY_MAP = {
-      // Pokemon
-      stage_badge: "stage", evolves_from: "evolves", type_icon: "typeIcon",
-      collector_number: "collectorNum", rarity_symbol: "rarity", regulation_mark: "regMark",
-      retreat_cost: "retreat", resistance: "resist", first_edition_stamp: "firstEdition",
-      gx_attack: "gxAttack", vstar_power: "vstarPower", expansion_code: "expansionCode",
-      // Yugioh
-      attribute_icon: "attrIcon", level_stars: "levelStars", type_ability_line: "typeLine",
-      effect_text: "effectText", set_id: "setId",
-      pendulum_scale_left: "pendScaleL", pendulum_scale_right: "pendScaleR",
-      pendulum_effect: "pendEffect", link_arrows: "linkArrows",
-      // MTG
-      mana_cost: "manaCost", type_line: "typeLine", set_symbol: "setSymbol",
-      rules_text: "rulesText", power_toughness: "pt", set_code: "setCode",
-      holofoil_stamp: "holofoilStamp",
-      // One Piece
-      type_tags: "typeTags", card_type_banner: "typeBanner",
-      // Lorcana
-      ink_cost: "inkCost", card_type: "cardType", classifications: "classif",
-      lore_value: "lore", ink_type: "inkType",
+    // ─── Structured Extraction Prompts (per TCG) ──────────────────────
+    const EXTRACTION_PROMPTS = {
+      pokemon: `You are analyzing a Pokémon TCG card. Extract ALL visible information and reply in KEY: VALUE format, one per line. Use these exact keys:
+
+NAME: (the Pokémon name, including suffixes like ex, V, VSTAR, VMAX, GX)
+STAGE: (Basic, Stage 1, Stage 2)
+HP: (just the number)
+TYPE: (Fire, Water, Grass, Lightning, Psychic, Fighting, Darkness, Metal, Dragon, Fairy, or Colorless)
+ABILITY_NAME: (name of the Ability or Pokémon Power, if any)
+ABILITY_TEXT: (full effect text of the ability)
+ATTACK1_NAME: (first attack name)
+ATTACK1_ENERGY: (e.g. "1 Fire, 2 Colorless")
+ATTACK1_DAMAGE: (number, or "none")
+ATTACK1_EFFECT: (effect text, or "none")
+ATTACK2_NAME: (second attack name, if any)
+ATTACK2_ENERGY: (energy cost)
+ATTACK2_DAMAGE: (number, or "none")
+ATTACK2_EFFECT: (effect text, or "none")
+WEAKNESS: (e.g. "Water ×2")
+RESISTANCE: (e.g. "Fighting −30", or "none")
+RETREAT: (number of colorless energy)
+COLLECTOR: (format XXX/YYY)
+RARITY: (Common, Uncommon, Rare, Double Rare, Ultra Rare, etc.)
+REGULATION: (single letter A-I, if present)
+ERA: (base_wotc, e_card, ex_ruby_sapphire, diamond_pearl, hgss, bw, xy, sun_moon, sword_shield, or scarlet_violet)
+EDITION: (1st Edition or Unlimited, if visible)
+FLAVOR: (flavor/Pokédex text, if any)
+
+Only include keys where you can see the value. Skip keys with no visible data.`,
+
+      yugioh: `You are analyzing a Yu-Gi-Oh! TCG card. Extract ALL visible information and reply in KEY: VALUE format, one per line. Use these exact keys:
+
+NAME: (the card name in bold at the top)
+ATTRIBUTE: (DARK, LIGHT, FIRE, WATER, WIND, EARTH, DIVINE, SPELL, or TRAP)
+LEVEL: (count of star icons, 1-12)
+MONSTER_TYPE: (bracketed text like "[Dragon/Effect]")
+ATK: (attack value number)
+DEF: (defense value number)
+LINK_RATING: (Link rating number, if Link monster)
+LINK_ARROWS: (active arrow positions, if Link monster)
+PEND_SCALE: (Pendulum scale numbers, if Pendulum monster)
+PEND_EFFECT: (Pendulum effect text, if Pendulum monster)
+EFFECT_TEXT: (card effect or flavor text)
+PASSCODE: (8-digit number at bottom-left)
+SET_ID: (set code like "ROTD-EN025")
+EDITION: (1st Edition or Unlimited)
+ERA: (series1_bandai, series2_early, series3_4_psct, series9_pendulum, or series10_plus)
+
+Only include keys where you can see the value. Skip keys with no visible data.`,
+
+      mtg: `You are analyzing a Magic: The Gathering card. Extract ALL visible information and reply in KEY: VALUE format, one per line. Use these exact keys:
+
+NAME: (the card name at top-left)
+MANA_COST: (using MTG notation like "{2}{R}{R}")
+TYPE_LINE: (e.g. "Legendary Creature — Human Wizard")
+RULES_TEXT: (full rules text)
+POWER_TOUGHNESS: (format X/Y for creatures)
+LOYALTY: (starting loyalty for planeswalkers)
+RARITY: (Common, Uncommon, Rare, or Mythic Rare — based on set symbol color)
+COLLECTOR: (collector number like "107/281")
+SET_CODE: (3-letter set code like "MKM")
+HOLOFOIL: (yes or no — silver oval stamp at bottom center)
+ERA: (alpha_beta, revised_4th, modern_8th, or m15_current)
+
+Only include keys where you can see the value. Skip keys with no visible data.`,
+
+      onepiece: `You are analyzing a One Piece TCG card. Extract ALL visible information and reply in KEY: VALUE format, one per line. Use these exact keys:
+
+NAME: (character/card name)
+COST: (play cost number in circle)
+CARD_TYPE: (CHARACTER, EVENT, STAGE, or LEADER)
+POWER: (power value in thousands like 5000)
+COLOR: (Red, Green, Blue, Purple, Black, or Yellow — from border color)
+TRAITS: (slash-separated trait tags like "Straw Hat Crew / Supernovas")
+COUNTER: (+1000 or +2000, from shield icon)
+EFFECT: (card effect text)
+COLLECTOR: (format like OP01-001)
+RARITY: (C, UC, R, SR, SEC, L, SP, P, or TR)
+
+Only include keys where you can see the value. Skip keys with no visible data.`,
+
+      lorcana: `You are analyzing a Disney Lorcana card. Extract ALL visible information and reply in KEY: VALUE format, one per line. Use these exact keys:
+
+NAME: (character name at top)
+SUBTITLE: (subtitle after em-dash, e.g. "Spirit of Winter")
+INK_COST: (number in hexagonal icon)
+INKABLE: (yes if ring is filled gold, no if empty outline)
+INK_TYPE: (Amber, Amethyst, Emerald, Ruby, Sapphire, or Steel — from border color)
+CARD_TYPE: (Character, Action, Item, or Song)
+CLASSIFICATION: (dot-separated traits like "Storyborn · Hero · Princess")
+STRENGTH: (number in sun/starburst icon)
+WILLPOWER: (number in shield icon)
+LORE: (number in diamond icon)
+COLLECTOR: (format XX/YYY)
+RARITY: (Common, Uncommon, Rare, Super Rare, Legendary, or Enchanted)
+
+Only include keys where you can see the value. Skip keys with no visible data.`,
     };
 
-    // TCG collection ID → JSON schema key
-    const TCG_SCHEMA_KEY = {
-      pokemon: "pokemon_tcg",
-      yugioh: "yugioh_tcg",
-      mtg: "magic_the_gathering",
-      onepiece: "one_piece_tcg",
-      lorcana: "disney_lorcana",
-    };
-
-    // Default eras (modern/current) per TCG when detection fails
-    const DEFAULT_ERA = {
-      pokemon: "scarlet_violet",
-      yugioh: "series10_plus",
-      mtg: "m15_current",
-      onepiece: "standard",
-      lorcana: "standard",
-    };
-
-    function getZonesForEra(col, era) {
-      const schemaKey = TCG_SCHEMA_KEY[col];
-      if (!schemaKey || !tcgZoneSchema.tcgs[schemaKey]) return null;
-      const tcgData = tcgZoneSchema.tcgs[schemaKey];
-      let eraData = tcgData.eras[era];
-      if (!eraData) eraData = tcgData.eras[DEFAULT_ERA[col]];
-      if (!eraData) return null;
-      // Handle "SAME AS" references (e.g., mega_evolution → scarlet_violet)
-      if (typeof eraData.zones === "string" && eraData.zones.startsWith("SAME AS")) {
-        const refEra = eraData.zones.replace("SAME AS ", "");
-        eraData = tcgData.eras[refEra] || tcgData.eras[DEFAULT_ERA[col]];
-        if (!eraData || typeof eraData.zones === "string") return null;
-      }
-      // Convert JSON zones to code format: { camelKey: [x,y,w,h], ... }
-      const zones = {};
-      for (const [jsonKey, zoneInfo] of Object.entries(eraData.zones)) {
-        const codeKey = ZONE_KEY_MAP[jsonKey] || jsonKey;
-        if (zoneInfo.bbox) zones[codeKey] = zoneInfo.bbox;
-      }
-      return zones;
-    }
-
-    async function detectCardEra(col, base64Src, vlmZoneFn) {
-      const schemaKey = TCG_SCHEMA_KEY[col];
-      if (!schemaKey) return DEFAULT_ERA[col];
-      const eraConfig = tcgZoneSchema.era_detection[col];
-      if (!eraConfig) return DEFAULT_ERA[col];
-      // One Piece and Lorcana have stable layouts — skip VLM call
-      if (col === "onepiece" || col === "lorcana") return DEFAULT_ERA[col];
-      try {
-        const eraResponse = await vlmZoneFn(
-          base64Src,
-          [0.0, 0.0, 1.0, 1.0], // full card
-          eraConfig.prompt,
-          40,
-        );
-        const detected = eraResponse?.trim().toLowerCase().replace(/[\s-]+/g, "_") || "";
-        console.log("[TCG] Era detection raw:", eraResponse, "→ normalized:", detected);
-        // Validate against known eras
-        const tcgData = tcgZoneSchema.tcgs[schemaKey];
-        if (tcgData.eras[detected]) return detected;
-        // Fuzzy match: check if response contains an era name
-        for (const eraName of Object.keys(tcgData.eras)) {
-          if (detected.includes(eraName) || eraName.includes(detected)) return eraName;
+    // ─── Unified Structured Response Parser ─────────────────────────────
+    function parseStructured(vlmText) {
+      const fields = {};
+      for (const line of vlmText.split('\n')) {
+        const m = line.match(/^([A-Z][A-Z0-9_]+):\s*(.+)$/);
+        if (m) {
+          const val = m[2].trim();
+          if (val && val.toLowerCase() !== 'n/a' && val !== '-') {
+            fields[m[1]] = val;
+          }
         }
-        console.log("[TCG] Era not recognized, using default:", DEFAULT_ERA[col]);
-        return DEFAULT_ERA[col];
-      } catch (e) {
-        console.warn("[TCG] Era detection failed:", e);
-        return DEFAULT_ERA[col];
       }
+      return fields;
     }
+
+    // ─── Per-TCG Detail Builders ─────────────────────────────────────────
+    function buildPokemonDetails(fields) {
+      const details = [];
+      if (fields.STAGE) details.push({ label: "Stage", value: fields.STAGE });
+      if (fields.HP) details.push({ label: "HP", value: fields.HP.replace(/\D/g, '') });
+      if (fields.TYPE) details.push({ label: "Energy Type", value: fields.TYPE.split(/[\s,.]/)[0] });
+      if (fields.ERA && fields.ERA !== "scarlet_violet") details.push({ label: "Era", value: fields.ERA.replace(/_/g, " ") });
+
+      // Ability / Pokémon Power
+      if (fields.ABILITY_NAME) {
+        const isWotc = fields.ERA && ["base_wotc", "e_card"].includes(fields.ERA);
+        details.push({ label: isWotc ? "Pokémon Power" : "Ability", value: fields.ABILITY_NAME });
+        if (fields.ABILITY_TEXT && fields.ABILITY_TEXT.toLowerCase() !== "none") {
+          details.push({ label: "  Effect", value: fields.ABILITY_TEXT });
+        }
+      }
+
+      // Attacks
+      for (const i of [1, 2]) {
+        const name = fields[`ATTACK${i}_NAME`];
+        if (!name) continue;
+        const label = fields.ATTACK2_NAME ? `Attack ${i}` : "Attack";
+        details.push({ label, value: name });
+        if (fields[`ATTACK${i}_ENERGY`]) details.push({ label: "  Energy Cost", value: fields[`ATTACK${i}_ENERGY`] });
+        const dmg = fields[`ATTACK${i}_DAMAGE`];
+        if (dmg && dmg.toLowerCase() !== "none") details.push({ label: "  Damage", value: dmg });
+        const eff = fields[`ATTACK${i}_EFFECT`];
+        if (eff && eff.toLowerCase() !== "none") details.push({ label: "  Effect", value: eff });
+      }
+
+      if (fields.FLAVOR) details.push({ label: "Description", value: fields.FLAVOR });
+      if (fields.WEAKNESS && fields.WEAKNESS.toLowerCase() !== "none") details.push({ label: "Weakness", value: fields.WEAKNESS });
+      if (fields.RESISTANCE && fields.RESISTANCE.toLowerCase() !== "none") details.push({ label: "Resistance", value: fields.RESISTANCE });
+      details.push({ label: "Retreat Cost", value: fields.RETREAT ? `${fields.RETREAT} Colorless` : "0" });
+      if (fields.RARITY) details.push({ label: "Rarity", value: fields.RARITY });
+      if (fields.COLLECTOR) details.push({ label: "Collector #", value: fields.COLLECTOR });
+      if (fields.REGULATION) details.push({ label: "Regulation Mark", value: fields.REGULATION });
+      if (fields.EDITION) details.push({ label: "Edition", value: fields.EDITION });
+      return details;
+    }
+
+    function buildYugiohDetails(fields) {
+      const details = [];
+      if (fields.ATTRIBUTE) details.push({ label: "Attribute", value: fields.ATTRIBUTE.split(/[\s,.]/)[0] });
+      if (fields.LEVEL) details.push({ label: "Level / Rank", value: fields.LEVEL });
+      if (fields.MONSTER_TYPE) details.push({ label: "Monster Type", value: fields.MONSTER_TYPE });
+      if (fields.ATK) details.push({ label: "ATK", value: fields.ATK.replace(/\D/g, '') });
+      if (fields.DEF) details.push({ label: "DEF", value: fields.DEF.replace(/\D/g, '') });
+      if (fields.LINK_RATING) details.push({ label: "LINK", value: fields.LINK_RATING });
+      if (fields.LINK_ARROWS) details.push({ label: "Link Arrows", value: fields.LINK_ARROWS });
+      if (fields.PEND_SCALE) details.push({ label: "Pendulum Scale", value: fields.PEND_SCALE });
+      if (fields.PEND_EFFECT) details.push({ label: "Pendulum Effect", value: fields.PEND_EFFECT });
+      if (fields.SET_ID) details.push({ label: "Set ID", value: fields.SET_ID });
+      if (fields.EDITION) details.push({ label: "Edition", value: fields.EDITION });
+      if (fields.PASSCODE) details.push({ label: "Passcode", value: fields.PASSCODE });
+      if (fields.ERA && fields.ERA !== "series10_plus") details.push({ label: "Era", value: fields.ERA.replace(/_/g, " ") });
+      return details;
+    }
+
+    function buildMtgDetails(fields) {
+      const details = [];
+      if (fields.TYPE_LINE) details.push({ label: "Card Type", value: fields.TYPE_LINE });
+      if (fields.MANA_COST && fields.MANA_COST.toLowerCase() !== "none") details.push({ label: "Mana Cost", value: fields.MANA_COST });
+      if (fields.POWER_TOUGHNESS) details.push({ label: "Power / Toughness", value: fields.POWER_TOUGHNESS });
+      if (fields.LOYALTY) details.push({ label: "Loyalty", value: fields.LOYALTY });
+      if (fields.RARITY) details.push({ label: "Rarity", value: fields.RARITY.split(/[\s,.]/)[0] });
+      if (fields.HOLOFOIL) details.push({ label: "Holofoil Stamp", value: /yes/i.test(fields.HOLOFOIL) ? "Present" : "Absent" });
+      if (fields.COLLECTOR) details.push({ label: "Collector #", value: fields.COLLECTOR });
+      if (fields.SET_CODE) details.push({ label: "Set Code", value: fields.SET_CODE.match(/[A-Z]{3}/)?.[0] || fields.SET_CODE.trim() });
+      if (fields.ERA && fields.ERA !== "m15_current") details.push({ label: "Era", value: fields.ERA.replace(/_/g, " ") });
+      return details;
+    }
+
+    function buildOnepieceDetails(fields) {
+      const details = [];
+      if (fields.CARD_TYPE) details.push({ label: "Card Type", value: fields.CARD_TYPE.split(/[\s,.]/)[0] });
+      if (fields.COST) details.push({ label: "Cost", value: fields.COST });
+      if (fields.POWER) details.push({ label: "Power", value: fields.POWER });
+      if (fields.COLOR) details.push({ label: "Color", value: fields.COLOR.split(/[\s,.]/)[0] });
+      if (fields.TRAITS && fields.TRAITS.toLowerCase() !== "none") details.push({ label: "Traits", value: fields.TRAITS });
+      if (fields.COUNTER) details.push({ label: "Counter", value: fields.COUNTER });
+      if (fields.RARITY) details.push({ label: "Rarity", value: fields.RARITY });
+      if (fields.COLLECTOR) details.push({ label: "Collector #", value: fields.COLLECTOR });
+      return details;
+    }
+
+    function buildLorcanaDetails(fields) {
+      const details = [];
+      if (fields.CARD_TYPE) details.push({ label: "Card Type", value: fields.CARD_TYPE.split(/[\s,.]/)[0] });
+      if (fields.INK_COST) details.push({ label: "Ink Cost", value: fields.INK_COST });
+      details.push({ label: "Inkable", value: fields.INKABLE && /yes/i.test(fields.INKABLE) ? "Yes" : "No" });
+      if (fields.INK_TYPE) details.push({ label: "Ink Type", value: fields.INK_TYPE.split(/[\s,.]/)[0] });
+      if (fields.CLASSIFICATION && fields.CLASSIFICATION.toLowerCase() !== "none") details.push({ label: "Classification", value: fields.CLASSIFICATION });
+      if (fields.STRENGTH) details.push({ label: "Strength", value: fields.STRENGTH });
+      if (fields.WILLPOWER) details.push({ label: "Willpower", value: fields.WILLPOWER });
+      if (fields.LORE) details.push({ label: "Lore", value: fields.LORE });
+      if (fields.RARITY) details.push({ label: "Rarity", value: fields.RARITY.split(/[\s,.]/)[0] });
+      if (fields.COLLECTOR) details.push({ label: "Collector #", value: fields.COLLECTOR });
+      return details;
+    }
+
+    // Fallback zones for zone verification (collector#, rarity — bottom strip)
+    const FALLBACK_ZONES = {
+      pokemon: { collectorNum: [0.06, 0.88, 0.20, 0.04], rarity: [0.38, 0.88, 0.06, 0.04] },
+      yugioh: { passcode: [0.04, 0.88, 0.30, 0.04], setId: [0.55, 0.88, 0.40, 0.04] },
+      mtg: { collectorNum: [0.06, 0.88, 0.25, 0.04], setCode: [0.72, 0.88, 0.22, 0.04] },
+      onepiece: { collectorNum: [0.04, 0.88, 0.30, 0.04], rarity: [0.38, 0.88, 0.15, 0.04] },
+      lorcana: { collectorNum: [0.06, 0.90, 0.25, 0.04], rarity: [0.35, 0.90, 0.15, 0.04] },
+    };
 
     // ─── Main Analysis Pipeline ───────────────────────────────────────
     async function analyzeCard() {
@@ -1213,60 +1268,34 @@ export default {
       emit("status-update", "Analyzing card...");
 
       try {
-        // Step 1: Full-card text extraction via VLM (Qwen3.5-0.8B)
-        showNotification("Extracting text from front...", "info", 0);
-        const ocrRes = await fetch(`${API_BASE}/vision/analyze`, {
+        // ─── Phase 1: Structured Full-Card Extraction (1 VLM call) ─────
+        const col = selectedCollection.value;
+        const extractionPrompt = EXTRACTION_PROMPTS[col];
+        if (!extractionPrompt) throw new Error(`Unknown collection: ${col}`);
+
+        showNotification(`Analyzing ${TCG_REFERENCE[col]?.game || col} card...`, "info", 0);
+        const structuredRes = await fetch(`${API_BASE}/vision/analyze`, {
           method: "POST",
           headers: { "Content-Type": "application/json", ...getAuthHeaders() },
           body: JSON.stringify({
             image_base64: frontBase64.value,
-            prompt: "Read ALL text visible on this trading card. Transcribe every word exactly as printed, preserving line breaks. Include: card name, HP, stage, attacks, abilities, flavor text, set number, illustrator, and any symbols or numbers.",
-            max_tokens: 2048,
+            prompt: extractionPrompt,
+            max_tokens: 1000,
             auto_download: false,
           }),
         });
-        if (!ocrRes.ok) {
-          const errBody = await ocrRes.json().catch(() => ({}));
-          throw new Error(errBody.error || `Text extraction failed (HTTP ${ocrRes.status})`);
+        if (!structuredRes.ok) {
+          const errBody = await structuredRes.json().catch(() => ({}));
+          throw new Error(errBody.error || `Structured extraction failed (HTTP ${structuredRes.status})`);
         }
-        let frontRawText = (await ocrRes.json()).response || "";
-        let rawText = frontRawText;
-        console.log("[TCGAnalysis] Front VLM text:", frontRawText.substring(0, 500));
+        const structuredText = (await structuredRes.json()).response || "";
+        const rawText = structuredText;
+        console.log("[TCGAnalysis] Structured extraction response:", structuredText.substring(0, 800));
 
-        // Step 1b: Text extraction on back if available
-        let backRawText = "";
-        if (backBase64.value) {
-          showNotification("Extracting text from back...", "info", 0);
-          try {
-            const backOcrRes = await fetch(`${API_BASE}/vision/analyze`, {
-              method: "POST",
-              headers: { "Content-Type": "application/json", ...getAuthHeaders() },
-              body: JSON.stringify({
-                image_base64: backBase64.value,
-                prompt: "Read ALL text visible on the back of this trading card. Transcribe every word exactly as printed.",
-                max_tokens: 1024,
-                auto_download: false,
-              }),
-            });
-            if (backOcrRes.ok) {
-              backRawText = (await backOcrRes.json()).response || "";
-              rawText += "\n\n--- BACK OF CARD ---\n" + backRawText;
-            }
-          } catch (e) { console.warn("[TCGAnalysis] Back text extraction failed:", e); }
-        }
+        const fields = parseStructured(structuredText);
+        console.log("[TCGAnalysis] Parsed fields:", Object.keys(fields).join(", "));
 
-        // ─── Step 2: Hybrid zone + full-card extraction ─────────────
-        // Use the full-card OCR as primary text, plus targeted zone OCR
-        // for critical fields (name, bottom strip). All calls are SEQUENTIAL
-        // to avoid overloading the single-threaded Flask server.
-        showNotification("Identifying card...", "info", 0);
-        const col = selectedCollection.value;
-
-        // Full-card OCR parsed into lines and flat text
-        const ocrLines = frontRawText.split("\n").map(l => l.trim()).filter(Boolean);
-        const ocrFlat = frontRawText.replace(/\n+/g, " ").trim();
-
-        // ── Canvas ROI cropper ────────────────────────────────────
+        // ── Canvas ROI cropper (for zone verification) ────────────
         async function cropZone(base64Src, bbox) {
           return new Promise((resolve) => {
             const img = new Image();
@@ -1276,7 +1305,6 @@ export default {
               const sy = Math.round(bbox[1] * img.naturalHeight);
               const sw = Math.max(Math.round(bbox[2] * img.naturalWidth), 1);
               const sh = Math.max(Math.round(bbox[3] * img.naturalHeight), 1);
-              // Upscale small zones for better OCR (min 200px wide)
               const scale = sw < 200 ? Math.ceil(200 / sw) : 1;
               canvas.width = sw * scale;
               canvas.height = sh * scale;
@@ -1290,22 +1318,7 @@ export default {
           });
         }
 
-        // ── OCR a single cropped zone via VLM ──────────
-        async function ocrZone(base64Src, bbox) {
-          const cropped = await cropZone(base64Src, bbox);
-          if (!cropped) return "";
-          try {
-            const res = await fetch(`${API_BASE}/vision/analyze`, {
-              method: "POST",
-              headers: { "Content-Type": "application/json", ...getAuthHeaders() },
-              body: JSON.stringify({ image_base64: cropped, prompt: "Read ALL text in this image. Transcribe exactly as printed, nothing else.", max_tokens: 256, auto_download: false }),
-            });
-            if (res.ok) return ((await res.json()).response || "").trim();
-          } catch (e) { console.warn("[TCGAnalysis] Zone OCR failed:", e); }
-          return "";
-        }
-
-        // ── VLM a single cropped zone (with 202 retry) ──────────
+        // ── VLM a single cropped zone ──────────
         async function vlmZone(base64Src, bbox, prompt, maxTok = 60) {
           const cropped = await cropZone(base64Src, bbox);
           if (!cropped) return "";
@@ -1320,554 +1333,95 @@ export default {
           return "";
         }
 
-        // Helper: extract a field from VLM response
-        function extractField(text, field) {
-          const patterns = [
-            new RegExp(`(?:[\\*\\-\\s]*)?(?:${field})(?:\\**)\\s*[:=\\-–]\\s*(.+?)(?:\\n|$)`, "i"),
-            new RegExp(`(?:${field})\\s+(.+?)(?:\\n|$)`, "i"),
-          ];
-          for (const re of patterns) {
-            const m = text.match(re);
-            if (m && m[1]) {
-              const val = m[1].trim().replace(/\*+/g, "").replace(/^[-–:]\s*/, "").trim();
-              if (val && val !== "-" && val.toLowerCase() !== "n/a") return val;
+        // ─── Phase 2: Zone Verification (collector# + rarity) ────────
+        // Only runs for fields the full-card pass typically misses (tiny bottom-strip text).
+        const zones = FALLBACK_ZONES[col] || {};
+        const src = frontBase64.value;
+
+        // Verify collector number if Phase 1 missed it
+        const collectorKey = col === "yugioh" ? "PASSCODE" : "COLLECTOR";
+        if (!fields[collectorKey] && zones.collectorNum) {
+          showNotification("Verifying collector number...", "info", 0);
+          const collPrompt = col === "yugioh"
+            ? "What 8-digit number is printed here? Reply with ONLY the 8 digits, nothing else."
+            : col === "onepiece"
+              ? "What is the collector number? Format: OPXX-XXX (e.g. OP01-001). Reply with ONLY the code, nothing else."
+              : "What is the collector number shown? Format: XXX/YYY. Reply with ONLY the number, nothing else.";
+          const collText = await vlmZone(src, zones.collectorNum, collPrompt, 15);
+          if (collText) {
+            if (col === "yugioh") {
+              const m = collText.match(/(\d{8})/);
+              if (m) fields.PASSCODE = m[1];
+            } else if (col === "onepiece") {
+              const m = collText.match(/(OP\d{2}-\d{3})/i);
+              if (m) fields.COLLECTOR = m[1];
+            } else {
+              const m = collText.match(/(\d{1,3}\s*\/\s*\d{1,3})/);
+              if (m) fields.COLLECTOR = m[0].replace(/\s/g, "");
             }
           }
-          return "";
+        }
+        // Verify set ID for Yu-Gi-Oh! if missed
+        if (col === "yugioh" && !fields.SET_ID && zones.setId) {
+          const setIdText = await vlmZone(src, zones.setId, "What is the set ID code printed here? Format like 'ROTD-EN025'. Reply with ONLY the code, nothing else.", 20);
+          const m = setIdText?.match(/([A-Z0-9]{2,5}-[A-Z]{2}\d{2,4})/i);
+          if (m) fields.SET_ID = m[0];
         }
 
-        // Helper: clean OCR text — strip noise, normalize
-        function cleanOcr(t) { return t.replace(/[^\x20-\x7E\u00C0-\u024F''·—–×+◆◇♦★☆●\n]/g, "").trim(); }
+        // Verify rarity if Phase 1 missed it
+        if (!fields.RARITY && zones.rarity) {
+          showNotification("Verifying rarity...", "info", 0);
+          const rarityPrompt = col === "pokemon"
+            ? "What rarity symbol is shown? Reply with ONE of: Common, Uncommon, Rare, Double Rare, Ultra Rare, Illustration Rare, Special Art Rare, Hyper Rare, Crown Rare. Reply with ONLY the rarity name."
+            : col === "onepiece"
+              ? "What rarity letter code is shown? Reply with ONLY one of: C, UC, R, SR, SEC, L, SP, P, TR."
+              : col === "lorcana"
+                ? "What color is the small gem icon? Reply: Common, Uncommon, Rare, Super Rare, Legendary, or Enchanted."
+                : "What is the rarity? Reply with ONLY the rarity name.";
+          const rarityText = await vlmZone(src, zones.rarity, rarityPrompt, 20);
+          if (rarityText && !/^none$/i.test(rarityText.trim())) {
+            fields.RARITY = rarityText.replace(/[()●◆★]/g, "").trim();
+          }
+        }
 
-        // ─── Phase 1.5: Era Detection ────────────────────────────
-        // Detect the card's era BEFORE zone extraction so we use correct coordinates.
-        showNotification("Detecting card era...", "info", 0);
-        const detectedEra = await detectCardEra(col, frontBase64.value, vlmZone);
-        console.log("[TCG] Detected era:", detectedEra);
+        console.log("[TCGAnalysis] After zone verification:", Object.keys(fields).join(", "));
 
-        // Load era-specific zones from JSON schema, with hardcoded fallback
-        const FALLBACK_ZONES = {
-          pokemon: { stage: [0.03, 0.02, 0.18, 0.06], name: [0.15, 0.02, 0.50, 0.06], hp: [0.60, 0.02, 0.20, 0.06], typeIcon: [0.82, 0.02, 0.10, 0.06], evolves: [0.03, 0.08, 0.30, 0.04], attacks: [0.06, 0.54, 0.88, 0.22], weakness: [0.06, 0.78, 0.28, 0.04], resist: [0.34, 0.78, 0.28, 0.04], retreat: [0.66, 0.78, 0.28, 0.04], collectorNum: [0.06, 0.88, 0.20, 0.04], rarity: [0.38, 0.88, 0.06, 0.04], regMark: [0.44, 0.88, 0.06, 0.04] },
-          yugioh: { name: [0.06, 0.02, 0.72, 0.07], attrIcon: [0.82, 0.02, 0.14, 0.07], levelStars: [0.30, 0.09, 0.66, 0.05], typeLine: [0.06, 0.52, 0.88, 0.05], effectText: [0.06, 0.57, 0.88, 0.22], atk: [0.06, 0.80, 0.40, 0.05], def: [0.50, 0.80, 0.40, 0.05], passcode: [0.04, 0.88, 0.30, 0.04], setId: [0.55, 0.88, 0.40, 0.04], edition: [0.04, 0.92, 0.30, 0.03] },
-          mtg: { name: [0.06, 0.02, 0.60, 0.07], manaCost: [0.60, 0.02, 0.36, 0.07], typeLine: [0.06, 0.48, 0.76, 0.05], setSymbol: [0.84, 0.48, 0.10, 0.05], rulesText: [0.06, 0.54, 0.88, 0.28], pt: [0.78, 0.80, 0.16, 0.06], collectorNum: [0.06, 0.88, 0.25, 0.04], setCode: [0.72, 0.88, 0.22, 0.04] },
-          onepiece: { cost: [0.03, 0.02, 0.10, 0.08], name: [0.16, 0.02, 0.55, 0.06], typeTags: [0.16, 0.08, 0.70, 0.04], typeBanner: [0.04, 0.58, 0.30, 0.05], effectText: [0.06, 0.63, 0.88, 0.16], power: [0.04, 0.80, 0.20, 0.06], counter: [0.26, 0.80, 0.16, 0.06], collectorNum: [0.04, 0.88, 0.30, 0.04], rarity: [0.38, 0.88, 0.15, 0.04] },
-          lorcana: { inkCost: [0.03, 0.02, 0.10, 0.09], inkable: [0.01, 0.01, 0.14, 0.11], name: [0.16, 0.02, 0.55, 0.06], subtitle: [0.16, 0.07, 0.55, 0.04], strength: [0.86, 0.20, 0.10, 0.08], willpower: [0.86, 0.30, 0.10, 0.08], cardType: [0.06, 0.55, 0.30, 0.05], classif: [0.06, 0.59, 0.88, 0.04], lore: [0.06, 0.82, 0.10, 0.06], collectorNum: [0.06, 0.90, 0.25, 0.04], rarity: [0.35, 0.90, 0.15, 0.04] },
-        };
-        const eraZones = getZonesForEra(col, detectedEra);
-        const ZONES = {};
-        ZONES[col] = eraZones || FALLBACK_ZONES[col];
-        console.log("[TCG] Using zones for era:", detectedEra, "| keys:", Object.keys(ZONES[col] || {}).join(", "));
-
-        // ─── Targeted VLM extraction per zone ─────────────────────
-        // Each zone is cropped and the VLM is asked a SPECIFIC question.
-        // All calls are sequential (Flask single-threaded).
+        // ─── Build details from parsed fields ─────────────────────────
         let cardName = "";
         let cardGame = TCG_REFERENCE[col]?.game || "";
         let cardSet = "";
-        let cardRarity = "";
-        let cardEra = detectedEra;
-        const details = [];
-        const src = frontBase64.value;
+        let cardRarity = fields.RARITY || "";
+        let cardEra = fields.ERA || "";
+        let details = [];
 
         if (col === "pokemon") {
-          // ── Pokémon: Targeted VLM zone extraction ─────────────────
-          const z = ZONES[col];
-          showNotification("Reading card data (Pokémon)...", "info", 0);
-
-          // WotC-era (base_wotc) detection flag — affects prompts, fallbacks, and zone reads
-          const isWotcEra = ["base_wotc", "e_card"].includes(detectedEra);
-
-          // 1. Name (CRITICAL) — bold text top-center, supplement with full-card OCR
-          const namePrompt = isWotcEra
-            ? "What is the Pokémon name printed here? Reply with ONLY the name, nothing else."
-            : "What is the Pokémon name printed here? Include suffixes like ex, V, VSTAR, VMAX, GX if present. Reply with ONLY the name, nothing else.";
-          const zoneNameRaw = await vlmZone(src, z.name, namePrompt, 30);
-          // Full-card OCR often captures WotC names better — extract from raw text as fallback
-          const ocrNameMatch = ocrFlat.match(/^([A-Z][a-z]+(?:\s[A-Z][a-z]+)?)\s/)?.[1];
-          cardName = zoneNameRaw?.trim() || ocrNameMatch || "";
-          // If zone name looks like noise but OCR has a clean name, prefer OCR
-          if (cardName.length < 2 || /^\d|error|sorry/i.test(cardName)) cardName = ocrNameMatch || cardName;
-          console.log("[TCG] Pokemon name (zone:", zoneNameRaw, "| ocr:", ocrNameMatch, "| final:", cardName, ")");
-
-          // 2. HP (CRITICAL) — era-aware; WotC uses "XX HP", modern uses "HP XXX"
-          // Try zone first, then fall back to full-card OCR extraction
-          const hpPrompt = isWotcEra
-            ? "What is the HP number shown? It may be formatted as '50 HP' or 'HP 50'. Reply with ONLY the number, nothing else."
-            : "What is the HP number shown? Reply with ONLY the number (e.g. 360), nothing else.";
-          const hpZone = await vlmZone(src, z.hp, hpPrompt, 10);
-          let hp = hpZone?.match(/(\d{2,4})/)?.[1] || "";
-          // Full-card OCR fallback for HP — especially important for WotC era
-          if (!hp) {
-            const ocrHpMatch = ocrFlat.match(/(\d{2,3})\s*HP|HP\s*(\d{2,4})/i);
-            hp = ocrHpMatch?.[1] || ocrHpMatch?.[2] || "";
-          }
-          console.log("[TCG] Pokemon HP (zone:", hpZone, "| final:", hp, ")");
-
-          // 3. Type icon (CRITICAL) — color classification
-          const energyType = await vlmZone(src, z.typeIcon, "What Pokémon energy type is this icon? Reply ONE word: Fire, Water, Grass, Lightning, Psychic, Fighting, Darkness, Metal, Dragon, Fairy, or Colorless.", 15);
-          console.log("[TCG] Pokemon type:", energyType);
-
-          // 4. Stage badge
-          const stageZone = z.stage ? await vlmZone(src, z.stage, "What stage is shown on this badge? Reply with ONLY one of: Basic, Stage 1, Stage 2, ex, V, VSTAR, VMAX, GX. Nothing else.", 15) : "";
-          let stage = stageZone?.replace(/[^A-Za-z0-9\s]/g, "").trim() || "";
-          // OCR fallback for stage
-          if (!stage) {
-            const ocrStage = ocrFlat.match(/\b(Basic|Stage\s*[12]|BASIC|STAGE\s*[12])\b/i)?.[1];
-            if (ocrStage) stage = ocrStage;
-          }
-
-          // 5+6. Ability/Power + Attacks — SINGLE combined VLM call (all eras)
-          // Merging these into one call reduces VLM overhead and avoids confusing
-          // the 0.8B model with too many sequential requests.
-          // Expand attacks bbox upward by 6% to capture ability text above attacks.
-          const atkBox = z.attacks || [0.06, 0.54, 0.88, 0.22];
-          const combinedBbox = [atkBox[0], Math.max(0, atkBox[1] - 0.06), atkBox[2], Math.min(1 - (atkBox[1] - 0.06), atkBox[3] + 0.06)];
-          const abilityLabel = isWotcEra ? "Pokémon Power" : "Ability";
-          const combinedPrompt = `Read the text area of this Pokémon card and list what you see.
-
-1. If there is an ${abilityLabel} section (labeled "${abilityLabel}" in red), reply:
-ABILITY_NAME: [name]
-ABILITY_TEXT: [effect text]
-
-2. For EACH attack (has energy cost circles on the left), reply:
-ATTACK_NAME: [name]
-ENERGY_COST: [e.g. "1 Fire, 2 Colorless"]
-DAMAGE: [number, or "none"]
-EFFECT: [text below attack name, or "none"]
-
-Separate sections with a blank line. If no ${abilityLabel}, skip it entirely.`;
-          const combinedText = await vlmZone(src, combinedBbox, combinedPrompt, 600);
-          console.log("[TCG] Pokemon combined ability+attacks raw:", combinedText);
-
-          // Parse combined output — ability section + attack sections
-          let pokemonPower = null;
-          const attackEntries = [];
-          if (combinedText && !/^none$/i.test(combinedText.trim())) {
-            const blocks = combinedText.split(/\n\s*\n/).filter(Boolean);
-            for (const block of blocks) {
-              const lines = block.split("\n").map(l => l.trim()).filter(Boolean);
-              // Check if this block is an ability
-              const aName = lines.find(l => /^ABILITY_NAME:/i.test(l))?.replace(/^ABILITY_NAME:\s*/i, "").trim();
-              if (aName) {
-                const aText = lines.find(l => /^ABILITY_TEXT:/i.test(l))?.replace(/^ABILITY_TEXT:\s*/i, "").trim();
-                pokemonPower = { name: aName, text: aText || "" };
-                continue;
-              }
-              // Otherwise parse as attack
-              const atkName = lines.find(l => /^ATTACK_NAME:/i.test(l))?.replace(/^ATTACK_NAME:\s*/i, "").trim();
-              const atkEnergy = lines.find(l => /^ENERGY_COST:/i.test(l))?.replace(/^ENERGY_COST:\s*/i, "").trim();
-              const atkDamage = lines.find(l => /^DAMAGE:/i.test(l))?.replace(/^DAMAGE:\s*/i, "").trim();
-              const atkEffect = lines.find(l => /^EFFECT:/i.test(l))?.replace(/^EFFECT:\s*/i, "").trim();
-              if (atkName) {
-                attackEntries.push({ name: atkName, energy: atkEnergy || "", damage: atkDamage || "", effect: atkEffect || "" });
-              }
-            }
-          }
-          // OCR fallbacks for ability
-          if (!pokemonPower) {
-            const ocrPower = ocrFlat.match(/Pok[eé]mon\s*Power[:\s]+(\w[\w\s]+?)(?:\s{2,}|\.)/i);
-            const ocrAbility = ocrFlat.match(/Ability[:\s]+(\w[\w\s]+?)(?:\s{2,}|\.)/i);
-            if (ocrPower) pokemonPower = { name: ocrPower[1].trim(), text: "" };
-            else if (ocrAbility) pokemonPower = { name: ocrAbility[1].trim(), text: "" };
-          }
-          // OCR fallback for attacks if VLM found nothing
-          if (attackEntries.length === 0) {
-            const ocrAtkMatches = ocrFlat.match(/([A-Z][a-z]+(?:\s[A-Z][a-z]+)?)\s+(\d{1,3}[+×]?)/g);
-            if (ocrAtkMatches) {
-              for (const m of ocrAtkMatches) {
-                const parts = m.match(/(.+?)\s+(\d{1,3}[+×]?)$/);
-                if (parts) attackEntries.push({ name: parts[1].trim(), energy: "", damage: parts[2], effect: "" });
-              }
-            }
-          }
-
-          // 7. Flavor text — OCR-only extraction (no dedicated VLM call)
-          let flavorText = "";
-          const ocrFlavor = ocrFlat.match(/(?:Pokédex|Pokémon|fossil|ancient|creature)[^.]*\./i)?.[0]
-            || ocrFlat.match(/[""]([^""]+)[""]/)?.[ 1];
-          if (ocrFlavor && ocrFlavor.length > 15) flavorText = ocrFlavor.trim();
-
-          // 8. Weakness — type icon + ×2
-          const weaknessText = await vlmZone(src, z.weakness, `What weakness is shown? It is a small energy type icon followed by ×2. Examples: "Grass ×2", "Water ×2", "Fighting ×2". Reply with ONLY the energy type and modifier. If there is NO weakness shown, reply 'none'. Do NOT confuse this with attack names or other text nearby.`, 20);
-          let weakness = "";
-          if (weaknessText && !/^none$/i.test(weaknessText.trim()) && !/scratch|attack/i.test(weaknessText)) {
-            weakness = weaknessText.trim();
-          }
-          // OCR fallback for weakness
-          if (!weakness) {
-            const ocrWeak = ocrFlat.match(/[Ww]eakness[:\s]*([\w]+\s*×?\s*\d*)/);
-            if (ocrWeak) weakness = ocrWeak[1].trim();
-          }
-
-          // 9. Resistance — type icon + −30 (may be blank/none)
-          const resistText = await vlmZone(src, z.resist, `What resistance is shown? It is a small energy type icon followed by −30 or -30. Examples: "Fighting −30", "Lightning −30". Reply with ONLY the energy type and modifier. If the resistance area is BLANK or says "none", reply 'none'. Do NOT confuse this with attack names.`, 20);
-          let resistance = "";
-          if (resistText && !/^none$/i.test(resistText.trim()) && !/scratch|attack/i.test(resistText)) {
-            resistance = resistText.trim();
-          }
-
-          // 10. Retreat cost — expressed as energy cards
-          const retreatText = await vlmZone(src, z.retreat, "How many Colorless energy circles are shown for the retreat cost? Reply like '2 Colorless' or '0' if none. ONLY the count and type, nothing else.", 15);
-          const retreatCount = retreatText?.match(/(\d)/)?.[1] || "0";
-          const retreatCost = retreatCount === "0" ? "0" : `${retreatCount} Colorless`;
-
-          // 11. Collector number — format XXX/YYY
-          const collNumText = await vlmZone(src, z.collectorNum, "What is the collector number shown? Format: XXX/YYY. Reply with ONLY the number, nothing else.", 15);
-          const collectorNum = collNumText?.match(/(\d{1,3}\s*\/\s*\d{1,3})/)?.[0]?.replace(/\s/g, "") || "";
-
-          // 12. Regulation mark — single letter (sun_moon+ eras only)
-          let regMark = "";
-          const hasRegMark = ["sun_moon", "sword_shield", "scarlet_violet", "mega_evolution"].includes(detectedEra);
-          if (hasRegMark && z.regMark) {
-            const regMarkText = await vlmZone(src, z.regMark, "What single letter regulation mark is shown? Reply with ONLY the letter (A-I), nothing else.", 5);
-            regMark = regMarkText?.match(/([A-I])/)?.[1] || "";
-          }
-
-          // 13. Rarity — symbol classification (● = Common, ◆ = Uncommon, ★ = Rare, etc.)
-          if (z.rarity) {
-            const rarityText = await vlmZone(src, z.rarity, "What rarity symbol is shown? Reply with ONE of: Common (circle ●), Uncommon (diamond ◆), Rare (star ★), Double Rare, Ultra Rare, Illustration Rare, Special Art Rare, Hyper Rare, Crown Rare. Reply with ONLY the rarity name, nothing else.", 20);
-            cardRarity = rarityText?.replace(/[()●◆★]/g, "").trim() || "";
-          }
-          console.log("[TCG] Pokemon rarity:", cardRarity);
-
-          // 14. Era-specific fields
-          let firstEdition = "";
-          if (detectedEra === "base_wotc" && z.firstEdition) {
-            const edText = await vlmZone(src, z.firstEdition, "Is there a '1st Edition' stamp (circled number 1) at the bottom-left of the art window? Reply 'yes' or 'no'.", 5);
-            firstEdition = /yes/i.test(edText) ? "1st Edition" : "Unlimited";
-          }
-
-          // GX attack zone for sun_moon era
-          if (detectedEra === "sun_moon" && z.gxAttack) {
-            const gxText = await vlmZone(src, z.gxAttack, "What is the GX attack name and text shown here? Reply with the attack name, then a colon, then the effect text. If no GX attack, reply 'none'.", 120);
-            if (gxText && !/^none$/i.test(gxText.trim())) {
-              attackEntries.push({ name: gxText.split(":")[0]?.trim() || "GX Attack", energy: "", damage: "", effect: gxText.split(":").slice(1).join(":").trim() || "", isGX: true });
-            }
-          }
-
-          // VSTAR power zone for sword_shield era
-          if (detectedEra === "sword_shield" && z.vstarPower) {
-            const vstarText = await vlmZone(src, z.vstarPower, "What is the VSTAR Power name and text shown here? Reply with the name, then a colon, then the effect text. If no VSTAR Power, reply 'none'.", 120);
-            if (vstarText && !/^none$/i.test(vstarText.trim())) {
-              pokemonPower = pokemonPower || { name: "", text: "" };
-              // Add as a separate VSTAR Power entry
-              details.push({ label: "VSTAR Power", value: vstarText });
-            }
-          }
-
-          // ── Build details — ordered: info → power → attacks → bottom bar ──
-          const topFields = [];
-          if (stage) topFields.push({ label: "Stage", value: stage });
-          if (hp) topFields.push({ label: "HP", value: hp });
-          if (energyType) topFields.push({ label: "Energy Type", value: energyType?.split(/[\s,.]/)[0] || "" });
-          if (detectedEra !== DEFAULT_ERA.pokemon) topFields.push({ label: "Era", value: detectedEra.replace(/_/g, " ") });
-          details.unshift(...topFields);
-
-          // Pokémon Power / Ability
-          if (pokemonPower) {
-            const powerLabel = isWotcEra ? "Pokémon Power" : "Ability";
-            details.push({ label: powerLabel, value: pokemonPower.name });
-            if (pokemonPower.text && pokemonPower.text.toLowerCase() !== "none") {
-              details.push({ label: "  Effect", value: pokemonPower.text });
-            }
-          }
-
-          // Attacks — each attack as a numbered section with sub-fields
-          for (let i = 0; i < attackEntries.length; i++) {
-            const atk = attackEntries[i];
-            const atkLabel = atk.isGX ? "GX Attack" : (attackEntries.length > 1 ? `Attack ${i + 1}` : "Attack");
-            details.push({ label: atkLabel, value: atk.name });
-            if (atk.energy) details.push({ label: "  Energy Cost", value: atk.energy });
-            if (atk.damage && atk.damage.toLowerCase() !== "none") details.push({ label: "  Damage", value: atk.damage });
-            if (atk.effect && atk.effect.toLowerCase() !== "none") details.push({ label: "  Effect", value: atk.effect });
-          }
-          // Fallback if no attacks parsed at all
-          if (attackEntries.length === 0 && attacksText) {
-            details.push({ label: "Attacks", value: attacksText });
-          }
-
-          // Flavor text / description
-          if (flavorText) details.push({ label: "Description", value: flavorText });
-
-          // Bottom bar fields
-          if (weakness) details.push({ label: "Weakness", value: weakness });
-          if (resistance) details.push({ label: "Resistance", value: resistance });
-          details.push({ label: "Retreat Cost", value: retreatCost });
-          if (cardRarity) details.push({ label: "Rarity", value: cardRarity });
-          if (collectorNum) details.push({ label: "Collector #", value: collectorNum });
-          if (regMark) details.push({ label: "Regulation Mark", value: regMark });
-          if (firstEdition) details.push({ label: "Edition", value: firstEdition });
-
+          cardName = fields.NAME || "";
+          details = buildPokemonDetails(fields);
         } else if (col === "yugioh") {
-          // ── Yu-Gi-Oh!: Targeted VLM zone extraction ──────────────
-          const z = ZONES[col];
-          const ref = TCG_REFERENCE.yugioh;
-          const exCards = ref.exampleCards.map(c => `${c.name} (${c.attribute}, Lv${c.level}, ATK ${c.atk})`).join("; ");
-          showNotification("Reading card data (Yu-Gi-Oh!)...", "info", 0);
-
-          // 1. Name (CRITICAL)
-          cardName = await vlmZone(src, z.name, `What is the card name printed here? Examples: ${exCards}. Reply with ONLY the name, nothing else.`, 40);
-
-          // 2. Attribute icon (CRITICAL) — color classification
-          const attribute = await vlmZone(src, z.attrIcon, "What Yu-Gi-Oh! attribute is this icon? Reply ONE word: DARK, LIGHT, FIRE, WATER, WIND, EARTH, DIVINE, SPELL, or TRAP.", 15);
-
-          // 3. Level/Rank stars — count
-          const levelText = z.levelStars ? await vlmZone(src, z.levelStars, "How many stars are shown? Reply with ONLY the number (1-12), nothing else. If no stars, reply '0'.", 5) : "";
-          const level = levelText?.match(/(\d{1,2})/)?.[1] || "";
-
-          // 4. Type/ability line — bracketed text
-          const typeLine = z.typeLine ? await vlmZone(src, z.typeLine, "Read the bracketed text on this line exactly as printed. E.g. '[Dragon / Effect]'. Reply with ONLY the bracketed text.", 60) : "";
-
-          // 5. ATK
-          const atkText = z.atk ? await vlmZone(src, z.atk, "What is the ATK value shown? Format: ATK/XXXX. Reply with ONLY the number, nothing else.", 15) : "";
-          const atk = atkText?.match(/(\d{1,5})/)?.[1] || "";
-
-          // 6. DEF or LINK
-          const defText = z.def ? await vlmZone(src, z.def, "What is shown here — DEF/XXXX or LINK-X? Reply with ONLY 'DEF XXXX' or 'LINK X', nothing else.", 15) : "";
-          const defM = defText?.match(/DEF\s*(\d{1,5})/i);
-          const linkM = defText?.match(/LINK\s*(\d)/i);
-
-          // 7. Passcode (CRITICAL) — 8-digit
-          const passcodeText = z.passcode ? await vlmZone(src, z.passcode, "What 8-digit number is printed here? Reply with ONLY the 8 digits, nothing else.", 15) : "";
-          const passcode = passcodeText?.match(/(\d{8})/)?.[1] || "";
-
-          // 8. Set ID (CRITICAL) — SETCODE-LANGXXX
-          const setIdText = z.setId ? await vlmZone(src, z.setId, "What is the set ID code printed here? Format like 'ROTD-EN025'. Reply with ONLY the code, nothing else.", 20) : "";
-          const setId = setIdText?.match(/([A-Z0-9]{2,5}-[A-Z]{2}\d{2,4})/i)?.[0] || setIdText?.trim() || "";
-
-          // 9. Edition
-          const editionText = z.edition ? await vlmZone(src, z.edition, "Is '1st Edition' printed here? Reply '1st Edition' or 'Unlimited' or 'none'.", 15) : "";
-          const edition = editionText?.match(/(1st\s*Edition)/i)?.[1] || "";
-
-          // 10. Pendulum-specific zones (series9_pendulum era)
-          let pendScaleL = "", pendScaleR = "", pendEffect = "";
-          if (detectedEra === "series9_pendulum") {
-            if (z.pendScaleL) {
-              const psl = await vlmZone(src, z.pendScaleL, "What number is shown in this Pendulum Scale indicator? Reply with ONLY the number (0-13), nothing else.", 5);
-              pendScaleL = psl?.match(/(\d{1,2})/)?.[1] || "";
-            }
-            if (z.pendScaleR) {
-              const psr = await vlmZone(src, z.pendScaleR, "What number is shown in this Pendulum Scale indicator? Reply with ONLY the number (0-13), nothing else.", 5);
-              pendScaleR = psr?.match(/(\d{1,2})/)?.[1] || "";
-            }
-            if (z.pendEffect) {
-              pendEffect = await vlmZone(src, z.pendEffect, "Read the Pendulum Effect text in this teal zone. Transcribe exactly as printed.", 200) || "";
-            }
-          }
-
-          // 11. Link Arrows (series10_plus era, Link monsters only)
-          let linkArrows = "";
-          if (detectedEra === "series10_plus" && z.linkArrows && linkM) {
-            linkArrows = await vlmZone(src, z.linkArrows, "What Link Arrow positions are active (red triangles)? Reply with compass positions separated by commas, from: Top, Top-Right, Right, Bottom-Right, Bottom, Bottom-Left, Left, Top-Left. ONLY list the active arrows.", 40) || "";
-          }
-
-          // Build details
-          if (attribute) details.push({ label: "Attribute", value: attribute?.split(/[\s,.]/)[0] || "" });
-          if (level && level !== "0") details.push({ label: "Level / Rank", value: level });
-          if (typeLine) details.push({ label: "Monster Type", value: typeLine });
-          if (atk) details.push({ label: "ATK", value: atk });
-          if (defM) details.push({ label: "DEF", value: defM[1] });
-          else if (linkM) details.push({ label: "LINK", value: linkM[1] });
-          if (linkArrows) details.push({ label: "Link Arrows", value: linkArrows });
-          if (pendScaleL || pendScaleR) details.push({ label: "Pendulum Scale", value: `${pendScaleL} / ${pendScaleR}` });
-          if (pendEffect) details.push({ label: "Pendulum Effect", value: pendEffect });
-          if (setId) details.push({ label: "Set ID", value: setId });
-          if (edition) details.push({ label: "Edition", value: edition });
-          if (passcode) details.push({ label: "Passcode", value: passcode });
-          if (detectedEra !== DEFAULT_ERA.yugioh) details.push({ label: "Era", value: detectedEra.replace(/_/g, " ") });
-
+          cardName = fields.NAME || "";
+          details = buildYugiohDetails(fields);
         } else if (col === "mtg") {
-          // ── MTG: Targeted VLM zone extraction ────────────────────
-          const z = ZONES[col];
-          const ref = TCG_REFERENCE.mtg;
-          const exCards = ref.exampleCards.map(c => `${c.name} (${c.manaCost}, ${c.cardType})`).join("; ");
-          showNotification("Reading card data (MTG)...", "info", 0);
-
-          // 1. Name (CRITICAL)
-          cardName = await vlmZone(src, z.name, `What is the card name printed here? Examples: ${exCards}. Reply with ONLY the name, nothing else.`, 40);
-
-          // 2. Mana cost (CRITICAL) — colored circles
-          const manaCost = await vlmZone(src, z.manaCost, "List the mana symbols shown using MTG notation: {W}=white, {U}=blue, {B}=black, {R}=red, {G}=green, {1}{2}{3}=generic. Reply with ONLY the mana cost string like '{2}{R}{R}', nothing else. If no mana cost, reply 'none'.", 30);
-
-          // 3. Type line (CRITICAL)
-          const typeLine = await vlmZone(src, z.typeLine, "Read the type line exactly as printed. E.g. 'Legendary Creature — Human Wizard'. Reply with ONLY the type line, nothing else.", 60);
-
-          // 4. Set symbol — rarity by color
-          const setSymbolRarity = await vlmZone(src, z.setSymbol, "What color is this set symbol? Reply ONE word: Black (Common), Silver (Uncommon), Gold (Rare), or Orange (Mythic Rare).", 15);
-
-          // 5. Power/Toughness or Loyalty
-          const ptText = await vlmZone(src, z.pt, "What number or fraction is shown in this box? For creatures reply 'X/Y' (power/toughness). For planeswalkers reply just the number (loyalty). If empty, reply 'none'.", 15);
-          const ptM = ptText?.match(/(\d{1,2})\s*\/\s*(\d{1,2})/);
-          const pt = ptM ? `${ptM[1]}/${ptM[2]}` : "";
-          const loyalty = (!pt && ptText?.match(/^\d{1,2}$/)) ? ptText.trim() : "";
-
-          // 6. Collector number
-          const collNumText = await vlmZone(src, z.collectorNum, "What is the collector number and rarity letter shown? Format: XXX/YYY C or R or U or M. Reply with ONLY that, nothing else.", 20);
-          const collectorNum = collNumText?.match(/(\d{1,3}\s*\/\s*\d{1,3})/)?.[0]?.replace(/\s/g, "") || "";
-
-          // 7. Set code (m15_current and modern_8th only — older eras may not have it)
-          const setCode = z.setCode ? await vlmZone(src, z.setCode, "What 3-letter set code is shown? Reply with ONLY the code like 'MKM' or 'ONE', nothing else.", 10) : "";
-
-          // 8. Holofoil stamp (m15_current only, Rare+ cards)
-          let holofoilStamp = "";
-          if (detectedEra === "m15_current" && z.holofoilStamp) {
-            const holoText = await vlmZone(src, z.holofoilStamp, "Is there a silver oval holofoil stamp at the bottom center of the card? Reply 'yes' or 'no'.", 5);
-            holofoilStamp = /yes/i.test(holoText) ? "Present" : "Absent";
-          }
-
-          // Build details
-          if (typeLine && typeLine.toLowerCase() !== "none") details.push({ label: "Card Type", value: typeLine });
-          if (manaCost && manaCost.toLowerCase() !== "none") details.push({ label: "Mana Cost", value: manaCost });
-          if (pt) details.push({ label: "Power / Toughness", value: pt });
-          else if (loyalty) details.push({ label: "Loyalty", value: loyalty });
-          if (setSymbolRarity) details.push({ label: "Rarity", value: setSymbolRarity?.split(/[\s,.]/)[0] || "" });
-          if (holofoilStamp) details.push({ label: "Holofoil Stamp", value: holofoilStamp });
-          if (collectorNum) details.push({ label: "Collector #", value: collectorNum });
-          if (setCode && setCode.toLowerCase() !== "none") details.push({ label: "Set Code", value: setCode?.match(/[A-Z]{3}/)?.[0] || setCode.trim() });
-          if (detectedEra !== DEFAULT_ERA.mtg) details.push({ label: "Era", value: detectedEra.replace(/_/g, " ") });
-
+          cardName = fields.NAME || "";
+          details = buildMtgDetails(fields);
         } else if (col === "onepiece") {
-          // ── One Piece: Targeted VLM zone extraction ──────────────
-          const z = ZONES[col];
-          const ref = TCG_REFERENCE.onepiece;
-          const exCards = ref.exampleCards.map(c => `${c.name} (${c.cardType}, ${c.color})`).join("; ");
-          showNotification("Reading card data (One Piece)...", "info", 0);
-
-          // 1. Name (CRITICAL)
-          cardName = await vlmZone(src, z.name, `What is the character/card name printed here? Examples: ${exCards}. Reply with ONLY the name, nothing else.`, 40);
-
-          // 2. Cost — large number in circle
-          const costText = await vlmZone(src, z.cost, "What number is inside this circle? Reply with ONLY the number (0-10), nothing else.", 5);
-          const cost = costText?.match(/(\d{1,2})/)?.[1] || "";
-
-          // 3. Type tags — slash-separated
-          const typeTags = await vlmZone(src, z.typeTags, "Read the trait tags printed here. They are slash-separated like 'Straw Hat Crew / Supernovas'. Reply with the full text, nothing else.", 60);
-
-          // 4. Card type banner — CHARACTER/EVENT/STAGE/LEADER
-          const cardType = await vlmZone(src, z.typeBanner, "What card type label is shown? Reply ONE word: CHARACTER, EVENT, STAGE, or LEADER.", 15);
-
-          // 5. Power — large number, thousands
-          const powerText = await vlmZone(src, z.power, "What power number is shown? Values are in thousands like 5000 or 8000. Reply with ONLY the number, nothing else. If none, reply 'none'.", 15);
-          const power = powerText?.match(/(\d{4,5})/)?.[1] || "";
-
-          // 6. Counter — shield with +1000/+2000
-          const counterText = await vlmZone(src, z.counter, "What counter value is shown on the shield? Reply '+1000' or '+2000' or 'none'.", 10);
-          const counter = counterText?.match(/\+\d{4}/)?.[0] || "";
-
-          // 7. Collector number — OPXX-XXX format
-          const collNumText = await vlmZone(src, z.collectorNum, "What is the collector number? Format: OPXX-XXX (e.g. OP01-001). Reply with ONLY the code, nothing else.", 15);
-          const collectorNum = collNumText?.match(/(OP\d{2}-\d{3})/i)?.[1] || collNumText?.trim() || "";
-
-          // 8. Rarity
-          const rarityText = await vlmZone(src, z.rarity, "What rarity letter code is shown? Reply with ONLY one of: C, UC, R, SR, SEC, L, SP, P, TR. Nothing else.", 5);
-          cardRarity = rarityText?.match(/\b(C|UC|R|SR|SEC|L|SP|P|TR)\b/)?.[1] || "";
-
-          // 9. Color identity — border color
-          const color = await vlmZone(src, [0.0, 0.0, 0.06, 1.0], "What color is this card border? Reply ONE word: Red, Green, Blue, Purple, Black, or Yellow.", 10);
-
-          // Build details
-          if (cardType) details.push({ label: "Card Type", value: cardType?.split(/[\s,.]/)[0] || "" });
-          if (cost) details.push({ label: "Cost", value: cost });
-          if (power) details.push({ label: "Power", value: power });
-          if (color) details.push({ label: "Color", value: color?.split(/[\s,.]/)[0] || "" });
-          if (typeTags && typeTags.toLowerCase() !== "none") details.push({ label: "Traits", value: typeTags });
-          if (counter) details.push({ label: "Counter", value: counter });
-          if (cardRarity) details.push({ label: "Rarity", value: cardRarity });
-          if (collectorNum) details.push({ label: "Collector #", value: collectorNum });
-
+          cardName = fields.NAME || "";
+          details = buildOnepieceDetails(fields);
         } else if (col === "lorcana") {
-          // ── Lorcana: Targeted VLM zone extraction ────────────────
-          const z = ZONES[col];
-          const ref = TCG_REFERENCE.lorcana;
-          const exCards = ref.exampleCards.map(c => `${c.name} (${c.inkType}, ${c.cardType})`).join("; ");
-          showNotification("Reading card data (Lorcana)...", "info", 0);
-
-          // 1. Name (CRITICAL)
-          const nameText = await vlmZone(src, z.name, `What is the character/card name printed here? Examples: ${exCards}. Reply with ONLY the name, nothing else.`, 30);
-
-          // 2. Subtitle (CRITICAL for unique ID)
-          const subtitleText = await vlmZone(src, z.subtitle, "What subtitle is printed below the name? It starts with an em-dash. Reply with ONLY the subtitle text (without the dash), or 'none' if blank.", 30);
-          cardName = subtitleText && subtitleText.toLowerCase() !== "none"
-            ? `${(nameText || "").trim()} — ${subtitleText.trim()}`
-            : (nameText || "").trim();
-
-          // 3. Ink cost — number in hex
-          const inkCostText = await vlmZone(src, z.inkCost, "What number is inside this hexagonal icon? Reply with ONLY the number (1-10), nothing else.", 5);
-          const inkCost = inkCostText?.match(/(\d{1,2})/)?.[1] || "";
-
-          // 4. Inkable boolean — ring fill detection
-          const inkableText = await vlmZone(src, z.inkable, "Is the ring around the ink cost hexagon FILLED with gold color, or is it an EMPTY outline? Reply 'inkable' if filled gold, or 'not inkable' if empty/outline.", 10);
-          const inkable = /inkable/i.test(inkableText) && !/not inkable/i.test(inkableText);
-
-          // 5. Ink type — border color
-          const inkType = await vlmZone(src, [0.0, 0.0, 0.06, 1.0], "What color is this card border? Reply ONE word: Amber, Amethyst, Emerald, Ruby, Sapphire, or Steel.", 10);
-
-          // 6. Strength (CHARACTER only)
-          const strText = await vlmZone(src, z.strength, "What number is shown inside this sun/starburst icon? Reply with ONLY the number, or 'none' if no icon is present.", 5);
-          const strength = strText?.match(/(\d{1,2})/)?.[1] || "";
-
-          // 7. Willpower (CHARACTER only)
-          const wilText = await vlmZone(src, z.willpower, "What number is shown inside this shield icon? Reply with ONLY the number, or 'none' if no icon is present.", 5);
-          const willpower = wilText?.match(/(\d{1,2})/)?.[1] || "";
-
-          // 8. Card type
-          const cardType = await vlmZone(src, z.cardType, "What card type is shown? Reply ONE word: Character, Action, Item, or Song.", 10);
-
-          // 9. Classifications — dot-separated traits
-          const classif = await vlmZone(src, z.classif, "Read the classification traits printed here, separated by dots. E.g. 'Storyborn · Hero · Princess'. Reply with the full text, nothing else.", 60);
-
-          // 10. Lore value (CHARACTER only) — diamond icon
-          const loreText = await vlmZone(src, z.lore, "What number is inside the diamond/lozenge icon? Reply with ONLY the number (1-4), or 'none' if not present.", 5);
-          const lore = loreText?.match(/(\d)/)?.[1] || "";
-
-          // 11. Collector number
-          const collNumText = await vlmZone(src, z.collectorNum, "What is the collector number shown? Format: XX/YYY. Reply with ONLY the number, nothing else.", 15);
-          const collectorNum = collNumText?.match(/(\d{1,3}\s*\/\s*\d{1,3})/)?.[0]?.replace(/\s/g, "") || "";
-
-          // 12. Rarity — gem color
-          const rarityText = await vlmZone(src, z.rarity, "What color is the small gem icon? Reply: None (Common), Bronze (Uncommon), Silver (Rare), Gold (Super Rare), or Teal (Legendary). If no gem, reply 'None'.", 15);
-
-          // Build details
-          if (cardType) details.push({ label: "Card Type", value: cardType?.split(/[\s,.]/)[0] || "" });
-          if (inkCost) details.push({ label: "Ink Cost", value: inkCost });
-          details.push({ label: "Inkable", value: inkable ? "Yes" : "No" });
-          if (inkType) details.push({ label: "Ink Type", value: inkType?.split(/[\s,.]/)[0] || "" });
-          if (classif && classif.toLowerCase() !== "none") details.push({ label: "Classification", value: classif });
-          if (strength) details.push({ label: "Strength", value: strength });
-          if (willpower) details.push({ label: "Willpower", value: willpower });
-          if (lore) details.push({ label: "Lore", value: lore });
-          if (rarityText) details.push({ label: "Rarity", value: rarityText?.split(/[\s,.]/)[0] || "" });
-          if (collectorNum) details.push({ label: "Collector #", value: collectorNum });
-
-        } else {
-          // Generic fallback — use VLM with short prompt on full card
-          try {
-            const vlmRes = await fetch(`${API_BASE}/vision/analyze`, {
-              method: "POST",
-              headers: { "Content-Type": "application/json", ...getAuthHeaders() },
-              body: JSON.stringify({ image_base64: frontBase64.value, prompt: "What is this card's NAME, TYPE, and RARITY? Reply only:\nCard Name: [name]\nCard Type: [type]\nRarity: [rarity]", max_tokens: 80, auto_download: false }),
-            });
-            if (vlmRes.ok) {
-              const vlmText = (await vlmRes.json()).response || "";
-              if (!cardName) cardName = extractField(vlmText, "Card Name");
-              const ct = extractField(vlmText, "Card Type");
-              cardRarity = extractField(vlmText, "Rarity") || cardRarity;
-              if (ct) details.push({ label: "Card Type", value: ct });
-            }
-          } catch (e) { /* */ }
-          if (cardRarity) details.push({ label: "Rarity", value: cardRarity });
+          cardName = fields.SUBTITLE
+            ? `${(fields.NAME || "").trim()} — ${fields.SUBTITLE.trim()}`
+            : (fields.NAME || "").trim();
+          details = buildLorcanaDetails(fields);
         }
 
-        // Final card name fallback — use first non-trivial OCR line from full-card OCR
+        // Final card name fallback
         if (!cardName) {
-          cardName = ocrLines.find(l => l.length > 2 && l.length < 60 &&
-            !/^(STAGE|Basic|Evolves|HP|\d{1,2}$|©|weakness|resistance|retreat|Illus|CHARACTER|EVENT|LEADER)/i.test(l)) || "Unknown Card";
+          cardName = "Unknown Card";
         }
 
         console.log("[TCGAnalysis] Extracted — Name:", cardName, "| Details:", details.length, "fields");
 
-        // Step 3: PGT Condition grading — grade front and back separately
-        showNotification("Grading front condition...", "info", 0);
+        // Step 3: PGT Condition grading
+        showNotification("Grading condition...", "info", 0);
         const sideGradePrompt = `Grade this trading card's physical condition. Use a scale from 100 (poor) to 1000 (pristine). A new card from a sealed pack is typically 850 to 950.
 
 Reply ONLY with these 4 lines, nothing else:
@@ -1879,9 +1433,6 @@ Edges: 860
 Replace the example numbers with your actual scores based on what you see. Check: border alignment (centering), corner sharpness vs wear (corners), scratches or print defects (surface), edge whitening or chips (edges).`;
 
         let frontGradeText = "";
-        let backGradeText = "";
-
-        // Grade front
         const frontGradeRes = await fetch(`${API_BASE}/vision/analyze`, {
           method: "POST",
           headers: { "Content-Type": "application/json", ...getAuthHeaders() },
@@ -1896,25 +1447,7 @@ Replace the example numbers with your actual scores based on what you see. Check
           frontGradeText = (await frontGradeRes.json()).response || "";
         }
 
-        // Grade back (if available)
-        if (backBase64.value) {
-          showNotification("Grading back condition...", "info", 0);
-          const backGradeRes = await fetch(`${API_BASE}/vision/analyze`, {
-            method: "POST",
-            headers: { "Content-Type": "application/json", ...getAuthHeaders() },
-            body: JSON.stringify({
-              image_base64: backBase64.value,
-              prompt: sideGradePrompt,
-              max_tokens: 200,
-              auto_download: false,
-            }),
-          });
-          if (backGradeRes.ok) {
-            backGradeText = (await backGradeRes.json()).response || "";
-          }
-        }
-
-        const grading = parseGrading(frontGradeText, backGradeText);
+        const grading = parseGrading(frontGradeText);
 
         // Build result
         scannedCard.value = {
@@ -1967,8 +1500,6 @@ Replace the example numbers with your actual scores based on what you see. Check
           thumbnail,
           fullImage: frontPreview.value,
           frontBase64: frontBase64.value,
-          backImage: backPreview.value,
-          backBase64: backBase64.value,
           date: new Date().toLocaleDateString(),
         });
         if (scanHistory.value.length > 20) scanHistory.value.pop();
@@ -2063,8 +1594,6 @@ Replace the example numbers with your actual scores based on what you see. Check
     function reset() {
       frontPreview.value = null;
       frontBase64.value = null;
-      backPreview.value = null;
-      backBase64.value = null;
       scannedCard.value = null;
       stopCamera();
     }
@@ -2073,8 +1602,6 @@ Replace the example numbers with your actual scores based on what you see. Check
       frontPreview.value = entry.fullImage || entry.thumbnail;
       frontBase64.value =
         entry.frontBase64 || entry.fullImage || entry.thumbnail;
-      backPreview.value = entry.backImage || null;
-      backBase64.value = entry.backBase64 || null;
       scannedCard.value = {
         name: entry.name,
         game: entry.game,
@@ -2165,8 +1692,6 @@ Replace the example numbers with your actual scores based on what you see. Check
       collections,
       frontPreview,
       frontBase64,
-      backPreview,
-      backBase64,
       isScanning,
       scanStatus,
       modelLoading,
@@ -2174,7 +1699,6 @@ Replace the example numbers with your actual scores based on what you see. Check
       cameraActive,
       scannedCard,
       scanHistory,
-      showBack,
       notification,
       formattedAnalysis,
       gradeColorClass,
@@ -2437,11 +1961,7 @@ Replace the example numbers with your actual scores based on what you see. Check
   justify-content: center;
 }
 
-/* ─── Card Flip (hover back over front) ──────────────────────────── */
-.card-flip-container {
-  position: relative;
-  cursor: pointer;
-}
+/* ─── Card Preview ───────────────────────────────────────────────── */
 .card-preview-container {
   position: relative;
   border-radius: 12px;
@@ -2449,38 +1969,11 @@ Replace the example numbers with your actual scores based on what you see. Check
   border: 1px solid rgba(155, 109, 200, 0.2);
   background: rgba(10, 5, 20, 0.4);
 }
-.card-back-overlay {
-  position: absolute;
-  inset: 0;
-  z-index: 2;
-}
 .card-preview-image {
   width: 100%;
   display: block;
   border-radius: 12px;
 }
-.card-side-label {
-  position: absolute;
-  bottom: 8px;
-  left: 8px;
-  background: rgba(0, 0, 0, 0.6);
-  color: rgba(255, 255, 255, 0.7);
-  padding: 2px 8px;
-  border-radius: 4px;
-  font-size: 0.7rem;
-  text-transform: uppercase;
-  letter-spacing: 0.05em;
-}
-.flip-hint {
-  display: block;
-  text-align: center;
-  font-size: 0.7rem;
-  color: rgba(255, 255, 255, 0.3);
-  margin-top: 6px;
-}
-.card-flip-enter-active { transition: opacity 0.25s ease; }
-.card-flip-leave-active { transition: opacity 0.2s ease; }
-.card-flip-enter-from, .card-flip-leave-to { opacity: 0; }
 
 /* ─── Card Title & Badge ──────────────────────────────────────────── */
 .card-title {

@@ -75,6 +75,7 @@ jobs:
         run: |
           pyinstaller \
             --onedir \
+            --strip \
             --distpath binaries/${{ env.OS_KEY }}-${{ env.ARCH_KEY }} \
             --workpath $RUNNER_TEMP/pybuild \
             --specpath $RUNNER_TEMP \
@@ -117,11 +118,13 @@ jobs:
           ls binaries/${{ env.OS_KEY }}-${{ env.ARCH_KEY }}/diffuser/_internal/ | head -20
 
       # PyInstaller has already bundled everything into the binary.
-      # Remove Python packages + CUDA libs to free ~10GB for Electron packaging.
+      # Remove Python packages, CUDA libs, pip cache, and PyInstaller workdir
+      # to free ~10GB+ for Electron packaging.
       - name: Free Python disk space
         run: |
           pip cache purge 2>/dev/null || true
           rm -rf $RUNNER_TEMP/pybuild
+          rm -rf ~/.cache/pip
           SITE_PKGS=$(python -c "import site; print(site.getsitepackages()[0])")
           echo "Removing $SITE_PKGS (~10GB of CUDA/torch packages)..."
           rm -rf "$SITE_PKGS"
@@ -164,6 +167,12 @@ jobs:
           ls -lh "$DEST/diffuser"
           echo "Internal deps: $(ls "$DEST/_internal/" | wc -l) items"
 
+      # Raw binaries are now duplicated inside out/BonzAI-linux-x64/resources/ — remove originals
+      - name: Remove duplicate binaries
+        run: |
+          rm -rf binaries/
+          df -h /
+
       - name: Build .deb package
         run: |
           TAG="${{ env.TAG }}"
@@ -193,14 +202,21 @@ jobs:
           echo "Package created:"
           ls -lh out/make/
 
-      # Free disk space before packaging: remove PyInstaller build cache
-      # and Python packages no longer needed (only the binary matters now)
-      - name: Reclaim disk space
+      # Unpacked app is redundant now that .deb is built
+      - name: Remove unpacked app
         run: |
-          rm -rf $RUNNER_TEMP/pybuild
-          pip cache purge 2>/dev/null || true
-          echo "Disk space after cleanup:"
+          rm -rf out/BonzAI-linux-x64/
           df -h /
+
+      - name: Disk report
+        if: always()
+        run: |
+          echo "=== Disk usage ==="
+          df -h
+          echo "=== Largest directories ==="
+          du -sh /home/runner/work/*/*/* 2>/dev/null | sort -rh | head -20
+          echo "=== pip cache ==="
+          pip cache info || true
 
       - name: Create Release & Upload
         run: |
