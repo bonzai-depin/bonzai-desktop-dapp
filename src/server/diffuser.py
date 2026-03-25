@@ -225,6 +225,7 @@ LTX2_I2V_LORA_REPO = "MachineDelusions/LTX-2_Image2Video_Adapter_LoRa"
 LTX2_I2V_LORA_FILENAME = "LTX-2-Image2Vid-Adapter.safetensors"
 
 
+
 # Kokoro TTS - Fast, lightweight TTS with multiple voices (ONNX)
 # Supports male and female voices with style control
 KOKORO_REPO = "hexgrad/Kokoro-82M"
@@ -4400,16 +4401,6 @@ def ltx2_gguf_video():
         else:
             os.environ["TRANSFORMERS_OFFLINE"] = _ltx_old_transformers_offline
 
-
-        # Restore offline mode
-        if _ltx_old_hf_offline is None:
-            os.environ.pop("HF_HUB_OFFLINE", None)
-        else:
-            os.environ["HF_HUB_OFFLINE"] = _ltx_old_hf_offline
-        if _ltx_old_transformers_offline is None:
-            os.environ.pop("TRANSFORMERS_OFFLINE", None)
-        else:
-            os.environ["TRANSFORMERS_OFFLINE"] = _ltx_old_transformers_offline
 
 # =============================================================================
 # REST API: TRAINING - DATASET MANAGEMENT

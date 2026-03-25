@@ -52,7 +52,7 @@
           <div class="models__activity--payouts">
             <div class="columns">
               <div class="column is-12">
-                <!-- MODE / DURATION / FPS / RESOLUTION OPTIONS -->
+                <!-- MODEL / MODE / DURATION / FPS / RESOLUTION OPTIONS -->
                 <div class="control mb-5 has-text-left">
                   <input
                     v-model="mode"
@@ -651,7 +651,6 @@ export default {
     };
 
     const mode = ref("i2v"); // "t2v" (text-to-video) or "i2v" (image-to-video)
-    const videoModel = ref("fast"); // LTX-2 (~10GB)
     const quality = ref("480p");  // 480p, 540p, 720p, 1080p, 4k (default 480p for quality)
     const duration = ref(5);       // seconds: 5 or 10 (default 5s for good motion)
     const fps = ref(12);           // 12 or 24 (default 12fps for memory efficiency)
@@ -861,12 +860,8 @@ export default {
         )
     );
 
-    const endpointForMode = () => {
-      return "/video";
-    };
-    const pipelineForMode = () => {
-      return "video_fast";
-    };
+    const endpointForMode = () => "/video";
+    const pipelineForMode = () => "video_fast";
 
     const normalizeFramesForLTX2 = (frames) => {
       // LTX-2 frames must be 8n+1
@@ -1469,8 +1464,8 @@ export default {
         width: w,
         frames: frames,
         frame_rate: frameRate,
-        steps: 10,  // Distilled model: 10 steps for quality
-        guidance_scale: 1,  // Distilled model: CFG=1
+        steps: 10,                               // Both distilled: 10 steps
+        guidance_scale: 1,                       // Both distilled: CFG=1
         auto_download: true,
       };
 
@@ -1715,13 +1710,8 @@ export default {
       { immediate: true }
     );
 
-    watch(videoModel, () => {
-      probeCurrentMode();
-    });
-
     return {
       mode,
-      videoModel,
       quality,
       duration,
       fps,

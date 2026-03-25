@@ -677,10 +677,10 @@ export const MODEL_REQUIREMENTS = {
     type: 'video',
     pipeline: 'video_fast',
     endpoint: '/video',
-    repo: 'Lightricks/LTX-Video',
+    repo: 'Lightricks/LTX-2',
     size: '~10 GB',
     vram: '10 GB',
-    description: 'Fast video generation',
+    description: 'Fast video generation (distilled, 8-10 steps)',
   },
 
   // 3D Models (no pipeline yet)

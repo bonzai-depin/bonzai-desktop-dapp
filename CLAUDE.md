@@ -201,7 +201,7 @@ All LLM inference goes through OpenClaw's OpenAI-compatible API at `/v1/chat/com
 | `audio_turbo` | `/audio/turbo` | Fast TTS (Kokoro) |
 | `audio_quality` | `/audio/quality/persona` | Persona-based TTS (Qwen3-TTS) |
 | `music` | `/audio/music` | AI music with lyrics (ACE-Step) |
-| `video_fast` | `/video` | Text/image to video (LTX-2) |
+| `video_fast` | `/video` | Fast video generation (LTX-2, distilled, 8-10 steps) |
 | `vision` | `/vision/analyze` | Vision analysis (Qwen3-VL) |
 
 ### NOT Supported
@@ -325,6 +325,7 @@ BonzAI supports peer-to-peer inference via libp2p with x402 ETH payments on Base
 3: IMAGE_STANDARD      7: MUSIC
 4: IMAGE_ADVANCED      8: VIDEO_FAST
                        9: VISION
+                       10: VIDEO_QUALITY
 ```
 
 ## Companion System
@@ -482,7 +483,7 @@ BonzAI includes a companion roleplay system with 13 pre-defined characters.
 
 | Endpoint | Model | Description |
 |----------|-------|-------------|
-| `/video` | LTX-2 | GGUF quantized, ~10GB, supports t2v and i2v |
+| `/video` | LTX-2 (Turbo) | Distilled GGUF, ~10GB, 8-10 steps, t2v and i2v |
 
 Request example:
 ```json

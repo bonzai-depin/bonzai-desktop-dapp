@@ -43,6 +43,7 @@ jobs:
 
       - name: Install Python deps
         run: |
+          pip install "huggingface_hub>=0.34.0,<1.0"
           pip install git+https://github.com/huggingface/diffusers.git
           pip install -r requirements.txt
           pip install https://github.com/vBaiCai/python-pesq/archive/master.zip
