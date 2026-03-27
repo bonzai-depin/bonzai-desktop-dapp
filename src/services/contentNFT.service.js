@@ -31,7 +31,7 @@ const BRAND_IMAGE_URLS = {
 };
 
 // ═══════════════════════════════════════════════════════════════════════════
-// BASE ERC-721 ABI
+// BASE ERC-721 ABI (BonzaiCollectibles clone)
 // ═══════════════════════════════════════════════════════════════════════════
 
 const BASE_CONTENT_ABI = [
@@ -40,8 +40,19 @@ const BASE_CONTENT_ABI = [
   'event ContentMinted(uint256 indexed tokenId, address indexed creator, string transactionId, string model, uint256 timestamp)',
 ];
 
-// Content type mapping (matches BonzaiContent.sol Provenance.contentType)
+// Factory ABI (BonzaiCollectiblesFactory)
+const FACTORY_ABI = [
+  'function getOrCreateCollection(string name) returns (address)',
+  'function getCollection(address user) view returns (address)',
+  'function collections(address user) view returns (address)',
+];
+
+// Content type mapping (matches BonzaiCollectibles.sol Provenance.contentType)
 const CONTENT_TYPE_MAP = { text: 0, audio: 1, image: 2, video: 3, object: 4, training: 5 };
+
+// Cache the user's collection address to avoid redundant on-chain lookups
+let _cachedCollectionAddress = null;
+let _cachedCollectionOwner = null;
 
 // ═══════════════════════════════════════════════════════════════════════════
 // BRANDED THUMBNAIL GENERATOR (blurred bg + logo + optional text snippet)
@@ -475,9 +486,9 @@ export async function mintContent({
 // ═══════════════════════════════════════════════════════════════════════════
 
 async function mintOnBase({ transactionId, model, tokenURI, onProgress, inferenceType }) {
-  const contractAddress = CONFIG.contentNFT?.base?.contractAddress;
-  if (!contractAddress) {
-    throw new Error('BonzaiContent contract not deployed on Base yet. Contract address not configured.');
+  const factoryAddress = CONFIG.contentNFT?.base?.factoryAddress;
+  if (!factoryAddress) {
+    throw new Error('BonzaiCollectiblesFactory not deployed on Base yet. Factory address not configured.');
   }
 
   // Ensure we're on Base (should already be from pre-flight)
@@ -485,7 +496,30 @@ async function mintOnBase({ transactionId, model, tokenURI, onProgress, inferenc
 
   onProgress('mint', 'Preparing transaction...', 68);
   const signer = await getSigner();
-  const contract = new ethers.Contract(contractAddress, BASE_CONTENT_ABI, signer);
+  const userAddress = await signer.getAddress();
+
+  // Get or create the user's collection via factory
+  let collectionAddress = _cachedCollectionAddress;
+  if (!collectionAddress || _cachedCollectionOwner !== userAddress) {
+    const factory = new ethers.Contract(factoryAddress, FACTORY_ABI, signer);
+
+    // Check if user already has a collection
+    collectionAddress = await factory.getCollection(userAddress);
+
+    if (collectionAddress === ethers.ZeroAddress) {
+      onProgress('mint', 'Creating your collection...', 69);
+      const createTx = await factory.getOrCreateCollection('BonzAI Collection');
+      await createTx.wait();
+      collectionAddress = await factory.getCollection(userAddress);
+      console.log('[ContentNFT] Created collection at:', collectionAddress);
+    }
+
+    // Cache for future mints
+    _cachedCollectionAddress = collectionAddress;
+    _cachedCollectionOwner = userAddress;
+  }
+
+  const contract = new ethers.Contract(collectionAddress, BASE_CONTENT_ABI, signer);
 
   // Get mint fee from contract
   let mintFee;
@@ -520,7 +554,7 @@ async function mintOnBase({ transactionId, model, tokenURI, onProgress, inferenc
 
   return {
     tokenId,
-    contractAddress,
+    contractAddress: collectionAddress,
     transactionHash: receipt.hash,
     explorerUrl: `https://basescan.org/tx/${receipt.hash}`,
   };

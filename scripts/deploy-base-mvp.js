@@ -3,15 +3,18 @@
  *
  * Deploys the core protocol contracts on Base (chainId 8453):
  *   1. BonzaiMintPool       — Epoch-based revenue pools for LVL holders
- *   2. BonzaiContent         — ERC-721 content NFT with fee splitting
+ *   2. BonzaiCollectibles    — ERC-721 content NFT implementation (ERC-1167 clone pattern)
+ *   2b. BonzaiCollectiblesFactory — Factory for per-user collection clones
  *   3. BonzaiRoyaltySplitter — Secondary royalty distribution
  *   4. BonzaiCompanions      — ERC-721 companion NFT with ERC-8004
  *   5. BonzaiUniswapHook     — V4 afterSwap hook (1% fee, 80/10/10 split)
  *   6. CompanionTokenFactory  — Atomic companion ERC-20 + Uniswap V4 LP
  *   7. FineTuneTokenFactory   — Atomic model ERC-20 + Uniswap V4 LP
  *   8. BonzaiUnlock           — ETH payment to unlock all levels
- *   9. BonzaiProviderRegistry — P2P inference provider registry
- *  10. BonzaiPayment          — P2P ETH/USDC payment processing
+ *   9. BonzaiSkillRegistry    — Skill marketplace
+ *  10. BonzaiSkillOwnership   — Companion co-ownership + revenue distribution
+ *  11. BonzaiProviderRegistry — P2P inference provider registry
+ *  12. BonzaiPayment          — P2P ETH/USDC payment processing
  *
  * Cross-contract wiring is performed after all deployments.
  *
@@ -60,7 +63,7 @@ const DEPLOY_CONFIG = {
   create2Deployer: '0x4e59b44847b379578588920cA78FbF26c0B4956C',
 
   // MintPool config
-  epochDuration: 604800, // 7 days in seconds
+  epochDuration: 1209600, // 14 days (2 weeks) in seconds
   poolThresholds: [1000, 5000, 10000, 25000, 33000, 50000],
 
   // BonzaiUnlock price in wei (1 ETH)
@@ -326,8 +329,11 @@ async function main() {
   const mintPoolCompiled = compileContract('BonzaiMintPool.sol');
   console.log('  ✓ BonzaiMintPool.sol');
 
-  const contentCompiled = compileContract('BonzaiContent.sol');
-  console.log('  ✓ BonzaiContent.sol');
+  const collectiblesCompiled = compileContract('BonzaiCollectibles.sol');
+  console.log('  ✓ BonzaiCollectibles.sol');
+
+  const collectiblesFactoryCompiled = compileContract('BonzaiCollectiblesFactory.sol');
+  console.log('  ✓ BonzaiCollectiblesFactory.sol');
 
   const splitterCompiled = compileContract('BonzaiRoyaltySplitter.sol');
   console.log('  ✓ BonzaiRoyaltySplitter.sol');
@@ -346,6 +352,12 @@ async function main() {
 
   const unlockCompiled = compileContract('BonzaiUnlock.sol');
   console.log('  ✓ BonzaiUnlock.sol');
+
+  const skillRegistryCompiled = compileContract('BonzaiSkillRegistry.sol');
+  console.log('  ✓ BonzaiSkillRegistry.sol');
+
+  const skillOwnershipCompiled = compileContract('BonzaiSkillOwnership.sol');
+  console.log('  ✓ BonzaiSkillOwnership.sol');
 
   const providerRegistryCompiled = compileContract('BonzaiProviderRegistry.sol');
   console.log('  ✓ BonzaiProviderRegistry.sol');
@@ -368,12 +380,25 @@ async function main() {
     'BonzaiMintPool (epoch-based revenue pools)',
   );
 
-  // 2b. BonzaiContent
-  const content = await deployContract(
-    signer, 'BonzaiContent',
-    contentCompiled.BonzaiContent,
-    [DEPLOY_CONFIG.treasury],
-    'BonzaiContent (ERC-721 content NFT)',
+  // 2b. BonzaiCollectibles (implementation contract)
+  const collectiblesImpl = await deployContract(
+    signer, 'BonzaiCollectibles',
+    collectiblesCompiled.BonzaiCollectibles,
+    [],
+    'BonzaiCollectibles (ERC-721 implementation)',
+  );
+
+  // 2b2. BonzaiCollectiblesFactory
+  const collectiblesFactory = await deployContract(
+    signer, 'BonzaiCollectiblesFactory',
+    collectiblesFactoryCompiled.BonzaiCollectiblesFactory,
+    [
+      deployedAddresses.BonzaiCollectibles,
+      DEPLOY_CONFIG.treasury,
+      deployedAddresses.BonzaiMintPool,
+      ethers.ZeroAddress, // royaltySplitter — set after splitter is deployed
+    ],
+    'BonzaiCollectiblesFactory (ERC-1167 clone factory)',
   );
 
   // 2c. BonzaiRoyaltySplitter
@@ -489,7 +514,34 @@ async function main() {
     'BonzaiUnlock (1 ETH all-level unlock)',
   );
 
-  // 2i. BonzaiProviderRegistry — P2P provider registration
+  // 2i. BonzaiSkillRegistry — Skill marketplace
+  const skillRegistry = await deployContract(
+    signer, 'BonzaiSkillRegistry',
+    skillRegistryCompiled.BonzaiSkillRegistry,
+    [
+      DEPLOY_CONFIG.bonzaiTokenBase,
+      DEPLOY_CONFIG.treasury,
+      ethers.ZeroAddress, // skillOwnership set after deployment
+      DEPLOY_CONFIG.usdcBase,
+    ],
+    'BonzaiSkillRegistry (skill marketplace)',
+  );
+
+  // 2j. BonzaiSkillOwnership — Companion co-ownership + revenue distribution
+  const skillOwnership = await deployContract(
+    signer, 'BonzaiSkillOwnership',
+    skillOwnershipCompiled.BonzaiSkillOwnership,
+    [
+      deployedAddresses.BonzaiSkillRegistry,
+      DEPLOY_CONFIG.bonzaiTokenBase,
+      DEPLOY_CONFIG.treasury,
+      deployerAddr, // attestation signer (deployer initially)
+      deployedAddresses.BonzaiCompanions,
+    ],
+    'BonzaiSkillOwnership (companion co-ownership)',
+  );
+
+  // 2l. BonzaiProviderRegistry — P2P provider registration
   const providerRegistry = await deployContract(
     signer, 'BonzaiProviderRegistry',
     providerRegistryCompiled.BonzaiProviderRegistry,
@@ -501,7 +553,7 @@ async function main() {
     'BonzaiProviderRegistry (P2P provider registry)',
   );
 
-  // 2j. BonzaiPayment — P2P ETH/USDC payment processing
+  // 2m. BonzaiPayment — P2P ETH/USDC payment processing
   const payment = await deployContract(
     signer, 'BonzaiPayment',
     paymentCompiled.BonzaiPayment,
@@ -516,25 +568,20 @@ async function main() {
   // ─── Step 3: Cross-contract wiring ──────────────────────────────────
   console.log('\n═══ Step 3: Cross-contract wiring ═══');
 
-  // Wire BonzaiContent → MintPool + RoyaltySplitter
-  const contentAbi = contentCompiled.BonzaiContent.abi;
+  // Wire BonzaiCollectiblesFactory → RoyaltySplitter (update factory defaults for new clones)
+  const factoryAbi = collectiblesFactoryCompiled.BonzaiCollectiblesFactory.abi;
   await wireContract(
-    signer, deployedAddresses.BonzaiContent, contentAbi,
-    'setMintPool', [deployedAddresses.BonzaiMintPool],
-    'BonzaiContent.setMintPool(mintPool)',
-  );
-  await wireContract(
-    signer, deployedAddresses.BonzaiContent, contentAbi,
+    signer, deployedAddresses.BonzaiCollectiblesFactory, factoryAbi,
     'setRoyaltySplitter', [deployedAddresses.BonzaiRoyaltySplitter],
-    'BonzaiContent.setRoyaltySplitter(splitter)',
+    'BonzaiCollectiblesFactory.setRoyaltySplitter(splitter)',
   );
 
-  // Wire BonzaiMintPool → ContentContract + RoyaltySplitter + FeeHook
+  // Wire BonzaiMintPool → CollectiblesFactory + RoyaltySplitter + FeeHook
   const mintPoolAbi = mintPoolCompiled.BonzaiMintPool.abi;
   await wireContract(
     signer, deployedAddresses.BonzaiMintPool, mintPoolAbi,
-    'setContentContract', [deployedAddresses.BonzaiContent],
-    'BonzaiMintPool.setContentContract(content)',
+    'setCollectiblesFactory', [deployedAddresses.BonzaiCollectiblesFactory],
+    'BonzaiMintPool.setCollectiblesFactory(factory)',
   );
   await wireContract(
     signer, deployedAddresses.BonzaiMintPool, mintPoolAbi,
@@ -567,13 +614,37 @@ async function main() {
     'CompanionTokenFactory.setCompanionContract(companions)',
   );
 
-  // Wire FineTuneTokenFactory → BonzaiContent (NFT ownership check)
+  // Wire FineTuneTokenFactory → BonzaiCollectibles implementation (NFT ownership check)
   const fineTuneFactoryAbi = fineTuneFactoryCompiled.FineTuneTokenFactory.abi;
   await wireContract(
     signer, deployedAddresses.FineTuneTokenFactory, fineTuneFactoryAbi,
-    'setContentContract', [deployedAddresses.BonzaiContent],
-    'FineTuneTokenFactory.setContentContract(content)',
+    'setContentContract', [deployedAddresses.BonzaiCollectibles],
+    'FineTuneTokenFactory.setContentContract(collectiblesImpl)',
   );
+
+  // Wire BonzaiSkillRegistry ↔ BonzaiSkillOwnership (bidirectional)
+  const skillRegistryAbi = skillRegistryCompiled.BonzaiSkillRegistry.abi;
+  const skillOwnershipAbi = skillOwnershipCompiled.BonzaiSkillOwnership.abi;
+  await wireContract(
+    signer, deployedAddresses.BonzaiSkillRegistry, skillRegistryAbi,
+    'setSkillOwnershipContract', [deployedAddresses.BonzaiSkillOwnership],
+    'BonzaiSkillRegistry.setSkillOwnershipContract(skillOwnership)',
+  );
+  await wireContract(
+    signer, deployedAddresses.BonzaiSkillOwnership, skillOwnershipAbi,
+    'setSkillRegistry', [deployedAddresses.BonzaiSkillRegistry],
+    'BonzaiSkillOwnership.setSkillRegistry(registry)',
+  );
+
+  // Set USDC token on SkillOwnership for USDC revenue distribution
+  await wireContract(
+    signer, deployedAddresses.BonzaiSkillOwnership, skillOwnershipAbi,
+    'setUsdcToken', [DEPLOY_CONFIG.usdcBase],
+    'BonzaiSkillOwnership.setUsdcToken(usdc)',
+  );
+
+  // Level gating removed — BONZAI holdings span 3 networks and can't be aggregated on-chain.
+  // Level checks are enforced off-chain in the application layer.
 
   // Wire BonzaiPayment ↔ BonzaiProviderRegistry
   const paymentAbi = paymentCompiled.BonzaiPayment.abi;
@@ -601,11 +672,13 @@ async function main() {
 
   console.log('╠═══════════════════════════════════════════════════════════╣');
   console.log('║  Cross-contract wiring:                                  ║');
-  console.log('║    Content  → MintPool, RoyaltySplitter                  ║');
-  console.log('║    MintPool → Content, RoyaltySplitter, FeeHook          ║');
+  console.log('║    CollectiblesFactory → RoyaltySplitter                  ║');
+  console.log('║    MintPool → Factory, RoyaltySplitter, FeeHook          ║');
   console.log('║    Hook     → CompanionFactory, FineTuneFactory          ║');
   console.log('║    CompanionFactory → Companions                         ║');
-  console.log('║    FineTuneFactory  → Content                            ║');
+  console.log('║    FineTuneFactory  → CollectiblesImpl                   ║');
+  console.log('║    SkillRegistry ↔ SkillOwnership (bidirectional)        ║');
+  console.log('║    SkillOwnership → USDC token                           ║');
   console.log('║    Payment ↔ ProviderRegistry                            ║');
   console.log('╚═══════════════════════════════════════════════════════════╝');
 
@@ -613,7 +686,7 @@ async function main() {
   console.log('\n═══ web3.config.js update snippet ═══');
   console.log(`
   // Paste into web3.config.js after deployment:
-  contentNFT: { base: { contractAddress: '${deployedAddresses.BonzaiContent}', chainId: 8453 } },
+  contentNFT: { base: { contractAddress: '${deployedAddresses.BonzaiCollectibles}', factoryAddress: '${deployedAddresses.BonzaiCollectiblesFactory}', chainId: 8453 } },
   companionNFT_BASE: { contractAddress: '${deployedAddresses.BonzaiCompanions}', chainId: 8453 },
   mintPool: { contractAddress: '${deployedAddresses.BonzaiMintPool}', chainId: 8453 },
   royaltySplitter: { contractAddress: '${deployedAddresses.BonzaiRoyaltySplitter}', chainId: 8453 },
@@ -621,6 +694,10 @@ async function main() {
   fineTuneTokenFactory: { contractAddress: '${deployedAddresses.FineTuneTokenFactory}', chainId: 8453 },
   levelUnlock: { registryAddress: '${deployedAddresses.BonzaiUnlock}', chainId: 8453 },
   uniswap: { base: { feeHook: '${deployedAddresses.BonzaiUniswapHook}' } },
+  skillRegistry: {
+    contractAddress: '${deployedAddresses.BonzaiSkillRegistry}',
+    ownershipContractAddress: '${deployedAddresses.BonzaiSkillOwnership}',
+  },
   p2pNetwork: {
     providerRegistryAddress: '${deployedAddresses.BonzaiProviderRegistry}',
     paymentContractAddress: '${deployedAddresses.BonzaiPayment}',
@@ -632,7 +709,7 @@ async function main() {
   console.log('  [ ] Verify all contracts on BaseScan (npx hardhat verify or manual)');
   console.log('  [ ] Update web3.config.js with deployed addresses');
   console.log('  [ ] Verify hook address has correct permission bits (0x0090)');
-  console.log('  [ ] Set Transfer Validator on BonzaiContent for ERC721-C (Limit Break)');
+  console.log('  [ ] Set Transfer Validator on BonzaiCollectibles clones for ERC721-C (Limit Break)');
   console.log('  [ ] Set contractURI on BonzaiCompanions for OpenSea collection metadata');
   console.log('  [ ] Test: mint content NFT, verify fee split 80/20');
   console.log('  [ ] Test: mint companion, verify treasury receives mint price');

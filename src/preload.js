@@ -69,6 +69,29 @@ contextBridge.exposeInMainWorld("electronAPI", {
     setPolicy: (walletId, policy) =>
       ipcRenderer.invoke("privy:set-policy", { walletId, policy }),
   },
+  // ─────────────────────────────────────────────────────────────────────────
+  // Open Wallet Standard (OWS) — encrypted vault-based wallets via NAPI-RS
+  // ─────────────────────────────────────────────────────────────────────────
+  ows: {
+    createWallet: (opts) => ipcRenderer.invoke("ows:create-wallet", opts),
+    listWallets: () => ipcRenderer.invoke("ows:list-wallets"),
+    getWallet: (nameOrId) => ipcRenderer.invoke("ows:get-wallet", nameOrId),
+    deleteWallet: (nameOrId) => ipcRenderer.invoke("ows:delete-wallet", nameOrId),
+    signMessage: (opts) => ipcRenderer.invoke("ows:sign-message", opts),
+    signTypedData: (opts) => ipcRenderer.invoke("ows:sign-typed-data", opts),
+    signTransaction: (opts) => ipcRenderer.invoke("ows:sign-transaction", opts),
+    signAndSend: (opts) => ipcRenderer.invoke("ows:sign-and-send", opts),
+    createApiKey: (opts) => ipcRenderer.invoke("ows:create-api-key", opts),
+    listApiKeys: () => ipcRenderer.invoke("ows:list-api-keys"),
+    revokeApiKey: (id) => ipcRenderer.invoke("ows:revoke-api-key", id),
+    createPolicy: (json) => ipcRenderer.invoke("ows:create-policy", json),
+    listPolicies: () => ipcRenderer.invoke("ows:list-policies"),
+    getPolicy: (id) => ipcRenderer.invoke("ows:get-policy", id),
+    deletePolicy: (id) => ipcRenderer.invoke("ows:delete-policy", id),
+    exportWallet: (opts) => ipcRenderer.invoke("ows:export-wallet", opts),
+    importPrivateKey: (opts) => ipcRenderer.invoke("ows:import-private-key", opts),
+  },
+
   saveImage: (defaultName, base64Data) =>
     ipcRenderer.invoke("agent-save-image", defaultName, base64Data),
   saveAudio: (defaultName, sourcePath) =>

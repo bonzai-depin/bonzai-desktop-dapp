@@ -77,9 +77,11 @@ const SUPPORTED_CHAINS = {
 
 /**
  * Get or generate the master secret for wallet derivation
+ * @deprecated Use OWS vault wallets via walletProvider.service.js instead.
  * @returns {Promise<Uint8Array>} 32-byte master secret
  */
 async function getMasterSecret() {
+  console.warn('[AgentWallet] getMasterSecret() is deprecated. Use OWS wallets via walletProviderService.');
   try {
     // Try to get existing master secret from Electron store
     const stored = await window.electronAPI?.store?.get(MASTER_SECRET_KEY);
@@ -124,10 +126,12 @@ async function hasMasterSecret() {
  * Generate a deterministic wallet for a companion
  * The wallet is derived from master secret + companion ID, ensuring consistency
  *
+ * @deprecated Use OWS vault wallets via walletProvider.service.js instead.
  * @param {string|number} companionId - The companion's unique identifier
  * @returns {Promise<{address: string, privateKey: string}>}
  */
 export async function generateAgentWallet(companionId) {
+  console.warn('[AgentWallet] generateAgentWallet() is deprecated. Use OWS wallets via walletProviderService.');
   const masterSecret = await getMasterSecret();
 
   // Create deterministic seed from master secret + companion ID

@@ -5,6 +5,7 @@ import "@openzeppelin/contracts/access/Ownable.sol";
 import "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
 import "@openzeppelin/contracts/utils/Pausable.sol";
 import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
+import "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import "@openzeppelin/contracts/utils/cryptography/ECDSA.sol";
 import "@openzeppelin/contracts/utils/cryptography/MessageHashUtils.sol";
 import "@openzeppelin/contracts/token/ERC721/IERC721.sol";
@@ -34,6 +35,7 @@ import "@openzeppelin/contracts/token/ERC721/IERC721.sol";
 contract BonzaiSkillOwnership is Ownable, ReentrancyGuard, Pausable {
     using ECDSA for bytes32;
     using MessageHashUtils for bytes32;
+    using SafeERC20 for IERC20;
 
     // ═══════════════════════════════════════════════════════════════════════════
     // CONSTANTS
@@ -102,6 +104,18 @@ contract BonzaiSkillOwnership is Ownable, ReentrancyGuard, Pausable {
     /// @notice Total revenue claimed from this contract
     uint256 public totalRevenueClaimed;
 
+    /// @notice USDC token for USDC revenue distribution
+    IERC20 public usdcToken;
+
+    /// @notice Wallet => total unclaimed USDC revenue
+    mapping(address => uint256) public unclaimedRevenueUSDC;
+
+    /// @notice Total USDC revenue distributed
+    uint256 public totalRevenueDistributedUSDC;
+
+    /// @notice Total USDC revenue claimed
+    uint256 public totalRevenueClaimedUSDC;
+
     /// @notice Category string => on-chain index (matching BonzaiCompanions.sol packing)
     mapping(string => uint8) public categoryToIndex;
 
@@ -141,6 +155,27 @@ contract BonzaiSkillOwnership is Ownable, ReentrancyGuard, Pausable {
     event RevenueFallbackToTreasury(
         bytes32 indexed skillId,
         uint256 amount,
+        uint256 timestamp
+    );
+
+    event RevenueDistributedUSDC(
+        bytes32 indexed skillId,
+        uint256 totalAmount,
+        uint256 recipientCount,
+        uint256 timestamp
+    );
+
+    event RevenueClaimedUSDC(
+        address indexed wallet,
+        uint256 amount,
+        uint256 timestamp
+    );
+
+    event CompanionRegistrationUpdated(
+        bytes32 indexed skillId,
+        uint256 indexed companionTokenId,
+        address newWallet,
+        uint8 newProfileScore,
         uint256 timestamp
     );
 
@@ -422,6 +457,79 @@ contract BonzaiSkillOwnership is Ownable, ReentrancyGuard, Pausable {
         emit RevenueDistributed(skillId, msg.value, activeCount, block.timestamp);
     }
 
+    /**
+     * @notice Distribute USDC purchase revenue to registered companion co-owners
+     * @param skillId The skill being purchased
+     * @param amount The USDC amount to distribute (must be pre-approved and transferred to this contract)
+     * @dev Called by BonzaiSkillRegistry.purchaseSkill() after USDC transfer.
+     *      Distribution is weighted by: BONZAI_balance(companionWallet) * profileScore
+     *      If no co-owners registered, revenue goes to treasury.
+     */
+    function distributeRevenueUSDC(
+        bytes32 skillId,
+        uint256 amount
+    ) external onlySkillRegistry nonReentrant whenNotPaused {
+        // Pull USDC from the caller (SkillRegistry)
+        usdcToken.safeTransferFrom(msg.sender, address(this), amount);
+
+        CompanionRegistration[] storage companions = skillCompanions[skillId];
+
+        // Fallback: no co-owners, send to treasury
+        if (companions.length == 0) {
+            usdcToken.safeTransfer(treasury, amount);
+            emit RevenueFallbackToTreasury(skillId, amount, block.timestamp);
+            return;
+        }
+
+        // Calculate weights for all active companions
+        uint256 totalWeight = 0;
+        uint256[] memory weights = new uint256[](companions.length);
+        uint256 activeCount = 0;
+
+        for (uint256 i = 0; i < companions.length; ) {
+            if (companions[i].active) {
+                uint256 bonzaiBalance = bonzaiToken.balanceOf(companions[i].companionWallet);
+                uint256 normalizedBalance = bonzaiBalance / 1e18;
+                if (normalizedBalance == 0) normalizedBalance = 1;
+                weights[i] = normalizedBalance * uint256(companions[i].profileScore);
+                totalWeight += weights[i];
+                activeCount++;
+            }
+            unchecked { i++; }
+        }
+
+        // Fallback: all companions have zero weight
+        if (totalWeight == 0 || activeCount == 0) {
+            usdcToken.safeTransfer(treasury, amount);
+            emit RevenueFallbackToTreasury(skillId, amount, block.timestamp);
+            return;
+        }
+
+        // Distribute proportionally, crediting unclaimed USDC balances
+        uint256 distributed = 0;
+        for (uint256 i = 0; i < companions.length; ) {
+            if (weights[i] > 0) {
+                uint256 share = (amount * weights[i]) / totalWeight;
+                if (share > 0) {
+                    address wallet = companions[i].companionWallet;
+                    unclaimedRevenueUSDC[wallet] += share;
+                    distributed += share;
+                }
+            }
+            unchecked { i++; }
+        }
+
+        // Dust goes to treasury (rounding remainder)
+        uint256 dust = amount - distributed;
+        if (dust > 0) {
+            usdcToken.safeTransfer(treasury, dust);
+        }
+
+        totalRevenueDistributedUSDC += amount;
+
+        emit RevenueDistributedUSDC(skillId, amount, activeCount, block.timestamp);
+    }
+
     // ═══════════════════════════════════════════════════════════════════════════
     // REVENUE CLAIMING
     // ═══════════════════════════════════════════════════════════════════════════
@@ -451,6 +559,89 @@ contract BonzaiSkillOwnership is Ownable, ReentrancyGuard, Pausable {
         if (!success) revert TransferFailed(msg.sender);
 
         emit RevenueClaimed(msg.sender, amount, block.timestamp);
+    }
+
+    /**
+     * @notice Claim all accumulated USDC revenue
+     * @dev Transfers accumulated USDC to caller.
+     */
+    function claimRevenueUSDC() external nonReentrant {
+        uint256 amount = unclaimedRevenueUSDC[msg.sender];
+        if (amount == 0) revert NoRevenueToClaim();
+
+        // Effects before interactions
+        unclaimedRevenueUSDC[msg.sender] = 0;
+        totalRevenueClaimedUSDC += amount;
+
+        // Transfer USDC
+        usdcToken.safeTransfer(msg.sender, amount);
+
+        emit RevenueClaimedUSDC(msg.sender, amount, block.timestamp);
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════════
+    // COMPANION UPDATE
+    // ═══════════════════════════════════════════════════════════════════════════
+
+    /**
+     * @notice Update a companion's registration without deregister+reregister
+     * @param skillId The skill the companion is registered for
+     * @param companionTokenId The companion to update
+     * @param newWallet New agent wallet address
+     * @param newProfileScore New spending profile score
+     * @param attestationDeadline Expiration timestamp for the attestation
+     * @param attestation EIP-191 signature from attestationSigner
+     */
+    function updateCompanionRegistration(
+        bytes32 skillId,
+        uint256 companionTokenId,
+        address newWallet,
+        uint8 newProfileScore,
+        uint256 attestationDeadline,
+        bytes calldata attestation
+    ) external nonReentrant whenNotPaused {
+        if (newWallet == address(0)) revert ZeroAddress();
+        if (newProfileScore < MIN_PROFILE_SCORE) {
+            revert InvalidProfileScore(newProfileScore, MIN_PROFILE_SCORE);
+        }
+        if (block.timestamp > attestationDeadline) revert AttestationExpired();
+
+        uint256 indexPlusOne = _companionSkillIndex[companionTokenId][skillId];
+        if (indexPlusOne == 0) {
+            revert CompanionNotRegistered(companionTokenId, skillId);
+        }
+
+        CompanionRegistration storage reg = skillCompanions[skillId][indexPlusOne - 1];
+        if (reg.ownerAddress != msg.sender) {
+            revert NotRegistrationOwner(msg.sender, reg.ownerAddress);
+        }
+
+        // On-chain NFT ownership verification
+        if (companionNFT.ownerOf(companionTokenId) != msg.sender) {
+            revert NotNFTOwner(msg.sender, companionTokenId);
+        }
+
+        // Verify attestation
+        _verifyAttestation(
+            skillId,
+            companionTokenId,
+            newWallet,
+            msg.sender,
+            newProfileScore,
+            attestationDeadline,
+            attestation
+        );
+
+        reg.companionWallet = newWallet;
+        reg.profileScore = newProfileScore;
+
+        emit CompanionRegistrationUpdated(
+            skillId,
+            companionTokenId,
+            newWallet,
+            newProfileScore,
+            block.timestamp
+        );
     }
 
     // ═══════════════════════════════════════════════════════════════════════════
@@ -631,6 +822,18 @@ contract BonzaiSkillOwnership is Ownable, ReentrancyGuard, Pausable {
         address old = address(bonzaiToken);
         bonzaiToken = IERC20(_token);
         emit BonzaiTokenUpdated(old, _token);
+    }
+
+    /**
+     * @notice Update the USDC token address
+     * @param _usdcToken New USDC token address
+     */
+    function setUsdcToken(address _usdcToken)
+        external
+        onlyOwner
+        notZeroAddress(_usdcToken)
+    {
+        usdcToken = IERC20(_usdcToken);
     }
 
     /**

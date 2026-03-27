@@ -75,6 +75,9 @@ export const CONFIG = {
       decimals: 18,
       symbol: "BONZAI",
     },
+    usdc: {
+      base: '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913',
+    },
   },
 
   // ═══════════════════════════════════════════════════════════════════════════
@@ -169,13 +172,17 @@ export const CONFIG = {
   // ═══════════════════════════════════════════════════════════════════════════
   skillRegistry: {
     // BonzaiSkillRegistry contract on Base (not yet deployed)
-    contractAddress: null,
-    ownershipContractAddress: null,
+    contractAddress: null, // Set after deployment
+    ownershipContractAddress: null, // Set after deployment
     chainId: 8453, // Base
 
     // Revenue split (configured in contract)
     authorShareBps: 8000, // 80% to co-owners (via BonzaiSkillOwnership)
     platformShareBps: 2000, // 20% to platform
+
+    // Default skill price in USDC (6 decimals)
+    defaultSkillPrice: 10_000_000, // 10 USDC
+    paymentToken: 'USDC',
 
     // Default pricing for new skills
     defaultPricing: {
@@ -221,7 +228,8 @@ export const CONFIG = {
   // ═══════════════════════════════════════════════════════════════════════════
   contentNFT: {
     base: {
-      contractAddress: '0xdcCF8d2A328F87eDC304898a35F9798ad5Bf87e9',
+      contractAddress: '0xdcCF8d2A328F87eDC304898a35F9798ad5Bf87e9', // BonzaiCollectibles implementation address
+      factoryAddress: null, // BonzaiCollectiblesFactory — set after deployment
       chainId: 8453,
       standard: 'ERC-721',
       mintFee: '0.0025', // ETH

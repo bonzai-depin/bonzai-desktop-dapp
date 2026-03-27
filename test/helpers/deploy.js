@@ -1,4 +1,5 @@
 const { ethers } = require("hardhat");
+const { time } = require("@nomicfoundation/hardhat-network-helpers");
 const {
   UNLOCK_PRICE,
   POOL_THRESHOLDS,
@@ -44,25 +45,49 @@ async function deployMintPool() {
     EPOCH_DURATION
   );
 
+  // Genesis is next Monday 00:00 UTC — advance time so tests start in epoch 0
+  const genesis = await mintPool.genesisTime();
+  await time.increaseTo(genesis);
+
   return { mintPool, token, owner, user1, user2, user3, treasury };
 }
 
 /**
- * Deploy BonzaiContent with treasury and optional mock pool
+ * Deploy BonzaiCollectibles (implementation) + BonzaiCollectiblesFactory,
+ * then create a collection clone for the test user (owner).
  */
 async function deployContent() {
   const [owner, treasury, user1, user2] = await ethers.getSigners();
 
-  const BonzaiContent = await ethers.getContractFactory("BonzaiContent");
-  const content = await BonzaiContent.deploy(treasury.address);
+  // Deploy implementation
+  const BonzaiCollectibles = await ethers.getContractFactory("BonzaiCollectibles");
+  const implementation = await BonzaiCollectibles.deploy();
 
+  // Deploy mock pool and validator
   const MockMintPool = await ethers.getContractFactory("MockMintPool");
   const mockPool = await MockMintPool.deploy();
 
   const MockTransferValidator = await ethers.getContractFactory("MockTransferValidator");
   const validator = await MockTransferValidator.deploy();
 
-  return { content, mockPool, validator, owner, treasury, user1, user2 };
+  // Deploy factory
+  const BonzaiCollectiblesFactory = await ethers.getContractFactory("BonzaiCollectiblesFactory");
+  const factory = await BonzaiCollectiblesFactory.deploy(
+    await implementation.getAddress(),
+    treasury.address,
+    await mockPool.getAddress(),
+    ethers.ZeroAddress // royaltySplitter
+  );
+
+  // Create a collection for the owner (default test user)
+  const tx = await factory.getOrCreateCollection("Test Collection");
+  const receipt = await tx.wait();
+  const cloneAddress = await factory.collections(owner.address);
+
+  // Get the clone contract instance
+  const content = BonzaiCollectibles.attach(cloneAddress);
+
+  return { factory, content, implementation, mockPool, validator, owner, treasury, user1, user2 };
 }
 
 /**
@@ -228,6 +253,7 @@ async function deploySkillRegistry() {
 
   const MockERC20 = await ethers.getContractFactory("MockERC20");
   const bonzaiToken = await MockERC20.deploy("BONZAI", "BONZAI");
+  const usdcToken = await MockERC20.deploy("USDC", "USDC");
 
   // Deploy a simple mock ownership contract that accepts ETH
   const MockSkillOwnership = await ethers.getContractFactory("MockSkillOwnership");
@@ -237,10 +263,11 @@ async function deploySkillRegistry() {
   const registry = await BonzaiSkillRegistry.deploy(
     await bonzaiToken.getAddress(),
     treasury.address,
-    await mockOwnership.getAddress()
+    await mockOwnership.getAddress(),
+    await usdcToken.getAddress()
   );
 
-  return { registry, bonzaiToken, mockOwnership, owner, treasury, author1, author2, buyer1, buyer2 };
+  return { registry, bonzaiToken, usdcToken, mockOwnership, owner, treasury, author1, author2, buyer1, buyer2 };
 }
 
 /**

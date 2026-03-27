@@ -15,9 +15,9 @@ import "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
  *
  * Skills are defined off-chain (IPFS/Arweave) and referenced by hash. This contract manages:
  * - Skill registration with author address and pricing
- * - One-time skill purchases (ETH payment)
- * - Per-execution running fees (BONZAI token)
- * - Revenue split: 80% to co-owners (via BonzaiSkillOwnership), 20% platform fee
+ * - One-time skill purchases (USDC payment)
+ * - Per-execution running fees (USDC)
+ * - Revenue split: 80% to co-owners (via BonzaiSkillOwnership), 20% to skill author
  *
  * Works with both BonzAI desktop app and Claude Code CLI (via MCP server).
  */
@@ -27,6 +27,7 @@ import "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
  */
 interface IBonzaiSkillOwnership {
     function distributeRevenue(bytes32 skillId, uint256 amount) external payable;
+    function distributeRevenueUSDC(bytes32 skillId, uint256 amount) external;
 }
 
 contract BonzaiSkillRegistry is Ownable, ReentrancyGuard, Pausable {
@@ -39,17 +40,17 @@ contract BonzaiSkillRegistry is Ownable, ReentrancyGuard, Pausable {
     /// @notice Basis points for percentage calculations (100% = 10000)
     uint256 private constant BASIS_POINTS = 10000;
 
-    /// @notice Author share in basis points (80% = 8000)
-    uint256 private constant AUTHOR_SHARE_BPS = 8000;
+    /// @notice Co-owner share in basis points (80% = 8000)
+    uint256 private constant CO_OWNER_SHARE_BPS = 8000;
 
-    /// @notice Platform share in basis points (20% = 2000)
-    uint256 private constant PLATFORM_SHARE_BPS = 2000;
+    /// @notice Author share in basis points (20% = 2000)
+    uint256 private constant AUTHOR_SHARE_BPS = 2000;
 
     /// @notice Maximum skills per author (spam prevention)
     uint256 public constant MAX_SKILLS_PER_AUTHOR = 100;
 
-    /// @notice Maximum running fee in BONZAI tokens
-    uint256 public constant MAX_RUNNING_FEE = 10000 * 1e18; // 10,000 BONZAI
+    /// @notice Maximum running fee in USDC (6 decimals)
+    uint256 public constant MAX_RUNNING_FEE = 1000 * 1e6; // 1,000 USDC
 
     // ═══════════════════════════════════════════════════════════════════════════
     // STRUCTS
@@ -63,8 +64,8 @@ contract BonzaiSkillRegistry is Ownable, ReentrancyGuard, Pausable {
         string version;              // Semantic version
         string category;             // Skill category
         string ipfsHash;             // IPFS/Arweave hash of full definition
-        uint256 purchasePrice;       // One-time purchase price in wei (ETH)
-        uint256 runningFee;          // Per-execution fee in BONZAI tokens
+        uint256 purchasePrice;       // One-time purchase price in USDC (6 decimals)
+        uint256 runningFee;          // Per-execution fee in USDC (6 decimals)
         bool isActive;               // Can be purchased/executed
         bool isVerified;             // Verified by BonzAI team
         uint256 totalPurchases;      // Total number of purchases
@@ -80,6 +81,9 @@ contract BonzaiSkillRegistry is Ownable, ReentrancyGuard, Pausable {
 
     /// @notice BONZAI token contract for running fees
     IERC20 public bonzaiToken;
+
+    /// @notice USDC token contract for skill purchases
+    IERC20 public usdcToken;
 
     /// @notice Platform treasury for fee collection
     address public treasury;
@@ -102,11 +106,11 @@ contract BonzaiSkillRegistry is Ownable, ReentrancyGuard, Pausable {
     /// @notice Valid spending profile category names (matching BonzaiCompanions.sol 12 categories)
     mapping(string => bool) public validCategories;
 
-    /// @notice Total platform fees collected (ETH)
-    uint256 public totalPlatformFeesETH;
+    /// @notice Total USDC collected as author share across all purchases
+    uint256 public totalAuthorFeesUSDC;
 
-    /// @notice Total platform fees collected (BONZAI)
-    uint256 public totalPlatformFeesBONZAI;
+    /// @notice Total USDC collected as author share from running fees
+    uint256 public totalAuthorRunningFeesUSDC;
 
     // ═══════════════════════════════════════════════════════════════════════════
     // EVENTS
@@ -142,6 +146,7 @@ contract BonzaiSkillRegistry is Ownable, ReentrancyGuard, Pausable {
         uint256 price,
         uint256 coOwnerShare,
         uint256 platformShare,
+        address paymentToken,
         uint256 timestamp
     );
 
@@ -286,17 +291,22 @@ contract BonzaiSkillRegistry is Ownable, ReentrancyGuard, Pausable {
      * @notice Initialize the registry
      * @param _bonzaiToken BONZAI token contract address
      * @param _treasury Platform treasury address
+     * @param _skillOwnershipContract Skill ownership contract address
+     * @param _usdcToken USDC token contract address
      */
     constructor(
         address _bonzaiToken,
         address _treasury,
-        address _skillOwnershipContract
+        address _skillOwnershipContract,
+        address _usdcToken
     ) Ownable(msg.sender) {
         if (_bonzaiToken == address(0)) revert ZeroAddress();
         if (_treasury == address(0)) revert ZeroAddress();
-        if (_skillOwnershipContract == address(0)) revert ZeroAddress();
+        if (_usdcToken == address(0)) revert ZeroAddress();
+        // _skillOwnershipContract can be zero — wired post-deploy via setSkillOwnershipContract()
 
         bonzaiToken = IERC20(_bonzaiToken);
+        usdcToken = IERC20(_usdcToken);
         treasury = _treasury;
         skillOwnershipContract = _skillOwnershipContract;
 
@@ -451,12 +461,12 @@ contract BonzaiSkillRegistry is Ownable, ReentrancyGuard, Pausable {
     // ═══════════════════════════════════════════════════════════════════════════
 
     /**
-     * @notice Purchase a skill (one-time payment)
+     * @notice Purchase a skill (one-time USDC payment)
      * @param skillId Skill to purchase
+     * @dev Caller must approve USDC spending before calling. 80% to co-owners, 20% to treasury.
      */
     function purchaseSkill(bytes32 skillId)
         external
-        payable
         nonReentrant
         whenNotPaused
         skillExists(skillId)
@@ -469,54 +479,56 @@ contract BonzaiSkillRegistry is Ownable, ReentrancyGuard, Pausable {
             revert AlreadyPurchased(msg.sender, skillId);
         }
 
-        // Check payment (free skills have price 0)
-        if (msg.value != skill.purchasePrice) {
-            revert IncorrectPayment(msg.value, skill.purchasePrice);
-        }
-
         // Mark as purchased
         hasPurchased[msg.sender][skillId] = true;
 
         // Update stats
+        uint256 price = skill.purchasePrice;
         unchecked {
             skill.totalPurchases += 1;
-            skill.totalRevenue += msg.value;
+            skill.totalRevenue += price;
         }
 
         // Split revenue if there's a payment
-        if (msg.value > 0) {
+        if (price > 0) {
             uint256 coOwnerShare;
-            uint256 platformShare;
+            uint256 authorShare;
 
             unchecked {
-                coOwnerShare = (msg.value * AUTHOR_SHARE_BPS) / BASIS_POINTS;
-                platformShare = msg.value - coOwnerShare;
-                totalPlatformFeesETH += platformShare;
+                coOwnerShare = (price * CO_OWNER_SHARE_BPS) / BASIS_POINTS;
+                authorShare = price - coOwnerShare;
             }
 
-            // Transfer to co-owners via BonzaiSkillOwnership contract.
-            // Uses try-catch so a revert in the ownership contract doesn't block
-            // the purchase — co-owner share falls back to treasury instead.
-            try IBonzaiSkillOwnership(skillOwnershipContract).distributeRevenue{value: coOwnerShare}(skillId, coOwnerShare) {
+            // Transfer USDC from buyer to this contract first
+            usdcToken.safeTransferFrom(msg.sender, address(this), price);
+
+            // Transfer co-owner share to BonzaiSkillOwnership contract.
+            // Approve + call distributeRevenueUSDC. Falls back to author on failure.
+            usdcToken.safeIncreaseAllowance(skillOwnershipContract, coOwnerShare);
+            try IBonzaiSkillOwnership(skillOwnershipContract).distributeRevenueUSDC(skillId, coOwnerShare) {
                 // Success — co-owners credited
             } catch {
-                // Fallback: send co-owner share to treasury so purchase still completes
+                // Fallback: send co-owner share to author so purchase still completes
                 emit CoOwnerShareFallbackToTreasury(skillId, coOwnerShare);
-                (bool fallbackOk, ) = treasury.call{value: coOwnerShare}("");
-                if (!fallbackOk) revert TransferFailed(treasury);
+                usdcToken.safeTransfer(skill.author, coOwnerShare);
             }
 
-            // Transfer to treasury
-            (bool successTreasury, ) = treasury.call{value: platformShare}("");
-            if (!successTreasury) revert TransferFailed(treasury);
+            // Transfer author share (20%) to skill author
+            usdcToken.safeTransfer(skill.author, authorShare);
+
+            // Track author fees
+            unchecked {
+                totalAuthorFeesUSDC += authorShare;
+            }
 
             emit SkillPurchased(
                 skillId,
                 msg.sender,
-                skill.author, // author is still relevant as the original creator
-                msg.value,
+                skill.author,
+                price,
                 coOwnerShare,
-                platformShare,
+                authorShare,
+                address(usdcToken),
                 block.timestamp
             );
         } else {
@@ -527,6 +539,7 @@ contract BonzaiSkillRegistry is Ownable, ReentrancyGuard, Pausable {
                 0,
                 0,
                 0,
+                address(usdcToken),
                 block.timestamp
             );
         }
@@ -537,9 +550,10 @@ contract BonzaiSkillRegistry is Ownable, ReentrancyGuard, Pausable {
     // ═══════════════════════════════════════════════════════════════════════════
 
     /**
-     * @notice Record a skill execution and deduct running fee
+     * @notice Record a skill execution and deduct running fee (USDC)
      * @param skillId Skill being executed
-     * @dev Caller must have purchased the skill and approved BONZAI spending
+     * @dev Caller must have purchased the skill and approved USDC spending.
+     *      Running fee is in USDC (6 decimals). 80% to co-owners, 20% to author.
      */
     function recordExecution(bytes32 skillId)
         external
@@ -560,30 +574,43 @@ contract BonzaiSkillRegistry is Ownable, ReentrancyGuard, Pausable {
             skill.totalExecutions += 1;
         }
 
-        // Deduct running fee if applicable
+        // Deduct running fee if applicable (USDC)
         if (skill.runningFee > 0) {
+            uint256 coOwnerShare;
             uint256 authorShare;
-            uint256 platformShare;
 
             unchecked {
-                authorShare = (skill.runningFee * AUTHOR_SHARE_BPS) / BASIS_POINTS;
-                platformShare = skill.runningFee - authorShare;
-                totalPlatformFeesBONZAI += platformShare;
+                coOwnerShare = (skill.runningFee * CO_OWNER_SHARE_BPS) / BASIS_POINTS;
+                authorShare = skill.runningFee - coOwnerShare;
             }
 
-            // Transfer BONZAI to author
-            bonzaiToken.safeTransferFrom(msg.sender, skill.author, authorShare);
+            // Pull USDC from executor
+            usdcToken.safeTransferFrom(msg.sender, address(this), skill.runningFee);
 
-            // Transfer BONZAI to treasury
-            bonzaiToken.safeTransferFrom(msg.sender, treasury, platformShare);
+            // Transfer co-owner share to SkillOwnership for weighted distribution
+            usdcToken.safeIncreaseAllowance(skillOwnershipContract, coOwnerShare);
+            try IBonzaiSkillOwnership(skillOwnershipContract).distributeRevenueUSDC(skillId, coOwnerShare) {
+                // Success
+            } catch {
+                // Fallback: send to author
+                usdcToken.safeTransfer(skill.author, coOwnerShare);
+            }
+
+            // Transfer author share (20%)
+            usdcToken.safeTransfer(skill.author, authorShare);
+
+            // Track author running fees
+            unchecked {
+                totalAuthorRunningFeesUSDC += authorShare;
+            }
 
             emit SkillExecuted(
                 skillId,
                 msg.sender,
                 skill.author,
                 skill.runningFee,
+                coOwnerShare,
                 authorShare,
-                platformShare,
                 block.timestamp
             );
         } else {
@@ -680,6 +707,18 @@ contract BonzaiSkillRegistry is Ownable, ReentrancyGuard, Pausable {
     }
 
     /**
+     * @notice Update USDC token address
+     * @param _usdcToken New USDC token address
+     */
+    function setUsdcToken(address _usdcToken)
+        external
+        onlyOwner
+        notZeroAddress(_usdcToken)
+    {
+        usdcToken = IERC20(_usdcToken);
+    }
+
+    /**
      * @notice Update skill ownership contract address
      * @param _skillOwnershipContract New ownership contract address
      */
@@ -727,6 +766,16 @@ contract BonzaiSkillRegistry is Ownable, ReentrancyGuard, Pausable {
      * @return True if purchased
      */
     function userHasPurchased(address user, bytes32 skillId) external view returns (bool) {
+        return hasPurchased[user][skillId];
+    }
+
+    /**
+     * @notice Check if user has purchased a skill (alias)
+     * @param user User address
+     * @param skillId Skill ID
+     * @return True if purchased
+     */
+    function hasUserPurchased(address user, bytes32 skillId) external view returns (bool) {
         return hasPurchased[user][skillId];
     }
 
@@ -798,18 +847,18 @@ contract BonzaiSkillRegistry is Ownable, ReentrancyGuard, Pausable {
     /**
      * @notice Get platform statistics
      * @return _totalSkills Total registered skills
-     * @return _totalPlatformFeesETH Total ETH platform fees
-     * @return _totalPlatformFeesBONZAI Total BONZAI platform fees
+     * @return _totalAuthorFeesUSDC Total USDC author fees from purchases
+     * @return _totalAuthorRunningFeesUSDC Total USDC author fees from executions
      */
     function getStats() external view returns (
         uint256 _totalSkills,
-        uint256 _totalPlatformFeesETH,
-        uint256 _totalPlatformFeesBONZAI
+        uint256 _totalAuthorFeesUSDC,
+        uint256 _totalAuthorRunningFeesUSDC
     ) {
         return (
             allSkillIds.length,
-            totalPlatformFeesETH,
-            totalPlatformFeesBONZAI
+            totalAuthorFeesUSDC,
+            totalAuthorRunningFeesUSDC
         );
     }
 

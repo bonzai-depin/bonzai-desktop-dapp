@@ -1492,6 +1492,25 @@ ${inputLines.length > 0 ? inputLines.join('\n') : '- None'}
         }
       }
 
+      // x402 skill purchase gate (USDC on Base)
+      if (skill.price && skill.price > 0) {
+        const purchaseKey = `skill-purchased-${skillId}`;
+        const isPurchased = await window.electronAPI?.store?.get(purchaseKey);
+        if (!isPurchased) {
+          const priceUSDC = skill.price || 10;
+          return {
+            text: `**Payment Required (402)**
+
+This skill costs **${priceUSDC} USDC** (on Base).
+
+Purchase this skill first via the Skills tab, or use:
+\`!skill purchase ${skillId}\`
+
+Once purchased, this skill will be unlocked for your companion.`,
+          };
+        }
+      }
+
       // Validate inputs
       const validation = validateSkillInputs(skill, inputs);
       if (!validation.valid) {

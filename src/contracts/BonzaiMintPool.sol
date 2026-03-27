@@ -123,6 +123,12 @@ contract BonzaiMintPool is Ownable, ReentrancyGuard, Pausable {
     /// @notice BonzaiUniswapHook contract (tertiary depositor — hook fee share)
     address public feeHook;
 
+    /// @notice Authorized minters (collection clones from BonzaiCollectiblesFactory)
+    mapping(address => bool) public authorizedMinters;
+
+    /// @notice Factory contract authorized to register new minters
+    address public collectiblesFactory;
+
     // ═══════════════════════════════════════════════════════════════════════════
     // EVENTS
     // ═══════════════════════════════════════════════════════════════════════════
@@ -133,6 +139,8 @@ contract BonzaiMintPool is Ownable, ReentrancyGuard, Pausable {
     event ContentContractUpdated(address indexed oldContract, address indexed newContract);
     event RoyaltySplitterUpdated(address indexed oldSplitter, address indexed newSplitter);
     event FeeHookUpdated(address indexed oldHook, address indexed newHook);
+    event AuthorizedMinterUpdated(address indexed minter, bool authorized);
+    event CollectiblesFactoryUpdated(address indexed oldFactory, address indexed newFactory);
     event PoolThresholdUpdated(uint8 indexed poolIndex, uint256 oldThreshold, uint256 newThreshold);
     event UnclaimedSwept(uint256 indexed epochId, uint256 amount);
     event ClaimConfirmed(uint256 indexed epochId, address indexed wallet, uint256 balance, uint256 blockNumber);
@@ -156,7 +164,14 @@ contract BonzaiMintPool is Ownable, ReentrancyGuard, Pausable {
 
         bonzaiToken = IERC20(_bonzaiToken);
         epochDuration = _epochDuration;
-        genesisTime = block.timestamp;
+
+        // Align genesis to the start of next Monday 00:00 UTC.
+        // Unix epoch (Jan 1 1970) was a Thursday, so Monday = day 4 of the week.
+        // dayOfWeek: 0=Thu, 1=Fri, 2=Sat, 3=Sun, 4=Mon, 5=Tue, 6=Wed
+        uint256 dayOfWeek = (block.timestamp / 1 days + 4) % 7; // 0=Mon … 6=Sun
+        uint256 todayStart = (block.timestamp / 1 days) * 1 days;
+        uint256 daysUntilMonday = dayOfWeek == 0 ? 7 : (7 - dayOfWeek);
+        genesisTime = todayStart + daysUntilMonday * 1 days;
 
         for (uint8 i = 0; i < 6; i++) {
             require(_thresholds[i] > 0, "Threshold cannot be zero");
@@ -174,9 +189,18 @@ contract BonzaiMintPool is Ownable, ReentrancyGuard, Pausable {
     /**
      * @notice Compute the current epoch index from block.timestamp.
      *         epoch = (block.timestamp - genesisTime) / epochDuration
+     *         Returns 0 before genesis (epoch 0 starts at genesisTime).
      */
     function currentEpoch() public view returns (uint256) {
+        if (block.timestamp < genesisTime) return 0;
         return (block.timestamp - genesisTime) / epochDuration;
+    }
+
+    /**
+     * @notice Whether the pool system has started (genesis reached).
+     */
+    function hasStarted() public view returns (bool) {
+        return block.timestamp >= genesisTime;
     }
 
     /**
@@ -234,7 +258,7 @@ contract BonzaiMintPool is Ownable, ReentrancyGuard, Pausable {
      */
     function depositForPool(uint8 poolIndex) external payable {
         require(
-            msg.sender == contentContract || msg.sender == royaltySplitter || msg.sender == feeHook,
+            msg.sender == contentContract || msg.sender == royaltySplitter || msg.sender == feeHook || authorizedMinters[msg.sender],
             "Unauthorized depositor"
         );
         require(poolIndex < NUM_POOLS, "Invalid pool index");
@@ -510,6 +534,29 @@ contract BonzaiMintPool is Ownable, ReentrancyGuard, Pausable {
     }
 
     /**
+     * @notice Authorize or deauthorize a minter (e.g. collection clone from factory).
+     *         Can be called by the contract owner or the authorized collectibles factory.
+     * @param minter The address to authorize/deauthorize
+     * @param authorized Whether to authorize (true) or deauthorize (false)
+     */
+    function setAuthorizedMinter(address minter, bool authorized) external {
+        require(msg.sender == owner() || msg.sender == collectiblesFactory, "Unauthorized");
+        require(minter != address(0), "Invalid address");
+        authorizedMinters[minter] = authorized;
+        emit AuthorizedMinterUpdated(minter, authorized);
+    }
+
+    /**
+     * @notice Set the collectibles factory address (authorized to register minters)
+     * @param _factory The factory contract address
+     */
+    function setCollectiblesFactory(address _factory) external onlyOwner {
+        address old = collectiblesFactory;
+        collectiblesFactory = _factory;
+        emit CollectiblesFactoryUpdated(old, _factory);
+    }
+
+    /**
      * @notice Update the BONZAI threshold for a pool.
      * @dev WARNING: Takes effect immediately, including for active claim windows.
      *      Users who registered in epoch N may be affected when claiming in epoch N+1
@@ -567,6 +614,33 @@ contract BonzaiMintPool is Ownable, ReentrancyGuard, Pausable {
             emit UnclaimedSwept(epochId, sweepAmount);
         }
     }
+
+    /// @notice Recirculate unclaimed epoch funds into the current active epoch
+    function recirculateUnclaimed(uint256 epochId) external onlyOwner {
+        uint256 current = currentEpoch();
+        require(current >= epochId + 2, "Claim window still open");
+        require(!epochSwept[epochId], "Already swept/recirculated");
+
+        epochSwept[epochId] = true;
+        uint256 totalRecirculated;
+
+        for (uint8 i = 0; i < NUM_POOLS;) {
+            uint256 deposited = epochs[epochId].poolDeposits[i];
+            uint256 claimed = epochClaimedPerPool[epochId][i];
+            uint256 unclaimed = deposited > claimed ? deposited - claimed : 0;
+            if (unclaimed > 0) {
+                epochs[current].poolDeposits[i] += unclaimed;
+                totalRecirculated += unclaimed;
+            }
+            unchecked { ++i; }
+        }
+
+        if (totalRecirculated > 0) {
+            emit UnclaimedRecirculated(epochId, current, totalRecirculated);
+        }
+    }
+
+    event UnclaimedRecirculated(uint256 indexed fromEpoch, uint256 indexed toEpoch, uint256 amount);
 
     function pause() external onlyOwner {
         _pause();

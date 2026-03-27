@@ -80,6 +80,13 @@
             <p>
               <strong>Wallet Address:</strong>
               <code class="is-size-7">{{ selectedCompanion.agentWallet || 'Not set' }}</code>
+              <span v-if="companionWalletProvider === 'ows'" class="tag is-success is-light ml-2" style="font-size: 0.65em; vertical-align: middle">OWS</span>
+              <span v-else-if="companionWalletProvider === 'privy'" class="tag is-link is-light ml-2" style="font-size: 0.65em; vertical-align: middle">Privy</span>
+              <span v-else-if="companionWalletProvider === 'local'" class="tag is-warning is-light ml-2" style="font-size: 0.65em; vertical-align: middle">Legacy</span>
+            </p>
+            <p v-if="companionEthBalance !== null">
+              <strong>Balance (Base):</strong>
+              <span class="is-size-7">{{ companionEthBalance }} ETH</span>
             </p>
             <p v-if="selectedCompanionUP">
               <strong>Universal Profile:</strong>
@@ -175,6 +182,52 @@
             </table>
           </div>
 
+          <!-- Wallet Policies (OWS only) -->
+          <div v-if="companionWalletProvider === 'ows'" class="mb-4">
+            <h4 class="subtitle is-5 mb-2">
+              <span class="material-symbols-outlined mr-1" style="vertical-align: middle">policy</span>
+              Wallet Policies
+            </h4>
+            <div v-if="companionPolicies.length === 0" class="has-text-grey-light is-size-7">
+              No policies configured.
+            </div>
+            <div v-else>
+              <div v-for="policy in companionPolicies" :key="policy.id" class="notification is-light is-size-7 p-2 mb-1">
+                <strong>{{ policy.id?.slice(0, 12) }}...</strong>
+                <span v-if="policy.rules?.allowed_chains"> Chains: {{ policy.rules.allowed_chains.join(', ') }}</span>
+                <span v-if="policy.rules?.daily_limit_eth"> | Limit: {{ policy.rules.daily_limit_eth }} ETH/day</span>
+              </div>
+            </div>
+            <button class="button is-small is-info is-outlined mt-2" @click="showPolicyModal = true">
+              <span class="material-symbols-outlined mr-1" style="font-size: 14px">add</span>
+              Add Policy
+            </button>
+          </div>
+
+          <!-- API Keys (OWS only) -->
+          <div v-if="companionWalletProvider === 'ows'" class="mb-4">
+            <h4 class="subtitle is-5 mb-2">
+              <span class="material-symbols-outlined mr-1" style="vertical-align: middle">vpn_key</span>
+              API Keys
+            </h4>
+            <div v-if="companionApiKeys.length === 0" class="has-text-grey-light is-size-7">
+              No API keys.
+            </div>
+            <div v-else>
+              <div v-for="key in companionApiKeys" :key="key.id" class="is-flex is-justify-content-space-between is-align-items-center mb-1">
+                <span class="is-size-7">
+                  <strong>{{ key.name }}</strong>
+                  <code class="ml-1">...{{ (key.id || '').slice(-8) }}</code>
+                </span>
+                <button class="button is-small is-danger is-outlined" @click="revokeApiKey(key.id)">Revoke</button>
+              </div>
+            </div>
+            <button class="button is-small is-info is-outlined mt-2" @click="createApiKey">
+              <span class="material-symbols-outlined mr-1" style="font-size: 14px">add</span>
+              Create New Key
+            </button>
+          </div>
+
           <!-- Action Buttons -->
           <div class="buttons">
             <button
@@ -193,9 +246,23 @@
               <span class="material-symbols-outlined mr-1">app_registration</span>
               Register for Skill
             </button>
-            <button class="button is-warning" @click="showBackupModal = true">
+            <button v-if="companionWalletProvider === 'ows'" class="button is-warning" @click="showBackupModal = true">
+              <span class="material-symbols-outlined mr-1">download</span>
+              Export Wallet
+            </button>
+            <button v-else class="button is-warning" @click="showBackupModal = true">
               <span class="material-symbols-outlined mr-1">key</span>
               Backup Private Key
+            </button>
+            <button
+              v-if="companionWalletProvider === 'local'"
+              class="button is-link"
+              :class="{ 'is-loading': isMigrating }"
+              :disabled="isMigrating"
+              @click="migrateToOWS"
+            >
+              <span class="material-symbols-outlined mr-1">upgrade</span>
+              Migrate to OWS
             </button>
           </div>
         </section>
@@ -284,6 +351,63 @@
             </div>
           </div>
         </section>
+      </div>
+    </div>
+
+    <!-- Add Policy Modal (OWS) -->
+    <div class="modal" :class="{ 'is-active': showPolicyModal }">
+      <div class="modal-background" @click="showPolicyModal = false"></div>
+      <div class="modal-card" style="max-width: 450px">
+        <header class="modal-card-head">
+          <p class="modal-card-title">Add Wallet Policy</p>
+          <button class="delete" aria-label="close" @click="showPolicyModal = false"></button>
+        </header>
+        <section class="modal-card-body">
+          <div class="field">
+            <label class="label">Allowed Chains (CAIP-2)</label>
+            <input class="input" v-model="newPolicyData.chains" placeholder="eip155:8453" />
+            <p class="help">Comma-separated chain IDs</p>
+          </div>
+          <div class="field">
+            <label class="label">Daily Limit (ETH)</label>
+            <input class="input" type="number" step="0.001" v-model="newPolicyData.dailyLimit" />
+          </div>
+          <div class="field">
+            <label class="label">Expiry (days from now)</label>
+            <input class="input" type="number" v-model.number="newPolicyData.expiryDays" />
+          </div>
+        </section>
+        <footer class="modal-card-foot">
+          <button class="button is-success" @click="createPolicy">Create Policy</button>
+          <button class="button" @click="showPolicyModal = false">Cancel</button>
+        </footer>
+      </div>
+    </div>
+
+    <!-- New API Key Token Modal (OWS) -->
+    <div class="modal" :class="{ 'is-active': showNewApiKeyModal }">
+      <div class="modal-background" @click="showNewApiKeyModal = false; newApiKeyToken = null"></div>
+      <div class="modal-card" style="max-width: 500px">
+        <header class="modal-card-head">
+          <p class="modal-card-title">API Key Created</p>
+          <button class="delete" aria-label="close" @click="showNewApiKeyModal = false; newApiKeyToken = null"></button>
+        </header>
+        <section class="modal-card-body">
+          <div class="notification is-warning is-light mb-3">
+            <strong>Copy this token now.</strong> It will only be shown once.
+          </div>
+          <div class="field">
+            <div class="control">
+              <input class="input is-family-monospace" :value="newApiKeyToken" readonly />
+            </div>
+          </div>
+        </section>
+        <footer class="modal-card-foot">
+          <button class="button is-info" @click="navigator.clipboard.writeText(newApiKeyToken || ''); showNewApiKeyModal = false; newApiKeyToken = null">
+            <span class="material-symbols-outlined mr-1">content_copy</span>
+            Copy & Close
+          </button>
+        </footer>
       </div>
     </div>
 
@@ -626,6 +750,8 @@ import { companionService } from "../../services/companion.service.js";
 import { getLeaderboard, isUsingMockData } from "../../services/leaderboard.service.js";
 import { skillOwnershipService } from "../../services/skillOwnership.service.js";
 import { web3Service, switchNetwork } from "../../services/web3.service.js";
+import { walletProviderService } from "../../services/walletProvider.service.js";
+import { owsMigrationService } from "../../services/owsMigration.service.js";
 import { SKILL_CATEGORY_META } from "../../skills/types.js";
 import ContextBanner from "../ContextBanner.vue";
 
@@ -684,6 +810,18 @@ export default {
     // Universal Profile state
     const selectedCompanionUP = ref(null);
     const isDeployingUP = ref(false);
+
+    // OWS wallet state
+    const companionWalletProvider = ref(null); // 'ows' | 'privy' | 'local'
+    const companionEthBalance = ref(null);
+    const companionTxHistory = ref([]);
+    const companionPolicies = ref([]);
+    const companionApiKeys = ref([]);
+    const isMigrating = ref(false);
+    const showPolicyModal = ref(false);
+    const newPolicyData = ref({ chains: 'eip155:8453', dailyLimit: '0.005', expiryDays: 365 });
+    const showNewApiKeyModal = ref(false);
+    const newApiKeyToken = ref(null);
 
     const loadCompanionUP = async (companionId) => {
       try {
@@ -744,6 +882,116 @@ export default {
       }
     };
 
+    // Load wallet provider type and ETH balance for selected companion
+    async function loadCompanionWalletInfo(companion) {
+      const id = companion.id || companion.tokenId;
+      try {
+        const creds = await walletProviderService.getAgentWalletCredentials(id);
+        companionWalletProvider.value = creds?.provider || 'local';
+
+        // Load ETH balance
+        const balance = await walletProviderService.getAgentWalletBalance(id, 8453);
+        companionEthBalance.value = parseFloat(balance).toFixed(6);
+      } catch (err) {
+        console.warn('[BrowseAgents] Wallet info load failed:', err.message);
+        companionWalletProvider.value = 'local';
+        companionEthBalance.value = null;
+      }
+    }
+
+    // Load OWS-specific data (policies, API keys)
+    async function loadOWSData() {
+      if (companionWalletProvider.value !== 'ows') {
+        companionPolicies.value = [];
+        companionApiKeys.value = [];
+        return;
+      }
+      try {
+        const [policies, keys] = await Promise.all([
+          walletProviderService.getOWSPolicies(),
+          walletProviderService.getOWSApiKeys(),
+        ]);
+        companionPolicies.value = Array.isArray(policies) ? policies : [];
+        companionApiKeys.value = Array.isArray(keys) ? keys : [];
+      } catch {
+        companionPolicies.value = [];
+        companionApiKeys.value = [];
+      }
+    }
+
+    // Migrate legacy wallet to OWS
+    async function migrateToOWS() {
+      if (!selectedCompanion.value || isMigrating.value) return;
+      const id = selectedCompanion.value.id || selectedCompanion.value.tokenId;
+      isMigrating.value = true;
+      try {
+        const result = await owsMigrationService.migrateCompanion(id);
+        if (result.success) {
+          companionWalletProvider.value = 'ows';
+          await loadOWSData();
+        } else {
+          alert('Migration failed: ' + result.error);
+        }
+      } catch (err) {
+        alert('Migration error: ' + err.message);
+      } finally {
+        isMigrating.value = false;
+      }
+    }
+
+    // Create OWS policy
+    async function createPolicy() {
+      try {
+        await walletProviderService.createOWSPolicy({
+          allowed_chains: newPolicyData.value.chains.split(',').map(c => c.trim()),
+          daily_limit_eth: newPolicyData.value.dailyLimit,
+          expires_at: new Date(Date.now() + newPolicyData.value.expiryDays * 86400000).toISOString(),
+        });
+        showPolicyModal.value = false;
+        await loadOWSData();
+      } catch (err) {
+        alert('Policy creation failed: ' + err.message);
+      }
+    }
+
+    // Create OWS API key
+    async function createApiKey() {
+      if (!selectedCompanion.value) return;
+      const id = selectedCompanion.value.id || selectedCompanion.value.tokenId;
+      try {
+        const owsMapping = await window.electronAPI?.store?.get(`ows-wallet-${id}`);
+        const passphrase = await window.electronAPI?.store?.get(`ows-passphrase-${id}`);
+        if (!owsMapping || !passphrase) return;
+
+        const { owsService } = await import('../../services/ows.service.js');
+        const result = await owsService.createApiKey(
+          `${owsMapping.walletName}-key-${Date.now()}`,
+          [owsMapping.walletName],
+          [],
+          passphrase,
+          new Date(Date.now() + 365 * 86400000).toISOString()
+        );
+        if (result?.token) {
+          newApiKeyToken.value = result.token;
+          showNewApiKeyModal.value = true;
+          await loadOWSData();
+        }
+      } catch (err) {
+        alert('API key creation failed: ' + err.message);
+      }
+    }
+
+    // Revoke OWS API key
+    async function revokeApiKey(keyId) {
+      try {
+        const { owsService } = await import('../../services/ows.service.js');
+        await owsService.revokeApiKey(keyId);
+        await loadOWSData();
+      } catch (err) {
+        alert('Revoke failed: ' + err.message);
+      }
+    }
+
     // Eligible skills for registration (profile score >= 5)
     const eligibleSkills = computed(() => {
       if (!selectedCompanion.value?.spendingHabits || !props.skills) return [];
@@ -765,13 +1013,20 @@ export default {
     async function selectCompanion(companion) {
       selectedCompanion.value = companion;
       const id = companion.id || companion.tokenId;
-      if (id) loadCompanionUP(id);
+      if (id) {
+        loadCompanionUP(id);
+        loadCompanionWalletInfo(companion);
+      }
     }
 
     function closeCompanionModal() {
       selectedCompanion.value = null;
       selectedCompanionUP.value = null;
       companionOwnedSkills.value = [];
+      companionWalletProvider.value = null;
+      companionEthBalance.value = null;
+      companionPolicies.value = [];
+      companionApiKeys.value = [];
     }
 
     async function loadCompanionSkills(companion) {
@@ -917,6 +1172,13 @@ export default {
       }
     });
 
+    // Load OWS data when wallet provider is detected as OWS
+    watch(companionWalletProvider, async (provider) => {
+      if (provider === 'ows') {
+        await loadOWSData();
+      }
+    });
+
     // Setup wizard methods
     function openSetupWizard(companion) {
       setupTarget.value = companion;
@@ -1054,6 +1316,21 @@ export default {
       isDeployingUP,
       upDeployStatus,
       attachUniversalProfile,
+      // OWS wallet
+      companionWalletProvider,
+      companionEthBalance,
+      companionTxHistory,
+      companionPolicies,
+      companionApiKeys,
+      isMigrating,
+      showPolicyModal,
+      newPolicyData,
+      showNewApiKeyModal,
+      newApiKeyToken,
+      migrateToOWS,
+      createPolicy,
+      createApiKey,
+      revokeApiKey,
       // Setup wizard
       showSetupWizard,
       setupTarget,

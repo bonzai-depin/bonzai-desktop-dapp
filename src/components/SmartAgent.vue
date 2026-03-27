@@ -153,6 +153,12 @@
 
                 <p class="skill-description">{{ skill.description }}</p>
 
+                <!-- Purchased badge -->
+                <span v-if="isSkillPurchased(skill.id)" class="tag is-success is-light mb-2">
+                  <span class="material-symbols-outlined mr-1" style="font-size: 14px">check_circle</span>
+                  Purchased
+                </span>
+
                 <hr />
 
                 <div class="skill-footer">
@@ -175,6 +181,16 @@
                       <span class="material-symbols-outlined mr-1" style="font-size: 16px">laptop_mac</span>
                       Requires Apple Silicon Mac
                     </span>
+                    <button
+                      v-if="skill.price > 0 && !isSkillPurchased(skill.id)"
+                      class="button is-warning is-medium ml-2"
+                      :class="{ 'is-loading': purchasingSkillId === skill.id }"
+                      :disabled="purchasingSkillId === skill.id"
+                      @click.stop="purchaseSkill(skill)"
+                    >
+                      <span class="material-symbols-outlined mr-1">shopping_cart</span>
+                      Purchase ({{ skill.price || 10 }} USDC)
+                    </button>
                   </div>
                 </div>
               </div>
@@ -898,7 +914,7 @@ import { useSkillStore } from "../stores/skillStore.js";
 import { SKILL_CATEGORY_META } from "../skills/types.js";
 import polymarketAgent from "./polymarketAgent.js";
 import { tokenService } from "../services/token.service.js";
-import { hasPurchasedAgent, purchaseAgent } from "../services/agent.service.js";
+import { hasPurchasedAgent, purchaseAgent, purchaseSkillUSDC } from "../services/agent.service.js";
 import { requestOpenLevelModal } from "../services/level.service.js";
 import SkillRunner from "./skills/SkillRunner.vue";
 import RoleplayChat from "./skills/RoleplayChat.vue";
@@ -2033,15 +2049,19 @@ Return ONLY the JSON, no explanation.`;
     // Skill purchase state
     const purchasingSkillId = ref(null);
 
+    // Remote command mapping per skill
     const isSkillPurchased = (skillId) => {
       return hasPurchasedAgent(skillId);
     };
+
+    const purchaseSkill = (skill) => handlePurchaseSkill(skill);
 
     const handlePurchaseSkill = async (skill) => {
       if (purchasingSkillId.value) return;
       purchasingSkillId.value = skill.id;
       try {
-        const result = await purchaseAgent(skill.id);
+        const priceUsdc = (skill.price || 10) * 1_000_000; // Convert to 6-decimal USDC units
+        const result = await purchaseSkillUSDC(skill.id, priceUsdc);
         if (result.success) {
           showNotification(`Purchased ${skill.name}!`, "success");
         } else {
@@ -2676,6 +2696,7 @@ Provide a concise analysis covering:
       isSkillPurchased,
       handlePurchaseSkill,
       purchasingSkillId,
+      purchaseSkill,
 
       // Skill execution
       selectedSkillId,

@@ -146,31 +146,27 @@
             <span class="material-symbols-outlined">shopping_cart</span>
           </a>
           <button
+            class="button is-warning ml-2 rewards-btn"
+            @click="showRewardsModal = true"
+            title="Rewards & Pool Revenue"
+          >
+            <span class="material-symbols-outlined">trophy</span>
+            <span
+              v-if="rewardsModalRef?.hasClaimableRewards"
+              class="rewards-badge-dot"
+            ></span>
+          </button>
+          <button
             class="button is-warning ml-2"
             @click="refresh"
             title="Refresh"
           >
             <span
-              class="material-symbols-outlined mr-2"
+              class="material-symbols-outlined"
               :class="{ spinning: isRefreshing }"
             >
               sync
             </span>
-            Refresh Balance
-          </button>
-          <button
-            class="p2p button ml-2"
-            :class="p2pButtonClass"
-            @click="showNetworkModal = true"
-            title="Peer-to-Peer Network"
-          >
-            <span
-              class="material-symbols-outlined mr-2"
-              :class="{ 'pulse-icon': p2pStatus.started }"
-            >
-              {{ p2pModeIcon }}
-            </span>
-            {{ p2pModeLabel }}
           </button>
         </div>
         <div
@@ -196,6 +192,21 @@
             </span>
           </span>
         </div>
+
+          <button
+            class="p2p button"
+            :class="p2pButtonClass"
+            @click="showNetworkModal = true"
+            title="Peer-to-Peer Network"
+          >
+            <span
+              class="material-symbols-outlined mr-2"
+              :class="{ 'pulse-icon': p2pStatus.started }"
+            >
+              {{ p2pModeIcon }}
+            </span>
+            {{ p2pModeLabel }}
+          </button>
       </div>
     </div>
 
@@ -337,6 +348,13 @@
       </Transition>
     </Teleport>
 
+    <!-- Rewards Modal -->
+    <RewardsModal
+      v-if="showRewardsModal"
+      ref="rewardsModalRef"
+      @close="showRewardsModal = false"
+    />
+
     <!-- ═══ Privy Login Modal ═══ -->
     <Teleport to="body">
       <Transition name="modal-fade">
@@ -456,6 +474,7 @@ import {
 } from "../services/auth.service.js";
 import { authVault } from "../services/authVault.service.js";
 import NetworkSettings from "./NetworkSettings.vue";
+import RewardsModal from "./RewardsModal.vue";
 import { mintStore } from "../stores/mintStore.js";
 import { switchNetwork } from "../services/web3.service.js";
 import { modelStore } from "../stores/modelStore.js";
@@ -493,6 +512,10 @@ const isUnlocking = ref(false);
 const selectedLevel = ref(null);
 const unlockStatus = ref("");
 const unlockStatusType = ref("info"); // 'info', 'warning', 'success', 'danger'
+
+// Rewards modal state
+const showRewardsModal = ref(false);
+const rewardsModalRef = ref(null);
 
 // Network modal state
 const showNetworkModal = ref(false);
@@ -2028,5 +2051,22 @@ hr {
   color: #ff6b6b;
   font-size: 13px;
   text-align: center;
+}
+
+/* Rewards button badge */
+.rewards-btn {
+  position: relative;
+}
+
+.rewards-badge-dot {
+  position: absolute;
+  top: -2px;
+  right: -2px;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #48c78e;
+  box-shadow: 0 0 6px #48c78e;
+  animation: status-blink 1.5s ease-in-out infinite;
 }
 </style>

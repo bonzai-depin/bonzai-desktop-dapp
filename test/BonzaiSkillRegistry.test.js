@@ -35,6 +35,17 @@ async function registerDefaultSkill(registry, author, overrides = {}) {
   return { tx, skillId, name, version, category, ipfsHash, purchasePrice, runningFee };
 }
 
+/**
+ * Mint USDC to buyer and approve registry, then purchase skill
+ */
+async function purchaseWithUSDC(registry, usdcToken, buyer, skillId, price) {
+  if (price > 0n) {
+    await usdcToken.mint(buyer.address, price);
+    await usdcToken.connect(buyer).approve(await registry.getAddress(), price);
+  }
+  return registry.connect(buyer).purchaseSkill(skillId);
+}
+
 describe("BonzaiSkillRegistry", function () {
   // ═══════════════════════════════════════════════════════════════════════════
   // 1. DEPLOYMENT
@@ -86,40 +97,43 @@ describe("BonzaiSkillRegistry", function () {
       expect(await registry.MAX_SKILLS_PER_AUTHOR()).to.equal(100);
     });
 
-    it("should set MAX_RUNNING_FEE to 10000 tokens", async function () {
+    it("should set MAX_RUNNING_FEE to 1000 USDC", async function () {
       const { registry } = await loadFixture(deploySkillRegistry);
-      expect(await registry.MAX_RUNNING_FEE()).to.equal(ethers.parseEther("10000"));
+      expect(await registry.MAX_RUNNING_FEE()).to.equal(ethers.parseUnits("1000", 6));
     });
 
     it("should revert when BONZAI token is zero address", async function () {
       const [, treasury] = await ethers.getSigners();
       const MockSkillOwnership = await ethers.getContractFactory("MockSkillOwnership");
       const mockOwnership = await MockSkillOwnership.deploy();
+      const MockERC20 = await ethers.getContractFactory("MockERC20");
+      const usdc = await MockERC20.deploy("USDC", "USDC");
       const BonzaiSkillRegistry = await ethers.getContractFactory("BonzaiSkillRegistry");
       await expect(
-        BonzaiSkillRegistry.deploy(ethers.ZeroAddress, treasury.address, await mockOwnership.getAddress())
+        BonzaiSkillRegistry.deploy(ethers.ZeroAddress, treasury.address, await mockOwnership.getAddress(), await usdc.getAddress())
       ).to.be.revertedWithCustomError(BonzaiSkillRegistry, "ZeroAddress");
     });
 
     it("should revert when treasury is zero address", async function () {
       const MockERC20 = await ethers.getContractFactory("MockERC20");
       const token = await MockERC20.deploy("BONZAI", "BONZAI");
+      const usdc = await MockERC20.deploy("USDC", "USDC");
       const MockSkillOwnership = await ethers.getContractFactory("MockSkillOwnership");
       const mockOwnership = await MockSkillOwnership.deploy();
       const BonzaiSkillRegistry = await ethers.getContractFactory("BonzaiSkillRegistry");
       await expect(
-        BonzaiSkillRegistry.deploy(await token.getAddress(), ethers.ZeroAddress, await mockOwnership.getAddress())
+        BonzaiSkillRegistry.deploy(await token.getAddress(), ethers.ZeroAddress, await mockOwnership.getAddress(), await usdc.getAddress())
       ).to.be.revertedWithCustomError(BonzaiSkillRegistry, "ZeroAddress");
     });
 
-    it("should revert when skill ownership contract is zero address", async function () {
+    it("should allow zero address for skill ownership contract (wired post-deploy)", async function () {
       const [, treasury] = await ethers.getSigners();
       const MockERC20 = await ethers.getContractFactory("MockERC20");
       const token = await MockERC20.deploy("BONZAI", "BONZAI");
+      const usdc = await MockERC20.deploy("USDC", "USDC");
       const BonzaiSkillRegistry = await ethers.getContractFactory("BonzaiSkillRegistry");
-      await expect(
-        BonzaiSkillRegistry.deploy(await token.getAddress(), treasury.address, ethers.ZeroAddress)
-      ).to.be.revertedWithCustomError(BonzaiSkillRegistry, "ZeroAddress");
+      const reg = await BonzaiSkillRegistry.deploy(await token.getAddress(), treasury.address, ethers.ZeroAddress, await usdc.getAddress());
+      expect(await reg.skillOwnershipContract()).to.equal(ethers.ZeroAddress);
     });
   });
 
@@ -241,11 +255,11 @@ describe("BonzaiSkillRegistry", function () {
 
     it("should revert on running fee too high", async function () {
       const { registry, author1 } = await loadFixture(deploySkillRegistry);
-      const tooHighFee = ethers.parseEther("10001"); // > 10000
+      const tooHighFee = ethers.parseUnits("1001", 6); // > 1000 USDC
       await expect(
         registry.connect(author1).registerSkill("TestSkill", "1.0.0", "education", VALID_IPFS_HASH, SKILL_PURCHASE_PRICE, tooHighFee)
       ).to.be.revertedWithCustomError(registry, "RunningFeeTooHigh")
-        .withArgs(tooHighFee, ethers.parseEther("10000"));
+        .withArgs(tooHighFee, ethers.parseUnits("1000", 6));
     });
 
     it("should revert on duplicate skill ID", async function () {
@@ -361,8 +375,8 @@ describe("BonzaiSkillRegistry", function () {
       const { skillId } = await registerDefaultSkill(registry, author1);
 
       const newIpfsHash = "QmUpdatedHash12345678";
-      const newPrice = ethers.parseEther("0.02");
-      const newFee = ethers.parseEther("20");
+      const newPrice = ethers.parseUnits("20", 6); // 20 USDC
+      const newFee = ethers.parseUnits("2", 6); // 2 USDC
 
       await registry.connect(author1).updateSkill(skillId, newIpfsHash, newPrice, newFee);
 
@@ -421,11 +435,11 @@ describe("BonzaiSkillRegistry", function () {
       const { registry, author1 } = await loadFixture(deploySkillRegistry);
       const { skillId } = await registerDefaultSkill(registry, author1);
 
-      const tooHighFee = ethers.parseEther("10001");
+      const tooHighFee = ethers.parseUnits("1001", 6); // > 1000 USDC
       await expect(
         registry.connect(author1).updateSkill(skillId, VALID_IPFS_HASH, SKILL_PURCHASE_PRICE, tooHighFee)
       ).to.be.revertedWithCustomError(registry, "RunningFeeTooHigh")
-        .withArgs(tooHighFee, ethers.parseEther("10000"));
+        .withArgs(tooHighFee, ethers.parseUnits("1000", 6));
     });
 
     it("should emit SkillUpdated event", async function () {
@@ -433,8 +447,8 @@ describe("BonzaiSkillRegistry", function () {
       const { skillId } = await registerDefaultSkill(registry, author1);
 
       const newIpfsHash = "QmUpdatedHash12345678";
-      const newPrice = ethers.parseEther("0.05");
-      const newFee = ethers.parseEther("50");
+      const newPrice = ethers.parseUnits("50", 6); // 50 USDC
+      const newFee = ethers.parseUnits("5", 6); // 5 USDC
 
       await expect(
         registry.connect(author1).updateSkill(skillId, newIpfsHash, newPrice, newFee)
@@ -553,91 +567,89 @@ describe("BonzaiSkillRegistry", function () {
   // ═══════════════════════════════════════════════════════════════════════════
 
   describe("Skill Purchase", function () {
-    it("should purchase a skill with correct ETH payment", async function () {
-      const { registry, author1, buyer1 } = await loadFixture(deploySkillRegistry);
+    it("should purchase a skill with correct USDC payment", async function () {
+      const { registry, usdcToken, author1, buyer1 } = await loadFixture(deploySkillRegistry);
       const { skillId } = await registerDefaultSkill(registry, author1);
 
-      await registry.connect(buyer1).purchaseSkill(skillId, { value: SKILL_PURCHASE_PRICE });
+      await purchaseWithUSDC(registry, usdcToken, buyer1, skillId, SKILL_PURCHASE_PRICE);
 
       expect(await registry.hasPurchased(buyer1.address, skillId)).to.be.true;
     });
 
-    it("should split fees 80/20 between ownership and treasury", async function () {
-      const { registry, mockOwnership, treasury, author1, buyer1 } = await loadFixture(deploySkillRegistry);
+    it("should split fees 80/20 between ownership and author (USDC)", async function () {
+      const { registry, usdcToken, mockOwnership, author1, buyer1 } = await loadFixture(deploySkillRegistry);
       const { skillId } = await registerDefaultSkill(registry, author1);
 
-      const treasuryBalBefore = await ethers.provider.getBalance(treasury.address);
-      const ownershipBalBefore = await ethers.provider.getBalance(await mockOwnership.getAddress());
+      const authorBalBefore = await usdcToken.balanceOf(author1.address);
 
-      await registry.connect(buyer1).purchaseSkill(skillId, { value: SKILL_PURCHASE_PRICE });
+      await purchaseWithUSDC(registry, usdcToken, buyer1, skillId, SKILL_PURCHASE_PRICE);
 
-      const treasuryBalAfter = await ethers.provider.getBalance(treasury.address);
-      const ownershipBalAfter = await ethers.provider.getBalance(await mockOwnership.getAddress());
+      const authorBalAfter = await usdcToken.balanceOf(author1.address);
 
       const expectedCoOwnerShare = (SKILL_PURCHASE_PRICE * 8000n) / 10000n; // 80%
-      const expectedPlatformShare = SKILL_PURCHASE_PRICE - expectedCoOwnerShare; // 20%
+      const expectedAuthorShare = SKILL_PURCHASE_PRICE - expectedCoOwnerShare; // 20%
 
-      expect(ownershipBalAfter - ownershipBalBefore).to.equal(expectedCoOwnerShare);
-      expect(treasuryBalAfter - treasuryBalBefore).to.equal(expectedPlatformShare);
+      // Author receives 20% share.
+      expect(authorBalAfter - authorBalBefore).to.equal(expectedAuthorShare);
     });
 
     it("should update skill totalPurchases and totalRevenue", async function () {
-      const { registry, author1, buyer1 } = await loadFixture(deploySkillRegistry);
+      const { registry, usdcToken, author1, buyer1 } = await loadFixture(deploySkillRegistry);
       const { skillId } = await registerDefaultSkill(registry, author1);
 
-      await registry.connect(buyer1).purchaseSkill(skillId, { value: SKILL_PURCHASE_PRICE });
+      await purchaseWithUSDC(registry, usdcToken, buyer1, skillId, SKILL_PURCHASE_PRICE);
 
       const skill = await registry.getSkill(skillId);
       expect(skill.totalPurchases).to.equal(1);
       expect(skill.totalRevenue).to.equal(SKILL_PURCHASE_PRICE);
     });
 
-    it("should update totalPlatformFeesETH", async function () {
-      const { registry, author1, buyer1 } = await loadFixture(deploySkillRegistry);
+    it("should update totalAuthorFeesUSDC", async function () {
+      const { registry, usdcToken, author1, buyer1 } = await loadFixture(deploySkillRegistry);
       const { skillId } = await registerDefaultSkill(registry, author1);
 
-      await registry.connect(buyer1).purchaseSkill(skillId, { value: SKILL_PURCHASE_PRICE });
+      await purchaseWithUSDC(registry, usdcToken, buyer1, skillId, SKILL_PURCHASE_PRICE);
 
-      const expectedPlatformShare = SKILL_PURCHASE_PRICE - (SKILL_PURCHASE_PRICE * 8000n) / 10000n;
-      expect(await registry.totalPlatformFeesETH()).to.equal(expectedPlatformShare);
+      const expectedAuthorShare = SKILL_PURCHASE_PRICE - (SKILL_PURCHASE_PRICE * 8000n) / 10000n;
+      expect(await registry.totalAuthorFeesUSDC()).to.equal(expectedAuthorShare);
     });
 
-    it("should call distributeRevenue on ownership contract", async function () {
-      const { registry, mockOwnership, author1, buyer1 } = await loadFixture(deploySkillRegistry);
+    it("should call distributeRevenueUSDC on ownership contract", async function () {
+      const { registry, usdcToken, mockOwnership, author1, buyer1 } = await loadFixture(deploySkillRegistry);
       const { skillId } = await registerDefaultSkill(registry, author1);
 
-      await registry.connect(buyer1).purchaseSkill(skillId, { value: SKILL_PURCHASE_PRICE });
+      await purchaseWithUSDC(registry, usdcToken, buyer1, skillId, SKILL_PURCHASE_PRICE);
 
       const expectedCoOwnerShare = (SKILL_PURCHASE_PRICE * 8000n) / 10000n;
       expect(await mockOwnership.lastDistributedSkillId()).to.equal(skillId);
-      expect(await mockOwnership.lastDistributedAmount()).to.equal(expectedCoOwnerShare);
+      expect(await mockOwnership.lastDistributedAmountUSDC()).to.equal(expectedCoOwnerShare);
     });
 
-    it("should allow free skill purchase with 0 ETH", async function () {
-      const { registry, author1, buyer1 } = await loadFixture(deploySkillRegistry);
+    it("should allow free skill purchase without USDC", async function () {
+      const { registry, usdcToken, author1, buyer1 } = await loadFixture(deploySkillRegistry);
       const { skillId } = await registerDefaultSkill(registry, author1, { purchasePrice: 0n });
 
-      await registry.connect(buyer1).purchaseSkill(skillId, { value: 0 });
+      await registry.connect(buyer1).purchaseSkill(skillId);
 
       expect(await registry.hasPurchased(buyer1.address, skillId)).to.be.true;
     });
 
-    it("should not transfer any ETH for free skill purchase", async function () {
-      const { registry, treasury, author1, buyer1 } = await loadFixture(deploySkillRegistry);
+    it("should not transfer any USDC for free skill purchase", async function () {
+      const { registry, usdcToken, treasury, author1, buyer1 } = await loadFixture(deploySkillRegistry);
       const { skillId } = await registerDefaultSkill(registry, author1, { purchasePrice: 0n });
 
-      const treasuryBalBefore = await ethers.provider.getBalance(treasury.address);
-      await registry.connect(buyer1).purchaseSkill(skillId, { value: 0 });
-      const treasuryBalAfter = await ethers.provider.getBalance(treasury.address);
+      const treasuryBalBefore = await usdcToken.balanceOf(treasury.address);
+      await registry.connect(buyer1).purchaseSkill(skillId);
+      const treasuryBalAfter = await usdcToken.balanceOf(treasury.address);
 
       expect(treasuryBalAfter).to.equal(treasuryBalBefore);
     });
 
     it("should increment totalPurchases even for free skills", async function () {
-      const { registry, author1, buyer1 } = await loadFixture(deploySkillRegistry);
+      const { registry, usdcToken, author1, buyer1 } = await loadFixture(deploySkillRegistry);
       const { skillId } = await registerDefaultSkill(registry, author1, { purchasePrice: 0n });
 
-      await registry.connect(buyer1).purchaseSkill(skillId, { value: 0 });
+      await registry.connect(buyer1).purchaseSkill(skillId);
 
       const skill = await registry.getSkill(skillId);
       expect(skill.totalPurchases).to.equal(1);
@@ -645,47 +657,53 @@ describe("BonzaiSkillRegistry", function () {
     });
 
     it("should revert on already purchased", async function () {
-      const { registry, author1, buyer1 } = await loadFixture(deploySkillRegistry);
+      const { registry, usdcToken, author1, buyer1 } = await loadFixture(deploySkillRegistry);
       const { skillId } = await registerDefaultSkill(registry, author1);
 
-      await registry.connect(buyer1).purchaseSkill(skillId, { value: SKILL_PURCHASE_PRICE });
+      await purchaseWithUSDC(registry, usdcToken, buyer1, skillId, SKILL_PURCHASE_PRICE);
+
+      // Mint more USDC for second attempt
+      await usdcToken.mint(buyer1.address, SKILL_PURCHASE_PRICE);
+      await usdcToken.connect(buyer1).approve(await registry.getAddress(), SKILL_PURCHASE_PRICE);
 
       await expect(
-        registry.connect(buyer1).purchaseSkill(skillId, { value: SKILL_PURCHASE_PRICE })
+        registry.connect(buyer1).purchaseSkill(skillId)
       ).to.be.revertedWithCustomError(registry, "AlreadyPurchased")
         .withArgs(buyer1.address, skillId);
     });
 
-    it("should revert on incorrect payment (too little)", async function () {
-      const { registry, author1, buyer1 } = await loadFixture(deploySkillRegistry);
+    it("should revert when buyer has insufficient USDC allowance", async function () {
+      const { registry, usdcToken, author1, buyer1 } = await loadFixture(deploySkillRegistry);
       const { skillId } = await registerDefaultSkill(registry, author1);
 
-      const wrongAmount = ethers.parseEther("0.005");
+      // Mint USDC but don't approve
+      await usdcToken.mint(buyer1.address, SKILL_PURCHASE_PRICE);
+
       await expect(
-        registry.connect(buyer1).purchaseSkill(skillId, { value: wrongAmount })
-      ).to.be.revertedWithCustomError(registry, "IncorrectPayment")
-        .withArgs(wrongAmount, SKILL_PURCHASE_PRICE);
+        registry.connect(buyer1).purchaseSkill(skillId)
+      ).to.be.reverted;
     });
 
-    it("should revert on incorrect payment (too much)", async function () {
-      const { registry, author1, buyer1 } = await loadFixture(deploySkillRegistry);
+    it("should revert when buyer has insufficient USDC balance", async function () {
+      const { registry, usdcToken, author1, buyer1 } = await loadFixture(deploySkillRegistry);
       const { skillId } = await registerDefaultSkill(registry, author1);
 
-      const wrongAmount = ethers.parseEther("0.02");
+      // Approve but don't mint
+      await usdcToken.connect(buyer1).approve(await registry.getAddress(), SKILL_PURCHASE_PRICE);
+
       await expect(
-        registry.connect(buyer1).purchaseSkill(skillId, { value: wrongAmount })
-      ).to.be.revertedWithCustomError(registry, "IncorrectPayment")
-        .withArgs(wrongAmount, SKILL_PURCHASE_PRICE);
+        registry.connect(buyer1).purchaseSkill(skillId)
+      ).to.be.reverted;
     });
 
     it("should revert when purchasing an inactive skill", async function () {
-      const { registry, author1, buyer1 } = await loadFixture(deploySkillRegistry);
+      const { registry, usdcToken, author1, buyer1 } = await loadFixture(deploySkillRegistry);
       const { skillId } = await registerDefaultSkill(registry, author1);
 
       await registry.connect(author1).deactivateSkill(skillId);
 
       await expect(
-        registry.connect(buyer1).purchaseSkill(skillId, { value: SKILL_PURCHASE_PRICE })
+        registry.connect(buyer1).purchaseSkill(skillId)
       ).to.be.revertedWithCustomError(registry, "SkillNotActive")
         .withArgs(skillId);
     });
@@ -695,28 +713,28 @@ describe("BonzaiSkillRegistry", function () {
       const fakeSkillId = ethers.keccak256(ethers.toUtf8Bytes("nonexistent"));
 
       await expect(
-        registry.connect(buyer1).purchaseSkill(fakeSkillId, { value: SKILL_PURCHASE_PRICE })
+        registry.connect(buyer1).purchaseSkill(fakeSkillId)
       ).to.be.revertedWithCustomError(registry, "SkillNotFound")
         .withArgs(fakeSkillId);
     });
 
     it("should revert when contract is paused", async function () {
-      const { registry, owner, author1, buyer1 } = await loadFixture(deploySkillRegistry);
+      const { registry, usdcToken, owner, author1, buyer1 } = await loadFixture(deploySkillRegistry);
       const { skillId } = await registerDefaultSkill(registry, author1);
 
       await registry.connect(owner).pause();
 
       await expect(
-        registry.connect(buyer1).purchaseSkill(skillId, { value: SKILL_PURCHASE_PRICE })
+        registry.connect(buyer1).purchaseSkill(skillId)
       ).to.be.revertedWithCustomError(registry, "EnforcedPause");
     });
 
     it("should allow multiple buyers to purchase the same skill", async function () {
-      const { registry, author1, buyer1, buyer2 } = await loadFixture(deploySkillRegistry);
+      const { registry, usdcToken, author1, buyer1, buyer2 } = await loadFixture(deploySkillRegistry);
       const { skillId } = await registerDefaultSkill(registry, author1);
 
-      await registry.connect(buyer1).purchaseSkill(skillId, { value: SKILL_PURCHASE_PRICE });
-      await registry.connect(buyer2).purchaseSkill(skillId, { value: SKILL_PURCHASE_PRICE });
+      await purchaseWithUSDC(registry, usdcToken, buyer1, skillId, SKILL_PURCHASE_PRICE);
+      await purchaseWithUSDC(registry, usdcToken, buyer2, skillId, SKILL_PURCHASE_PRICE);
 
       expect(await registry.hasPurchased(buyer1.address, skillId)).to.be.true;
       expect(await registry.hasPurchased(buyer2.address, skillId)).to.be.true;
@@ -727,14 +745,17 @@ describe("BonzaiSkillRegistry", function () {
     });
 
     it("should emit SkillPurchased event with correct args for paid skill", async function () {
-      const { registry, author1, buyer1 } = await loadFixture(deploySkillRegistry);
+      const { registry, usdcToken, author1, buyer1 } = await loadFixture(deploySkillRegistry);
       const { skillId } = await registerDefaultSkill(registry, author1);
 
       const expectedCoOwnerShare = (SKILL_PURCHASE_PRICE * 8000n) / 10000n;
       const expectedPlatformShare = SKILL_PURCHASE_PRICE - expectedCoOwnerShare;
 
+      await usdcToken.mint(buyer1.address, SKILL_PURCHASE_PRICE);
+      await usdcToken.connect(buyer1).approve(await registry.getAddress(), SKILL_PURCHASE_PRICE);
+
       await expect(
-        registry.connect(buyer1).purchaseSkill(skillId, { value: SKILL_PURCHASE_PRICE })
+        registry.connect(buyer1).purchaseSkill(skillId)
       )
         .to.emit(registry, "SkillPurchased")
         .withArgs(
@@ -744,19 +765,20 @@ describe("BonzaiSkillRegistry", function () {
           SKILL_PURCHASE_PRICE,
           expectedCoOwnerShare,
           expectedPlatformShare,
+          await usdcToken.getAddress(),
           (v) => v > 0
         );
     });
 
     it("should emit SkillPurchased event with zero amounts for free skill", async function () {
-      const { registry, author1, buyer1 } = await loadFixture(deploySkillRegistry);
+      const { registry, usdcToken, author1, buyer1 } = await loadFixture(deploySkillRegistry);
       const { skillId } = await registerDefaultSkill(registry, author1, { purchasePrice: 0n });
 
       await expect(
-        registry.connect(buyer1).purchaseSkill(skillId, { value: 0 })
+        registry.connect(buyer1).purchaseSkill(skillId)
       )
         .to.emit(registry, "SkillPurchased")
-        .withArgs(skillId, buyer1.address, author1.address, 0, 0, 0, (v) => v > 0);
+        .withArgs(skillId, buyer1.address, author1.address, 0, 0, 0, await usdcToken.getAddress(), (v) => v > 0);
     });
   });
 
@@ -765,57 +787,63 @@ describe("BonzaiSkillRegistry", function () {
   // ═══════════════════════════════════════════════════════════════════════════
 
   describe("Ownership Fallback", function () {
-    it("should send co-owner share to treasury when ownership contract reverts", async function () {
-      const { registry, mockOwnership, treasury, author1, buyer1 } = await loadFixture(deploySkillRegistry);
+    it("should send co-owner share to author when ownership contract reverts", async function () {
+      const { registry, usdcToken, mockOwnership, author1, buyer1 } = await loadFixture(deploySkillRegistry);
       const { skillId } = await registerDefaultSkill(registry, author1);
 
       // Tell the mock ownership contract to revert
       await mockOwnership.setRevert(true);
 
-      const treasuryBalBefore = await ethers.provider.getBalance(treasury.address);
+      const authorBalBefore = await usdcToken.balanceOf(author1.address);
 
-      await registry.connect(buyer1).purchaseSkill(skillId, { value: SKILL_PURCHASE_PRICE });
+      await purchaseWithUSDC(registry, usdcToken, buyer1, skillId, SKILL_PURCHASE_PRICE);
 
-      const treasuryBalAfter = await ethers.provider.getBalance(treasury.address);
+      const authorBalAfter = await usdcToken.balanceOf(author1.address);
 
-      // Treasury should receive both co-owner share (80%) + platform share (20%) = 100%
-      expect(treasuryBalAfter - treasuryBalBefore).to.equal(SKILL_PURCHASE_PRICE);
+      // Author should receive both co-owner share (80%) + author share (20%) = 100%
+      expect(authorBalAfter - authorBalBefore).to.equal(SKILL_PURCHASE_PRICE);
     });
 
     it("should emit CoOwnerShareFallbackToTreasury event when ownership reverts", async function () {
-      const { registry, mockOwnership, author1, buyer1 } = await loadFixture(deploySkillRegistry);
+      const { registry, usdcToken, mockOwnership, author1, buyer1 } = await loadFixture(deploySkillRegistry);
       const { skillId } = await registerDefaultSkill(registry, author1);
 
       await mockOwnership.setRevert(true);
 
       const expectedCoOwnerShare = (SKILL_PURCHASE_PRICE * 8000n) / 10000n;
 
+      await usdcToken.mint(buyer1.address, SKILL_PURCHASE_PRICE);
+      await usdcToken.connect(buyer1).approve(await registry.getAddress(), SKILL_PURCHASE_PRICE);
+
       await expect(
-        registry.connect(buyer1).purchaseSkill(skillId, { value: SKILL_PURCHASE_PRICE })
+        registry.connect(buyer1).purchaseSkill(skillId)
       )
         .to.emit(registry, "CoOwnerShareFallbackToTreasury")
         .withArgs(skillId, expectedCoOwnerShare);
     });
 
     it("should still mark skill as purchased when ownership reverts", async function () {
-      const { registry, mockOwnership, author1, buyer1 } = await loadFixture(deploySkillRegistry);
+      const { registry, usdcToken, mockOwnership, author1, buyer1 } = await loadFixture(deploySkillRegistry);
       const { skillId } = await registerDefaultSkill(registry, author1);
 
       await mockOwnership.setRevert(true);
 
-      await registry.connect(buyer1).purchaseSkill(skillId, { value: SKILL_PURCHASE_PRICE });
+      await purchaseWithUSDC(registry, usdcToken, buyer1, skillId, SKILL_PURCHASE_PRICE);
 
       expect(await registry.hasPurchased(buyer1.address, skillId)).to.be.true;
     });
 
     it("should still emit SkillPurchased event when ownership reverts", async function () {
-      const { registry, mockOwnership, author1, buyer1 } = await loadFixture(deploySkillRegistry);
+      const { registry, usdcToken, mockOwnership, author1, buyer1 } = await loadFixture(deploySkillRegistry);
       const { skillId } = await registerDefaultSkill(registry, author1);
 
       await mockOwnership.setRevert(true);
 
+      await usdcToken.mint(buyer1.address, SKILL_PURCHASE_PRICE);
+      await usdcToken.connect(buyer1).approve(await registry.getAddress(), SKILL_PURCHASE_PRICE);
+
       await expect(
-        registry.connect(buyer1).purchaseSkill(skillId, { value: SKILL_PURCHASE_PRICE })
+        registry.connect(buyer1).purchaseSkill(skillId)
       ).to.emit(registry, "SkillPurchased");
     });
   });
@@ -826,15 +854,15 @@ describe("BonzaiSkillRegistry", function () {
 
   describe("Skill Execution", function () {
     it("should record execution for a purchased skill with running fee", async function () {
-      const { registry, bonzaiToken, author1, buyer1 } = await loadFixture(deploySkillRegistry);
+      const { registry, usdcToken, author1, buyer1 } = await loadFixture(deploySkillRegistry);
       const { skillId } = await registerDefaultSkill(registry, author1);
 
-      // Purchase the skill
-      await registry.connect(buyer1).purchaseSkill(skillId, { value: SKILL_PURCHASE_PRICE });
+      // Purchase the skill with USDC
+      await purchaseWithUSDC(registry, usdcToken, buyer1, skillId, SKILL_PURCHASE_PRICE);
 
-      // Mint BONZAI to buyer and approve
-      await bonzaiToken.mint(buyer1.address, ethers.parseEther("1000"));
-      await bonzaiToken.connect(buyer1).approve(await registry.getAddress(), ethers.MaxUint256);
+      // Mint USDC to buyer for running fee and approve
+      await usdcToken.mint(buyer1.address, SKILL_RUNNING_FEE);
+      await usdcToken.connect(buyer1).approve(await registry.getAddress(), ethers.MaxUint256);
 
       await registry.connect(buyer1).recordExecution(skillId);
 
@@ -842,52 +870,50 @@ describe("BonzaiSkillRegistry", function () {
       expect(skill.totalExecutions).to.equal(1);
     });
 
-    it("should split running fee 80/20 in BONZAI tokens", async function () {
-      const { registry, bonzaiToken, treasury, author1, buyer1 } = await loadFixture(deploySkillRegistry);
+    it("should split running fee 80/20 between co-owners and author (USDC)", async function () {
+      const { registry, usdcToken, author1, buyer1 } = await loadFixture(deploySkillRegistry);
       const { skillId } = await registerDefaultSkill(registry, author1);
 
-      await registry.connect(buyer1).purchaseSkill(skillId, { value: SKILL_PURCHASE_PRICE });
+      await purchaseWithUSDC(registry, usdcToken, buyer1, skillId, SKILL_PURCHASE_PRICE);
 
-      await bonzaiToken.mint(buyer1.address, ethers.parseEther("1000"));
-      await bonzaiToken.connect(buyer1).approve(await registry.getAddress(), ethers.MaxUint256);
+      await usdcToken.mint(buyer1.address, SKILL_RUNNING_FEE);
+      await usdcToken.connect(buyer1).approve(await registry.getAddress(), ethers.MaxUint256);
 
-      const authorBalBefore = await bonzaiToken.balanceOf(author1.address);
-      const treasuryBalBefore = await bonzaiToken.balanceOf(treasury.address);
+      const authorBalBefore = await usdcToken.balanceOf(author1.address);
 
       await registry.connect(buyer1).recordExecution(skillId);
 
-      const authorBalAfter = await bonzaiToken.balanceOf(author1.address);
-      const treasuryBalAfter = await bonzaiToken.balanceOf(treasury.address);
+      const authorBalAfter = await usdcToken.balanceOf(author1.address);
 
-      const expectedAuthorShare = (SKILL_RUNNING_FEE * 8000n) / 10000n;
-      const expectedPlatformShare = SKILL_RUNNING_FEE - expectedAuthorShare;
+      const expectedCoOwnerShare = (SKILL_RUNNING_FEE * 8000n) / 10000n;
+      const expectedAuthorShare = SKILL_RUNNING_FEE - expectedCoOwnerShare;
 
+      // Author receives 20% of running fee
       expect(authorBalAfter - authorBalBefore).to.equal(expectedAuthorShare);
-      expect(treasuryBalAfter - treasuryBalBefore).to.equal(expectedPlatformShare);
     });
 
-    it("should update totalPlatformFeesBONZAI", async function () {
-      const { registry, bonzaiToken, author1, buyer1 } = await loadFixture(deploySkillRegistry);
+    it("should update totalAuthorRunningFeesUSDC", async function () {
+      const { registry, usdcToken, author1, buyer1 } = await loadFixture(deploySkillRegistry);
       const { skillId } = await registerDefaultSkill(registry, author1);
 
-      await registry.connect(buyer1).purchaseSkill(skillId, { value: SKILL_PURCHASE_PRICE });
+      await purchaseWithUSDC(registry, usdcToken, buyer1, skillId, SKILL_PURCHASE_PRICE);
 
-      await bonzaiToken.mint(buyer1.address, ethers.parseEther("1000"));
-      await bonzaiToken.connect(buyer1).approve(await registry.getAddress(), ethers.MaxUint256);
+      await usdcToken.mint(buyer1.address, SKILL_RUNNING_FEE);
+      await usdcToken.connect(buyer1).approve(await registry.getAddress(), ethers.MaxUint256);
 
       await registry.connect(buyer1).recordExecution(skillId);
 
-      const expectedPlatformShare = SKILL_RUNNING_FEE - (SKILL_RUNNING_FEE * 8000n) / 10000n;
-      expect(await registry.totalPlatformFeesBONZAI()).to.equal(expectedPlatformShare);
+      const expectedAuthorShare = SKILL_RUNNING_FEE - (SKILL_RUNNING_FEE * 8000n) / 10000n;
+      expect(await registry.totalAuthorRunningFeesUSDC()).to.equal(expectedAuthorShare);
     });
 
     it("should allow execution of a free skill (purchasePrice = 0) without purchasing", async function () {
-      const { registry, bonzaiToken, author1, buyer1 } = await loadFixture(deploySkillRegistry);
+      const { registry, usdcToken, author1, buyer1 } = await loadFixture(deploySkillRegistry);
       const { skillId } = await registerDefaultSkill(registry, author1, { purchasePrice: 0n });
 
       // buyer1 has NOT purchased, but the skill is free so execution should work
-      await bonzaiToken.mint(buyer1.address, ethers.parseEther("1000"));
-      await bonzaiToken.connect(buyer1).approve(await registry.getAddress(), ethers.MaxUint256);
+      await usdcToken.mint(buyer1.address, SKILL_RUNNING_FEE);
+      await usdcToken.connect(buyer1).approve(await registry.getAddress(), ethers.MaxUint256);
 
       await registry.connect(buyer1).recordExecution(skillId);
 
@@ -895,26 +921,26 @@ describe("BonzaiSkillRegistry", function () {
       expect(skill.totalExecutions).to.equal(1);
     });
 
-    it("should allow execution with zero running fee (no BONZAI transfer)", async function () {
-      const { registry, bonzaiToken, author1, buyer1 } = await loadFixture(deploySkillRegistry);
+    it("should allow execution with zero running fee (no USDC transfer)", async function () {
+      const { registry, usdcToken, author1, buyer1 } = await loadFixture(deploySkillRegistry);
       const { skillId } = await registerDefaultSkill(registry, author1, { runningFee: 0n });
 
-      await registry.connect(buyer1).purchaseSkill(skillId, { value: SKILL_PURCHASE_PRICE });
+      await purchaseWithUSDC(registry, usdcToken, buyer1, skillId, SKILL_PURCHASE_PRICE);
 
-      const buyerBalBefore = await bonzaiToken.balanceOf(buyer1.address);
+      const buyerBalBefore = await usdcToken.balanceOf(buyer1.address);
 
       await registry.connect(buyer1).recordExecution(skillId);
 
-      const buyerBalAfter = await bonzaiToken.balanceOf(buyer1.address);
+      const buyerBalAfter = await usdcToken.balanceOf(buyer1.address);
       expect(buyerBalAfter).to.equal(buyerBalBefore); // no tokens transferred
     });
 
     it("should revert when paid skill is not purchased", async function () {
-      const { registry, bonzaiToken, author1, buyer1 } = await loadFixture(deploySkillRegistry);
+      const { registry, usdcToken, author1, buyer1 } = await loadFixture(deploySkillRegistry);
       const { skillId } = await registerDefaultSkill(registry, author1);
 
-      await bonzaiToken.mint(buyer1.address, ethers.parseEther("1000"));
-      await bonzaiToken.connect(buyer1).approve(await registry.getAddress(), ethers.MaxUint256);
+      await usdcToken.mint(buyer1.address, SKILL_RUNNING_FEE);
+      await usdcToken.connect(buyer1).approve(await registry.getAddress(), ethers.MaxUint256);
 
       await expect(
         registry.connect(buyer1).recordExecution(skillId)
@@ -923,14 +949,14 @@ describe("BonzaiSkillRegistry", function () {
     });
 
     it("should revert when skill is inactive", async function () {
-      const { registry, bonzaiToken, author1, buyer1 } = await loadFixture(deploySkillRegistry);
+      const { registry, usdcToken, author1, buyer1 } = await loadFixture(deploySkillRegistry);
       const { skillId } = await registerDefaultSkill(registry, author1);
 
-      await registry.connect(buyer1).purchaseSkill(skillId, { value: SKILL_PURCHASE_PRICE });
+      await purchaseWithUSDC(registry, usdcToken, buyer1, skillId, SKILL_PURCHASE_PRICE);
       await registry.connect(author1).deactivateSkill(skillId);
 
-      await bonzaiToken.mint(buyer1.address, ethers.parseEther("1000"));
-      await bonzaiToken.connect(buyer1).approve(await registry.getAddress(), ethers.MaxUint256);
+      await usdcToken.mint(buyer1.address, SKILL_RUNNING_FEE);
+      await usdcToken.connect(buyer1).approve(await registry.getAddress(), ethers.MaxUint256);
 
       await expect(
         registry.connect(buyer1).recordExecution(skillId)
@@ -949,13 +975,13 @@ describe("BonzaiSkillRegistry", function () {
     });
 
     it("should revert when contract is paused", async function () {
-      const { registry, bonzaiToken, owner, author1, buyer1 } = await loadFixture(deploySkillRegistry);
+      const { registry, usdcToken, owner, author1, buyer1 } = await loadFixture(deploySkillRegistry);
       const { skillId } = await registerDefaultSkill(registry, author1);
 
-      await registry.connect(buyer1).purchaseSkill(skillId, { value: SKILL_PURCHASE_PRICE });
+      await purchaseWithUSDC(registry, usdcToken, buyer1, skillId, SKILL_PURCHASE_PRICE);
 
-      await bonzaiToken.mint(buyer1.address, ethers.parseEther("1000"));
-      await bonzaiToken.connect(buyer1).approve(await registry.getAddress(), ethers.MaxUint256);
+      await usdcToken.mint(buyer1.address, SKILL_RUNNING_FEE);
+      await usdcToken.connect(buyer1).approve(await registry.getAddress(), ethers.MaxUint256);
 
       await registry.connect(owner).pause();
 
@@ -965,16 +991,16 @@ describe("BonzaiSkillRegistry", function () {
     });
 
     it("should emit SkillExecuted event with fee details", async function () {
-      const { registry, bonzaiToken, author1, buyer1 } = await loadFixture(deploySkillRegistry);
+      const { registry, usdcToken, author1, buyer1 } = await loadFixture(deploySkillRegistry);
       const { skillId } = await registerDefaultSkill(registry, author1);
 
-      await registry.connect(buyer1).purchaseSkill(skillId, { value: SKILL_PURCHASE_PRICE });
+      await purchaseWithUSDC(registry, usdcToken, buyer1, skillId, SKILL_PURCHASE_PRICE);
 
-      await bonzaiToken.mint(buyer1.address, ethers.parseEther("1000"));
-      await bonzaiToken.connect(buyer1).approve(await registry.getAddress(), ethers.MaxUint256);
+      await usdcToken.mint(buyer1.address, SKILL_RUNNING_FEE);
+      await usdcToken.connect(buyer1).approve(await registry.getAddress(), ethers.MaxUint256);
 
-      const expectedAuthorShare = (SKILL_RUNNING_FEE * 8000n) / 10000n;
-      const expectedPlatformShare = SKILL_RUNNING_FEE - expectedAuthorShare;
+      const expectedCoOwnerShare = (SKILL_RUNNING_FEE * 8000n) / 10000n;
+      const expectedAuthorShare = SKILL_RUNNING_FEE - expectedCoOwnerShare;
 
       await expect(registry.connect(buyer1).recordExecution(skillId))
         .to.emit(registry, "SkillExecuted")
@@ -983,17 +1009,17 @@ describe("BonzaiSkillRegistry", function () {
           buyer1.address,
           author1.address,
           SKILL_RUNNING_FEE,
+          expectedCoOwnerShare,
           expectedAuthorShare,
-          expectedPlatformShare,
           (v) => v > 0
         );
     });
 
     it("should emit SkillExecuted event with zero amounts for no-fee skill", async function () {
-      const { registry, author1, buyer1 } = await loadFixture(deploySkillRegistry);
+      const { registry, usdcToken, author1, buyer1 } = await loadFixture(deploySkillRegistry);
       const { skillId } = await registerDefaultSkill(registry, author1, { runningFee: 0n });
 
-      await registry.connect(buyer1).purchaseSkill(skillId, { value: SKILL_PURCHASE_PRICE });
+      await purchaseWithUSDC(registry, usdcToken, buyer1, skillId, SKILL_PURCHASE_PRICE);
 
       await expect(registry.connect(buyer1).recordExecution(skillId))
         .to.emit(registry, "SkillExecuted")
@@ -1001,13 +1027,13 @@ describe("BonzaiSkillRegistry", function () {
     });
 
     it("should allow multiple executions by the same user", async function () {
-      const { registry, bonzaiToken, author1, buyer1 } = await loadFixture(deploySkillRegistry);
+      const { registry, usdcToken, author1, buyer1 } = await loadFixture(deploySkillRegistry);
       const { skillId } = await registerDefaultSkill(registry, author1);
 
-      await registry.connect(buyer1).purchaseSkill(skillId, { value: SKILL_PURCHASE_PRICE });
+      await purchaseWithUSDC(registry, usdcToken, buyer1, skillId, SKILL_PURCHASE_PRICE);
 
-      await bonzaiToken.mint(buyer1.address, ethers.parseEther("1000"));
-      await bonzaiToken.connect(buyer1).approve(await registry.getAddress(), ethers.MaxUint256);
+      await usdcToken.mint(buyer1.address, SKILL_RUNNING_FEE * 3n);
+      await usdcToken.connect(buyer1).approve(await registry.getAddress(), ethers.MaxUint256);
 
       await registry.connect(buyer1).recordExecution(skillId);
       await registry.connect(buyer1).recordExecution(skillId);
@@ -1017,19 +1043,19 @@ describe("BonzaiSkillRegistry", function () {
       expect(skill.totalExecutions).to.equal(3);
     });
 
-    it("should deduct BONZAI from the executor's balance", async function () {
-      const { registry, bonzaiToken, author1, buyer1 } = await loadFixture(deploySkillRegistry);
+    it("should deduct USDC from the executor's balance", async function () {
+      const { registry, usdcToken, author1, buyer1 } = await loadFixture(deploySkillRegistry);
       const { skillId } = await registerDefaultSkill(registry, author1);
 
-      await registry.connect(buyer1).purchaseSkill(skillId, { value: SKILL_PURCHASE_PRICE });
+      await purchaseWithUSDC(registry, usdcToken, buyer1, skillId, SKILL_PURCHASE_PRICE);
 
-      const initialBalance = ethers.parseEther("1000");
-      await bonzaiToken.mint(buyer1.address, initialBalance);
-      await bonzaiToken.connect(buyer1).approve(await registry.getAddress(), ethers.MaxUint256);
+      const initialBalance = ethers.parseUnits("1000", 6);
+      await usdcToken.mint(buyer1.address, initialBalance);
+      await usdcToken.connect(buyer1).approve(await registry.getAddress(), ethers.MaxUint256);
 
       await registry.connect(buyer1).recordExecution(skillId);
 
-      const finalBalance = await bonzaiToken.balanceOf(buyer1.address);
+      const finalBalance = await usdcToken.balanceOf(buyer1.address);
       expect(finalBalance).to.equal(initialBalance - SKILL_RUNNING_FEE);
     });
   });
@@ -1467,43 +1493,43 @@ describe("BonzaiSkillRegistry", function () {
 
     describe("getStats", function () {
       it("should return correct stats after purchases and executions", async function () {
-        const { registry, bonzaiToken, author1, buyer1 } = await loadFixture(deploySkillRegistry);
+        const { registry, usdcToken, author1, buyer1 } = await loadFixture(deploySkillRegistry);
         const { skillId } = await registerDefaultSkill(registry, author1);
 
         // Purchase
-        await registry.connect(buyer1).purchaseSkill(skillId, { value: SKILL_PURCHASE_PRICE });
+        await purchaseWithUSDC(registry, usdcToken, buyer1, skillId, SKILL_PURCHASE_PRICE);
 
         // Execute
-        await bonzaiToken.mint(buyer1.address, ethers.parseEther("1000"));
-        await bonzaiToken.connect(buyer1).approve(await registry.getAddress(), ethers.MaxUint256);
+        await usdcToken.mint(buyer1.address, SKILL_RUNNING_FEE);
+        await usdcToken.connect(buyer1).approve(await registry.getAddress(), ethers.MaxUint256);
         await registry.connect(buyer1).recordExecution(skillId);
 
-        const [totalSkills, feesETH, feesBONZAI] = await registry.getStats();
+        const [totalSkills, authorFeesUSDC, authorRunningFeesUSDC] = await registry.getStats();
 
         expect(totalSkills).to.equal(1);
 
-        const expectedPlatformETH = SKILL_PURCHASE_PRICE - (SKILL_PURCHASE_PRICE * 8000n) / 10000n;
-        expect(feesETH).to.equal(expectedPlatformETH);
+        const expectedAuthorPurchaseFees = SKILL_PURCHASE_PRICE - (SKILL_PURCHASE_PRICE * 8000n) / 10000n;
+        expect(authorFeesUSDC).to.equal(expectedAuthorPurchaseFees);
 
-        const expectedPlatformBONZAI = SKILL_RUNNING_FEE - (SKILL_RUNNING_FEE * 8000n) / 10000n;
-        expect(feesBONZAI).to.equal(expectedPlatformBONZAI);
+        const expectedAuthorRunningFees = SKILL_RUNNING_FEE - (SKILL_RUNNING_FEE * 8000n) / 10000n;
+        expect(authorRunningFeesUSDC).to.equal(expectedAuthorRunningFees);
       });
 
       it("should return zero stats initially", async function () {
         const { registry } = await loadFixture(deploySkillRegistry);
-        const [totalSkills, feesETH, feesBONZAI] = await registry.getStats();
+        const [totalSkills, authorFeesUSDC, authorRunningFeesUSDC] = await registry.getStats();
         expect(totalSkills).to.equal(0);
-        expect(feesETH).to.equal(0);
-        expect(feesBONZAI).to.equal(0);
+        expect(authorFeesUSDC).to.equal(0);
+        expect(authorRunningFeesUSDC).to.equal(0);
       });
     });
 
     describe("userHasPurchased", function () {
       it("should return true for purchased skill", async function () {
-        const { registry, author1, buyer1 } = await loadFixture(deploySkillRegistry);
+        const { registry, usdcToken, author1, buyer1 } = await loadFixture(deploySkillRegistry);
         const { skillId } = await registerDefaultSkill(registry, author1);
 
-        await registry.connect(buyer1).purchaseSkill(skillId, { value: SKILL_PURCHASE_PRICE });
+        await purchaseWithUSDC(registry, usdcToken, buyer1, skillId, SKILL_PURCHASE_PRICE);
 
         expect(await registry.userHasPurchased(buyer1.address, skillId)).to.be.true;
       });
@@ -1570,8 +1596,8 @@ describe("BonzaiSkillRegistry", function () {
       const version = "2.0.0";
       const category = "finance";
       const ipfsHash = "QmEventHash1234567890";
-      const purchasePrice = ethers.parseEther("0.05");
-      const runningFee = ethers.parseEther("25");
+      const purchasePrice = ethers.parseUnits("50", 6); // 50 USDC
+      const runningFee = ethers.parseUnits("5", 6); // 5 USDC
 
       const expectedId = await registry.generateSkillId(name, version, author1.address);
 
@@ -1597,8 +1623,8 @@ describe("BonzaiSkillRegistry", function () {
       const { skillId } = await registerDefaultSkill(registry, author1);
 
       const newHash = "QmNewHash1234567890123";
-      const newPrice = ethers.parseEther("0.1");
-      const newFee = ethers.parseEther("100");
+      const newPrice = ethers.parseUnits("100", 6); // 100 USDC
+      const newFee = ethers.parseUnits("10", 6); // 10 USDC
 
       await expect(
         registry.connect(author1).updateSkill(skillId, newHash, newPrice, newFee)
@@ -1608,14 +1634,17 @@ describe("BonzaiSkillRegistry", function () {
     });
 
     it("should emit SkillPurchased with all correct args", async function () {
-      const { registry, author1, buyer1 } = await loadFixture(deploySkillRegistry);
+      const { registry, usdcToken, author1, buyer1 } = await loadFixture(deploySkillRegistry);
       const { skillId } = await registerDefaultSkill(registry, author1);
 
       const coOwnerShare = (SKILL_PURCHASE_PRICE * 8000n) / 10000n;
       const platformShare = SKILL_PURCHASE_PRICE - coOwnerShare;
 
+      await usdcToken.mint(buyer1.address, SKILL_PURCHASE_PRICE);
+      await usdcToken.connect(buyer1).approve(await registry.getAddress(), SKILL_PURCHASE_PRICE);
+
       await expect(
-        registry.connect(buyer1).purchaseSkill(skillId, { value: SKILL_PURCHASE_PRICE })
+        registry.connect(buyer1).purchaseSkill(skillId)
       )
         .to.emit(registry, "SkillPurchased")
         .withArgs(
@@ -1625,21 +1654,22 @@ describe("BonzaiSkillRegistry", function () {
           SKILL_PURCHASE_PRICE,
           coOwnerShare,
           platformShare,
+          await usdcToken.getAddress(),
           (v) => v > 0
         );
     });
 
     it("should emit SkillExecuted with all correct args", async function () {
-      const { registry, bonzaiToken, author1, buyer1 } = await loadFixture(deploySkillRegistry);
+      const { registry, usdcToken, author1, buyer1 } = await loadFixture(deploySkillRegistry);
       const { skillId } = await registerDefaultSkill(registry, author1);
 
-      await registry.connect(buyer1).purchaseSkill(skillId, { value: SKILL_PURCHASE_PRICE });
+      await purchaseWithUSDC(registry, usdcToken, buyer1, skillId, SKILL_PURCHASE_PRICE);
 
-      await bonzaiToken.mint(buyer1.address, ethers.parseEther("1000"));
-      await bonzaiToken.connect(buyer1).approve(await registry.getAddress(), ethers.MaxUint256);
+      await usdcToken.mint(buyer1.address, SKILL_RUNNING_FEE);
+      await usdcToken.connect(buyer1).approve(await registry.getAddress(), ethers.MaxUint256);
 
-      const authorShare = (SKILL_RUNNING_FEE * 8000n) / 10000n;
-      const platformShare = SKILL_RUNNING_FEE - authorShare;
+      const coOwnerShare = (SKILL_RUNNING_FEE * 8000n) / 10000n;
+      const authorShare = SKILL_RUNNING_FEE - coOwnerShare;
 
       await expect(
         registry.connect(buyer1).recordExecution(skillId)
@@ -1650,8 +1680,8 @@ describe("BonzaiSkillRegistry", function () {
           buyer1.address,
           author1.address,
           SKILL_RUNNING_FEE,
+          coOwnerShare,
           authorShare,
-          platformShare,
           (v) => v > 0
         );
     });
@@ -1721,15 +1751,18 @@ describe("BonzaiSkillRegistry", function () {
     });
 
     it("should emit CoOwnerShareFallbackToTreasury when ownership reverts", async function () {
-      const { registry, mockOwnership, author1, buyer1 } = await loadFixture(deploySkillRegistry);
+      const { registry, usdcToken, mockOwnership, author1, buyer1 } = await loadFixture(deploySkillRegistry);
       const { skillId } = await registerDefaultSkill(registry, author1);
 
       await mockOwnership.setRevert(true);
 
       const expectedCoOwnerShare = (SKILL_PURCHASE_PRICE * 8000n) / 10000n;
 
+      await usdcToken.mint(buyer1.address, SKILL_PURCHASE_PRICE);
+      await usdcToken.connect(buyer1).approve(await registry.getAddress(), SKILL_PURCHASE_PRICE);
+
       await expect(
-        registry.connect(buyer1).purchaseSkill(skillId, { value: SKILL_PURCHASE_PRICE })
+        registry.connect(buyer1).purchaseSkill(skillId)
       )
         .to.emit(registry, "CoOwnerShareFallbackToTreasury")
         .withArgs(skillId, expectedCoOwnerShare);

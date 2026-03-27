@@ -34,10 +34,32 @@ describe("Integration Tests", function () {
       EPOCH_DURATION
     );
 
-    // Deploy Content
-    const BonzaiContent = await ethers.getContractFactory("BonzaiContent");
-    const content = await BonzaiContent.deploy(treasury.address);
-    await content.setMintPool(await mintPool.getAddress());
+    // Advance time to genesis (next Monday 00:00 UTC)
+    const genesis = await mintPool.genesisTime();
+    await time.increaseTo(genesis);
+
+    // Deploy BonzaiCollectibles (implementation + factory)
+    const BonzaiCollectibles = await ethers.getContractFactory("BonzaiCollectibles");
+    const implementation = await BonzaiCollectibles.deploy();
+
+    const BonzaiCollectiblesFactory = await ethers.getContractFactory("BonzaiCollectiblesFactory");
+    const factory = await BonzaiCollectiblesFactory.deploy(
+      await implementation.getAddress(),
+      treasury.address,
+      await mintPool.getAddress(),
+      ethers.ZeroAddress // royaltySplitter — set after splitter is deployed
+    );
+
+    // Authorize factory on MintPool so it can register clones as authorized minters
+    await mintPool.setCollectiblesFactory(await factory.getAddress());
+
+    // Create collections for test users
+    await factory.connect(user1).getOrCreateCollection("User1 Collection");
+    await factory.connect(user2).getOrCreateCollection("User2 Collection");
+    const content1Addr = await factory.collections(user1.address);
+    const content2Addr = await factory.collections(user2.address);
+    const content = BonzaiCollectibles.attach(content1Addr);
+    const content2 = BonzaiCollectibles.attach(content2Addr);
 
     // Deploy Splitter
     const BonzaiRoyaltySplitter = await ethers.getContractFactory("BonzaiRoyaltySplitter");
@@ -47,14 +69,13 @@ describe("Integration Tests", function () {
     );
 
     // Authorize depositors on MintPool
-    await mintPool.setContentContract(await content.getAddress());
     await mintPool.setRoyaltySplitter(await splitter.getAddress());
 
     // Mint BONZAI tokens to users
     await bonzaiToken.mint(user1.address, ethers.parseEther("50000"));
     await bonzaiToken.mint(user2.address, ethers.parseEther("10000"));
 
-    return { bonzaiToken, mintPool, content, splitter, owner, treasury, user1, user2 };
+    return { bonzaiToken, mintPool, content, content2, factory, splitter, owner, treasury, user1, user2 };
   }
 
   // ═══════════════════════════════════════════════════════════════════════════
@@ -112,15 +133,15 @@ describe("Integration Tests", function () {
     });
 
     it("should route multiple mints of different content types to separate pools", async function () {
-      const { content, mintPool, user1, user2 } = await loadFixture(deployIntegration);
+      const { content, content2, mintPool, user1, user2 } = await loadFixture(deployIntegration);
 
       const poolAmt = expectedPoolAmount();
 
-      // Mint text content
+      // Mint text content (user1's collection)
       await mintContent(content, user1, CONTENT_TYPE.TEXT);
-      // Mint audio content
-      await mintContent(content, user2, CONTENT_TYPE.AUDIO);
-      // Mint video content
+      // Mint audio content (user2's collection)
+      await mintContent(content2, user2, CONTENT_TYPE.AUDIO);
+      // Mint video content (user1's collection)
       await mintContent(content, user1, CONTENT_TYPE.VIDEO);
 
       const deposits = await mintPool.getEpochDeposits(0);
@@ -141,15 +162,30 @@ describe("Integration Tests", function () {
     });
 
     it("should fallback pool share to treasury when pool reverts", async function () {
-      const { treasury, user1, owner } = await loadFixture(deployIntegration);
+      const { treasury, user1 } = await loadFixture(deployIntegration);
 
-      // Deploy a separate BonzaiContent pointing to ETHRejector as the pool
+      // Deploy ETHRejector (reverts on all calls including depositForPool)
       const ETHRejector = await ethers.getContractFactory("ETHRejector");
       const rejector = await ETHRejector.deploy();
 
-      const BonzaiContent = await ethers.getContractFactory("BonzaiContent");
-      const badContent = await BonzaiContent.deploy(treasury.address);
-      await badContent.setMintPool(await rejector.getAddress());
+      // Create factory with no pool (so getOrCreateCollection won't call setAuthorizedMinter)
+      const BonzaiCollectibles = await ethers.getContractFactory("BonzaiCollectibles");
+      const badImpl = await BonzaiCollectibles.deploy();
+
+      const BonzaiCollectiblesFactory = await ethers.getContractFactory("BonzaiCollectiblesFactory");
+      const badFactory = await BonzaiCollectiblesFactory.deploy(
+        await badImpl.getAddress(),
+        treasury.address,
+        ethers.ZeroAddress, // no pool during clone creation
+        ethers.ZeroAddress
+      );
+
+      await badFactory.connect(user1).getOrCreateCollection("Bad Collection");
+      const badCloneAddr = await badFactory.collections(user1.address);
+      const badContent = BonzaiCollectibles.attach(badCloneAddr);
+
+      // Now set the rejector as mintPool on the clone (owner = user1)
+      await badContent.connect(user1).setMintPool(await rejector.getAddress());
 
       const treasuryBefore = await ethers.provider.getBalance(treasury.address);
 
@@ -309,7 +345,7 @@ describe("Integration Tests", function () {
     });
 
     it("should distribute proportionally when two users register with different balances", async function () {
-      const { content, mintPool, bonzaiToken, user1, user2 } =
+      const { content, content2, mintPool, bonzaiToken, user1, user2 } =
         await loadFixture(deployIntegration);
 
       // user1 has 50000 BONZAI, user2 has 10000 BONZAI
@@ -318,7 +354,7 @@ describe("Integration Tests", function () {
       await mintPool.connect(user1).registerForEpoch();
       await mintPool.connect(user2).registerForEpoch();
 
-      // Deposit via content mint
+      // Deposit via content mint (user1's collection)
       await mintContent(content, user1, CONTENT_TYPE.TEXT);
 
       const poolAmt = expectedPoolAmount();
@@ -423,12 +459,12 @@ describe("Integration Tests", function () {
     });
 
     it("should revert claim when user balance drops below registered amount", async function () {
-      const { content, mintPool, bonzaiToken, user2, user1 } =
+      const { content2, mintPool, bonzaiToken, user2, user1 } =
         await loadFixture(deployIntegration);
 
       // user2 has 10000 BONZAI, registers
       await mintPool.connect(user2).registerForEpoch();
-      await mintContent(content, user2, CONTENT_TYPE.TEXT);
+      await mintContent(content2, user2, CONTENT_TYPE.TEXT);
 
       // Advance epoch
       await time.increase(EPOCH_DURATION);
@@ -492,7 +528,7 @@ describe("Integration Tests", function () {
     });
 
     it("should maintain correct totalClaimed, totalDeposited, totalSwept across epochs", async function () {
-      const { content, mintPool, bonzaiToken, owner, user1, user2 } =
+      const { content, content2, mintPool, bonzaiToken, owner, user1, user2 } =
         await loadFixture(deployIntegration);
 
       const poolAmt = expectedPoolAmount();
@@ -514,7 +550,7 @@ describe("Integration Tests", function () {
       // ── Epoch 1 ──
       // user2 registers and deposits (AUDIO=pool 1, user2 has 10K which qualifies for pool 1=5K threshold)
       await mintPool.connect(user2).registerForEpoch();
-      await mintContent(content, user2, CONTENT_TYPE.AUDIO);
+      await mintContent(content2, user2, CONTENT_TYPE.AUDIO);
 
       // Advance to epoch 2 (epoch 0 claim window closes, epoch 1 claim window opens)
       await time.increase(EPOCH_DURATION);
@@ -554,7 +590,7 @@ describe("Integration Tests", function () {
 
   describe("5. Cross-Contract Accounting", function () {
     it("should balance content mints + royalty distributions + claims with no ETH stuck", async function () {
-      const { content, mintPool, splitter, bonzaiToken, owner, treasury, user1, user2 } =
+      const { content, content2, mintPool, splitter, bonzaiToken, owner, treasury, user1, user2 } =
         await loadFixture(deployIntegration);
 
       const poolAmt = expectedPoolAmount();
@@ -566,10 +602,10 @@ describe("Integration Tests", function () {
 
       const treasuryBefore = await ethers.provider.getBalance(treasury.address);
 
-      // 3 content mints
+      // 3 content mints (user1 on their collection, user2 on theirs)
       await mintContent(content, user1, CONTENT_TYPE.IMAGE);
       await mintContent(content, user1, CONTENT_TYPE.TEXT);
-      await mintContent(content, user2, CONTENT_TYPE.AUDIO);
+      await mintContent(content2, user2, CONTENT_TYPE.AUDIO);
 
       // Royalty distribution (0.03 ETH)
       const royaltyETH = ethers.parseEther("0.03");

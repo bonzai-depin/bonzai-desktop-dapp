@@ -11,21 +11,26 @@ const {
   CONTENT_TYPE,
 } = require("./helpers/constants");
 
-describe("BonzaiContent", function () {
+describe("BonzaiCollectibles", function () {
   // ═══════════════════════════════════════════════════════════════════════════
-  // DEPLOYMENT
+  // DEPLOYMENT & INITIALIZATION
   // ═══════════════════════════════════════════════════════════════════════════
 
-  describe("Deployment", function () {
-    it("should set correct name and symbol", async function () {
+  describe("Deployment & Initialization", function () {
+    it("should set correct name from initialize parameter", async function () {
       const { content } = await loadFixture(deployContent);
-      expect(await content.name()).to.equal("BonzAI Collectibles");
-      expect(await content.symbol()).to.equal("BONZAI-C");
+      expect(await content.name()).to.equal("Test Collection");
+      expect(await content.symbol()).to.equal("BNZC");
     });
 
-    it("should set deployer as owner", async function () {
+    it("should set collection owner as Ownable owner", async function () {
       const { content, owner } = await loadFixture(deployContent);
       expect(await content.owner()).to.equal(owner.address);
+    });
+
+    it("should set collection owner", async function () {
+      const { content, owner } = await loadFixture(deployContent);
+      expect(await content.collectionOwner()).to.equal(owner.address);
     });
 
     it("should set treasury address", async function () {
@@ -41,16 +46,59 @@ describe("BonzaiContent", function () {
       expect(await content.royaltyBps()).to.equal(ROYALTY_BPS);
     });
 
-    it("should revert if treasury is zero address", async function () {
-      const BonzaiContent = await ethers.getContractFactory("BonzaiContent");
+    it("should revert if initialize is called twice", async function () {
+      const { content, owner, treasury } = await loadFixture(deployContent);
       await expect(
-        BonzaiContent.deploy(ethers.ZeroAddress)
-      ).to.be.revertedWith("Invalid treasury");
+        content.initialize(owner.address, "Dup", treasury.address, ethers.ZeroAddress, ethers.ZeroAddress, ethers.ZeroAddress)
+      ).to.be.revertedWith("Already initialized");
+    });
+
+    it("should revert if implementation is initialized directly", async function () {
+      const { implementation, owner, treasury } = await loadFixture(deployContent);
+      await expect(
+        implementation.initialize(owner.address, "Dup", treasury.address, ethers.ZeroAddress, ethers.ZeroAddress, ethers.ZeroAddress)
+      ).to.be.revertedWith("Already initialized");
     });
 
     it("should start with totalMinted at zero", async function () {
       const { content } = await loadFixture(deployContent);
       expect(await content.totalMinted()).to.equal(0);
+    });
+  });
+
+  // ═══════════════════════════════════════════════════════════════════════════
+  // FACTORY
+  // ═══════════════════════════════════════════════════════════════════════════
+
+  describe("Factory", function () {
+    it("should return existing collection on second call", async function () {
+      const { factory, content, owner } = await loadFixture(deployContent);
+      const addr1 = await factory.collections(owner.address);
+      // Call again — should return the same address
+      const tx = await factory.getOrCreateCollection("Different Name");
+      const receipt = await tx.wait();
+      const addr2 = await factory.collections(owner.address);
+      expect(addr1).to.equal(addr2);
+    });
+
+    it("should create separate collections for different users", async function () {
+      const { factory, user1 } = await loadFixture(deployContent);
+      await factory.connect(user1).getOrCreateCollection("User1 Collection");
+      const addr = await factory.collections(user1.address);
+      expect(addr).to.not.equal(ethers.ZeroAddress);
+    });
+
+    it("should track total collections", async function () {
+      const { factory, user1 } = await loadFixture(deployContent);
+      // Owner already has one
+      expect(await factory.totalCollections()).to.equal(1);
+      await factory.connect(user1).getOrCreateCollection("User1 Collection");
+      expect(await factory.totalCollections()).to.equal(2);
+    });
+
+    it("getCollection should return zero for users without a collection", async function () {
+      const { factory, user2 } = await loadFixture(deployContent);
+      expect(await factory.getCollection(user2.address)).to.equal(ethers.ZeroAddress);
     });
   });
 
@@ -65,71 +113,77 @@ describe("BonzaiContent", function () {
     const contentType = CONTENT_TYPE.IMAGE;
 
     it("should mint a token and return tokenId 1", async function () {
-      const { content, user1 } = await loadFixture(deployContent);
-      const tx = await content.connect(user1).mint(contentId, model, tokenURI, contentType, { value: MINT_FEE });
-      const receipt = await tx.wait();
+      const { content, owner } = await loadFixture(deployContent);
+      const tx = await content.connect(owner).mint(contentId, model, tokenURI, contentType, { value: MINT_FEE });
+      await tx.wait();
 
-      // tokenId should be 1 (first mint)
       expect(await content.totalMinted()).to.equal(1);
-      expect(await content.ownerOf(1)).to.equal(user1.address);
+      expect(await content.ownerOf(1)).to.equal(owner.address);
+    });
+
+    it("should revert when non-owner tries to mint", async function () {
+      const { content, user1 } = await loadFixture(deployContent);
+      await expect(
+        content.connect(user1).mint(contentId, model, tokenURI, contentType, { value: MINT_FEE })
+      ).to.be.revertedWith("Only collection owner can mint");
     });
 
     it("should store provenance data correctly", async function () {
-      const { content, user1 } = await loadFixture(deployContent);
-      await content.connect(user1).mint(contentId, model, tokenURI, contentType, { value: MINT_FEE });
+      const { content, owner } = await loadFixture(deployContent);
+      await content.connect(owner).mint(contentId, model, tokenURI, contentType, { value: MINT_FEE });
 
       const prov = await content.provenance(1);
       expect(prov.transactionId).to.equal(contentId);
-      expect(prov.originalCreator).to.equal(user1.address);
+      expect(prov.originalCreator).to.equal(owner.address);
       expect(prov.model).to.equal(model);
       expect(prov.contentType).to.equal(contentType);
       expect(prov.creationTimestamp).to.be.gt(0);
     });
 
     it("should set tokenURI correctly", async function () {
-      const { content, user1 } = await loadFixture(deployContent);
-      await content.connect(user1).mint(contentId, model, tokenURI, contentType, { value: MINT_FEE });
+      const { content, owner } = await loadFixture(deployContent);
+      await content.connect(owner).mint(contentId, model, tokenURI, contentType, { value: MINT_FEE });
       expect(await content.tokenURI(1)).to.equal(tokenURI);
     });
 
     it("should emit ContentMinted event", async function () {
-      const { content, user1 } = await loadFixture(deployContent);
+      const { content, owner } = await loadFixture(deployContent);
       await expect(
-        content.connect(user1).mint(contentId, model, tokenURI, contentType, { value: MINT_FEE })
+        content.connect(owner).mint(contentId, model, tokenURI, contentType, { value: MINT_FEE })
       )
         .to.emit(content, "ContentMinted")
-        .withArgs(1, user1.address, contentId, model, () => true);
+        .withArgs(1, owner.address, contentId, model, () => true);
     });
 
     it("should increment tokenId for sequential mints", async function () {
-      const { content, user1, user2 } = await loadFixture(deployContent);
-      await content.connect(user1).mint(contentId, model, tokenURI, contentType, { value: MINT_FEE });
-      await content.connect(user2).mint("content-2", "llama-3.1-8b", "uri2", CONTENT_TYPE.TEXT, { value: MINT_FEE });
+      const { content, owner } = await loadFixture(deployContent);
+      await content.connect(owner).mint(contentId, model, tokenURI, contentType, { value: MINT_FEE });
+      await content.connect(owner).mint("content-2", "llama-3.1-8b", "uri2", CONTENT_TYPE.TEXT, { value: MINT_FEE });
 
       expect(await content.totalMinted()).to.equal(2);
-      expect(await content.ownerOf(1)).to.equal(user1.address);
-      expect(await content.ownerOf(2)).to.equal(user2.address);
+      expect(await content.ownerOf(1)).to.equal(owner.address);
+      expect(await content.ownerOf(2)).to.equal(owner.address);
     });
 
     it("should revert if fee is insufficient", async function () {
-      const { content, user1 } = await loadFixture(deployContent);
+      const { content, owner } = await loadFixture(deployContent);
       const lowFee = MINT_FEE - 1n;
       await expect(
-        content.connect(user1).mint(contentId, model, tokenURI, contentType, { value: lowFee })
+        content.connect(owner).mint(contentId, model, tokenURI, contentType, { value: lowFee })
       ).to.be.revertedWith("Insufficient mint fee");
     });
 
     it("should revert if contentType > 5", async function () {
-      const { content, user1 } = await loadFixture(deployContent);
+      const { content, owner } = await loadFixture(deployContent);
       await expect(
-        content.connect(user1).mint(contentId, model, tokenURI, 6, { value: MINT_FEE })
+        content.connect(owner).mint(contentId, model, tokenURI, 6, { value: MINT_FEE })
       ).to.be.revertedWith("Invalid content type");
     });
 
     it("should accept all valid content types (0-5)", async function () {
-      const { content, user1 } = await loadFixture(deployContent);
+      const { content, owner } = await loadFixture(deployContent);
       for (let ct = 0; ct <= 5; ct++) {
-        await content.connect(user1).mint(contentId, model, tokenURI, ct, { value: MINT_FEE });
+        await content.connect(owner).mint(contentId, model, tokenURI, ct, { value: MINT_FEE });
         expect(await content.getContentType(ct + 1)).to.equal(ct);
       }
     });
@@ -138,14 +192,11 @@ describe("BonzaiContent", function () {
 
     describe("fee split", function () {
       it("should send 80% to treasury and 20% to pool", async function () {
-        const { content, mockPool, treasury, user1 } = await loadFixture(deployContent);
-
-        // Configure pool
-        await content.setMintPool(await mockPool.getAddress());
+        const { content, mockPool, treasury, owner } = await loadFixture(deployContent);
 
         const treasuryBefore = await ethers.provider.getBalance(treasury.address);
 
-        await content.connect(user1).mint(contentId, model, tokenURI, contentType, { value: MINT_FEE });
+        await content.connect(owner).mint(contentId, model, tokenURI, contentType, { value: MINT_FEE });
 
         const treasuryAfter = await ethers.provider.getBalance(treasury.address);
         const expectedTreasury = (MINT_FEE * TREASURY_BPS) / BPS_DENOMINATOR;
@@ -156,34 +207,45 @@ describe("BonzaiContent", function () {
       });
 
       it("should route pool deposit to correct content type pool index", async function () {
-        const { content, mockPool, user1 } = await loadFixture(deployContent);
-        await content.setMintPool(await mockPool.getAddress());
+        const { content, mockPool, owner } = await loadFixture(deployContent);
 
         const videoType = CONTENT_TYPE.VIDEO;
-        await content.connect(user1).mint(contentId, model, tokenURI, videoType, { value: MINT_FEE });
+        await content.connect(owner).mint(contentId, model, tokenURI, videoType, { value: MINT_FEE });
 
         const expectedPool = MINT_FEE - (MINT_FEE * TREASURY_BPS) / BPS_DENOMINATOR;
         expect(await mockPool.poolDeposits(videoType)).to.equal(expectedPool);
       });
 
       it("should send entire fee to treasury when no pool is configured", async function () {
-        const { content, treasury, user1 } = await loadFixture(deployContent);
-        // mintPool is address(0) by default
+        const { factory, treasury, user1 } = await loadFixture(deployContent);
+
+        // Create a new collection with no pool configured
+        const BonzaiCollectibles = await ethers.getContractFactory("BonzaiCollectibles");
+        const impl = await BonzaiCollectibles.deploy();
+        const NoPoolFactory = await ethers.getContractFactory("BonzaiCollectiblesFactory");
+        const noPoolFactory = await NoPoolFactory.deploy(
+          await impl.getAddress(),
+          treasury.address,
+          ethers.ZeroAddress, // no pool
+          ethers.ZeroAddress
+        );
+        await noPoolFactory.connect(user1).getOrCreateCollection("No Pool Collection");
+        const cloneAddr = await noPoolFactory.collections(user1.address);
+        const noPcolContent = BonzaiCollectibles.attach(cloneAddr);
 
         const treasuryBefore = await ethers.provider.getBalance(treasury.address);
-        await content.connect(user1).mint(contentId, model, tokenURI, contentType, { value: MINT_FEE });
+        await noPcolContent.connect(user1).mint(contentId, model, tokenURI, contentType, { value: MINT_FEE });
         const treasuryAfter = await ethers.provider.getBalance(treasury.address);
 
         expect(treasuryAfter - treasuryBefore).to.equal(MINT_FEE);
       });
 
       it("should fallback pool share to treasury when pool reverts", async function () {
-        const { content, mockPool, treasury, user1 } = await loadFixture(deployContent);
-        await content.setMintPool(await mockPool.getAddress());
+        const { content, mockPool, treasury, owner } = await loadFixture(deployContent);
         await mockPool.setShouldRevert(true);
 
         const treasuryBefore = await ethers.provider.getBalance(treasury.address);
-        await content.connect(user1).mint(contentId, model, tokenURI, contentType, { value: MINT_FEE });
+        await content.connect(owner).mint(contentId, model, tokenURI, contentType, { value: MINT_FEE });
         const treasuryAfter = await ethers.provider.getBalance(treasury.address);
 
         // Entire mintFee should go to treasury
@@ -191,15 +253,14 @@ describe("BonzaiContent", function () {
       });
 
       it("should emit PoolDepositFailed when pool reverts", async function () {
-        const { content, mockPool, user1 } = await loadFixture(deployContent);
+        const { content, mockPool, owner } = await loadFixture(deployContent);
         const poolAddr = await mockPool.getAddress();
-        await content.setMintPool(poolAddr);
         await mockPool.setShouldRevert(true);
 
         const expectedPool = MINT_FEE - (MINT_FEE * TREASURY_BPS) / BPS_DENOMINATOR;
 
         await expect(
-          content.connect(user1).mint(contentId, model, tokenURI, contentType, { value: MINT_FEE })
+          content.connect(owner).mint(contentId, model, tokenURI, contentType, { value: MINT_FEE })
         )
           .to.emit(content, "PoolDepositFailed")
           .withArgs(poolAddr, contentType, expectedPool);
@@ -210,28 +271,28 @@ describe("BonzaiContent", function () {
 
     describe("excess refund", function () {
       it("should refund excess ETH to minter", async function () {
-        const { content, user1 } = await loadFixture(deployContent);
+        const { content, owner } = await loadFixture(deployContent);
         const excess = ethers.parseEther("0.01");
         const sent = MINT_FEE + excess;
 
-        const balBefore = await ethers.provider.getBalance(user1.address);
-        const tx = await content.connect(user1).mint(contentId, model, tokenURI, contentType, { value: sent });
+        const balBefore = await ethers.provider.getBalance(owner.address);
+        const tx = await content.connect(owner).mint(contentId, model, tokenURI, contentType, { value: sent });
         const receipt = await tx.wait();
         const gasCost = receipt.gasUsed * receipt.gasPrice;
-        const balAfter = await ethers.provider.getBalance(user1.address);
+        const balAfter = await ethers.provider.getBalance(owner.address);
 
         // User should only pay MINT_FEE + gas
         expect(balBefore - balAfter - gasCost).to.equal(MINT_FEE);
       });
 
       it("should work with exact mint fee (no refund)", async function () {
-        const { content, user1 } = await loadFixture(deployContent);
+        const { content, owner } = await loadFixture(deployContent);
 
-        const balBefore = await ethers.provider.getBalance(user1.address);
-        const tx = await content.connect(user1).mint(contentId, model, tokenURI, contentType, { value: MINT_FEE });
+        const balBefore = await ethers.provider.getBalance(owner.address);
+        const tx = await content.connect(owner).mint(contentId, model, tokenURI, contentType, { value: MINT_FEE });
         const receipt = await tx.wait();
         const gasCost = receipt.gasUsed * receipt.gasPrice;
-        const balAfter = await ethers.provider.getBalance(user1.address);
+        const balAfter = await ethers.provider.getBalance(owner.address);
 
         expect(balBefore - balAfter - gasCost).to.equal(MINT_FEE);
       });
@@ -254,6 +315,7 @@ describe("BonzaiContent", function () {
     it("should return treasury as receiver when no royaltySplitter is set", async function () {
       const { content, treasury } = await loadFixture(deployContent);
       const [receiver] = await content.royaltyInfo(1, ethers.parseEther("1"));
+      // royaltySplitter is ZeroAddress in our fixture, so falls back to treasury
       expect(receiver).to.equal(treasury.address);
     });
 
@@ -282,46 +344,45 @@ describe("BonzaiContent", function () {
     const contentType = CONTENT_TYPE.IMAGE;
 
     it("should allow transfers when no validator is set", async function () {
-      const { content, user1, user2 } = await loadFixture(deployContent);
-      await content.connect(user1).mint(contentId, model, tokenURI, contentType, { value: MINT_FEE });
+      const { content, owner, user1 } = await loadFixture(deployContent);
+      await content.connect(owner).mint(contentId, model, tokenURI, contentType, { value: MINT_FEE });
 
-      // Transfer should succeed without validator
-      await content.connect(user1).transferFrom(user1.address, user2.address, 1);
-      expect(await content.ownerOf(1)).to.equal(user2.address);
+      await content.connect(owner).transferFrom(owner.address, user1.address, 1);
+      expect(await content.ownerOf(1)).to.equal(user1.address);
     });
 
     it("should allow transfers when validator approves", async function () {
-      const { content, validator, user1, user2 } = await loadFixture(deployContent);
+      const { content, validator, owner, user1 } = await loadFixture(deployContent);
       await content.setTransferValidator(await validator.getAddress());
-      await content.connect(user1).mint(contentId, model, tokenURI, contentType, { value: MINT_FEE });
+      await content.connect(owner).mint(contentId, model, tokenURI, contentType, { value: MINT_FEE });
 
-      await content.connect(user1).transferFrom(user1.address, user2.address, 1);
-      expect(await content.ownerOf(1)).to.equal(user2.address);
+      await content.connect(owner).transferFrom(owner.address, user1.address, 1);
+      expect(await content.ownerOf(1)).to.equal(user1.address);
     });
 
     it("should revert transfers when validator rejects", async function () {
-      const { content, validator, user1, user2 } = await loadFixture(deployContent);
+      const { content, validator, owner, user1 } = await loadFixture(deployContent);
       await content.setTransferValidator(await validator.getAddress());
-      await content.connect(user1).mint(contentId, model, tokenURI, contentType, { value: MINT_FEE });
+      await content.connect(owner).mint(contentId, model, tokenURI, contentType, { value: MINT_FEE });
 
       await validator.setRevert(true);
 
       await expect(
-        content.connect(user1).transferFrom(user1.address, user2.address, 1)
+        content.connect(owner).transferFrom(owner.address, user1.address, 1)
       ).to.be.revertedWith("Transfer not allowed");
     });
 
     it("should skip validation on mints (from == address(0))", async function () {
-      const { content, validator, user1 } = await loadFixture(deployContent);
+      const { content, validator, owner } = await loadFixture(deployContent);
       await content.setTransferValidator(await validator.getAddress());
       await validator.setRevert(true);
 
       // Mint should still succeed even though validator reverts on transfers
       await expect(
-        content.connect(user1).mint(contentId, model, tokenURI, contentType, { value: MINT_FEE })
+        content.connect(owner).mint(contentId, model, tokenURI, contentType, { value: MINT_FEE })
       ).to.not.be.reverted;
 
-      expect(await content.ownerOf(1)).to.equal(user1.address);
+      expect(await content.ownerOf(1)).to.equal(owner.address);
     });
 
     it("should expose getTransferValidator()", async function () {
@@ -335,13 +396,6 @@ describe("BonzaiContent", function () {
 
     it("should support ICreatorToken interface", async function () {
       const { content } = await loadFixture(deployContent);
-      // ICreatorToken has getTransferValidator() + TransferValidatorUpdated event
-      // Interface ID calculated from the function selector
-      // keccak256("getTransferValidator()") first 4 bytes = 0x098144d4
-      // ICreatorToken interfaceId = 0x098144d4
-      // Actually need to check the real interfaceId; let's just verify it supports it
-      // The supportsInterface includes type(ICreatorToken).interfaceId
-      // We can just verify by checking the contract reports support
       const iCreatorTokenId = "0x098144d4";
       expect(await content.supportsInterface(iCreatorTokenId)).to.be.true;
     });
@@ -367,8 +421,8 @@ describe("BonzaiContent", function () {
     const contentType = CONTENT_TYPE.AUDIO;
 
     it("getContentType() should return the correct content type", async function () {
-      const { content, user1 } = await loadFixture(deployContent);
-      await content.connect(user1).mint(contentId, model, tokenURI, contentType, { value: MINT_FEE });
+      const { content, owner } = await loadFixture(deployContent);
+      await content.connect(owner).mint(contentId, model, tokenURI, contentType, { value: MINT_FEE });
       expect(await content.getContentType(1)).to.equal(contentType);
     });
 
@@ -378,15 +432,15 @@ describe("BonzaiContent", function () {
     });
 
     it("getCreator() should return the original minter", async function () {
-      const { content, user1, user2 } = await loadFixture(deployContent);
-      await content.connect(user1).mint(contentId, model, tokenURI, contentType, { value: MINT_FEE });
+      const { content, owner, user1 } = await loadFixture(deployContent);
+      await content.connect(owner).mint(contentId, model, tokenURI, contentType, { value: MINT_FEE });
 
-      // Transfer to user2
-      await content.connect(user1).transferFrom(user1.address, user2.address, 1);
+      // Transfer to user1
+      await content.connect(owner).transferFrom(owner.address, user1.address, 1);
 
-      // Creator should still be user1 even after transfer
-      expect(await content.getCreator(1)).to.equal(user1.address);
-      expect(await content.ownerOf(1)).to.equal(user2.address);
+      // Creator should still be owner even after transfer
+      expect(await content.getCreator(1)).to.equal(owner.address);
+      expect(await content.ownerOf(1)).to.equal(user1.address);
     });
 
     it("getCreator() should revert for non-existent token", async function () {
@@ -395,23 +449,23 @@ describe("BonzaiContent", function () {
     });
 
     it("totalMinted() should return cumulative mint count", async function () {
-      const { content, user1, user2 } = await loadFixture(deployContent);
+      const { content, owner } = await loadFixture(deployContent);
       expect(await content.totalMinted()).to.equal(0);
 
-      await content.connect(user1).mint(contentId, model, tokenURI, contentType, { value: MINT_FEE });
+      await content.connect(owner).mint(contentId, model, tokenURI, contentType, { value: MINT_FEE });
       expect(await content.totalMinted()).to.equal(1);
 
-      await content.connect(user2).mint("content-2", "llama", "uri2", CONTENT_TYPE.TEXT, { value: MINT_FEE });
+      await content.connect(owner).mint("content-2", "llama", "uri2", CONTENT_TYPE.TEXT, { value: MINT_FEE });
       expect(await content.totalMinted()).to.equal(2);
     });
 
     it("provenance() should return all stored fields", async function () {
-      const { content, user1 } = await loadFixture(deployContent);
-      await content.connect(user1).mint(contentId, model, tokenURI, contentType, { value: MINT_FEE });
+      const { content, owner } = await loadFixture(deployContent);
+      await content.connect(owner).mint(contentId, model, tokenURI, contentType, { value: MINT_FEE });
 
       const prov = await content.provenance(1);
       expect(prov.transactionId).to.equal(contentId);
-      expect(prov.originalCreator).to.equal(user1.address);
+      expect(prov.originalCreator).to.equal(owner.address);
       expect(prov.model).to.equal(model);
       expect(prov.contentType).to.equal(contentType);
       expect(prov.creationTimestamp).to.be.gt(0);
@@ -444,18 +498,18 @@ describe("BonzaiContent", function () {
       });
 
       it("should enforce the new fee on subsequent mints", async function () {
-        const { content, user1 } = await loadFixture(deployContent);
+        const { content, owner } = await loadFixture(deployContent);
         const newFee = ethers.parseEther("0.01");
         await content.setMintFee(newFee);
 
         // Old fee should fail
         await expect(
-          content.connect(user1).mint("id", "model", "uri", 0, { value: MINT_FEE })
+          content.connect(owner).mint("id", "model", "uri", 0, { value: MINT_FEE })
         ).to.be.revertedWith("Insufficient mint fee");
 
         // New fee should succeed
         await expect(
-          content.connect(user1).mint("id", "model", "uri", 0, { value: newFee })
+          content.connect(owner).mint("id", "model", "uri", 0, { value: newFee })
         ).to.not.be.reverted;
       });
     });
@@ -484,15 +538,16 @@ describe("BonzaiContent", function () {
       it("should emit MintPoolUpdated event", async function () {
         const { content, mockPool } = await loadFixture(deployContent);
         const poolAddr = await mockPool.getAddress();
-        await expect(content.setMintPool(poolAddr))
+        // The clone was initialized with mockPool, so old == mockPool
+        const oldPool = await content.mintPool();
+        const newPoolAddr = await mockPool.getAddress();
+        await expect(content.setMintPool(newPoolAddr))
           .to.emit(content, "MintPoolUpdated")
-          .withArgs(ethers.ZeroAddress, poolAddr);
+          .withArgs(oldPool, newPoolAddr);
       });
 
       it("should allow setting pool to zero address (disabling pool)", async function () {
-        const { content, mockPool } = await loadFixture(deployContent);
-        const poolAddr = await mockPool.getAddress();
-        await content.setMintPool(poolAddr);
+        const { content } = await loadFixture(deployContent);
         await content.setMintPool(ethers.ZeroAddress);
         expect(await content.mintPool()).to.equal(ethers.ZeroAddress);
       });

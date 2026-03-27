@@ -3434,11 +3434,11 @@ import {
 
 // Pre-load bundled companion and scenario images using Vite's import.meta.glob
 // This ensures images are bundled with the app and available on first run
-const companionAssets = import.meta.glob("../assets/companions/*.webp", {
+const companionAssets = import.meta.glob("../../assets/companions/*.webp", {
   eager: true,
   import: "default",
 });
-const scenarioAssets = import.meta.glob("../assets/scenarios/*.webp", {
+const scenarioAssets = import.meta.glob("../../assets/scenarios/*.webp", {
   eager: true,
   import: "default",
 });
@@ -3451,8 +3451,8 @@ const scenarioAssets = import.meta.glob("../assets/scenarios/*.webp", {
 function resolveBundledAsset(defaultImage) {
   if (!defaultImage) return null;
 
-  // Construct the glob key path
-  const assetPath = `../assets/${defaultImage}`;
+  // Construct the glob key path (matches ../../assets/ from src/components/skills/)
+  const assetPath = `../../assets/${defaultImage}`;
 
   // Check both asset collections
   const asset = companionAssets[assetPath] || scenarioAssets[assetPath];
@@ -6285,115 +6285,150 @@ export default {
             // AND merge new properties from defaults onto existing built-in companions
             let needsSave = false;
             const validCompanions = stored.filter((c) => {
-              // Auto-migrate companions with age 18-20 to 21 (minimum raised)
-              const numAge = typeof c.age === 'number' ? c.age : parseInt(c.age, 10);
-              if (!isNaN(numAge) && numAge >= 18 && numAge < 21) {
-                console.log(`[Roleplay] Migrating companion "${c.name}" age ${numAge} → 21`);
-                c.age = 21;
-                needsSave = true;
-              }
-
-              // Auto-migrate age references in text fields (18-20 → 21)
-              // so existing custom companions aren't silently filtered out
-              const textFields = ['description', 'appearance', 'personality'];
-              for (const field of textFields) {
-                if (c[field] && typeof c[field] === 'string') {
-                  const migrated = c[field].replace(
-                    /\b(1[89]|20)\s*(years?\s*old|yo\b|y\.o\.)/gi,
-                    '21 years old'
-                  );
-                  if (migrated !== c[field]) {
-                    console.log(`[Roleplay] Migrated age reference in ${c.name}'s ${field}`);
-                    c[field] = migrated;
-                    needsSave = true;
-                  }
-                }
-              }
-
-              const validation = validateCompanionAge(c);
-              if (!validation.valid) {
-                console.warn(
-                  `[Roleplay] Removed invalid companion "${c.name}": ${validation.reason}`,
-                );
-                return false;
-              }
-              sanitizeCompanionAge(c);
-              // Ensure isCustom flag is set correctly:
-              // - Companions not in DEFAULT_COMPANIONS are custom
-              // - Companions in DEFAULT_COMPANIONS are built-in (isCustom = false)
-              if (!defaultIds.includes(c.id)) {
-                c.isCustom = true;
-                // Generate spending profile for custom companions if missing or has default values
-                if (
-                  !c.spendingHabits ||
-                  isDefaultSpendingProfile(c.spendingHabits)
-                ) {
-                  c.spendingHabits = generateSpendingProfile(c);
-                  needsSave = true;
-                  console.log(
-                    `[Roleplay] Generated spending profile for ${c.name}`,
-                  );
-                }
-                // Generate firstName/familyName from name if missing
-                if (!c.firstName && c.name) {
-                  const nameParts = c.name.trim().split(/\s+/);
-                  c.firstName = nameParts[0];
-                  if (nameParts.length > 1) {
-                    c.familyName = nameParts.slice(1).join(" ");
-                  }
+              try {
+                // Auto-migrate companions with age 18-20 to 21 (minimum raised)
+                const numAge = typeof c.age === 'number' ? c.age : parseInt(c.age, 10);
+                if (!isNaN(numAge) && numAge >= 18 && numAge < 21) {
+                  console.log(`[Roleplay] Migrating companion "${c.name}" age ${numAge} → 21`);
+                  c.age = 21;
                   needsSave = true;
                 }
-              } else {
-                c.isCustom = false;
-                // Merge new properties from defaults (preserve user's image)
-                const defaultCompanion = defaultsById[c.id];
-                if (defaultCompanion) {
-                  const userImage = c.image; // Preserve user's generated image
-                  // Add any missing properties from default
-                  for (const key of Object.keys(defaultCompanion)) {
-                    if (
-                      !(key in c) ||
-                      c[key] === undefined ||
-                      c[key] === null
-                    ) {
-                      c[key] = defaultCompanion[key];
+
+                // Auto-migrate age references in text fields (18-20 → 21)
+                // so existing custom companions aren't silently filtered out
+                const textFields = ['description', 'appearance', 'personality', 'background'];
+                for (const field of textFields) {
+                  if (c[field] && typeof c[field] === 'string') {
+                    let migrated = c[field];
+                    // "18 years old", "19 yo", "20 y.o."
+                    migrated = migrated.replace(
+                      /\b(1[89]|20)\s*(years?\s*old|yo\b|y\.o\.)/gi,
+                      '21 years old'
+                    );
+                    // "18-year-old", "19-year old"
+                    migrated = migrated.replace(
+                      /\b(1[89]|20)[- ]year[- ]?old\b/gi,
+                      '21-year-old'
+                    );
+                    // Written-out: "eighteen", "nineteen", "twenty years old"
+                    migrated = migrated.replace(
+                      /\b(eighteen|nineteen|twenty)\s*(years?\s*old|yo\b|y\.o\.)/gi,
+                      '21 years old'
+                    );
+                    migrated = migrated.replace(
+                      /\b(eighteen|nineteen|twenty)[- ]year[- ]?old\b/gi,
+                      '21-year-old'
+                    );
+                    // Sanitize blocked terms that LLMs may have generated
+                    migrated = migrated
+                      .replace(/\b(teen|teenager|teenage)\b/gi, 'young adult')
+                      .replace(/\b(adolescent)\b/gi, 'young')
+                      .replace(/\b(schoolgirl|schoolboy)\b/gi, 'student')
+                      .replace(/\b(freshman|sophomore)\b/gi, 'student');
+                    if (migrated !== c[field]) {
+                      console.log(`[Roleplay] Migrated text in ${c.name}'s ${field}`);
+                      c[field] = migrated;
                       needsSave = true;
                     }
                   }
-                  // Always update spendingHabits and shortBio from defaults (schema changes)
-                  if (
-                    defaultCompanion.spendingHabits &&
-                    JSON.stringify(c.spendingHabits) !==
-                      JSON.stringify(defaultCompanion.spendingHabits)
-                  ) {
-                    c.spendingHabits = { ...defaultCompanion.spendingHabits };
-                    needsSave = true;
-                  }
-                  if (
-                    defaultCompanion.shortBio &&
-                    c.shortBio !== defaultCompanion.shortBio
-                  ) {
-                    c.shortBio = defaultCompanion.shortBio;
-                    needsSave = true;
-                  }
-                  if (
-                    defaultCompanion.familyName &&
-                    c.familyName !== defaultCompanion.familyName
-                  ) {
-                    c.familyName = defaultCompanion.familyName;
-                    needsSave = true;
-                  }
-                  if (
-                    defaultCompanion.firstName &&
-                    c.firstName !== defaultCompanion.firstName
-                  ) {
-                    c.firstName = defaultCompanion.firstName;
-                    needsSave = true;
-                  }
-                  c.image = userImage; // Restore user's image
                 }
+
+                const validation = validateCompanionAge(c);
+                if (!validation.valid) {
+                  console.warn(
+                    `[Roleplay] Removed invalid companion "${c.name}": ${validation.reason}`,
+                  );
+                  return false;
+                }
+                sanitizeCompanionAge(c);
+                // Ensure isCustom flag is set correctly:
+                // - Companions not in DEFAULT_COMPANIONS are custom
+                // - Companions in DEFAULT_COMPANIONS are built-in (isCustom = false)
+                if (!defaultIds.includes(c.id)) {
+                  c.isCustom = true;
+                  // Generate spending profile for custom companions if missing or has default values
+                  try {
+                    if (
+                      !c.spendingHabits ||
+                      isDefaultSpendingProfile(c.spendingHabits)
+                    ) {
+                      c.spendingHabits = generateSpendingProfile(c);
+                      needsSave = true;
+                      console.log(
+                        `[Roleplay] Generated spending profile for ${c.name}`,
+                      );
+                    }
+                  } catch (spErr) {
+                    console.warn(`[Roleplay] Failed to generate spending profile for "${c.name}":`, spErr.message);
+                    // Use neutral defaults so companion isn't dropped
+                    c.spendingHabits = { education: 5, entertainment: 5, fashion: 5, finance: 5, food: 5, healthcare: 5, housing: 5, beauty: 5, reading: 5, social: 5, sports: 5, travel: 5 };
+                  }
+                  // Generate firstName/familyName from name if missing
+                  if (!c.firstName && c.name) {
+                    const nameParts = c.name.trim().split(/\s+/);
+                    c.firstName = nameParts[0];
+                    if (nameParts.length > 1) {
+                      c.familyName = nameParts.slice(1).join(" ");
+                    }
+                    needsSave = true;
+                  }
+                } else {
+                  c.isCustom = false;
+                  // Merge new properties from defaults (preserve user's image)
+                  const defaultCompanion = defaultsById[c.id];
+                  if (defaultCompanion) {
+                    const userImage = c.image; // Preserve user's generated image
+                    // Add any missing properties from default
+                    for (const key of Object.keys(defaultCompanion)) {
+                      if (
+                        !(key in c) ||
+                        c[key] === undefined ||
+                        c[key] === null
+                      ) {
+                        c[key] = defaultCompanion[key];
+                        needsSave = true;
+                      }
+                    }
+                    // Always update spendingHabits and shortBio from defaults (schema changes)
+                    if (
+                      defaultCompanion.spendingHabits &&
+                      JSON.stringify(c.spendingHabits) !==
+                        JSON.stringify(defaultCompanion.spendingHabits)
+                    ) {
+                      c.spendingHabits = { ...defaultCompanion.spendingHabits };
+                      needsSave = true;
+                    }
+                    if (
+                      defaultCompanion.shortBio &&
+                      c.shortBio !== defaultCompanion.shortBio
+                    ) {
+                      c.shortBio = defaultCompanion.shortBio;
+                      needsSave = true;
+                    }
+                    if (
+                      defaultCompanion.familyName &&
+                      c.familyName !== defaultCompanion.familyName
+                    ) {
+                      c.familyName = defaultCompanion.familyName;
+                      needsSave = true;
+                    }
+                    if (
+                      defaultCompanion.firstName &&
+                      c.firstName !== defaultCompanion.firstName
+                    ) {
+                      c.firstName = defaultCompanion.firstName;
+                      needsSave = true;
+                    }
+                    // Restore user's image, or resolve bundled default if none
+                    c.image = userImage || resolveBundledAsset(c.defaultImage || defaultCompanion.defaultImage);
+                  }
+                }
+                return true;
+              } catch (filterErr) {
+                console.error(`[Roleplay] Error processing companion "${c?.name || c?.id || 'unknown'}":`, filterErr);
+                // Keep the companion rather than silently dropping it
+                return true;
               }
-              return true;
             });
 
             // Check if any default companions are missing (migration after update)
@@ -6455,7 +6490,7 @@ export default {
             // First run - seed with defaults
             companions.value = DEFAULT_COMPANIONS.map((c) => ({
               ...c,
-              image: null,
+              image: resolveBundledAsset(c.defaultImage),
               isCustom: false, // Default companions are not custom
             }));
             await saveCompanions();
@@ -6860,6 +6895,32 @@ export default {
           );
 
         if (generationCancelled.value) return;
+
+        // Sanitize generated text to remove blocked terms before validation
+        // LLMs may generate these words despite prompt instructions
+        for (const field of ['description', 'appearance', 'background', 'personality']) {
+          if (result[field] && typeof result[field] === 'string') {
+            // Replace blocked terms with neutral alternatives
+            result[field] = result[field]
+              .replace(/\b(teen|teenager|teenage)\b/gi, 'young adult')
+              .replace(/\b(adolescent)\b/gi, 'young')
+              .replace(/\b(minor)\b/gi, 'emerging')
+              .replace(/\b(schoolgirl|schoolboy)\b/gi, 'student')
+              .replace(/\b(freshman|sophomore)\b/gi, 'student')
+              .replace(/\b(prom)\b/gi, 'gala');
+            // Migrate any age references 18-20 to 21
+            result[field] = result[field]
+              .replace(/\b(1[89]|20)\s*(years?\s*old|yo\b|y\.o\.)/gi, `${result.age || 21} years old`)
+              .replace(/\b(1[89]|20)[- ]year[- ]?old\b/gi, `${result.age || 21}-year-old`)
+              .replace(/\b(eighteen|nineteen|twenty)\s*(years?\s*old|yo\b|y\.o\.)/gi, `${result.age || 21} years old`)
+              .replace(/\b(eighteen|nineteen|twenty)[- ]year[- ]?old\b/gi, `${result.age || 21}-year-old`);
+          }
+        }
+
+        // Ensure age is at least 21
+        if (typeof result.age === 'number' && result.age < 21) {
+          result.age = 21;
+        }
 
         // Age validation - reject underage companions
         const ageValidation = validateCompanionAge(result);
@@ -8091,6 +8152,11 @@ export default {
       if (!image) return "";
       if (image.startsWith("data:")) return image;
       if (image.startsWith("http")) return image;
+      // Vite-resolved asset URLs (dev: /src/assets/..., prod: ./assets/...)
+      // These are served by the dev server or bundled — return as-is
+      if (image.startsWith("/assets/") || image.startsWith("/src/assets/") || image.startsWith("./assets/")) {
+        return image;
+      }
       // Local file path - use Flask media stream endpoint
       if (image.startsWith("/")) {
         const port = window.BONZAI_SERVER_PORT || 65000;
@@ -9054,6 +9120,16 @@ export default {
     // Watch for phase changes to re-render spending charts
     watch(phase, (newPhase) => {
       if (newPhase === "setup") {
+        setTimeout(() => {
+          renderSpendingCharts();
+        }, 100);
+      }
+    });
+
+    // Re-render spending charts when companion creation form closes
+    // (companion grid canvases are recreated by v-if toggle)
+    watch(showCustomCompanion, (showing) => {
+      if (!showing) {
         setTimeout(() => {
           renderSpendingCharts();
         }, 100);

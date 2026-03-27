@@ -1,7 +1,7 @@
 {
   "name": "bonzai",
   "productName": "BonzAI",
-  "version": "2.2.1",
+  "version": "2.3.0",
   "description": "1-click Sovereign AI deployment, training & serving. This is BonzAI !",
   "main": ".vite/build/main.js",
   "type": "module",
@@ -77,6 +77,7 @@
     "@libp2p/webrtc": "^4.1.0",
     "@libp2p/websockets": "^8.1.0",
     "@lukso/lsp-smart-contracts": "^0.16.7",
+    "@open-wallet-standard/core": "^1.0.0",
     "@openzeppelin/contracts": "^5.4.0",
     "@privy-io/js-sdk-core": "^0.60.4",
     "@reown/appkit": "^1.8.17",

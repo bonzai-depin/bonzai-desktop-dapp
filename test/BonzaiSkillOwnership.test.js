@@ -4,9 +4,20 @@ const { loadFixture } = require("@nomicfoundation/hardhat-toolbox/network-helper
 const { deploySkillOwnership } = require("./helpers/deploy");
 const { MIN_PROFILE_SCORE } = require("./helpers/constants");
 
+const { time } = require("@nomicfoundation/hardhat-network-helpers");
+
 // ═══════════════════════════════════════════════════════════════════════════
 // SHARED HELPERS
 // ═══════════════════════════════════════════════════════════════════════════
+
+/**
+ * Get a deadline 1 hour in the future relative to blockchain time.
+ * Using Date.now() fails when blockchain time has been advanced by other tests.
+ */
+async function futureDeadline() {
+  const latest = await time.latest();
+  return latest + 3600;
+}
 
 /**
  * Mint a companion NFT and return the tokenId.
@@ -58,7 +69,7 @@ async function registerCompanionHelper(
   const tokenId = overrides.tokenId ?? (await mintCompanionNFT(companionNFT, registrar.address));
   const companionWallet = overrides.companionWallet ?? ethers.Wallet.createRandom().address;
   const profileScore = overrides.profileScore ?? 7;
-  const deadline = overrides.deadline ?? Math.floor(Date.now() / 1000) + 3600;
+  const deadline = overrides.deadline ?? await futureDeadline();
 
   // Give the companion wallet some BONZAI tokens for weighted distribution
   if (overrides.bonzaiAmount !== undefined && overrides.bonzaiAmount > 0n) {
@@ -263,7 +274,7 @@ describe("BonzaiSkillOwnership", function () {
       const tokenId = await mintCompanionNFT(companionNFT, registrar1.address);
       const companionWallet = ethers.Wallet.createRandom().address;
       const profileScore = 7;
-      const deadline = Math.floor(Date.now() / 1000) + 3600;
+      const deadline = await futureDeadline();
 
       const attestation = await createAttestation(
         attestationSigner,
@@ -328,7 +339,7 @@ describe("BonzaiSkillOwnership", function () {
       const skillId = ethers.keccak256(ethers.toUtf8Bytes("zero-wallet-skill"));
       const tokenId = await mintCompanionNFT(companionNFT, registrar1.address);
       const profileScore = 7;
-      const deadline = Math.floor(Date.now() / 1000) + 3600;
+      const deadline = await futureDeadline();
 
       const attestation = await createAttestation(
         attestationSigner, skillId, tokenId, ethers.ZeroAddress, registrar1.address, profileScore, deadline
@@ -349,7 +360,7 @@ describe("BonzaiSkillOwnership", function () {
       const tokenId = await mintCompanionNFT(companionNFT, registrar1.address);
       const companionWallet = ethers.Wallet.createRandom().address;
       const lowScore = 4; // Below MIN_PROFILE_SCORE (5)
-      const deadline = Math.floor(Date.now() / 1000) + 3600;
+      const deadline = await futureDeadline();
 
       const attestation = await createAttestation(
         attestationSigner, skillId, tokenId, companionWallet, registrar1.address, lowScore, deadline
@@ -370,7 +381,7 @@ describe("BonzaiSkillOwnership", function () {
       const skillId = ethers.keccak256(ethers.toUtf8Bytes("zero-score-skill"));
       const tokenId = await mintCompanionNFT(companionNFT, registrar1.address);
       const companionWallet = ethers.Wallet.createRandom().address;
-      const deadline = Math.floor(Date.now() / 1000) + 3600;
+      const deadline = await futureDeadline();
 
       const attestation = await createAttestation(
         attestationSigner, skillId, tokenId, companionWallet, registrar1.address, 0, deadline
@@ -416,7 +427,7 @@ describe("BonzaiSkillOwnership", function () {
       );
 
       // Try to register same companion again
-      const deadline = Math.floor(Date.now() / 1000) + 3600;
+      const deadline = await futureDeadline();
       const attestation = await createAttestation(
         attestationSigner, skillId, tokenId, companionWallet, registrar1.address, profileScore, deadline
       );
@@ -437,7 +448,7 @@ describe("BonzaiSkillOwnership", function () {
       const tokenId = await mintCompanionNFT(companionNFT, registrar1.address);
       const companionWallet = ethers.Wallet.createRandom().address;
       const profileScore = 7;
-      const deadline = Math.floor(Date.now() / 1000) + 3600;
+      const deadline = await futureDeadline();
 
       // Sign with wrong signer (registrar2 instead of attestationSigner)
       const attestation = await createAttestation(
@@ -459,7 +470,7 @@ describe("BonzaiSkillOwnership", function () {
       const tokenId = await mintCompanionNFT(companionNFT, registrar1.address);
       const companionWallet = ethers.Wallet.createRandom().address;
       const profileScore = 7;
-      const deadline = Math.floor(Date.now() / 1000) + 3600;
+      const deadline = await futureDeadline();
 
       // Sign for profileScore=7 but submit profileScore=10
       const attestation = await createAttestation(
@@ -497,7 +508,7 @@ describe("BonzaiSkillOwnership", function () {
       const tokenId = await mintCompanionNFT(companionNFT, registrar1.address);
       const companionWallet = ethers.Wallet.createRandom().address;
       const profileScore = 7;
-      const deadline = Math.floor(Date.now() / 1000) + 3600;
+      const deadline = await futureDeadline();
 
       const attestation = await createAttestation(
         attestationSigner, skillId, tokenId, companionWallet, registrar1.address, profileScore, deadline
@@ -525,7 +536,7 @@ describe("BonzaiSkillOwnership", function () {
       const tokenId = await mintCompanionNFT(companionNFT, registrar2.address);
       const companionWallet = ethers.Wallet.createRandom().address;
       const profileScore = 7;
-      const deadline = Math.floor(Date.now() / 1000) + 3600;
+      const deadline = await futureDeadline();
 
       // Create attestation with registrar1 as owner (but NFT belongs to registrar2)
       const attestation = await createAttestation(
@@ -548,7 +559,7 @@ describe("BonzaiSkillOwnership", function () {
       const tokenId = await mintCompanionNFT(companionNFT, registrar1.address);
       const companionWallet = ethers.Wallet.createRandom().address;
       const profileScore = 7;
-      const deadline = Math.floor(Date.now() / 1000) + 3600;
+      const deadline = await futureDeadline();
 
       const attestation = await createAttestation(
         attestationSigner, skillId, tokenId, companionWallet, registrar1.address, profileScore, deadline
@@ -648,7 +659,7 @@ describe("BonzaiSkillOwnership", function () {
       const tokenId = await mintCompanionNFT(companionNFT, registrar1.address);
       const companionWallet = ethers.Wallet.createRandom().address;
       const profileScore = 7;
-      const deadline = Math.floor(Date.now() / 1000) + 3600;
+      const deadline = await futureDeadline();
 
       // Register
       const attestation1 = await createAttestation(
@@ -1536,7 +1547,7 @@ describe("BonzaiSkillOwnership", function () {
       const tokenId = await mintCompanionNFT(companionNFT, registrar1.address);
       const companionWallet = ethers.Wallet.createRandom().address;
       const profileScore = 7;
-      const deadline = Math.floor(Date.now() / 1000) + 3600;
+      const deadline = await futureDeadline();
 
       const attestation = await createAttestation(
         attestationSigner, skillId, tokenId, companionWallet, registrar1.address, profileScore, deadline
@@ -1661,6 +1672,162 @@ describe("BonzaiSkillOwnership", function () {
         ownership.connect(owner).setCompanionNFT(registrar1.address)
       ).to.emit(ownership, "CompanionNFTUpdated")
         .withArgs(await companionNFT.getAddress(), registrar1.address);
+    });
+  });
+
+  // ─────────────────────────────────────────────────────────────────────────
+  // USDC REVENUE DISTRIBUTION & CLAIMING
+  // ─────────────────────────────────────────────────────────────────────────
+
+  describe("USDC Revenue Distribution", function () {
+    async function deployWithUSDC() {
+      const base = await deploySkillOwnership();
+      const MockERC20 = await ethers.getContractFactory("MockERC20");
+      const usdcToken = await MockERC20.deploy("USDC", "USDC");
+      await base.ownership.connect(base.owner).setUsdcToken(await usdcToken.getAddress());
+      return { ...base, usdcToken };
+    }
+
+    it("should distribute USDC to registered companions weighted by BONZAI * profileScore", async function () {
+      const { ownership, bonzaiToken, companionNFT, attestationSigner, registrar1, registrar2, skillRegistryWallet, usdcToken } = await loadFixture(deployWithUSDC);
+
+      const skillId = ethers.keccak256(ethers.toUtf8Bytes("usdc-skill"));
+
+      // Register companion 1 (100 BONZAI, score 10)
+      const wallet1 = ethers.Wallet.createRandom().address;
+      const tokenId1 = await mintCompanionNFT(companionNFT, registrar1.address);
+      await bonzaiToken.mint(wallet1, ethers.parseEther("100"));
+      const deadline1 = await futureDeadline();
+      const attest1 = await createAttestation(attestationSigner, skillId, tokenId1, wallet1, registrar1.address, 10, deadline1);
+      await ownership.connect(registrar1).registerCompanion(skillId, tokenId1, wallet1, 10, deadline1, attest1);
+
+      // Register companion 2 (200 BONZAI, score 5)
+      const wallet2 = ethers.Wallet.createRandom().address;
+      const tokenId2 = await mintCompanionNFT(companionNFT, registrar2.address);
+      await bonzaiToken.mint(wallet2, ethers.parseEther("200"));
+      const deadline2 = await futureDeadline();
+      const attest2 = await createAttestation(attestationSigner, skillId, tokenId2, wallet2, registrar2.address, 5, deadline2);
+      await ownership.connect(registrar2).registerCompanion(skillId, tokenId2, wallet2, 5, deadline2, attest2);
+
+      // Distribute 100 USDC (100_000_000 in 6 decimals)
+      const amount = 100_000_000n;
+      await usdcToken.mint(skillRegistryWallet.address, amount);
+      await usdcToken.connect(skillRegistryWallet).approve(await ownership.getAddress(), amount);
+      await ownership.connect(skillRegistryWallet).distributeRevenueUSDC(skillId, amount);
+
+      // Weight1 = 100 * 10 = 1000, Weight2 = 200 * 5 = 1000
+      // Equal split: 50M each
+      expect(await ownership.unclaimedRevenueUSDC(wallet1)).to.equal(50_000_000n);
+      expect(await ownership.unclaimedRevenueUSDC(wallet2)).to.equal(50_000_000n);
+    });
+
+    it("should send USDC to treasury when no companions registered", async function () {
+      const { ownership, skillRegistryWallet, treasury, usdcToken } = await loadFixture(deployWithUSDC);
+
+      const skillId = ethers.keccak256(ethers.toUtf8Bytes("empty-skill"));
+      const amount = 50_000_000n;
+      await usdcToken.mint(skillRegistryWallet.address, amount);
+      await usdcToken.connect(skillRegistryWallet).approve(await ownership.getAddress(), amount);
+      await ownership.connect(skillRegistryWallet).distributeRevenueUSDC(skillId, amount);
+
+      expect(await usdcToken.balanceOf(treasury.address)).to.equal(amount);
+    });
+
+    it("should emit RevenueDistributedUSDC event", async function () {
+      const { ownership, bonzaiToken, companionNFT, attestationSigner, registrar1, skillRegistryWallet, usdcToken } = await loadFixture(deployWithUSDC);
+
+      const skillId = ethers.keccak256(ethers.toUtf8Bytes("event-skill"));
+      const wallet1 = ethers.Wallet.createRandom().address;
+      const tokenId1 = await mintCompanionNFT(companionNFT, registrar1.address);
+      await bonzaiToken.mint(wallet1, ethers.parseEther("100"));
+      const deadline = await futureDeadline();
+      const attest = await createAttestation(attestationSigner, skillId, tokenId1, wallet1, registrar1.address, 7, deadline);
+      await ownership.connect(registrar1).registerCompanion(skillId, tokenId1, wallet1, 7, deadline, attest);
+
+      const amount = 10_000_000n;
+      await usdcToken.mint(skillRegistryWallet.address, amount);
+      await usdcToken.connect(skillRegistryWallet).approve(await ownership.getAddress(), amount);
+
+      await expect(
+        ownership.connect(skillRegistryWallet).distributeRevenueUSDC(skillId, amount)
+      ).to.emit(ownership, "RevenueDistributedUSDC");
+    });
+
+    it("should revert if caller is not skillRegistry", async function () {
+      const { ownership, registrar1, usdcToken } = await loadFixture(deployWithUSDC);
+      const skillId = ethers.keccak256(ethers.toUtf8Bytes("hack-skill"));
+      await expect(
+        ownership.connect(registrar1).distributeRevenueUSDC(skillId, 1000n)
+      ).to.be.revertedWithCustomError(ownership, "OnlySkillRegistry");
+    });
+  });
+
+  describe("USDC Revenue Claiming", function () {
+    async function deployWithUSDCAndDistribute() {
+      const base = await deploySkillOwnership();
+      const MockERC20 = await ethers.getContractFactory("MockERC20");
+      const usdcToken = await MockERC20.deploy("USDC", "USDC");
+      await base.ownership.connect(base.owner).setUsdcToken(await usdcToken.getAddress());
+
+      const skillId = ethers.keccak256(ethers.toUtf8Bytes("claim-skill"));
+      const claimWallet = base.registrar1; // use registrar1 as the companion wallet (so they can claim)
+      const tokenId = await mintCompanionNFT(base.companionNFT, base.registrar1.address);
+      await base.bonzaiToken.mint(claimWallet.address, ethers.parseEther("100"));
+      const deadline = await futureDeadline();
+      const attest = await createAttestation(base.attestationSigner, skillId, tokenId, claimWallet.address, base.registrar1.address, 7, deadline);
+      await base.ownership.connect(base.registrar1).registerCompanion(skillId, tokenId, claimWallet.address, 7, deadline, attest);
+
+      // Distribute 20 USDC
+      const amount = 20_000_000n;
+      await usdcToken.mint(base.skillRegistryWallet.address, amount);
+      await usdcToken.connect(base.skillRegistryWallet).approve(await base.ownership.getAddress(), amount);
+      await base.ownership.connect(base.skillRegistryWallet).distributeRevenueUSDC(skillId, amount);
+
+      return { ...base, usdcToken, skillId, claimWallet, amount };
+    }
+
+    it("should allow companion wallet to claim USDC", async function () {
+      const { ownership, usdcToken, claimWallet, amount } = await loadFixture(deployWithUSDCAndDistribute);
+
+      const balanceBefore = await usdcToken.balanceOf(claimWallet.address);
+      await ownership.connect(claimWallet).claimRevenueUSDC();
+      const balanceAfter = await usdcToken.balanceOf(claimWallet.address);
+
+      expect(balanceAfter - balanceBefore).to.equal(amount);
+      expect(await ownership.unclaimedRevenueUSDC(claimWallet.address)).to.equal(0n);
+    });
+
+    it("should emit RevenueClaimedUSDC event", async function () {
+      const { ownership, claimWallet, amount } = await loadFixture(deployWithUSDCAndDistribute);
+
+      await expect(
+        ownership.connect(claimWallet).claimRevenueUSDC()
+      ).to.emit(ownership, "RevenueClaimedUSDC");
+    });
+
+    it("should revert if nothing to claim", async function () {
+      const { ownership, registrar2 } = await loadFixture(deployWithUSDCAndDistribute);
+      await expect(
+        ownership.connect(registrar2).claimRevenueUSDC()
+      ).to.be.revertedWithCustomError(ownership, "NoRevenueToClaim");
+    });
+
+    it("should revert on double claim", async function () {
+      const { ownership, claimWallet } = await loadFixture(deployWithUSDCAndDistribute);
+      await ownership.connect(claimWallet).claimRevenueUSDC();
+      await expect(
+        ownership.connect(claimWallet).claimRevenueUSDC()
+      ).to.be.revertedWithCustomError(ownership, "NoRevenueToClaim");
+    });
+
+    it("should track totalRevenueDistributedUSDC and totalRevenueClaimedUSDC", async function () {
+      const { ownership, claimWallet, amount } = await loadFixture(deployWithUSDCAndDistribute);
+
+      expect(await ownership.totalRevenueDistributedUSDC()).to.equal(amount);
+      expect(await ownership.totalRevenueClaimedUSDC()).to.equal(0n);
+
+      await ownership.connect(claimWallet).claimRevenueUSDC();
+      expect(await ownership.totalRevenueClaimedUSDC()).to.equal(amount);
     });
   });
 

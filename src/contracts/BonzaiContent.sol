@@ -5,6 +5,11 @@ import "@openzeppelin/contracts/token/ERC721/extensions/ERC721URIStorage.sol";
 import "@openzeppelin/contracts/access/Ownable.sol";
 import "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
 import "@openzeppelin/contracts/interfaces/IERC2981.sol";
+import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
+
+interface IBonzaiUnlock {
+    function isUnlocked(address user) external view returns (bool);
+}
 
 /**
  * @title ITransferValidator
@@ -63,6 +68,10 @@ contract BonzaiContent is ERC721URIStorage, Ownable, ReentrancyGuard, IERC2981, 
     /// @notice ERC721-C Transfer Validator address
     address private _transferValidator;
 
+    IERC20 public bonzaiToken;
+    address public unlockContract;
+    uint256[6] public mintThresholds;
+
     struct Provenance {
         string transactionId;
         address originalCreator;
@@ -89,6 +98,7 @@ contract BonzaiContent is ERC721URIStorage, Ownable, ReentrancyGuard, IERC2981, 
     constructor(address _treasury) ERC721("BonzAI Collectibles", "BONZAI-C") Ownable(msg.sender) {
         require(_treasury != address(0), "Invalid treasury");
         treasury = _treasury;
+        // Level thresholds initialized to zero (set via admin after deployment)
     }
 
     /**
@@ -106,6 +116,7 @@ contract BonzaiContent is ERC721URIStorage, Ownable, ReentrancyGuard, IERC2981, 
     ) external payable nonReentrant returns (uint256) {
         require(msg.value >= mintFee, "Insufficient mint fee");
         require(contentType_ <= 5, "Invalid content type");
+        require(_hasLevel(msg.sender, contentType_), "Insufficient level");
 
         // Split mintFee: treasuryBps% to treasury, poolBps% to content-type pool
         // All ETH transfers happen BEFORE _safeMint to prevent reentrancy
@@ -312,6 +323,34 @@ contract BonzaiContent is ERC721URIStorage, Ownable, ReentrancyGuard, IERC2981, 
         require(balance > 0, "No ETH to withdraw");
         (bool sent, ) = owner().call{value: balance}("");
         require(sent, "ETH transfer failed");
+    }
+
+    function setBonzaiToken(address _token) external onlyOwner {
+        bonzaiToken = IERC20(_token);
+    }
+
+    function setUnlockContract(address _unlock) external onlyOwner {
+        unlockContract = _unlock;
+    }
+
+    function setMintThresholds(uint256[6] calldata _thresholds) external onlyOwner {
+        mintThresholds = _thresholds;
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════════
+    // INTERNAL FUNCTIONS
+    // ═══════════════════════════════════════════════════════════════════════════
+
+    function _hasLevel(address user, uint8 contentType) internal view returns (bool) {
+        if (contentType >= 6) return false;
+        if (unlockContract != address(0) && IBonzaiUnlock(unlockContract).isUnlocked(user)) {
+            return true;
+        }
+        if (address(bonzaiToken) != address(0) && mintThresholds[contentType] > 0) {
+            return bonzaiToken.balanceOf(user) >= mintThresholds[contentType];
+        }
+        // If no level check configured, allow minting (backward compatible)
+        return true;
     }
 
     /// @notice Accept ETH transfers

@@ -107,6 +107,8 @@ contract BonzaiUnlock is Ownable, ReentrancyGuard, Pausable {
         uint256 timestamp
     );
 
+    event WithdrawFailed(address indexed wallet, uint256 amount);
+
     /// @notice Emitted when ERC20 tokens are recovered
     event TokensRecovered(
         address indexed token,
@@ -343,36 +345,24 @@ contract BonzaiUnlock is Ownable, ReentrancyGuard, Pausable {
     /**
      * @notice Withdraw accumulated ETH proceeds to foundation and liquidity wallets
      * @dev Nonreentrant, only owner can call. Splits 50/50.
+     *      Handles individual wallet failures gracefully — if one wallet reverts,
+     *      the other still receives its share.
      */
     function withdrawProceeds() external nonReentrant onlyOwner {
         uint256 balance = address(this).balance;
         if (balance == 0) revert NoProceeds();
 
-        // Calculate split using basis points
-        uint256 foundationAmount;
-        uint256 liquidityAmount;
-        unchecked {
-            foundationAmount = (balance * FOUNDATION_SHARE_BPS) / BASIS_POINTS;
-            liquidityAmount = balance - foundationAmount; // Remainder avoids rounding loss
-        }
+        uint256 foundationAmount = (balance * FOUNDATION_SHARE_BPS) / BASIS_POINTS;
+        uint256 liquidityAmount = balance - foundationAmount;
 
-        // Cache addresses (gas optimization + prevents TOCTOU)
-        address foundation = foundationWallet;
-        address liquidity = liquidityWallet;
+        (bool fSuccess, ) = foundationWallet.call{value: foundationAmount}("");
+        (bool lSuccess, ) = liquidityWallet.call{value: liquidityAmount}("");
 
-        // Transfer to foundation wallet
-        (bool successFoundation, ) = foundation.call{value: foundationAmount}("");
-        if (!successFoundation) revert TransferFailed(foundation);
-
-        // Transfer to liquidity wallet
-        (bool successLiquidity, ) = liquidity.call{value: liquidityAmount}("");
-        if (!successLiquidity) revert TransferFailed(liquidity);
+        require(fSuccess || lSuccess, "Both transfers failed");
 
         emit ProceedsWithdrawn(
-            foundation,
-            foundationAmount,
-            liquidity,
-            liquidityAmount,
+            foundationWallet, fSuccess ? foundationAmount : 0,
+            liquidityWallet, lSuccess ? liquidityAmount : 0,
             block.timestamp
         );
     }

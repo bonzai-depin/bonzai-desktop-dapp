@@ -418,6 +418,23 @@ contract BonzaiUniswapHook is Ownable, ReentrancyGuard {
         emit MintPoolUpdated(old, _mintPool);
     }
 
+    /// @notice Admin recovery for stuck beneficiary fees (e.g., lost wallet or reverting contract)
+    function adminRecoverBeneficiaryFees(address beneficiary, address recipient) external onlyOwner {
+        require(beneficiary != address(0) && recipient != address(0), "Zero address");
+        uint256 amount = unclaimedBeneficiary[beneficiary];
+        require(amount > 0, "Nothing to recover");
+
+        unclaimedBeneficiary[beneficiary] = 0;
+        totalUnclaimedBeneficiary -= amount;
+
+        (bool success, ) = recipient.call{value: amount}("");
+        require(success, "Transfer failed");
+
+        emit BeneficiaryFeesRecovered(beneficiary, recipient, amount);
+    }
+
+    event BeneficiaryFeesRecovered(address indexed beneficiary, address indexed recipient, uint256 amount);
+
     /**
      * @notice Withdraw surplus ETH (rounding dust, direct transfers).
      * @dev Only withdraws ETH not accounted for in any unclaimed balance.

@@ -1,12 +1,12 @@
 /**
  * BonzAI Agent Service
- * 
+ *
  * Manages smart agent lifecycle:
- * - Purchase: One-time 0.1 ETH payment to own an agent
- * - Running Fee: 99 BONZAI transferred per execution
- * 
- * The running fee is an actual token transfer, not a holding requirement.
- * User must have 99 BONZAI in their wallet and approve the transfer.
+ * - Purchase: One-time USDC payment to own an agent (via BonzaiSkillRegistry)
+ * - Running Fee: USDC transferred per execution (via BonzaiSkillRegistry)
+ *
+ * All payments are in USDC (6 decimals) to avoid sell pressure on BONZAI token.
+ * Revenue split: 80% to companion co-owners, 20% to skill author.
  */
 
 import { ethers } from 'ethers';
@@ -41,9 +41,9 @@ const state = reactive({
   // Purchased agents (agentId => boolean)
   purchasedAgents: {},
   
-  // Running fee config
-  runningFee: CONFIG.agents?.runningFee || 99,
-  purchasePrice: CONFIG.agents?.purchasePrice || '0.1',
+  // Running fee config (USDC, 6 decimals — value in human units)
+  runningFee: CONFIG.agents?.runningFee || 1, // 1 USDC per execution
+  purchasePrice: CONFIG.agents?.purchasePrice || 10, // 10 USDC one-time purchase
   
   // Loading states
   isPurchasing: false,
@@ -194,36 +194,39 @@ export const purchaseAgent = async (agentId) => {
 };
 
 // ═══════════════════════════════════════════════════════════════════════════
-// RUNNING FEE (99 BONZAI per execution)
+// RUNNING FEE (USDC per execution, via BonzaiSkillRegistry)
 // ═══════════════════════════════════════════════════════════════════════════
 
 /**
- * Check if user has enough BONZAI for running fee
+ * Check if user has enough USDC for running fee
  */
 export const hasEnoughForRunningFee = () => {
-  const balance = web3Service.state.balances.total;
-  return balance >= state.runningFee;
+  // TODO: Check USDC balance on Base when BonzaiSkillRegistry is deployed
+  // For now, always return true (mock mode)
+  return true;
 };
 
 /**
- * Get BONZAI contract instance
+ * Get USDC contract instance on Base
  */
-const getBonzaiContract = async (withSigner = false) => {
-  const bonzaiAddress = CONFIG.tokens.BONZAI.arbitrum;
-  
+const getUsdcContract = async (withSigner = false) => {
+  const usdcAddress = CONFIG.tokens?.USDC?.base;
+  if (!usdcAddress) throw new Error('USDC address not configured for Base');
+
   if (withSigner) {
     const signer = await web3Service.getSigner();
-    return new ethers.Contract(bonzaiAddress, ERC20_ABI, signer);
+    return new ethers.Contract(usdcAddress, ERC20_ABI, signer);
   }
 
-  const provider = await web3Service.getProvider('arbitrum');
-  return new ethers.Contract(bonzaiAddress, ERC20_ABI, provider);
+  const provider = await web3Service.getProvider('base');
+  return new ethers.Contract(usdcAddress, ERC20_ABI, provider);
 };
 
 /**
- * Pay running fee (transfer 99 BONZAI to treasury)
- * Currently mocked until BonzaiSkillRegistry contract is deployed and battle-tested
- * This must be called before each agent execution
+ * Pay running fee (USDC via BonzaiSkillRegistry.recordExecution)
+ * Currently mocked until BonzaiSkillRegistry contract is deployed and battle-tested.
+ * When enabled, this calls registry.recordExecution(skillId) which pulls USDC from the user.
+ * Revenue split: 80% to companion co-owners, 20% to skill author.
  *
  * @param {string} agentId - For logging purposes
  * @returns {Promise<{success: boolean, txHash?: string, error?: string, mock?: boolean}>}
@@ -233,21 +236,20 @@ export const payRunningFee = async (agentId) => {
   state.error = null;
 
   try {
-    // TODO: Enable real fee payments after BonzaiSkillRegistry is deployed
-    // For now, always use mock payment for testing
+    // TODO: Enable real fee payments after BonzaiSkillRegistry is deployed on Base
+    // When enabled: approve USDC to SkillRegistry, then call recordExecution(skillId)
     const ENABLE_REAL_FEES = false;
 
     if (!ENABLE_REAL_FEES) {
       // Mock fee payment for development/testing
-      console.log('[Agent] Mock fee payment for:', agentId);
+      console.log('[Agent] Mock USDC fee payment for:', agentId);
       const mockTxHash = `mock-fee-${Date.now()}-${Math.random().toString(36).substring(7)}`;
 
-      // Log mock transaction
       state.transactions.push({
         type: 'agent-run-fee',
         agentId,
         amount: state.runningFee,
-        token: 'BONZAI',
+        token: 'USDC',
         txHash: mockTxHash,
         timestamp: Date.now(),
         mock: true,
@@ -256,39 +258,14 @@ export const payRunningFee = async (agentId) => {
       return { success: true, txHash: mockTxHash, mock: true };
     }
 
-    // Real fee payment flow (disabled until contract deployed)
-    // Check balance first
+    // Real fee payment flow via BonzaiSkillRegistry (disabled until deployed)
     if (!hasEnoughForRunningFee()) {
-      throw new Error(`Insufficient BONZAI balance. Need ${state.runningFee} BONZAI to run this agent.`);
+      throw new Error(`Insufficient USDC balance. Need ${state.runningFee} USDC to run this skill.`);
     }
 
-    const treasury = CONFIG.treasury?.address || CONFIG.agents?.feeRecipient;
-    if (!treasury || treasury === ethers.ZeroAddress) {
-      throw new Error('Treasury address not configured');
-    }
-
-    const bonzaiContract = await getBonzaiContract(true);
-    const decimals = await bonzaiContract.decimals();
-    const feeAmount = ethers.parseUnits(state.runningFee.toString(), decimals);
-
-    // Transfer BONZAI to treasury
-    const tx = await bonzaiContract.transfer(treasury, feeAmount);
-    const receipt = await tx.wait();
-
-    // Refresh balances
-    await web3Service.fetchAllBalances();
-
-    // Log transaction
-    state.transactions.push({
-      type: 'agent-run-fee',
-      agentId,
-      amount: state.runningFee,
-      token: 'BONZAI',
-      txHash: receipt.hash,
-      timestamp: Date.now(),
-    });
-
-    return { success: true, txHash: receipt.hash };
+    // TODO: Call BonzaiSkillRegistry.recordExecution(skillId) on Base
+    // The contract handles USDC transfer and revenue distribution
+    throw new Error('Real USDC fee payments not yet enabled');
   } catch (e) {
     const error = e.shortMessage || e.message || String(e);
     state.error = error;
@@ -324,7 +301,7 @@ export const executeAgentWithFee = async (agent, inputs, context = {}) => {
   if (!hasEnoughForRunningFee()) {
     return { 
       success: false, 
-      error: `Insufficient BONZAI. Need ${state.runningFee} BONZAI to run this agent.`,
+      error: `Insufficient USDC. Need ${state.runningFee} USDC to run this skill.`,
       insufficientBalance: true,
       required: state.runningFee,
       current: web3Service.state.balances.total,
@@ -390,6 +367,146 @@ export const initialize = () => {
 };
 
 // ═══════════════════════════════════════════════════════════════════════════
+// USDC SKILL PURCHASE (on-chain via BonzaiSkillRegistry on Base)
+// ═══════════════════════════════════════════════════════════════════════════
+
+const USDC_ADDRESS_BASE = '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913';
+const DEFAULT_SKILL_PRICE_USDC = 10_000_000; // 10 USDC (6 decimals)
+
+const SKILL_REGISTRY_ABI = [
+  'function hasUserPurchased(address user, bytes32 skillId) view returns (bool)',
+  'function purchaseSkill(bytes32 skillId) external',
+  'function skillPrice(bytes32 skillId) view returns (uint256)',
+];
+
+const USDC_ABI = [
+  'function approve(address spender, uint256 amount) returns (bool)',
+  'function allowance(address owner, address spender) view returns (uint256)',
+  'function balanceOf(address account) view returns (uint256)',
+];
+
+/**
+ * Get the BonzaiSkillRegistry contract instance (Base only).
+ * @param {boolean} [withSigner=false]
+ * @returns {Promise<ethers.Contract|null>}
+ */
+async function getSkillRegistryContract(withSigner = false) {
+  const registryAddress = CONFIG.skillRegistry?.contractAddress;
+  if (!registryAddress) return null;
+
+  if (withSigner) {
+    const signer = await web3Service.getSigner();
+    return new ethers.Contract(registryAddress, SKILL_REGISTRY_ABI, signer);
+  }
+
+  const provider = await web3Service.getProvider('base');
+  return new ethers.Contract(registryAddress, SKILL_REGISTRY_ABI, provider);
+}
+
+/**
+ * Check if a skill has been purchased by the current user.
+ * Checks on-chain via BonzaiSkillRegistry.hasUserPurchased() first,
+ * then falls back to local store for offline access.
+ *
+ * @param {string} skillId
+ * @returns {Promise<boolean>}
+ */
+export async function hasPurchasedSkill(skillId) {
+  // Try on-chain check first
+  try {
+    const registry = await getSkillRegistryContract();
+    if (registry) {
+      const userAddress = web3Service.state.walletAddress;
+      if (userAddress) {
+        const skillIdBytes = ethers.id(skillId);
+        return await registry.hasUserPurchased(userAddress, skillIdBytes);
+      }
+    }
+  } catch (e) {
+    console.warn('[SkillPurchase] On-chain check failed, using local:', e.message);
+  }
+  // Fallback to local store
+  return !!(await window.electronAPI?.store?.get(`skill-purchased-${skillId}`));
+}
+
+/**
+ * Purchase a skill with USDC on Base.
+ * Handles USDC approval + on-chain purchase in one flow.
+ *
+ * @param {string} skillId
+ * @param {number} [price=10_000_000] - Price in USDC smallest unit (6 decimals). Default 10 USDC.
+ * @returns {Promise<{success: boolean, txHash?: string, error?: string}>}
+ */
+export async function purchaseSkillUSDC(skillId, price = DEFAULT_SKILL_PRICE_USDC) {
+  state.isPurchasing = true;
+  state.error = null;
+
+  try {
+    // 1. Ensure on Base
+    const currentChainId = web3Service.state.chainId;
+    if (currentChainId !== 8453) {
+      throw new Error('Please switch to Base network to purchase skills with USDC');
+    }
+
+    // 2. Get signer
+    const signer = await web3Service.getSigner();
+    const userAddress = await signer.getAddress();
+
+    // 3. Get registry contract
+    const registryAddress = CONFIG.skillRegistry?.contractAddress;
+    if (!registryAddress) {
+      throw new Error('Skill registry contract not yet deployed');
+    }
+
+    // 4. Check/set USDC allowance for SkillRegistry
+    const usdcContract = new ethers.Contract(USDC_ADDRESS_BASE, USDC_ABI, signer);
+    const currentAllowance = await usdcContract.allowance(userAddress, registryAddress);
+
+    if (currentAllowance < BigInt(price)) {
+      console.log('[SkillPurchase] Approving USDC spend...');
+      const approveTx = await usdcContract.approve(registryAddress, BigInt(price));
+      await approveTx.wait();
+      console.log('[SkillPurchase] USDC approved');
+    }
+
+    // 5. Call registry.purchaseSkill(skillIdBytes)
+    const registry = new ethers.Contract(registryAddress, SKILL_REGISTRY_ABI, signer);
+    const skillIdBytes = ethers.id(skillId);
+    const tx = await registry.purchaseSkill(skillIdBytes);
+    const receipt = await tx.wait();
+
+    // 6. Store purchase locally for offline access
+    await window.electronAPI?.store?.set(`skill-purchased-${skillId}`, {
+      purchasedAt: Date.now(),
+      txHash: receipt.hash,
+      price,
+    });
+
+    // Also save in localStorage for immediate UI update
+    savePurchase(skillId, receipt.hash);
+
+    state.transactions.push({
+      type: 'skill-purchase-usdc',
+      skillId,
+      amount: price / 1_000_000,
+      token: 'USDC',
+      txHash: receipt.hash,
+      timestamp: Date.now(),
+    });
+
+    console.log('[SkillPurchase] Skill purchased on-chain:', receipt.hash);
+    return { success: true, txHash: receipt.hash };
+  } catch (e) {
+    const error = e.shortMessage || e.message || String(e);
+    state.error = error;
+    console.error('[SkillPurchase] USDC purchase failed:', error);
+    return { success: false, error };
+  } finally {
+    state.isPurchasing = false;
+  }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
 // EXPORT
 // ═══════════════════════════════════════════════════════════════════════════
 
@@ -400,6 +517,10 @@ export const agentService = {
   hasPurchasedAgent,
   purchaseAgent,
   getAgentPurchaseInfo,
+
+  // USDC Skill Purchase (on-chain)
+  hasPurchasedSkill,
+  purchaseSkillUSDC,
   
   // Running fee
   hasEnoughForRunningFee,

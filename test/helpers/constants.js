@@ -14,7 +14,7 @@ const MIN_ETH_LIQUIDITY = ethers.parseEther("0.01");
 // ═══════════════════════════════════════════════════════════════════════════
 
 const NUM_POOLS = 6;
-const EPOCH_DURATION = 7 * 24 * 60 * 60; // 1 week in seconds
+const EPOCH_DURATION = 14 * 24 * 60 * 60; // 2 weeks in seconds
 const MIN_CLAIM_BLOCK_GAP = 256;
 
 // LVL thresholds in full token units (constructor multiplies by 1e18)
@@ -105,8 +105,8 @@ const PAYMENT_AMOUNT_ETH = ethers.parseEther("0.05");
 // SKILL REGISTRY / OWNERSHIP
 // ═══════════════════════════════════════════════════════════════════════════
 
-const SKILL_PURCHASE_PRICE = ethers.parseEther("0.01"); // 0.01 ETH
-const SKILL_RUNNING_FEE = ethers.parseEther("10"); // 10 BONZAI
+const SKILL_PURCHASE_PRICE = ethers.parseUnits("10", 6); // 10 USDC (6 decimals)
+const SKILL_RUNNING_FEE = ethers.parseUnits("1", 6); // 1 USDC per execution (6 decimals)
 const SKILL_AUTHOR_SHARE_BPS = 8000n;
 const SKILL_PLATFORM_SHARE_BPS = 2000n;
 const MIN_PROFILE_SCORE = 5;

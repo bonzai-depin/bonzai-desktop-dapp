@@ -219,7 +219,9 @@ async function mintCompanionBase(params) {
     const companionId = params.companionId || `companion-${Date.now()}`;
     console.log('[CompanionService] Creating agent wallet for companion:', companionId);
 
-    const agentWallet = await walletProviderService.createAgentWallet(companionId);
+    const agentWallet = await walletProviderService.createAgentWallet(companionId, {
+      firstName: params.firstName, lastName: params.lastName,
+    });
     console.log('[CompanionService] Agent wallet created:', agentWallet.address);
 
     // Ensure wallet is on Base network
@@ -861,7 +863,9 @@ async function finalizeCompanion(tokenId, companionData, options = {}) {
       if (currentWallet === ethers.ZeroAddress) {
         progress('agent_wallet', 'Creating agent wallet...', 72);
         const companionId = `companion-${tokenId}`;
-        const agentWallet = await walletProviderService.createAgentWallet(companionId);
+        const agentWallet = await walletProviderService.createAgentWallet(companionId, {
+          firstName: companionData.firstName, lastName: companionData.lastName,
+        });
         agentWalletAddress = agentWallet.address;
 
         const walletTx = await contract.setAgentWallet(tokenId, agentWalletAddress);

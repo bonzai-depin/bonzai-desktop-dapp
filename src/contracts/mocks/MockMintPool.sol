@@ -34,5 +34,10 @@ contract MockMintPool {
         _totalDeposited[poolIndex] = amount;
     }
 
+    /// @notice Mock setAuthorizedMinter (called by factory when creating clones)
+    function setAuthorizedMinter(address, bool) external {
+        // No-op in mock — all callers are accepted
+    }
+
     receive() external payable {}
 }

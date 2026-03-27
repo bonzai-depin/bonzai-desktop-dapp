@@ -27,7 +27,7 @@ export const MINIMUM_COMPANION_AGE = 21;
  * Terms that indicate the companion IS currently underage (always blocked)
  */
 const ALWAYS_BLOCKED_TERMS = [
-  'loli', 'shota', 'jailbait', 'underage', 'minor',
+  'loli', 'shota', 'jailbait', 'underage',
   'preteen', 'pre-teen', 'pubescent', 'prepubescent',
 ];
 
@@ -38,7 +38,7 @@ const ALWAYS_BLOCKED_TERMS = [
 const CURRENT_STATE_BLOCKED = [
   'schoolgirl', 'schoolboy', 'high school student', 'middle school',
   'elementary school', 'grade school',
-  'teen', 'teenager', 'teenage', 'adolescent',
+  'teen', 'teenager', 'teenage', 'adolescent', 'minor',
   'freshman', 'sophomore', 'junior year', 'senior year', 'prom',
 ];
 
@@ -101,16 +101,19 @@ export function validateCompanionAge(companion) {
     companion.background,
   ].filter(Boolean).join(' ').toLowerCase();
 
-  // Check for always-blocked terms in ALL text
+  // Check for always-blocked terms in ALL text (word-boundary match)
   for (const term of ALWAYS_BLOCKED_TERMS) {
-    if (allText.includes(term)) {
+    const termPattern = new RegExp(`\\b${term.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\b`, 'i');
+    if (termPattern.test(allText)) {
       return { valid: false, reason: `Companion contains prohibited term ("${term}"). All companions must be adults.` };
     }
   }
 
   // Check for current-state-blocked terms only in description/appearance (not background)
+  // Uses word-boundary matching to avoid false positives (e.g., "eighteen" matching "teen")
   for (const term of CURRENT_STATE_BLOCKED) {
-    if (currentStateText.includes(term)) {
+    const termPattern = new RegExp(`\\b${term.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\b`, 'i');
+    if (termPattern.test(currentStateText)) {
       return { valid: false, reason: `Companion description/appearance suggests underage status ("${term}"). All companions must be adults.` };
     }
   }
@@ -161,10 +164,6 @@ export function sanitizeCompanionAge(companion) {
 
   return sanitized;
 }
-
-// Finance skills (formerly builtin)
-import { skill as polymarketTopPerformers } from './builtin/polymarketTopPerformers.js';
-import { skill as dslaSmartMarket } from './builtin/dslaSmartMarket.js';
 
 // ═══════════════════════════════════════════════════════════════════════════
 // MODEL REQUIREMENTS DEFINITIONS
@@ -4514,6 +4513,7 @@ export const storyStudio = createSkillDefinition({
   author: { address: '0x8Ff3b2e823b33BeE30e699bB1b6BBc8F622fEa89', name: 'BonzAI', verified: true },
   category: 'entertainment',
   tags: ['story', 'illustration', 'audiobook', 'creative'],
+  price: 0,
   requirements: {
     minLevel: 3,
     requiredApis: ['llm', 'image', 'audio'],
@@ -4602,6 +4602,7 @@ export const meditationForge = createSkillDefinition({
   version: '1.0.0',
   author: { address: '0x8Ff3b2e823b33BeE30e699bB1b6BBc8F622fEa89', name: 'BonzAI', verified: true },
   category: 'healthcare',
+  price: 0,
   purchasePrice: '0.1', // 0.1 ETH one-time purchase fee
   tags: ['meditation', 'wellness', 'mindfulness', 'relaxation', 'ASMR', 'sleep'],
   // Custom UI component handles all rendering
@@ -4684,6 +4685,7 @@ export const videoCaptioning = createSkillDefinition({
   version: '1.0.0',
   author: { address: '0x8Ff3b2e823b33BeE30e699bB1b6BBc8F622fEa89', name: 'BonzAI', verified: true },
   category: 'productivity',
+  price: 0,
   purchasePrice: '0.1',
   tags: ['video', 'captioning', 'transcription', 'subtitles', 'accessibility', 'vision'],
   hasCustomUI: true,
@@ -4720,6 +4722,7 @@ export const tcgAnalysis = createSkillDefinition({
   version: '1.0.0',
   author: { address: '0x8Ff3b2e823b33BeE30e699bB1b6BBc8F622fEa89', name: 'BonzAI', verified: true },
   category: 'productivity',
+  price: 0,
   purchasePrice: '0.1',
   tags: ['tcg', 'cards', 'ocr', 'grading', 'pokemon', 'mtg', 'yugioh', 'collector', 'pricing'],
   hasCustomUI: true,
@@ -4756,6 +4759,7 @@ export const virtualStagingPro = createSkillDefinition({
   version: '1.0.0',
   author: { address: '0x8Ff3b2e823b33BeE30e699bB1b6BBc8F622fEa89', name: 'BonzAI', verified: true },
   category: 'housing',
+  price: 0,
   tags: ['interior-design', 'staging', 'real-estate'],
   requirements: {
     minLevel: 3,
@@ -4838,6 +4842,7 @@ export const virtualTryOn = createSkillDefinition({
   version: '1.0.0',
   author: { address: '0x8Ff3b2e823b33BeE30e699bB1b6BBc8F622fEa89', name: 'BonzAI', verified: true },
   category: 'fashion',
+  price: 0,
   tags: ['fashion', 'try-on', 'clothing', 'style', 'virtual-fitting'],
   requirements: {
     minLevel: 3,
@@ -4930,6 +4935,7 @@ export const chefsTable = createSkillDefinition({
   version: '1.0.0',
   author: { address: '0x8Ff3b2e823b33BeE30e699bB1b6BBc8F622fEa89', name: 'BonzAI', verified: true },
   category: 'food',
+  price: 0,
   tags: ['cooking', 'recipes', 'food-photography'],
   requirements: {
     minLevel: 3,
@@ -5005,6 +5011,7 @@ export const eli5 = createSkillDefinition({
   version: '1.0.0',
   author: { address: '0x8Ff3b2e823b33BeE30e699bB1b6BBc8F622fEa89', name: 'BonzAI', verified: true },
   category: 'education',
+  price: 0,
   tags: ['education', 'explainer', 'learning', 'eli5', 'simple'],
   requirements: {
     minLevel: 3,
@@ -5088,6 +5095,7 @@ export const musicVideoForge = createSkillDefinition({
   version: '1.0.0',
   author: { address: '0x8Ff3b2e823b33BeE30e699bB1b6BBc8F622fEa89', name: 'BonzAI', verified: true },
   category: 'entertainment',
+  price: 0,
   tags: ['music', 'video', 'visuals', 'creative'],
   requirements: {
     minLevel: 4,
@@ -5168,6 +5176,7 @@ export const gameMaker = createSkillDefinition({
   version: '1.0.0',
   author: { address: '0x8Ff3b2e823b33BeE30e699bB1b6BBc8F622fEa89', name: 'BonzAI', verified: true },
   category: 'entertainment',
+  price: 0,
   tags: ['game', 'gamedev', '2d', '3d', 'creative', 'assets'],
   requirements: {
     minLevel: 5,
@@ -5271,6 +5280,7 @@ export const mangaToAnime = createSkillDefinition({
   version: '1.0.0',
   author: { address: '0x8Ff3b2e823b33BeE30e699bB1b6BBc8F622fEa89', name: 'BonzAI', verified: true },
   category: 'entertainment',
+  price: 0,
   tags: ['manga', 'anime', 'animation', 'japanese', 'creative'],
   requirements: {
     minLevel: 4,
@@ -5367,6 +5377,7 @@ export const hairstyleStudio = createSkillDefinition({
   version: '1.0.0',
   author: { address: '0x8Ff3b2e823b33BeE30e699bB1b6BBc8F622fEa89', name: 'BonzAI', verified: true },
   category: 'personal-care',
+  price: 0,
   tags: ['hairstyle', 'beauty', 'transformation'],
   requirements: {
     minLevel: 3,
@@ -5448,6 +5459,7 @@ export const roleplayCompanion = createSkillDefinition({
   version: '1.0.0',
   author: { address: '0x8Ff3b2e823b33BeE30e699bB1b6BBc8F622fEa89', name: 'BonzAI', verified: true },
   category: 'entertainment',
+  price: 0,
   tags: ['roleplay', 'chat', 'character', 'interactive', 'creative', 'companion'],
   featured: true,
   requirements: {
@@ -6813,6 +6825,7 @@ User's vision: "${description}"
 Style: ${style}
 
 The description should capture their essence, occupation, and allure. Paint a vivid picture.
+IMPORTANT: The character is an adult (${companion.age}). Do NOT use words like "teen", "teenager", "adolescent", "minor", "schoolgirl", "schoolboy", "freshman", "sophomore", "prom", or any age references below 21. Do NOT mention their age numerically.
 Respond with ONLY the description text, no JSON, no quotes.`;
 
         companion.description = await generateTextWithModel(descPrompt, '', ROLEPLAY_LLM, { maxTokens: 512 });
@@ -6840,6 +6853,7 @@ Respond with ONLY comma-separated traits, nothing else. Example: curious, advent
 
 Include: hair color/style, eye color/shape, facial features, body type, height, skin tone, clothing style, distinctive features.
 Use measurements like "around 5 feet 6 inches" instead of quote symbols.
+IMPORTANT: The character is an adult (${companion.age}). Do NOT use words like "teen", "teenager", "adolescent", "minor", "schoolgirl", "schoolboy", or any youthful/underage descriptors.
 Respond with ONLY the appearance description, no JSON.`;
 
         companion.appearance = await generateTextWithModel(appearancePrompt, '', ROLEPLAY_LLM, { maxTokens: 512 });
@@ -6854,6 +6868,7 @@ Respond with ONLY the appearance description, no JSON.`;
 Personality: ${companion.personality}
 
 Include their origins, what shaped them, their passions, desires, and what they seek in connection.
+IMPORTANT: The character is an adult (${companion.age}). Avoid words like "teen", "teenager", "adolescent", "minor", "schoolgirl", "schoolboy". You may reference their past/childhood briefly but do not dwell on it.
 Respond with ONLY the backstory text, no JSON.`;
 
         companion.background = await generateTextWithModel(backgroundPrompt, '', ROLEPLAY_LLM, { maxTokens: 512 });
@@ -7000,6 +7015,214 @@ Respond with ONLY the setting description (2-3 sentences), nothing else.`;
     MEMORY_SUMMARIZE_INTERVAL,
   },
   metadata: { createdAt: '2025-01-25T00:00:00Z', updatedAt: '2025-01-25T00:00:00Z', license: 'MIT' },
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+// FINANCE SKILLS
+// ═══════════════════════════════════════════════════════════════════════════
+
+const DSLA_USE_CASES = [
+  { key: 'vol_returns', label: 'Volatility of Returns', context: 'DeFi yields, staking rewards, lending rates', examples: ['Will ETH staking APY exceed 5% by Q2 2025?', 'Will AAVE lending rates stay above 3%?'] },
+  { key: 'vol_availability', label: 'Volatility of Availability', context: 'blockchain uptime, API availability, node reliability', examples: ['Will Ethereum maintain 99.9% uptime in March?', 'Will Chainlink oracles have <1s latency?'] },
+  { key: 'vol_asset_floors', label: 'Volatility of Asset Floors', context: 'NFT floor prices, token minimums, collateral ratios', examples: ['Will BAYC floor exceed 30 ETH by April?', 'Will CryptoPunks maintain 50 ETH floor?'] },
+  { key: 'vol_currency_pegs', label: 'Volatility of Currency Pegs', context: 'stablecoin pegs, wrapped token ratios, synthetic assets', examples: ['Will USDC maintain $0.99-$1.01 peg in Q1?', 'Will wBTC stay within 0.5% of BTC?'] },
+  { key: 'vol_response_time', label: 'Volatility of Response Time', context: 'block times, transaction confirmations, oracle updates', examples: ['Will Solana block times stay under 500ms?', 'Will Polygon confirm txs in <3 seconds?'] },
+  { key: 'vol_delivery_time', label: 'Volatility of Delivery Time', context: 'NFT mints, token distributions, airdrop claims', examples: ['Will Project X deliver tokens by March 15?', 'Will the NFT mint complete within 1 hour?'] },
+];
+
+export const polymarketTopPerformers = createSkillDefinition({
+  id: 'polymarket-top-performers-v1.0.0',
+  name: 'Polymarket Top Performers',
+  description: 'Analyze top PnL traders on Polymarket and find positions where multiple winners agree. Get copy-trading recommendations based on collective whale intelligence.',
+  version: '1.0.0',
+  author: { address: '0x8Ff3b2e823b33BeE30e699bB1b6BBc8F622fEa89', name: 'BonzAI', verified: true },
+  category: 'finance',
+  tags: ['polymarket', 'copy-trading', 'prediction-markets'],
+  price: 0,
+  requirements: { minLevel: 1, requiredApis: ['polymarket'], requiredPermissions: ['network:read'] },
+  inputs: {
+    numTraders: { type: 'number', default: 10, min: 1, max: 20, label: 'Top traders to analyze', description: 'Number of top PnL traders to fetch from leaderboard' },
+    timePeriod: { type: 'select', default: 'WEEK', options: ['DAY', 'WEEK', 'MONTH', 'ALL'], label: 'Performance period' },
+    minConviction: { type: 'number', default: 2, min: 1, max: 10, label: 'Minimum conviction', description: 'Minimum number of traders that must agree on a position' },
+    copyFraction: { type: 'number', default: 0.1, min: 0.01, max: 1, label: 'Copy fraction', description: 'Fraction of average whale position to copy (0.1 = 10%)' },
+  },
+  prompt: {
+    system: `You are an expert prediction market analyst specializing in Polymarket copy-trading strategies.
+
+Your role is to:
+1. Analyze data from top-performing traders on Polymarket
+2. Identify high-conviction positions where multiple winners agree
+3. Provide actionable copy-trading recommendations
+4. Assess risk and potential returns
+
+Be data-driven, concise, and highlight:
+- Positions with highest trader agreement (conviction)
+- Current market prices and potential upside
+- Risk factors and position sizing suggestions
+
+Format recommendations clearly with:
+- Market question and outcome
+- Number of agreeing traders and their combined position
+- Suggested position size
+- Market URL for easy access`,
+    task: `Analyze Polymarket using these parameters:
+- Number of top traders: {{numTraders}}
+- Performance period: {{timePeriod}}
+- Minimum conviction (traders agreeing): {{minConviction}}
+- Copy fraction: {{copyFraction}}
+
+Execute the following analysis:
+1. Fetch the top {{numTraders}} traders by PnL for the {{timePeriod}} period
+2. Retrieve each trader's current active positions
+3. Aggregate positions by market and outcome
+4. Filter for positions where {{minConviction}}+ traders agree
+5. Generate copy-trading recommendations`,
+    outputFormat: { type: 'structured', fields: ['topTraders', 'recommendations', 'meta'] },
+  },
+  tools: {
+    bonzai: [
+      { name: 'polymarket_leaderboard', endpoint: 'leaderboard', proxy: 'polymarketProxy', description: 'Fetch top performing traders from Polymarket leaderboard by PnL' },
+      { name: 'polymarket_positions', endpoint: 'positions', proxy: 'polymarketProxy', description: 'Get all active positions for a specific trader wallet' },
+      { name: 'polymarket_markets', endpoint: 'markets', proxy: 'polymarketProxy', description: 'Get market information including current prices' },
+    ],
+    mcp: [
+      { name: 'fetch_polymarket_leaderboard', description: 'Fetch top performing traders from Polymarket leaderboard ranked by PnL', inputSchema: { type: 'object', properties: { category: { type: 'string', enum: ['OVERALL', 'POLITICS', 'SPORTS', 'CRYPTO', 'POP_CULTURE'], default: 'OVERALL' }, timePeriod: { type: 'string', enum: ['DAY', 'WEEK', 'MONTH', 'ALL'], default: 'WEEK' }, orderBy: { type: 'string', enum: ['PNL', 'VOLUME'], default: 'PNL' }, limit: { type: 'number', default: 10, minimum: 1, maximum: 100 } }, required: [] } },
+      { name: 'fetch_trader_positions', description: 'Get all active positions for a specific Polymarket trader', inputSchema: { type: 'object', properties: { user: { type: 'string', description: 'Trader proxy wallet address' }, sizeThreshold: { type: 'number', default: 100 }, limit: { type: 'number', default: 50 }, sortBy: { type: 'string', enum: ['CURRENT', 'SIZE', 'PNL'], default: 'CURRENT' } }, required: ['user'] } },
+      { name: 'fetch_market_info', description: 'Get detailed information about a specific Polymarket market', inputSchema: { type: 'object', properties: { conditionId: { type: 'string' }, slug: { type: 'string' } }, required: [] } },
+    ],
+  },
+  execution: {
+    type: 'javascript',
+    entrypoint: 'execute',
+    async execute(inputs, context) {
+      const { numTraders, timePeriod, minConviction, copyFraction } = inputs;
+      const { fetchTool, updateStatus } = context;
+
+      updateStatus?.('Fetching top traders from leaderboard...');
+      const leaderboardData = await fetchTool('polymarket_leaderboard', { category: 'OVERALL', timePeriod, orderBy: 'PNL', limit: numTraders });
+      if (!Array.isArray(leaderboardData) || leaderboardData.length === 0) throw new Error('No traders found on leaderboard');
+
+      const topTraders = leaderboardData.filter(t => t.pnl > 0).map(t => ({ rank: t.rank, proxyWallet: t.proxyWallet, userName: t.userName || `Trader ${t.rank}`, pnl: t.pnl, vol: t.vol, profileImage: t.profileImage }));
+
+      updateStatus?.(`Fetching positions for ${topTraders.length} traders...`);
+      const traderPositions = await Promise.all(topTraders.map(async trader => {
+        try {
+          const positions = await fetchTool('polymarket_positions', { user: trader.proxyWallet, sizeThreshold: 100, limit: 50, sortBy: 'CURRENT' });
+          return { trader, positions: (positions || []).filter(p => !p.redeemable && p.size > 100 && p.title && p.outcome) };
+        } catch (e) { return { trader, positions: [] }; }
+      }));
+
+      updateStatus?.('Analyzing positions for conviction signals...');
+      const positionMap = new Map();
+      for (const { trader, positions } of traderPositions) {
+        for (const pos of positions) {
+          const key = `${pos.conditionId}|${pos.outcome}`;
+          if (!positionMap.has(key)) positionMap.set(key, { conditionId: pos.conditionId, title: pos.title, outcome: pos.outcome, eventSlug: pos.eventSlug || pos.slug, curPrice: pos.curPrice, endDate: pos.endDate, traders: [], totalSize: 0, totalPnl: 0 });
+          const agg = positionMap.get(key);
+          agg.traders.push({ userName: trader.userName, proxyWallet: trader.proxyWallet, rank: trader.rank, size: pos.size, avgPrice: pos.avgPrice, cashPnl: pos.cashPnl });
+          agg.totalSize += pos.size;
+          agg.totalPnl += pos.cashPnl || 0;
+        }
+      }
+
+      const aggregatedPositions = Array.from(positionMap.values()).filter(p => p.traders.length >= minConviction).sort((a, b) => b.traders.length !== a.traders.length ? b.traders.length - a.traders.length : b.totalSize - a.totalSize);
+      const recommendations = aggregatedPositions.slice(0, 10).map(pos => {
+        const avgSize = pos.totalSize / pos.traders.length;
+        return { question: pos.title, outcome: pos.outcome, slug: pos.eventSlug, url: `https://polymarket.com/event/${pos.eventSlug}`, conviction: { traderCount: pos.traders.length, totalSize: Math.round(pos.totalSize * 100) / 100, avgPnl: Math.round((pos.totalPnl / pos.traders.length) * 100) / 100 }, traders: pos.traders.map(t => ({ userName: t.userName, rank: t.rank, size: Math.round(t.size * 100) / 100, entryPrice: t.avgPrice })), market: { currentPrice: pos.curPrice, endDate: pos.endDate }, suggestedSize: Math.round(avgSize * copyFraction * 100) / 100 };
+      });
+
+      return { topTraders: topTraders.map(t => { const td = traderPositions.find(tp => tp.trader.proxyWallet === t.proxyWallet); return { ...t, positionCount: td?.positions?.length || 0 }; }), recommendations, meta: { analyzedAt: new Date().toISOString(), timePeriod, tradersAnalyzed: topTraders.length, positionsScanned: traderPositions.reduce((sum, tp) => sum + tp.positions.length, 0), minConviction, positionsWithConviction: aggregatedPositions.length } };
+    },
+  },
+  metadata: { createdAt: '2024-01-01T00:00:00Z', updatedAt: '2024-01-01T00:00:00Z', license: 'MIT' },
+});
+
+export const dslaSmartMarket = createSkillDefinition({
+  id: 'prediction-market-maker-v1.0.0',
+  name: 'Prediction Market Maker',
+  description: 'Create and manage prediction markets using the Decentralized Service Level Agreement (DSLA) protocol. Define verifiable SLA-based outcomes for any measurable on-chain or off-chain metric.',
+  version: '1.0.0',
+  author: { address: '0x8Ff3b2e823b33BeE30e699bB1b6BBc8F622fEa89', name: 'BonzAI', verified: true },
+  category: 'finance',
+  tags: ['dsla', 'prediction-markets', 'sla'],
+  price: 0,
+  requirements: { minLevel: 1, requiredApis: ['dsla', 'coingecko', 'chainlink'], requiredPermissions: ['network:read', 'wallet:sign'] },
+  inputs: {
+    useCase: { type: 'select', default: 'vol_returns', options: DSLA_USE_CASES.map(u => u.key), label: 'Use Case', description: 'The type of SLA to create' },
+    projectName: { type: 'string', default: '', label: 'Project Name' },
+    tokenSymbol: { type: 'string', default: '', label: 'Token Symbol' },
+    asset: { type: 'string', default: '', label: 'Asset/Service', description: 'The asset or service being measured' },
+    metric: { type: 'string', default: '', label: 'Metric', description: 'The metric to track' },
+    operator: { type: 'select', default: '>', options: ['>', '<', '>=', '<=', '='], label: 'Operator' },
+    target: { type: 'string', default: '', label: 'Target Value' },
+    targetDate: { type: 'string', default: '', label: 'Target Date', description: 'Date by which the condition should be met (YYYY-MM-DD)' },
+    dataSource: { type: 'string', default: '', label: 'Data Source URL' },
+  },
+  prompt: {
+    system: `You are an expert in prediction markets and Service Level Agreements (SLAs).
+
+Your role is to:
+1. Help users create well-defined, verifiable prediction markets
+2. Suggest appropriate metrics and data sources for different use cases
+3. Analyze market conditions and predict outcomes
+4. Provide risk assessment for market participants`,
+    task: `Create a DSLA-based prediction market with these parameters:
+- Use Case: {{useCase}}
+- Project: {{projectName}} ({{tokenSymbol}})
+- Asset: {{asset}}
+- Metric: {{metric}}
+- Condition: {{operator}} {{target}}
+- Target Date: {{targetDate}}
+- Data Source: {{dataSource}}
+
+Execute the following:
+1. Validate the market definition is well-formed and verifiable
+2. Format the prediction question clearly
+3. Analyze the data source for reliability
+4. Suggest initial liquidity parameters
+5. Provide risk assessment`,
+    outputFormat: { type: 'structured', fields: ['marketDefinition', 'riskAnalysis', 'parameters', 'examples'] },
+  },
+  tools: {
+    bonzai: [
+      { name: 'dsla_create_market', endpoint: 'create_market', proxy: 'dslaProxy', description: 'Create a new DSLA prediction market' },
+      { name: 'dsla_get_markets', endpoint: 'get_markets', proxy: 'dslaProxy', description: 'Get active DSLA markets' },
+      { name: 'dsla_verify_datasource', endpoint: 'verify_datasource', proxy: 'externalProxy', description: 'Verify a data source API is accessible' },
+    ],
+    mcp: [
+      { name: 'create_dsla_market', description: 'Create a new DSLA-based prediction market', inputSchema: { type: 'object', properties: { projectName: { type: 'string' }, tokenSymbol: { type: 'string' }, slaDefinition: { type: 'object', properties: { asset: { type: 'string' }, metric: { type: 'string' }, operator: { type: 'string', enum: ['>', '<', '>=', '<=', '='] }, target: { type: 'string' }, targetDate: { type: 'string' }, dataSource: { type: 'string' } }, required: ['asset', 'metric', 'operator', 'target', 'targetDate'] } }, required: ['projectName', 'slaDefinition'] } },
+      { name: 'list_dsla_markets', description: 'List active DSLA prediction markets', inputSchema: { type: 'object', properties: { useCase: { type: 'string', enum: DSLA_USE_CASES.map(u => u.key) }, status: { type: 'string', enum: ['active', 'pending', 'resolved'], default: 'active' }, limit: { type: 'number', default: 10 } }, required: [] } },
+    ],
+  },
+  execution: {
+    type: 'javascript',
+    entrypoint: 'execute',
+    async execute(inputs, context) {
+      const { useCase, projectName, tokenSymbol, asset, metric, operator, target, targetDate, dataSource } = inputs;
+      const { updateStatus } = context;
+      updateStatus?.('Validating market definition...');
+
+      const useCaseInfo = DSLA_USE_CASES.find(u => u.key === useCase);
+      const operatorText = { '>': 'exceed', '<': 'fall below', '>=': 'reach at least', '<=': 'stay at or below', '=': 'equal exactly' };
+      const formattedDate = targetDate ? new Date(targetDate).toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' }) : 'TBD';
+      const predictionQuestion = asset && metric && target && targetDate ? `Will ${asset}'s ${metric} ${operatorText[operator]} ${target} by ${formattedDate}?` : 'Please provide all required fields to generate the prediction question.';
+
+      updateStatus?.('Generating risk analysis...');
+      const riskAnalysis = { overallRisk: 'MEDIUM', factors: [
+        { factor: 'Data Source Reliability', risk: dataSource ? 'LOW' : 'HIGH', note: dataSource ? 'External API may have downtime or rate limits' : 'No data source specified' },
+        { factor: 'Market Liquidity', risk: 'MEDIUM', note: 'New markets may have limited initial liquidity' },
+        { factor: 'Oracle Risk', risk: 'LOW', note: 'DSLA uses Chainlink oracles for verification' },
+        { factor: 'Smart Contract Risk', risk: 'LOW', note: 'DSLA contracts are audited' },
+      ], recommendation: 'Ensure data source is reliable and accessible before launching market.' };
+
+      const marketParameters = { projectName: projectName || 'Unnamed Project', tokenSymbol: tokenSymbol || 'TOKEN', useCase: useCaseInfo?.label || useCase, sla: { asset, metric, operator, target, targetDate, question: predictionQuestion }, liquidity: { suggestedInitial: '10,000 DSLA', minimumRequired: '1,000 DSLA', feePercentage: '1%' }, resolution: { method: 'Chainlink Oracle', dataSource, disputePeriod: '24 hours' } };
+
+      updateStatus?.('Complete!');
+      return { marketDefinition: { question: predictionQuestion, useCase: useCaseInfo, parameters: marketParameters }, dataSourceAnalysis: dataSource ? { url: dataSource, accessible: true, responseFormat: 'JSON', updateFrequency: 'Real-time', reliability: 'HIGH' } : { url: null, accessible: false, reliability: 'UNKNOWN' }, riskAnalysis, examples: useCaseInfo?.examples || [], meta: { createdAt: new Date().toISOString(), status: 'draft' } };
+    },
+  },
+  useCases: DSLA_USE_CASES,
+  metadata: { createdAt: '2024-01-01T00:00:00Z', updatedAt: '2024-01-01T00:00:00Z', license: 'MIT' },
 });
 
 // ═══════════════════════════════════════════════════════════════════════════

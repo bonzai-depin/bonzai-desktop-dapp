@@ -815,6 +815,213 @@ ipcMain.handle("privy:set-policy", async (_event, { walletId, policy }) => {
   }
 });
 
+// ─────────────────────────────────────────────────────────────────────────────
+// Open Wallet Standard (OWS) IPC Handlers
+// Native Rust bindings via NAPI-RS — runs entirely in-process, no server.
+// ─────────────────────────────────────────────────────────────────────────────
+
+const OWS_VAULT_PATH = path.join(app.getPath("userData"), "ows-vault");
+
+let _owsCore = null;
+
+function getOWS() {
+  if (!_owsCore) {
+    try {
+      _owsCore = require("@open-wallet-standard/core");
+    } catch (err) {
+      console.error("[OWS] Failed to load @open-wallet-standard/core:", err.message);
+      throw new Error("OWS native bindings not available");
+    }
+  }
+  return _owsCore;
+}
+
+// Wallet CRUD
+ipcMain.handle("ows:create-wallet", async (_event, { name, passphrase }) => {
+  try {
+    const ows = getOWS();
+    const result = await ows.createWallet({ name, passphrase, vaultPath: OWS_VAULT_PATH });
+    return { address: result.address, name: result.name };
+  } catch (err) {
+    console.error("[OWS] Create wallet failed:", err.message);
+    return { error: err.message };
+  }
+});
+
+ipcMain.handle("ows:list-wallets", async () => {
+  try {
+    const ows = getOWS();
+    return await ows.listWallets({ vaultPath: OWS_VAULT_PATH });
+  } catch (err) {
+    console.error("[OWS] List wallets failed:", err.message);
+    return { error: err.message };
+  }
+});
+
+ipcMain.handle("ows:get-wallet", async (_event, nameOrId) => {
+  try {
+    const ows = getOWS();
+    return await ows.getWallet({ nameOrId, vaultPath: OWS_VAULT_PATH });
+  } catch (err) {
+    console.error("[OWS] Get wallet failed:", err.message);
+    return { error: err.message };
+  }
+});
+
+ipcMain.handle("ows:delete-wallet", async (_event, nameOrId) => {
+  try {
+    const ows = getOWS();
+    await ows.deleteWallet({ nameOrId, vaultPath: OWS_VAULT_PATH });
+    return { success: true };
+  } catch (err) {
+    console.error("[OWS] Delete wallet failed:", err.message);
+    return { error: err.message };
+  }
+});
+
+// Signing
+ipcMain.handle("ows:sign-message", async (_event, { wallet, message, passphrase }) => {
+  try {
+    const ows = getOWS();
+    const result = await ows.signMessage({ wallet, message, passphrase, vaultPath: OWS_VAULT_PATH });
+    return { signature: result.signature };
+  } catch (err) {
+    console.error("[OWS] Sign message failed:", err.message);
+    return { error: err.message };
+  }
+});
+
+ipcMain.handle("ows:sign-typed-data", async (_event, { wallet, typedDataJson, passphrase }) => {
+  try {
+    const ows = getOWS();
+    const result = await ows.signTypedData({ wallet, typedDataJson, passphrase, vaultPath: OWS_VAULT_PATH });
+    return { signature: result.signature };
+  } catch (err) {
+    console.error("[OWS] Sign typed data failed:", err.message);
+    return { error: err.message };
+  }
+});
+
+ipcMain.handle("ows:sign-transaction", async (_event, { wallet, rawTxHex, passphrase }) => {
+  try {
+    const ows = getOWS();
+    const result = await ows.signTransaction({ wallet, rawTxHex, passphrase, vaultPath: OWS_VAULT_PATH });
+    return { signedTx: result.signedTx };
+  } catch (err) {
+    console.error("[OWS] Sign transaction failed:", err.message);
+    return { error: err.message };
+  }
+});
+
+ipcMain.handle("ows:sign-and-send", async (_event, { wallet, rawTxHex, passphrase, rpcUrl }) => {
+  try {
+    const ows = getOWS();
+    const result = await ows.signAndSend({ wallet, rawTxHex, passphrase, rpcUrl, vaultPath: OWS_VAULT_PATH });
+    return { txHash: result.txHash };
+  } catch (err) {
+    console.error("[OWS] Sign and send failed:", err.message);
+    return { error: err.message };
+  }
+});
+
+// API Key management
+ipcMain.handle("ows:create-api-key", async (_event, { name, wallets, policies, passphrase, expiry }) => {
+  try {
+    const ows = getOWS();
+    const result = await ows.createApiKey({ name, wallets, policies, passphrase, expiry, vaultPath: OWS_VAULT_PATH });
+    return { id: result.id, token: result.token };
+  } catch (err) {
+    console.error("[OWS] Create API key failed:", err.message);
+    return { error: err.message };
+  }
+});
+
+ipcMain.handle("ows:list-api-keys", async () => {
+  try {
+    const ows = getOWS();
+    return await ows.listApiKeys({ vaultPath: OWS_VAULT_PATH });
+  } catch (err) {
+    console.error("[OWS] List API keys failed:", err.message);
+    return { error: err.message };
+  }
+});
+
+ipcMain.handle("ows:revoke-api-key", async (_event, id) => {
+  try {
+    const ows = getOWS();
+    await ows.revokeApiKey({ id, vaultPath: OWS_VAULT_PATH });
+    return { success: true };
+  } catch (err) {
+    console.error("[OWS] Revoke API key failed:", err.message);
+    return { error: err.message };
+  }
+});
+
+// Policy management
+ipcMain.handle("ows:create-policy", async (_event, json) => {
+  try {
+    const ows = getOWS();
+    const result = await ows.createPolicy({ ...json, vaultPath: OWS_VAULT_PATH });
+    return { id: result.id };
+  } catch (err) {
+    console.error("[OWS] Create policy failed:", err.message);
+    return { error: err.message };
+  }
+});
+
+ipcMain.handle("ows:list-policies", async () => {
+  try {
+    const ows = getOWS();
+    return await ows.listPolicies({ vaultPath: OWS_VAULT_PATH });
+  } catch (err) {
+    console.error("[OWS] List policies failed:", err.message);
+    return { error: err.message };
+  }
+});
+
+ipcMain.handle("ows:get-policy", async (_event, id) => {
+  try {
+    const ows = getOWS();
+    return await ows.getPolicy({ id, vaultPath: OWS_VAULT_PATH });
+  } catch (err) {
+    console.error("[OWS] Get policy failed:", err.message);
+    return { error: err.message };
+  }
+});
+
+ipcMain.handle("ows:delete-policy", async (_event, id) => {
+  try {
+    const ows = getOWS();
+    await ows.deletePolicy({ id, vaultPath: OWS_VAULT_PATH });
+    return { success: true };
+  } catch (err) {
+    console.error("[OWS] Delete policy failed:", err.message);
+    return { error: err.message };
+  }
+});
+
+// Import / Export
+ipcMain.handle("ows:export-wallet", async (_event, { name, passphrase }) => {
+  try {
+    const ows = getOWS();
+    return await ows.exportWallet({ name, passphrase, vaultPath: OWS_VAULT_PATH });
+  } catch (err) {
+    console.error("[OWS] Export wallet failed:", err.message);
+    return { error: err.message };
+  }
+});
+
+ipcMain.handle("ows:import-private-key", async (_event, { name, hexKey, passphrase }) => {
+  try {
+    const ows = getOWS();
+    const result = await ows.importWalletPrivateKey({ name, hexKey, passphrase, vaultPath: OWS_VAULT_PATH });
+    return { address: result.address, name: result.name };
+  } catch (err) {
+    console.error("[OWS] Import private key failed:", err.message);
+    return { error: err.message };
+  }
+});
+
 ipcMain.handle("store-get", (_event, key, def) => store.get(key, def));
 ipcMain.handle("store-set", (_event, key, value) => {
   store.set(key, value);
