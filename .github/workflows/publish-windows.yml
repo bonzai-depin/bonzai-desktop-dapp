@@ -9,6 +9,9 @@ on:
         required: true
         type: string
 
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
 jobs:
   publish_on_windows:
     runs-on: windows-latest

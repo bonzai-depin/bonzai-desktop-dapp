@@ -9,6 +9,9 @@ on:
         required: true
         type: string
 
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
 jobs:
   publish_on_linux:
     runs-on: ubuntu-latest
@@ -117,6 +120,32 @@ jobs:
           ls -lh "$BINARY"
           echo "Internal deps:"
           ls binaries/${{ env.OS_KEY }}-${{ env.ARCH_KEY }}/diffuser/_internal/ | head -20
+
+      # Strip unnecessary CUDA/cuDNN libs from PyInstaller output to save ~3-5GB.
+      # Keep only the libs needed at runtime (cublas, cufft, cusolver, cusparse, cudnn).
+      - name: Strip PyInstaller output
+        run: |
+          INTERNAL="binaries/${{ env.OS_KEY }}-${{ env.ARCH_KEY }}/diffuser/_internal"
+          echo "Size before strip: $(du -sh "$INTERNAL" | cut -f1)"
+
+          # Remove CUDA libraries we don't need (nvJitLink, nvrtc, curand extras, profiler)
+          find "$INTERNAL" -name "libnvJitLink*" -delete 2>/dev/null || true
+          find "$INTERNAL" -name "libnvrtc*" -delete 2>/dev/null || true
+          find "$INTERNAL" -name "libcupti*" -delete 2>/dev/null || true
+          find "$INTERNAL" -name "libnvToolsExt*" -delete 2>/dev/null || true
+
+          # Remove test/example files bundled by PyInstaller
+          find "$INTERNAL" -type d -name "test" -exec rm -rf {} + 2>/dev/null || true
+          find "$INTERNAL" -type d -name "tests" -exec rm -rf {} + 2>/dev/null || true
+          find "$INTERNAL" -type d -name "__pycache__" -exec rm -rf {} + 2>/dev/null || true
+          find "$INTERNAL" -name "*.pyc" -delete 2>/dev/null || true
+
+          # Strip debug symbols from all shared libraries
+          find "$INTERNAL" -name "*.so" -exec strip --strip-debug {} + 2>/dev/null || true
+          find "$INTERNAL" -name "*.so.*" -exec strip --strip-debug {} + 2>/dev/null || true
+
+          echo "Size after strip: $(du -sh "$INTERNAL" | cut -f1)"
+          df -h /
 
       # PyInstaller has already bundled everything into the binary.
       # Remove Python packages, CUDA libs, pip cache, and PyInstaller workdir
