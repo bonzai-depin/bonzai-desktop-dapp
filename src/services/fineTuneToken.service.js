@@ -111,7 +111,7 @@ async function getHookContract(withSigner = false) {
  * @param {number|string} contentTokenId - BonzaiContent NFT token ID for the model
  * @param {string} name - Token name (e.g., "BonzAI Fine-Tune: My Custom Model")
  * @param {string} symbol - Token symbol (e.g., "BZCUSTOM")
- * @param {string} modelIrysHash - Irys/Arweave hash of the model weights
+ * @param {string} modelIrysHash - IPFS/Pinata hash of the model weights
  * @param {string} ethAmount - Amount of ETH for liquidity (e.g., "0.01")
  *
  * @returns {Promise<Object>} Launch result with token address and poolId

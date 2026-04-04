@@ -5,21 +5,25 @@
   <Transition name="notification-slide">
     <div
       v-if="statusNotification.show"
-      class="status-notification fira-sans-condensed-black-italic"
+      class="generation notification fira-sans-condensed-black-italic"
       :class="'is-' + statusNotification.type"
     >
-      <span class="material-symbols-outlined mr-2">
-        {{
-          statusNotification.type === "success"
-            ? "check_circle"
-            : statusNotification.type === "danger"
-              ? "error"
-              : statusNotification.type === "warning"
-                ? "warning"
-                : "info"
-        }}
-      </span>
-      {{ statusNotification.message }}
+      <p>
+        <span class="fira-sans-condensed-black-italic is-size-4">
+          <span class="material-symbols-outlined mr-2 is-size-4" style="vertical-align: middle">
+            {{
+              statusNotification.type === "success"
+                ? "check_circle"
+                : statusNotification.type === "danger"
+                  ? "error"
+                  : statusNotification.type === "warning"
+                    ? "warning"
+                    : "info"
+            }}
+          </span>
+          {{ statusNotification.message }}
+        </span>
+      </p>
     </div>
   </Transition>
 
@@ -153,44 +157,66 @@
 
                 <p class="skill-description">{{ skill.description }}</p>
 
-                <!-- Purchased badge -->
-                <span v-if="isSkillPurchased(skill.id)" class="tag is-success is-light mb-2">
-                  <span class="material-symbols-outlined mr-1" style="font-size: 14px">check_circle</span>
-                  Purchased
-                </span>
-
                 <hr />
 
                 <div class="skill-footer">
                   <div class="skill-actions">
-                    <button
-                      v-if="!skill.platform || isAppleSilicon"
-                      class="button is-info is-medium"
-                      @click="runSkill(skill)"
-                    >
-                      <span class="material-symbols-outlined mr-1">
-                        play_arrow
-                      </span>
-                      Run
-                    </button>
+                    <!-- Platform requirement (Apple Silicon) -->
                     <span
-                      v-else
+                      v-if="skill.platform && !isAppleSilicon"
                       class="tag is-dark is-medium"
                       style="opacity: 0.6"
                     >
                       <span class="material-symbols-outlined mr-1" style="font-size: 16px">laptop_mac</span>
                       Requires Apple Silicon Mac
                     </span>
-                    <button
-                      v-if="skill.price > 0 && !isSkillPurchased(skill.id)"
-                      class="button is-warning is-medium ml-2"
-                      :class="{ 'is-loading': purchasingSkillId === skill.id }"
-                      :disabled="purchasingSkillId === skill.id"
-                      @click.stop="purchaseSkill(skill)"
-                    >
-                      <span class="material-symbols-outlined mr-1">shopping_cart</span>
-                      Purchase ({{ skill.price || 10 }} USDC)
-                    </button>
+
+                    <!-- Free skill or already purchased: show Run -->
+                    <template v-else-if="isFreeSkill(skill) || isSkillPurchased(skill.id)">
+                      <button
+                        class="button is-info is-medium"
+                        @click="runSkill(skill)"
+                      >
+                        <span class="material-symbols-outlined mr-1">play_arrow</span>
+                        Run
+                      </button>
+                      <span v-if="isSkillPurchased(skill.id)" class="tag is-success is-light ml-2">
+                        <span class="material-symbols-outlined mr-1" style="font-size: 14px">check_circle</span>
+                        Purchased
+                      </span>
+                    </template>
+
+                    <!-- Paid skill, not purchased, wallet not connected: Connect Wallet -->
+                    <template v-else-if="!web3Store.isConnected">
+                      <button
+                        class="button is-success is-medium"
+                        @click="web3Store.connect()"
+                      >
+                        <span class="material-symbols-outlined mr-2">wallet</span>
+                        Connect Wallet
+                      </button>
+                      <span class="skill-price-tag ml-5">
+                        <span class="skill-price-amount">{{ skill.price }}</span>
+                        <span class="skill-price-currency">USDC</span>
+                      </span>
+                    </template>
+
+                    <!-- Paid skill, not purchased, wallet connected: Purchase -->
+                    <template v-else>
+                      <button
+                        class="button is-warning is-medium"
+                        :class="{ 'is-loading': purchasingSkillId === skill.id }"
+                        :disabled="purchasingSkillId === skill.id"
+                        @click.stop="purchaseSkill(skill)"
+                      >
+                        <span class="material-symbols-outlined mr-1">shopping_cart</span>
+                        Purchase
+                      </button>
+                      <span class="skill-price-tag ml-5">
+                        <span class="skill-price-amount">{{ skill.price }}</span>
+                        <span class="skill-price-currency">USDC</span>
+                      </span>
+                    </template>
                   </div>
                 </div>
               </div>
@@ -911,6 +937,7 @@ import VueMarkdown from "vue-markdown-render";
 import axios from "axios";
 import { io } from "socket.io-client";
 import { useSkillStore } from "../stores/skillStore.js";
+import { useWeb3Store } from "../stores/web3.store.js";
 import { SKILL_CATEGORY_META } from "../skills/types.js";
 import polymarketAgent from "./polymarketAgent.js";
 import { tokenService } from "../services/token.service.js";
@@ -1001,6 +1028,7 @@ export default {
   setup() {
     // Store
     const skillStore = useSkillStore();
+    const web3Store = useWeb3Store();
 
     // Tab state
     const activeTab = ref("browseSkills");
@@ -2042,17 +2070,20 @@ Return ONLY the JSON, no explanation.`;
     };
 
     const refreshSkills = async () => {
-      await skillStore.initialize();
+      await skillStore.refresh();
       showNotification("Skills refreshed!", "success");
     };
 
     // Skill purchase state
     const purchasingSkillId = ref(null);
+    const purchasedSkillIds = ref(new Set());
 
-    // Remote command mapping per skill
     const isSkillPurchased = (skillId) => {
-      return hasPurchasedAgent(skillId);
+      // Check reactive set first (immediate UI update), then persistent store
+      return purchasedSkillIds.value.has(skillId) || hasPurchasedAgent(skillId);
     };
+
+    const isFreeSkill = (skill) => !skill.price || skill.price === 0;
 
     const purchaseSkill = (skill) => handlePurchaseSkill(skill);
 
@@ -2063,6 +2094,8 @@ Return ONLY the JSON, no explanation.`;
         const priceUsdc = (skill.price || 10) * 1_000_000; // Convert to 6-decimal USDC units
         const result = await purchaseSkillUSDC(skill.id, priceUsdc);
         if (result.success) {
+          // Add to reactive set for immediate UI update
+          purchasedSkillIds.value = new Set([...purchasedSkillIds.value, skill.id]);
           showNotification(`Purchased ${skill.name}!`, "success");
         } else {
           showNotification(result.error || "Purchase failed", "danger");
@@ -2588,8 +2621,8 @@ Provide a concise analysis covering:
 
     // Lifecycle - optimized with parallel initialization
     onMounted(async () => {
-      // Initialize skill store first (others may depend on it)
-      await skillStore.initialize();
+      // Refresh skill store on every mount (Agents tab re-entry)
+      await skillStore.refresh();
 
       // Run independent checks in parallel for faster startup
       const [, , ] = await Promise.all([
@@ -2694,9 +2727,11 @@ Provide a concise analysis covering:
       runSkill,
       availableSkills,
       isSkillPurchased,
+      isFreeSkill,
       handlePurchaseSkill,
       purchasingSkillId,
       purchaseSkill,
+      web3Store,
 
       // Skill execution
       selectedSkillId,
@@ -2796,7 +2831,6 @@ Provide a concise analysis covering:
 </script>
 
 <style scoped>
-@import url("https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:opsz,wght,FILL,GRAD@20..48,100..700,0..1,-50..200");
 
 .material-symbols-outlined {
   font-variation-settings:
@@ -2905,35 +2939,13 @@ p {
   font-weight: 100;
 }
 
-.status-notification {
+.generation {
   position: fixed;
-  top: 20px;
-  right: 20px;
-  z-index: 9999;
-  padding: 1em 1.5em;
-  border-radius: 8px;
-  display: flex;
-  align-items: center;
-  color: #fff;
-  backdrop-filter: blur(10px);
-  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.3);
-}
-
-.status-notification.is-success {
-  background: rgba(57, 213, 130, 0.95);
-}
-
-.status-notification.is-danger {
-  background: rgba(255, 56, 96, 0.95);
-}
-
-.status-notification.is-info {
-  background: rgba(62, 142, 208, 0.95);
-}
-
-.status-notification.is-warning {
-  background: rgba(255, 193, 7, 0.95);
-  color: #000;
+  width: 33%;
+  top: 1em;
+  right: 1em;
+  z-index: 1;
+  opacity: 0.9;
 }
 
 /* Notification slide animation */
@@ -3093,6 +3105,10 @@ p {
   margin-bottom: 0.5em;
 }
 
+.skill-header .tags .tag {
+  text-transform: uppercase;
+}
+
 .skill-name {
   font-size: 1.5rem;
   margin: 0;
@@ -3120,6 +3136,62 @@ p {
   display: flex;
   justify-content: space-between;
   align-items: center;
+}
+
+.skill-price-tag {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35em;
+  padding: 0.35em 0.85em;
+  border-radius: 20px;
+  background: linear-gradient(135deg, rgba(155, 109, 200, 0.2), rgba(255, 153, 51, 0.2));
+  border: 1px solid rgba(155, 109, 200, 0.45);
+  backdrop-filter: blur(8px);
+  position: relative;
+  overflow: hidden;
+  transition: border-color 0.3s ease, box-shadow 0.3s ease;
+}
+
+.skill-price-tag::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  background: linear-gradient(135deg, rgba(155, 109, 200, 0.08), rgba(255, 153, 51, 0.08));
+  opacity: 0;
+  transition: opacity 0.3s ease;
+}
+
+.skill-card:hover .skill-price-tag {
+  border-color: rgba(255, 153, 51, 0.7);
+  box-shadow: 0 0 12px rgba(155, 109, 200, 0.25), 0 0 24px rgba(255, 153, 51, 0.1);
+}
+
+.skill-card:hover .skill-price-tag::before {
+  opacity: 1;
+}
+
+.skill-price-amount {
+  font-family: "Fira Sans Condensed", sans-serif;
+  font-style: italic;
+  font-weight: 900;
+  font-size: 1.15rem;
+  background: linear-gradient(135deg, rgb(200, 170, 240), rgb(255, 190, 100));
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+  line-height: 1;
+}
+
+.skill-price-currency {
+  font-family: "Fira Sans", sans-serif;
+  font-weight: 400;
+  font-size: 0.7rem;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: rgba(255, 255, 255, 0.5);
+  line-height: 1;
+  padding-top: 0.1em;
 }
 
 .skill-inputs .field {

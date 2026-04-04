@@ -18,10 +18,16 @@ import { ethers } from 'ethers';
 import { CONFIG } from '../config/web3.config.js';
 import { walletProviderService } from './walletProvider.service.js';
 import { companionTokenService } from './companionToken.service.js';
-import { irysService } from './irys.service.js';
+import { storageService } from './storage.service.js';
 import { x402ExecutorService } from './x402Executor.service.js';
 import { sellerRegistryService } from './sellerRegistry.service.js';
-import { BonzaiContentABI } from '../contracts/abi/BonzaiContent.abi.js';
+// BonzaiCollectibles clone ABI (mint with contentType)
+const BonzaiCollectiblesABI = [
+  'function mint(string transactionId, string model, string tokenURI_, uint8 contentType) payable returns (uint256)',
+  'function mintFee() view returns (uint256)',
+  'function mintFees(uint8 contentType) view returns (uint256)',
+  'event ContentMinted(uint256 indexed tokenId, address indexed creator, string transactionId, string model, uint256 timestamp)',
+];
 
 // Uniswap V4 Universal Router ABI (minimal for V4_SWAP command)
 const UNIVERSAL_ROUTER_ABI = [
@@ -105,12 +111,12 @@ async function handleContentNFTMint(companionId, companion, session) {
   }
 
   try {
-    // Upload image to Irys
-    if (!irysService.isInitialized()) {
-      return { success: false, error: 'Irys not initialized' };
+    // Upload image to IPFS
+    if (!storageService.isInitialized()) {
+      return { success: false, error: 'Storage not initialized' };
     }
 
-    const imageUpload = await irysService.uploadBase64({
+    const imageUpload = await storageService.uploadBase64({
       base64Data: imageData,
       contentType: 'image/png',
       generation: {
@@ -135,13 +141,13 @@ async function handleContentNFTMint(companionId, companion, session) {
       ],
     };
 
-    const metadataUpload = await irysService.uploadMetadata(metadata);
+    const metadataUpload = await storageService.uploadMetadata(metadata);
 
     // Get agent wallet signer for Base
     const signer = await walletProviderService.getAgentWalletSigner(companionId, 8453);
 
     // Mint content NFT
-    const contentContract = new ethers.Contract(contractAddress, BonzaiContentABI, signer);
+    const contentContract = new ethers.Contract(contractAddress, BonzaiCollectiblesABI, signer);
     const mintFee = await contentContract.mintFee();
 
     const tx = await contentContract.mint(

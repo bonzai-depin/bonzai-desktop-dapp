@@ -6,7 +6,7 @@
  */
 
 import { ethers } from 'ethers';
-import { irysService } from './irys.service.js';
+import { storageService } from './storage.service.js';
 import { getEip1193Provider, switchNetwork, getSigner } from './web3.service.js';
 import { markAsMinted } from '../stores/inferenceStore.js';
 import { mintStore } from '../stores/mintStore.js';
@@ -37,6 +37,7 @@ const BRAND_IMAGE_URLS = {
 const BASE_CONTENT_ABI = [
   'function mint(string transactionId, string model, string tokenURI_, uint8 contentType) payable returns (uint256)',
   'function mintFee() view returns (uint256)',
+  'function mintFees(uint8 contentType) view returns (uint256)',
   'event ContentMinted(uint256 indexed tokenId, address indexed creator, string transactionId, string model, uint256 timestamp)',
 ];
 
@@ -245,8 +246,8 @@ export async function mintContent({
     }
 
     // Initialize storage (Pinata — no wallet needed, just API key)
-    irysService.disconnect();
-    await irysService.initIrys(provider);
+    storageService.disconnect();
+    await storageService.initStorage(provider);
 
     const promptHash = ethers.keccak256(ethers.toUtf8Bytes(prompt || ''));
     const attribution = {
@@ -257,7 +258,7 @@ export async function mintContent({
     let contentReceipt;
     onProgress('upload', 'Uploading content to IPFS...', 12);
     if (typeof content === 'string' && (content.startsWith('data:') || isBase64(content))) {
-      contentReceipt = await irysService.uploadBase64({
+      contentReceipt = await storageService.uploadBase64({
         base64Data: content,
         contentType,
         generation: {
@@ -273,7 +274,7 @@ export async function mintContent({
     } else if (typeof content === 'string') {
       // Plain text content
       const textBuffer = new TextEncoder().encode(content);
-      contentReceipt = await irysService.uploadContent({
+      contentReceipt = await storageService.uploadContent({
         data: textBuffer,
         contentType: contentType || 'text/plain',
         generation: {
@@ -286,7 +287,7 @@ export async function mintContent({
       });
     } else {
       // Buffer / Uint8Array
-      contentReceipt = await irysService.uploadContent({
+      contentReceipt = await storageService.uploadContent({
         data: content,
         contentType,
         generation: {
@@ -316,7 +317,7 @@ export async function mintContent({
         const textContent = inferenceType === 'text' ? (typeof content === 'string' ? content : '') : null;
         thumbBuf = await generateBrandedThumbnail(inferenceType, textContent, customThumbnail || undefined);
         onProgress('upload', 'Uploading thumbnail...', 34);
-        brandedImageReceipt = await irysService.uploadContent({
+        brandedImageReceipt = await storageService.uploadContent({
           data: thumbBuf,
           contentType: thumbMime,
           generation: { type: 'nft-thumbnail', model: modelSlug, timestamp: Date.now() },
@@ -334,7 +335,7 @@ export async function mintContent({
       const userCode = extractUserCode(generation.threeCode);
       const viewerHtml = buildInteractive3DViewer(userCode, brandedImageReceipt?.gatewayUrl);
       const viewerBuffer = new TextEncoder().encode(viewerHtml);
-      viewerReceipt = await irysService.uploadContent({
+      viewerReceipt = await storageService.uploadContent({
         data: viewerBuffer,
         contentType: 'text/html',
         generation: {
@@ -353,7 +354,7 @@ export async function mintContent({
         onProgress('upload', 'Uploading audio player...', 36);
         const playerHtml = buildAudioPlayer(contentReceipt.gatewayUrl, brandedImageReceipt?.gatewayUrl, title || prompt);
         const playerBuf = new TextEncoder().encode(playerHtml);
-        mediaPlayerReceipt = await irysService.uploadContent({
+        mediaPlayerReceipt = await storageService.uploadContent({
           data: playerBuf,
           contentType: 'text/html',
           generation: { type: 'audio-player', model: modelSlug, timestamp: Date.now() },
@@ -363,7 +364,7 @@ export async function mintContent({
         onProgress('upload', 'Uploading video player...', 36);
         const playerHtml = buildVideoPlayer(contentReceipt.gatewayUrl, brandedImageReceipt?.gatewayUrl, title || prompt);
         const playerBuf = new TextEncoder().encode(playerHtml);
-        mediaPlayerReceipt = await irysService.uploadContent({
+        mediaPlayerReceipt = await storageService.uploadContent({
           data: playerBuf,
           contentType: 'text/html',
           generation: { type: 'video-player', model: modelSlug, timestamp: Date.now() },
@@ -426,7 +427,7 @@ export async function mintContent({
       metadata.image = contentReceipt.url;
     }
 
-    const metadataReceipt = await irysService.uploadMetadata(metadata, {
+    const metadataReceipt = await storageService.uploadMetadata(metadata, {
       type: 'metadata',
       model: modelSlug,
     }, attribution);
@@ -1126,9 +1127,9 @@ export async function fetchNFT3DCode(tokenId) {
     );
     let metadataUrl = await contract.tokenURI(tokenId);
 
-    // Resolve Arweave URLs
-    if (metadataUrl.startsWith('ar://')) {
-      metadataUrl = `https://gateway.irys.xyz/${metadataUrl.slice(5)}`;
+    // Resolve IPFS URLs
+    if (metadataUrl.startsWith('ipfs://')) {
+      metadataUrl = `https://gateway.pinata.cloud/ipfs/${metadataUrl.slice(7)}`;
     }
 
     // Fetch metadata JSON

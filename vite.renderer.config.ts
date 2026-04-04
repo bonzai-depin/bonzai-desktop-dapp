@@ -9,7 +9,7 @@ export default defineConfig({
     VuePlugin(),
     tsconfigPaths(),
     nodePolyfills({
-      // Polyfill stream + crypto for @irys/web-upload browser compat
+      // Polyfill stream + crypto for ethers.js and Web3 browser compat
       include: ['stream', 'crypto', 'buffer', 'process', 'util'],
       globals: { Buffer: true, global: true, process: true },
     }),

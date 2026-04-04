@@ -692,6 +692,7 @@ import VueMarkdown from "vue-markdown-render";
 import useClipboard from "vue-clipboard3";
 import MintModal from "./MintModal.vue";
 import { modelStore } from "../stores/modelStore.js";
+import { addTextInference } from "../stores/inferenceStore.js";
 
 // Debounce utility for persistence
 const debounce = (fn, delay) => {
@@ -2150,6 +2151,15 @@ export default {
         // Debounced persistence
         persistInferences([...inferences.value]);
 
+        // Save to unified inference store with performance metadata
+        addTextInference(prompt, assistantResult, {
+          model: modelName,
+          tokensUsed: tokenCount,
+          tokensPerSecond: finalTokPerSec,
+          elapsed: elapsedSec,
+          source: 'bonzai',
+        });
+
         resetForm();
         isLoading.value = false;
       } catch (e) {
@@ -2395,7 +2405,6 @@ export default {
 
 <!-- Add "scoped" attribute to limit CSS to this component only -->
 <style scoped>
-@import url("https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:opsz,wght,FILL,GRAD@20..48,100..700,0..1,-50..200");
 
 hr {
   margin: 24px 0 !important;

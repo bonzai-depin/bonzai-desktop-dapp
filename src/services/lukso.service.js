@@ -428,9 +428,9 @@ export async function getMintFee() {
  * Mint AI-generated content as LSP8 NFT
  *
  * @param {Object} params
- * @param {string} params.irysTransactionId - Arweave TX ID from Irys upload
+ * @param {string} params.irysTransactionId - IPFS CID from Pinata upload
  * @param {string} params.model - AI model used
- * @param {string} params.metadataUri - URI to LSP4Metadata JSON (ar://...)
+ * @param {string} params.metadataUri - URI to LSP4Metadata JSON (ipfs://...)
  * @param {bytes32} params.tokenId - Content hash as tokenId
  * @param {address} params.to - Recipient (default: sender's UP)
  * @returns {Object} Transaction receipt and token info
@@ -449,7 +449,7 @@ export async function mint({ irysTransactionId, model, metadataUri, tokenId, to 
 
   console.log("[LUKSO] Minting NFT...");
   console.log("[LUKSO] TokenId:", tokenId);
-  console.log("[LUKSO] Irys TX:", irysTransactionId);
+  console.log("[LUKSO] IPFS CID:", irysTransactionId);
   console.log("[LUKSO] Recipient:", recipient);
   console.log("[LUKSO] Mint Fee:", ethers.formatEther(mintFee), "LYX");
 

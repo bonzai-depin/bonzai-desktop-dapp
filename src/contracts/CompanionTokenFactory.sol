@@ -432,17 +432,15 @@ contract CompanionTokenFactory is Ownable, ReentrancyGuard, IERC721Receiver {
         pure
         returns (uint160)
     {
-        // price = ethAmount / tokenAmount
-        // sqrtPrice = sqrt(ethAmount / tokenAmount) = sqrt(ethAmount) / sqrt(tokenAmount)
-        // sqrtPriceX96 = sqrtPrice * 2^96
-
-        // Use fixed-point arithmetic to maintain precision
+        require(ethAmount > 0 && tokenAmount > 0, "Zero amount");
         // sqrtPriceX96 = sqrt(ethAmount * 2^192 / tokenAmount)
-        uint256 ratioX192 = (ethAmount << 192) / tokenAmount;
-        uint256 sqrtRatio = _sqrt(ratioX192);
-
-        require(sqrtRatio <= type(uint160).max, "Price overflow");
-        return uint160(sqrtRatio);
+        // Split shift to avoid overflow: (ethAmount << 192) overflows for ethAmount >= 2^64
+        // Instead: compute (ethAmount << 96) / tokenAmount, then shift result << 96 before sqrt
+        uint256 step1 = (ethAmount << 96) / tokenAmount;
+        uint256 ratioX192 = step1 << 96;
+        uint256 sqrtResult = _sqrt(ratioX192);
+        require(sqrtResult > 0 && sqrtResult <= type(uint160).max, "Invalid sqrt price");
+        return uint160(sqrtResult);
     }
 
     /**

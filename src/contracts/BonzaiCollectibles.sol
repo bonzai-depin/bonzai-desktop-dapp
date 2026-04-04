@@ -37,12 +37,20 @@ interface IBonzaiMintPool {
 }
 
 /**
+ * @title IBonzaiUnlock
+ * @notice Interface for checking if a user has unlocked all levels
+ */
+interface IBonzaiUnlock {
+    function hasUnlocked(address user) external view returns (bool);
+}
+
+/**
  * @title BonzaiCollectibles
  * @notice ERC-721 NFT contract for AI-generated content on Base.
  *         Designed as an ERC-1167 minimal proxy implementation — each user gets
  *         their own clone (collection) via BonzaiCollectiblesFactory.
  *
- *         Each token stores on-chain provenance linking to Irys/Arweave storage.
+ *         Each token stores on-chain provenance linking to IPFS storage.
  *         Mint fees are split 80/20 between treasury and per-content-type pools.
  *         Implements ERC-2981 for 7.5% secondary sale royalties.
  *         Implements ERC721-C (Creator Token Standard) for on-chain royalty enforcement
@@ -55,10 +63,17 @@ interface IBonzaiMintPool {
  */
 contract BonzaiCollectibles is ERC721URIStorage, Ownable, ReentrancyGuard, IERC2981, ICreatorToken {
     uint256 private _tokenIdCounter;
-    uint256 public mintFee = 0.0025 ether;
+    uint256 public mintFee = 0.0025 ether; // legacy default, used if mintFees[type] == 0
     address public treasury;
+
+    /// @notice Per-content-type mint fees (natural LVL progression)
+    /// 0=text 0.0005, 1=audio 0.001, 2=image 0.0015, 3=video 0.0025, 4=3D 0.0035, 5=training 0.005
+    mapping(uint8 => uint256) public mintFees;
     address public mintPool;
     address public royaltySplitter;
+
+    /// @notice BonzaiUnlock contract — unlocked users mint for free
+    IBonzaiUnlock public unlockContract;
 
     /// @notice The user who owns this collection — only they can mint
     address public collectionOwner;
@@ -101,6 +116,11 @@ contract BonzaiCollectibles is ERC721URIStorage, Ownable, ReentrancyGuard, IERC2
     event RoyaltySplitterUpdated(address indexed oldSplitter, address indexed newSplitter);
     event SplitBpsUpdated(uint256 treasuryBps, uint256 poolBps);
     event PoolDepositFailed(address indexed mintPool, uint8 contentType, uint256 amount);
+    event MintFeeUpdated(uint8 indexed contentType, uint256 oldFee, uint256 newFee);
+    event UnlockContractUpdated(address indexed oldUnlock, address indexed newUnlock);
+    event TreasuryUpdated(address indexed oldTreasury, address indexed newTreasury);
+    event RoyaltyBpsUpdated(uint256 oldBps, uint256 newBps);
+    event LegacyMintFeeUpdated(uint256 oldFee, uint256 newFee);
 
     /**
      * @dev Constructor sets defaults for the implementation contract.
@@ -119,6 +139,7 @@ contract BonzaiCollectibles is ERC721URIStorage, Ownable, ReentrancyGuard, IERC2
      * @param _treasury Treasury address for fee splits
      * @param _mintPool MintPool contract address
      * @param _royaltySplitter RoyaltySplitter contract address
+     * @param _factory Factory contract address (caller validation)
      */
     function initialize(
         address _owner,
@@ -149,6 +170,14 @@ contract BonzaiCollectibles is ERC721URIStorage, Ownable, ReentrancyGuard, IERC2
         poolBps = 2000;
         royaltyBps = 750;
 
+        // Per-type mint fees (natural LVL1→LVL6 progression)
+        mintFees[0] = 0.0005 ether;   // text   (LVL1)
+        mintFees[1] = 0.001 ether;    // audio  (LVL2)
+        mintFees[2] = 0.0015 ether;   // image  (LVL3)
+        mintFees[3] = 0.0025 ether;   // video  (LVL4)
+        mintFees[4] = 0.0035 ether;   // 3D     (LVL5)
+        mintFees[5] = 0.005 ether;    // training (LVL6)
+
         // Transfer ownership from address(0) to _owner
         _transferOwnership(_owner);
     }
@@ -173,9 +202,9 @@ contract BonzaiCollectibles is ERC721URIStorage, Ownable, ReentrancyGuard, IERC2
 
     /**
      * @notice Mint AI-generated content as an NFT. Only the collection owner can mint.
-     * @param transactionId Arweave transaction ID from Irys upload
+     * @param transactionId IPFS CID from Pinata upload
      * @param model AI model identifier used for generation
-     * @param tokenURI_ URI pointing to Irys metadata JSON
+     * @param tokenURI_ URI pointing to IPFS metadata JSON
      * @param contentType_ Content type index (0=text, 1=audio, 2=image, 3=video, 4=3D, 5=training)
      */
     function mint(
@@ -185,14 +214,27 @@ contract BonzaiCollectibles is ERC721URIStorage, Ownable, ReentrancyGuard, IERC2
         uint8 contentType_
     ) external payable nonReentrant returns (uint256) {
         require(msg.sender == collectionOwner, "Only collection owner can mint");
-        require(msg.value >= mintFee, "Insufficient mint fee");
         require(contentType_ <= 5, "Invalid content type");
 
-        // Split mintFee: treasuryBps% to treasury, poolBps% to content-type pool
+        // Unlocked users (paid 1 ETH via BonzaiUnlock) mint for free
+        bool isUnlocked = false;
+        if (address(unlockContract) != address(0)) {
+            try unlockContract.hasUnlocked(msg.sender) returns (bool result) {
+                isUnlocked = result;
+            } catch {
+                // Unlock contract unavailable — charge normal fee
+            }
+        }
+
+        // Use per-type fee if set, otherwise fall back to legacy flat fee
+        uint256 fee = isUnlocked ? 0 : (mintFees[contentType_] > 0 ? mintFees[contentType_] : mintFee);
+        require(msg.value >= fee, "Insufficient mint fee");
+
+        // Split fee: treasuryBps% to treasury, poolBps% to content-type pool
         // All ETH transfers happen BEFORE _safeMint to prevent reentrancy
         // via onERC721Received callback.
-        uint256 treasuryAmt = (mintFee * treasuryBps) / 10000;
-        uint256 poolAmt = mintFee - treasuryAmt;
+        uint256 treasuryAmt = (fee * treasuryBps) / 10000;
+        uint256 poolAmt = fee - treasuryAmt;
 
         // treasury is guaranteed != address(0) by initialize and setTreasury
         (bool s1, ) = treasury.call{value: treasuryAmt}("");
@@ -214,7 +256,7 @@ contract BonzaiCollectibles is ERC721URIStorage, Ownable, ReentrancyGuard, IERC2
         }
 
         // Refund excess ETH to minter
-        uint256 excess = msg.value - mintFee;
+        uint256 excess = msg.value - fee;
         if (excess > 0) {
             (bool refunded, ) = msg.sender.call{value: excess}("");
             require(refunded, "ETH refund failed");
@@ -343,12 +385,24 @@ contract BonzaiCollectibles is ERC721URIStorage, Ownable, ReentrancyGuard, IERC2
 
     function setMintFee(uint256 _fee) external onlyOwner {
         require(_fee > 0, "Fee cannot be zero");
+        uint256 old = mintFee;
         mintFee = _fee;
+        emit LegacyMintFeeUpdated(old, _fee);
+    }
+
+    function setMintFeeForType(uint8 contentType, uint256 _fee) external onlyOwner {
+        require(contentType <= 5, "Invalid content type");
+        require(_fee > 0, "Fee cannot be zero");
+        uint256 old = mintFees[contentType];
+        mintFees[contentType] = _fee;
+        emit MintFeeUpdated(contentType, old, _fee);
     }
 
     function setTreasury(address _treasury) external onlyOwner {
         require(_treasury != address(0), "Invalid treasury");
+        address old = treasury;
         treasury = _treasury;
+        emit TreasuryUpdated(old, _treasury);
     }
 
     function setMintPool(address _pool) external onlyOwner {
@@ -372,7 +426,16 @@ contract BonzaiCollectibles is ERC721URIStorage, Ownable, ReentrancyGuard, IERC2
 
     function setRoyaltyBps(uint256 _royaltyBps) external onlyOwner {
         require(_royaltyBps <= 1000, "Max 10%");
+        uint256 old = royaltyBps;
         royaltyBps = _royaltyBps;
+        emit RoyaltyBpsUpdated(old, _royaltyBps);
+    }
+
+    /// @notice Set or remove the unlock contract. Pass address(0) to disable free minting.
+    function setUnlockContract(address _unlock) external onlyOwner {
+        address old = address(unlockContract);
+        unlockContract = IBonzaiUnlock(_unlock);
+        emit UnlockContractUpdated(old, _unlock);
     }
 
     /**

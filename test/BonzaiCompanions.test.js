@@ -5,6 +5,7 @@ const { deployCompanions } = require("./helpers/deploy");
 const {
   COMPANION_MINT_PRICE,
   MAX_SUPPLY,
+  UNLOCK_PRICE,
   VALID_SPENDING_PROFILE,
   ALL_ONES_PROFILE,
   ALL_TENS_PROFILE,
@@ -15,8 +16,8 @@ const {
 // SHARED HELPERS
 // ═══════════════════════════════════════════════════════════════════════════
 
-const AGENT_URI = "ar://abc123-agent-registration";
-const UPDATED_URI = "ar://updated-agent-registration";
+const AGENT_URI = "ipfs://abc123-agent-registration";
+const UPDATED_URI = "ipfs://updated-agent-registration";
 const PERSONALITY_HASH = ethers.keccak256(ethers.toUtf8Bytes("personality-v1"));
 const GENDER_NEUTRAL = 0;
 const GENDER_FEMALE = 1;
@@ -1007,6 +1008,178 @@ describe("BonzaiCompanions", function () {
     it("should not support a random interface", async function () {
       const { companions } = await loadFixture(deployCompanions);
       expect(await companions.supportsInterface("0xdeadbeef")).to.equal(false);
+    });
+  });
+
+  // ─────────────────────────────────────────────────────────────────────────
+  // PER-WALLET CAP (MAX_PER_WALLET = 4)
+  // ─────────────────────────────────────────────────────────────────────────
+
+  describe("Per-wallet cap", function () {
+    it("should allow minting up to MAX_PER_WALLET companions", async function () {
+      const { companions, user1 } = await loadFixture(deployCompanions);
+
+      for (let i = 0; i < 4; i++) {
+        await mintDefault(companions, user1);
+      }
+      expect(await companions.balanceOf(user1.address)).to.equal(4);
+    });
+
+    it("should revert when exceeding MAX_PER_WALLET", async function () {
+      const { companions, user1 } = await loadFixture(deployCompanions);
+
+      for (let i = 0; i < 4; i++) {
+        await mintDefault(companions, user1);
+      }
+
+      await expect(
+        mintDefault(companions, user1)
+      ).to.be.revertedWith("Max companions per wallet reached");
+    });
+
+    it("should allow minting again after transferring a companion", async function () {
+      const { companions, user1, user2 } = await loadFixture(deployCompanions);
+
+      const tokenIds = [];
+      for (let i = 0; i < 4; i++) {
+        tokenIds.push(await mintDefault(companions, user1));
+      }
+
+      // Transfer one away
+      await companions.connect(user1).transferFrom(user1.address, user2.address, tokenIds[0]);
+      expect(await companions.balanceOf(user1.address)).to.equal(3);
+
+      // Should be able to mint again
+      await mintDefault(companions, user1);
+      expect(await companions.balanceOf(user1.address)).to.equal(4);
+    });
+
+    it("should enforce cap independently per wallet", async function () {
+      const { companions, user1, user2 } = await loadFixture(deployCompanions);
+
+      // user1 mints 4
+      for (let i = 0; i < 4; i++) {
+        await mintDefault(companions, user1);
+      }
+
+      // user2 can still mint
+      await mintDefault(companions, user2);
+      expect(await companions.balanceOf(user2.address)).to.equal(1);
+    });
+  });
+
+  // ─────────────────────────────────────────────────────────────────────────
+  // FREE MINTING FOR UNLOCKED USERS
+  // ─────────────────────────────────────────────────────────────────────────
+
+  describe("Free minting for unlocked users", function () {
+    async function deployWithUnlock() {
+      const { companions, owner, treasury, user1, user2, user3 } = await loadFixture(deployCompanions);
+
+      const BonzaiUnlock = await ethers.getContractFactory("BonzaiUnlock");
+      const unlock = await BonzaiUnlock.deploy(treasury.address, treasury.address, UNLOCK_PRICE);
+
+      await companions.connect(owner).setUnlockContract(await unlock.getAddress());
+
+      return { companions, unlock, owner, treasury, user1, user2, user3 };
+    }
+
+    it("should allow unlocked user to mint for free (0 ETH)", async function () {
+      const { companions, unlock, user1 } = await loadFixture(deployWithUnlock);
+
+      // Unlock user1
+      await unlock.connect(user1).unlock({ value: UNLOCK_PRICE });
+
+      // Mint with 0 ETH
+      const tokenId = await mintDefault(companions, user1, { value: 0n });
+      expect(tokenId).to.equal(1);
+      expect(await companions.ownerOf(tokenId)).to.equal(user1.address);
+    });
+
+    it("should not send ETH to treasury for unlocked user", async function () {
+      const { companions, unlock, user1, treasury } = await loadFixture(deployWithUnlock);
+
+      await unlock.connect(user1).unlock({ value: UNLOCK_PRICE });
+
+      await expect(
+        companions.connect(user1).mintCompanion(
+          AGENT_URI, PERSONALITY_HASH, VALID_SPENDING_PROFILE, GENDER_FEMALE, ethers.ZeroAddress,
+          { value: 0 }
+        )
+      ).to.changeEtherBalance(treasury, 0);
+    });
+
+    it("should still charge non-unlocked users the full mint price", async function () {
+      const { companions, user2, treasury } = await loadFixture(deployWithUnlock);
+
+      await expect(
+        companions.connect(user2).mintCompanion(
+          AGENT_URI, PERSONALITY_HASH, VALID_SPENDING_PROFILE, GENDER_FEMALE, ethers.ZeroAddress,
+          { value: COMPANION_MINT_PRICE }
+        )
+      ).to.changeEtherBalance(treasury, COMPANION_MINT_PRICE);
+    });
+
+    it("should revert for non-unlocked users with insufficient ETH", async function () {
+      const { companions, user2 } = await loadFixture(deployWithUnlock);
+
+      await expect(
+        companions.connect(user2).mintCompanion(
+          AGENT_URI, PERSONALITY_HASH, VALID_SPENDING_PROFILE, GENDER_FEMALE, ethers.ZeroAddress,
+          { value: 0 }
+        )
+      ).to.be.revertedWith("Insufficient ETH");
+    });
+
+    it("should refund excess ETH to unlocked user", async function () {
+      const { companions, unlock, user1 } = await loadFixture(deployWithUnlock);
+
+      await unlock.connect(user1).unlock({ value: UNLOCK_PRICE });
+
+      // Send 0.1 ETH when fee is 0 — should refund all
+      const overpay = ethers.parseEther("0.1");
+      await expect(
+        companions.connect(user1).mintCompanion(
+          AGENT_URI, PERSONALITY_HASH, VALID_SPENDING_PROFILE, GENDER_FEMALE, ethers.ZeroAddress,
+          { value: overpay }
+        )
+      ).to.changeEtherBalance(user1, 0n);
+    });
+
+    it("should allow owner to set unlock contract", async function () {
+      const { companions, owner, unlock } = await loadFixture(deployWithUnlock);
+      const unlockAddr = await unlock.getAddress();
+
+      expect(await companions.unlockContract()).to.equal(unlockAddr);
+    });
+
+    it("should allow setting unlock contract to zero address (disable)", async function () {
+      const { companions, owner } = await loadFixture(deployWithUnlock);
+
+      await companions.connect(owner).setUnlockContract(ethers.ZeroAddress);
+      expect(await companions.unlockContract()).to.equal(ethers.ZeroAddress);
+    });
+
+    it("should revert setUnlockContract from non-owner", async function () {
+      const { companions, user1 } = await loadFixture(deployWithUnlock);
+
+      await expect(
+        companions.connect(user1).setUnlockContract(ethers.ZeroAddress)
+      ).to.be.revertedWithCustomError(companions, "OwnableUnauthorizedAccount");
+    });
+
+    it("should enforce per-wallet cap even for unlocked users", async function () {
+      const { companions, unlock, user1 } = await loadFixture(deployWithUnlock);
+
+      await unlock.connect(user1).unlock({ value: UNLOCK_PRICE });
+
+      for (let i = 0; i < 4; i++) {
+        await mintDefault(companions, user1, { value: 0n });
+      }
+
+      await expect(
+        mintDefault(companions, user1, { value: 0n })
+      ).to.be.revertedWith("Max companions per wallet reached");
     });
   });
 });

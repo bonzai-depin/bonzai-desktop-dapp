@@ -1797,18 +1797,18 @@ async function handleMintCommand(channelId, args, webhookData = {}) {
         // Build bare registration metadata
         const registration = buildBareRegistration({ gender });
 
-        // Upload registration to Arweave via IPC
+        // Upload registration to IPFS via Pinata
         let metadataURI;
         try {
-          const { irysService } = await import('./irys.service.js');
-          const tx = await irysService.uploadJSON(registration, [
+          const { storageService } = await import('./storage.service.js');
+          const tx = await storageService.uploadJSON(registration, [
             { name: 'Content-Type', value: 'application/json' },
             { name: 'bonzai-type', value: 'companion-registration' },
             { name: 'bonzai-status', value: 'pending_setup' },
           ]);
-          metadataURI = `ar://${tx.id}`;
+          metadataURI = tx.url;
         } catch (uploadErr) {
-          console.error('[OpenClaw] Arweave upload failed:', uploadErr);
+          console.error('[OpenClaw] IPFS upload failed:', uploadErr);
           return { text: `Failed to upload companion metadata: ${uploadErr.message}` };
         }
 
@@ -1918,16 +1918,16 @@ async function handleMintCommand(channelId, args, webhookData = {}) {
         const { generateCompanionPicture } = await import('../skills/flagship.js');
         const imageResult = await generateCompanionPicture({ ...personality, firstName, familyName });
 
-        // Upload image to Arweave
+        // Upload image to IPFS via Pinata
         let imageUri = '';
         if (imageResult?.base64 || imageResult?.image) {
-          const { irysService } = await import('./irys.service.js');
-          const imageTx = await irysService.uploadBase64({
+          const { storageService } = await import('./storage.service.js');
+          const imageTx = await storageService.uploadBase64({
             base64: imageResult.base64 || imageResult.image,
             contentType: 'image/png',
             tags: [{ name: 'bonzai-type', value: 'companion-portrait' }],
           });
-          imageUri = `ar://${imageTx.id}`;
+          imageUri = imageTx.url;
         }
 
         // Build full registration metadata
@@ -1955,13 +1955,13 @@ async function handleMintCommand(channelId, args, webhookData = {}) {
           },
         };
 
-        // Upload registration to Arweave
-        const { irysService } = await import('./irys.service.js');
-        const metaTx = await irysService.uploadJSON(registration, [
+        // Upload registration to IPFS via Pinata
+        const { storageService } = await import('./storage.service.js');
+        const metaTx = await storageService.uploadJSON(registration, [
           { name: 'Content-Type', value: 'application/json' },
           { name: 'bonzai-type', value: 'companion-registration' },
         ]);
-        const metadataURI = `ar://${metaTx.id}`;
+        const metadataURI = metaTx.url;
 
         // Mint on Base
         let personalityHash = '0x' + '0'.repeat(64);
@@ -2035,7 +2035,7 @@ async function handleMintCommand(channelId, args, webhookData = {}) {
             // Try to fetch metadata to check status
             let status = 'unknown';
             try {
-              const metaUrl = uri.startsWith('ar://') ? `https://arweave.net/${uri.slice(5)}` : uri;
+              const metaUrl = uri.startsWith('ipfs://') ? `https://gateway.pinata.cloud/ipfs/${uri.slice(7)}` : uri;
               const resp = await fetch(metaUrl);
               const meta = await resp.json();
               status = meta?.bonzai?.status || (isBareCompanion(meta) ? 'pending_setup' : 'active');

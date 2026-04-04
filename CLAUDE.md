@@ -135,7 +135,7 @@ npm run publish
 | `agentWallet.service.js` | Local deterministic agent wallets for companions |
 | `lukso.service.js` | LUKSO Universal Profile (LSP23 factory, LSP6 controller) |
 | `auth.service.js` | JWT authentication for Flask server |
-| `irys.service.js` | Arweave/Irys uploads for metadata and content |
+| `storage.service.js` | IPFS uploads via Pinata for metadata and content |
 | `moltbook.service.js` | Moltbook social network API integration |
 | `openclaw.handler.js` | OpenClaw webhook → companion response pipeline |
 | `skill.service.js` | Skill loading, validation, execution |
@@ -253,6 +253,8 @@ Common channels:
 | LVL6 | 50,000 | Training NFTs, ERC-20 token issuance | Training pool |
 
 - **Alternative**: 1 ETH one-time payment via BonzaiUnlock on Base unlocks ALL levels permanently
+- **Unlocked users mint for free**: Both content NFTs (BonzaiCollectibles) and companions (BonzaiCompanions) have zero mint fee for users who have unlocked via BonzaiUnlock
+- **Companion per-wallet cap**: Maximum 4 companions per wallet (MAX_PER_WALLET constant)
 - Proceeds split: 50% Foundation / 50% Liquidity
 
 ### Treasury Wallets
@@ -269,9 +271,9 @@ Deployed via `scripts/deploy-base-mvp.js`. All addresses set in `web3.config.js`
 |----------|------|---------|
 | `BonzaiUnlock` | `BonzaiUnlock.sol` | 1 ETH all-level unlock, 50/50 proceeds split |
 | `BonzaiMintPool` | `BonzaiMintPool.sol` | 6 epoch-based revenue pools (weekly epochs, 256-block flash loan protection) |
-| `BonzaiContent` | `BonzaiContent.sol` | ERC-721 content NFT, 80/20 fee split (treasury/pool), ERC-2981 royalties (7.5%), ERC721-C |
+| `BonzaiCollectibles` | `BonzaiCollectibles.sol` | ERC-721 content NFT (ERC-1167 clone per user), per-type mint fees (free for unlocked users), 80/20 fee split, ERC-2981 royalties (7.5%), ERC721-C |
 | `BonzaiRoyaltySplitter` | `BonzaiRoyaltySplitter.sol` | Secondary royalty distribution (2/3 treasury, 1/3 pools weighted by activity) |
-| `BonzaiCompanions` | `BonzaiCompanions.sol` | ERC-721 + ERC-8004 companion NFT, 10K max supply, spending profiles (uint96), 0.25 ETH mint |
+| `BonzaiCompanions` | `BonzaiCompanions.sol` | ERC-721 + ERC-8004 companion NFT, 10K max supply, 4 per wallet, spending profiles (uint96), 0.25 ETH mint (free for unlocked users) |
 | `BonzaiUniswapHook` | `BonzaiUniswapHook.sol` | V4 afterSwap hook capturing 1% fee, deployed via CREATE2 for address flags |
 | `CompanionTokenFactory` | `CompanionTokenFactory.sol` | Atomic ERC-20 + V4 LP for companions (1B supply, 96/4 split, LP locked at dead address) |
 | `FineTuneTokenFactory` | `FineTuneTokenFactory.sol` | Atomic ERC-20 + V4 LP for fine-tuned models (same structure) |
@@ -401,12 +403,23 @@ Companions (ERC-721 NFTs on Base) can register as co-owners of skills. When a sk
 
 ## Content NFT Minting
 
-### Base (ERC-721 via BonzaiContent)
-- Mint fee: 0.0025 ETH
+### Base (ERC-721 via BonzaiCollectibles)
+Each user gets their own collection clone (ERC-1167) via BonzaiCollectiblesFactory.
+
+**Per-type mint fees** (natural LVL progression):
+
+| Type | Index | Level | Mint Fee |
+|------|-------|-------|----------|
+| Text | 0 | LVL1 | 0.0005 ETH |
+| Audio | 1 | LVL2 | 0.001 ETH |
+| Image | 2 | LVL3 | 0.0015 ETH |
+| Video | 3 | LVL4 | 0.0025 ETH |
+| 3D | 4 | LVL5 | 0.0035 ETH |
+| Training | 5 | LVL6 | 0.005 ETH |
+
 - Fee split: 80% treasury, 20% to content-type pool (via MintPool)
 - ERC-2981 royalties: 7.5%
 - ERC721-C transfer validation (Limit Break)
-- 6 content types: text(0), audio(1), image(2), video(3), object(4), training(5)
 
 ### LUKSO (LSP8)
 - Mint fee: 15 LYX
@@ -417,6 +430,7 @@ Companions (ERC-721 NFTs on Base) can register as co-owners of skills. When a sk
 - 6 pools (one per level/content type)
 - Weekly epochs (604,800 seconds)
 - BONZAI holders register per epoch → claim proportional share after finalization
+- **Companion required**: Must own at least 1 Companion NFT to claim rewards (enforced at `confirmClaim`)
 - 256-block gap enforcement (flash loan protection)
 - Pool thresholds: [1000, 5000, 10000, 25000, 33000, 50000] BONZAI
 - Revenue sources: content mint fees (20%), hook pool fees, royalty splitter distributions

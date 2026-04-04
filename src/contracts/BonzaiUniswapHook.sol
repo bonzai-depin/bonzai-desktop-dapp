@@ -224,14 +224,22 @@ contract BonzaiUniswapHook is Ownable, ReentrancyGuard {
             return (this.afterSwap.selector, 0);
         }
 
+        // Determine output currency
+        address outputCurrency = params.zeroForOne ? key.currency1 : key.currency0;
+
+        // Only capture fees on native ETH output — ERC-20 fee distribution not supported.
+        // Claim functions use .call{value:}("") which only works for ETH. Capturing
+        // ERC-20 fees would lock tokens permanently. This means fees are only taken on
+        // sells (companion/finetune token → ETH), not on buys (ETH → token).
+        if (outputCurrency != address(0)) {
+            return (this.afterSwap.selector, 0);
+        }
+
         // Calculate 1% fee
         uint256 feeAmount = (uint256(outputAmount) * FEE_BPS) / BPS_DENOMINATOR;
         if (feeAmount == 0) {
             return (this.afterSwap.selector, 0);
         }
-
-        // Determine output currency
-        address outputCurrency = params.zeroForOne ? key.currency1 : key.currency0;
 
         // Take fee from PoolManager
         poolManager.take(outputCurrency, address(this), feeAmount);

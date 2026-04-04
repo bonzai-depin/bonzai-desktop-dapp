@@ -9,7 +9,7 @@
         <span class="material-symbols-outlined" style="font-size: 48px">
           closed_caption
         </span>
-        Video Captioning
+        Realtime Video Captioning
       </h2>
       <p class="skill-description is-size-5">
         {{

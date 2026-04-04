@@ -4602,8 +4602,7 @@ export const meditationForge = createSkillDefinition({
   version: '1.0.0',
   author: { address: '0x8Ff3b2e823b33BeE30e699bB1b6BBc8F622fEa89', name: 'BonzAI', verified: true },
   category: 'healthcare',
-  price: 0,
-  purchasePrice: '0.1', // 0.1 ETH one-time purchase fee
+  price: 9.99,
   tags: ['meditation', 'wellness', 'mindfulness', 'relaxation', 'ASMR', 'sleep'],
   // Custom UI component handles all rendering
   hasCustomUI: true,
@@ -4680,13 +4679,12 @@ Return ONLY valid JSON.`;
 
 export const videoCaptioning = createSkillDefinition({
   id: 'video-captioning-v1.0.0',
-  name: 'Video Captioning',
+  name: 'Realtime Video Captioning',
   description: 'Generate real-time captions and transcripts from any video using AI vision analysis. Load local files or URLs, get frame-by-frame descriptions, and export SRT subtitles.',
   version: '1.0.0',
   author: { address: '0x8Ff3b2e823b33BeE30e699bB1b6BBc8F622fEa89', name: 'BonzAI', verified: true },
-  category: 'productivity',
-  price: 0,
-  purchasePrice: '0.1',
+  category: 'entertainment',
+  price: 9.99,
   tags: ['video', 'captioning', 'transcription', 'subtitles', 'accessibility', 'vision'],
   hasCustomUI: true,
   platform: { os: 'darwin', arch: 'arm64' }, // Apple Silicon only (mlx_vlm)
@@ -4712,7 +4710,7 @@ export const videoCaptioning = createSkillDefinition({
 });
 
 // ═══════════════════════════════════════════════════════════════════════════
-// 2b. TRADING CARD GAME ANALYSIS (Productivity — OCR + vision + pricing agentic skill)
+// 2b. TRADING CARD GAME ANALYSIS (Entertainment — OCR + vision + pricing agentic skill)
 // ═══════════════════════════════════════════════════════════════════════════
 
 export const tcgAnalysis = createSkillDefinition({
@@ -4721,9 +4719,8 @@ export const tcgAnalysis = createSkillDefinition({
   description: 'Analyze Trading Card Game cards with AI-powered OCR and vision. Supports Pokémon, Yu-Gi-Oh!, Magic: The Gathering, One Piece, Lorcana, and more. Get live market prices and PGT (Peer-to-Peer Grading Technology) condition grading on a 1000-point scale.',
   version: '1.0.0',
   author: { address: '0x8Ff3b2e823b33BeE30e699bB1b6BBc8F622fEa89', name: 'BonzAI', verified: true },
-  category: 'productivity',
-  price: 0,
-  purchasePrice: '0.1',
+  category: 'entertainment',
+  price: 9.99,
   tags: ['tcg', 'cards', 'ocr', 'grading', 'pokemon', 'mtg', 'yugioh', 'collector', 'pricing'],
   hasCustomUI: true,
   platform: { os: 'darwin', arch: 'arm64' }, // Apple Silicon only (mlx_vlm)
@@ -7038,7 +7035,8 @@ export const polymarketTopPerformers = createSkillDefinition({
   author: { address: '0x8Ff3b2e823b33BeE30e699bB1b6BBc8F622fEa89', name: 'BonzAI', verified: true },
   category: 'finance',
   tags: ['polymarket', 'copy-trading', 'prediction-markets'],
-  price: 0,
+  price: 9.99,
+  disabled: true, // Temporarily disabled for this release
   requirements: { minLevel: 1, requiredApis: ['polymarket'], requiredPermissions: ['network:read'] },
   inputs: {
     numTraders: { type: 'number', default: 10, min: 1, max: 20, label: 'Top traders to analyze', description: 'Number of top PnL traders to fetch from leaderboard' },
@@ -7145,7 +7143,8 @@ export const dslaSmartMarket = createSkillDefinition({
   author: { address: '0x8Ff3b2e823b33BeE30e699bB1b6BBc8F622fEa89', name: 'BonzAI', verified: true },
   category: 'finance',
   tags: ['dsla', 'prediction-markets', 'sla'],
-  price: 0,
+  price: 9.99,
+  disabled: true, // Temporarily disabled for this release
   requirements: { minLevel: 1, requiredApis: ['dsla', 'coingecko', 'chainlink'], requiredPermissions: ['network:read', 'wallet:sign'] },
   inputs: {
     useCase: { type: 'select', default: 'vol_returns', options: DSLA_USE_CASES.map(u => u.key), label: 'Use Case', description: 'The type of SLA to create' },

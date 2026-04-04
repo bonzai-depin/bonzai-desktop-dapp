@@ -30,9 +30,12 @@ function makePoolKey(hookAddress, tokenAddress) {
 }
 
 /**
- * Default SwapParams (zeroForOne = true).
+ * Default SwapParams.
+ * zeroForOne = false means user sells token1 (ERC-20) and receives token0 (ETH).
+ * Since currency0 = address(0) in our PoolKey, outputCurrency = address(0) = native ETH,
+ * which is required for the hook to capture fees after the ETH-only fee guard.
  */
-function makeSwapParams(zeroForOne = true) {
+function makeSwapParams(zeroForOne = false) {
   return {
     zeroForOne,
     amountSpecified: 0,

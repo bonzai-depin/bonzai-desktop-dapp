@@ -68,13 +68,13 @@ interface IBonzaiUniswapHookFTF {
 /**
  * @title FineTuneToken
  * @notice Burnable ERC-20 token for fine-tuned AI models on Base
- * @dev Simple token linking to content NFT token ID and Irys model hash
+ * @dev Simple token linking to content NFT token ID and IPFS model hash
  */
 contract FineTuneToken is ERC20, ERC20Burnable {
     /// @notice Content NFT token ID that this model token represents
     uint256 public immutable contentTokenId;
 
-    /// @notice Irys/Arweave hash of the model weights
+    /// @notice IPFS/Pinata hash of the model weights
     string public modelIrysHash;
 
     /// @notice Creator address
@@ -133,7 +133,7 @@ contract FineTuneToken is ERC20, ERC20Burnable {
  * - LP position NFT sent to DEAD_ADDRESS (unruggable - permanent liquidity)
  * - Tokens are burnable (deflationary)
  * - One token per content NFT (prevents duplicates)
- * - Links to content NFT token ID and Irys model hash
+ * - Links to content NFT token ID and IPFS model hash
  * - Hook captures 1% of swap output: 80% creator, 10% treasury, 10% MintPool(LVL6)
  */
 contract FineTuneTokenFactory is Ownable, ReentrancyGuard, IERC721Receiver {
@@ -262,7 +262,7 @@ contract FineTuneTokenFactory is Ownable, ReentrancyGuard, IERC721Receiver {
      * @param contentTokenId BonzaiContent NFT token ID for the fine-tuned model
      * @param name Full name (e.g., "BonzAI Fine-Tune: My Custom Model")
      * @param symbol Token symbol (e.g., "BZCUSTOM")
-     * @param modelIrysHash Irys/Arweave hash of the model weights
+     * @param modelIrysHash IPFS/Pinata hash of the model weights
      * @param creator Creator address (receives 4% of supply + 80% hook fees)
      *
      * @return token Address of the deployed token
@@ -438,10 +438,15 @@ contract FineTuneTokenFactory is Ownable, ReentrancyGuard, IERC721Receiver {
         pure
         returns (uint160)
     {
-        uint256 ratioX192 = (ethAmount << 192) / tokenAmount;
-        uint256 sqrtRatio = _sqrt(ratioX192);
-        require(sqrtRatio <= type(uint160).max, "Price overflow");
-        return uint160(sqrtRatio);
+        require(ethAmount > 0 && tokenAmount > 0, "Zero amount");
+        // sqrtPriceX96 = sqrt(ethAmount * 2^192 / tokenAmount)
+        // Split shift to avoid overflow: (ethAmount << 192) overflows for ethAmount >= 2^64
+        // Instead: compute (ethAmount << 96) / tokenAmount, then shift result << 96 before sqrt
+        uint256 step1 = (ethAmount << 96) / tokenAmount;
+        uint256 ratioX192 = step1 << 96;
+        uint256 sqrtResult = _sqrt(ratioX192);
+        require(sqrtResult > 0 && sqrtResult <= type(uint160).max, "Invalid sqrt price");
+        return uint160(sqrtResult);
     }
 
     function _sqrt(uint256 x) internal pure returns (uint256) {

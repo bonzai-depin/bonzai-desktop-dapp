@@ -29,7 +29,7 @@ describe("BonzaiMintPool", function () {
    * Returns all objects for further assertions.
    */
   async function setupFullClaimFlow() {
-    const { mintPool, token, owner, user1, user2, user3, treasury } =
+    const { mintPool, token, companionNFT, owner, user1, user2, user3, treasury } =
       await loadFixture(deployMintPool);
 
     const poolAddress = await mintPool.getAddress();
@@ -39,6 +39,10 @@ describe("BonzaiMintPool", function () {
     const user2Amount = ethers.parseEther("1000");
     await token.mint(user1.address, user1Amount);
     await token.mint(user2.address, user2Amount);
+
+    // Mint companion NFTs (required for claiming)
+    await companionNFT.mintTo(user1.address);
+    await companionNFT.mintTo(user2.address);
 
     // Set treasury as the contentContract (authorized depositor)
     await mintPool.setContentContract(treasury.address);
@@ -66,6 +70,7 @@ describe("BonzaiMintPool", function () {
     return {
       mintPool,
       token,
+      companionNFT,
       owner,
       user1,
       user2,
@@ -97,23 +102,26 @@ describe("BonzaiMintPool", function () {
     });
 
     it("should reject zero address for token", async function () {
+      const [, , , , treasury] = await ethers.getSigners();
       const BonzaiMintPool = await ethers.getContractFactory("BonzaiMintPool");
       await expect(
-        BonzaiMintPool.deploy(ethers.ZeroAddress, POOL_THRESHOLDS, EPOCH_DURATION)
+        BonzaiMintPool.deploy(ethers.ZeroAddress, POOL_THRESHOLDS, EPOCH_DURATION, treasury.address)
       ).to.be.revertedWith("Invalid token address");
     });
 
     it("should reject zero epoch duration", async function () {
+      const [, , , , treasury] = await ethers.getSigners();
       const token = await (
         await ethers.getContractFactory("MockERC20")
       ).deploy("BONZAI", "BONZAI");
       const BonzaiMintPool = await ethers.getContractFactory("BonzaiMintPool");
       await expect(
-        BonzaiMintPool.deploy(await token.getAddress(), POOL_THRESHOLDS, 0)
+        BonzaiMintPool.deploy(await token.getAddress(), POOL_THRESHOLDS, 0, treasury.address)
       ).to.be.revertedWith("Invalid epoch duration");
     });
 
     it("should reject non-ascending thresholds", async function () {
+      const [, , , , treasury] = await ethers.getSigners();
       const token = await (
         await ethers.getContractFactory("MockERC20")
       ).deploy("BONZAI", "BONZAI");
@@ -123,12 +131,14 @@ describe("BonzaiMintPool", function () {
         BonzaiMintPool.deploy(
           await token.getAddress(),
           badThresholds,
-          EPOCH_DURATION
+          EPOCH_DURATION,
+          treasury.address
         )
       ).to.be.revertedWith("Thresholds must be ascending");
     });
 
     it("should reject zero threshold", async function () {
+      const [, , , , treasury] = await ethers.getSigners();
       const token = await (
         await ethers.getContractFactory("MockERC20")
       ).deploy("BONZAI", "BONZAI");
@@ -138,7 +148,8 @@ describe("BonzaiMintPool", function () {
         BonzaiMintPool.deploy(
           await token.getAddress(),
           badThresholds,
-          EPOCH_DURATION
+          EPOCH_DURATION,
+          treasury.address
         )
       ).to.be.revertedWith("Threshold cannot be zero");
     });
@@ -395,9 +406,10 @@ describe("BonzaiMintPool", function () {
 
   describe("confirmClaim", function () {
     it("should confirm claim for registered user in epoch N+1", async function () {
-      const { mintPool, token, user1, treasury } =
+      const { mintPool, token, companionNFT, user1, treasury } =
         await loadFixture(deployMintPool);
       await token.mint(user1.address, ethers.parseEther("10000"));
+      await companionNFT.mintTo(user1.address);
       await mintPool.setContentContract(treasury.address);
       await mintPool.connect(user1).registerForEpoch();
       await mintPool
@@ -433,8 +445,22 @@ describe("BonzaiMintPool", function () {
       ).to.be.revertedWith("Claim window closed");
     });
 
+    it("should reject confirmClaim without companion NFT", async function () {
+      const { mintPool, token, user1, treasury } = await loadFixture(deployMintPool);
+      await token.mint(user1.address, ethers.parseEther("10000"));
+      await mintPool.setContentContract(treasury.address);
+      await mintPool.connect(user1).registerForEpoch();
+
+      await time.increase(EPOCH_DURATION);
+
+      await expect(
+        mintPool.connect(user1).confirmClaim(0)
+      ).to.be.revertedWith("Must own a companion");
+    });
+
     it("should reject confirmClaim for unregistered user", async function () {
-      const { mintPool, user1 } = await loadFixture(deployMintPool);
+      const { mintPool, companionNFT, user1 } = await loadFixture(deployMintPool);
+      await companionNFT.mintTo(user1.address);
       await time.increase(EPOCH_DURATION);
 
       await expect(
@@ -443,9 +469,10 @@ describe("BonzaiMintPool", function () {
     });
 
     it("should reject confirmClaim if balance dropped below registered amount", async function () {
-      const { mintPool, token, user1 } = await loadFixture(deployMintPool);
+      const { mintPool, token, companionNFT, user1 } = await loadFixture(deployMintPool);
       const amount = ethers.parseEther("10000");
       await token.mint(user1.address, amount);
+      await companionNFT.mintTo(user1.address);
       await mintPool.connect(user1).registerForEpoch();
 
       // Transfer tokens away before confirming
@@ -525,9 +552,10 @@ describe("BonzaiMintPool", function () {
     });
 
     it("should reject claim before 256 blocks after confirmClaim", async function () {
-      const { mintPool, token, user1, treasury } =
+      const { mintPool, token, companionNFT, user1, treasury } =
         await loadFixture(deployMintPool);
       await token.mint(user1.address, ethers.parseEther("50000"));
+      await companionNFT.mintTo(user1.address);
       await mintPool.setContentContract(treasury.address);
       await mintPool.connect(user1).registerForEpoch();
       await mintPool
@@ -553,10 +581,11 @@ describe("BonzaiMintPool", function () {
     });
 
     it("should reject claim if balance dropped after registration", async function () {
-      const { mintPool, token, user1, treasury } =
+      const { mintPool, token, companionNFT, user1, treasury } =
         await loadFixture(deployMintPool);
       const amount = ethers.parseEther("50000");
       await token.mint(user1.address, amount);
+      await companionNFT.mintTo(user1.address);
       await mintPool.setContentContract(treasury.address);
       await mintPool.connect(user1).registerForEpoch();
       await mintPool
@@ -576,9 +605,10 @@ describe("BonzaiMintPool", function () {
     });
 
     it("should reject claim when epoch has no deposits in pool", async function () {
-      const { mintPool, token, user1, treasury } =
+      const { mintPool, token, companionNFT, user1, treasury } =
         await loadFixture(deployMintPool);
       await token.mint(user1.address, ethers.parseEther("50000"));
+      await companionNFT.mintTo(user1.address);
       await mintPool.setContentContract(treasury.address);
       await mintPool.connect(user1).registerForEpoch();
       // Deposit to pool 0 but NOT to pool 1
@@ -609,9 +639,10 @@ describe("BonzaiMintPool", function () {
     });
 
     it("should reject claim when claim window is closed (epoch N+2)", async function () {
-      const { mintPool, token, user1, treasury } =
+      const { mintPool, token, companionNFT, user1, treasury } =
         await loadFixture(deployMintPool);
       await token.mint(user1.address, ethers.parseEther("50000"));
+      await companionNFT.mintTo(user1.address);
       await mintPool.setContentContract(treasury.address);
       await mintPool.connect(user1).registerForEpoch();
       await mintPool
@@ -677,10 +708,11 @@ describe("BonzaiMintPool", function () {
 
   describe("claimEpochBatch", function () {
     it("should claim from multiple pools in one transaction", async function () {
-      const { mintPool, token, user1, treasury } =
+      const { mintPool, token, companionNFT, user1, treasury } =
         await loadFixture(deployMintPool);
       const amount = ethers.parseEther("50000"); // LVL5
       await token.mint(user1.address, amount);
+      await companionNFT.mintTo(user1.address);
       await mintPool.setContentContract(treasury.address);
       await mintPool.connect(user1).registerForEpoch();
 
@@ -709,11 +741,12 @@ describe("BonzaiMintPool", function () {
     });
 
     it("should skip pools where user is below threshold in batch", async function () {
-      const { mintPool, token, user1, treasury } =
+      const { mintPool, token, companionNFT, user1, treasury } =
         await loadFixture(deployMintPool);
       // 1000 BONZAI = LVL1 only, qualifies for pool 0 but not pool 1 (5000)
       const amount = ethers.parseEther("1000");
       await token.mint(user1.address, amount);
+      await companionNFT.mintTo(user1.address);
       await mintPool.setContentContract(treasury.address);
       await mintPool.connect(user1).registerForEpoch();
 
@@ -738,10 +771,11 @@ describe("BonzaiMintPool", function () {
     });
 
     it("should revert batch if nothing to claim", async function () {
-      const { mintPool, token, user1, treasury } =
+      const { mintPool, token, companionNFT, user1, treasury } =
         await loadFixture(deployMintPool);
       const amount = ethers.parseEther("50000");
       await token.mint(user1.address, amount);
+      await companionNFT.mintTo(user1.address);
       await mintPool.setContentContract(treasury.address);
       await mintPool.connect(user1).registerForEpoch();
       // No deposits at all
@@ -770,7 +804,7 @@ describe("BonzaiMintPool", function () {
   // ═══════════════════════════════════════════════════════════════════════════
 
   describe("sweepUnclaimed", function () {
-    it("should sweep unclaimed ETH after claim window closes", async function () {
+    it("should sweep unclaimed ETH to treasury after claim window closes", async function () {
       const { mintPool, token, user1, owner, treasury } =
         await loadFixture(deployMintPool);
       await token.mint(user1.address, ethers.parseEther("50000"));
@@ -783,18 +817,16 @@ describe("BonzaiMintPool", function () {
       // Advance 2 epochs: epoch 0 finalized, claim window (epoch 1) closed
       await time.increase(EPOCH_DURATION * 2);
 
-      const ownerBalBefore = await ethers.provider.getBalance(owner.address);
-      const tx = await mintPool.connect(owner).sweepUnclaimed(0);
-      const receipt = await tx.wait();
-      const gasUsed = receipt.gasUsed * receipt.gasPrice;
-      const ownerBalAfter = await ethers.provider.getBalance(owner.address);
+      const treasuryBalBefore = await ethers.provider.getBalance(treasury.address);
+      await mintPool.connect(owner).sweepUnclaimed(0);
+      const treasuryBalAfter = await ethers.provider.getBalance(treasury.address);
 
-      // All 10 ETH unclaimed should be swept
-      expect(ownerBalAfter - ownerBalBefore + gasUsed).to.equal(deposit);
+      // All 10 ETH unclaimed should be swept to treasury
+      expect(treasuryBalAfter - treasuryBalBefore).to.equal(deposit);
     });
 
-    it("should sweep only unclaimed portion after partial claims", async function () {
-      const { mintPool, user1, user1Amount, user2Amount, depositAmount, owner } =
+    it("should sweep only unclaimed portion to treasury after partial claims", async function () {
+      const { mintPool, user1, user1Amount, user2Amount, depositAmount, owner, treasury } =
         await setupFullClaimFlow();
 
       // user1 claims pool 0
@@ -805,15 +837,13 @@ describe("BonzaiMintPool", function () {
       // Advance to epoch 2 so sweep is allowed
       await time.increase(EPOCH_DURATION);
 
-      const ownerBalBefore = await ethers.provider.getBalance(owner.address);
-      const tx = await mintPool.connect(owner).sweepUnclaimed(0);
-      const receipt = await tx.wait();
-      const gasUsed = receipt.gasUsed * receipt.gasPrice;
-      const ownerBalAfter = await ethers.provider.getBalance(owner.address);
+      const treasuryBalBefore = await ethers.provider.getBalance(treasury.address);
+      await mintPool.connect(owner).sweepUnclaimed(0);
+      const treasuryBalAfter = await ethers.provider.getBalance(treasury.address);
 
       // Unclaimed = total deposited - user1's claimed amount
       const expectedSweep = depositAmount - user1Share;
-      expect(ownerBalAfter - ownerBalBefore + gasUsed).to.equal(expectedSweep);
+      expect(treasuryBalAfter - treasuryBalBefore).to.equal(expectedSweep);
     });
 
     it("should reject sweep before claim window closes", async function () {
@@ -928,6 +958,30 @@ describe("BonzaiMintPool", function () {
         .to.emit(mintPool, "FeeHookUpdated")
         .withArgs(ethers.ZeroAddress, user1.address);
       expect(await mintPool.feeHook()).to.equal(user1.address);
+    });
+
+    it("setCompanionNFT should update and emit event", async function () {
+      const { mintPool, companionNFT, user1 } = await loadFixture(deployMintPool);
+      const currentAddr = await companionNFT.getAddress();
+      // Set to a new address
+      await expect(mintPool.setCompanionNFT(user1.address))
+        .to.emit(mintPool, "CompanionNFTUpdated")
+        .withArgs(currentAddr, user1.address);
+      expect(await mintPool.companionNFT()).to.equal(user1.address);
+    });
+
+    it("setCompanionNFT should reject zero address", async function () {
+      const { mintPool } = await loadFixture(deployMintPool);
+      await expect(
+        mintPool.setCompanionNFT(ethers.ZeroAddress)
+      ).to.be.revertedWith("Invalid address");
+    });
+
+    it("setCompanionNFT should reject non-owner", async function () {
+      const { mintPool, user1 } = await loadFixture(deployMintPool);
+      await expect(
+        mintPool.connect(user1).setCompanionNFT(user1.address)
+      ).to.be.revertedWithCustomError(mintPool, "OwnableUnauthorizedAccount");
     });
 
     it("setPoolThreshold should update threshold in ascending order", async function () {

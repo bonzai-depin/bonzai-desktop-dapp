@@ -133,6 +133,9 @@
               <span
                 v-if="systemValues && systemValues.ram !== undefined"
                 class="system tag is-info is-large is-pulled-right memory fira-sans-condensed-black-italic is-size-2"
+                style="cursor: pointer"
+                title="View hardware specifications & performance"
+                @click="openSpecsModal"
               >
                 <span
                   class="material-symbols-outlined is-size-1 mr-2"
@@ -258,6 +261,161 @@
     <SmartAgent v-if="modelMode == 'agent'" key="agent" />
   </div>
   <BonzaiBottomBar />
+
+  <!-- Hardware Specifications & Performance Modal -->
+  <div
+    v-if="showSpecsModal"
+    class="specs-modal-overlay"
+    @click.self="showSpecsModal = false"
+  >
+    <div class="specs-modal">
+      <div class="has-text-right">
+        <button class="button is-danger" @click="showSpecsModal = false">
+          <span class="material-symbols-outlined">close</span>
+        </button>
+      </div>
+
+      <div class="specs-modal-header has-text-center">
+        <span class="material-symbols-outlined" style="font-size: 48px; color: #3e8ed0">
+          memory
+        </span>
+        <h2 class="fira-sans-condensed-black-italic is-size-3 has-text-centered mt-2 has-text-white">
+          Hardware Specifications
+        </h2>
+      </div>
+
+      <div class="specs-modal-body mt-4 has-text-left">
+        <!-- Hardware Info -->
+        <div class="specs-section" v-if="specsData.hardware">
+          <h3 class="fira-sans-condensed-black-italic is-size-5 mb-3 has-text-white">
+            <span class="material-symbols-outlined mr-2" style="vertical-align: middle">computer</span>
+            System
+          </h3>
+          <table class="table is-fullwidth specs-table">
+            <tbody>
+              <tr>
+                <td class="specs-label">CPU</td>
+                <td class="specs-value fira-sans-condensed-black-italic">{{ specsData.hardware.cpu }}</td>
+              </tr>
+              <tr>
+                <td class="specs-label">Cores / Threads</td>
+                <td class="specs-value fira-sans-condensed-black-italic">{{ specsData.hardware.cpuCores }} / {{ specsData.hardware.cpuThreads }}</td>
+              </tr>
+              <tr>
+                <td class="specs-label">CPU Speed</td>
+                <td class="specs-value fira-sans-condensed-black-italic">{{ specsData.hardware.cpuSpeed }} GHz</td>
+              </tr>
+              <tr>
+                <td class="specs-label">GPU</td>
+                <td class="specs-value fira-sans-condensed-black-italic">{{ specsData.hardware.gpu }}</td>
+              </tr>
+              <tr>
+                <td class="specs-label">RAM</td>
+                <td class="specs-value fira-sans-condensed-black-italic">{{ (specsData.hardware.ram / 1024 ** 3).toFixed(0) }} GB</td>
+              </tr>
+              <tr v-if="specsData.hardware.vram > 0">
+                <td class="specs-label">VRAM</td>
+                <td class="specs-value fira-sans-condensed-black-italic">{{ (specsData.hardware.vram / 1024).toFixed(0) }} GB</td>
+              </tr>
+              <tr>
+                <td class="specs-label">OS</td>
+                <td class="specs-value fira-sans-condensed-black-italic">{{ specsData.hardware.os }}</td>
+              </tr>
+              <tr>
+                <td class="specs-label">Architecture</td>
+                <td class="specs-value fira-sans-condensed-black-italic">{{ specsData.hardware.arch }}</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+
+        <!-- Performance Stats -->
+        <div class="specs-section mt-5" v-if="specsData.performance">
+          <h3 class="fira-sans-condensed-black-italic is-size-5 mb-3 has-text-white">
+            <span class="material-symbols-outlined mr-2" style="vertical-align: middle">speed</span>
+            Average Performance
+          </h3>
+          <table class="table is-fullwidth specs-table">
+            <thead>
+              <tr>
+                <th class="specs-label">Content Type</th>
+                <th class="specs-label has-text-right">Metric</th>
+                <th class="specs-label has-text-right">Samples</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td>
+                  <span class="material-symbols-outlined mr-1" style="vertical-align: middle; font-size: 18px">chat</span>
+                  Text
+                </td>
+                <td class="has-text-right fira-sans-condensed-black-italic">
+                  <template v-if="specsData.performance.text.count > 0">
+                    {{ specsData.performance.text.avgTokPerSec.toFixed(1) }} tok/s
+                  </template>
+                  <span v-else class="has-text-grey">--</span>
+                </td>
+                <td class="has-text-right">{{ specsData.performance.text.count }}</td>
+              </tr>
+              <tr>
+                <td>
+                  <span class="material-symbols-outlined mr-1" style="vertical-align: middle; font-size: 18px">image</span>
+                  Image
+                </td>
+                <td class="has-text-right fira-sans-condensed-black-italic">
+                  <template v-if="specsData.performance.image.count > 0">
+                    {{ specsData.performance.image.avgElapsed.toFixed(1) }}s
+                  </template>
+                  <span v-else class="has-text-grey">--</span>
+                </td>
+                <td class="has-text-right">{{ specsData.performance.image.count }}</td>
+              </tr>
+              <tr>
+                <td>
+                  <span class="material-symbols-outlined mr-1" style="vertical-align: middle; font-size: 18px">movie</span>
+                  Video
+                </td>
+                <td class="has-text-right fira-sans-condensed-black-italic">
+                  <template v-if="specsData.performance.video.count > 0">
+                    {{ specsData.performance.video.avgElapsed.toFixed(1) }}s
+                  </template>
+                  <span v-else class="has-text-grey">--</span>
+                </td>
+                <td class="has-text-right">{{ specsData.performance.video.count }}</td>
+              </tr>
+              <tr>
+                <td>
+                  <span class="material-symbols-outlined mr-1" style="vertical-align: middle; font-size: 18px">headphones</span>
+                  Audio
+                </td>
+                <td class="has-text-right fira-sans-condensed-black-italic">
+                  <template v-if="specsData.performance.audio.count > 0">
+                    {{ specsData.performance.audio.avgElapsed.toFixed(1) }}s
+                  </template>
+                  <span v-else class="has-text-grey">--</span>
+                </td>
+                <td class="has-text-right">{{ specsData.performance.audio.count }}</td>
+              </tr>
+              <tr>
+                <td>
+                  <span class="material-symbols-outlined mr-1" style="vertical-align: middle; font-size: 18px">3d_rotation</span>
+                  3D
+                </td>
+                <td class="has-text-right fira-sans-condensed-black-italic">
+                  <template v-if="specsData.performance.object.count > 0">
+                    {{ specsData.performance.object.avgTokPerSec.toFixed(1) }} tok/s
+                  </template>
+                  <span v-else class="has-text-grey">--</span>
+                </td>
+                <td class="has-text-right">{{ specsData.performance.object.count }}</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+
+      </div>
+    </div>
+  </div>
 </template>
 
 <script>
@@ -274,6 +432,7 @@ import { authService } from "./services/auth.service.js";
 import { useSkillStore } from "./stores/skillStore.js";
 import { initOpenClawHandler } from "./services/openclaw.handler.js";
 import { modelStore } from "./stores/modelStore.js";
+import { getPerformanceStats, getHardwareSpecs, initializeStore } from "./stores/inferenceStore.js";
 
 export default {
   name: "App",
@@ -292,6 +451,14 @@ export default {
     const modelMode = ref("chat");
     const systemValues = ref({});
     const videoImageBase64 = ref("");
+    const showSpecsModal = ref(false);
+    const specsData = reactive({ hardware: null, performance: null });
+
+    const openSpecsModal = async () => {
+      specsData.hardware = await getHardwareSpecs();
+      specsData.performance = getPerformanceStats();
+      showSpecsModal.value = true;
+    };
     const authState = authService.state;
     const skillStore = useSkillStore();
 
@@ -360,11 +527,14 @@ export default {
     };
 
     onMounted(() => {
+      // Initialize unified inference store (loads persisted generation history)
+      initializeStore();
+
       // Load system info asynchronously (non-blocking) with timeout
       const loadSystemInfo = async () => {
         try {
           const timeoutPromise = new Promise((_, reject) =>
-            setTimeout(() => reject(new Error("System info timeout")), 5000),
+            setTimeout(() => reject(new Error("System info timeout")), 10000),
           );
           const infoPromise = window.electronAPI.systemInformation();
           const mySystemValues = await Promise.race([
@@ -375,10 +545,9 @@ export default {
           console.log("System info loaded:", systemValues.value);
         } catch (e) {
           console.warn("Failed to load system info:", e.message);
-          // Continue without system info - non-critical
         }
       };
-      loadSystemInfo(); // Fire and forget - don't block mount
+      loadSystemInfo();
 
       // Initialize model store (query current model + start listening for changes)
       modelStore.initialize().then(() => modelStore.startListening());
@@ -444,6 +613,9 @@ export default {
       handleServerRestart,
       authState,
       skillStore,
+      showSpecsModal,
+      specsData,
+      openSpecsModal,
     };
   },
 };
@@ -812,5 +984,60 @@ p.question {
     opacity: 1;
     transform: translateX(0);
   }
+}
+
+/* Specs Modal */
+.specs-modal-overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: rgba(0, 0, 0, 0.7);
+  backdrop-filter: blur(4px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 9999;
+}
+
+.specs-modal {
+  background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%);
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  border-radius: 16px;
+  padding: 2em;
+  width: 550px;
+  max-height: 85vh;
+  overflow-y: auto;
+  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.5);
+}
+
+.specs-section {
+  padding: 1em;
+  background: rgba(255, 255, 255, 0.04);
+  border-radius: 12px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.specs-table {
+  background: transparent !important;
+}
+
+.specs-table td,
+.specs-table th {
+  background: transparent !important;
+  border-color: rgba(255, 255, 255, 0.08) !important;
+  color: rgba(255, 255, 255, 0.7);
+  padding: 0.6em 0.75em;
+}
+
+.specs-label {
+  color: rgba(255, 255, 255, 0.5) !important;
+  font-size: 0.85rem;
+}
+
+.specs-value {
+  color: #fff !important;
+  font-size: 0.95rem;
 }
 </style>

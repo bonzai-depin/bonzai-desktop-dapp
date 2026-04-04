@@ -148,6 +148,14 @@
                   Claim Rewards
                 </h3>
 
+                <!-- Companion requirement notice -->
+                <div class="notification mb-3" style="background: rgba(255, 183, 77, 0.08); border: 1px solid rgba(255, 183, 77, 0.25); border-radius: 10px;">
+                  <p class="has-text-warning-light" style="font-size: 13px;">
+                    <span class="material-symbols-outlined mr-1" style="font-size: 16px; vertical-align: middle;">pets</span>
+                    <strong>Companion required</strong> — You must own at least 1 Companion NFT to claim rewards from the MintPool.
+                  </p>
+                </div>
+
                 <div v-if="!isConnected" class="notification is-dark mb-3" style="background: rgba(255,255,255,0.04); border: 1px solid rgba(255,255,255,0.08);">
                   <p class="has-text-grey-light">Connect your wallet to view claimable rewards.</p>
                 </div>

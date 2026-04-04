@@ -179,7 +179,7 @@ export const useSkillStore = defineStore('skill', () => {
 
   // Skills filtered by search query (debounced), with featured skills first
   const filteredSkills = computed(() => {
-    let result = skillsByCategory.value;
+    let result = skillsByCategory.value.filter(s => !s.disabled);
 
     // Use debounced search query for performance
     if (debouncedSearchQuery.value) {
@@ -313,6 +313,28 @@ export const useSkillStore = defineStore('skill', () => {
       console.log(`[SkillStore] Initialized with ${skills.value.length} skills`);
     } catch (e) {
       console.error('[SkillStore] Initialization error:', e);
+      error.value = e.message;
+    } finally {
+      isLoading.value = false;
+    }
+  };
+
+  /**
+   * Force-refresh skills (re-initializes even if already loaded)
+   */
+  const refresh = async () => {
+    isLoading.value = true;
+    error.value = null;
+
+    try {
+      const { skills: loadedSkills } = await skillService.initializeSkills();
+      skills.value = [...loadedSkills];
+      await loadUserSkills();
+      await loadExecutionHistory();
+      isInitialized.value = true;
+      console.log(`[SkillStore] Refreshed with ${skills.value.length} skills`);
+    } catch (e) {
+      console.error('[SkillStore] Refresh error:', e);
       error.value = e.message;
     } finally {
       isLoading.value = false;
@@ -1262,6 +1284,7 @@ REQUIREMENTS:
 
     // Actions
     initialize,
+    refresh,
     executeSkill,
     registerSkill,
     publishSkill,

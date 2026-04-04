@@ -1078,6 +1078,7 @@ import {
 import AccessRequirements from "./AccessRequirements.vue";
 import MintModal from "./MintModal.vue";
 import { requestOpenNetworkModal } from "../services/level.service.js";
+import { addAudioInference } from "../stores/inferenceStore.js";
 
 const API_BASE =
   (typeof process !== "undefined" && process.env?.VITE_API_BASE) ||
@@ -2652,6 +2653,14 @@ Remember: 6-10 syllables per line, use all appropriate structure tags. Write in 
           inferences.value = [...inferences.value, newInference];
           hasCopy.value = [...hasCopy.value, false];
           persistInferences([...inferences.value]);
+
+          // Save to unified inference store with performance metadata
+          addAudioInference(prompt, audioPath, {
+            pipeline: mode.value === 'music' ? 'music' : (mode.value === 'clone' ? 'audio_quality' : 'audio_turbo'),
+            elapsed: elapsedMs / 1000,
+            source: 'bonzai',
+          });
+
           form.prompt = "";
           // Reset to first page to show the new result
           resetToFirstPage();

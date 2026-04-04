@@ -41,13 +41,14 @@ async function createAttestation(
   companionWallet,
   ownerAddress,
   profileScore,
-  deadline
+  deadline,
+  contractAddress
 ) {
   const chainId = (await ethers.provider.getNetwork()).chainId;
 
   const messageHash = ethers.solidityPackedKeccak256(
-    ["bytes32", "uint256", "address", "address", "uint8", "uint256", "uint256"],
-    [skillId, companionTokenId, companionWallet, ownerAddress, profileScore, deadline, chainId]
+    ["bytes32", "uint256", "address", "address", "uint8", "uint256", "uint256", "address"],
+    [skillId, companionTokenId, companionWallet, ownerAddress, profileScore, deadline, chainId, contractAddress]
   );
 
   const attestation = await attestationSigner.signMessage(ethers.getBytes(messageHash));
@@ -83,7 +84,8 @@ async function registerCompanionHelper(
     companionWallet,
     registrar.address,
     profileScore,
-    deadline
+    deadline,
+    await ownership.getAddress()
   );
 
   await ownership.connect(registrar).registerCompanion(
@@ -283,7 +285,8 @@ describe("BonzaiSkillOwnership", function () {
         companionWallet,
         registrar1.address,
         profileScore,
-        deadline
+        deadline,
+        await ownership.getAddress()
       );
 
       await expect(
@@ -328,7 +331,7 @@ describe("BonzaiSkillOwnership", function () {
       expect(reg.companionWallet).to.equal(companionWallet);
       expect(reg.ownerAddress).to.equal(registrar1.address);
       expect(reg.profileScore).to.equal(profileScore);
-      expect(reg.active).to.be.true;
+
       expect(reg.registeredAt).to.be.gt(0);
     });
 
@@ -342,7 +345,7 @@ describe("BonzaiSkillOwnership", function () {
       const deadline = await futureDeadline();
 
       const attestation = await createAttestation(
-        attestationSigner, skillId, tokenId, ethers.ZeroAddress, registrar1.address, profileScore, deadline
+        attestationSigner, skillId, tokenId, ethers.ZeroAddress, registrar1.address, profileScore, deadline, await ownership.getAddress()
       );
 
       await expect(
@@ -363,7 +366,7 @@ describe("BonzaiSkillOwnership", function () {
       const deadline = await futureDeadline();
 
       const attestation = await createAttestation(
-        attestationSigner, skillId, tokenId, companionWallet, registrar1.address, lowScore, deadline
+        attestationSigner, skillId, tokenId, companionWallet, registrar1.address, lowScore, deadline, await ownership.getAddress()
       );
 
       await expect(
@@ -384,7 +387,7 @@ describe("BonzaiSkillOwnership", function () {
       const deadline = await futureDeadline();
 
       const attestation = await createAttestation(
-        attestationSigner, skillId, tokenId, companionWallet, registrar1.address, 0, deadline
+        attestationSigner, skillId, tokenId, companionWallet, registrar1.address, 0, deadline, await ownership.getAddress()
       );
 
       await expect(
@@ -406,7 +409,7 @@ describe("BonzaiSkillOwnership", function () {
       const expiredDeadline = 1; // Already expired (timestamp 1)
 
       const attestation = await createAttestation(
-        attestationSigner, skillId, tokenId, companionWallet, registrar1.address, profileScore, expiredDeadline
+        attestationSigner, skillId, tokenId, companionWallet, registrar1.address, profileScore, expiredDeadline, await ownership.getAddress()
       );
 
       await expect(
@@ -429,7 +432,7 @@ describe("BonzaiSkillOwnership", function () {
       // Try to register same companion again
       const deadline = await futureDeadline();
       const attestation = await createAttestation(
-        attestationSigner, skillId, tokenId, companionWallet, registrar1.address, profileScore, deadline
+        attestationSigner, skillId, tokenId, companionWallet, registrar1.address, profileScore, deadline, await ownership.getAddress()
       );
 
       await expect(
@@ -452,7 +455,7 @@ describe("BonzaiSkillOwnership", function () {
 
       // Sign with wrong signer (registrar2 instead of attestationSigner)
       const attestation = await createAttestation(
-        registrar2, skillId, tokenId, companionWallet, registrar1.address, profileScore, deadline
+        registrar2, skillId, tokenId, companionWallet, registrar1.address, profileScore, deadline, await ownership.getAddress()
       );
 
       await expect(
@@ -474,7 +477,7 @@ describe("BonzaiSkillOwnership", function () {
 
       // Sign for profileScore=7 but submit profileScore=10
       const attestation = await createAttestation(
-        attestationSigner, skillId, tokenId, companionWallet, registrar1.address, profileScore, deadline
+        attestationSigner, skillId, tokenId, companionWallet, registrar1.address, profileScore, deadline, await ownership.getAddress()
       );
 
       await expect(
@@ -511,7 +514,7 @@ describe("BonzaiSkillOwnership", function () {
       const deadline = await futureDeadline();
 
       const attestation = await createAttestation(
-        attestationSigner, skillId, tokenId, companionWallet, registrar1.address, profileScore, deadline
+        attestationSigner, skillId, tokenId, companionWallet, registrar1.address, profileScore, deadline, await ownership.getAddress()
       );
 
       await expect(
@@ -540,7 +543,7 @@ describe("BonzaiSkillOwnership", function () {
 
       // Create attestation with registrar1 as owner (but NFT belongs to registrar2)
       const attestation = await createAttestation(
-        attestationSigner, skillId, tokenId, companionWallet, registrar1.address, profileScore, deadline
+        attestationSigner, skillId, tokenId, companionWallet, registrar1.address, profileScore, deadline, await ownership.getAddress()
       );
 
       await expect(
@@ -562,7 +565,7 @@ describe("BonzaiSkillOwnership", function () {
       const deadline = await futureDeadline();
 
       const attestation = await createAttestation(
-        attestationSigner, skillId, tokenId, companionWallet, registrar1.address, profileScore, deadline
+        attestationSigner, skillId, tokenId, companionWallet, registrar1.address, profileScore, deadline, await ownership.getAddress()
       );
 
       await expect(
@@ -647,8 +650,7 @@ describe("BonzaiSkillOwnership", function () {
       // registrar2 tries to deregister registrar1's companion
       await expect(
         ownership.connect(registrar2).deregisterCompanion(skillId, tokenId)
-      ).to.be.revertedWithCustomError(ownership, "NotRegistrationOwner")
-        .withArgs(registrar2.address, registrar1.address);
+      ).to.be.revertedWith("Not companion owner");
     });
 
     it("should allow re-registration after deregistration", async function () {
@@ -660,10 +662,11 @@ describe("BonzaiSkillOwnership", function () {
       const companionWallet = ethers.Wallet.createRandom().address;
       const profileScore = 7;
       const deadline = await futureDeadline();
+      const contractAddr = await ownership.getAddress();
 
       // Register
       const attestation1 = await createAttestation(
-        attestationSigner, skillId, tokenId, companionWallet, registrar1.address, profileScore, deadline
+        attestationSigner, skillId, tokenId, companionWallet, registrar1.address, profileScore, deadline, contractAddr
       );
       await ownership.connect(registrar1).registerCompanion(
         skillId, tokenId, companionWallet, profileScore, deadline, attestation1
@@ -673,12 +676,13 @@ describe("BonzaiSkillOwnership", function () {
       await ownership.connect(registrar1).deregisterCompanion(skillId, tokenId);
       expect(await ownership.isCompanionRegistered(tokenId, skillId)).to.be.false;
 
-      // Re-register
+      // Re-register with a different deadline to produce a unique attestation
+      const deadline2 = deadline + 1;
       const attestation2 = await createAttestation(
-        attestationSigner, skillId, tokenId, companionWallet, registrar1.address, profileScore, deadline
+        attestationSigner, skillId, tokenId, companionWallet, registrar1.address, profileScore, deadline2, contractAddr
       );
       await ownership.connect(registrar1).registerCompanion(
-        skillId, tokenId, companionWallet, profileScore, deadline, attestation2
+        skillId, tokenId, companionWallet, profileScore, deadline2, attestation2
       );
       expect(await ownership.isCompanionRegistered(tokenId, skillId)).to.be.true;
     });
@@ -1464,7 +1468,7 @@ describe("BonzaiSkillOwnership", function () {
         expect(reg.companionWallet).to.equal(companionWallet);
         expect(reg.ownerAddress).to.equal(registrar1.address);
         expect(reg.profileScore).to.equal(profileScore);
-        expect(reg.active).to.be.true;
+  
       });
     });
 
@@ -1550,7 +1554,7 @@ describe("BonzaiSkillOwnership", function () {
       const deadline = await futureDeadline();
 
       const attestation = await createAttestation(
-        attestationSigner, skillId, tokenId, companionWallet, registrar1.address, profileScore, deadline
+        attestationSigner, skillId, tokenId, companionWallet, registrar1.address, profileScore, deadline, await ownership.getAddress()
       );
 
       await expect(
@@ -1698,7 +1702,7 @@ describe("BonzaiSkillOwnership", function () {
       const tokenId1 = await mintCompanionNFT(companionNFT, registrar1.address);
       await bonzaiToken.mint(wallet1, ethers.parseEther("100"));
       const deadline1 = await futureDeadline();
-      const attest1 = await createAttestation(attestationSigner, skillId, tokenId1, wallet1, registrar1.address, 10, deadline1);
+      const attest1 = await createAttestation(attestationSigner, skillId, tokenId1, wallet1, registrar1.address, 10, deadline1, await ownership.getAddress());
       await ownership.connect(registrar1).registerCompanion(skillId, tokenId1, wallet1, 10, deadline1, attest1);
 
       // Register companion 2 (200 BONZAI, score 5)
@@ -1706,7 +1710,7 @@ describe("BonzaiSkillOwnership", function () {
       const tokenId2 = await mintCompanionNFT(companionNFT, registrar2.address);
       await bonzaiToken.mint(wallet2, ethers.parseEther("200"));
       const deadline2 = await futureDeadline();
-      const attest2 = await createAttestation(attestationSigner, skillId, tokenId2, wallet2, registrar2.address, 5, deadline2);
+      const attest2 = await createAttestation(attestationSigner, skillId, tokenId2, wallet2, registrar2.address, 5, deadline2, await ownership.getAddress());
       await ownership.connect(registrar2).registerCompanion(skillId, tokenId2, wallet2, 5, deadline2, attest2);
 
       // Distribute 100 USDC (100_000_000 in 6 decimals)
@@ -1741,7 +1745,7 @@ describe("BonzaiSkillOwnership", function () {
       const tokenId1 = await mintCompanionNFT(companionNFT, registrar1.address);
       await bonzaiToken.mint(wallet1, ethers.parseEther("100"));
       const deadline = await futureDeadline();
-      const attest = await createAttestation(attestationSigner, skillId, tokenId1, wallet1, registrar1.address, 7, deadline);
+      const attest = await createAttestation(attestationSigner, skillId, tokenId1, wallet1, registrar1.address, 7, deadline, await ownership.getAddress());
       await ownership.connect(registrar1).registerCompanion(skillId, tokenId1, wallet1, 7, deadline, attest);
 
       const amount = 10_000_000n;
@@ -1774,7 +1778,7 @@ describe("BonzaiSkillOwnership", function () {
       const tokenId = await mintCompanionNFT(base.companionNFT, base.registrar1.address);
       await base.bonzaiToken.mint(claimWallet.address, ethers.parseEther("100"));
       const deadline = await futureDeadline();
-      const attest = await createAttestation(base.attestationSigner, skillId, tokenId, claimWallet.address, base.registrar1.address, 7, deadline);
+      const attest = await createAttestation(base.attestationSigner, skillId, tokenId, claimWallet.address, base.registrar1.address, 7, deadline, await base.ownership.getAddress());
       await base.ownership.connect(base.registrar1).registerCompanion(skillId, tokenId, claimWallet.address, 7, deadline, attest);
 
       // Distribute 20 USDC

@@ -181,13 +181,13 @@ export const CONFIG = {
     platformShareBps: 2000, // 20% to platform
 
     // Default skill price in USDC (6 decimals)
-    defaultSkillPrice: 10_000_000, // 10 USDC
+    defaultSkillPrice: 9_990_000, // 9.99 USDC
     paymentToken: 'USDC',
 
     // Default pricing for new skills
     defaultPricing: {
-      purchasePrice: "0.1", // ETH (one-time)
-      runningFee: 99, // BONZAI tokens (per execution)
+      purchasePrice: 9.99, // USDC (one-time lifetime fee)
+      runningFee: 0, // No per-execution fee
     },
 
     // Skill categories (12 spending profile categories, matching BonzaiCompanions.sol packing order)
@@ -215,9 +215,9 @@ export const CONFIG = {
       "prediction-market-maker-v1.0.0",
     ],
 
-    // Gateways for skill definition fetching (Irys primary)
+    // Gateways for skill definition fetching
     gateways: [
-      "https://gateway.irys.xyz/",
+      "https://gateway.pinata.cloud/ipfs/",
       "https://ipfs.io/ipfs/",
       "https://cloudflare-ipfs.com/ipfs/",
     ],
@@ -306,8 +306,8 @@ export const CONFIG = {
     // Flat mint price in ETH (no rarity tiers)
     mintPrice: "0.25", // 0.25 ETH
 
-    // Metadata gateway (Irys/Arweave)
-    metadataGateway: "https://gateway.irys.xyz/",
+    // Metadata gateway (IPFS via Pinata)
+    metadataGateway: "https://gateway.pinata.cloud/ipfs/",
 
     // ERC-8004 specific
     x402Support: true, // Companions can have agent wallets for x402 payments
@@ -315,8 +315,8 @@ export const CONFIG = {
     // Self-custody agent wallet
     agentWalletProvider: 'local',
 
-    // DEPLOY: Upload placeholder JSON to Arweave via Irys, then replace this with the real ar:// TX ID
-    placeholderURI: 'ar://PLACEHOLDER_TX_ID',
+    // DEPLOY: Upload placeholder JSON to IPFS via Pinata, then replace this with the real ipfs:// CID
+    placeholderURI: 'ipfs://PLACEHOLDER_CID',
 
     // Default values for external minting (Etherscan / dApp)
     externalMintDefaults: {
@@ -343,8 +343,8 @@ export const CONFIG = {
     // Platform fee on marketplace sales (basis points, 250 = 2.5%)
     platformFeeBps: 250,
 
-    // Metadata gateway (Irys/Arweave, LSP4 metadata)
-    metadataGateway: "https://gateway.irys.xyz/",
+    // Metadata gateway (IPFS via Pinata, LSP4 metadata)
+    metadataGateway: "https://gateway.pinata.cloud/ipfs/",
 
     // LSP8 token ID format (number-based for sequential IDs)
     tokenIdFormat: "NUMBER", // _LSP8_TOKENID_FORMAT_NUMBER

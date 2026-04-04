@@ -5,7 +5,16 @@ const { ethers } = require("hardhat");
 // ═══════════════════════════════════════════════════════════════════════════
 
 const UNLOCK_PRICE = ethers.parseEther("1");
-const MINT_FEE = ethers.parseEther("0.0025");
+const MINT_FEE = ethers.parseEther("0.0025"); // legacy flat fee
+// Per-type mint fees (LVL progression)
+const MINT_FEES_BY_TYPE = [
+  ethers.parseEther("0.0005"),   // 0: text   (LVL1)
+  ethers.parseEther("0.001"),    // 1: audio  (LVL2)
+  ethers.parseEther("0.0015"),   // 2: image  (LVL3)
+  ethers.parseEther("0.0025"),   // 3: video  (LVL4)
+  ethers.parseEther("0.0035"),   // 4: 3D     (LVL5)
+  ethers.parseEther("0.005"),    // 5: training (LVL6)
+];
 const COMPANION_MINT_PRICE = ethers.parseEther("0.25");
 const MIN_ETH_LIQUIDITY = ethers.parseEther("0.01");
 
@@ -121,6 +130,7 @@ const VALID_CATEGORIES = [
 module.exports = {
   UNLOCK_PRICE,
   MINT_FEE,
+  MINT_FEES_BY_TYPE,
   COMPANION_MINT_PRICE,
   MIN_ETH_LIQUIDITY,
   NUM_POOLS,

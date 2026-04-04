@@ -4,6 +4,7 @@ const { loadFixture } = require("@nomicfoundation/hardhat-toolbox/network-helper
 const { time, mine } = require("@nomicfoundation/hardhat-network-helpers");
 const {
   MINT_FEE,
+  MINT_FEES_BY_TYPE,
   EPOCH_DURATION,
   POOL_THRESHOLDS,
   MIN_CLAIM_BLOCK_GAP,
@@ -31,7 +32,8 @@ describe("Integration Tests", function () {
     const mintPool = await BonzaiMintPool.deploy(
       await bonzaiToken.getAddress(),
       POOL_THRESHOLDS,
-      EPOCH_DURATION
+      EPOCH_DURATION,
+      treasury.address
     );
 
     // Advance time to genesis (next Monday 00:00 UTC)
@@ -71,11 +73,20 @@ describe("Integration Tests", function () {
     // Authorize depositors on MintPool
     await mintPool.setRoyaltySplitter(await splitter.getAddress());
 
+    // Deploy companion NFT and wire into MintPool (required for claiming)
+    const MockBonzaiCompanions = await ethers.getContractFactory("MockBonzaiCompanions");
+    const companionNFT = await MockBonzaiCompanions.deploy();
+    await mintPool.setCompanionNFT(await companionNFT.getAddress());
+
     // Mint BONZAI tokens to users
     await bonzaiToken.mint(user1.address, ethers.parseEther("50000"));
     await bonzaiToken.mint(user2.address, ethers.parseEther("10000"));
 
-    return { bonzaiToken, mintPool, content, content2, factory, splitter, owner, treasury, user1, user2 };
+    // Mint companion NFTs to users (required for claiming rewards)
+    await companionNFT.mintTo(user1.address);
+    await companionNFT.mintTo(user2.address);
+
+    return { bonzaiToken, mintPool, companionNFT, content, content2, factory, splitter, owner, treasury, user1, user2 };
   }
 
   // ═══════════════════════════════════════════════════════════════════════════
@@ -84,12 +95,13 @@ describe("Integration Tests", function () {
 
   /** Mint a content NFT with default parameters */
   async function mintContent(content, signer, contentType = CONTENT_TYPE.IMAGE) {
+    const fee = MINT_FEES_BY_TYPE[contentType];
     return content.connect(signer).mint(
       "irys-tx-" + Date.now(),
       "test-model",
       "https://gateway.irys.xyz/test",
       contentType,
-      { value: MINT_FEE }
+      { value: fee }
     );
   }
 
@@ -100,9 +112,10 @@ describe("Integration Tests", function () {
   }
 
   /** Calculate expected pool deposit from a single mint */
-  function expectedPoolAmount() {
-    const treasuryAmt = (MINT_FEE * TREASURY_BPS) / BPS_DENOMINATOR;
-    return MINT_FEE - treasuryAmt;
+  function expectedPoolAmount(contentType = CONTENT_TYPE.IMAGE) {
+    const fee = MINT_FEES_BY_TYPE[contentType];
+    const treasuryAmt = (fee * TREASURY_BPS) / BPS_DENOMINATOR;
+    return fee - treasuryAmt;
   }
 
   // ═══════════════════════════════════════════════════════════════════════════
@@ -121,8 +134,9 @@ describe("Integration Tests", function () {
       const treasuryAfter = await ethers.provider.getBalance(treasury.address);
       const poolAfter = await ethers.provider.getBalance(await mintPool.getAddress());
 
-      const expectedTreasury = (MINT_FEE * TREASURY_BPS) / BPS_DENOMINATOR;
-      const expectedPool = MINT_FEE - expectedTreasury;
+      const imageFee = MINT_FEES_BY_TYPE[CONTENT_TYPE.IMAGE];
+      const expectedTreasury = (imageFee * TREASURY_BPS) / BPS_DENOMINATOR;
+      const expectedPool = imageFee - expectedTreasury;
 
       expect(treasuryAfter - treasuryBefore).to.equal(expectedTreasury);
       expect(poolAfter - poolBefore).to.equal(expectedPool);
@@ -135,8 +149,6 @@ describe("Integration Tests", function () {
     it("should route multiple mints of different content types to separate pools", async function () {
       const { content, content2, mintPool, user1, user2 } = await loadFixture(deployIntegration);
 
-      const poolAmt = expectedPoolAmount();
-
       // Mint text content (user1's collection)
       await mintContent(content, user1, CONTENT_TYPE.TEXT);
       // Mint audio content (user2's collection)
@@ -146,9 +158,9 @@ describe("Integration Tests", function () {
 
       const deposits = await mintPool.getEpochDeposits(0);
 
-      expect(deposits[CONTENT_TYPE.TEXT]).to.equal(poolAmt);
-      expect(deposits[CONTENT_TYPE.AUDIO]).to.equal(poolAmt);
-      expect(deposits[CONTENT_TYPE.VIDEO]).to.equal(poolAmt);
+      expect(deposits[CONTENT_TYPE.TEXT]).to.equal(expectedPoolAmount(CONTENT_TYPE.TEXT));
+      expect(deposits[CONTENT_TYPE.AUDIO]).to.equal(expectedPoolAmount(CONTENT_TYPE.AUDIO));
+      expect(deposits[CONTENT_TYPE.VIDEO]).to.equal(expectedPoolAmount(CONTENT_TYPE.VIDEO));
       // Unused pools should be zero
       expect(deposits[CONTENT_TYPE.IMAGE]).to.equal(0);
       expect(deposits[CONTENT_TYPE.THREE_D]).to.equal(0);
@@ -156,9 +168,9 @@ describe("Integration Tests", function () {
 
       // Lifetime totals
       const totals = await mintPool.getAllTotalDeposited();
-      expect(totals[CONTENT_TYPE.TEXT]).to.equal(poolAmt);
-      expect(totals[CONTENT_TYPE.AUDIO]).to.equal(poolAmt);
-      expect(totals[CONTENT_TYPE.VIDEO]).to.equal(poolAmt);
+      expect(totals[CONTENT_TYPE.TEXT]).to.equal(expectedPoolAmount(CONTENT_TYPE.TEXT));
+      expect(totals[CONTENT_TYPE.AUDIO]).to.equal(expectedPoolAmount(CONTENT_TYPE.AUDIO));
+      expect(totals[CONTENT_TYPE.VIDEO]).to.equal(expectedPoolAmount(CONTENT_TYPE.VIDEO));
     });
 
     it("should fallback pool share to treasury when pool reverts", async function () {
@@ -189,14 +201,15 @@ describe("Integration Tests", function () {
 
       const treasuryBefore = await ethers.provider.getBalance(treasury.address);
 
+      const imageFee = MINT_FEES_BY_TYPE[CONTENT_TYPE.IMAGE];
       await badContent.connect(user1).mint(
-        "irys-bad", "model", "uri", CONTENT_TYPE.IMAGE, { value: MINT_FEE }
+        "irys-bad", "model", "uri", CONTENT_TYPE.IMAGE, { value: imageFee }
       );
 
       const treasuryAfter = await ethers.provider.getBalance(treasury.address);
 
-      // Treasury should receive the full MINT_FEE (80% treasury + 20% fallback)
-      expect(treasuryAfter - treasuryBefore).to.equal(MINT_FEE);
+      // Treasury should receive the full fee (80% treasury + 20% fallback)
+      expect(treasuryAfter - treasuryBefore).to.equal(imageFee);
     });
   });
 
@@ -230,7 +243,8 @@ describe("Integration Tests", function () {
       const { content, splitter, mintPool, treasury, owner, user1 } =
         await loadFixture(deployIntegration);
 
-      const poolAmt = expectedPoolAmount();
+      const imagePoolAmt = expectedPoolAmount(CONTENT_TYPE.IMAGE);
+      const textPoolAmt = expectedPoolAmount(CONTENT_TYPE.TEXT);
 
       // Create pool history: 3 image mints, 1 text mint
       await mintContent(content, user1, CONTENT_TYPE.IMAGE);
@@ -250,13 +264,12 @@ describe("Integration Tests", function () {
 
       const poolShare = royaltyAmount - (royaltyAmount * 2n) / 3n;
 
-      // Total deposited: image = 3 * poolAmt, text = 1 * poolAmt
-      // Total = 4 * poolAmt
-      // Image share: poolShare * (3 * poolAmt) / (4 * poolAmt) = poolShare * 3/4
-      // Text share: poolShare * 1/4
-      const totalDeposited = poolAmt * 4n;
-      const imageRoyalty = (poolShare * poolAmt * 3n) / totalDeposited;
-      const textRoyalty = (poolShare * poolAmt) / totalDeposited;
+      // Total deposited: image = 3 * imagePoolAmt, text = 1 * textPoolAmt
+      const imageTotal = imagePoolAmt * 3n;
+      const totalDeposited = imageTotal + textPoolAmt;
+      // Royalty weighted by deposited share
+      const imageRoyalty = (poolShare * imageTotal) / totalDeposited;
+      const textRoyalty = (poolShare * textPoolAmt) / totalDeposited;
 
       // Check that epoch deposits reflect the royalty distribution
       // The MintPool epoch deposits already contain the content mint deposits,
@@ -264,8 +277,8 @@ describe("Integration Tests", function () {
       const deposits = await mintPool.getEpochDeposits(0);
 
       // Content mint deposits + royalty deposits
-      expect(deposits[CONTENT_TYPE.IMAGE]).to.equal(poolAmt * 3n + imageRoyalty);
-      expect(deposits[CONTENT_TYPE.TEXT]).to.equal(poolAmt + textRoyalty);
+      expect(deposits[CONTENT_TYPE.IMAGE]).to.equal(imageTotal + imageRoyalty);
+      expect(deposits[CONTENT_TYPE.TEXT]).to.equal(textPoolAmt + textRoyalty);
 
       // Net ETH increase to the pool should equal the poolShare (minus rounding dust to treasury)
       const netPoolIncrease = poolBalanceAfter - poolBalanceBefore;
@@ -357,7 +370,7 @@ describe("Integration Tests", function () {
       // Deposit via content mint (user1's collection)
       await mintContent(content, user1, CONTENT_TYPE.TEXT);
 
-      const poolAmt = expectedPoolAmount();
+      const poolAmt = expectedPoolAmount(CONTENT_TYPE.TEXT);
 
       // Advance epoch
       await time.increase(EPOCH_DURATION);
@@ -433,8 +446,8 @@ describe("Integration Tests", function () {
       expect(await mintPool.hasClaimed(0, user1.address, CONTENT_TYPE.VIDEO)).to.be.true;
     });
 
-    it("should sweep unclaimed funds after epoch N+2", async function () {
-      const { content, mintPool, owner, user1 } = await loadFixture(deployIntegration);
+    it("should sweep unclaimed funds to treasury after epoch N+2", async function () {
+      const { content, mintPool, owner, treasury, user1 } = await loadFixture(deployIntegration);
 
       // Register and deposit in epoch 0
       await mintPool.connect(user1).registerForEpoch();
@@ -446,14 +459,12 @@ describe("Integration Tests", function () {
       await time.increase(EPOCH_DURATION * 2);
       expect(await mintPool.currentEpoch()).to.equal(2);
 
-      // Owner sweeps unclaimed from epoch 0
-      const ownerBefore = await ethers.provider.getBalance(owner.address);
-      const tx = await mintPool.sweepUnclaimed(0);
-      const receipt = await tx.wait();
-      const gasCost = receipt.gasUsed * receipt.gasPrice;
-      const ownerAfter = await ethers.provider.getBalance(owner.address);
+      // Owner sweeps unclaimed from epoch 0 — funds go to treasury
+      const treasuryBefore = await ethers.provider.getBalance(treasury.address);
+      await mintPool.sweepUnclaimed(0);
+      const treasuryAfter = await ethers.provider.getBalance(treasury.address);
 
-      expect(ownerAfter - ownerBefore + gasCost).to.equal(poolAmt);
+      expect(treasuryAfter - treasuryBefore).to.equal(poolAmt);
       expect(await mintPool.totalSwept()).to.equal(poolAmt);
       expect(await mintPool.epochSwept(0)).to.be.true;
     });
@@ -491,7 +502,9 @@ describe("Integration Tests", function () {
       const { content, mintPool, bonzaiToken, user1 } =
         await loadFixture(deployIntegration);
 
-      const poolAmt = expectedPoolAmount();
+      const imagePool = expectedPoolAmount(CONTENT_TYPE.IMAGE);
+      const textPool = expectedPoolAmount(CONTENT_TYPE.TEXT);
+      const audioPool = expectedPoolAmount(CONTENT_TYPE.AUDIO);
 
       // ── Epoch 0 ──
       await mintPool.connect(user1).registerForEpoch();
@@ -505,7 +518,7 @@ describe("Integration Tests", function () {
       await mintPool.connect(user1).confirmClaim(0);
       await mine(MIN_CLAIM_BLOCK_GAP);
       await mintPool.connect(user1).claimEpoch(0, CONTENT_TYPE.IMAGE);
-      expect(await mintPool.totalClaimed()).to.equal(poolAmt);
+      expect(await mintPool.totalClaimed()).to.equal(imagePool);
 
       // ── Epoch 1 ── (register + deposit within epoch 1)
       await mintPool.connect(user1).registerForEpoch();
@@ -524,14 +537,16 @@ describe("Integration Tests", function () {
       await mintPool.connect(user1).claimEpochBatch(1, [CONTENT_TYPE.TEXT, CONTENT_TYPE.AUDIO]);
 
       // Total claimed = epoch0 claim + epoch1 claims
-      expect(await mintPool.totalClaimed()).to.equal(poolAmt * 3n);
+      expect(await mintPool.totalClaimed()).to.equal(imagePool + textPool + audioPool);
     });
 
     it("should maintain correct totalClaimed, totalDeposited, totalSwept across epochs", async function () {
       const { content, content2, mintPool, bonzaiToken, owner, user1, user2 } =
         await loadFixture(deployIntegration);
 
-      const poolAmt = expectedPoolAmount();
+      const imagePool = expectedPoolAmount(CONTENT_TYPE.IMAGE);
+      const textPool = expectedPoolAmount(CONTENT_TYPE.TEXT);
+      const audioPool = expectedPoolAmount(CONTENT_TYPE.AUDIO);
 
       // ── Epoch 0 ──
       // user1 registers and we deposit
@@ -564,20 +579,19 @@ describe("Integration Tests", function () {
       await mintPool.connect(user2).claimEpoch(1, CONTENT_TYPE.AUDIO);
 
       // Verify accounting
-      // totalDeposited: IMAGE = poolAmt, TEXT = poolAmt, AUDIO = poolAmt
       const totals = await mintPool.getAllTotalDeposited();
-      expect(totals[CONTENT_TYPE.IMAGE]).to.equal(poolAmt);
-      expect(totals[CONTENT_TYPE.TEXT]).to.equal(poolAmt);
-      expect(totals[CONTENT_TYPE.AUDIO]).to.equal(poolAmt);
+      expect(totals[CONTENT_TYPE.IMAGE]).to.equal(imagePool);
+      expect(totals[CONTENT_TYPE.TEXT]).to.equal(textPool);
+      expect(totals[CONTENT_TYPE.AUDIO]).to.equal(audioPool);
 
       // totalClaimed: IMAGE (epoch 0, user1) + AUDIO (epoch 1, user2)
-      expect(await mintPool.totalClaimed()).to.equal(poolAmt * 2n);
+      expect(await mintPool.totalClaimed()).to.equal(imagePool + audioPool);
 
       // totalSwept: TEXT from epoch 0
-      expect(await mintPool.totalSwept()).to.equal(poolAmt);
+      expect(await mintPool.totalSwept()).to.equal(textPool);
 
       // All deposited ETH is accounted for
-      const totalDepositedAll = poolAmt * 3n;
+      const totalDepositedAll = imagePool + textPool + audioPool;
       const totalClaimed = await mintPool.totalClaimed();
       const totalSwept = await mintPool.totalSwept();
       expect(totalClaimed + totalSwept).to.equal(totalDepositedAll);
@@ -593,14 +607,9 @@ describe("Integration Tests", function () {
       const { content, content2, mintPool, splitter, bonzaiToken, owner, treasury, user1, user2 } =
         await loadFixture(deployIntegration);
 
-      const poolAmt = expectedPoolAmount();
-      const treasuryAmt = (MINT_FEE * TREASURY_BPS) / BPS_DENOMINATOR;
-
       // ── Epoch 0: Content mints + royalty distribution ──
       await mintPool.connect(user1).registerForEpoch();
       await mintPool.connect(user2).registerForEpoch();
-
-      const treasuryBefore = await ethers.provider.getBalance(treasury.address);
 
       // 3 content mints (user1 on their collection, user2 on theirs)
       await mintContent(content, user1, CONTENT_TYPE.IMAGE);
@@ -673,7 +682,7 @@ describe("Integration Tests", function () {
     });
 
     it("should allow MintPool surplus withdrawal after all claims and sweeps", async function () {
-      const { content, mintPool, bonzaiToken, owner, user1 } =
+      const { content, mintPool, bonzaiToken, owner, treasury, user1 } =
         await loadFixture(deployIntegration);
 
       const poolAmt = expectedPoolAmount();
@@ -703,14 +712,12 @@ describe("Integration Tests", function () {
       // Sweep any unclaimed pools from epoch 0 (pools with zero deposits are a no-op)
       await mintPool.sweepUnclaimed(0);
 
-      // Now the surplus should be withdrawable
-      const ownerBefore = await ethers.provider.getBalance(owner.address);
-      const tx = await mintPool.withdrawETH();
-      const receipt = await tx.wait();
-      const gasCost = receipt.gasUsed * receipt.gasPrice;
-      const ownerAfter = await ethers.provider.getBalance(owner.address);
+      // Now the surplus should be withdrawable (goes to treasury)
+      const treasuryBefore = await ethers.provider.getBalance(treasury.address);
+      await mintPool.withdrawETH();
+      const treasuryAfter = await ethers.provider.getBalance(treasury.address);
 
-      expect(ownerAfter - ownerBefore + gasCost).to.equal(surplus);
+      expect(treasuryAfter - treasuryBefore).to.equal(surplus);
 
       // MintPool should now be completely empty
       const poolBalance = await ethers.provider.getBalance(await mintPool.getAddress());

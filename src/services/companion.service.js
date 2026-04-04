@@ -558,8 +558,6 @@ async function fetchMetadata(uri) {
     let url = uri;
     if (uri.startsWith('ipfs://')) {
       url = uri.replace('ipfs://', 'https://gateway.pinata.cloud/ipfs/');
-    } else if (uri.startsWith('ar://')) {
-      url = uri.replace('ar://', 'https://gateway.irys.xyz/');
     }
 
     const response = await fetch(url);
@@ -628,11 +626,10 @@ function mapBareCompanion(tokenId, onChainData) {
 // ═══════════════════════════════════════════════════════════════════════════
 
 /**
- * Resolve ipfs:// (and legacy ar://) URIs to HTTP gateway URLs.
+ * Resolve ipfs:// URIs to HTTP gateway URLs.
  */
 function resolveMediaUri(uri) {
   if (!uri) return null;
-  if (uri.startsWith('ar://')) return uri.replace('ar://', 'https://gateway.irys.xyz/');
   if (uri.startsWith('ipfs://')) return uri.replace('ipfs://', 'https://gateway.pinata.cloud/ipfs/');
   return uri; // Already HTTP
 }
@@ -813,8 +810,8 @@ async function finalizeCompanion(tokenId, companionData, options = {}) {
 
       if (imageBase64) {
         progress('upload_image', 'Uploading portrait to IPFS...', 35);
-        const { irysService } = await import('./irys.service.js');
-        const imageReceipt = await irysService.uploadBase64({
+        const { storageService } = await import('./storage.service.js');
+        const imageReceipt = await storageService.uploadBase64({
           base64Data: imageBase64,
           contentType: 'image/png',
           generation: { type: 'companion-portrait', tokenId: String(tokenId) },
@@ -823,8 +820,8 @@ async function finalizeCompanion(tokenId, companionData, options = {}) {
       }
     } else if (companionData.imageBase64) {
       progress('upload_image', 'Uploading provided image to IPFS...', 35);
-      const { irysService } = await import('./irys.service.js');
-      const imageReceipt = await irysService.uploadBase64({
+      const { storageService } = await import('./storage.service.js');
+      const imageReceipt = await storageService.uploadBase64({
         base64Data: companionData.imageBase64,
         contentType: 'image/png',
         generation: { type: 'companion-portrait', tokenId: String(tokenId) },
@@ -843,8 +840,8 @@ async function finalizeCompanion(tokenId, companionData, options = {}) {
 
     // Step 5: Upload registration JSON to IPFS
     progress('upload_metadata', 'Uploading metadata to IPFS...', 55);
-    const { irysService } = await import('./irys.service.js');
-    const metadataReceipt = await irysService.uploadMetadata(registration, {
+    const { storageService } = await import('./storage.service.js');
+    const metadataReceipt = await storageService.uploadMetadata(registration, {
       type: 'companion-finalization',
       tokenId: String(tokenId),
     });

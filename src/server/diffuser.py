@@ -4205,6 +4205,7 @@ def ltx2_gguf_video():
                 LTX2_REPO,
                 transformer=transformer,
                 torch_dtype=model_dtype,
+                low_cpu_mem_usage=False,
             )
         else:
             # Image-to-Video pipeline
@@ -4212,6 +4213,7 @@ def ltx2_gguf_video():
                 LTX2_REPO,
                 transformer=transformer,
                 torch_dtype=model_dtype,
+                low_cpu_mem_usage=False,
             )
 
             # Load I2V Adapter LoRA for better image-to-video quality
@@ -4226,6 +4228,18 @@ def ltx2_gguf_video():
             #     logger.warning(f"[LTX-2 GGUF] Failed to load I2V LoRA (continuing without it): {e}")
 
         # Enable memory optimizations
+        # Newer diffusers loads sub-models (VAE) on meta device via low_cpu_mem_usage;
+        # enable_model_cpu_offload() calls .to("cpu") which crashes on meta tensors.
+        # Fix: reload any component stuck on meta device before enabling offload.
+        for attr_name in ["vae", "text_encoder"]:
+            component = getattr(pipe, attr_name, None)
+            if component is not None and hasattr(component, "parameters"):
+                if any(p.device.type == "meta" for p in component.parameters()):
+                    logger.info(f"[LTX-2 GGUF] Reloading {attr_name} to fix meta tensors")
+                    reloaded = type(component).from_pretrained(
+                        LTX2_REPO, subfolder=attr_name, torch_dtype=model_dtype, low_cpu_mem_usage=False,
+                    )
+                    setattr(pipe, attr_name, reloaded)
         pipe.enable_model_cpu_offload()
 
         # Enable tiling for high resolutions (720p+ = ~900K pixels)

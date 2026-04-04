@@ -43,7 +43,7 @@ async function purchaseWithUSDC(registry, usdcToken, buyer, skillId, price) {
     await usdcToken.mint(buyer.address, price);
     await usdcToken.connect(buyer).approve(await registry.getAddress(), price);
   }
-  return registry.connect(buyer).purchaseSkill(skillId);
+  return registry.connect(buyer).purchaseSkill(skillId, price || ethers.MaxUint256);
 }
 
 describe("BonzaiSkillRegistry", function () {
@@ -629,7 +629,7 @@ describe("BonzaiSkillRegistry", function () {
       const { registry, usdcToken, author1, buyer1 } = await loadFixture(deploySkillRegistry);
       const { skillId } = await registerDefaultSkill(registry, author1, { purchasePrice: 0n });
 
-      await registry.connect(buyer1).purchaseSkill(skillId);
+      await registry.connect(buyer1).purchaseSkill(skillId, ethers.MaxUint256);
 
       expect(await registry.hasPurchased(buyer1.address, skillId)).to.be.true;
     });
@@ -639,7 +639,7 @@ describe("BonzaiSkillRegistry", function () {
       const { skillId } = await registerDefaultSkill(registry, author1, { purchasePrice: 0n });
 
       const treasuryBalBefore = await usdcToken.balanceOf(treasury.address);
-      await registry.connect(buyer1).purchaseSkill(skillId);
+      await registry.connect(buyer1).purchaseSkill(skillId, ethers.MaxUint256);
       const treasuryBalAfter = await usdcToken.balanceOf(treasury.address);
 
       expect(treasuryBalAfter).to.equal(treasuryBalBefore);
@@ -649,7 +649,7 @@ describe("BonzaiSkillRegistry", function () {
       const { registry, usdcToken, author1, buyer1 } = await loadFixture(deploySkillRegistry);
       const { skillId } = await registerDefaultSkill(registry, author1, { purchasePrice: 0n });
 
-      await registry.connect(buyer1).purchaseSkill(skillId);
+      await registry.connect(buyer1).purchaseSkill(skillId, ethers.MaxUint256);
 
       const skill = await registry.getSkill(skillId);
       expect(skill.totalPurchases).to.equal(1);
@@ -667,7 +667,7 @@ describe("BonzaiSkillRegistry", function () {
       await usdcToken.connect(buyer1).approve(await registry.getAddress(), SKILL_PURCHASE_PRICE);
 
       await expect(
-        registry.connect(buyer1).purchaseSkill(skillId)
+        registry.connect(buyer1).purchaseSkill(skillId, ethers.MaxUint256)
       ).to.be.revertedWithCustomError(registry, "AlreadyPurchased")
         .withArgs(buyer1.address, skillId);
     });
@@ -680,7 +680,7 @@ describe("BonzaiSkillRegistry", function () {
       await usdcToken.mint(buyer1.address, SKILL_PURCHASE_PRICE);
 
       await expect(
-        registry.connect(buyer1).purchaseSkill(skillId)
+        registry.connect(buyer1).purchaseSkill(skillId, ethers.MaxUint256)
       ).to.be.reverted;
     });
 
@@ -692,7 +692,7 @@ describe("BonzaiSkillRegistry", function () {
       await usdcToken.connect(buyer1).approve(await registry.getAddress(), SKILL_PURCHASE_PRICE);
 
       await expect(
-        registry.connect(buyer1).purchaseSkill(skillId)
+        registry.connect(buyer1).purchaseSkill(skillId, ethers.MaxUint256)
       ).to.be.reverted;
     });
 
@@ -703,7 +703,7 @@ describe("BonzaiSkillRegistry", function () {
       await registry.connect(author1).deactivateSkill(skillId);
 
       await expect(
-        registry.connect(buyer1).purchaseSkill(skillId)
+        registry.connect(buyer1).purchaseSkill(skillId, ethers.MaxUint256)
       ).to.be.revertedWithCustomError(registry, "SkillNotActive")
         .withArgs(skillId);
     });
@@ -713,7 +713,7 @@ describe("BonzaiSkillRegistry", function () {
       const fakeSkillId = ethers.keccak256(ethers.toUtf8Bytes("nonexistent"));
 
       await expect(
-        registry.connect(buyer1).purchaseSkill(fakeSkillId)
+        registry.connect(buyer1).purchaseSkill(fakeSkillId, ethers.MaxUint256)
       ).to.be.revertedWithCustomError(registry, "SkillNotFound")
         .withArgs(fakeSkillId);
     });
@@ -725,7 +725,7 @@ describe("BonzaiSkillRegistry", function () {
       await registry.connect(owner).pause();
 
       await expect(
-        registry.connect(buyer1).purchaseSkill(skillId)
+        registry.connect(buyer1).purchaseSkill(skillId, ethers.MaxUint256)
       ).to.be.revertedWithCustomError(registry, "EnforcedPause");
     });
 
@@ -755,7 +755,7 @@ describe("BonzaiSkillRegistry", function () {
       await usdcToken.connect(buyer1).approve(await registry.getAddress(), SKILL_PURCHASE_PRICE);
 
       await expect(
-        registry.connect(buyer1).purchaseSkill(skillId)
+        registry.connect(buyer1).purchaseSkill(skillId, ethers.MaxUint256)
       )
         .to.emit(registry, "SkillPurchased")
         .withArgs(
@@ -775,7 +775,7 @@ describe("BonzaiSkillRegistry", function () {
       const { skillId } = await registerDefaultSkill(registry, author1, { purchasePrice: 0n });
 
       await expect(
-        registry.connect(buyer1).purchaseSkill(skillId)
+        registry.connect(buyer1).purchaseSkill(skillId, ethers.MaxUint256)
       )
         .to.emit(registry, "SkillPurchased")
         .withArgs(skillId, buyer1.address, author1.address, 0, 0, 0, await usdcToken.getAddress(), (v) => v > 0);
@@ -816,7 +816,7 @@ describe("BonzaiSkillRegistry", function () {
       await usdcToken.connect(buyer1).approve(await registry.getAddress(), SKILL_PURCHASE_PRICE);
 
       await expect(
-        registry.connect(buyer1).purchaseSkill(skillId)
+        registry.connect(buyer1).purchaseSkill(skillId, ethers.MaxUint256)
       )
         .to.emit(registry, "CoOwnerShareFallbackToTreasury")
         .withArgs(skillId, expectedCoOwnerShare);
@@ -843,7 +843,7 @@ describe("BonzaiSkillRegistry", function () {
       await usdcToken.connect(buyer1).approve(await registry.getAddress(), SKILL_PURCHASE_PRICE);
 
       await expect(
-        registry.connect(buyer1).purchaseSkill(skillId)
+        registry.connect(buyer1).purchaseSkill(skillId, ethers.MaxUint256)
       ).to.emit(registry, "SkillPurchased");
     });
   });
@@ -1638,13 +1638,13 @@ describe("BonzaiSkillRegistry", function () {
       const { skillId } = await registerDefaultSkill(registry, author1);
 
       const coOwnerShare = (SKILL_PURCHASE_PRICE * 8000n) / 10000n;
-      const platformShare = SKILL_PURCHASE_PRICE - coOwnerShare;
+      const authorShare = SKILL_PURCHASE_PRICE - coOwnerShare;
 
       await usdcToken.mint(buyer1.address, SKILL_PURCHASE_PRICE);
       await usdcToken.connect(buyer1).approve(await registry.getAddress(), SKILL_PURCHASE_PRICE);
 
       await expect(
-        registry.connect(buyer1).purchaseSkill(skillId)
+        registry.connect(buyer1).purchaseSkill(skillId, ethers.MaxUint256)
       )
         .to.emit(registry, "SkillPurchased")
         .withArgs(
@@ -1653,7 +1653,7 @@ describe("BonzaiSkillRegistry", function () {
           author1.address,
           SKILL_PURCHASE_PRICE,
           coOwnerShare,
-          platformShare,
+          authorShare,
           await usdcToken.getAddress(),
           (v) => v > 0
         );
@@ -1762,7 +1762,7 @@ describe("BonzaiSkillRegistry", function () {
       await usdcToken.connect(buyer1).approve(await registry.getAddress(), SKILL_PURCHASE_PRICE);
 
       await expect(
-        registry.connect(buyer1).purchaseSkill(skillId)
+        registry.connect(buyer1).purchaseSkill(skillId, ethers.MaxUint256)
       )
         .to.emit(registry, "CoOwnerShareFallbackToTreasury")
         .withArgs(skillId, expectedCoOwnerShare);

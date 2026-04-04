@@ -635,6 +635,7 @@ import {
 import AccessRequirements from "./AccessRequirements.vue";
 import MintModal from "./MintModal.vue";
 import { requestOpenNetworkModal } from "../services/level.service.js";
+import { addImageInference } from "../stores/inferenceStore.js";
 
 const API_BASE =
   (typeof process !== "undefined" && process.env?.VITE_API_BASE) ||
@@ -1520,6 +1521,17 @@ export default {
           hasCopy.value = [...hasCopy.value, false];
           // Debounced persistence
           persistInferences([...inferences.value]);
+
+          // Save to unified inference store with performance metadata
+          addImageInference(prompt, response.data.image, {
+            pipeline: pipelineName,
+            width: form.width,
+            height: form.height,
+            steps: form.steps,
+            elapsed: elapsedMs / 1000,
+            source: 'bonzai',
+          });
+
           form.prompt = "";
           // Reset to first page to show the new result
           resetToFirstPage();

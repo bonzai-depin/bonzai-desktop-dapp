@@ -63,7 +63,7 @@ const DEPLOY_CONFIG = {
   create2Deployer: '0x4e59b44847b379578588920cA78FbF26c0B4956C',
 
   // MintPool config
-  epochDuration: 1209600, // 14 days (2 weeks) in seconds
+  epochDuration: 604800, // 7 days (1 week) in seconds — matches documentation
   poolThresholds: [1000, 5000, 10000, 25000, 33000, 50000],
 
   // BonzaiUnlock price in wei (1 ETH)
@@ -376,6 +376,7 @@ async function main() {
       DEPLOY_CONFIG.bonzaiTokenBase,
       DEPLOY_CONFIG.poolThresholds,
       DEPLOY_CONFIG.epochDuration,
+      DEPLOY_CONFIG.treasury,
     ],
     'BonzaiMintPool (epoch-based revenue pools)',
   );
@@ -593,6 +594,11 @@ async function main() {
     'setFeeHook', [deployedAddresses.BonzaiUniswapHook],
     'BonzaiMintPool.setFeeHook(hook)',
   );
+  await wireContract(
+    signer, deployedAddresses.BonzaiMintPool, mintPoolAbi,
+    'setCompanionNFT', [deployedAddresses.BonzaiCompanions],
+    'BonzaiMintPool.setCompanionNFT(companions)',
+  );
 
   // Wire BonzaiUniswapHook → authorize both factories
   await wireContract(
@@ -615,6 +621,11 @@ async function main() {
   );
 
   // Wire FineTuneTokenFactory → BonzaiCollectibles implementation (NFT ownership check)
+  // TODO: FineTuneTokenFactory.setContentContract should point to CollectiblesFactory,
+  // and the contract needs to be updated to verify NFT ownership on user-specific clones
+  // (ERC-1167). Currently it checks the implementation address, but NFTs are minted on
+  // per-user clone addresses. The contract's launchToken should accept a `collection`
+  // parameter and verify it was created by the factory.
   const fineTuneFactoryAbi = fineTuneFactoryCompiled.FineTuneTokenFactory.abi;
   await wireContract(
     signer, deployedAddresses.FineTuneTokenFactory, fineTuneFactoryAbi,

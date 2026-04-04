@@ -1,13 +1,13 @@
 /**
  * useBonzaiNFT Composable
  *
- * Orchestrates the full flow: Generation → Irys Upload → LSP8 Mint
- * Uses LUKSO Universal Profiles and Irys (Arweave) for decentralized provenance
+ * Orchestrates the full flow: Generation → IPFS Upload → LSP8 Mint
+ * Uses LUKSO Universal Profiles and IPFS (Pinata) for decentralized provenance
  */
 
 import { ref, computed, reactive } from "vue";
 import { ethers } from "ethers";
-import { irysService } from "../services/irys.service.js";
+import { storageService } from "../services/storage.service.js";
 import { luksoService } from "../services/lukso.service.js";
 
 export function useBonzaiNFT() {
@@ -37,7 +37,7 @@ export function useBonzaiNFT() {
 
   // Service states
   const isLuksoConnected = computed(() => luksoService.state.isConnected);
-  const isIrysConnected = computed(() => irysService.isInitialized());
+  const isStorageConnected = computed(() => storageService.isInitialized());
   const luksoAddress = computed(() => luksoService.state.address);
   const luksoProfile = computed(() => luksoService.state.profileData);
 
@@ -115,14 +115,14 @@ export function useBonzaiNFT() {
   }
 
   /**
-   * Connect to Irys using the LUKSO wallet
+   * Connect to IPFS storage using the LUKSO wallet
    */
-  async function connectIrys() {
+  async function connectStorage() {
     if (!isLuksoConnected.value) {
       throw new Error("Please connect your Universal Profile first");
     }
 
-    updateProgress("connect", 60, "Connecting to Irys...");
+    updateProgress("connect", 60, "Connecting to IPFS storage...");
 
     try {
       // Get the LUKSO provider
@@ -131,8 +131,8 @@ export function useBonzaiNFT() {
         throw new Error("LUKSO provider not found");
       }
 
-      await irysService.initIrys(provider);
-      updateProgress("connect", 100, "Connected to Irys!");
+      await storageService.initStorage(provider);
+      updateProgress("connect", 100, "Connected to IPFS storage!");
     } catch (err) {
       status.value = "error";
       error.value = err.message;
@@ -141,7 +141,7 @@ export function useBonzaiNFT() {
   }
 
   /**
-   * Connect both LUKSO and Irys
+   * Connect both LUKSO and IPFS storage
    */
   async function connect() {
     reset();
@@ -149,15 +149,15 @@ export function useBonzaiNFT() {
 
     try {
       await connectLukso();
-      await connectIrys();
+      await connectStorage();
       status.value = "idle";
       return {
         lukso: {
           address: luksoService.state.address,
           profile: luksoService.state.profileData,
         },
-        irys: {
-          address: irysService.isInitialized(),
+        storage: {
+          address: storageService.isInitialized(),
         },
       };
     } catch (err) {
@@ -172,7 +172,7 @@ export function useBonzaiNFT() {
    */
   function disconnect() {
     luksoService.disconnect();
-    irysService.disconnect();
+    storageService.disconnect();
     reset();
   }
 
@@ -181,33 +181,33 @@ export function useBonzaiNFT() {
   // ═══════════════════════════════════════════════════════════════════════
 
   /**
-   * Get Irys balance
+   * Get storage balance
    */
-  async function getIrysBalance() {
-    if (!isIrysConnected.value) {
-      throw new Error("Irys not connected");
+  async function getStorageBalance() {
+    if (!isStorageConnected.value) {
+      throw new Error("IPFS storage not connected");
     }
-    return irysService.getBalance();
+    return storageService.getBalance();
   }
 
   /**
-   * Fund Irys account
+   * Fund storage account
    */
-  async function fundIrys(amountEth) {
-    if (!isIrysConnected.value) {
-      throw new Error("Irys not connected");
+  async function fundStorage(amountEth) {
+    if (!isStorageConnected.value) {
+      throw new Error("IPFS storage not connected");
     }
-    return irysService.fund(amountEth);
+    return storageService.fund(amountEth);
   }
 
   /**
    * Estimate upload cost
    */
   async function estimateUploadCost(bytes) {
-    if (!isIrysConnected.value) {
-      throw new Error("Irys not connected");
+    if (!isStorageConnected.value) {
+      throw new Error("IPFS storage not connected");
     }
-    return irysService.estimateCost(bytes);
+    return storageService.estimateCost(bytes);
   }
 
   /**
@@ -248,12 +248,12 @@ export function useBonzaiNFT() {
         throw new Error("Please connect your Universal Profile first");
       }
 
-      if (!isIrysConnected.value) {
-        throw new Error("Please connect to Irys first");
+      if (!isStorageConnected.value) {
+        throw new Error("Please connect to IPFS storage first");
       }
 
       // ─────────────────────────────────────────────────────────────────
-      // STAGE 1: UPLOAD CONTENT TO IRYS
+      // STAGE 1: UPLOAD CONTENT TO IPFS
       // ─────────────────────────────────────────────────────────────────
 
       status.value = "uploading";
@@ -282,19 +282,19 @@ export function useBonzaiNFT() {
         parameters: generation.parameters || {},
       };
 
-      updateProgress("upload", 20, "Uploading content to Arweave...");
+      updateProgress("upload", 20, "Uploading content to IPFS...");
 
       // Upload content
       let contentReceipt;
       if (typeof content === "string" && content.includes("base64")) {
-        contentReceipt = await irysService.uploadBase64({
+        contentReceipt = await storageService.uploadBase64({
           base64Data: content,
           contentType,
           generation: genMetadata,
           attribution,
         });
       } else {
-        contentReceipt = await irysService.uploadContent({
+        contentReceipt = await storageService.uploadContent({
           data: content,
           contentType,
           generation: genMetadata,
@@ -308,20 +308,20 @@ export function useBonzaiNFT() {
       // STAGE 2: BUILD & UPLOAD LSP4 METADATA
       // ─────────────────────────────────────────────────────────────────
 
-      // Build LSP4Metadata with Irys provenance
+      // Build LSP4Metadata with IPFS provenance
       const lsp4Metadata = {
         LSP4Metadata: {
           name: title,
           description,
           links: [
             {
-              title: "View on Arweave",
+              title: "View on IPFS",
               url: contentReceipt.gatewayUrl,
             },
           ],
           assets: [
             {
-              url: contentReceipt.url, // ar://TX_ID
+              url: contentReceipt.url, // ipfs://CID
               fileType: contentType,
               verification: {
                 method: "keccak256(bytes)",
@@ -345,11 +345,11 @@ export function useBonzaiNFT() {
             contentHash,
             promptHash,
 
-            irys: {
+            storage: {
               transactionId: contentReceipt.transactionId,
               timestamp: contentReceipt.timestamp,
               signature: contentReceipt.signature,
-              gateway: "https://gateway.irys.xyz",
+              gateway: "https://gateway.pinata.cloud/ipfs",
             },
 
             generation: {
@@ -382,7 +382,7 @@ export function useBonzaiNFT() {
       };
 
       // Upload metadata JSON
-      const metadataReceipt = await irysService.uploadMetadata(
+      const metadataReceipt = await storageService.uploadMetadata(
         lsp4Metadata,
         genMetadata,
         attribution
@@ -410,9 +410,9 @@ export function useBonzaiNFT() {
 
       // Mint on LUKSO
       const mintResult = await luksoService.mint({
-        irysTransactionId: contentReceipt.transactionId,
+        transactionId: contentReceipt.transactionId,
         model: generation.model,
-        metadataUri: metadataReceipt.url, // ar://TX_ID
+        metadataUri: metadataReceipt.url, // ipfs://CID
         tokenId,
       });
 
@@ -435,8 +435,8 @@ export function useBonzaiNFT() {
         metadataUrl: metadataReceipt.gatewayUrl,
         explorerUrl: mintResult.explorerUrl,
 
-        // Irys receipts
-        irys: {
+        // Storage receipts
+        storage: {
           content: contentReceipt,
           metadata: metadataReceipt,
         },
@@ -465,12 +465,12 @@ export function useBonzaiNFT() {
   // ═══════════════════════════════════════════════════════════════════════
 
   /**
-   * Upload content to Irys without minting
+   * Upload content to IPFS without minting
    * Useful for previewing or when user wants to mint later
    */
   async function uploadOnly({ content, contentType, prompt, generation }) {
-    if (!isIrysConnected.value) {
-      throw new Error("Please connect to Irys first");
+    if (!isStorageConnected.value) {
+      throw new Error("Please connect to IPFS storage first");
     }
 
     status.value = "uploading";
@@ -497,18 +497,18 @@ export function useBonzaiNFT() {
         parameters: generation.parameters || {},
       };
 
-      updateProgress("upload", 30, "Uploading to Arweave...");
+      updateProgress("upload", 30, "Uploading to IPFS...");
 
       let receipt;
       if (typeof content === "string" && content.includes("base64")) {
-        receipt = await irysService.uploadBase64({
+        receipt = await storageService.uploadBase64({
           base64Data: content,
           contentType,
           generation: genMetadata,
           attribution,
         });
       } else {
-        receipt = await irysService.uploadContent({
+        receipt = await storageService.uploadContent({
           data: content,
           contentType,
           generation: genMetadata,
@@ -548,9 +548,9 @@ export function useBonzaiNFT() {
       // Get on-chain provenance
       const onChain = await luksoService.getProvenance(tokenId);
 
-      // Fetch from Irys and verify hash
-      const { content, provenance: irysProvenance } = await irysService.fetchWithProvenance(
-        onChain.irysTransactionId
+      // Fetch from IPFS and verify hash
+      const { content, provenance } = await storageService.fetchWithProvenance(
+        onChain.transactionId
       );
 
       // Verify content hash
@@ -559,9 +559,9 @@ export function useBonzaiNFT() {
       return {
         valid: true, // Will be compared against expected hash from metadata
         onChain,
-        irysProvenance,
+        provenance,
         contentHash,
-        arweaveUrl: `https://gateway.irys.xyz/${onChain.irysTransactionId}`,
+        gatewayUrl: `https://gateway.pinata.cloud/ipfs/${onChain.transactionId}`,
       };
     } catch (err) {
       console.error("[BonzaiNFT] Verification failed:", err);
@@ -585,19 +585,19 @@ export function useBonzaiNFT() {
     isComplete,
     hasError,
     isLuksoConnected,
-    isIrysConnected,
+    isStorageConnected,
     luksoAddress,
     luksoProfile,
 
     // Connection
     connect,
     connectLukso,
-    connectIrys,
+    connectStorage,
     disconnect,
 
     // Funding
-    getIrysBalance,
-    fundIrys,
+    getStorageBalance,
+    fundStorage,
     estimateUploadCost,
     getMintFee,
 

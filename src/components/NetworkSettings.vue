@@ -285,6 +285,38 @@
                   +{{ provider.pipelines.length - 4 }}
                 </span>
               </div>
+
+              <!-- Historical Performance -->
+              <div class="provider-performance" v-if="getProviderHistory(provider.peerId)">
+                <div class="performance-header">
+                  <span class="material-symbols-outlined" style="font-size: 14px; vertical-align: middle">speed</span>
+                  Historical Performance
+                  <span class="has-text-grey-light">({{ getProviderHistory(provider.peerId).totalGenerations }} runs)</span>
+                </div>
+                <div class="performance-metrics">
+                  <span v-if="getProviderHistory(provider.peerId).text.count > 0" class="perf-metric">
+                    <span class="material-symbols-outlined" style="font-size: 12px">chat</span>
+                    {{ getProviderHistory(provider.peerId).text.avgTokPerSec.toFixed(1) }} tok/s
+                  </span>
+                  <span v-if="getProviderHistory(provider.peerId).image.count > 0" class="perf-metric">
+                    <span class="material-symbols-outlined" style="font-size: 12px">image</span>
+                    {{ getProviderHistory(provider.peerId).image.avgElapsed.toFixed(1) }}s
+                  </span>
+                  <span v-if="getProviderHistory(provider.peerId).video.count > 0" class="perf-metric">
+                    <span class="material-symbols-outlined" style="font-size: 12px">movie</span>
+                    {{ getProviderHistory(provider.peerId).video.avgElapsed.toFixed(1) }}s
+                  </span>
+                  <span v-if="getProviderHistory(provider.peerId).audio.count > 0" class="perf-metric">
+                    <span class="material-symbols-outlined" style="font-size: 12px">headphones</span>
+                    {{ getProviderHistory(provider.peerId).audio.avgElapsed.toFixed(1) }}s
+                  </span>
+                </div>
+                <div class="performance-hw" v-if="getProviderHistory(provider.peerId).hardware">
+                  <span class="has-text-grey-light" style="font-size: 0.7rem">
+                    {{ getProviderHistory(provider.peerId).hardware.gpu }} / {{ (getProviderHistory(provider.peerId).hardware.ram / 1024 ** 3).toFixed(0) }}GB
+                  </span>
+                </div>
+              </div>
             </div>
           </div>
         </div>
@@ -850,6 +882,7 @@
 
 <script setup>
 import { ref, computed, onMounted, onUnmounted, watch } from "vue";
+import { getProviderPerformanceStats } from "../stores/inferenceStore.js";
 
 // State
 const isLoadingSettings = ref(true);
@@ -874,6 +907,13 @@ const isSelfTesting = ref(false);
 const availableProviders = ref([]);
 const selectedProvider = ref(null);
 const isRefreshingProviders = ref(false);
+const providerHistory = ref({});
+
+const loadProviderHistory = () => {
+  providerHistory.value = getProviderPerformanceStats();
+};
+
+const getProviderHistory = (peerId) => providerHistory.value[peerId] || null;
 
 // OpenClaw integration state
 const openclawInstalled = ref(false);
@@ -1269,6 +1309,7 @@ onMounted(async () => {
   await refreshStatus();
   await checkOpenClawStatus();
   await checkHermesStatus();
+  loadProviderHistory();
 
   // Refresh providers if in consumer mode
   if (networkMode.value === "consumer") {
@@ -1655,6 +1696,45 @@ hr {
   font-size: 0.75rem;
   padding: 4px 8px;
   border-radius: 999px;
+}
+
+.provider-performance {
+  margin-top: 10px;
+  padding-top: 10px;
+  border-top: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.performance-header {
+  font-size: 0.75rem;
+  color: rgba(255, 255, 255, 0.5);
+  margin-bottom: 6px;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.performance-metrics {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.perf-metric {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  font-size: 0.8rem;
+  font-family: "Fira Sans Condensed", sans-serif;
+  font-style: italic;
+  font-weight: 900;
+  color: rgba(255, 255, 255, 0.85);
+  background: rgba(255, 255, 255, 0.06);
+  padding: 2px 8px;
+  border-radius: 6px;
+}
+
+.performance-hw {
+  margin-top: 4px;
 }
 
 .selected-provider-info .notification {

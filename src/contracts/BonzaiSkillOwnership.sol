@@ -61,7 +61,6 @@ contract BonzaiSkillOwnership is Ownable, ReentrancyGuard, Pausable {
         address ownerAddress;       // NFT owner who registered
         uint8 profileScore;         // Spending profile score for this skill's category (1-15)
         uint256 registeredAt;       // Block timestamp of registration
-        bool active;                // Can be deregistered by owner
     }
 
     // ═══════════════════════════════════════════════════════════════════════════
@@ -98,6 +97,9 @@ contract BonzaiSkillOwnership is Ownable, ReentrancyGuard, Pausable {
     /// @notice Wallet => list of skill IDs with unclaimed revenue (for zeroing on claim)
     mapping(address => bytes32[]) private _walletSkills;
 
+    /// @notice Wallet => skill ID => whether already tracked in _walletSkills
+    mapping(address => mapping(bytes32 => bool)) private _walletSkillTracked;
+
     /// @notice Total revenue distributed through this contract
     uint256 public totalRevenueDistributed;
 
@@ -118,6 +120,9 @@ contract BonzaiSkillOwnership is Ownable, ReentrancyGuard, Pausable {
 
     /// @notice Category string => on-chain index (matching BonzaiCompanions.sol packing)
     mapping(string => uint8) public categoryToIndex;
+
+    /// @notice Tracks used attestation signatures to prevent replay
+    mapping(bytes32 => bool) public usedAttestations;
 
     // ═══════════════════════════════════════════════════════════════════════════
     // EVENTS
@@ -184,6 +189,7 @@ contract BonzaiSkillOwnership is Ownable, ReentrancyGuard, Pausable {
     event TreasuryUpdated(address indexed oldTreasury, address indexed newTreasury);
     event BonzaiTokenUpdated(address indexed oldToken, address indexed newToken);
     event CompanionNFTUpdated(address indexed oldNFT, address indexed newNFT);
+    event UsdcTokenUpdated(address indexed oldToken, address indexed newToken);
 
     // ═══════════════════════════════════════════════════════════════════════════
     // ERRORS
@@ -320,8 +326,7 @@ contract BonzaiSkillOwnership is Ownable, ReentrancyGuard, Pausable {
             companionWallet: companionWallet,
             ownerAddress: msg.sender,
             profileScore: profileScore,
-            registeredAt: block.timestamp,
-            active: true
+            registeredAt: block.timestamp
         }));
 
         // Store index (1-based to distinguish from "not registered" = 0)
@@ -354,9 +359,8 @@ contract BonzaiSkillOwnership is Ownable, ReentrancyGuard, Pausable {
         uint256 index = indexPlusOne - 1;
         CompanionRegistration storage reg = skillCompanions[skillId][index];
 
-        if (reg.ownerAddress != msg.sender) {
-            revert NotRegistrationOwner(msg.sender, reg.ownerAddress);
-        }
+        address currentOwner = companionNFT.ownerOf(reg.companionTokenId);
+        require(currentOwner == msg.sender || reg.ownerAddress == msg.sender, "Not companion owner");
 
         // Swap with last element and pop (gas-efficient removal)
         uint256 lastIndex = skillCompanions[skillId].length - 1;
@@ -398,22 +402,31 @@ contract BonzaiSkillOwnership is Ownable, ReentrancyGuard, Pausable {
             return;
         }
 
-        // Calculate weights for all active companions
+        // Calculate weights for all eligible companions
         uint256 totalWeight = 0;
         uint256[] memory weights = new uint256[](companions.length);
         uint256 activeCount = 0;
 
         for (uint256 i = 0; i < companions.length; ) {
-            if (companions[i].active) {
-                uint256 bonzaiBalance = bonzaiToken.balanceOf(companions[i].companionWallet);
-                // Normalize balance to whole tokens (divide by 1e18) to prevent
-                // overflow when multiplying by profileScore. Minimum 1 for score-only weight.
-                uint256 normalizedBalance = bonzaiBalance / 1e18;
-                if (normalizedBalance == 0) normalizedBalance = 1;
-                weights[i] = normalizedBalance * uint256(companions[i].profileScore);
-                totalWeight += weights[i];
-                activeCount++;
+            // Skip companions whose NFT is no longer owned by the registrant
+            try companionNFT.ownerOf(companions[i].companionTokenId) returns (address currentOwner) {
+                if (currentOwner != companions[i].ownerAddress) {
+                    unchecked { i++; }
+                    continue;
+                }
+            } catch {
+                unchecked { i++; }
+                continue;
             }
+
+            uint256 bonzaiBalance = bonzaiToken.balanceOf(companions[i].companionWallet);
+            // Normalize balance to whole tokens (divide by 1e18) to prevent
+            // overflow when multiplying by profileScore. Minimum 1 for score-only weight.
+            uint256 normalizedBalance = bonzaiBalance / 1e18;
+            if (normalizedBalance == 0) normalizedBalance = 1;
+            weights[i] = normalizedBalance * uint256(companions[i].profileScore);
+            totalWeight += weights[i];
+            activeCount++;
             unchecked { i++; }
         }
 
@@ -433,9 +446,10 @@ contract BonzaiSkillOwnership is Ownable, ReentrancyGuard, Pausable {
                 uint256 share = (msg.value * weights[i]) / totalWeight;
                 if (share > 0) {
                     address wallet = companions[i].companionWallet;
-                    // Track skill for this wallet if first time earning from it
-                    if (unclaimedRevenuePerSkill[wallet][skillId] == 0) {
+                    // Track skill for this wallet (only once, never re-added)
+                    if (!_walletSkillTracked[wallet][skillId]) {
                         _walletSkills[wallet].push(skillId);
+                        _walletSkillTracked[wallet][skillId] = true;
                     }
                     unclaimedRevenue[wallet] += share;
                     unclaimedRevenuePerSkill[wallet][skillId] += share;
@@ -452,7 +466,7 @@ contract BonzaiSkillOwnership is Ownable, ReentrancyGuard, Pausable {
             if (!success) revert TransferFailed(treasury);
         }
 
-        totalRevenueDistributed += msg.value;
+        totalRevenueDistributed += (msg.value - dust);
 
         emit RevenueDistributed(skillId, msg.value, activeCount, block.timestamp);
     }
@@ -469,6 +483,8 @@ contract BonzaiSkillOwnership is Ownable, ReentrancyGuard, Pausable {
         bytes32 skillId,
         uint256 amount
     ) external onlySkillRegistry nonReentrant whenNotPaused {
+        require(address(usdcToken) != address(0), "USDC token not set");
+
         // Pull USDC from the caller (SkillRegistry)
         usdcToken.safeTransferFrom(msg.sender, address(this), amount);
 
@@ -481,20 +497,29 @@ contract BonzaiSkillOwnership is Ownable, ReentrancyGuard, Pausable {
             return;
         }
 
-        // Calculate weights for all active companions
+        // Calculate weights for all eligible companions
         uint256 totalWeight = 0;
         uint256[] memory weights = new uint256[](companions.length);
         uint256 activeCount = 0;
 
         for (uint256 i = 0; i < companions.length; ) {
-            if (companions[i].active) {
-                uint256 bonzaiBalance = bonzaiToken.balanceOf(companions[i].companionWallet);
-                uint256 normalizedBalance = bonzaiBalance / 1e18;
-                if (normalizedBalance == 0) normalizedBalance = 1;
-                weights[i] = normalizedBalance * uint256(companions[i].profileScore);
-                totalWeight += weights[i];
-                activeCount++;
+            // Skip companions whose NFT is no longer owned by the registrant
+            try companionNFT.ownerOf(companions[i].companionTokenId) returns (address currentOwner) {
+                if (currentOwner != companions[i].ownerAddress) {
+                    unchecked { i++; }
+                    continue;
+                }
+            } catch {
+                unchecked { i++; }
+                continue;
             }
+
+            uint256 bonzaiBalance = bonzaiToken.balanceOf(companions[i].companionWallet);
+            uint256 normalizedBalance = bonzaiBalance / 1e18;
+            if (normalizedBalance == 0) normalizedBalance = 1;
+            weights[i] = normalizedBalance * uint256(companions[i].profileScore);
+            totalWeight += weights[i];
+            activeCount++;
             unchecked { i++; }
         }
 
@@ -546,13 +571,12 @@ contract BonzaiSkillOwnership is Ownable, ReentrancyGuard, Pausable {
         unclaimedRevenue[msg.sender] = 0;
         totalRevenueClaimed += amount;
 
-        // Zero all per-skill entries for this wallet
+        // Zero all per-skill entries for this wallet (keep _walletSkills intact to prevent quadratic re-growth)
         bytes32[] storage skills = _walletSkills[msg.sender];
         for (uint256 i = 0; i < skills.length; ) {
             delete unclaimedRevenuePerSkill[msg.sender][skills[i]];
             unchecked { i++; }
         }
-        delete _walletSkills[msg.sender];
 
         // Transfer ETH
         (bool success, ) = msg.sender.call{value: amount}("");
@@ -649,7 +673,7 @@ contract BonzaiSkillOwnership is Ownable, ReentrancyGuard, Pausable {
     // ═══════════════════════════════════════════════════════════════════════════
 
     /**
-     * @dev Verify EIP-191 attestation from trusted signer
+     * @dev Verify EIP-191 attestation from trusted signer with replay protection
      */
     function _verifyAttestation(
         bytes32 skillId,
@@ -659,7 +683,7 @@ contract BonzaiSkillOwnership is Ownable, ReentrancyGuard, Pausable {
         uint8 profileScore,
         uint256 deadline,
         bytes calldata attestation
-    ) internal view {
+    ) internal {
         bytes32 messageHash = keccak256(abi.encodePacked(
             skillId,
             companionTokenId,
@@ -667,13 +691,19 @@ contract BonzaiSkillOwnership is Ownable, ReentrancyGuard, Pausable {
             ownerAddress,
             profileScore,
             deadline,
-            block.chainid
+            block.chainid,
+            address(this)
         ));
 
         bytes32 ethSignedHash = messageHash.toEthSignedMessageHash();
         address recoveredSigner = ethSignedHash.recover(attestation);
 
         if (recoveredSigner != attestationSigner) revert InvalidAttestation();
+
+        // Prevent attestation replay
+        bytes32 attestationId = keccak256(abi.encodePacked(attestation));
+        require(!usedAttestations[attestationId], "Attestation already used");
+        usedAttestations[attestationId] = true;
     }
 
     // ═══════════════════════════════════════════════════════════════════════════
@@ -833,7 +863,9 @@ contract BonzaiSkillOwnership is Ownable, ReentrancyGuard, Pausable {
         onlyOwner
         notZeroAddress(_usdcToken)
     {
+        address old = address(usdcToken);
         usdcToken = IERC20(_usdcToken);
+        emit UsdcTokenUpdated(old, _usdcToken);
     }
 
     /**

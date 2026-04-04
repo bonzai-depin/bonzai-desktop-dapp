@@ -565,6 +565,7 @@ import { io } from "socket.io-client";
 import AccessRequirements from "./AccessRequirements.vue";
 import MintModal from "./MintModal.vue";
 import { requestOpenNetworkModal } from "../services/level.service.js";
+import { addVideoInference } from "../stores/inferenceStore.js";
 
 // ═══════════════════════════════════════════════════════════════════════════
 // PERFORMANCE UTILITIES
@@ -1504,6 +1505,20 @@ export default {
           hasCopy.value = [...hasCopy.value, false];
           // Debounced persistence
           persistInferences([...inferences.value]);
+
+          // Save to unified inference store with performance metadata
+          addVideoInference(
+            `${mode.value}-i2v`,
+            response.data.video_path || response.data.video_url,
+            {
+              pipeline: 'video_fast',
+              duration: duration.value,
+              fps: fps.value,
+              elapsed: elapsedMs / 1000,
+              source: 'bonzai',
+            },
+          );
+
           // Reset to first page to show the new result
           resetToFirstPage();
         }

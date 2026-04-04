@@ -1550,7 +1550,7 @@ export default {
         const model = trainedModels.value.find(m => m.id === mintTarget.value.inferenceId);
         if (model) {
           model.contentTokenId = result.tokenId;
-          model.irysHash = result.irysTransactionId;
+          model.ipfsHash = result.transactionId;
         }
       }
     };
@@ -1588,7 +1588,7 @@ export default {
           tokenLaunchTarget.value.contentTokenId,
           tokenName.value,
           tokenSymbol.value,
-          tokenLaunchTarget.value.irysHash || '',
+          tokenLaunchTarget.value.ipfsHash || '',
           tokenEthAmount.value,
         );
 

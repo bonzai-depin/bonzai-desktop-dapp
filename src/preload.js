@@ -155,18 +155,6 @@ contextBridge.exposeInMainWorld("electronAPI", {
   hermesSetEnabled: (enabled) => ipcRenderer.invoke("hermes-set-enabled", enabled),
   hermesIsInstalled: () => ipcRenderer.invoke("hermes-is-installed"),
 
-  // ─────────────────────────────────────────────────────────────────────────────
-  // Irys / Arweave Upload (proxied through main process for Node.js compat)
-  // ─────────────────────────────────────────────────────────────────────────────
-  irys: {
-    init: (opts) => ipcRenderer.invoke("irys-init", opts),
-    upload: (opts) => ipcRenderer.invoke("irys-upload", opts),
-    uploadJson: (opts) => ipcRenderer.invoke("irys-upload-json", opts),
-    balance: () => ipcRenderer.invoke("irys-balance"),
-    fund: (opts) => ipcRenderer.invoke("irys-fund", opts),
-    price: (opts) => ipcRenderer.invoke("irys-price", opts),
-    disconnect: () => ipcRenderer.invoke("irys-disconnect"),
-  },
 
   // ─────────────────────────────────────────────────────────────────────────────
   // Dataset Studio (simple CRUD + LLM describe)

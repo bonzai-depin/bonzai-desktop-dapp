@@ -2012,84 +2012,6 @@ ipcMain.handle("save-base64-to-file", async (_event, filePath, base64Data) => {
   }
 });
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Irys / Arweave Upload (runs in Node.js — no browser polyfill issues)
-// ─────────────────────────────────────────────────────────────────────────────
-let irysNode = null;
-
-ipcMain.handle("irys-init", async (_event, { privateKey }) => {
-  try {
-    const Irys = (await import("@irys/sdk")).default;
-    irysNode = new Irys({
-      url: "https://node2.irys.xyz",
-      token: "ethereum",
-      key: privateKey,
-    });
-    await irysNode.ready();
-    console.log(`[Irys] Connected — wallet: ${irysNode.address}`);
-    let balance = "0";
-    try {
-      const bal = await irysNode.getLoadedBalance();
-      balance = irysNode.utils.fromAtomic(bal);
-    } catch (e) {
-      console.warn("[Irys] Could not fetch balance:", e.message);
-    }
-    return { ok: true, address: irysNode.address, balance };
-  } catch (e) {
-    console.error("[Irys] Init failed:", e.message);
-    return { ok: false, error: e.message };
-  }
-});
-
-ipcMain.handle("irys-upload", async (_event, { data, contentType, tags }) => {
-  if (!irysNode) throw new Error("Irys not initialized — call irys-init first");
-  const buf = Buffer.from(data);
-  const receipt = await irysNode.upload(buf, { tags });
-  console.log(`[Irys] Uploaded: ${receipt.id} (${buf.length} bytes)`);
-  return {
-    id: receipt.id,
-    timestamp: receipt.timestamp,
-    signature: receipt.signature,
-  };
-});
-
-ipcMain.handle("irys-upload-json", async (_event, { json, tags }) => {
-  if (!irysNode) throw new Error("Irys not initialized — call irys-init first");
-  const buf = Buffer.from(JSON.stringify(json, null, 2), "utf-8");
-  const allTags = [{ name: "Content-Type", value: "application/json" }, ...(tags || [])];
-  const receipt = await irysNode.upload(buf, { tags: allTags });
-  console.log(`[Irys] Uploaded JSON: ${receipt.id}`);
-  return {
-    id: receipt.id,
-    timestamp: receipt.timestamp,
-    signature: receipt.signature,
-  };
-});
-
-ipcMain.handle("irys-balance", async () => {
-  if (!irysNode) throw new Error("Irys not initialized");
-  const bal = await irysNode.getLoadedBalance();
-  return irysNode.utils.fromAtomic(bal);
-});
-
-ipcMain.handle("irys-fund", async (_event, { amount }) => {
-  if (!irysNode) throw new Error("Irys not initialized");
-  const atomicAmount = irysNode.utils.toAtomic(amount);
-  const response = await irysNode.fund(atomicAmount);
-  console.log(`[Irys] Funded ${amount} ETH. TX: ${response.id}`);
-  return { id: response.id };
-});
-
-ipcMain.handle("irys-price", async (_event, { bytes }) => {
-  if (!irysNode) throw new Error("Irys not initialized");
-  const price = await irysNode.getPrice(bytes);
-  return irysNode.utils.fromAtomic(price);
-});
-
-ipcMain.handle("irys-disconnect", () => {
-  irysNode = null;
-  return { ok: true };
-});
 
 // ─────────────────────────────────────────────────────────────────────────────
 // OpenClaw Integration Config
@@ -3484,8 +3406,9 @@ function getLocalIP() {
 }
 
 async function systemInformation() {
-  const ram = await si.mem(); // bytes: { total, free, available, ... }
-  const gfx = await si.graphics(); // includes controllers[].vram in MB
+  // Core system info (RAM + GPU) — must succeed for context calculation
+  const ram = await si.mem();
+  const gfx = await si.graphics();
   const ip = getLocalIP();
   console.log(
     `Flask API should be accessible at: http://${ip}:${PY_SERVER_PORT}`
@@ -3493,14 +3416,34 @@ async function systemInformation() {
 
   const controller = gfx.controllers?.[0];
 
-  return {
-    // existing
+  const result = {
     ram: ram.total,
     ramAvailable: ram.available,
     gpu: controller?.model || "Unknown",
     vram: controller?.vram || 0,
     ip,
   };
+
+  // Extended info — best-effort, failures are non-fatal
+  try {
+    const cpu = await si.cpu();
+    result.cpu = `${cpu.manufacturer} ${cpu.brand}`;
+    result.cpuCores = cpu.physicalCores;
+    result.cpuThreads = cpu.cores;
+    result.cpuSpeed = cpu.speed;
+  } catch (e) {
+    console.warn("[SystemInfo] CPU info unavailable:", e.message);
+  }
+  try {
+    const osInfo = await si.osInfo();
+    result.os = `${osInfo.distro} ${osInfo.release}`;
+    result.arch = osInfo.arch;
+    result.platform = osInfo.platform;
+  } catch (e) {
+    console.warn("[SystemInfo] OS info unavailable:", e.message);
+  }
+
+  return result;
 }
 
 // Restore user's model directory from store, or use default

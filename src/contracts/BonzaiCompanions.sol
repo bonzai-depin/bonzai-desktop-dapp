@@ -7,6 +7,14 @@ import "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
 import "@openzeppelin/contracts/utils/Pausable.sol";
 
 /**
+ * @title IBonzaiUnlock
+ * @notice Interface for checking if a user has unlocked all levels
+ */
+interface IBonzaiUnlock {
+    function hasUnlocked(address user) external view returns (bool);
+}
+
+/**
  * @title IERC8004
  * @notice Interface for ERC-8004 Decentralized AI Agent Identity
  * @dev Core identity registry functions for autonomous AI agents.
@@ -29,7 +37,7 @@ interface IERC8004 {
  * On-chain data model:
  *   1. ERC-8004 Agent Traits (via setMetadata): domain, service, skill, tool, trust_model, x402_support
  *   2. Companion Identity (struct): personalityHash, spendingProfile (12 categories × 4 bits packed uint96), gender
- *   3. Full metadata on Arweave via agentURI
+ *   3. Full metadata on IPFS via agentURI
  *
  * spendingProfile packing (4 bits per category, values 1-10):
  *   Bits [3:0]=education  [7:4]=entertainment  [11:8]=fashion  [15:12]=finance
@@ -76,11 +84,17 @@ contract BonzaiCompanions is ERC721URIStorage, Ownable, ReentrancyGuard, Pausabl
     // Maximum supply of companions
     uint256 public constant MAX_SUPPLY = 10000;
 
+    // Maximum companions per wallet
+    uint256 public constant MAX_PER_WALLET = 4;
+
+    /// @notice BonzaiUnlock contract — unlocked users mint for free
+    IBonzaiUnlock public unlockContract;
+
     // ═══════════════════════════════════════════════════════════════════════════
     // ERC-8004 IDENTITY REGISTRY STATE
     // ═══════════════════════════════════════════════════════════════════════════
 
-    /// @notice Agent URI pointing to registration file (Arweave)
+    /// @notice Agent URI pointing to registration file (IPFS)
     mapping(uint256 => string) private _agentURIs;
 
     /// @notice Agent wallet for autonomous x402 payments
@@ -104,6 +118,11 @@ contract BonzaiCompanions is ERC721URIStorage, Ownable, ReentrancyGuard, Pausabl
         string metadataURI
     );
     event CompanionVerified(uint256 indexed tokenId, address indexed verifier);
+    event UnlockContractUpdated(address indexed oldUnlock, address indexed newUnlock);
+    event MintPriceUpdated(uint256 oldPrice, uint256 newPrice);
+    event TreasuryUpdated(address indexed oldTreasury, address indexed newTreasury);
+    event PersonalityHashUpdated(uint256 indexed tokenId, bytes32 oldHash, bytes32 newHash);
+    event SpendingProfileUpdated(uint256 indexed tokenId, uint96 oldProfile, uint96 newProfile);
 
     // ERC-8004 events
     event Registered(uint256 indexed agentId, string agentURI, address indexed owner);
@@ -134,7 +153,7 @@ contract BonzaiCompanions is ERC721URIStorage, Ownable, ReentrancyGuard, Pausabl
 
     /**
      * @notice Mint a companion with ERC-8004 agent identity
-     * @param agentURI Arweave URI to ERC-8004 registration file
+     * @param agentURI IPFS URI to ERC-8004 registration file
      * @param personalityHash Hash of personality traits
      * @param spendingProfile Packed uint96 — 12 categories × 4 bits
      * @param gender Companion gender
@@ -149,26 +168,23 @@ contract BonzaiCompanions is ERC721URIStorage, Ownable, ReentrancyGuard, Pausabl
         address agentWallet
     ) external payable nonReentrant whenNotPaused returns (uint256) {
         require(_tokenIdCounter < MAX_SUPPLY, "Max supply reached");
+        require(balanceOf(msg.sender) < MAX_PER_WALLET, "Max companions per wallet reached");
         require(bytes(agentURI).length > 0, "Empty agent URI");
-        require(msg.value >= mintPrice, "Insufficient ETH");
         _validateSpendingProfile(spendingProfile);
 
-        // Forward mint price to treasury
-        (bool sent, ) = treasury.call{value: mintPrice}("");
-        require(sent, "ETH transfer failed");
-
-        // Refund excess ETH to minter
-        uint256 excess = msg.value - mintPrice;
-        if (excess > 0) {
-            (bool refunded, ) = msg.sender.call{value: excess}("");
-            require(refunded, "ETH refund failed");
+        // Unlocked users (paid 1 ETH via BonzaiUnlock) mint for free
+        bool isUnlocked = false;
+        if (address(unlockContract) != address(0)) {
+            try unlockContract.hasUnlocked(msg.sender) returns (bool result) {
+                isUnlocked = result;
+            } catch {}
         }
+        uint256 fee = isUnlocked ? 0 : mintPrice;
+        require(msg.value >= fee, "Insufficient ETH");
 
+        // State changes BEFORE ETH transfers
         _tokenIdCounter++;
         uint256 tokenId = _tokenIdCounter;
-
-        _safeMint(msg.sender, tokenId);
-        _setTokenURI(tokenId, agentURI);
 
         companions[tokenId] = CompanionData({
             creator: msg.sender,
@@ -180,6 +196,23 @@ contract BonzaiCompanions is ERC721URIStorage, Ownable, ReentrancyGuard, Pausabl
         });
 
         _creatorCompanions[msg.sender].push(tokenId);
+
+        // Forward fee to treasury (skip if free)
+        if (fee > 0) {
+            (bool sent, ) = treasury.call{value: fee}("");
+            require(sent, "ETH transfer failed");
+        }
+
+        // Refund excess ETH to minter
+        uint256 excess = msg.value - fee;
+        if (excess > 0) {
+            (bool refunded, ) = msg.sender.call{value: excess}("");
+            require(refunded, "ETH refund failed");
+        }
+
+        // _safeMint AFTER all state changes and ETH transfers
+        _safeMint(msg.sender, tokenId);
+        _setTokenURI(tokenId, agentURI);
 
         // Set ERC-8004 agent identity
         _agentURIs[tokenId] = agentURI;
@@ -306,7 +339,9 @@ contract BonzaiCompanions is ERC721URIStorage, Ownable, ReentrancyGuard, Pausabl
      */
     function setPersonalityHash(uint256 tokenId, bytes32 newHash) external {
         require(ownerOf(tokenId) == msg.sender, "Not owner");
+        bytes32 oldHash = companions[tokenId].personalityHash;
         companions[tokenId].personalityHash = newHash;
+        emit PersonalityHashUpdated(tokenId, oldHash, newHash);
     }
 
     /**
@@ -318,7 +353,9 @@ contract BonzaiCompanions is ERC721URIStorage, Ownable, ReentrancyGuard, Pausabl
     function setSpendingProfile(uint256 tokenId, uint96 newProfile) external {
         require(ownerOf(tokenId) == msg.sender, "Not owner");
         _validateSpendingProfile(newProfile);
+        uint96 oldProfile = companions[tokenId].spendingProfile;
         companions[tokenId].spendingProfile = newProfile;
+        emit SpendingProfileUpdated(tokenId, oldProfile, newProfile);
     }
 
     /**
@@ -481,12 +518,22 @@ contract BonzaiCompanions is ERC721URIStorage, Ownable, ReentrancyGuard, Pausabl
 
     function setMintPrice(uint256 _mintPrice) external onlyOwner {
         require(_mintPrice > 0, "Price cannot be zero");
+        uint256 old = mintPrice;
         mintPrice = _mintPrice;
+        emit MintPriceUpdated(old, _mintPrice);
     }
 
     function setTreasury(address _treasury) external onlyOwner {
         require(_treasury != address(0), "Invalid treasury");
+        address old = treasury;
         treasury = _treasury;
+        emit TreasuryUpdated(old, _treasury);
+    }
+
+    function setUnlockContract(address _unlock) external onlyOwner {
+        address old = address(unlockContract);
+        unlockContract = IBonzaiUnlock(_unlock);
+        emit UnlockContractUpdated(old, _unlock);
     }
 
     function pause() external onlyOwner {

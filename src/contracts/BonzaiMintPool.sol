@@ -5,6 +5,7 @@ import "@openzeppelin/contracts/access/Ownable.sol";
 import "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
 import "@openzeppelin/contracts/utils/Pausable.sol";
 import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
+import "@openzeppelin/contracts/token/ERC721/IERC721.sol";
 
 /**
  * @title BonzaiMintPool
@@ -47,6 +48,12 @@ contract BonzaiMintPool is Ownable, ReentrancyGuard, Pausable {
     /// @notice BONZAI ERC-20 token
     IERC20 public bonzaiToken;
 
+    /// @notice BonzaiCompanions ERC-721 contract (required for claiming)
+    IERC721 public companionNFT;
+
+    /// @notice Treasury address for swept/surplus funds
+    address public treasury;
+
     /// @notice Number of content-type pools
     uint256 public constant NUM_POOLS = 6;
 
@@ -56,6 +63,12 @@ contract BonzaiMintPool is Ownable, ReentrancyGuard, Pausable {
 
     /// @notice LVL thresholds per pool (in token units with 18 decimals)
     uint256[6] public poolThresholds;
+
+    /// @notice Snapshotted thresholds per epoch (frozen at first registration)
+    mapping(uint256 => uint256[6]) public epochThresholds;
+
+    /// @notice Whether an epoch's thresholds have been snapshotted
+    mapping(uint256 => bool) public epochThresholdSnapshotted;
 
     // ═══════════════════════════════════════════════════════════════════════════
     // TIME-BASED EPOCH CONFIG
@@ -142,8 +155,11 @@ contract BonzaiMintPool is Ownable, ReentrancyGuard, Pausable {
     event AuthorizedMinterUpdated(address indexed minter, bool authorized);
     event CollectiblesFactoryUpdated(address indexed oldFactory, address indexed newFactory);
     event PoolThresholdUpdated(uint8 indexed poolIndex, uint256 oldThreshold, uint256 newThreshold);
+    event CompanionNFTUpdated(address indexed oldNFT, address indexed newNFT);
     event UnclaimedSwept(uint256 indexed epochId, uint256 amount);
     event ClaimConfirmed(uint256 indexed epochId, address indexed wallet, uint256 balance, uint256 blockNumber);
+    event TreasuryUpdated(address indexed oldTreasury, address indexed newTreasury);
+    event EpochThresholdsSnapshotted(uint256 indexed epochId);
 
     // ═══════════════════════════════════════════════════════════════════════════
     // CONSTRUCTOR
@@ -153,14 +169,18 @@ contract BonzaiMintPool is Ownable, ReentrancyGuard, Pausable {
      * @param _bonzaiToken BONZAI ERC-20 token address
      * @param _thresholds Array of 6 thresholds in full token units (e.g. 1000 = 1000 * 1e18)
      * @param _epochDuration Duration of each epoch in seconds (e.g. 604800 = 7 days)
+     * @param _treasury Treasury address for swept/surplus funds
      */
     constructor(
         address _bonzaiToken,
         uint256[6] memory _thresholds,
-        uint256 _epochDuration
+        uint256 _epochDuration,
+        address _treasury
     ) Ownable(msg.sender) {
         require(_bonzaiToken != address(0), "Invalid token address");
         require(_epochDuration > 0, "Invalid epoch duration");
+        require(_treasury != address(0), "Invalid treasury address");
+        treasury = _treasury;
 
         bonzaiToken = IERC20(_bonzaiToken);
         epochDuration = _epochDuration;
@@ -239,8 +259,18 @@ contract BonzaiMintPool is Ownable, ReentrancyGuard, Pausable {
         uint256 epochId = currentEpoch();
         require(registeredBalances[epochId][msg.sender] == 0, "Already registered");
 
+        // Snapshot thresholds on first registration of this epoch
+        if (!epochThresholdSnapshotted[epochId]) {
+            for (uint8 i = 0; i < NUM_POOLS;) {
+                epochThresholds[epochId][i] = poolThresholds[i];
+                unchecked { i++; }
+            }
+            epochThresholdSnapshotted[epochId] = true;
+            emit EpochThresholdsSnapshotted(epochId);
+        }
+
         uint256 balance = bonzaiToken.balanceOf(msg.sender);
-        require(balance >= poolThresholds[0], "Below minimum threshold");
+        require(balance >= epochThresholds[epochId][0], "Below minimum threshold");
 
         registeredBalances[epochId][msg.sender] = balance;
         epochs[epochId].totalRegistered += balance;
@@ -289,6 +319,12 @@ contract BonzaiMintPool is Ownable, ReentrancyGuard, Pausable {
         uint256 current = currentEpoch();
         require(current == epochId + 1, "Claim window closed");
 
+        // Must own at least 1 companion NFT to claim
+        require(
+            address(companionNFT) != address(0) && companionNFT.balanceOf(msg.sender) >= 1,
+            "Must own a companion"
+        );
+
         uint256 balance = registeredBalances[epochId][msg.sender];
         require(balance > 0, "Not registered for this epoch");
         require(
@@ -335,7 +371,12 @@ contract BonzaiMintPool is Ownable, ReentrancyGuard, Pausable {
 
         uint256 balance = registeredBalances[epochId][msg.sender];
         require(balance > 0, "Not registered for this epoch");
-        require(balance >= poolThresholds[poolIndex], "Below pool threshold");
+
+        // Use snapshotted thresholds from the epoch the user registered in
+        uint256 threshold = epochThresholdSnapshotted[epochId]
+            ? epochThresholds[epochId][poolIndex]
+            : poolThresholds[poolIndex];
+        require(balance >= threshold, "Below pool threshold");
 
         EpochData storage epoch = epochs[epochId];
         require(epoch.totalRegistered > 0, "No registrations");
@@ -512,6 +553,13 @@ contract BonzaiMintPool is Ownable, ReentrancyGuard, Pausable {
     // ADMIN FUNCTIONS
     // ═══════════════════════════════════════════════════════════════════════════
 
+    function setTreasury(address _treasury) external onlyOwner {
+        require(_treasury != address(0), "Invalid address");
+        address old = treasury;
+        treasury = _treasury;
+        emit TreasuryUpdated(old, _treasury);
+    }
+
     function setContentContract(address _contract) external onlyOwner {
         require(_contract != address(0), "Invalid address");
         address old = contentContract;
@@ -531,6 +579,13 @@ contract BonzaiMintPool is Ownable, ReentrancyGuard, Pausable {
         address old = feeHook;
         feeHook = _hook;
         emit FeeHookUpdated(old, _hook);
+    }
+
+    function setCompanionNFT(address _nft) external onlyOwner {
+        require(_nft != address(0), "Invalid address");
+        address old = address(companionNFT);
+        companionNFT = IERC721(_nft);
+        emit CompanionNFTUpdated(old, _nft);
     }
 
     /**
@@ -609,7 +664,7 @@ contract BonzaiMintPool is Ownable, ReentrancyGuard, Pausable {
 
         if (sweepAmount > 0) {
             totalSwept += sweepAmount;
-            (bool ok, ) = owner().call{value: sweepAmount}("");
+            (bool ok, ) = treasury.call{value: sweepAmount}("");
             require(ok, "Sweep transfer failed");
             emit UnclaimedSwept(epochId, sweepAmount);
         }
@@ -630,6 +685,7 @@ contract BonzaiMintPool is Ownable, ReentrancyGuard, Pausable {
             uint256 unclaimed = deposited > claimed ? deposited - claimed : 0;
             if (unclaimed > 0) {
                 epochs[current].poolDeposits[i] += unclaimed;
+                totalDeposited[i] += unclaimed;
                 totalRecirculated += unclaimed;
             }
             unchecked { ++i; }
@@ -655,7 +711,7 @@ contract BonzaiMintPool is Ownable, ReentrancyGuard, Pausable {
      */
     function recoverERC20(address token, uint256 amount) external onlyOwner {
         (bool success, bytes memory data) = token.call(
-            abi.encodeWithSignature("transfer(address,uint256)", owner(), amount)
+            abi.encodeWithSignature("transfer(address,uint256)", treasury, amount)
         );
         require(success && (data.length == 0 || abi.decode(data, (bool))), "Transfer failed");
     }
@@ -678,7 +734,7 @@ contract BonzaiMintPool is Ownable, ReentrancyGuard, Pausable {
         require(balance > accountable, "No surplus ETH to withdraw");
 
         uint256 surplus = balance - accountable;
-        (bool sent, ) = owner().call{value: surplus}("");
+        (bool sent, ) = treasury.call{value: surplus}("");
         require(sent, "ETH transfer failed");
     }
 

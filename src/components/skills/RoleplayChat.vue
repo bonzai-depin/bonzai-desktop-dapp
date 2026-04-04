@@ -3425,7 +3425,7 @@ import { sellerRegistryService } from "../../services/sellerRegistry.service.js"
 import { useBonzaiWeb3 } from "../../composables/useBonzaiWeb3.js";
 import { requestOpenLevelModal } from "../../services/level.service.js";
 import { companionTokenService } from "../../services/companionToken.service.js";
-import { irysService } from "../../services/irys.service.js";
+import { storageService } from "../../services/storage.service.js";
 import {
   getEip1193Provider,
   switchNetwork,
@@ -5658,25 +5658,25 @@ export default {
       mintResult.value = null;
 
       try {
-        // Initialize Irys with connected wallet
+        // Initialize storage with connected wallet
         const provider = getEip1193Provider();
         if (!provider)
           throw new Error(
             "Wallet not connected. Please connect your wallet first.",
           );
-        await irysService.getIrys(provider);
+        await storageService.getStorage(provider);
 
-        // Upload companion image to Arweave via Irys
+        // Upload companion image to decentralized storage
         let imageUri = companion.image || "";
         if (imageUri && imageUri.startsWith("data:image")) {
           console.log(
-            "[NFT Mint] Uploading companion image to Arweave via Irys...",
+            "[NFT Mint] Uploading companion image to storage...",
           );
 
           // Check balance for image upload (metadata is free <100KB)
           const imageBytes = Math.ceil(imageUri.length * 0.75); // base64 → bytes estimate
-          const cost = await irysService.estimateCost(imageBytes);
-          const balance = await irysService.getBalance();
+          const cost = await storageService.estimateCost(imageBytes);
+          const balance = await storageService.getBalance();
           if (parseFloat(balance) < parseFloat(cost)) {
             const needed = (
               parseFloat(cost) -
@@ -5684,14 +5684,14 @@ export default {
               0.0001
             ).toFixed(6);
             const ok = confirm(
-              `Irys balance too low for image upload.\n\nCost: ~${cost} ETH\nBalance: ${balance} ETH\n\nFund ${needed} ETH to proceed?`,
+              `Storage balance too low for image upload.\n\nCost: ~${cost} ETH\nBalance: ${balance} ETH\n\nFund ${needed} ETH to proceed?`,
             );
             if (!ok)
-              throw new Error("Upload cancelled — insufficient Irys balance.");
-            await irysService.fund(needed);
+              throw new Error("Upload cancelled — insufficient storage balance.");
+            await storageService.fund(needed);
           }
 
-          const imageReceipt = await irysService.uploadBase64({
+          const imageReceipt = await storageService.uploadBase64({
             base64Data: imageUri,
             contentType: "image/webp",
           });
@@ -5737,11 +5737,11 @@ export default {
           JSON.stringify(registration, null, 2),
         );
 
-        // Upload registration JSON to Arweave via Irys (free — under 100KB)
+        // Upload registration JSON to decentralized storage (free — under 100KB)
         console.log(
-          "[NFT Mint] Uploading ERC-8004 registration to Arweave via Irys...",
+          "[NFT Mint] Uploading ERC-8004 registration to storage...",
         );
-        const metadataReceipt = await irysService.uploadMetadata(registration);
+        const metadataReceipt = await storageService.uploadMetadata(registration);
         const metadataUri = metadataReceipt.gatewayUrl;
         console.log("[NFT Mint] Registration uploaded:", metadataUri);
 

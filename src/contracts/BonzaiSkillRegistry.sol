@@ -13,7 +13,7 @@ import "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
  * @notice On-chain registry for decentralized AI skills (packaged prompts + tools)
  * @dev Deployed on Base. Handles skill registration, purchases, and execution fees.
  *
- * Skills are defined off-chain (IPFS/Arweave) and referenced by hash. This contract manages:
+ * Skills are defined off-chain (IPFS/Pinata) and referenced by hash. This contract manages:
  * - Skill registration with author address and pricing
  * - One-time skill purchases (USDC payment)
  * - Per-execution running fees (USDC)
@@ -63,14 +63,15 @@ contract BonzaiSkillRegistry is Ownable, ReentrancyGuard, Pausable {
         string name;                 // Skill name
         string version;              // Semantic version
         string category;             // Skill category
-        string ipfsHash;             // IPFS/Arweave hash of full definition
+        string ipfsHash;             // IPFS/Pinata hash of full definition
         uint256 purchasePrice;       // One-time purchase price in USDC (6 decimals)
         uint256 runningFee;          // Per-execution fee in USDC (6 decimals)
         bool isActive;               // Can be purchased/executed
         bool isVerified;             // Verified by BonzAI team
+        bool adminDeactivated;       // Admin-deactivated (cannot be reactivated by author)
         uint256 totalPurchases;      // Total number of purchases
         uint256 totalExecutions;     // Total number of executions
-        uint256 totalRevenue;        // Total ETH revenue collected
+        uint256 totalRevenue;        // Total USDC revenue collected
         uint256 createdAt;           // Registration timestamp
         uint256 updatedAt;           // Last update timestamp
     }
@@ -79,7 +80,7 @@ contract BonzaiSkillRegistry is Ownable, ReentrancyGuard, Pausable {
     // STATE VARIABLES
     // ═══════════════════════════════════════════════════════════════════════════
 
-    /// @notice BONZAI token contract for running fees
+    /// @notice BONZAI token contract — Reserved for future use
     IERC20 public bonzaiToken;
 
     /// @notice USDC token contract for skill purchases
@@ -145,7 +146,7 @@ contract BonzaiSkillRegistry is Ownable, ReentrancyGuard, Pausable {
         address indexed author,
         uint256 price,
         uint256 coOwnerShare,
-        uint256 platformShare,
+        uint256 authorShare,
         address paymentToken,
         uint256 timestamp
     );
@@ -156,8 +157,8 @@ contract BonzaiSkillRegistry is Ownable, ReentrancyGuard, Pausable {
         address indexed executor,
         address indexed author,
         uint256 fee,
+        uint256 coOwnerShare,
         uint256 authorShare,
-        uint256 platformShare,
         uint256 timestamp
     );
 
@@ -333,9 +334,9 @@ contract BonzaiSkillRegistry is Ownable, ReentrancyGuard, Pausable {
      * @notice Register a new skill
      * @param name Skill name
      * @param version Semantic version (e.g., "1.0.0")
-     * @param ipfsHash IPFS/Arweave hash of skill definition JSON
-     * @param purchasePrice One-time purchase price in wei (0 for free skills)
-     * @param runningFee Per-execution fee in BONZAI tokens (0 for no fee)
+     * @param ipfsHash IPFS/Pinata hash of skill definition JSON
+     * @param purchasePrice One-time purchase price in USDC (6 decimals, 0 for free skills)
+     * @param runningFee Per-execution fee in USDC (6 decimals, 0 for no fee)
      * @return skillId The generated skill ID
      */
     function registerSkill(
@@ -358,7 +359,7 @@ contract BonzaiSkillRegistry is Ownable, ReentrancyGuard, Pausable {
         }
 
         // Generate skill ID
-        skillId = keccak256(abi.encodePacked(name, version, msg.sender));
+        skillId = keccak256(abi.encode(name, version, msg.sender));
 
         // Check for duplicate
         if (skills[skillId].author != address(0)) revert SkillAlreadyExists(skillId);
@@ -375,6 +376,7 @@ contract BonzaiSkillRegistry is Ownable, ReentrancyGuard, Pausable {
             runningFee: runningFee,
             isActive: true,
             isVerified: false,
+            adminDeactivated: false,
             totalPurchases: 0,
             totalExecutions: 0,
             totalRevenue: 0,
@@ -450,6 +452,7 @@ contract BonzaiSkillRegistry is Ownable, ReentrancyGuard, Pausable {
         skillExists(skillId)
         onlyAuthor(skillId)
     {
+        require(!skills[skillId].adminDeactivated, "Admin deactivated");
         skills[skillId].isActive = true;
         skills[skillId].updatedAt = block.timestamp;
 
@@ -465,7 +468,7 @@ contract BonzaiSkillRegistry is Ownable, ReentrancyGuard, Pausable {
      * @param skillId Skill to purchase
      * @dev Caller must approve USDC spending before calling. 80% to co-owners, 20% to treasury.
      */
-    function purchaseSkill(bytes32 skillId)
+    function purchaseSkill(bytes32 skillId, uint256 maxPrice)
         external
         nonReentrant
         whenNotPaused
@@ -473,6 +476,10 @@ contract BonzaiSkillRegistry is Ownable, ReentrancyGuard, Pausable {
         skillActive(skillId)
     {
         Skill storage skill = skills[skillId];
+        uint256 price = skill.purchasePrice;
+
+        // Slippage protection
+        require(price <= maxPrice, "Price exceeds maximum");
 
         // Check not already purchased
         if (hasPurchased[msg.sender][skillId]) {
@@ -483,7 +490,6 @@ contract BonzaiSkillRegistry is Ownable, ReentrancyGuard, Pausable {
         hasPurchased[msg.sender][skillId] = true;
 
         // Update stats
-        uint256 price = skill.purchasePrice;
         unchecked {
             skill.totalPurchases += 1;
             skill.totalRevenue += price;
@@ -509,6 +515,7 @@ contract BonzaiSkillRegistry is Ownable, ReentrancyGuard, Pausable {
                 // Success — co-owners credited
             } catch {
                 // Fallback: send co-owner share to author so purchase still completes
+                usdcToken.forceApprove(skillOwnershipContract, 0);
                 emit CoOwnerShareFallbackToTreasury(skillId, coOwnerShare);
                 usdcToken.safeTransfer(skill.author, coOwnerShare);
             }
@@ -593,6 +600,7 @@ contract BonzaiSkillRegistry is Ownable, ReentrancyGuard, Pausable {
                 // Success
             } catch {
                 // Fallback: send to author
+                usdcToken.forceApprove(skillOwnershipContract, 0);
                 usdcToken.safeTransfer(skill.author, coOwnerShare);
             }
 
@@ -669,11 +677,28 @@ contract BonzaiSkillRegistry is Ownable, ReentrancyGuard, Pausable {
         onlyOwner
         skillExists(skillId)
     {
+        skills[skillId].adminDeactivated = true;
         skills[skillId].isActive = false;
         skills[skillId].isVerified = false;
         skills[skillId].updatedAt = block.timestamp;
 
         emit SkillStatusChanged(skillId, false, block.timestamp);
+    }
+
+    /**
+     * @notice Admin reactivate a skill that was admin-deactivated
+     * @param skillId Skill to reactivate
+     */
+    function adminReactivateSkill(bytes32 skillId)
+        external
+        onlyOwner
+        skillExists(skillId)
+    {
+        skills[skillId].adminDeactivated = false;
+        skills[skillId].isActive = true;
+        skills[skillId].updatedAt = block.timestamp;
+
+        emit SkillStatusChanged(skillId, true, block.timestamp);
     }
 
     /**
@@ -770,16 +795,6 @@ contract BonzaiSkillRegistry is Ownable, ReentrancyGuard, Pausable {
     }
 
     /**
-     * @notice Check if user has purchased a skill (alias)
-     * @param user User address
-     * @param skillId Skill ID
-     * @return True if purchased
-     */
-    function hasUserPurchased(address user, bytes32 skillId) external view returns (bool) {
-        return hasPurchased[user][skillId];
-    }
-
-    /**
      * @notice Get all skills by an author
      * @param author Author address
      * @return Array of skill IDs
@@ -841,7 +856,7 @@ contract BonzaiSkillRegistry is Ownable, ReentrancyGuard, Pausable {
         string calldata version,
         address author
     ) external pure returns (bytes32) {
-        return keccak256(abi.encodePacked(name, version, author));
+        return keccak256(abi.encode(name, version, author));
     }
 
     /**

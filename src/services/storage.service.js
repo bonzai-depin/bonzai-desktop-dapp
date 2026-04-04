@@ -3,9 +3,6 @@
  *
  * Handles content & metadata uploads to IPFS via Pinata's API.
  * No wallet signatures or funding required — uses API key auth.
- *
- * Keeps the same export API (`irysService`) for backward compatibility
- * with all consumers (contentNFT, companion, roleplayChat, etc.).
  */
 
 import { ethers } from "ethers";
@@ -36,7 +33,7 @@ function getAuthHeaders() {
   );
 }
 
-const IRYS_CONFIG = {
+const STORAGE_CONFIG = {
   gateways: {
     primary: PINATA_GATEWAY,
     backup: "https://ipfs.io/ipfs",
@@ -44,7 +41,7 @@ const IRYS_CONFIG = {
 };
 
 // ═══════════════════════════════════════════════════════════════════════════
-// STATE (compatibility stubs)
+// STATE
 // ═══════════════════════════════════════════════════════════════════════════
 
 let _initialized = false;
@@ -53,7 +50,7 @@ let _initialized = false;
 // INITIALIZATION (lightweight — no wallet needed for Pinata)
 // ═══════════════════════════════════════════════════════════════════════════
 
-export async function initIrys(_provider) {
+export async function initStorage(_provider) {
   // Verify credentials are available
   getAuthHeaders();
   _initialized = true;
@@ -61,8 +58,8 @@ export async function initIrys(_provider) {
   return true;
 }
 
-export async function getIrys(_provider) {
-  if (!_initialized) return initIrys(_provider);
+export async function getStorage(_provider) {
+  if (!_initialized) return initStorage(_provider);
   return true;
 }
 
@@ -163,7 +160,7 @@ function buildKeyValues(generation = {}, attribution = {}) {
  * @param {string} params.contentType - MIME type
  * @param {Object} params.generation - Generation metadata
  * @param {Object} params.attribution - Attribution metadata
- * @returns {Object} Upload receipt compatible with existing consumers
+ * @returns {Object} Upload receipt
  */
 export async function uploadContent({
   data,
@@ -357,13 +354,21 @@ export async function verifyContentIntegrity(cid, expectedHash) {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
-// EXPORT (same name for backward compatibility)
+// UPLOAD — JSON convenience (alias for uploadMetadata)
 // ═══════════════════════════════════════════════════════════════════════════
 
-export const irysService = {
+export async function uploadJSON(json, generation = {}, attribution = {}) {
+  return uploadMetadata(json, generation, attribution);
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// EXPORT
+// ═══════════════════════════════════════════════════════════════════════════
+
+export const storageService = {
   // Init
-  initIrys,
-  getIrys,
+  initStorage,
+  getStorage,
   isInitialized,
   disconnect,
 
@@ -377,6 +382,7 @@ export const irysService = {
   uploadMetadata,
   uploadBase64,
   uploadFile,
+  uploadJSON,
 
   // Retrieval
   fetchContent,
@@ -384,7 +390,7 @@ export const irysService = {
   verifyContentIntegrity,
 
   // Config
-  config: IRYS_CONFIG,
+  config: STORAGE_CONFIG,
 };
 
-export default irysService;
+export default storageService;
