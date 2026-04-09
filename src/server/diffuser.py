@@ -3741,6 +3741,14 @@ def _load_ace_step():
         if not ckpt_link.exists():
             os.symlink(".", str(ckpt_link))
 
+        # Symlink XL turbo repo into base repo so handler finds it at
+        # checkpoints/acestep-v15-xl-turbo → <xl_repo>/
+        xl_local = repo_local_dir(ACE_STEP_XL_REPO)
+        xl_link = main_local / "acestep-v15-xl-turbo"
+        if xl_local.exists() and not xl_link.exists():
+            os.symlink(str(xl_local), str(xl_link))
+            logger.info(f"[ACE-Step] Symlinked XL turbo: {xl_link} → {xl_local}")
+
         device = DeviceManager.get_device()
         device_str = "cuda" if device.type == "cuda" else (
             "mps" if device.type == "mps" else "cpu"
@@ -3882,15 +3890,15 @@ def audio_music():
     auto_dl = bool(data.get("auto_download", False))
 
     # Memory check for semantic mode (LLM + DiT together need ~10GB)
+    # Falls back to non-semantic instead of failing
     SEMANTIC_MIN_MEMORY_GB = 10
     if semantic:
         import psutil
         available_gb = psutil.virtual_memory().available / (1024 ** 3)
         if available_gb < SEMANTIC_MIN_MEMORY_GB:
             logger.warning(f"[ACE-Step] Semantic mode requires {SEMANTIC_MIN_MEMORY_GB}GB free memory, "
-                          f"only {available_gb:.1f}GB available. Disabling semantic mode.")
-            return jsonify({"ok": False, "error": f"Semantic mode requires at least {SEMANTIC_MIN_MEMORY_GB}GB free memory. "
-                           f"Currently only {available_gb:.1f}GB available. Please close other applications or disable semantic mode."}), 400
+                          f"only {available_gb:.1f}GB available. Falling back to non-semantic mode.")
+            semantic = False
 
     # Append time signature to caption if provided (ACE-Step uses it as a style tag)
     if time_signature and time_signature not in prompt:
