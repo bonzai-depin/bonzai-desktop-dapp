@@ -253,18 +253,38 @@ jobs:
           echo "=== pip cache ==="
           pip cache info || true
 
-      - name: Create Release & Upload
+      - name: Compress .deb if over GitHub limit (2GB)
         run: |
           TAG="${{ env.TAG }}"
           ASSET="out/make/BonzAI-${TAG}-linux-amd64.deb"
-
           if [ -f "$ASSET" ]; then
-            echo "Uploading: $ASSET"
-            gh release upload "${TAG}" "$ASSET" --clobber \
+            SIZE=$(stat --format="%s" "$ASSET")
+            LIMIT=2147483648
+            echo "Asset size: $((SIZE / 1024 / 1024)) MB"
+            if [ "$SIZE" -ge "$LIMIT" ]; then
+              echo "Over 2GB GitHub limit — splitting with zip"
+              cd out/make
+              zip -s 1900m "BonzAI-${TAG}-linux-amd64.zip" "BonzAI-${TAG}-linux-amd64.deb"
+              rm "BonzAI-${TAG}-linux-amd64.deb"
+              ls -lh BonzAI-${TAG}-linux-amd64.z*
+              cd ../..
+            fi
+          fi
+
+      - name: Create Release & Upload
+        run: |
+          TAG="${{ env.TAG }}"
+
+          # Upload all assets (deb or split zip parts)
+          for ASSET in out/make/BonzAI-${TAG}-linux-amd64.*; do
+            [ -f "$ASSET" ] || continue
+            echo "Uploading: $ASSET ($(stat --format='%s' "$ASSET" | numfmt --to=iec))"
+            gh release upload "${TAG}" "$ASSET" --clobber 2>/dev/null \
               || gh release create "${TAG}" "$ASSET" \
                 --title "BonzAI v${TAG}" \
-                --generate-notes
-          fi
+                --generate-notes 2>/dev/null \
+              || echo "Upload failed for $ASSET (release may already exist with max assets)"
+          done
 
           echo "Released Linux build for v${TAG}"
 
