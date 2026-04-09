@@ -159,9 +159,10 @@ function copyBinaries() {
   fs.mkdirSync(BIN_DIR, { recursive: true });
 
   const ext = PLATFORM === "win32" ? ".exe" : "";
+  // MSVC puts binaries in bin/Release/ (multi-config generator), GCC/Clang in bin/
   const binaries = [
-    { name: `rpc-server${ext}`, searchDirs: ["bin", "tools/rpc", "."] },
-    { name: `llama-server${ext}`, searchDirs: ["bin", "tools/server", "."] },
+    { name: `rpc-server${ext}`, searchDirs: ["bin/Release", "bin", "tools/rpc/Release", "tools/rpc", "."] },
+    { name: `llama-server${ext}`, searchDirs: ["bin/Release", "bin", "tools/server/Release", "tools/server", "."] },
   ];
 
   for (const { name, searchDirs } of binaries) {
