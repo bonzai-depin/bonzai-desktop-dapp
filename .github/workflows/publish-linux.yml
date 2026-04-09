@@ -72,13 +72,40 @@ jobs:
           pip install -U qwen-tts --no-deps
           pip install git+https://github.com/ace-step/ACE-Step-1.5.git --no-deps
 
-      # Use --onedir instead of --onefile: CUDA PyTorch exceeds the 4GB
-      # uint32 limit for onefile CArchive. onedir produces an executable +
-      # _internal/ folder with shared libraries — no size limit.
+      # Strip CUDA libs BEFORE PyInstaller bundles them — keeps onefile under 4GB
+      - name: Strip CUDA from torch installation
+        run: |
+          TORCH_DIR=$(python -c "import torch; import os; print(os.path.dirname(torch.__file__))")
+          echo "Torch dir: $TORCH_DIR"
+          echo "Size before: $(du -sh "$TORCH_DIR" | cut -f1)"
+
+          # Remove training-only and unused CUDA libs from the installed torch package
+          find "$TORCH_DIR" -name "libnvJitLink*" -delete 2>/dev/null || true
+          find "$TORCH_DIR" -name "libnvrtc*" -delete 2>/dev/null || true
+          find "$TORCH_DIR" -name "libcupti*" -delete 2>/dev/null || true
+          find "$TORCH_DIR" -name "libnvToolsExt*" -delete 2>/dev/null || true
+          find "$TORCH_DIR" -name "libcurand*" -delete 2>/dev/null || true
+          find "$TORCH_DIR" -name "libcudnn_*_train*" -delete 2>/dev/null || true
+          find "$TORCH_DIR" -name "libcudnn_adv*" -delete 2>/dev/null || true
+          find "$TORCH_DIR" -name "libcudnn_heur*" -delete 2>/dev/null || true
+          find "$TORCH_DIR" -name "libcudnn_cnn_train*" -delete 2>/dev/null || true
+          find "$TORCH_DIR" -name "libnccl*" -delete 2>/dev/null || true
+          find "$TORCH_DIR" -name "libcusparse*" -delete 2>/dev/null || true
+          find "$TORCH_DIR" -name "libcufft*" -delete 2>/dev/null || true
+          find "$TORCH_DIR" -name "libcusolver*" -delete 2>/dev/null || true
+          find "$TORCH_DIR" -name "libtorch_python*" -delete 2>/dev/null || true
+          find "$TORCH_DIR" -name "libc10d*" -delete 2>/dev/null || true
+          find "$TORCH_DIR" -type d -name "caffe2" -exec rm -rf {} + 2>/dev/null || true
+          find "$TORCH_DIR" -name "*.so" -exec strip --strip-debug {} + 2>/dev/null || true
+          find "$TORCH_DIR" -name "*.so.*" -exec strip --strip-debug {} + 2>/dev/null || true
+
+          echo "Size after: $(du -sh "$TORCH_DIR" | cut -f1)"
+
+      # Onefile: single compressed binary. CUDA libs stripped above keep it under 4GB.
       - name: Build Python binary (Linux x64)
         run: |
           pyinstaller \
-            --onedir \
+            --onefile \
             --strip \
             --distpath binaries/${{ env.OS_KEY }}-${{ env.ARCH_KEY }} \
             --workpath $RUNNER_TEMP/pybuild \
@@ -113,69 +140,11 @@ jobs:
 
       - name: Verify Python binary
         run: |
-          # onedir produces: binaries/<os>-<arch>/diffuser/diffuser + _internal/
-          BINARY="binaries/${{ env.OS_KEY }}-${{ env.ARCH_KEY }}/diffuser/diffuser"
+          # onefile produces: binaries/<os>-<arch>/diffuser (single compressed binary)
+          BINARY="binaries/${{ env.OS_KEY }}-${{ env.ARCH_KEY }}/diffuser"
           file "$BINARY"
           file "$BINARY" | grep -q "ELF 64-bit" || { echo "ERROR: Not a 64-bit binary!"; exit 1; }
           ls -lh "$BINARY"
-          echo "Internal deps:"
-          ls binaries/${{ env.OS_KEY }}-${{ env.ARCH_KEY }}/diffuser/_internal/ | head -20
-
-      # Strip unnecessary CUDA/cuDNN libs from PyInstaller output to save ~3-5GB.
-      # Keep only the libs needed at runtime (cublas, cufft, cusolver, cusparse, cudnn).
-      - name: Strip PyInstaller output
-        run: |
-          INTERNAL="binaries/${{ env.OS_KEY }}-${{ env.ARCH_KEY }}/diffuser/_internal"
-          echo "Size before strip: $(du -sh "$INTERNAL" | cut -f1)"
-
-          # Remove CUDA libraries we don't need (saves ~2-4GB)
-          # Keep only: cublas, cufft, cusolver, cusparse, cudnn_*_infer (inference only)
-          find "$INTERNAL" -name "libnvJitLink*" -delete 2>/dev/null || true
-          find "$INTERNAL" -name "libnvrtc*" -delete 2>/dev/null || true
-          find "$INTERNAL" -name "libcupti*" -delete 2>/dev/null || true
-          find "$INTERNAL" -name "libnvToolsExt*" -delete 2>/dev/null || true
-          find "$INTERNAL" -name "libcurand*" -delete 2>/dev/null || true
-          # === CUDA libs: keep only what inference needs ===
-          # KEEP: cublas (matrix math), cudart (runtime), cudnn_ops_infer, cudnn_cnn_infer, cudnn_engines_runtime
-          # DELETE: everything else (~2-4GB savings)
-
-          # Training-only cuDNN (not needed for inference)
-          find "$INTERNAL" -name "libcudnn_*_train*" -delete 2>/dev/null || true
-          find "$INTERNAL" -name "libcudnn_adv*" -delete 2>/dev/null || true
-          find "$INTERNAL" -name "libcudnn_heur*" -delete 2>/dev/null || true
-          # Keep libcudnn_cnn_infer (SDXL U-Net needs conv inference) but remove training
-          find "$INTERNAL" -name "libcudnn_cnn_train*" -delete 2>/dev/null || true
-
-          # CUDA libs not used by diffusion/transformer inference
-          find "$INTERNAL" -name "libnccl*" -delete 2>/dev/null || true      # Multi-GPU comms
-          find "$INTERNAL" -name "libcusparse*" -delete 2>/dev/null || true   # Sparse matrix ops
-          find "$INTERNAL" -name "libcurand*" -delete 2>/dev/null || true     # RNG (PyTorch has own)
-          find "$INTERNAL" -name "libnvJitLink*" -delete 2>/dev/null || true  # JIT compilation
-          find "$INTERNAL" -name "libnvrtc*" -delete 2>/dev/null || true      # Runtime compilation
-          find "$INTERNAL" -name "libcupti*" -delete 2>/dev/null || true      # Profiling
-          find "$INTERNAL" -name "libnvToolsExt*" -delete 2>/dev/null || true # Profiling
-          find "$INTERNAL" -name "libcufft*" -delete 2>/dev/null || true      # FFT (not used)
-          find "$INTERNAL" -name "libcusolver*" -delete 2>/dev/null || true   # Linear algebra solvers
-
-          # PyTorch training-only components
-          find "$INTERNAL" -type d -name "caffe2" -exec rm -rf {} + 2>/dev/null || true
-          find "$INTERNAL" -name "libtorch_python*" -delete 2>/dev/null || true
-          find "$INTERNAL" -name "libc10d*" -delete 2>/dev/null || true
-
-          # General cleanup
-          find "$INTERNAL" -type d -name "test" -exec rm -rf {} + 2>/dev/null || true
-          find "$INTERNAL" -type d -name "tests" -exec rm -rf {} + 2>/dev/null || true
-          find "$INTERNAL" -type d -name "__pycache__" -exec rm -rf {} + 2>/dev/null || true
-          find "$INTERNAL" -name "*.pyc" -delete 2>/dev/null || true
-
-          echo "Size after CUDA strip: $(du -sh "$INTERNAL" | cut -f1)"
-
-          # Strip debug symbols from all shared libraries
-          find "$INTERNAL" -name "*.so" -exec strip --strip-debug {} + 2>/dev/null || true
-          find "$INTERNAL" -name "*.so.*" -exec strip --strip-debug {} + 2>/dev/null || true
-
-          echo "Size after strip: $(du -sh "$INTERNAL" | cut -f1)"
-          df -h /
 
       # PyInstaller has already bundled everything into the binary.
       # Remove Python packages, CUDA libs, pip cache, and PyInstaller workdir
@@ -225,12 +194,11 @@ jobs:
           APP_RESOURCES="out/BonzAI-linux-x64/resources"
           DEST="$APP_RESOURCES/server/python-runtime/linux-x64"
           mkdir -p "$DEST"
-          # onedir: copy executable + _internal/ folder
-          cp -r binaries/linux-x64/diffuser/* "$DEST/"
+          # onefile: copy single binary
+          cp binaries/linux-x64/diffuser "$DEST/diffuser"
           chmod +x "$DEST/diffuser"
           echo "Python runtime copied:"
           ls -lh "$DEST/diffuser"
-          echo "Internal deps: $(ls "$DEST/_internal/" | wc -l) items"
 
       # Raw binaries are now duplicated inside out/BonzAI-linux-x64/resources/ — remove originals
       - name: Remove duplicate binaries
@@ -283,38 +251,18 @@ jobs:
           echo "=== pip cache ==="
           pip cache info || true
 
-      - name: Compress .deb if over GitHub limit (2GB)
-        run: |
-          TAG="${{ env.TAG }}"
-          ASSET="out/make/BonzAI-${TAG}-linux-amd64.deb"
-          if [ -f "$ASSET" ]; then
-            SIZE=$(stat --format="%s" "$ASSET")
-            LIMIT=2147483648
-            echo "Asset size: $((SIZE / 1024 / 1024)) MB"
-            if [ "$SIZE" -ge "$LIMIT" ]; then
-              echo "Over 2GB GitHub limit — splitting with zip"
-              cd out/make
-              zip -s 1900m "BonzAI-${TAG}-linux-amd64.zip" "BonzAI-${TAG}-linux-amd64.deb"
-              rm "BonzAI-${TAG}-linux-amd64.deb"
-              ls -lh BonzAI-${TAG}-linux-amd64.z*
-              cd ../..
-            fi
-          fi
-
       - name: Create Release & Upload
         run: |
           TAG="${{ env.TAG }}"
+          ASSET="out/make/BonzAI-${TAG}-linux-amd64.deb"
 
-          # Upload all assets (deb or split zip parts)
-          for ASSET in out/make/BonzAI-${TAG}-linux-amd64.*; do
-            [ -f "$ASSET" ] || continue
+          if [ -f "$ASSET" ]; then
             echo "Uploading: $ASSET ($(stat --format='%s' "$ASSET" | numfmt --to=iec))"
-            gh release upload "${TAG}" "$ASSET" --clobber 2>/dev/null \
+            gh release upload "${TAG}" "$ASSET" --clobber \
               || gh release create "${TAG}" "$ASSET" \
                 --title "BonzAI v${TAG}" \
-                --generate-notes 2>/dev/null \
-              || echo "Upload failed for $ASSET (release may already exist with max assets)"
-          done
+                --generate-notes
+          fi
 
           echo "Released Linux build for v${TAG}"
 
