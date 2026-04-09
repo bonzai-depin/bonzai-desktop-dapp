@@ -2977,8 +2977,8 @@ def image_turbo_flux_klein_i2i():
 
 
 
-# ACE-Step v1.5 handler cache (DiT handler only; LLM optional for low-VRAM)
-_ace_step_dit = None  # Turbo model
+# ACE-Step v1.5 handler cache — keyed by quality mode
+_ace_step_handlers = {}  # "fast" → handler, "quality" → handler
 _ace_step_lock = threading.Lock()
 
 # ACE-Step LLM handler for semantic audio mode
@@ -3714,21 +3714,39 @@ def audio_quality_voices():
 # ACE-STEP MUSIC GENERATION
 # =============================================================================
 
-def _load_ace_step():
-    """Load or get cached ACE-Step v1.5 DiT handler."""
-    global _ace_step_dit
+def _load_ace_step(quality="fast"):
+    """Load or get cached ACE-Step v1.5 DiT handler.
+
+    Args:
+        quality: "fast" (v1.5 turbo, 2B) or "quality" (v1.5 XL turbo, 4B)
+    """
+    global _ace_step_handlers
     with _ace_step_lock:
-        if _ace_step_dit is not None:
-            return _ace_step_dit
+        if quality in _ace_step_handlers:
+            return _ace_step_handlers[quality]
+
+        # Unload the other quality handler to free memory
+        other = "quality" if quality == "fast" else "fast"
+        if other in _ace_step_handlers:
+            logger.info(f"[ACE-Step] Unloading {other} handler to load {quality}")
+            del _ace_step_handlers[other]
+            gc.collect()
+            DeviceManager.free_memory()
 
         from acestep.handler import AceStepHandler
 
-        # Resolve checkpoint root from MODEL_DIR.
-        # ACE-Step expects models inside <project_root>/checkpoints/.
-        # BonzAI downloads the HF repo to MODEL_DIR/repos/<repo>/ where
-        # model dirs (vae/, acestep-v15-turbo/, etc.) live at root level.
-        # We create a "checkpoints" symlink pointing to "." so
-        # <repo>/checkpoints/<component> resolves to <repo>/<component>.
+        # Config for each quality mode
+        if quality == "quality":
+            config_path = "acestep-v15-xl-turbo"
+            label = "XL Turbo (4B)"
+            dtype = torch.float16   # float16 for speed on XL
+            offload = False         # Keep on device — avoid CPU↔GPU shuffling
+        else:
+            config_path = "acestep-v15-turbo"
+            label = "Turbo (2B)"
+            dtype = torch.float32   # float32 for turbo (small enough)
+            offload = (DeviceManager.get_device().type != "cuda")
+
         main_local = repo_local_dir(ACE_STEP_REPO)
         if not main_local.exists():
             raise RuntimeError(
@@ -3741,13 +3759,13 @@ def _load_ace_step():
         if not ckpt_link.exists():
             os.symlink(".", str(ckpt_link))
 
-        # Symlink XL turbo repo into base repo so handler finds it at
-        # checkpoints/acestep-v15-xl-turbo → <xl_repo>/
-        xl_local = repo_local_dir(ACE_STEP_XL_REPO)
-        xl_link = main_local / "acestep-v15-xl-turbo"
-        if xl_local.exists() and not xl_link.exists():
-            os.symlink(str(xl_local), str(xl_link))
-            logger.info(f"[ACE-Step] Symlinked XL turbo: {xl_link} → {xl_local}")
+        # Symlink XL turbo repo into base repo if needed
+        if quality == "quality":
+            xl_local = repo_local_dir(ACE_STEP_XL_REPO)
+            xl_link = main_local / "acestep-v15-xl-turbo"
+            if xl_local.exists() and not xl_link.exists():
+                os.symlink(str(xl_local), str(xl_link))
+                logger.info(f"[ACE-Step] Symlinked XL turbo: {xl_link} → {xl_local}")
 
         device = DeviceManager.get_device()
         device_str = "cuda" if device.type == "cuda" else (
@@ -3755,34 +3773,35 @@ def _load_ace_step():
         )
 
         handler = AceStepHandler()
-        # Override internal path resolution to use MODEL_DIR location.
-        # The handler's _get_project_root() defaults to site-packages,
-        # ignoring the project_root parameter passed to initialize_service().
         handler._get_project_root = lambda: project_root
 
         is_mps = device.type == "mps"
         status_msg, success = handler.initialize_service(
             project_root=project_root,
-            config_path="acestep-v15-xl-turbo",
+            config_path=config_path,
             device=device_str,
-            offload_to_cpu=True,  # XL Turbo benefits from CPU offload
+            offload_to_cpu=offload,
         )
         if not success:
-            raise RuntimeError(f"ACE-Step v1.5 XL init failed: {status_msg}")
+            raise RuntimeError(f"ACE-Step {label} init failed: {status_msg}")
+
+        # Force float16 for XL quality mode
+        if quality == "quality" and dtype == torch.float16:
+            try:
+                if hasattr(handler, 'dit') and handler.dit is not None:
+                    handler.dit = handler.dit.half()
+                    logger.info("[ACE-Step] XL model converted to float16")
+            except Exception as e:
+                logger.warning(f"[ACE-Step] float16 conversion failed: {e}")
 
         if is_mps:
-            # Monkey-patch the handler to use MPS-specific cache clearing
-            # The original _load_model_context calls torch.cuda.empty_cache() which does nothing on MPS
             _original_load_model_context = handler._load_model_context
-
             from contextlib import contextmanager
 
             @contextmanager
             def _mps_aware_load_model_context(model_name: str):
-                """Wrapper that adds MPS cache clearing after offloading."""
                 with _original_load_model_context(model_name):
                     yield
-                # After the context exits (model offloaded), clear MPS cache
                 if hasattr(torch.mps, 'empty_cache'):
                     torch.mps.empty_cache()
                 if hasattr(torch.mps, 'synchronize'):
@@ -3790,16 +3809,12 @@ def _load_ace_step():
                 gc.collect()
 
             handler._load_model_context = _mps_aware_load_model_context
-            logger.info("ACE-Step TURBO: MPS cache clearing patch applied")
+            logger.info(f"ACE-Step {label}: MPS cache clearing patch applied")
 
-        # Keep using the stock tiled_decode - it uses overlap-discard which
-        # may have minor boundary artifacts but produces correct output.
-        # A crossfade version was attempted but had issues.
         logger.info("ACE-Step: using stock tiled_decode (overlap-discard)")
-
-        _ace_step_dit = handler
-        logger.info("ACE-Step v1.5 DiT handler loaded (%s): %s", device_str, status_msg)
-        return _ace_step_dit
+        _ace_step_handlers[quality] = handler
+        logger.info("ACE-Step v1.5 %s loaded (%s): %s", label, device_str, status_msg)
+        return handler
 
 
 def _load_ace_step_llm():
@@ -3873,9 +3888,12 @@ def audio_music():
     if not prompt:
         return jsonify({"error": "prompt is required"}), 400
 
+    quality = (data.get("quality") or "fast").strip().lower()  # "fast" (v1.5 turbo) or "quality" (v1.5 XL)
+    if quality not in ("fast", "quality"):
+        quality = "fast"
     lyrics = (data.get("lyrics") or "").strip() or ""
     duration = max(10, min(600, int(data.get("duration", 60))))
-    steps = max(1, min(32, int(data.get("steps", 8))))  # XL Turbo: 50 default, up to 100
+    steps = max(1, min(32, int(data.get("steps", 8))))
     guidance_scale = float(data.get("guidance_scale", 7.0))
     seed = int(data.get("seed", -1))
     shift = max(1.0, min(10.0, float(data.get("shift", 4.0))))
@@ -3905,7 +3923,7 @@ def audio_music():
         prompt = f"{prompt}, {time_signature} time"
 
     # Log all music generation parameters for debugging
-    logger.info(f"[ACE-Step] Music generation params: steps={steps}, duration={duration}, bpm={bpm}, "
+    logger.info(f"[ACE-Step] Music generation params: quality={quality}, steps={steps}, duration={duration}, bpm={bpm}, "
                 f"guidance={guidance_scale}, seed={seed}, shift={shift}, instrumental={instrumental}, "
                 f"keyscale={keyscale}, vocal_language={vocal_language}, semantic={semantic}")
 
@@ -3920,7 +3938,7 @@ def audio_music():
         gc.collect()
         DeviceManager.free_memory()
 
-        dit_handler = _load_ace_step()
+        dit_handler = _load_ace_step(quality=quality)
 
         import random as _rng
         actual_seed = seed if seed >= 0 else _rng.randint(0, 2**31 - 1)

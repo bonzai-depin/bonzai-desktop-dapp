@@ -674,11 +674,15 @@
                       <span>Make Music</span>
                     </button>
                     <div class="select is-dark">
-                      <select v-model="musicSemantic">
-                        <option :value="false">⚡ Fast</option>
-                        <option :value="true">🧠 Semantic</option>
+                      <select v-model="musicQuality">
+                        <option value="fast">Fast (v1.5)</option>
+                        <option value="quality">Quality (v1.5 XL)</option>
                       </select>
                     </div>
+                    <label class="checkbox has-text-light ml-3" style="display: flex; align-items: center; gap: 6px; font-size: 0.85rem">
+                      <input type="checkbox" v-model="musicSemantic" />
+                      Semantic
+                    </label>
                   </div>
                 </div>
 
@@ -1155,6 +1159,7 @@ export default {
     const musicGuidance = ref(7.0);
     const musicSeed = ref(-1);
     const musicShift = ref(4.0);
+    const musicQuality = ref("fast"); // "fast" (v1.5 turbo 2B) or "quality" (v1.5 XL turbo 4B)
     const musicSemantic = ref(false); // Use 5Hz LLM for semantic audio codes
     const musicVocalLanguage = ref("en");
     const customVocalLanguage = ref("");
@@ -1930,6 +1935,7 @@ Remember: 6-10 syllables per line, use all appropriate structure tags. Write in 
           musicGuidance.value = params.guidance || 7.0;
           musicSeed.value = params.seed || -1;
           musicShift.value = params.shift || 4.0;
+          musicQuality.value = params.quality || "fast";
           musicSemantic.value = params.semantic || false;
           musicInstrumental.value = params.instrumental || false;
           musicVocalLanguage.value = params.vocalLanguage || "en";
@@ -2540,6 +2546,7 @@ Remember: 6-10 syllables per line, use all appropriate structure tags. Write in 
           lyrics: musicInstrumental.value
             ? undefined
             : musicLyrics.value.trim() || undefined,
+          quality: musicQuality.value,
           duration: musicDuration.value,
           bpm: musicBPM.value,
           keyscale: musicKey.value || undefined,
@@ -2616,7 +2623,7 @@ Remember: 6-10 syllables per line, use all appropriate structure tags. Write in 
             },
             id: uuid(),
             language: language.value,
-            model: mode.value === "music" ? "ace-step-v1.5-xl-turbo" : "qwen3-tts",
+            model: mode.value === "music" ? (musicQuality.value === "quality" ? "ace-step-v1.5-xl-turbo" : "ace-step-v1.5-turbo") : "qwen3-tts",
             hasClone: mode.value === "clone",
             isMusic: mode.value === "music",
             voiceGender: voiceGender.value,
@@ -2625,6 +2632,7 @@ Remember: 6-10 syllables per line, use all appropriate structure tags. Write in 
             ...(mode.value === "music" && {
               songName: songName.value.trim() || null,
               musicParams: {
+                quality: musicQuality.value,
                 caption: musicCaption.value,
                 lyrics: musicLyrics.value,
                 lyricsTheme: lyricsTheme.value,
@@ -2960,6 +2968,7 @@ Remember: 6-10 syllables per line, use all appropriate structure tags. Write in 
       musicGuidance,
       musicSeed,
       musicShift,
+      musicQuality,
       musicSemantic,
       musicVocalLanguage,
       customVocalLanguage,

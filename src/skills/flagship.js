@@ -646,14 +646,14 @@ export const MODEL_REQUIREMENTS = {
 
   // Music Generation
   music: {
-    name: 'ACE-Step v1.5 XL Turbo',
+    name: 'ACE-Step v1.5 Music',
     type: 'audio',
     pipeline: 'music',
     endpoint: '/audio/music',
     repo: ['ACE-Step/Ace-Step1.5', 'ACE-Step/acestep-v15-xl-turbo'],
-    size: '~18.8 GB (4B param DiT)',
-    vram: '12 GB (with CPU offload)',
-    description: 'High-quality music generation with XL model (4B params, 8 steps, DMD-GAN distilled)',
+    size: '~4 GB fast (2B) / ~18.8 GB quality (4B XL)',
+    vram: '4 GB fast / 12 GB quality',
+    description: 'AI music generation — Fast mode (v1.5 turbo, 2B params) or Quality mode (v1.5 XL turbo, 4B params, float16)',
     llmRequired: 'llm_llama_3_1_8b',
     llmNote: 'LLaMA 3.1 8B recommended for lyrics generation',
   },
