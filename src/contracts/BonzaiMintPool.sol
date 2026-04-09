@@ -7,6 +7,10 @@ import "@openzeppelin/contracts/utils/Pausable.sol";
 import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import "@openzeppelin/contracts/token/ERC721/IERC721.sol";
 
+interface IBonzaiUnlock {
+    function hasUnlocked(address user) external view returns (bool);
+}
+
 /**
  * @title BonzaiMintPool
  * @notice Epoch-based revenue pools for BONZAI LVL holders.
@@ -53,6 +57,9 @@ contract BonzaiMintPool is Ownable, ReentrancyGuard, Pausable {
 
     /// @notice Treasury address for swept/surplus funds
     address public treasury;
+
+    /// @notice BonzaiUnlock contract — unlocked users bypass pool thresholds
+    IBonzaiUnlock public unlockContract;
 
     /// @notice Number of content-type pools
     uint256 public constant NUM_POOLS = 6;
@@ -270,7 +277,19 @@ contract BonzaiMintPool is Ownable, ReentrancyGuard, Pausable {
         }
 
         uint256 balance = bonzaiToken.balanceOf(msg.sender);
-        require(balance >= epochThresholds[epochId][0], "Below minimum threshold");
+        require(balance > 0, "Must hold BONZAI tokens");
+
+        // Unlocked users bypass the level threshold — they can register with any positive balance
+        // Their reward share is still proportional to their actual BONZAI balance
+        bool isUnlocked = false;
+        if (address(unlockContract) != address(0)) {
+            try unlockContract.hasUnlocked(msg.sender) returns (bool result) {
+                isUnlocked = result;
+            } catch {}
+        }
+        if (!isUnlocked) {
+            require(balance >= epochThresholds[epochId][0], "Below minimum threshold");
+        }
 
         registeredBalances[epochId][msg.sender] = balance;
         epochs[epochId].totalRegistered += balance;
@@ -319,12 +338,6 @@ contract BonzaiMintPool is Ownable, ReentrancyGuard, Pausable {
         uint256 current = currentEpoch();
         require(current == epochId + 1, "Claim window closed");
 
-        // Must own at least 1 companion NFT to claim
-        require(
-            address(companionNFT) != address(0) && companionNFT.balanceOf(msg.sender) >= 1,
-            "Must own a companion"
-        );
-
         uint256 balance = registeredBalances[epochId][msg.sender];
         require(balance > 0, "Not registered for this epoch");
         require(
@@ -372,11 +385,19 @@ contract BonzaiMintPool is Ownable, ReentrancyGuard, Pausable {
         uint256 balance = registeredBalances[epochId][msg.sender];
         require(balance > 0, "Not registered for this epoch");
 
-        // Use snapshotted thresholds from the epoch the user registered in
-        uint256 threshold = epochThresholdSnapshotted[epochId]
-            ? epochThresholds[epochId][poolIndex]
-            : poolThresholds[poolIndex];
-        require(balance >= threshold, "Below pool threshold");
+        // Unlocked users bypass per-pool thresholds — can claim from all pools
+        bool isUnlocked = false;
+        if (address(unlockContract) != address(0)) {
+            try unlockContract.hasUnlocked(msg.sender) returns (bool result) {
+                isUnlocked = result;
+            } catch {}
+        }
+        if (!isUnlocked) {
+            uint256 threshold = epochThresholdSnapshotted[epochId]
+                ? epochThresholds[epochId][poolIndex]
+                : poolThresholds[poolIndex];
+            require(balance >= threshold, "Below pool threshold");
+        }
 
         EpochData storage epoch = epochs[epochId];
         require(epoch.totalRegistered > 0, "No registrations");
@@ -430,15 +451,32 @@ contract BonzaiMintPool is Ownable, ReentrancyGuard, Pausable {
         // Must still hold at least the registered balance to prevent register-then-sell
         require(bonzaiToken.balanceOf(msg.sender) >= balance, "Balance dropped below registered amount");
 
+        // Unlocked users bypass per-pool thresholds
+        bool isUnlocked = false;
+        if (address(unlockContract) != address(0)) {
+            try unlockContract.hasUnlocked(msg.sender) returns (bool result) {
+                isUnlocked = result;
+            } catch {}
+        }
+
         uint256 totalAmount = 0;
 
         for (uint256 i = 0; i < poolIndices.length; ) {
             uint8 poolIndex = poolIndices[i];
             require(poolIndex < NUM_POOLS, "Invalid pool index");
 
+            // Use snapshotted thresholds — unlocked users skip threshold check
+            bool meetsThreshold = isUnlocked;
+            if (!isUnlocked) {
+                uint256 threshold = epochThresholdSnapshotted[epochId]
+                    ? epochThresholds[epochId][poolIndex]
+                    : poolThresholds[poolIndex];
+                meetsThreshold = balance >= threshold;
+            }
+
             if (
                 !hasClaimed[epochId][msg.sender][poolIndex] &&
-                balance >= poolThresholds[poolIndex] &&
+                meetsThreshold &&
                 epoch.poolDeposits[poolIndex] > 0
             ) {
                 uint256 amount = (epoch.poolDeposits[poolIndex] * balance) / epoch.totalRegistered;
@@ -586,6 +624,10 @@ contract BonzaiMintPool is Ownable, ReentrancyGuard, Pausable {
         address old = address(companionNFT);
         companionNFT = IERC721(_nft);
         emit CompanionNFTUpdated(old, _nft);
+    }
+
+    function setUnlockContract(address _unlock) external onlyOwner {
+        unlockContract = IBonzaiUnlock(_unlock);
     }
 
     /**

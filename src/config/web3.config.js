@@ -140,7 +140,7 @@ export const CONFIG = {
   // ═══════════════════════════════════════════════════════════════════════════
   levelUnlock: {
     // BonzaiUnlock contract on Base
-    registryAddress: "0xeDadE2f9fa659817E000b887f3d8222c4AC687B8",
+    registryAddress: "0x7A33a9843C1740Ea73594fA2468Fb210a7fd7968",
     chainId: 8453, // Base
     // Fixed price: 1 ETH unlocks all 6 levels permanently
     unlockPrice: "1.0", // ETH
@@ -171,9 +171,8 @@ export const CONFIG = {
   // SKILL REGISTRY (Decentralized Claude Skills)
   // ═══════════════════════════════════════════════════════════════════════════
   skillRegistry: {
-    // BonzaiSkillRegistry contract on Base (not yet deployed)
-    contractAddress: null, // Set after deployment
-    ownershipContractAddress: null, // Set after deployment
+    contractAddress: '0xeeB6B8A73B13141013416D74A327180905AFdF3F',
+    ownershipContractAddress: '0xa1f80ABCe763De90eB873990C5841F7B1770383C',
     chainId: 8453, // Base
 
     // Revenue split (configured in contract)
@@ -207,7 +206,7 @@ export const CONFIG = {
     ],
 
     // Trusted attestation signer for cross-chain companion verification (set after deployment)
-    attestationSignerAddress: null,
+    attestationSignerAddress: '0x9D7d090865f9fEd3C0beA3f851523228c0b76BFE',
 
     // Built-in skills (bundled with app, available for purchase)
     builtinSkills: [
@@ -228,8 +227,8 @@ export const CONFIG = {
   // ═══════════════════════════════════════════════════════════════════════════
   contentNFT: {
     base: {
-      contractAddress: '0xdcCF8d2A328F87eDC304898a35F9798ad5Bf87e9', // BonzaiCollectibles implementation address
-      factoryAddress: null, // BonzaiCollectiblesFactory — set after deployment
+      contractAddress: '0x44f1675eBeB7f7A4Ac3E99E4A4652b34515F1F36',
+      factoryAddress: '0xCF5d739674A9daf91Da83CF84eDE1456B7f17BC2',
       chainId: 8453,
       standard: 'ERC-721',
       mintFee: '0.0025', // ETH
@@ -269,15 +268,15 @@ export const CONFIG = {
   // MINT POOL & REVENUE CONTRACTS (Base)
   // ═══════════════════════════════════════════════════════════════════════════
   mintPool: {
-    contractAddress: '0xB9423Ef7cedAAC87419511Fa1E24DE65C19c7CD2',
+    contractAddress: '0x3a31aE7F6E03E095D5D68a4D6c7165Ba2b2E6D4c',
     chainId: 8453,
   },
   royaltySplitter: {
-    contractAddress: '0x5B63AD58034D7396e7024F4Bebf8E5D86D668399',
+    contractAddress: '0x798Bcae41E3A08B216D0Df6f03Be1e4eBEED9f24',
     chainId: 8453,
   },
   fineTuneTokenFactory: {
-    contractAddress: '0x54Ee513a7a6809c109408EA20dA9E7e424A6e36c',
+    contractAddress: '0x9bd9621b8F77e501063b0ec8CD15e6f53bDc6B34',
     chainId: 8453,
     totalSupply: '1000000000', // 1 billion tokens per model
     minEthLiquidity: '0.01',
@@ -299,7 +298,7 @@ export const CONFIG = {
   // ═══════════════════════════════════════════════════════════════════════════
   companionNFT_BASE: {
     // BonzaiCompanions contract on Base
-    contractAddress: '0xb3ea09922E8227cCa6331346ed31D0f5F173BDe3',
+    contractAddress: '0x0889B53F810aF1bFc83EFFD459E945a1a4D79c38',
     chainId: 8453, // Base
     standard: 'ERC-8004',
 
@@ -415,10 +414,9 @@ export const CONFIG = {
   // P2P DISTRIBUTED INFERENCE NETWORK
   // ═══════════════════════════════════════════════════════════════════════════
   p2pNetwork: {
-    // BonzaiProviderRegistry contract on Base (not yet deployed)
-    providerRegistryAddress: null,
-    // BonzaiPayment contract on Base — supports ETH + USDC (not yet deployed)
-    paymentContractAddress: null,
+    providerRegistryAddress: '0x683d0B11a2553E9D4B338935e2D935873439e8bB',
+    paymentContractAddress: '0x438A73FC0e0DA882BFdD007aF41415769Af33F1d',
+    pipelinePaymentAddress: '0xB45D1D635192Aa223Ce28d9F3cC047A13D8850Bd',
     chainId: 8453, // Base
 
     // USDC on Base (Circle native)
@@ -534,7 +532,7 @@ export const CONFIG = {
   // ═══════════════════════════════════════════════════════════════════════════
   companionTokenFactory: {
     // CompanionTokenFactory contract on Base
-    contractAddress: '0x30C62FF8fD8EE708e73c17899C87eFfD27B5c24e',
+    contractAddress: '0x0cD90Ef3a38Ab8E845D3538Dc55EB9bd9C9e0477',
     chainId: 8453, // Base
 
     // Token settings
@@ -545,11 +543,11 @@ export const CONFIG = {
     lpLocked: true,
     deadAddress: "0x000000000000000000000000000000000000dEaD",
 
-    // Hook fee split for companion tokens: 33% treasury, 33% companion owner, 34% companion wallet
+    // Hook fee split for companion tokens: 34% wallet, 33% owner, 33% LVL6 pool
     hookFeeBps: 100, // 1% total swap fee
-    companionTreasuryBps: 3300,     // 33% treasury
-    companionOwnerBps: 3300,        // 33% companion owner (NFT holder)
     companionWalletBps: 3400,       // 34% companion wallet (agent wallet)
+    companionOwnerBps: 3300,        // 33% companion owner (NFT holder)
+    companionPoolBps: 3300,         // 33% LVL6 (training) pool
 
     // Description
     description: "Launch burnable ERC-20 tokens with V4 LP (unruggable, hook fees)",
@@ -575,7 +573,7 @@ export const CONFIG = {
       quoter: '0x0d5e0f971ed27fbff6c2837bf31316121532048d',
       stateView: '0xa3c0c9b65bad0b08107aa264b0f3db444b867a71',
       permit2: '0x000000000022D473030F116dDEE9F6B43aC78BA3',
-      feeHook: '0xB14d0224b2B6BBc43359B0f5a3EBbAB35fB90090',
+      feeHook: '0x0d4B1d95ec00A6BC794B4bE18D1dF4136D524090',
     },
   },
 };

@@ -23,7 +23,7 @@ const MIN_ETH_LIQUIDITY = ethers.parseEther("0.01");
 // ═══════════════════════════════════════════════════════════════════════════
 
 const NUM_POOLS = 6;
-const EPOCH_DURATION = 14 * 24 * 60 * 60; // 2 weeks in seconds
+const EPOCH_DURATION = 14 * 24 * 60 * 60; // 2 weeks in tests (production uses 1 week = 604800)
 const MIN_CLAIM_BLOCK_GAP = 256;
 
 // LVL thresholds in full token units (constructor multiplies by 1e18)
@@ -61,9 +61,9 @@ const MIN_DISTRIBUTION_AMOUNT = ethers.parseEther("0.01");
 // ═══════════════════════════════════════════════════════════════════════════
 
 const HOOK_FEE_BPS = 100n;
-const COMPANION_TREASURY_BPS = 3300n;
-const COMPANION_OWNER_BPS = 3300n;
-const COMPANION_WALLET_BPS = 3400n;
+const COMPANION_WALLET_BPS = 3400n;   // 34% companion wallet
+const COMPANION_OWNER_BPS = 3300n;    // 33% companion owner
+const COMPANION_POOL_BPS = 3300n;     // 33% LVL6 (training) pool
 const FINETUNE_BENEFICIARY_BPS = 8000n;
 const FINETUNE_TREASURY_BPS = 1000n;
 const FINETUNE_POOL_BPS = 1000n;
@@ -145,9 +145,9 @@ module.exports = {
   CONTENT_TYPE,
   MIN_DISTRIBUTION_AMOUNT,
   HOOK_FEE_BPS,
-  COMPANION_TREASURY_BPS,
-  COMPANION_OWNER_BPS,
   COMPANION_WALLET_BPS,
+  COMPANION_OWNER_BPS,
+  COMPANION_POOL_BPS,
   FINETUNE_BENEFICIARY_BPS,
   FINETUNE_TREASURY_BPS,
   FINETUNE_POOL_BPS,

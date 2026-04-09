@@ -101,6 +101,8 @@ export const PIPELINE_CATEGORY_IDS = {
   video_fast: 9,
   // Vision
   vision: 10,
+  // Pipeline shard (private distributed inference)
+  pipeline_shard: 11,
 };
 
 // Map specific model names to their category
@@ -670,6 +672,66 @@ function formatProvider(provider) {
   };
 }
 
+// ═══════════════════════════════════════════════════════════════════════════
+// PIPELINE PAYMENT (Multi-Payee)
+// ═══════════════════════════════════════════════════════════════════════════
+
+const PIPELINE_PAYMENT_ABI = [
+  "function processPipelinePaymentETH(address consumer, address[] providers, uint256[] amounts, uint256 totalAmount, uint256 nonce, uint256 expiry, string service, bytes32 sessionId, bytes signature) payable",
+  "function processPipelinePaymentUSDC(address consumer, address[] providers, uint256[] amounts, uint256 totalAmount, uint256 nonce, uint256 expiry, string service, bytes32 sessionId, bytes signature)",
+  "function withdrawETH()",
+  "function withdrawUSDC()",
+  "function pendingWithdrawalsETH(address) view returns (uint256)",
+  "function pendingWithdrawalsUSDC(address) view returns (uint256)",
+  "function isNonceUsed(address consumer, uint256 nonce) view returns (bool)",
+  "function totalSessions() view returns (uint256)",
+];
+
+function getPipelinePaymentContract(needsSigner = false) {
+  const config = CONFIG.p2pNetwork;
+  if (!config.pipelinePaymentAddress) throw new Error("Pipeline payment contract not deployed");
+  const provider = getProvider(needsSigner);
+  return new ethers.Contract(config.pipelinePaymentAddress, PIPELINE_PAYMENT_ABI, provider);
+}
+
+/**
+ * Submit a signed multi-payee pipeline payment on-chain (ETH).
+ *
+ * @param {Object} signedPayment - From signPipelinePayment()
+ * @returns {Promise<Object>} Transaction receipt
+ */
+export async function submitPipelinePaymentETH(signedPayment) {
+  const contract = getPipelinePaymentContract(true);
+  const tx = await contract.processPipelinePaymentETH(
+    signedPayment.consumer,
+    signedPayment.providers,
+    signedPayment.amounts.map((a) => BigInt(a)),
+    BigInt(signedPayment.totalAmount),
+    BigInt(signedPayment.nonce),
+    BigInt(signedPayment.expiry),
+    signedPayment.service,
+    signedPayment.sessionId,
+    signedPayment.signature,
+    { value: BigInt(signedPayment.totalAmount) },
+  );
+  const receipt = await tx.wait();
+  console.log(`[P2P Contract] Pipeline payment settled: ${receipt.hash} (${signedPayment.providers.length} providers)`);
+  return receipt;
+}
+
+/**
+ * Get shard-capable providers from the registry.
+ *
+ * @param {number} minLayers - Minimum layers the provider must support
+ * @param {number} minMemoryMB - Minimum available memory in MB
+ * @returns {Promise<Object[]>} Array of formatted provider objects
+ */
+export async function getShardProviders(minLayers = 1, minMemoryMB = 0) {
+  const contract = await getRegistryContract();
+  const providers = await contract.getShardProviders(minLayers, minMemoryMB);
+  return providers.map(formatProvider);
+}
+
 /**
  * Check if contracts are deployed
  */
@@ -721,6 +783,10 @@ export default {
   // Unified
   payProvider,
   withdrawEarnings,
+
+  // Pipeline (multi-payee)
+  submitPipelinePaymentETH,
+  getShardProviders,
 
   // Utils
   areContractsDeployed,

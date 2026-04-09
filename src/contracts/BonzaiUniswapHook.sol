@@ -73,10 +73,10 @@ contract BonzaiUniswapHook is Ownable, ReentrancyGuard {
     uint256 public constant FEE_BPS = 100;            // 1% total hook fee
     uint256 public constant BPS_DENOMINATOR = 10000;
 
-    // Companion pool type split: equal thirds (no MintPool)
-    uint256 public constant COMPANION_TREASURY_BPS = 3300;   // 33%
-    uint256 public constant COMPANION_OWNER_BPS = 3300;      // 33%
-    uint256 public constant COMPANION_WALLET_BPS = 3400;     // 34%
+    // Companion pool type split: wallet + owner + LVL6 pool
+    uint256 public constant COMPANION_WALLET_BPS = 3400;     // 34% companion wallet
+    uint256 public constant COMPANION_OWNER_BPS = 3300;      // 33% companion owner
+    uint256 public constant COMPANION_POOL_BPS = 3300;       // 33% LVL6 (training) pool
 
     // FineTune pool type split: 80/10/10 (with MintPool)
     uint256 public constant FINETUNE_BENEFICIARY_BPS = 8000; // 80%
@@ -246,18 +246,18 @@ contract BonzaiUniswapHook is Ownable, ReentrancyGuard {
 
         // Split based on pool type
         if (config.poolType == POOL_TYPE_COMPANION) {
-            // COMPANION: 33% treasury, 33% owner, 34% wallet (no MintPool)
-            uint256 treasuryShare = (feeAmount * COMPANION_TREASURY_BPS) / BPS_DENOMINATOR;
+            // COMPANION: 34% wallet, 33% owner, 33% LVL6 (training) pool
+            uint256 walletShare = (feeAmount * COMPANION_WALLET_BPS) / BPS_DENOMINATOR;
             uint256 ownerShare = (feeAmount * COMPANION_OWNER_BPS) / BPS_DENOMINATOR;
-            uint256 walletShare = feeAmount - treasuryShare - ownerShare;
+            uint256 poolShare = feeAmount - walletShare - ownerShare;
 
-            unclaimedTreasury += treasuryShare;
-            unclaimedBeneficiary[config.companionOwner] += ownerShare;
-            totalUnclaimedBeneficiary += ownerShare;
             unclaimedBeneficiary[config.beneficiary] += walletShare;
             totalUnclaimedBeneficiary += walletShare;
+            unclaimedBeneficiary[config.companionOwner] += ownerShare;
+            totalUnclaimedBeneficiary += ownerShare;
+            unclaimedPool[5] += poolShare; // Pool index 5 = LVL6 (training)
 
-            emit FeeCaptured(poolId, POOL_TYPE_COMPANION, feeAmount, walletShare, treasuryShare, ownerShare);
+            emit FeeCaptured(poolId, POOL_TYPE_COMPANION, feeAmount, walletShare, poolShare, ownerShare);
         } else {
             // FINETUNE: 80% beneficiary, 10% treasury, 10% MintPool
             uint256 beneficiaryShare = (feeAmount * FINETUNE_BENEFICIARY_BPS) / BPS_DENOMINATOR;

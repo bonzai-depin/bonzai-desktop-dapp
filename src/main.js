@@ -1073,13 +1073,14 @@ ipcMain.handle("p2p-start", async (_event, options = {}) => {
     node.onInferenceRequest(async (request, remotePeer) => {
       console.log(`[P2P] Inference request from ${remotePeer}:`, request.pipeline);
 
-      // Check if this is self-inference (consumer === provider)
-      // Self-inference is FREE - no payment required
-      if (isSelfInference(remotePeer, localPeerId)) {
-        console.log(`[P2P] Self-inference detected, processing for free`);
+      // Check if this is self-inference or LAN inference — both are FREE
+      const node = getP2PNode();
+      if (isSelfInference(remotePeer, localPeerId) || node.isLANPeer(remotePeer)) {
+        const inferenceType = node.isLANPeer(remotePeer) ? 'LAN' : 'self';
+        console.log(`[P2P] ${inferenceType} inference from ${remotePeer.slice(0, 12)}..., processing for free`);
         try {
           const result = await routeInferenceRequest(request);
-          return { ok: true, result, selfInference: true };
+          return { ok: true, result, lanInference: inferenceType === 'LAN', selfInference: inferenceType === 'self' };
         } catch (err) {
           return { ok: false, error: "inference_failed", detail: err.message };
         }
@@ -1261,6 +1262,203 @@ ipcMain.handle("p2p-local-peer-id", async () => {
     return { ok: false, error: "Node not started" };
   }
   return { ok: true, peerId: node.getPeerId() };
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// LAN PROVIDER DISCOVERY (mDNS)
+// ─────────────────────────────────────────────────────────────────────────────
+
+ipcMain.handle("p2p-lan-peers", async () => {
+  const node = getP2PNode();
+  if (!node?.isStarted) return { ok: true, peers: [] };
+
+  const lanPeers = node.getLANPeers();
+  // Health check each LAN peer to get capabilities (pipelines, version)
+  const enriched = await Promise.all(lanPeers.map(async (peer) => {
+    try {
+      const health = await node.checkPeerHealth(peer.peerId);
+      return { ...peer, ...health, online: true };
+    } catch {
+      return { ...peer, online: false };
+    }
+  }));
+
+  return { ok: true, peers: enriched.filter(p => p.online) };
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// PIPELINE PRIVATE INFERENCE (v2)
+// ─────────────────────────────────────────────────────────────────────────────
+
+let rpcServerProcess = null;
+
+// Pipeline orchestrator + tunnel imports (lazy to avoid circular deps at startup)
+let _pipelineOrchestrator = null;
+let _pipelineTunnel = null;
+async function getPipelineOrchestrator() {
+  if (!_pipelineOrchestrator) _pipelineOrchestrator = await import("./services/pipeline.orchestrator.js");
+  return _pipelineOrchestrator;
+}
+async function getPipelineTunnel() {
+  if (!_pipelineTunnel) _pipelineTunnel = await import("./services/pipeline.tunnel.js");
+  return _pipelineTunnel;
+}
+
+ipcMain.handle("p2p-pipeline-infer", async (event, options) => {
+  try {
+    // Resolve model path: use provided path, or resolve from currently loaded model
+    let resolvedModelPath = options.modelPath;
+    if (!resolvedModelPath && currentLoadedModel?.filename) {
+      resolvedModelPath = path.join(MODEL_DIR, currentLoadedModel.filename);
+    }
+    if (!resolvedModelPath) {
+      return { ok: false, error: "No model loaded. Load a model first." };
+    }
+
+    // Unload node-llama-cpp model only on first pipeline request (session start).
+    // Once llama-server is running, node-llama-cpp stays unloaded — the pipeline
+    // session persists across messages until the user disables pipeline mode.
+    const { getActiveSession } = await getPipelineOrchestrator();
+    if (!getActiveSession() && (loadedModel || modelContext || modelSession)) {
+      console.log("[Pipeline] Unloading node-llama-cpp model to free GPU for llama-server...");
+      try { await unloadModel(); } catch (e) {
+        console.warn("[Pipeline] Model unload warning:", e.message);
+      }
+    }
+
+    const { runPipelineInference } = await getPipelineOrchestrator();
+    const result = await runPipelineInference({
+      modelPath: resolvedModelPath,
+      request: options.request || { prompt: options.prompt, maxTokens: options.maxTokens },
+      privacyConfig: options.privacyConfig,
+      onToken: (chunk) => {
+        event.sender.send("pipeline-token", chunk);
+      },
+      onStatus: (msg) => {
+        event.sender.send("pipeline-status", msg);
+      },
+    });
+    return { ok: true, ...result };
+  } catch (e) {
+    console.error("[Pipeline] Inference error:", e.message);
+    return { ok: false, error: e.message };
+  }
+});
+
+ipcMain.handle("p2p-pipeline-status", async () => {
+  const { getActiveSession } = await getPipelineOrchestrator();
+  const session = getActiveSession();
+  if (!session) return { ok: true, active: false };
+  return {
+    ok: true,
+    active: true,
+    sessionId: session.sessionId,
+    status: session.status,
+    peersUsed: session.peerIds?.length || 0,
+    llamaServerPort: session.llamaServerPort,
+    elapsed: Date.now() - session.startTime,
+    requestCount: session.requestCount || 0,
+    tunnelStats: session.tunnels?.map((t) => t.stats()) || [],
+    privacyAudit: session.privacyAudit || null,
+  };
+});
+
+ipcMain.handle("p2p-pipeline-cancel", async () => {
+  try {
+    const { cancelPipelineSession } = await getPipelineOrchestrator();
+    await cancelPipelineSession();
+    return { ok: true };
+  } catch (e) {
+    return { ok: false, error: e.message };
+  }
+});
+
+ipcMain.handle("p2p-shard-metadata", async (_event, { modelPath }) => {
+  try {
+    const { readGGUFMetadata } = await getPipelineOrchestrator();
+    const meta = readGGUFMetadata(modelPath || MODEL_DIR);
+    return { ok: true, ...meta };
+  } catch (e) {
+    return { ok: false, error: e.message };
+  }
+});
+
+// Shard provider mode: spawn local rpc-server and register tunnel handler
+ipcMain.handle("p2p-shard-start", async (_event, options = {}) => {
+  if (rpcServerProcess && !rpcServerProcess.killed) {
+    return { ok: false, error: "rpc-server already running" };
+  }
+
+  const rpcPort = options.port || 50052;
+
+  // Find rpc-server binary
+  const platform = { darwin: "macos", win32: "windows", linux: "linux" }[process.platform] || process.platform;
+  const arch = process.arch;
+  const ext = process.platform === "win32" ? ".exe" : "";
+  const binName = `rpc-server${ext}`;
+
+  let binPath = path.join(process.cwd(), "bin", `${platform}-${arch}`, binName);
+  if (!fs.existsSync(binPath) && process.resourcesPath) {
+    binPath = path.join(process.resourcesPath, "server", "llama-runtime", `${platform}-${arch}`, binName);
+  }
+
+  if (!fs.existsSync(binPath)) {
+    return { ok: false, error: `rpc-server binary not found. Run 'npm run build:rpc' first.` };
+  }
+
+  // Clear quarantine on macOS
+  if (process.platform === "darwin" && app.isPackaged) {
+    try {
+      child_process.execSync(`xattr -rd com.apple.quarantine "${binPath}"`, { stdio: "ignore" });
+    } catch {}
+  }
+
+  console.log(`[Pipeline Shard] Starting rpc-server on port ${rpcPort}...`);
+  rpcServerProcess = child_process.spawn(binPath, ["-p", String(rpcPort)], {
+    stdio: ["ignore", "pipe", "pipe"],
+  });
+
+  rpcServerProcess.stdout.on("data", (d) => {
+    const line = d.toString().trim();
+    if (line) console.log(`[rpc-server] ${line}`);
+  });
+  rpcServerProcess.stderr.on("data", (d) => {
+    const line = d.toString().trim();
+    if (line) console.log(`[rpc-server:err] ${line}`);
+  });
+  rpcServerProcess.on("exit", (code) => {
+    console.log(`[Pipeline Shard] rpc-server exited with code ${code}`);
+    rpcServerProcess = null;
+  });
+
+  // Register libp2p tunnel handler to bridge incoming streams to rpc-server
+  const node = getP2PNode();
+  if (node?.isStarted) {
+    const { registerRPCTunnelHandler } = await getPipelineTunnel();
+    registerRPCTunnelHandler(node, rpcPort);
+  }
+
+  return { ok: true, rpcPort };
+});
+
+ipcMain.handle("p2p-shard-stop", async () => {
+  if (rpcServerProcess && !rpcServerProcess.killed) {
+    rpcServerProcess.kill("SIGTERM");
+    await new Promise((r) => setTimeout(r, 1000));
+    if (rpcServerProcess && !rpcServerProcess.killed) {
+      rpcServerProcess.kill("SIGKILL");
+    }
+    rpcServerProcess = null;
+    console.log("[Pipeline Shard] rpc-server stopped");
+  }
+  return { ok: true };
+});
+
+// Kill rpc-server on app quit
+app.on("before-quit", () => {
+  if (rpcServerProcess && !rpcServerProcess.killed) {
+    rpcServerProcess.kill("SIGTERM");
+  }
 });
 
 /**
@@ -3405,42 +3603,69 @@ function getLocalIP() {
   return "127.0.0.1";
 }
 
-async function systemInformation() {
-  // Core system info (RAM + GPU) — must succeed for context calculation
-  const ram = await si.mem();
-  const gfx = await si.graphics();
-  const ip = getLocalIP();
-  console.log(
-    `Flask API should be accessible at: http://${ip}:${PY_SERVER_PORT}`
-  );
+// Cached system info — refreshed periodically
+let _cachedSystemInfo = null;
 
-  const controller = gfx.controllers?.[0];
+async function systemInformation() {
+  // Instant result from os module (never fails, never hangs)
+  const totalMem = os.totalmem();
+  const freeMem = os.freemem();
+  const ip = getLocalIP();
+
+  // Compute memBudget: available memory for AI inference
+  // Apple Silicon unified memory: 70% headroom. Discrete GPU: 80% of RAM.
+  const isMac = process.platform === "darwin";
+  const memBudget = Math.floor((isMac ? totalMem * 0.7 : totalMem * 0.8));
 
   const result = {
-    ram: ram.total,
-    ramAvailable: ram.available,
-    gpu: controller?.model || "Unknown",
-    vram: controller?.vram || 0,
+    ram: totalMem,
+    ramAvailable: freeMem,
+    memBudget,
+    gpu: "Unknown",
+    vram: 0,
     ip,
   };
 
-  // Extended info — best-effort, failures are non-fatal
-  try {
-    const cpu = await si.cpu();
-    result.cpu = `${cpu.manufacturer} ${cpu.brand}`;
-    result.cpuCores = cpu.physicalCores;
-    result.cpuThreads = cpu.cores;
-    result.cpuSpeed = cpu.speed;
-  } catch (e) {
-    console.warn("[SystemInfo] CPU info unavailable:", e.message);
+  // Merge cached detailed info if available
+  if (_cachedSystemInfo) {
+    Object.assign(result, _cachedSystemInfo);
+    // Update live memory values
+    result.ramAvailable = freeMem;
+    result.memBudget = memBudget;
   }
-  try {
-    const osInfo = await si.osInfo();
-    result.os = `${osInfo.distro} ${osInfo.release}`;
-    result.arch = osInfo.arch;
-    result.platform = osInfo.platform;
-  } catch (e) {
-    console.warn("[SystemInfo] OS info unavailable:", e.message);
+
+  // Fetch detailed info in background (si.mem, si.graphics, si.cpu, si.osInfo)
+  // Only once — subsequent calls use cache + live os.freemem()
+  if (!_cachedSystemInfo) {
+    (async () => {
+      try {
+        const [mem, gfx, cpu, osInfo] = await Promise.all([
+          si.mem().catch(() => null),
+          si.graphics().catch(() => null),
+          si.cpu().catch(() => null),
+          si.osInfo().catch(() => null),
+        ]);
+        _cachedSystemInfo = {};
+        if (gfx?.controllers?.[0]) {
+          _cachedSystemInfo.gpu = gfx.controllers[0].model || "Unknown";
+          _cachedSystemInfo.vram = gfx.controllers[0].vram || 0;
+        }
+        if (cpu) {
+          _cachedSystemInfo.cpu = `${cpu.manufacturer} ${cpu.brand}`;
+          _cachedSystemInfo.cpuCores = cpu.physicalCores;
+          _cachedSystemInfo.cpuThreads = cpu.cores;
+          _cachedSystemInfo.cpuSpeed = cpu.speed;
+        }
+        if (osInfo) {
+          _cachedSystemInfo.os = `${osInfo.distro} ${osInfo.release}`;
+          _cachedSystemInfo.arch = osInfo.arch;
+          _cachedSystemInfo.platform = osInfo.platform;
+        }
+        console.log("[SystemInfo] Detailed info cached:", _cachedSystemInfo.gpu, _cachedSystemInfo.cpu);
+      } catch (e) {
+        console.warn("[SystemInfo] Background fetch failed:", e.message);
+      }
+    })();
   }
 
   return result;

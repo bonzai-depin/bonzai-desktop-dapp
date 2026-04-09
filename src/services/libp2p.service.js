@@ -15,6 +15,7 @@ import { circuitRelayTransport, circuitRelayServer } from '@libp2p/circuit-relay
 import { identify } from '@libp2p/identify';
 import { kadDHT } from '@libp2p/kad-dht';
 import { bootstrap } from '@libp2p/bootstrap';
+import { mdns } from '@libp2p/mdns';
 import { pipe } from 'it-pipe';
 import { fromString, toString } from 'uint8arrays';
 
@@ -23,6 +24,8 @@ export const PROTOCOLS = {
   INFERENCE: '/bonzai/v1/inference',
   HEALTH: '/bonzai/v1/health',
   DISCOVERY: '/bonzai/v1/discovery',
+  PIPELINE: '/bonzai/v2/pipeline',          // Pipeline negotiation (JSON)
+  RPC_TUNNEL: '/bonzai/v2/rpc-tunnel',      // Raw TCP tunnel for llama.cpp RPC traffic
 };
 
 // Default configuration
@@ -47,6 +50,7 @@ class BonzaiP2PNode {
     this.handlers = new Map();
     this.peerConnections = new Map();
     this.relayConnections = new Set();
+    this.lanPeers = new Map(); // peerId → { multiaddrs, discoveredAt, free: true }
   }
 
   /**
@@ -96,7 +100,10 @@ class BonzaiP2PNode {
     }
 
     // Build peer discovery
-    const peerDiscovery = [];
+    const peerDiscovery = [
+      // mDNS: auto-discover BonzAI peers on the local network (free inference)
+      mdns({ interval: 10000 }),
+    ];
     if (bootstrapNodes.length > 0) {
       peerDiscovery.push(
         bootstrap({
@@ -226,6 +233,23 @@ class BonzaiP2PNode {
     } else {
       return 'unknown';
     }
+  }
+
+  /**
+   * Get all LAN-discovered peers (via mDNS). These providers serve for free.
+   * @returns {Object[]} Array of { peerId, multiaddrs, lanAddress, discoveredAt, free }
+   */
+  getLANPeers() {
+    return Array.from(this.lanPeers.values());
+  }
+
+  /**
+   * Check if a peer was discovered on the LAN (free inference).
+   * @param {string} peerId
+   * @returns {boolean}
+   */
+  isLANPeer(peerId) {
+    return this.lanPeers.has(peerId);
   }
 
   /**
@@ -365,10 +389,30 @@ class BonzaiP2PNode {
   // ═══════════════════════════════════════════════════════════════════════════
 
   _setupEventListeners() {
-    // Peer discovery
+    // Peer discovery — detect LAN peers via mDNS multiaddr patterns
     this.node.addEventListener('peer:discovery', (evt) => {
       const peerId = evt.detail.id.toString();
-      console.log('[libp2p] Discovered peer:', peerId);
+      const addrs = evt.detail.multiaddrs || [];
+      const addrStrings = addrs.map(a => a.toString());
+
+      // Detect LAN peers by private IP ranges in their multiaddrs
+      const lanAddr = addrStrings.find(a =>
+        a.includes('/ip4/192.168.') || a.includes('/ip4/10.') ||
+        a.match(/\/ip4\/172\.(1[6-9]|2\d|3[01])\./)
+      );
+
+      if (lanAddr) {
+        this.lanPeers.set(peerId, {
+          peerId,
+          multiaddrs: addrStrings,
+          lanAddress: lanAddr.match(/\/ip4\/([\d.]+)\//)?.[1] || null,
+          discoveredAt: Date.now(),
+          free: true,
+        });
+        console.log(`[libp2p] Discovered LAN peer: ${peerId} at ${this.lanPeers.get(peerId).lanAddress}`);
+      } else {
+        console.log('[libp2p] Discovered peer:', peerId);
+      }
     });
 
     // Peer connect
@@ -383,6 +427,7 @@ class BonzaiP2PNode {
       const peerId = evt.detail.toString();
       console.log('[libp2p] Disconnected from peer:', peerId);
       this.peerConnections.delete(peerId);
+      this.lanPeers.delete(peerId);
     });
 
     // Self peer update (new addresses)
@@ -394,8 +439,45 @@ class BonzaiP2PNode {
   _registerDefaultHandlers() {
     // Register any handlers that were set before start
     for (const [protocol, handler] of this.handlers) {
-      this._registerProtocolHandler(protocol, handler);
+      if (handler?.raw) {
+        this.node.handle(protocol, handler.handler);
+      } else {
+        this._registerProtocolHandler(protocol, handler);
+      }
     }
+  }
+
+  /**
+   * Open a raw bidirectional stream to a peer for binary data (e.g., RPC tunnel).
+   * Unlike sendInferenceRequest which JSON-encodes, this returns the raw stream
+   * for the caller to pipe TCP data through.
+   *
+   * @param {string} peerId Target peer ID
+   * @param {string} protocol Protocol string (e.g., PROTOCOLS.RPC_TUNNEL)
+   * @returns {Promise<{stream, connection}>} The raw duplex stream and connection
+   */
+  async openRawStream(peerId, protocol) {
+    if (!this.isStarted) throw new Error('Node not started');
+
+    const connection = await this.dial(peerId);
+    const stream = await connection.newStream(protocol);
+    return { stream, connection };
+  }
+
+  /**
+   * Register a raw protocol handler that receives the raw duplex stream
+   * instead of JSON-parsed data. Used for binary protocols like RPC tunnels.
+   *
+   * @param {string} protocol Protocol string
+   * @param {Function} handler Async function({ stream, connection }) — caller owns the stream lifecycle
+   */
+  registerRawProtocolHandler(protocol, handler) {
+    if (!this.isStarted) {
+      // Defer until start
+      this.handlers.set(protocol, { raw: true, handler });
+      return;
+    }
+    this.node.handle(protocol, handler);
   }
 
   _registerProtocolHandler(protocol, handler) {

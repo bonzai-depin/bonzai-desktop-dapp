@@ -202,7 +202,233 @@
 
       <hr />
 
-      <!-- Consumer Mode: Provider Selection -->
+      <!-- Private Pipeline Settings (Consumer Mode) -->
+      <div class="pipeline-section mt-5" v-if="networkMode === 'consumer'">
+        <h2 class="section-title fira-sans-condensed-black-italic">
+          Private Pipeline Inference
+        </h2>
+
+        <div class="description-card pipeline">
+          <span class="material-symbols-outlined">lock</span>
+          <div>
+            <strong>Structural Privacy Through Pipeline Parallelism</strong>
+            <p>
+              Split LLM inference across multiple peers so no single peer sees your prompt or output.
+              Your device keeps the tokenizer, embedding, first and last transformer layers, unembedding,
+              and sampling locally. Remote peers only process opaque activation tensors — float16 math
+              operations with no access to text, tokens, or vocabulary.
+            </p>
+          </div>
+        </div>
+
+        <!-- Pipeline Activation Toggle -->
+        <div class="orchestration-controls mt-4">
+          <div class="orchestration-label">Pipeline Inference</div>
+          <div class="orchestration-toggle-row">
+            <div class="orchestration-status-info">
+              <span
+                class="material-symbols-outlined mr-2"
+                :class="pipelineEnabled ? 'icon-success' : 'icon-muted'"
+              >
+                {{ pipelineEnabled ? "check_circle" : "cancel" }}
+              </span>
+              <span>
+                {{ pipelineEnabled ? "Active — LLM requests use private distributed inference" : "Disabled — LLM requests use local inference" }}
+              </span>
+            </div>
+            <button
+              class="button is-small"
+              :class="pipelineEnabled ? 'is-danger' : 'is-success'"
+              @click="pipelineEnabled = !pipelineEnabled"
+            >
+              {{ pipelineEnabled ? "Disable" : "Enable" }}
+            </button>
+          </div>
+        </div>
+
+        <template v-if="pipelineEnabled">
+          <!-- Local Test Mode Toggle -->
+          <div class="orchestration-controls mt-3">
+            <div class="orchestration-label">Local Test Mode</div>
+            <div class="orchestration-toggle-row">
+              <div class="orchestration-status-info">
+                <span
+                  class="material-symbols-outlined mr-2"
+                  :class="pipelineLocalTest ? 'icon-success' : 'icon-muted'"
+                >
+                  {{ pipelineLocalTest ? "check_circle" : "cancel" }}
+                </span>
+                <span>
+                  {{ pipelineLocalTest ? "Active — rpc-server running on this machine" : "Disabled — requires remote shard providers" }}
+                </span>
+              </div>
+              <button
+                class="button is-small"
+                :class="pipelineLocalTest ? 'is-danger' : 'is-success'"
+                @click="pipelineLocalTest = !pipelineLocalTest"
+              >
+                {{ pipelineLocalTest ? "Stop" : "Start" }}
+              </button>
+            </div>
+            <p class="control-help mt-2">
+              Starts a local rpc-server on port 50052 so you can validate the pipeline on a single machine
+              without needing a second device. In production, remote peers on the P2P network serve as shard providers.
+            </p>
+            <div v-if="pipelineLocalTest && pipelineLocalTestStatus" class="mt-2">
+              <span class="tag" :class="pipelineLocalTestStatus === 'running' ? 'is-success' : 'is-danger'">
+                <span class="material-symbols-outlined mr-1" style="font-size: 14px">
+                  {{ pipelineLocalTestStatus === 'running' ? 'check_circle' : 'error' }}
+                </span>
+                rpc-server {{ pipelineLocalTestStatus }}
+              </span>
+            </div>
+          </div>
+
+          <!-- Local Layer Proportion -->
+          <div class="orchestration-controls mt-3">
+            <div class="orchestration-label">Local Layer Proportion — {{ pipelineLocalProportion }}%</div>
+            <p class="control-help mb-3">
+              How much of the model runs on your device. Higher values keep more layers local for
+              stronger privacy, but require more of your GPU and leave less work for remote peers.
+              Lower values are faster but expose more layers to remote processing.
+            </p>
+            <input
+              type="range"
+              class="pipeline-slider"
+              min="25"
+              max="75"
+              step="5"
+              v-model.number="pipelineLocalProportion"
+            />
+            <div class="slider-labels">
+              <span>25% — Faster</span>
+              <span class="fira-sans-condensed-black-italic" style="color: #fff">{{ pipelineLocalProportion }}%</span>
+              <span>75% — More Private</span>
+            </div>
+          </div>
+
+          <!-- Differential Privacy Toggle -->
+          <div class="orchestration-controls mt-3">
+            <div class="orchestration-label">Differential Privacy Noise</div>
+            <div class="orchestration-toggle-row">
+              <div class="orchestration-status-info">
+                <span
+                  class="material-symbols-outlined mr-2"
+                  :class="pipelineDPEnabled ? 'icon-success' : 'icon-muted'"
+                >
+                  {{ pipelineDPEnabled ? "check_circle" : "cancel" }}
+                </span>
+                <span>
+                  {{ pipelineDPEnabled ? "Active — calibrated Gaussian noise added to tensor data" : "Disabled — tensors sent without noise" }}
+                </span>
+              </div>
+              <button
+                class="button is-small"
+                :class="pipelineDPEnabled ? 'is-danger' : 'is-success'"
+                @click="pipelineDPEnabled = !pipelineDPEnabled"
+              >
+                {{ pipelineDPEnabled ? "Disable" : "Enable" }}
+              </button>
+            </div>
+            <p class="control-help mt-2">
+              Adds mathematically calibrated noise to activation tensors before they leave your device.
+              Makes model inversion attacks computationally infeasible. The model must tolerate the noise
+              for coherent output — lower epsilon values add more noise (stronger privacy, lower quality).
+            </p>
+
+            <template v-if="pipelineDPEnabled">
+              <div class="mt-3">
+                <div class="orchestration-label">Privacy Budget (ε) — {{ pipelineEpsilon }}</div>
+                <p class="control-help mb-3">
+                  Controls the noise-to-signal ratio. ε = 2 adds significant noise (strong privacy, may reduce quality).
+                  ε = 16 adds minimal noise (weaker privacy, preserves quality). Default ε = 8 balances both.
+                </p>
+                <input
+                  type="range"
+                  class="pipeline-slider"
+                  min="2"
+                  max="16"
+                  step="1"
+                  v-model.number="pipelineEpsilon"
+                />
+                <div class="slider-labels">
+                  <span>ε = 2 — Strong Privacy</span>
+                  <span class="fira-sans-condensed-black-italic" style="color: #fff">ε = {{ pipelineEpsilon }}</span>
+                  <span>ε = 16 — High Quality</span>
+                </div>
+              </div>
+            </template>
+          </div>
+        </template>
+
+        <PipelineStatus class="mt-4" />
+      </div>
+
+      <hr v-if="networkMode === 'consumer'" />
+
+      <!-- LAN Providers (auto-discovered via mDNS, free) -->
+      <div class="consumer-section mt-5" v-if="networkMode === 'consumer' && lanProviders.length > 0">
+        <h2 class="section-title fira-sans-condensed-black-italic">
+          <span class="material-symbols-outlined mr-2" style="vertical-align: middle">wifi</span>
+          Local Network Providers
+        </h2>
+
+        <div class="description-card pipeline">
+          <span class="material-symbols-outlined">info</span>
+          <div>
+            <strong>Free LAN Inference</strong>
+            <p>
+              These providers were auto-discovered on your local network via mDNS.
+              All inference is free — no payment, no on-chain registration required.
+              Supports all pipelines: LLM, image, audio, video, music, and vision.
+            </p>
+          </div>
+        </div>
+
+        <div class="provider-cards mt-4">
+          <div
+            v-for="provider in lanProviders"
+            :key="provider.peerId"
+            class="provider-card"
+            :class="{ selected: selectedProvider?.peerId === provider.peerId }"
+            @click="selectProvider(provider)"
+          >
+            <div class="provider-header">
+              <span class="material-symbols-outlined provider-icon" style="color: #39d582">wifi</span>
+              <div class="provider-info">
+                <span class="provider-id">
+                  {{ truncateId(provider.peerId) }}
+                </span>
+                <span class="provider-status online">Online</span>
+              </div>
+              <div style="margin-left: auto; display: flex; gap: 6px">
+                <span class="tag is-success">LAN</span>
+                <span class="tag is-info">FREE</span>
+              </div>
+            </div>
+            <div class="provider-pricing" v-if="provider.lanAddress">
+              <div class="price-row">
+                <span>Address:</span>
+                <span>{{ provider.lanAddress }}</span>
+              </div>
+            </div>
+            <div class="provider-pipelines" v-if="provider.pipelines?.length">
+              <span
+                v-for="p in provider.pipelines.slice(0, 6)"
+                :key="p"
+                class="pipeline-tag"
+              >
+                {{ p }}
+              </span>
+              <span v-if="provider.pipelines.length > 6" class="more-tag">
+                +{{ provider.pipelines.length - 6 }}
+              </span>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Consumer Mode: Remote Provider Selection -->
       <div class="consumer-section mt-5" v-if="networkMode === 'consumer'">
         <h2 class="section-title fira-sans-condensed-black-italic">
           Remote Providers
@@ -629,6 +855,44 @@
         <hr class="mt-5 mb-5" />
 
         <h2 class="section-title fira-sans-condensed-black-italic">
+          <span class="material-symbols-outlined mr-2" style="vertical-align: middle">lock</span>
+          Pipeline Shard Provider
+        </h2>
+
+        <div class="description-card">
+          <span class="material-symbols-outlined">info</span>
+          <div>
+            <strong>Serve Private Inference Shards</strong>
+            <p>
+              Enable to serve as a pipeline shard provider. Your GPU will process
+              partial transformer layers for consumers running private inference.
+              You never see the consumer's prompt or output — only opaque tensor operations.
+            </p>
+          </div>
+        </div>
+
+        <div class="setting-group mt-4">
+          <label class="setting-label">
+            <span class="material-symbols-outlined">memory</span>
+            Shard Provider
+          </label>
+          <div class="relay-toggle">
+            <label class="toggle">
+              <input
+                type="checkbox"
+                v-model="shardProviderEnabled"
+              />
+              <span class="toggle-slider"></span>
+            </label>
+            <span class="toggle-label">
+              {{ shardProviderEnabled ? "Running (rpc-server active)" : "Disabled" }}
+            </span>
+          </div>
+        </div>
+
+        <hr class="mt-5 mb-5" />
+
+        <h2 class="section-title fira-sans-condensed-black-italic">
           Relay Settings
         </h2>
 
@@ -883,6 +1147,7 @@
 <script setup>
 import { ref, computed, onMounted, onUnmounted, watch } from "vue";
 import { getProviderPerformanceStats } from "../stores/inferenceStore.js";
+import PipelineStatus from "./PipelineStatus.vue";
 
 // State
 const isLoadingSettings = ref(true);
@@ -908,6 +1173,65 @@ const availableProviders = ref([]);
 const selectedProvider = ref(null);
 const isRefreshingProviders = ref(false);
 const providerHistory = ref({});
+
+// LAN providers (auto-discovered via mDNS, free)
+const lanProviders = ref([]);
+let lanPollInterval = null;
+const pollLANProviders = async () => {
+  try {
+    const res = await window.electronAPI.p2pLANPeers?.();
+    if (res?.ok) lanProviders.value = res.peers;
+  } catch {}
+};
+
+// Pipeline privacy settings (consumer mode)
+const pipelineEnabled = ref(false);
+const pipelineLocalTest = ref(false);
+const pipelineLocalTestStatus = ref(null);
+const pipelineLocalProportion = ref(25);
+const pipelineDPEnabled = ref(false);
+const pipelineEpsilon = ref(8);
+
+// Shard provider toggle (provider mode)
+const shardProviderEnabled = ref(false);
+
+watch(shardProviderEnabled, async (enabled) => {
+  if (enabled) {
+    const res = await window.electronAPI.p2pShardStart({ port: 50052 });
+    if (!res.ok) {
+      console.error("[Pipeline] Failed to start rpc-server:", res.error);
+      shardProviderEnabled.value = false;
+    }
+  } else {
+    await window.electronAPI.p2pShardStop();
+  }
+});
+
+// Local test mode: start/stop rpc-server on same machine for testing
+watch(pipelineLocalTest, async (enabled) => {
+  if (enabled) {
+    pipelineLocalTestStatus.value = 'starting';
+    const res = await window.electronAPI.p2pShardStart({ port: 50052 });
+    if (res.ok) {
+      pipelineLocalTestStatus.value = 'running';
+      await window.electronAPI.store.set("p2p.pipeline.localTest", true);
+    } else {
+      pipelineLocalTestStatus.value = 'failed';
+      console.error("[Pipeline] Local test rpc-server failed:", res.error);
+      pipelineLocalTest.value = false;
+    }
+  } else {
+    await window.electronAPI.p2pShardStop();
+    pipelineLocalTestStatus.value = null;
+    await window.electronAPI.store.set("p2p.pipeline.localTest", false);
+  }
+});
+
+// Persist pipeline settings
+watch(pipelineEnabled, (v) => window.electronAPI.store.set("p2p.pipeline.enabled", v));
+watch(pipelineLocalProportion, (v) => window.electronAPI.store.set("p2p.pipeline.localProportion", v));
+watch(pipelineDPEnabled, (v) => window.electronAPI.store.set("p2p.pipeline.dpEnabled", v));
+watch(pipelineEpsilon, (v) => window.electronAPI.store.set("p2p.pipeline.epsilon", v));
 
 const loadProviderHistory = () => {
   providerHistory.value = getProviderPerformanceStats();
@@ -1278,6 +1602,12 @@ const loadSettings = async () => {
 
     enableRelay.value = savedRelay;
     relayFee.value = savedRelayFee;
+
+    // Load pipeline privacy settings
+    pipelineEnabled.value = await window.electronAPI.store.get("p2p.pipeline.enabled", false);
+    pipelineLocalProportion.value = await window.electronAPI.store.get("p2p.pipeline.localProportion", 25);
+    pipelineDPEnabled.value = await window.electronAPI.store.get("p2p.pipeline.dpEnabled", false);
+    pipelineEpsilon.value = await window.electronAPI.store.get("p2p.pipeline.epsilon", 8);
   } catch (err) {
     console.error("[NetworkSettings] Failed to load settings:", err);
   } finally {
@@ -1316,7 +1646,10 @@ onMounted(async () => {
     await refreshProviders();
   }
 
-  // Poll status every 10 seconds when online
+  // Poll LAN peers and status
+  pollLANProviders();
+  lanPollInterval = setInterval(pollLANProviders, 10000);
+
   statusInterval = setInterval(() => {
     if (p2pStatus.value.started) {
       refreshStatus();
@@ -1325,9 +1658,8 @@ onMounted(async () => {
 });
 
 onUnmounted(() => {
-  if (statusInterval) {
-    clearInterval(statusInterval);
-  }
+  if (statusInterval) clearInterval(statusInterval);
+  if (lanPollInterval) clearInterval(lanPollInterval);
 });
 </script>
 
@@ -1536,6 +1868,58 @@ hr {
 
 .description-card.orchestration .material-symbols-outlined {
   color: #a855f7;
+}
+
+.description-card.pipeline {
+  border-color: rgba(57, 213, 130, 0.3);
+  background: rgba(57, 213, 130, 0.08);
+}
+
+.description-card.pipeline .material-symbols-outlined {
+  color: #39d582;
+}
+
+.control-help {
+  color: rgba(255, 255, 255, 0.5);
+  font-size: 0.8rem;
+  line-height: 1.5;
+  margin: 0;
+}
+
+.pipeline-slider {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 100%;
+  height: 6px;
+  border-radius: 3px;
+  background: rgba(255, 255, 255, 0.12);
+  outline: none;
+  cursor: pointer;
+}
+
+.pipeline-slider::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  background: #39d582;
+  border: 2px solid rgba(255, 255, 255, 0.3);
+  cursor: pointer;
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.3);
+}
+
+.pipeline-slider::-webkit-slider-thumb:hover {
+  background: #4de896;
+  transform: scale(1.1);
+}
+
+.slider-labels {
+  display: flex;
+  justify-content: space-between;
+  margin-top: 6px;
+  font-size: 0.75rem;
+  color: rgba(255, 255, 255, 0.4);
 }
 
 .orchestration-controls {

@@ -29,7 +29,7 @@ import { web3Service } from './web3.service.js';
 // ═══════════════════════════════════════════════════════════════════════════
 
 // BonzaiUnlock contract ABI (1 ETH one-time payment unlocks all levels)
-// Contract: 0xeDadE2f9fa659817E000b887f3d8222c4AC687B8 on Base
+// Contract: 0x7A33a9843C1740Ea73594fA2468Fb210a7fd7968 on Base
 const BONZAI_UNLOCK_ABI = [
   // View functions
   'function unlockPrice() view returns (uint256)',

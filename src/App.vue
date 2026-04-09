@@ -131,10 +131,10 @@
             <div class="shade"></div>
             <div class="logo">
               <span
-                v-if="systemValues && systemValues.ram !== undefined"
+                v-if="systemValues && systemValues.memBudget"
                 class="system tag is-info is-large is-pulled-right memory fira-sans-condensed-black-italic is-size-2"
                 style="cursor: pointer"
-                title="View hardware specifications & performance"
+                title="Available memory budget for AI inference (click for details)"
                 @click="openSpecsModal"
               >
                 <span
@@ -144,10 +144,7 @@
                   memory
                 </span>
                 {{
-                  (
-                    ((systemValues.ram || 0) + (systemValues.vram || 0)) /
-                    1024 ** 3
-                  ).toFixed(0)
+                  (systemValues.memBudget / 1024 ** 3).toFixed(0)
                 }}
                 GB
               </span>
@@ -310,8 +307,12 @@
                 <td class="specs-value fira-sans-condensed-black-italic">{{ specsData.hardware.gpu }}</td>
               </tr>
               <tr>
-                <td class="specs-label">RAM</td>
+                <td class="specs-label">Total RAM</td>
                 <td class="specs-value fira-sans-condensed-black-italic">{{ (specsData.hardware.ram / 1024 ** 3).toFixed(0) }} GB</td>
+              </tr>
+              <tr>
+                <td class="specs-label">Inference Budget</td>
+                <td class="specs-value fira-sans-condensed-black-italic" style="color: #39d582">{{ (specsData.hardware.memBudget / 1024 ** 3).toFixed(1) }} GB</td>
               </tr>
               <tr v-if="specsData.hardware.vram > 0">
                 <td class="specs-label">VRAM</td>
@@ -451,6 +452,7 @@ export default {
     const modelMode = ref("chat");
     const systemValues = ref({});
     const videoImageBase64 = ref("");
+    let sysInfoInterval = null;
     const showSpecsModal = ref(false);
     const specsData = reactive({ hardware: null, performance: null });
 
@@ -530,24 +532,17 @@ export default {
       // Initialize unified inference store (loads persisted generation history)
       initializeStore();
 
-      // Load system info asynchronously (non-blocking) with timeout
+      // Load system info — returns instantly via os.totalmem(), no timeout needed
       const loadSystemInfo = async () => {
         try {
-          const timeoutPromise = new Promise((_, reject) =>
-            setTimeout(() => reject(new Error("System info timeout")), 10000),
-          );
-          const infoPromise = window.electronAPI.systemInformation();
-          const mySystemValues = await Promise.race([
-            infoPromise,
-            timeoutPromise,
-          ]);
-          systemValues.value = mySystemValues;
-          console.log("System info loaded:", systemValues.value);
+          systemValues.value = await window.electronAPI.systemInformation();
         } catch (e) {
           console.warn("Failed to load system info:", e.message);
         }
       };
       loadSystemInfo();
+      // Refresh every 30s so memBudget reflects current available memory
+      sysInfoInterval = setInterval(loadSystemInfo, 30000);
 
       // Initialize model store (query current model + start listening for changes)
       modelStore.initialize().then(() => modelStore.startListening());
@@ -599,6 +594,9 @@ export default {
       if (autoHideTimeout) {
         clearTimeout(autoHideTimeout);
       }
+      if (sysInfoInterval) {
+        clearInterval(sysInfoInterval);
+      }
       modelStore.stopListening();
       window.removeEventListener("bonzai:open-browse-models", openBrowseModels);
     });
@@ -635,6 +633,14 @@ body {
   -webkit-user-select: none;
   box-sizing: border-box !important;
   overflow: hidden;
+}
+
+/* Suppress scrollbars on all generative views — content scrolls via .models__deployment-install */
+.models__deployment-install {
+  scrollbar-width: none; /* Firefox */
+}
+.models__deployment-install::-webkit-scrollbar {
+  display: none; /* Chrome/Safari/Electron */
 }
 
 #app {

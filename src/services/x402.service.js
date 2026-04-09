@@ -542,6 +542,198 @@ export function calculatePaymentAmount(request, pricePerToken) {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
+// PIPELINE PAYMENT (Multi-Payee x402)
+// ═══════════════════════════════════════════════════════════════════════════
+
+// EIP-712 types for multi-payee pipeline payments (must match BonzaiPipelinePayment.sol)
+const PIPELINE_PAYMENT_TYPES = {
+  PipelinePayment: [
+    { name: 'providers', type: 'address[]' },
+    { name: 'amounts', type: 'uint256[]' },
+    { name: 'totalAmount', type: 'uint256' },
+    { name: 'nonce', type: 'uint256' },
+    { name: 'expiry', type: 'uint256' },
+    { name: 'service', type: 'string' },
+    { name: 'sessionId', type: 'bytes32' },
+  ],
+};
+
+/**
+ * Sign a multi-payee pipeline payment authorization.
+ * Consumer signs ONE message covering all pipeline peers.
+ *
+ * @param {ethers.Wallet} signer - Wallet to sign with
+ * @param {Object} params
+ * @param {string[]} params.providers - Array of provider wallet addresses
+ * @param {string[]} params.amounts - Array of per-provider amounts in wei
+ * @param {string} params.service - Service identifier (e.g., "pipeline/llm/llama-3.1-8b")
+ * @param {string} params.sessionId - Pipeline session ID (bytes32 hex string)
+ * @returns {Promise<Object>} Signed pipeline payment authorization
+ */
+export async function signPipelinePayment(signer, { providers, amounts, service, sessionId }) {
+  if (providers.length !== amounts.length) throw new Error('providers and amounts must have equal length');
+  if (providers.length === 0) throw new Error('At least one provider required');
+
+  const totalAmount = amounts.reduce((sum, a) => sum + BigInt(a), 0n);
+  const nonce = Date.now();
+  const expiry = Math.floor(Date.now() / 1000) + 300; // 5 minutes
+
+  // Ensure sessionId is a valid bytes32
+  const sessionIdBytes32 = sessionId.startsWith('0x')
+    ? sessionId.padEnd(66, '0')
+    : ('0x' + sessionId).padEnd(66, '0');
+
+  const message = {
+    providers,
+    amounts: amounts.map((a) => BigInt(a)),
+    totalAmount,
+    nonce: BigInt(nonce),
+    expiry: BigInt(expiry),
+    service,
+    sessionId: sessionIdBytes32,
+  };
+
+  const signature = await signer.signTypedData(EIP712_DOMAIN, PIPELINE_PAYMENT_TYPES, message);
+
+  return {
+    version: 'x402-pipeline/1.0',
+    consumer: await signer.getAddress(),
+    providers,
+    amounts: amounts.map(String),
+    totalAmount: totalAmount.toString(),
+    totalAmountEth: ethers.formatEther(totalAmount),
+    nonce,
+    expiry,
+    service,
+    sessionId: sessionIdBytes32,
+    chainId: BASE_CONFIG.chainId,
+    signature,
+  };
+}
+
+/**
+ * Validate a signed pipeline payment authorization.
+ *
+ * @param {Object} payment - Signed pipeline payment
+ * @param {Object} options
+ * @param {string[]} [options.expectedProviders] - Expected provider addresses
+ * @param {string} [options.minTotalAmount] - Minimum total amount in wei
+ * @returns {Promise<Object>} Validation result { valid, consumer, totalAmount }
+ */
+export async function validatePipelinePayment(payment, options = {}) {
+  const { expectedProviders, minTotalAmount = '0' } = options;
+
+  try {
+    await _loadNonces();
+
+    if (payment.version !== 'x402-pipeline/1.0') {
+      return { valid: false, error: 'invalid_version' };
+    }
+
+    const now = Math.floor(Date.now() / 1000);
+    if (payment.expiry < now) {
+      return { valid: false, error: 'payment_expired' };
+    }
+
+    const nonceKey = `${payment.consumer}:pipeline:${payment.nonce}`;
+    if (_hasNonce(nonceKey)) {
+      return { valid: false, error: 'nonce_reused' };
+    }
+
+    if (payment.providers.length !== payment.amounts.length) {
+      return { valid: false, error: 'array_length_mismatch' };
+    }
+
+    // Verify amounts sum to totalAmount
+    const computedTotal = payment.amounts.reduce((sum, a) => sum + BigInt(a), 0n);
+    if (computedTotal !== BigInt(payment.totalAmount)) {
+      return { valid: false, error: 'amount_sum_mismatch' };
+    }
+
+    if (BigInt(payment.totalAmount) < BigInt(minTotalAmount)) {
+      return { valid: false, error: 'insufficient_amount' };
+    }
+
+    // Verify expected providers if specified
+    if (expectedProviders) {
+      const paymentProviders = payment.providers.map((p) => p.toLowerCase()).sort();
+      const expected = expectedProviders.map((p) => p.toLowerCase()).sort();
+      if (JSON.stringify(paymentProviders) !== JSON.stringify(expected)) {
+        return { valid: false, error: 'provider_mismatch' };
+      }
+    }
+
+    // Verify EIP-712 signature
+    const message = {
+      providers: payment.providers,
+      amounts: payment.amounts.map((a) => BigInt(a)),
+      totalAmount: BigInt(payment.totalAmount),
+      nonce: BigInt(payment.nonce),
+      expiry: BigInt(payment.expiry),
+      service: payment.service,
+      sessionId: payment.sessionId,
+    };
+
+    const recoveredAddress = ethers.verifyTypedData(
+      EIP712_DOMAIN,
+      PIPELINE_PAYMENT_TYPES,
+      message,
+      payment.signature,
+    );
+
+    if (recoveredAddress.toLowerCase() !== payment.consumer.toLowerCase()) {
+      return { valid: false, error: 'invalid_signature' };
+    }
+
+    _addNonce(nonceKey);
+
+    return {
+      valid: true,
+      consumer: recoveredAddress,
+      totalAmount: payment.totalAmount,
+      totalAmountEth: ethers.formatEther(payment.totalAmount),
+      providers: payment.providers,
+      amounts: payment.amounts,
+    };
+  } catch (err) {
+    console.error('[x402] Pipeline payment validation error:', err.message);
+    return { valid: false, error: 'validation_error', detail: err.message };
+  }
+}
+
+/**
+ * Calculate pipeline payment amounts per provider.
+ * Splits total cost proportionally by layer count per shard.
+ *
+ * @param {number} totalCostWei - Total cost in wei
+ * @param {Object[]} shards - Array of { peerId, wallet, layerCount }
+ * @returns {{ providers: string[], amounts: string[], totalAmount: string }}
+ */
+export function calculatePipelinePaymentSplit(totalCostWei, shards) {
+  const totalLayers = shards.reduce((sum, s) => sum + s.layerCount, 0);
+  const total = BigInt(totalCostWei);
+
+  const providers = [];
+  const amounts = [];
+  let distributed = 0n;
+
+  for (let i = 0; i < shards.length; i++) {
+    const share = (total * BigInt(shards[i].layerCount)) / BigInt(totalLayers);
+    providers.push(shards[i].wallet);
+    amounts.push(share.toString());
+    distributed += share;
+  }
+
+  // Give rounding dust to the last provider
+  if (distributed < total && amounts.length > 0) {
+    const last = BigInt(amounts[amounts.length - 1]);
+    amounts[amounts.length - 1] = (last + (total - distributed)).toString();
+  }
+
+  return { providers, amounts, totalAmount: total.toString() };
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
 // EXPORTS
 // ═══════════════════════════════════════════════════════════════════════════
 
@@ -568,6 +760,12 @@ export const x402Service = {
   isSelfInference,
   validatePayment,
   calculatePaymentAmount,
+
+  // Pipeline multi-payee
+  PIPELINE_PAYMENT_TYPES,
+  signPipelinePayment,
+  validatePipelinePayment,
+  calculatePipelinePaymentSplit,
 };
 
 export default x402Service;

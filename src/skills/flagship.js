@@ -646,28 +646,16 @@ export const MODEL_REQUIREMENTS = {
 
   // Music Generation
   music: {
-    name: 'ACE-Step v1.5 Music (Turbo)',
+    name: 'ACE-Step v1.5 XL Turbo',
     type: 'audio',
     pipeline: 'music',
     endpoint: '/audio/music',
-    repo: 'ACE-Step/Ace-Step1.5',
-    size: '~4 GB (turbo DiT)',
-    vram: '4 GB',
-    description: 'Fast music generation with ODE solver (8 steps)',
+    repo: ['ACE-Step/Ace-Step1.5', 'ACE-Step/acestep-v15-xl-turbo'],
+    size: '~18.8 GB (4B param DiT)',
+    vram: '12 GB (with CPU offload)',
+    description: 'High-quality music generation with XL model (4B params, 8 steps, DMD-GAN distilled)',
     llmRequired: 'llm_llama_3_1_8b',
     llmNote: 'LLaMA 3.1 8B recommended for lyrics generation',
-  },
-  music_quality: {
-    name: 'ACE-Step v1.5 Music (Quality)',
-    type: 'audio',
-    pipeline: 'music_quality',
-    endpoint: '/audio/music/quality',
-    repo: ['ACE-Step/Ace-Step1.5', 'ACE-Step/acestep-v15-base'],
-    size: '~12 GB (base DiT + turbo repo + 5Hz LM)',
-    vram: '8 GB',
-    description: 'High-quality music with BASE model (32-100 steps), SDE solver, thinking/CoT, and ADG',
-    llmRequired: 'llm_llama_3_1_8b',
-    llmNote: 'Uses 5Hz Language Model (1.7B) for semantic reasoning',
   },
 
   // Video Models

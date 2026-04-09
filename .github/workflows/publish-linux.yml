@@ -169,6 +169,11 @@ jobs:
       - name: Install Node dependencies
         run: npm ci
 
+      - name: Build llama.cpp RPC binaries
+        run: |
+          sudo apt-get update && sudo apt-get install -y cmake
+          npm run build:rpc
+
       - name: Build Vite bundles
         env:
           VITE_PINATA_JWT: ${{ secrets.PINATA_JWT }}

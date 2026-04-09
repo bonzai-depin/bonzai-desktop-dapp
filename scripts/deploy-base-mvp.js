@@ -63,7 +63,7 @@ const DEPLOY_CONFIG = {
   create2Deployer: '0x4e59b44847b379578588920cA78FbF26c0B4956C',
 
   // MintPool config
-  epochDuration: 604800, // 7 days (1 week) in seconds — matches documentation
+  epochDuration: 1209600, // 14 days (2 weeks) in seconds
   poolThresholds: [1000, 5000, 10000, 25000, 33000, 50000],
 
   // BonzaiUnlock price in wei (1 ETH)
@@ -365,6 +365,9 @@ async function main() {
   const paymentCompiled = compileContract('BonzaiPayment.sol');
   console.log('  ✓ BonzaiPayment.sol');
 
+  const pipelinePaymentCompiled = compileContract('BonzaiPipelinePayment.sol');
+  console.log('  ✓ BonzaiPipelinePayment.sol');
+
   // ─── Step 2: Deploy contracts (dependency order) ────────────────────
   console.log('\n═══ Step 2: Deploying contracts ═══');
 
@@ -566,6 +569,18 @@ async function main() {
     'BonzaiPayment (P2P ETH/USDC payments)',
   );
 
+  // 2n. BonzaiPipelinePayment — Multi-payee pipeline payment for private inference
+  const pipelinePayment = await deployContract(
+    signer, 'BonzaiPipelinePayment',
+    pipelinePaymentCompiled.BonzaiPipelinePayment,
+    [
+      DEPLOY_CONFIG.usdcBase,
+      DEPLOY_CONFIG.treasury,
+      DEPLOY_CONFIG.p2pPlatformFeeBps,
+    ],
+    'BonzaiPipelinePayment (multi-payee pipeline payments)',
+  );
+
   // ─── Step 3: Cross-contract wiring ──────────────────────────────────
   console.log('\n═══ Step 3: Cross-contract wiring ═══');
 
@@ -598,6 +613,11 @@ async function main() {
     signer, deployedAddresses.BonzaiMintPool, mintPoolAbi,
     'setCompanionNFT', [deployedAddresses.BonzaiCompanions],
     'BonzaiMintPool.setCompanionNFT(companions)',
+  );
+  await wireContract(
+    signer, deployedAddresses.BonzaiMintPool, mintPoolAbi,
+    'setUnlockContract', [deployedAddresses.BonzaiUnlock],
+    'BonzaiMintPool.setUnlockContract(unlock)',
   );
 
   // Wire BonzaiUniswapHook → authorize both factories
@@ -654,6 +674,13 @@ async function main() {
     'BonzaiSkillOwnership.setUsdcToken(usdc)',
   );
 
+  // Wire BonzaiSkillRegistry → BonzaiUnlock (unlocked users get skills for free)
+  await wireContract(
+    signer, deployedAddresses.BonzaiSkillRegistry, skillRegistryAbi,
+    'setUnlockContract', [deployedAddresses.BonzaiUnlock],
+    'BonzaiSkillRegistry.setUnlockContract(unlock)',
+  );
+
   // Level gating removed — BONZAI holdings span 3 networks and can't be aggregated on-chain.
   // Level checks are enforced off-chain in the application layer.
 
@@ -670,6 +697,14 @@ async function main() {
     signer, deployedAddresses.BonzaiProviderRegistry, providerRegistryAbi,
     'setPaymentContract', [deployedAddresses.BonzaiPayment],
     'BonzaiProviderRegistry.setPaymentContract(payment)',
+  );
+
+  // Wire BonzaiPipelinePayment → BonzaiProviderRegistry
+  const pipelinePaymentAbi = pipelinePaymentCompiled.BonzaiPipelinePayment.abi;
+  await wireContract(
+    signer, deployedAddresses.BonzaiPipelinePayment, pipelinePaymentAbi,
+    'setProviderRegistry', [deployedAddresses.BonzaiProviderRegistry],
+    'BonzaiPipelinePayment.setProviderRegistry(providerRegistry)',
   );
 
   // ─── Step 4: Summary ───────────────────────────────────────────────
@@ -712,6 +747,7 @@ async function main() {
   p2pNetwork: {
     providerRegistryAddress: '${deployedAddresses.BonzaiProviderRegistry}',
     paymentContractAddress: '${deployedAddresses.BonzaiPayment}',
+    pipelinePaymentAddress: '${deployedAddresses.BonzaiPipelinePayment}',
   },
   `);
 

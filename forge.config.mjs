@@ -133,6 +133,23 @@ export default {
         console.log(
           `[forge] Packaged python runtime from ${pyDist} → ${destDir}`
         );
+
+        // ── llama.cpp RPC binaries (rpc-server + llama-server) ───────────
+        const llamaBinDir = path.resolve(__dirname, "bin", `${platformKey}-${arch}`);
+        if (fs.existsSync(llamaBinDir)) {
+          const llamaDestDir = path.join(serverDir, "llama-runtime", `${platformKey}-${arch}`);
+          fs.mkdirSync(llamaDestDir, { recursive: true });
+          const ext = platform === "win32" ? ".exe" : "";
+          for (const bin of [`rpc-server${ext}`, `llama-server${ext}`]) {
+            const src = path.join(llamaBinDir, bin);
+            if (fs.existsSync(src)) {
+              copyRecursive(src, path.join(llamaDestDir, bin));
+              console.log(`[forge] Packaged ${bin} → ${llamaDestDir}`);
+            }
+          }
+        } else {
+          console.log(`[forge] Skipping llama runtime copy - binaries not found at ${llamaBinDir} (run 'npm run build:rpc' to build)`);
+        }
       },
     ],
   },

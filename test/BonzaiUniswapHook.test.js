@@ -5,9 +5,9 @@ const { deployHook } = require("./helpers/deploy");
 const {
   HOOK_FEE_BPS,
   BPS_DENOMINATOR,
-  COMPANION_TREASURY_BPS,
-  COMPANION_OWNER_BPS,
   COMPANION_WALLET_BPS,
+  COMPANION_OWNER_BPS,
+  COMPANION_POOL_BPS,
   FINETUNE_BENEFICIARY_BPS,
   FINETUNE_TREASURY_BPS,
   FINETUNE_POOL_BPS,
@@ -342,18 +342,18 @@ describe("BonzaiUniswapHook", function () {
       const expectedFee = (swapOutput * HOOK_FEE_BPS) / BPS_DENOMINATOR;
       expect(expectedFee).to.equal(ethers.parseEther("0.01"));
 
-      // Verify total fees accumulated
-      const treasuryFees = await hook.unclaimedTreasury();
+      // Verify total fees accumulated (companion: wallet + owner + LVL6 pool, no treasury)
+      const poolFees = await hook.unclaimedPool(5); // LVL6 pool index
       const ownerFees = await hook.unclaimedBeneficiary(
         (await ethers.getSigners())[3].address // companionOwner
       );
       const beneficiaryFees = await hook.unclaimedBeneficiary(
-        (await ethers.getSigners())[2].address // beneficiary
+        (await ethers.getSigners())[2].address // beneficiary (companion wallet)
       );
-      expect(treasuryFees + ownerFees + beneficiaryFees).to.equal(expectedFee);
+      expect(poolFees + ownerFees + beneficiaryFees).to.equal(expectedFee);
     });
 
-    it("should split COMPANION fees 33/33/34 (treasury/owner/wallet)", async function () {
+    it("should split COMPANION fees 34/33/33 (wallet/owner/LVL6 pool)", async function () {
       const { hook, poolManager, key, beneficiary, companionOwner, user1 } =
         await loadFixture(deployWithCompanionPool);
       const hookAddr = await hook.getAddress();
@@ -366,13 +366,13 @@ describe("BonzaiUniswapHook", function () {
       await poolManager.callAfterSwap(hookAddr, user1.address, key, makeSwapParams(), delta, "0x");
 
       const feeAmount = (swapOutput * HOOK_FEE_BPS) / BPS_DENOMINATOR; // 0.1 ETH
-      const expectedTreasury = (feeAmount * COMPANION_TREASURY_BPS) / BPS_DENOMINATOR; // 33%
+      const expectedWallet = (feeAmount * COMPANION_WALLET_BPS) / BPS_DENOMINATOR; // 34%
       const expectedOwner = (feeAmount * COMPANION_OWNER_BPS) / BPS_DENOMINATOR; // 33%
-      const expectedWallet = feeAmount - expectedTreasury - expectedOwner; // 34%
+      const expectedPool = feeAmount - expectedWallet - expectedOwner; // 33% → LVL6 pool (index 5)
 
-      expect(await hook.unclaimedTreasury()).to.equal(expectedTreasury);
-      expect(await hook.unclaimedBeneficiary(companionOwner.address)).to.equal(expectedOwner);
       expect(await hook.unclaimedBeneficiary(beneficiary.address)).to.equal(expectedWallet);
+      expect(await hook.unclaimedBeneficiary(companionOwner.address)).to.equal(expectedOwner);
+      expect(await hook.unclaimedPool(5)).to.equal(expectedPool); // Pool index 5 = LVL6 training
     });
 
     it("should split FINETUNE fees 80/10/10 (beneficiary/treasury/pool)", async function () {
@@ -503,15 +503,15 @@ describe("BonzaiUniswapHook", function () {
       await user1.sendTransaction({ to: pmAddr, value: swapOutput });
 
       const feeAmount = (swapOutput * HOOK_FEE_BPS) / BPS_DENOMINATOR;
-      const treasuryShare = (feeAmount * COMPANION_TREASURY_BPS) / BPS_DENOMINATOR;
+      const walletShare = (feeAmount * COMPANION_WALLET_BPS) / BPS_DENOMINATOR;
       const ownerShare = (feeAmount * COMPANION_OWNER_BPS) / BPS_DENOMINATOR;
-      const walletShare = feeAmount - treasuryShare - ownerShare;
+      const poolShare = feeAmount - walletShare - ownerShare;
 
       await expect(
         poolManager.callAfterSwap(hookAddr, user1.address, key, makeSwapParams(), -swapOutput, "0x")
       )
         .to.emit(hook, "FeeCaptured")
-        .withArgs(poolId, POOL_TYPE_COMPANION, feeAmount, walletShare, treasuryShare, ownerShare);
+        .withArgs(poolId, POOL_TYPE_COMPANION, feeAmount, walletShare, poolShare, ownerShare);
     });
 
     it("should emit FeeCaptured event for FINETUNE swap", async function () {
@@ -555,11 +555,11 @@ describe("BonzaiUniswapHook", function () {
       }
 
       const totalFee = (ethers.parseEther("2") * HOOK_FEE_BPS) / BPS_DENOMINATOR;
-      const treasuryFees = await hook.unclaimedTreasury();
+      const poolFees = await hook.unclaimedPool(5); // LVL6 pool
       const ownerFees = await hook.unclaimedBeneficiary(companionOwner.address);
       const walletFees = await hook.unclaimedBeneficiary(beneficiary.address);
 
-      expect(treasuryFees + ownerFees + walletFees).to.equal(totalFee);
+      expect(poolFees + ownerFees + walletFees).to.equal(totalFee);
     });
 
     it("should not capture fees after pool is deregistered", async function () {
@@ -598,12 +598,11 @@ describe("BonzaiUniswapHook", function () {
       await poolManager.callAfterSwap(hookAddr, user1.address, key, makeSwapParams(), -swapOutput, "0x");
 
       const feeAmount = (swapOutput * HOOK_FEE_BPS) / BPS_DENOMINATOR;
+      const walletShare = (feeAmount * COMPANION_WALLET_BPS) / BPS_DENOMINATOR;
       const ownerShare = (feeAmount * COMPANION_OWNER_BPS) / BPS_DENOMINATOR;
-      const treasuryShare = (feeAmount * COMPANION_TREASURY_BPS) / BPS_DENOMINATOR;
-      const walletShare = feeAmount - treasuryShare - ownerShare;
 
-      // totalUnclaimedBeneficiary = ownerShare + walletShare
-      expect(await hook.totalUnclaimedBeneficiary()).to.equal(ownerShare + walletShare);
+      // totalUnclaimedBeneficiary = walletShare + ownerShare (pool share goes to unclaimedPool, not beneficiary)
+      expect(await hook.totalUnclaimedBeneficiary()).to.equal(walletShare + ownerShare);
     });
   });
 
@@ -675,6 +674,8 @@ describe("BonzaiUniswapHook", function () {
 
   describe("claimTreasuryFees()", function () {
     async function deployWithAccumulatedTreasuryFees() {
+      // Use FINETUNE pool type because COMPANION fees no longer go to treasury
+      // (they go to LVL6 pool instead). FINETUNE still has 10% treasury share.
       const base = await deployHook();
       const { hook, poolManager, owner, beneficiary, companionOwner, user1 } = base;
       const hookAddr = await hook.getAddress();
@@ -682,7 +683,7 @@ describe("BonzaiUniswapHook", function () {
       const poolId = computePoolId(key);
 
       await hook.connect(owner).authorizeFactory(owner.address, true);
-      await hook.connect(owner).registerPool(poolId, beneficiary.address, companionOwner.address, POOL_TYPE_COMPANION, 0);
+      await hook.connect(owner).registerPool(poolId, beneficiary.address, companionOwner.address, POOL_TYPE_FINETUNE, 5);
 
       const swapOutput = ethers.parseEther("10");
       const pmAddr = await poolManager.getAddress();
@@ -793,7 +794,9 @@ describe("BonzaiUniswapHook", function () {
       await user1.sendTransaction({ to: pmAddr, value: swapOutput });
       await poolManager.callAfterSwap(hookAddr, user1.address, key, makeSwapParams(), -swapOutput, "0x");
 
-      const accountable = await hook.unclaimedTreasury() + await hook.totalUnclaimedBeneficiary();
+      // accountable = treasury + beneficiaries + all pools
+      let accountable = await hook.unclaimedTreasury() + await hook.totalUnclaimedBeneficiary();
+      for (let i = 0; i < 6; i++) accountable += await hook.unclaimedPool(i);
 
       // Send extra ETH directly to the hook contract (surplus)
       const surplus = ethers.parseEther("0.5");

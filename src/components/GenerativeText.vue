@@ -2443,11 +2443,7 @@ hr {
   height: 100%;
   width: 100%;
   background: url("../assets/bonzai_chat.webp") no-repeat;
-  background-size: cover;
-  filter: blur(6px);
-  animation: move 40s ease infinite;
-  will-change: transform;
-  overflow: hidden;
+  background-size: cover;  overflow: hidden;
 }
 
 .shade {

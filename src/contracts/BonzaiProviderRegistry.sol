@@ -28,6 +28,10 @@ contract BonzaiProviderRegistry is Ownable, ReentrancyGuard, Pausable {
         uint256 lastSeenAt;       // Last activity timestamp
         bool isActive;            // Currently accepting jobs
         bool isRelay;             // Acts as a relay node
+        // Pipeline shard capabilities (v2)
+        uint16 maxLayers;         // Max transformer layers this peer can serve (0 = not shard-capable)
+        uint32 computeScore;      // Benchmark throughput score (self-reported, higher = faster)
+        uint32 memoryMB;          // Available VRAM/RAM for model shards in MB
     }
 
     /**
@@ -51,7 +55,8 @@ contract BonzaiProviderRegistry is Ownable, ReentrancyGuard, Pausable {
         AUDIO_QUALITY,  // 7: Quality TTS
         MUSIC,          // 8: Music generation
         VIDEO_FAST,     // 9: Video generation (fast)
-        VISION          // 10: Vision analysis
+        VISION,         // 10: Vision analysis
+        PIPELINE_SHARD  // 11: Pipeline shard provider (partial LLM layers for private inference)
     }
 
     /// @notice Maximum valid pipeline category value
@@ -123,6 +128,7 @@ contract BonzaiProviderRegistry is Ownable, ReentrancyGuard, Pausable {
     event ProviderDeactivated(address indexed wallet);
     event ProviderActivated(address indexed wallet);
     event ProviderSlashed(address indexed wallet, uint256 amount, string reason);
+    event ShardCapabilitiesUpdated(address indexed wallet, uint16 maxLayers, uint32 computeScore, uint32 memoryMB);
     event EarningsRecorded(address indexed wallet, uint256 amount);
     event StakeWithdrawn(address indexed wallet, uint256 amount);
     event MinStakeUpdated(uint256 oldMinStake, uint256 newMinStake);
@@ -302,6 +308,29 @@ contract BonzaiProviderRegistry is Ownable, ReentrancyGuard, Pausable {
     }
 
     /**
+     * @notice Set shard capabilities for pipeline participation.
+     *         Providers call this after registration to advertise their
+     *         ability to serve as pipeline shard nodes for private inference.
+     * @param _maxLayers Max transformer layers this provider can serve
+     * @param _computeScore Self-reported benchmark throughput score
+     * @param _memoryMB Available VRAM/RAM for model shards in MB
+     */
+    function setShardCapabilities(
+        uint16 _maxLayers,
+        uint32 _computeScore,
+        uint32 _memoryMB
+    ) external {
+        if (providers[msg.sender].wallet == address(0)) revert NotRegistered();
+
+        providers[msg.sender].maxLayers = _maxLayers;
+        providers[msg.sender].computeScore = _computeScore;
+        providers[msg.sender].memoryMB = _memoryMB;
+        providers[msg.sender].lastSeenAt = block.timestamp;
+
+        emit ShardCapabilitiesUpdated(msg.sender, _maxLayers, _computeScore, _memoryMB);
+    }
+
+    /**
      * @notice Update last seen timestamp (called periodically by provider)
      */
     function heartbeat() external {
@@ -442,6 +471,31 @@ contract BonzaiProviderRegistry is Ownable, ReentrancyGuard, Pausable {
             }
         }
         return count;
+    }
+
+    /**
+     * @notice Get active shard-capable providers meeting minimum requirements
+     * @param minLayers Minimum layers the provider must support
+     * @param minMemoryMB Minimum available VRAM/RAM in MB
+     */
+    function getShardProviders(uint16 minLayers, uint32 minMemoryMB) external view returns (Provider[] memory) {
+        uint256 count = 0;
+        for (uint256 i = 0; i < providerAddresses.length; i++) {
+            Provider storage p = providers[providerAddresses[i]];
+            if (p.isActive && p.maxLayers >= minLayers && p.memoryMB >= minMemoryMB) {
+                count++;
+            }
+        }
+
+        Provider[] memory result = new Provider[](count);
+        uint256 idx = 0;
+        for (uint256 i = 0; i < providerAddresses.length; i++) {
+            Provider storage p = providers[providerAddresses[i]];
+            if (p.isActive && p.maxLayers >= minLayers && p.memoryMB >= minMemoryMB) {
+                result[idx++] = p;
+            }
+        }
+        return result;
     }
 
     // ═══════════════════════════════════════════════════════════════════════════

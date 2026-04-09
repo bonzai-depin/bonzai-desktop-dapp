@@ -73,9 +73,9 @@ describe("BonzaiProviderRegistry", function () {
       expect(await registry.paymentContract()).to.equal(ethers.ZeroAddress);
     });
 
-    it("should set MAX_PIPELINE_CATEGORY to 10", async function () {
+    it("should set MAX_PIPELINE_CATEGORY to 11 (PIPELINE_SHARD)", async function () {
       const { registry } = await loadFixture(deployProviderRegistry);
-      expect(await registry.MAX_PIPELINE_CATEGORY()).to.equal(10);
+      expect(await registry.MAX_PIPELINE_CATEGORY()).to.equal(11);
     });
 
     it("should revert when treasury is zero address", async function () {
@@ -305,15 +305,15 @@ describe("BonzaiProviderRegistry", function () {
       expect(provider.pipelines.length).to.equal(11);
     });
 
-    it("should revert with InvalidPipelineCategory when category is 11", async function () {
+    it("should revert with InvalidPipelineCategory when category is 12", async function () {
       const { registry, provider1 } = await loadFixture(deployProviderRegistry);
       await expect(
         registry.connect(provider1).register(
-          PEER_ID_1, MULTIADDRS, [11], PRICE_PER_TOKEN, false,
+          PEER_ID_1, MULTIADDRS, [12], PRICE_PER_TOKEN, false,
           { value: MIN_STAKE }
         )
       ).to.be.revertedWithCustomError(registry, "InvalidPipelineCategory")
-        .withArgs(11, 10);
+        .withArgs(12, 11);
     });
 
     it("should revert with InvalidPipelineCategory when category is 255", async function () {
@@ -324,7 +324,7 @@ describe("BonzaiProviderRegistry", function () {
           { value: MIN_STAKE }
         )
       ).to.be.revertedWithCustomError(registry, "InvalidPipelineCategory")
-        .withArgs(255, 10);
+        .withArgs(255, 11);
     });
 
     it("should revert when any pipeline in the array is invalid", async function () {
@@ -336,7 +336,7 @@ describe("BonzaiProviderRegistry", function () {
           { value: MIN_STAKE }
         )
       ).to.be.revertedWithCustomError(registry, "InvalidPipelineCategory")
-        .withArgs(50, 10);
+        .withArgs(50, 11);
     });
 
     it("should revert with InvalidPipelineCategory on updateProvider with invalid pipeline", async function () {
@@ -348,7 +348,7 @@ describe("BonzaiProviderRegistry", function () {
           PEER_ID_1, MULTIADDRS, [0, 12], PRICE_PER_TOKEN, false
         )
       ).to.be.revertedWithCustomError(registry, "InvalidPipelineCategory")
-        .withArgs(12, 10);
+        .withArgs(12, 11);
     });
   });
 

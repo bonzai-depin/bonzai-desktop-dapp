@@ -431,7 +431,7 @@
                             type="range"
                             v-model.number="musicSteps"
                             :min="1"
-                            :max="8"
+                            :max="32"
                             step="1"
                             class="slider"
                           />
@@ -2616,7 +2616,7 @@ Remember: 6-10 syllables per line, use all appropriate structure tags. Write in 
             },
             id: uuid(),
             language: language.value,
-            model: mode.value === "music" ? "ace-step-v1.5-turbo" : "qwen3-tts",
+            model: mode.value === "music" ? "ace-step-v1.5-xl-turbo" : "qwen3-tts",
             hasClone: mode.value === "clone",
             isMusic: mode.value === "music",
             voiceGender: voiceGender.value,
@@ -3029,11 +3029,7 @@ Remember: 6-10 syllables per line, use all appropriate structure tags. Write in 
   height: 100%;
   width: 100%;
   background: url("../assets/bonzai_music.webp") no-repeat;
-  background-size: cover;
-  filter: blur(6px);
-  animation: move 40s ease infinite;
-  will-change: transform;
-  overflow: hidden;
+  background-size: cover;  overflow: hidden;
 }
 .models__deployment {
   position: relative;

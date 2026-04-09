@@ -7,6 +7,10 @@ import "@openzeppelin/contracts/utils/Pausable.sol";
 import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 
+interface IBonzaiUnlock {
+    function hasUnlocked(address user) external view returns (bool);
+}
+
 /**
  * @title BonzaiSkillRegistry
  * @author BonzAI Team
@@ -91,6 +95,9 @@ contract BonzaiSkillRegistry is Ownable, ReentrancyGuard, Pausable {
 
     /// @notice Skill ownership contract
     address public skillOwnershipContract;
+
+    /// @notice BonzaiUnlock contract — unlocked users get skills for free
+    address public unlockContract;
 
     /// @notice Mapping of skill ID => Skill data
     mapping(bytes32 => Skill) public skills;
@@ -478,8 +485,21 @@ contract BonzaiSkillRegistry is Ownable, ReentrancyGuard, Pausable {
         Skill storage skill = skills[skillId];
         uint256 price = skill.purchasePrice;
 
-        // Slippage protection
-        require(price <= maxPrice, "Price exceeds maximum");
+        // Unlocked users get skills for free
+        bool isUnlocked = false;
+        if (unlockContract != address(0)) {
+            try IBonzaiUnlock(unlockContract).hasUnlocked(msg.sender) returns (bool result) {
+                isUnlocked = result;
+            } catch {}
+        }
+        if (isUnlocked) {
+            price = 0;
+        }
+
+        // Slippage protection (skip for free/unlocked)
+        if (price > 0) {
+            require(price <= maxPrice, "Price exceeds maximum");
+        }
 
         // Check not already purchased
         if (hasPurchased[msg.sender][skillId]) {
@@ -571,8 +591,14 @@ contract BonzaiSkillRegistry is Ownable, ReentrancyGuard, Pausable {
     {
         Skill storage skill = skills[skillId];
 
-        // Check purchased (free skills with no purchase requirement skip this)
-        if (skill.purchasePrice > 0 && !hasPurchased[msg.sender][skillId]) {
+        // Check purchased (unlocked users and free skills skip this)
+        bool isUnlocked = false;
+        if (unlockContract != address(0)) {
+            try IBonzaiUnlock(unlockContract).hasUnlocked(msg.sender) returns (bool result) {
+                isUnlocked = result;
+            } catch {}
+        }
+        if (!isUnlocked && skill.purchasePrice > 0 && !hasPurchased[msg.sender][skillId]) {
             revert NotPurchased(msg.sender, skillId);
         }
 
@@ -581,8 +607,8 @@ contract BonzaiSkillRegistry is Ownable, ReentrancyGuard, Pausable {
             skill.totalExecutions += 1;
         }
 
-        // Deduct running fee if applicable (USDC)
-        if (skill.runningFee > 0) {
+        // Deduct running fee if applicable (USDC) — unlocked users skip fees
+        if (skill.runningFee > 0 && !isUnlocked) {
             uint256 coOwnerShare;
             uint256 authorShare;
 
@@ -755,6 +781,13 @@ contract BonzaiSkillRegistry is Ownable, ReentrancyGuard, Pausable {
         address old = skillOwnershipContract;
         skillOwnershipContract = _skillOwnershipContract;
         emit SkillOwnershipContractUpdated(old, _skillOwnershipContract);
+    }
+
+    /**
+     * @notice Set the BonzaiUnlock contract — unlocked users get skills for free
+     */
+    function setUnlockContract(address _unlock) external onlyOwner {
+        unlockContract = _unlock;
     }
 
     /**

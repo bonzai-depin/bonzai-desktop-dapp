@@ -445,22 +445,8 @@ describe("BonzaiMintPool", function () {
       ).to.be.revertedWith("Claim window closed");
     });
 
-    it("should reject confirmClaim without companion NFT", async function () {
-      const { mintPool, token, user1, treasury } = await loadFixture(deployMintPool);
-      await token.mint(user1.address, ethers.parseEther("10000"));
-      await mintPool.setContentContract(treasury.address);
-      await mintPool.connect(user1).registerForEpoch();
-
-      await time.increase(EPOCH_DURATION);
-
-      await expect(
-        mintPool.connect(user1).confirmClaim(0)
-      ).to.be.revertedWith("Must own a companion");
-    });
-
     it("should reject confirmClaim for unregistered user", async function () {
-      const { mintPool, companionNFT, user1 } = await loadFixture(deployMintPool);
-      await companionNFT.mintTo(user1.address);
+      const { mintPool, user1 } = await loadFixture(deployMintPool);
       await time.increase(EPOCH_DURATION);
 
       await expect(

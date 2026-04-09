@@ -2843,7 +2843,6 @@ Provide a concise analysis covering:
 
 .rotating {
   animation: spin 1s linear infinite;
-  will-change: transform;
 }
 
 @keyframes spin {
@@ -2869,11 +2868,7 @@ Provide a concise analysis covering:
   height: 100%;
   width: 100%;
   background: url("../assets/bonzai_agent.webp") no-repeat;
-  background-size: cover;
-  filter: blur(6px);
-  animation: move 40s ease infinite;
-  will-change: transform;
-  overflow: hidden;
+  background-size: cover;  overflow: hidden;
 }
 
 .models__deployment {

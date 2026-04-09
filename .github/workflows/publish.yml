@@ -147,6 +147,30 @@ jobs:
       - name: Install Node dependencies
         run: npm ci
 
+      - name: Build llama.cpp RPC binaries
+        run: |
+          brew install cmake
+          npm run build:rpc
+
+      - name: Sign llama.cpp RPC binaries
+        env:
+          KEYCHAIN_PW: ${{ secrets.KEYCHAIN_PASSWORD }}
+        run: |
+          security unlock-keychain -p "$KEYCHAIN_PW" build.keychain
+          IDENTITY=$(security find-identity -v -p codesigning build.keychain | grep "Developer ID Application" | head -1 | sed 's/.*"\(.*\)".*/\1/')
+
+          for binary in bin/${{ env.OS_KEY }}-${{ env.ARCH_KEY }}/rpc-server bin/${{ env.OS_KEY }}-${{ env.ARCH_KEY }}/llama-server; do
+            if [ -f "$binary" ]; then
+              echo "Signing: $binary"
+              codesign --force --sign "$IDENTITY" \
+                --options runtime \
+                --entitlements ./entitlements.mac.plist \
+                --timestamp \
+                "$binary"
+              codesign --verify --verbose "$binary"
+            fi
+          done
+
       - name: Sign ffmpeg binaries
         env:
           KEYCHAIN_PW: ${{ secrets.KEYCHAIN_PASSWORD }}
@@ -221,7 +245,7 @@ jobs:
           # EXCLUDE python-runtime as it's already signed with proper framework structure
           echo "Signing all native binaries..."
           find "$APP_PATH" -type f \( -name "*.dylib" -o -name "*.so" -o -name "*.node" \) \
-            -not -path "*/python-runtime/*" | while read -r binary; do
+            -not -path "*/python-runtime/*" -not -path "*/llama-runtime/*" | while read -r binary; do
             echo "Signing: $binary"
             codesign --force --sign "$IDENTITY" \
               --options runtime \
@@ -233,7 +257,7 @@ jobs:
           # Sign executables (Mach-O binaries without extensions)
           # EXCLUDE python-runtime as it's already signed with proper framework structure
           echo "Signing executables..."
-          find "$APP_PATH" -type f -perm +111 -not -path "*/python-runtime/*" | while read -r binary; do
+          find "$APP_PATH" -type f -perm +111 -not -path "*/python-runtime/*" -not -path "*/llama-runtime/*" | while read -r binary; do
             if file "$binary" | grep -q "Mach-O"; then
               echo "Signing executable: $binary"
               codesign --force --sign "$IDENTITY" \

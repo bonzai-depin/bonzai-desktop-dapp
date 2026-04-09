@@ -122,6 +122,11 @@ jobs:
       - name: Install Node dependencies
         run: npm ci
 
+      - name: Build llama.cpp RPC binaries
+        run: |
+          choco install cmake --installargs 'ADD_CMAKE_TO_PATH=System' -y
+          npm run build:rpc
+
       - name: Build Vite bundles
         env:
           VITE_PINATA_JWT: ${{ secrets.PINATA_JWT }}

@@ -2596,11 +2596,7 @@ OUTPUT:`;
   left: 0;
   top: 0;
   background: url("../assets/bonzai_3d.webp") no-repeat center center;
-  background-size: cover;
-  filter: blur(6px);
-  animation: move 40s ease infinite;
-  will-change: transform;
-  overflow: hidden;
+  background-size: cover;  overflow: hidden;
 }
 @keyframes move {
   0% {

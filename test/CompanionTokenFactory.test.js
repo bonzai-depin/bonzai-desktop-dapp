@@ -97,7 +97,7 @@ describe("CompanionTokenFactory", function () {
       expect(await factory.AGENT_SHARE_BPS()).to.equal(AGENT_SHARE_BPS);
       expect(await factory.BPS_DENOMINATOR()).to.equal(BPS_DENOMINATOR);
       expect(await factory.DEAD_ADDRESS()).to.equal(DEAD_ADDRESS);
-      expect(await factory.MINT_POOL_INDEX()).to.equal(3);
+      expect(await factory.MINT_POOL_INDEX()).to.equal(0); // Unused for COMPANION — hook hardcodes pool 5
     });
   });
 
@@ -141,7 +141,7 @@ describe("CompanionTokenFactory", function () {
       expect(reg.beneficiary).to.equal(fixture.agentWallet.address);
       expect(reg.companionOwner).to.equal(fixture.companionOwner.address);
       expect(reg.poolType).to.equal(0);
-      expect(reg.mintPoolIndex).to.equal(3);
+      expect(reg.mintPoolIndex).to.equal(0); // Unused for COMPANION type — hook hardcodes pool 5
     });
 
     it("should transfer LP position NFT to DEAD_ADDRESS", async function () {

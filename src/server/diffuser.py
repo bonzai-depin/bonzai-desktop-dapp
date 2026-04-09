@@ -274,9 +274,10 @@ GLM_OCR_MLX_MODEL_ID = "mlx-community/GLM-OCR-4bit"
 QWEN3_TTS_BASE_REPO = "Qwen/Qwen3-TTS-12Hz-1.7B-Base"  # For voice cloning
 QWEN3_TTS_DESIGN_REPO = "Qwen/Qwen3-TTS-12Hz-1.7B-VoiceDesign"  # For voice design from description
 
-# ACE-Step v1.5 Music Generation (handler-based, hybrid LM + DiT architecture)
-# Models auto-download on first run via acestep internals; this repo is for the pipeline plan guard only.
-ACE_STEP_REPO = "ACE-Step/Ace-Step1.5"  # Turbo model (8 steps max, DMD-GAN distilled)
+# ACE-Step v1.5 XL Music Generation (handler-based, hybrid LM + DiT architecture)
+# XL Turbo needs BOTH repos: base repo (VAE, embeddings) + XL weights
+ACE_STEP_REPO = "ACE-Step/Ace-Step1.5"            # Base repo (VAE, Qwen3-Embedding, turbo config)
+ACE_STEP_XL_REPO = "ACE-Step/acestep-v15-xl-turbo"  # XL Turbo weights (4B params, 8 steps)
 
 LLAMA_REPOS = {
     "llama-3.2-1b": "meta-llama/Llama-3.2-1B",
@@ -1220,12 +1221,19 @@ REPO_SPECS = {
         "extra_dirs": ["speech_tokenizer"],
         "fallback_any_weights": True,
     },
-    # ACE-Step v1.5: handler-based music model (no model_index.json)
+    # ACE-Step v1.5 base repo: VAE, embeddings, turbo config (shared by all ACE-Step variants)
     "ACE-Step/Ace-Step1.5": {
         "must_files": ["config.json"],
         "must_tokenizers": [],
         "must_weight_dirs": ["vae"],
         "extra_dirs": ["acestep-v15-turbo", "Qwen3-Embedding-0.6B"],
+    },
+    # ACE-Step v1.5 XL Turbo weights (4B params, loaded alongside base repo)
+    "ACE-Step/acestep-v15-xl-turbo": {
+        "must_files": ["config.json"],
+        "must_tokenizers": [],
+        "must_weight_dirs": [],
+        "fallback_any_weights": True,
     },
     # Qwen3.5-0.8B MLX 4-bit: Vision-language model for vision/captioning (Apple Silicon)
     "mlx-community/Qwen3.5-0.8B-MLX-4bit": {
@@ -1463,7 +1471,7 @@ def _sf(name, url):
 def _plan_for(pipeline: str) -> Dict[str, Any]:
     """
     Pipeline naming convention:
-    - image_standard: SDXL base + refiner
+    - image_standard: SDXL Turbo + refiner
     - image_turbo: FLUX Klein (fast generation, i2i)
     - image_quality: Z-Image-Turbo (high quality)
     - audio_turbo: Kokoro TTS
@@ -1494,7 +1502,7 @@ def _plan_for(pipeline: str) -> Dict[str, Any]:
         # Persona needs both models
         return {"repos_to_fetch": [QWEN3_TTS_BASE_REPO, QWEN3_TTS_DESIGN_REPO], "single_files": []}
     if pipeline in ("music", "ace_step"):
-        return {"repos_to_fetch": [ACE_STEP_REPO], "single_files": []}
+        return {"repos_to_fetch": [ACE_STEP_REPO, ACE_STEP_XL_REPO], "single_files": []}
 
     # Video pipelines
     if pipeline in ("video_fast", "ltx2_video_gguf"):
@@ -3747,12 +3755,12 @@ def _load_ace_step():
         is_mps = device.type == "mps"
         status_msg, success = handler.initialize_service(
             project_root=project_root,
-            config_path="acestep-v15-turbo",
+            config_path="acestep-v15-xl-turbo",
             device=device_str,
-            offload_to_cpu=(device.type != "cuda"),
+            offload_to_cpu=True,  # XL Turbo benefits from CPU offload
         )
         if not success:
-            raise RuntimeError(f"ACE-Step v1.5 init failed: {status_msg}")
+            raise RuntimeError(f"ACE-Step v1.5 XL init failed: {status_msg}")
 
         if is_mps:
             # Monkey-patch the handler to use MPS-specific cache clearing
@@ -3859,7 +3867,7 @@ def audio_music():
 
     lyrics = (data.get("lyrics") or "").strip() or ""
     duration = max(10, min(600, int(data.get("duration", 60))))
-    steps = max(1, min(8, int(data.get("steps", 8))))  # Turbo max 8 steps
+    steps = max(1, min(32, int(data.get("steps", 8))))  # XL Turbo: 50 default, up to 100
     guidance_scale = float(data.get("guidance_scale", 7.0))
     seed = int(data.get("seed", -1))
     shift = max(1.0, min(10.0, float(data.get("shift", 4.0))))
@@ -4855,7 +4863,7 @@ def start_sdxl_lora_training():
     if not dataset_dir.exists():
         return jsonify({"error": "Dataset not found"}), 404
     
-    # Verify SDXL base is available
+    # Verify SDXL Turbo is available
     guard = _repos_ready_or_resp(SDXL_BASE_REPO)
     if guard:
         return guard

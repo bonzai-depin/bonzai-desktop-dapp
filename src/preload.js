@@ -221,6 +221,77 @@ contextBridge.exposeInMainWorld("electronAPI", {
   p2pLocalPeerId: () => ipcRenderer.invoke("p2p-local-peer-id"),
 
   /**
+   * Get LAN-discovered peers (via mDNS) — free providers on local network
+   * @returns {Promise<{ok: boolean, peers: Object[]}>}
+   */
+  p2pLANPeers: () => ipcRenderer.invoke("p2p-lan-peers"),
+
+  // ─────────────────────────────────────────────────────────────────────────────
+  // Pipeline Private Inference (v2)
+  // ─────────────────────────────────────────────────────────────────────────────
+
+  /**
+   * Run private pipeline inference across multiple peers
+   * @param {Object} opts { modelPath, request: { prompt, maxTokens }, privacyConfig }
+   * @returns {Promise<{ok, text, tokensGenerated, elapsed, peersUsed, sessionId}>}
+   */
+  p2pPipelineInfer: (opts) => ipcRenderer.invoke("p2p-pipeline-infer", opts),
+
+  /**
+   * Get active pipeline session status
+   * @returns {Promise<{ok, active, sessionId?, status?, peersUsed?, elapsed?}>}
+   */
+  p2pPipelineStatus: () => ipcRenderer.invoke("p2p-pipeline-status"),
+
+  /**
+   * Cancel the active pipeline session
+   * @returns {Promise<{ok}>}
+   */
+  p2pPipelineCancel: () => ipcRenderer.invoke("p2p-pipeline-cancel"),
+
+  /**
+   * Start local rpc-server for shard provider mode
+   * @param {Object} opts { port }
+   * @returns {Promise<{ok, rpcPort?}>}
+   */
+  p2pShardStart: (opts) => ipcRenderer.invoke("p2p-shard-start", opts),
+
+  /**
+   * Stop local rpc-server
+   * @returns {Promise<{ok}>}
+   */
+  p2pShardStop: () => ipcRenderer.invoke("p2p-shard-stop"),
+
+  /**
+   * Read GGUF model metadata (layer count, dims, architecture)
+   * @param {string} modelPath
+   * @returns {Promise<{ok, n_layer?, n_embd?, architecture?}>}
+   */
+  p2pShardMetadata: (modelPath) => ipcRenderer.invoke("p2p-shard-metadata", { modelPath }),
+
+  /**
+   * Subscribe to pipeline token streaming
+   * @param {Function} cb Token chunk callback
+   * @returns {Function} Unsubscribe function
+   */
+  onPipelineToken: (cb) => {
+    const handler = (_event, chunk) => cb(chunk);
+    ipcRenderer.on("pipeline-token", handler);
+    return () => ipcRenderer.removeListener("pipeline-token", handler);
+  },
+
+  /**
+   * Subscribe to pipeline status updates
+   * @param {Function} cb Status message callback
+   * @returns {Function} Unsubscribe function
+   */
+  onPipelineStatus: (cb) => {
+    const handler = (_event, msg) => cb(msg);
+    ipcRenderer.on("pipeline-status", handler);
+    return () => ipcRenderer.removeListener("pipeline-status", handler);
+  },
+
+  /**
    * Read file as base64 (for NFT minting of audio/video files)
    * @param {string} filePath - Absolute path to the file
    * @returns {Promise<string>} Base64-encoded file content

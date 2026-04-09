@@ -300,6 +300,25 @@ async function deploySkillOwnership() {
   return { ownership, bonzaiToken, companionNFT, owner, treasury, attestationSigner, registrar1, registrar2, skillRegistryWallet };
 }
 
+/**
+ * Deploy BonzaiPipelinePayment
+ */
+async function deployPipelinePayment() {
+  const [owner, treasury, provider1, provider2, provider3, consumer1] = await ethers.getSigners();
+
+  const MockERC20 = await ethers.getContractFactory("MockERC20");
+  const usdc = await MockERC20.deploy("USDC", "USDC");
+
+  const BonzaiPipelinePayment = await ethers.getContractFactory("BonzaiPipelinePayment");
+  const payment = await BonzaiPipelinePayment.deploy(
+    await usdc.getAddress(),
+    treasury.address,
+    PLATFORM_FEE_BPS,
+  );
+
+  return { payment, usdc, owner, treasury, provider1, provider2, provider3, consumer1 };
+}
+
 module.exports = {
   deployUnlock,
   deployMockERC20,
@@ -314,4 +333,5 @@ module.exports = {
   deployProviderRegistry,
   deploySkillRegistry,
   deploySkillOwnership,
+  deployPipelinePayment,
 };

@@ -625,8 +625,36 @@ async function executeLocalInference(pipeline, params) {
     throw new Error(`Unknown pipeline: ${pipeline}`);
   }
 
-  // LLM goes through electronAPI
+  // LLM goes through electronAPI (or pipeline llama-server when active)
   if (pipelineInfo.type === 'llm') {
+    // Check if a private pipeline session is active — route through pipeline llama-server
+    try {
+      const pipelineStatus = await window.electronAPI.p2pPipelineStatus();
+      if (pipelineStatus?.active && pipelineStatus.llamaServerPort) {
+        console.log(`[OpenClaw] Routing LLM through private pipeline :${pipelineStatus.llamaServerPort}`);
+        const prompt = params.prompt || params.messages?.[0]?.content;
+        const res = await fetch(`http://127.0.0.1:${pipelineStatus.llamaServerPort}/v1/chat/completions`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            model: 'pipeline',
+            messages: [{ role: 'user', content: prompt }],
+            max_tokens: params.maxTokens || 512,
+            temperature: params.temperature || 0.7,
+          }),
+        });
+        if (res.ok) {
+          const data = await res.json();
+          const text = data.choices?.[0]?.message?.content || '';
+          return { ok: true, result: { text, model: 'pipeline-private' }, local: false, pipeline: true };
+        }
+        console.warn(`[OpenClaw] Pipeline llama-server returned ${res.status}, falling back to local`);
+      }
+    } catch (e) {
+      // Pipeline not available — fall through to normal local inference
+      console.warn(`[OpenClaw] Pipeline check failed: ${e.message}, using local inference`);
+    }
+
     // Check if a specific model is requested
     const requestedModel = params.model;
     if (requestedModel) {
@@ -1026,8 +1054,10 @@ function inferEmotion(text) {
 // ═══════════════════════════════════════════════════════════════════════════
 
 function parseCommand(message) {
-  if (!message.startsWith('!')) return null;
-  const parts = message.slice(1).split(/\s+/);
+  // Support both !bonzai and /bonzai prefixes (OpenClaw uses !, Hermes uses /)
+  const match = message.match(/^[!/]bonzai\s+(.+)/i);
+  if (!match) return null;
+  const parts = match[1].split(/\s+/);
   return { command: parts[0].toLowerCase(), args: parts.slice(1) };
 }
 
@@ -1046,7 +1076,7 @@ async function handleNetworkCommand(channelId, args) {
           text: `**Network Status: Offline**
 Mode: ${networkSettings.mode}
 
-P2P node is not running. Use \`!network start\` to connect.`,
+P2P node is not running. Use \`!bonzai network start\` to connect.`,
         };
       }
       return {
@@ -1100,14 +1130,14 @@ Note: Provider discovery requires deployed contracts on Base.`,
         text: `**Available Providers** ${pipeline ? `(${pipeline})` : ''}
 ${lines.join('\n')}
 
-Use \`!network use <peerId>\` to select a provider.`,
+Use \`!bonzai network use <peerId>\` to select a provider.`,
       };
     }
 
     case 'use': {
       const target = args[1]?.toLowerCase();
       if (!target) {
-        return { text: 'Usage: `!network use <local|auto|peerId>`' };
+        return { text: 'Usage: `!bonzai network use <local|auto|peerId>`' };
       }
 
       if (target === 'local') {
@@ -1138,7 +1168,7 @@ Available modes:
 - \`local\` - Use local BonzAI Desktop (free)
 - \`remote\` - Use remote P2P providers (paid with ETH)
 
-Use \`!network mode <mode>\` to change.`,
+Use \`!bonzai network mode <mode>\` to change.`,
         };
       }
 
@@ -1162,7 +1192,7 @@ Use \`!network mode <mode>\` to change.`,
 
 ${lines.join('\n')}
 
-Use \`!network providers <pipeline>\` to find providers for a specific pipeline.`,
+Use \`!bonzai network providers <pipeline>\` to find providers for a specific pipeline.`,
       };
     }
 
@@ -1170,13 +1200,13 @@ Use \`!network providers <pipeline>\` to find providers for a specific pipeline.
       return {
         text: `**Network Commands**
 
-\`!network status\` - Show P2P status and current provider
-\`!network start\` - Start P2P node
-\`!network stop\` - Stop P2P node
-\`!network providers [pipeline]\` - Discover providers
-\`!network use <local|auto|peerId>\` - Select provider
-\`!network mode [local|provider]\` - Set network mode
-\`!network pipelines\` - List available pipelines`,
+\`!bonzai network status\` - Show P2P status and current provider
+\`!bonzai network start\` - Start P2P node
+\`!bonzai network stop\` - Stop P2P node
+\`!bonzai network providers [pipeline]\` - Discover providers
+\`!bonzai network use <local|auto|peerId>\` - Select provider
+\`!bonzai network mode [local|provider]\` - Set network mode
+\`!bonzai network pipelines\` - List available pipelines`,
       };
   }
 }
@@ -1273,14 +1303,14 @@ async function handleGenerateCommand(channelId, args, webhookData = {}) {
     return {
       text: `**Generate Commands**
 
-\`!generate image <prompt>\` - Fast image (FLUX Klein)
-\`!generate image_quality <prompt>\` - Quality image (Z-Image Turbo)
-\`!generate image_standard <prompt>\` - Standard image (SDXL)
-\`!generate video <prompt>\` - Video (LTX-2)
-\`!generate audio <text>\` - Fast TTS (Kokoro)
-\`!generate audio_quality <text>\` - Quality TTS (Qwen)
-\`!generate music <prompt>\` - Music (ACE-Step)
-\`!generate vision\` - Analyze attached image (Qwen3-VL)
+\`!bonzai generate image <prompt>\` - Fast image (FLUX Klein)
+\`!bonzai generate image_quality <prompt>\` - Quality image (Z-Image Turbo)
+\`!bonzai generate image_standard <prompt>\` - Standard image (SDXL)
+\`!bonzai generate video <prompt>\` - Video (LTX-2)
+\`!bonzai generate audio <text>\` - Fast TTS (Kokoro)
+\`!bonzai generate audio_quality <text>\` - Quality TTS (Qwen)
+\`!bonzai generate music <prompt>\` - Music (ACE-Step)
+\`!bonzai generate vision\` - Analyze attached image (Qwen3-VL)
 
 Pipelines: ${Object.keys(PIPELINES).filter(p => p !== 'llm').join(', ')}`,
     };
@@ -1346,7 +1376,7 @@ Pipelines: ${Object.keys(PIPELINES).filter(p => p !== 'llm').join(', ')}`,
 
     case 'vision': {
       if (!prompt && !options?.imageBase64) {
-        return { text: '**Vision Analysis** requires an image attachment or base64 data.\n\nAttach an image and send `!generate vision <optional prompt>`' };
+        return { text: '**Vision Analysis** requires an image attachment or base64 data.\n\nAttach an image and send `!bonzai generate vision <optional prompt>`' };
       }
       const imageData = options?.imageBase64 || prompt;
       const visionPrompt = options?.imageBase64 ? (prompt || 'Describe this image in detail') : 'Describe this image in detail';
@@ -1416,15 +1446,15 @@ Categories: finance, analysis, trading, prediction, training, automation, utilit
 
 ${lines.join('\n')}
 
-Use \`!skill info <id>\` to see skill details.
-Use \`!skill run <id>\` to execute a skill.`,
+Use \`!bonzai skill info <id>\` to see skill details.
+Use \`!bonzai skill run <id>\` to execute a skill.`,
       };
     }
 
     case 'info': {
       const skillId = args[1];
       if (!skillId) {
-        return { text: 'Usage: `!skill info <skill-id>`' };
+        return { text: 'Usage: `!bonzai skill info <skill-id>`' };
       }
 
       const skill = getSkill(skillId);
@@ -1461,14 +1491,14 @@ ${skill.description}
 ${inputLines.length > 0 ? inputLines.join('\n') : '- None'}
 
 **Usage**
-\`!skill run ${skill.id} [key=value ...]\``,
+\`!bonzai skill run ${skill.id} [key=value ...]\``,
       };
     }
 
     case 'run': {
       const skillId = args[1];
       if (!skillId) {
-        return { text: 'Usage: `!skill run <skill-id> [key=value ...]`' };
+        return { text: 'Usage: `!bonzai skill run <skill-id> [key=value ...]`' };
       }
 
       const skill = getSkill(skillId);
@@ -1504,7 +1534,7 @@ ${inputLines.length > 0 ? inputLines.join('\n') : '- None'}
 This skill costs **${priceUSDC} USDC** (on Base).
 
 Purchase this skill first via the Skills tab, or use:
-\`!skill purchase ${skillId}\`
+\`!bonzai skill purchase ${skillId}\`
 
 Once purchased, this skill will be unlocked for your companion.`,
           };
@@ -1519,7 +1549,7 @@ Once purchased, this skill will be unlocked for your companion.`,
 
 ${validation.errors.map(e => `- ${e}`).join('\n')}
 
-Use \`!skill info ${skillId}\` to see required inputs.`,
+Use \`!bonzai skill info ${skillId}\` to see required inputs.`,
         };
       }
 
@@ -1604,7 +1634,7 @@ ${error.message}`,
     case 'search': {
       const query = args.slice(1).join(' ');
       if (!query) {
-        return { text: 'Usage: `!skill search <query>`' };
+        return { text: 'Usage: `!bonzai skill search <query>`' };
       }
 
       const matches = searchSkills(query);
@@ -1638,7 +1668,7 @@ ${lines.join('\n')}`,
 
 ${lines.join('\n')}
 
-Use \`!skill list <category>\` to filter by category.`,
+Use \`!bonzai skill list <category>\` to filter by category.`,
       };
     }
 
@@ -1646,11 +1676,11 @@ Use \`!skill list <category>\` to filter by category.`,
       return {
         text: `**Skill Commands**
 
-\`!skill list [category]\` - List available skills
-\`!skill info <id>\` - Show skill details
-\`!skill run <id> [key=value ...]\` - Execute a skill
-\`!skill search <query>\` - Search skills
-\`!skill categories\` - Show categories
+\`!bonzai skill list [category]\` - List available skills
+\`!bonzai skill info <id>\` - Show skill details
+\`!bonzai skill run <id> [key=value ...]\` - Execute a skill
+\`!bonzai skill search <query>\` - Search skills
+\`!bonzai skill categories\` - Show categories
 
 **Available Skills**
 ${getAllSkills().slice(0, 3).map(s => `- ${s.name} (\`${s.id}\`)`).join('\n')}
@@ -1675,7 +1705,7 @@ async function handleAutonomousCommand(channelId, args) {
       const data = await getOrCreateSession(channelId, companions, scenarios);
 
       if (!data) {
-        return { text: 'No companion selected. Use `!companion select <name>` first.' };
+        return { text: 'No companion selected. Use `!bonzai companion select <name>` first.' };
       }
 
       const { session, companion, scenario } = data;
@@ -1700,7 +1730,7 @@ Companion: ${companion.name}
 Scenario: ${scenario.name}
 
 ${companion.name} will act independently when you're idle.
-Use \`!autonomous status\` to check or \`!autonomous off\` to stop.`,
+Use \`!bonzai autonomous status\` to check or \`!bonzai autonomous off\` to stop.`,
       };
     }
 
@@ -1733,9 +1763,9 @@ Max Messages: ${config.maxMessages || 12}`,
         return {
           text: `**Autonomous Config**
 
-\`!autonomous config idle <minutes>\` - Idle timeout (1-60, default 5)
-\`!autonomous config interval <minutes>\` - Message interval (1-120, default 15)
-\`!autonomous config max <count>\` - Max messages (1-100, default 12)`,
+\`!bonzai autonomous config idle <minutes>\` - Idle timeout (1-60, default 5)
+\`!bonzai autonomous config interval <minutes>\` - Message interval (1-120, default 15)
+\`!bonzai autonomous config max <count>\` - Max messages (1-100, default 12)`,
         };
       }
 
@@ -1763,12 +1793,12 @@ Max Messages: ${config.maxMessages || 12}`,
       return {
         text: `**Autonomous Mode Commands**
 
-\`!autonomous on\` - Enable autonomous mode
-\`!autonomous off\` - Disable autonomous mode
-\`!autonomous status\` - Show status & config
-\`!autonomous config idle <minutes>\` - Idle timeout (1-60)
-\`!autonomous config interval <minutes>\` - Message interval (1-120)
-\`!autonomous config max <count>\` - Max messages (1-100)`,
+\`!bonzai autonomous on\` - Enable autonomous mode
+\`!bonzai autonomous off\` - Disable autonomous mode
+\`!bonzai autonomous status\` - Show status & config
+\`!bonzai autonomous config idle <minutes>\` - Idle timeout (1-60)
+\`!bonzai autonomous config interval <minutes>\` - Message interval (1-120)
+\`!bonzai autonomous config max <count>\` - Max messages (1-100)`,
       };
   }
 }
@@ -1853,7 +1883,7 @@ async function handleMintCommand(channelId, args, webhookData = {}) {
       // !mint companion <name>
       const name = args.slice(1).join(' ');
       if (!name) {
-        return { text: 'Usage: `!mint companion <name>` — e.g. `!mint companion Sakura Tanaka`' };
+        return { text: 'Usage: `!bonzai mint companion <name>` — e.g. `!bonzai mint companion Sakura Tanaka`' };
       }
 
       try {
@@ -1867,7 +1897,7 @@ async function handleMintCommand(channelId, args, webhookData = {}) {
 
         if (!healthOk) {
           return {
-            text: `Complete minting requires BonzAI Desktop for AI generation. Start the app and try again, or use \`!mint bare\` for a placeholder mint.`,
+            text: `Complete minting requires BonzAI Desktop for AI generation. Start the app and try again, or use \`!bonzai mint bare\` for a placeholder mint.`,
           };
         }
 
@@ -2022,7 +2052,7 @@ async function handleMintCommand(channelId, args, webhookData = {}) {
 
         const balance = await contract.balanceOf(userAddress);
         if (balance === 0n) {
-          return { text: `You don't own any BonzAI Companions. Use \`!mint bare\` or \`!mint companion <name>\` to mint one.` };
+          return { text: `You don't own any BonzAI Companions. Use \`!bonzai mint bare\` or \`!bonzai mint companion <name>\` to mint one.` };
         }
 
         const companions = [];
@@ -2058,7 +2088,7 @@ async function handleMintCommand(channelId, args, webhookData = {}) {
       // !mint finalize <tokenId>
       const tokenId = parseInt(args[1], 10);
       if (isNaN(tokenId)) {
-        return { text: 'Usage: `!mint finalize <tokenId>` — e.g. `!mint finalize 42`' };
+        return { text: 'Usage: `!bonzai mint finalize <tokenId>` — e.g. `!bonzai mint finalize 42`' };
       }
 
       try {
@@ -2138,10 +2168,10 @@ async function handleMintCommand(channelId, args, webhookData = {}) {
       return {
         text: `**Mint Commands**
 
-\`!mint bare [gender]\` - Mint a bare companion (gender: female, male, neutral)
-\`!mint companion <name>\` - Mint a complete companion (requires BonzAI Desktop)
-\`!mint status\` - Check owned companions
-\`!mint finalize <tokenId>\` - Finalize a bare companion (requires BonzAI Desktop)`,
+\`!bonzai mint bare [gender]\` - Mint a bare companion (gender: female, male, neutral)
+\`!bonzai mint companion <name>\` - Mint a complete companion (requires BonzAI Desktop)
+\`!bonzai mint status\` - Check owned companions
+\`!bonzai mint finalize <tokenId>\` - Finalize a bare companion (requires BonzAI Desktop)`,
       };
   }
 }
@@ -2176,8 +2206,8 @@ async function handleCommand(channelId, cmd, webhookData = {}) {
         return {
           text: `**Current Mode:** ${networkSettings.mode}
 
-\`!mode local\` - Use local BonzAI Desktop (free)
-\`!mode remote\` - Use remote P2P providers (paid with USDC)`,
+\`!bonzai mode local\` - Use local BonzAI Desktop (free)
+\`!bonzai mode remote\` - Use remote P2P providers (paid with USDC)`,
         };
       }
 
@@ -2201,8 +2231,8 @@ async function handleCommand(channelId, cmd, webhookData = {}) {
 **Saved Model:** ${savedModel}
 
 Usage:
-- \`!model <model-name>\` - Load a specific LLM
-- \`!model restore\` - Restore the model before companion chat
+- \`!bonzai model <model-name>\` - Load a specific LLM
+- \`!bonzai model restore\` - Restore the model before companion chat
 
 Available models:
 - \`llama_3_1_8b\` - Llama 3.1 8B
@@ -2211,7 +2241,7 @@ Available models:
 - \`mythomax_13b\` - MythoMax 13B (roleplay)
 - \`qwen_coder_32b\` - Qwen Coder 32B
 
-Use \`!models\` for full list.`,
+Use \`!bonzai models\` for full list.`,
         };
       }
 
@@ -2230,7 +2260,7 @@ Use \`!models\` for full list.`,
 
       // Check if model exists in requirements
       if (!MODEL_REQUIREMENTS[modelKey]) {
-        return { text: `Model not found: ${modelName}\n\nUse \`!models\` to see available models.` };
+        return { text: `Model not found: ${modelName}\n\nUse \`!bonzai models\` to see available models.` };
       }
 
       // Load the model (also clears the saved pre-roleplay model)
@@ -2263,7 +2293,7 @@ Use \`!models\` for full list.`,
         await saveChannelMappings();
         return { text: `Selected companion: **${companion.name}**\n${companion.description}` };
       }
-      return { text: 'Usage: !companion list | !companion select <name>' };
+      return { text: 'Usage: !bonzai companion list | !companion select <name>' };
     }
 
     case 'scenario': {
@@ -2280,7 +2310,7 @@ Use \`!models\` for full list.`,
         await saveChannelMappings();
         return { text: `Selected scenario: **${scenario.name}**\n${scenario.description}` };
       }
-      return { text: 'Usage: !scenario list | !scenario select <name>' };
+      return { text: 'Usage: !bonzai scenario list | !scenario select <name>' };
     }
 
     case 'settings': {
@@ -2325,7 +2355,7 @@ Video: ${mapping.settings.enableVideo ? 'on' : 'off'}
 Music: ${mapping.settings.enableMusic ? 'on' : 'off'}
 Content Level: ${mapping.settings.contentLevel}
 
-Usage: !settings <audio|images|video|music> <on|off>
+Usage: !bonzai settings <audio|images|video|music> <on|off>
        !settings level <pg|pg13|mature|adult>`,
       };
     }
@@ -2400,52 +2430,53 @@ Total: ${Object.keys(MODEL_REQUIREMENTS).filter(k => MODEL_REQUIREMENTS[k].type 
     case 'help': {
       return {
         text: `**BonzAI Commands**
+All commands use the \`!bonzai\` prefix (or \`/bonzai\` for Hermes).
 
 **Mode**
-\`!mode local\` - Use local BonzAI (free)
-\`!mode remote\` - Use remote providers (paid with ETH)
-\`!model <name>\` - Load specific LLM model
+\`!bonzai mode local\` - Use local BonzAI (free)
+\`!bonzai mode remote\` - Use remote providers (paid with ETH)
+\`!bonzai model <name>\` - Load specific LLM model
 
 **Roleplay**
-\`!companion list|select <name>\` - Manage companions
-\`!scenario list|select <name>\` - Manage scenarios
-\`!settings <option> <value>\` - Configure generation
-\`!status\` - Show current session
-\`!reset\` - Clear history
+\`!bonzai companion list|select <name>\` - Manage companions
+\`!bonzai scenario list|select <name>\` - Manage scenarios
+\`!bonzai settings <option> <value>\` - Configure generation
+\`!bonzai status\` - Show current session
+\`!bonzai reset\` - Clear history
 
 **Generation**
-\`!generate image <prompt>\` - Fast image (FLUX Klein)
-\`!generate image_quality <prompt>\` - Quality image (Z-Image Turbo)
-\`!generate image_standard <prompt>\` - Standard image (SDXL)
-\`!generate video <prompt>\` - Video (LTX-2)
-\`!generate audio <text>\` - Fast TTS (Kokoro)
-\`!generate audio_quality <text>\` - Quality TTS (Qwen)
-\`!generate music <prompt>\` - Music (ACE-Step)
-\`!generate vision\` - Image analysis (Qwen3-VL)
+\`!bonzai generate image <prompt>\` - Fast image (FLUX Klein)
+\`!bonzai generate image_quality <prompt>\` - Quality image (Z-Image Turbo)
+\`!bonzai generate image_standard <prompt>\` - Standard image (SDXL)
+\`!bonzai generate video <prompt>\` - Video (LTX-2)
+\`!bonzai generate audio <text>\` - Fast TTS (Kokoro)
+\`!bonzai generate audio_quality <text>\` - Quality TTS (Qwen)
+\`!bonzai generate music <prompt>\` - Music (ACE-Step)
+\`!bonzai generate vision\` - Image analysis (Qwen3-VL)
 
 **Minting**
-\`!mint bare [gender]\` - Mint a bare companion NFT (no BonzAI Desktop needed)
-\`!mint companion <name>\` - Mint a complete companion (requires BonzAI Desktop)
-\`!mint status\` - Check mint status and owned companions
-\`!mint finalize <tokenId>\` - Finalize a bare companion
+\`!bonzai mint bare [gender]\` - Mint a bare companion NFT
+\`!bonzai mint companion <name>\` - Mint a complete companion
+\`!bonzai mint status\` - Check mint status and owned companions
+\`!bonzai mint finalize <tokenId>\` - Finalize a bare companion
 
 **Autonomous**
-\`!autonomous on|off\` - Toggle autonomous mode
-\`!autonomous status\` - Current status & config
-\`!autonomous config <setting> <value>\` - Configure (idle, interval, max)
+\`!bonzai autonomous on|off\` - Toggle autonomous mode
+\`!bonzai autonomous status\` - Current status & config
+\`!bonzai autonomous config <setting> <value>\` - Configure (idle, interval, max)
 
 **Skills**
-\`!skill list [category]\` - List BonzAI skills
-\`!skill info <id>\` - Show skill details
-\`!skill run <id> [inputs]\` - Execute a skill
+\`!bonzai skill list [category]\` - List BonzAI skills
+\`!bonzai skill info <id>\` - Show skill details
+\`!bonzai skill run <id> [inputs]\` - Execute a skill
 
 **Network (P2P)**
-\`!network status\` - Show P2P status
-\`!network providers [pipeline]\` - Find providers
-\`!network use <peerId>\` - Select provider
+\`!bonzai network status\` - Show P2P status
+\`!bonzai network providers [pipeline]\` - Find providers
+\`!bonzai network use <peerId>\` - Select provider
 
-\`!models\` - List LLM models
-\`!help\` - Show this help`,
+\`!bonzai models\` - List LLM models
+\`!bonzai help\` - Show this help`,
       };
     }
 

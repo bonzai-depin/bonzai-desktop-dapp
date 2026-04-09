@@ -30,6 +30,7 @@ const getHardwareSpecs = async () => {
         cpuSpeed: info.cpuSpeed || 0,
         gpu: info.gpu || 'Unknown',
         ram: info.ram || 0,
+        memBudget: info.memBudget || 0,
         vram: info.vram || 0,
         os: info.os || 'Unknown',
         arch: info.arch || 'Unknown',

@@ -125,7 +125,9 @@ contract CompanionTokenFactory is Ownable, ReentrancyGuard, IERC721Receiver {
     int24 public constant TICK_SPACING = 60;
 
     /// @notice Hook mint pool index for companion tokens (LVL4 = video pool)
-    uint8 public constant MINT_POOL_INDEX = 3;
+    /// @notice Unused for COMPANION pool type — companion hook fees always go to pool 5 (LVL6 training).
+    /// This value is passed to registerPool() but ignored by BonzaiUniswapHook for POOL_TYPE_COMPANION.
+    uint8 public constant MINT_POOL_INDEX = 0;
 
     // ═══════════════════════════════════════════════════════════════════════════
     // IMMUTABLES
