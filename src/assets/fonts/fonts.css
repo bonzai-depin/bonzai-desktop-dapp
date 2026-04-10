@@ -64,6 +64,9 @@
   text-transform: none;
   white-space: nowrap;
   word-wrap: normal;
+  /* Prevent text placeholder flash: constrain width to icon size until font loads */
+  overflow: hidden;
+  max-width: 1em;
 }
 
 /* Fira Sans Condensed Black Italic helper class */

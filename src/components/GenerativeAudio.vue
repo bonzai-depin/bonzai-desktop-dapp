@@ -673,7 +673,7 @@
                       </span>
                       <span>Make Music</span>
                     </button>
-                    <div class="select is-dark">
+                    <div class="select is-dark is-large">
                       <select v-model="musicQuality">
                         <option value="fast">Fast (v1.5)</option>
                         <option value="quality">Quality (v1.5 XL)</option>
@@ -684,14 +684,14 @@
                       type="checkbox"
                       v-model="musicSemantic"
                       id="music_semantic"
-                      class="music-toggle-input"
+                      class="music-toggle"
                     />
-                    <label for="music_semantic" class="radio ml-2">
+                    <label for="music_semantic" class="mr-2">
                       <span
                         class="material-symbols-outlined"
-                        style="font-size: 24px !important"
+                        style="font-size: 32px !important"
                       >
-                        psychology
+                        neurology
                       </span>
                       Semantic
                     </label>
@@ -700,12 +700,12 @@
                       type="checkbox"
                       v-model="musicOffload"
                       id="music_offload"
-                      class="music-toggle-input"
+                      class="music-toggle"
                     />
-                    <label for="music_offload" class="radio ml-2">
+                    <label for="music_offload" class="mr-2">
                       <span
                         class="material-symbols-outlined"
-                        style="font-size: 24px !important"
+                        style="font-size: 32px !important"
                       >
                         memory
                       </span>
@@ -3222,11 +3222,19 @@ input[type="radio"]:checked + label {
   backdrop-filter: blur(64px) !important;
 }
 
-/* Music toggle checkboxes styled like radio selectors */
-.music-toggle-input {
+/* Music toggle checkboxes — identical to radio selectors */
+input.music-toggle[type="checkbox"] {
   display: none;
 }
-.music-toggle-input:checked + label {
+input.music-toggle[type="checkbox"] + label {
+  padding: 3px 12px 9px;
+  color: rgba(255, 255, 255, 0.3) !important;
+  border: 1px solid rgba(255, 255, 255, 0.3);
+  border-radius: 4px;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+input.music-toggle[type="checkbox"]:checked + label {
   color: rgba(255, 255, 255, 1) !important;
   border: 1px solid rgba(255, 255, 255, 1) !important;
   background: rgba(97, 55, 142, 0.33) !important;
