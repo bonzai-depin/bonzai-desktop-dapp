@@ -227,12 +227,14 @@
                         <button
                           class="button is-medium is-info"
                           :class="{ 'is-loading': isGeneratingLyrics }"
-                          :disabled="isGeneratingLyrics || !lyricsTheme.trim()"
+                          :disabled="isGeneratingLyrics || !lyricsTheme.trim() || !lyricsModelReady"
                           @click.prevent="generateLyrics"
                           :title="
-                            lyricsTheme.trim()
-                              ? 'Generate lyrics using local LLM'
-                              : 'Enter a theme first'
+                            !lyricsModelReady
+                              ? 'Download Qwen3.5 4B from the Chat tab first'
+                              : lyricsTheme.trim()
+                                ? 'Generate lyrics using Qwen3.5 4B'
+                                : 'Enter a theme first'
                           "
                         >
                           <span
@@ -244,7 +246,11 @@
                           <span>Generate</span>
                         </button>
                       </div>
-                      <p v-if="lyricsError" class="help is-danger mt-2">
+                      <p v-if="!lyricsModelReady" class="help is-warning mt-2">
+                        <span class="material-symbols-outlined mr-1" style="font-size: 14px; vertical-align: middle">download</span>
+                        Download <strong>Qwen3.5 4B</strong> from the Chat tab to enable lyrics generation
+                      </p>
+                      <p v-else-if="lyricsError" class="help is-danger mt-2">
                         {{ lyricsError }}
                       </p>
                     </div>
@@ -1822,25 +1828,35 @@ export default {
       context: 8192,
     };
 
+    // Check if lyrics LLM is downloaded
+    const lyricsModelReady = ref(false);
+    const checkLyricsModel = async () => {
+      try {
+        const result = await window.electronAPI?.checkModel?.(LYRICS_LLM.filename);
+        lyricsModelReady.value = !!result?.exists;
+      } catch { lyricsModelReady.value = false; }
+    };
+    checkLyricsModel();
+
     const ensureLLMLoaded = async () => {
       if (!window.electronAPI?.loadModel) {
         throw new Error("LLM API not available");
       }
 
-      // Check if a model is already loaded
+      if (!lyricsModelReady.value) {
+        throw new Error(`Lyrics model not downloaded. Download "${LYRICS_LLM.modelname}" from the Chat tab first.`);
+      }
+
+      // Check if this model is already loaded
       const modelInfo = await window.electronAPI.getModelInfo?.();
-      if (modelInfo?.loaded) {
-        console.log(
-          "[GenerativeAudio] LLM already loaded:",
-          modelInfo.modelName || "unknown",
-        );
+      if (modelInfo?.loaded && modelInfo.modelName?.includes?.("qwen3.5-4b")) {
         return;
       }
 
-      // Load the default LLM
-      console.log("[GenerativeAudio] Loading LLM for lyrics generation...");
+      // Load the lyrics LLM
+      console.log("[GenerativeAudio] Loading lyrics LLM...");
       await window.electronAPI.loadModel(LYRICS_LLM);
-      console.log("[GenerativeAudio] LLM loaded successfully");
+      console.log("[GenerativeAudio] Lyrics LLM loaded");
     };
 
     // Language code to full name mapping for lyrics generation
@@ -3037,6 +3053,7 @@ Remember: 6-10 syllables per line, use all appropriate structure tags. Write in 
       isGeneratingLyrics,
       lyricsError,
       generateLyrics,
+      lyricsModelReady,
       generateMusic,
       restoreFromHistory,
       // Dimension selectors
