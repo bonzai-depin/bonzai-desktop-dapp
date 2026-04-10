@@ -246,11 +246,7 @@
                           <span>Generate</span>
                         </button>
                       </div>
-                      <p v-if="!lyricsModelReady" class="help is-warning mt-2">
-                        <span class="material-symbols-outlined mr-1" style="font-size: 14px; vertical-align: middle">download</span>
-                        Download <strong>Qwen3.5 4B</strong> from the Chat tab to enable lyrics generation
-                      </p>
-                      <p v-else-if="lyricsError" class="help is-danger mt-2">
+                      <p v-if="lyricsError" class="help is-danger mt-2">
                         {{ lyricsError }}
                       </p>
                     </div>
@@ -1004,13 +1000,17 @@
                             inference.language
                           }}
                         </span>
-                        <span
-                          v-if="inference.hasClone"
-                          class="tag is-dark ml-2"
-                        >
-                          <span class="material-symbols-outlined is-size-6">
-                            genetics
-                          </span>
+                        <span v-if="inference.isMusic" class="tag is-warning ml-2">
+                          <span class="material-symbols-outlined is-size-6 mr-1">music_note</span>
+                          Music
+                        </span>
+                        <span v-else-if="inference.hasClone" class="tag is-info ml-2">
+                          <span class="material-symbols-outlined is-size-6 mr-1">genetics</span>
+                          Clone
+                        </span>
+                        <span v-else class="tag is-success ml-2">
+                          <span class="material-symbols-outlined is-size-6 mr-1">record_voice_over</span>
+                          TTS
                         </span>
                       </div>
                       <!-- Audio Player -->
