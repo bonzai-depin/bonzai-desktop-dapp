@@ -679,13 +679,37 @@
                         <option value="quality">Quality (v1.5 XL)</option>
                       </select>
                     </div>
-                    <label class="checkbox has-text-light ml-3" style="display: flex; align-items: center; gap: 6px; font-size: 0.85rem">
-                      <input type="checkbox" v-model="musicSemantic" />
+
+                    <input
+                      type="checkbox"
+                      v-model="musicSemantic"
+                      id="music_semantic"
+                      class="music-toggle-input"
+                    />
+                    <label for="music_semantic" class="radio ml-2">
+                      <span
+                        class="material-symbols-outlined"
+                        style="font-size: 24px !important"
+                      >
+                        psychology
+                      </span>
                       Semantic
                     </label>
-                    <label class="checkbox has-text-light ml-3" style="display: flex; align-items: center; gap: 6px; font-size: 0.85rem">
-                      <input type="checkbox" v-model="musicOffload" />
-                      CPU Offload
+
+                    <input
+                      type="checkbox"
+                      v-model="musicOffload"
+                      id="music_offload"
+                      class="music-toggle-input"
+                    />
+                    <label for="music_offload" class="radio ml-2">
+                      <span
+                        class="material-symbols-outlined"
+                        style="font-size: 24px !important"
+                      >
+                        memory
+                      </span>
+                      Save Memory
                     </label>
                   </div>
                 </div>
@@ -3192,6 +3216,17 @@ input[type="radio"] + label.is-disabled {
   cursor: not-allowed;
 }
 input[type="radio"]:checked + label {
+  color: rgba(255, 255, 255, 1) !important;
+  border: 1px solid rgba(255, 255, 255, 1) !important;
+  background: rgba(97, 55, 142, 0.33) !important;
+  backdrop-filter: blur(64px) !important;
+}
+
+/* Music toggle checkboxes styled like radio selectors */
+.music-toggle-input {
+  display: none;
+}
+.music-toggle-input:checked + label {
   color: rgba(255, 255, 255, 1) !important;
   border: 1px solid rgba(255, 255, 255, 1) !important;
   background: rgba(97, 55, 142, 0.33) !important;
