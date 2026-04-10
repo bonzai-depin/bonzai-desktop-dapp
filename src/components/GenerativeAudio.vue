@@ -1812,14 +1812,14 @@ export default {
     // ------------ LLM lyrics generation -----
     const lyricsError = ref("");
 
-    // Default LLM for lyrics generation — small and fast
+    // Default LLM for lyrics generation — 4B is the sweet spot for creative writing
     const LYRICS_LLM = {
-      modelname: "Qwen3.5 0.8B",
-      filename: "qwen3.5-0.8b-q4_k_m.gguf",
-      url: "https://huggingface.co/unsloth/Qwen3.5-0.8B-GGUF/resolve/main/Qwen3.5-0.8B-Q4_K_M.gguf",
-      filesizeBytes: 0.6e9,
-      parameters: 800000000,
-      context: 131072,
+      modelname: "Qwen3.5 4B",
+      filename: "qwen3.5-4b-q4_k_m.gguf",
+      url: "https://huggingface.co/unsloth/Qwen3.5-4B-GGUF/resolve/main/Qwen3.5-4B-Q4_K_M.gguf",
+      filesizeBytes: 2.8e9,
+      parameters: 4000000000,
+      context: 8192,
     };
 
     const ensureLLMLoaded = async () => {
@@ -1930,7 +1930,8 @@ Remember: 6-10 syllables per line, use all appropriate structure tags. Write in 
         const fullPrompt = `${systemPrompt}\n\n${userMsg}`;
 
         // Use the local LLM via Electron IPC (node-llama-cpp)
-        const result = await window.electronAPI.chat(fullPrompt);
+        // maxTokens capped to prevent repetition loops
+        const result = await window.electronAPI.chat(fullPrompt, { maxTokens: 512 });
 
         if (result && typeof result === "string") {
           musicLyrics.value = result.trim();
