@@ -446,6 +446,8 @@ export const getPerformanceStats = () => {
     image: { count: 0, totalElapsed: 0, avgElapsed: 0 },
     video: { count: 0, totalElapsed: 0, avgElapsed: 0 },
     audio: { count: 0, totalElapsed: 0, avgElapsed: 0 },
+    audioTts: { count: 0, totalElapsed: 0, avgElapsed: 0 },
+    audioMusic: { count: 0, totalElapsed: 0, avgElapsed: 0 },
     object: { count: 0, totalTokPerSec: 0, avgTokPerSec: 0 },
   };
 
@@ -476,10 +478,19 @@ export const getPerformanceStats = () => {
   for (const inf of state.audioInferences) {
     if (inf.elapsed) {
       const e = parseFloat(inf.elapsed);
-      if (e > 0) { stats.audio.count++; stats.audio.totalElapsed += e; }
+      if (e > 0) {
+        stats.audio.count++; stats.audio.totalElapsed += e;
+        if (inf.pipeline === 'music') {
+          stats.audioMusic.count++; stats.audioMusic.totalElapsed += e;
+        } else {
+          stats.audioTts.count++; stats.audioTts.totalElapsed += e;
+        }
+      }
     }
   }
   if (stats.audio.count > 0) stats.audio.avgElapsed = stats.audio.totalElapsed / stats.audio.count;
+  if (stats.audioTts.count > 0) stats.audioTts.avgElapsed = stats.audioTts.totalElapsed / stats.audioTts.count;
+  if (stats.audioMusic.count > 0) stats.audioMusic.avgElapsed = stats.audioMusic.totalElapsed / stats.audioMusic.count;
 
   for (const inf of state.objectInferences) {
     if (inf.tokensPerSecond) {

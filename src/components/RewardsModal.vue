@@ -148,11 +148,11 @@
                   Claim Rewards
                 </h3>
 
-                <!-- Companion requirement notice -->
-                <div class="notification mb-3" style="background: rgba(255, 183, 77, 0.08); border: 1px solid rgba(255, 183, 77, 0.25); border-radius: 10px;">
-                  <p class="has-text-warning-light" style="font-size: 13px;">
-                    <span class="material-symbols-outlined mr-1" style="font-size: 16px; vertical-align: middle;">pets</span>
-                    <strong>Companion required</strong> — You must own at least 1 Companion NFT to claim rewards from the MintPool.
+                <!-- Total Available Rewards -->
+                <div v-if="totalAvailableRewards > 0" class="notification mb-3" style="background: rgba(72, 199, 142, 0.08); border: 1px solid rgba(72, 199, 142, 0.25); border-radius: 10px;">
+                  <p class="has-text-success-light" style="font-size: 14px;">
+                    <span class="material-symbols-outlined mr-1" style="font-size: 18px; vertical-align: middle;">savings</span>
+                    <strong class="fira-sans-condensed-black-italic">{{ formatEth(totalAvailableRewards) }} ETH</strong> available to claim
                   </p>
                 </div>
 
@@ -340,6 +340,11 @@ const epochCountdown = computed(() => {
   return `${hours.toString().padStart(2, '0')}:${minutes.toString().padStart(2, '0')}:${seconds.toString().padStart(2, '0')}`;
 });
 
+const totalAvailableRewards = computed(() => {
+  const poolRewards = claimableEpochs.value.reduce((sum, e) => sum + e.totalClaimable, 0);
+  return poolRewards + parseFloat(unclaimedSkillRevenue.value || '0');
+});
+
 /**
  * Whether there are any claimable rewards (used for badge indicator via expose)
  */
@@ -417,14 +422,15 @@ async function loadClaimableEpochs() {
       for (let p = 0; p < 6; p++) {
         const hasClaimed = await mintPoolService.hasClaimedEpoch(epochId, p);
         if (!hasClaimed) {
-          // We can't easily preview the amount without a contract call,
-          // so just mark as claimable
+          const amount = await mintPoolService.previewClaim(epochId, p);
+          const amountEth = Number(ethers.formatEther(amount));
           poolResults.push({
             index: p,
             label: mintPoolService.POOL_LABELS[p],
-            amount: 0, // Would need previewClaim call
+            amount: amountEth,
             claimed: false,
           });
+          totalClaimable += amountEth;
           claimablePoolIndices.push(p);
         }
       }

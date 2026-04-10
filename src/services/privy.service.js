@@ -54,28 +54,18 @@ async function initialize() {
       return;
     }
 
-    const { PrivyClient } = await import('@privy-io/js-sdk-core');
-    privyClient = new PrivyClient({
-      appId,
-      // Electron: allow custom scheme redirects
-      loginMethods: ['email', 'google', 'apple'],
+    // SDK exports Privy class as default export
+    const PrivySDK = await import('@privy-io/js-sdk-core');
+    const Privy = PrivySDK.default;
+
+    privyClient = new Privy({
+      clientId: appId,
     });
+
+    await privyClient.initialize();
 
     state.isInitialized = true;
     console.log('[Privy] Client initialized');
-
-    // Check for existing session
-    try {
-      const session = await privyClient.getSession();
-      if (session?.user) {
-        state.isAuthenticated = true;
-        state.user = session.user;
-        await _extractEmbeddedWallet(session.user);
-        console.log('[Privy] Restored session for', state.embeddedWalletAddress);
-      }
-    } catch {
-      // No existing session — that's fine
-    }
   } catch (err) {
     console.error('[Privy] Initialization failed:', err);
     state.error = err.message;
@@ -93,13 +83,13 @@ async function initialize() {
  */
 async function loginWithEmail(email) {
   await initialize();
-  if (!privyClient) return { success: false, error: 'Privy not configured' };
+  if (!privyClient) return { success: false, error: 'Privy not configured. Set VITE_PRIVY_APP_ID in your .env file.' };
 
   state.isLoggingIn = true;
   state.error = null;
 
   try {
-    await privyClient.sendOtp({ email });
+    await privyClient.auth.email.sendCode(email);
     return { success: true, needsOtp: true };
   } catch (err) {
     state.error = err.message;
@@ -116,13 +106,13 @@ async function loginWithEmail(email) {
  * @returns {Promise<{success: boolean, address?: string, error?: string}>}
  */
 async function verifyOtp(email, code) {
-  if (!privyClient) return { success: false, error: 'Privy not configured' };
+  if (!privyClient) return { success: false, error: 'Privy not configured. Set VITE_PRIVY_APP_ID in your .env file.' };
 
   state.isLoggingIn = true;
   state.error = null;
 
   try {
-    const authResult = await privyClient.loginWithOtp({ email, code });
+    const authResult = await privyClient.auth.email.loginWithCode(email, code);
     state.isAuthenticated = true;
     state.user = authResult.user;
 
@@ -145,19 +135,59 @@ async function verifyOtp(email, code) {
  */
 async function loginWithSocial(provider) {
   await initialize();
+  if (!privyClient) return { success: false, error: 'Privy not configured. Set VITE_PRIVY_APP_ID in your .env file.' };
+
+  state.isLoggingIn = true;
+  state.error = null;
+
+  try {
+    // Generate OAuth URL and open in external browser
+    const redirectURI = 'bonzai://auth/callback';
+    const { url, state: oauthState } = await privyClient.auth.oauth.generateURL(provider, redirectURI);
+
+    // Open URL in system browser
+    const { shell } = await import('electron');
+    shell.openExternal(url);
+
+    // The callback will be handled by the Electron deep link handler
+    // For now, return a pending state — the user completes auth in browser
+    return {
+      success: false,
+      error: 'Complete sign-in in your browser, then return to BonzAI.',
+      pending: true,
+      oauthState,
+    };
+  } catch (err) {
+    state.error = err.message;
+    return { success: false, error: err.message };
+  } finally {
+    state.isLoggingIn = false;
+  }
+}
+
+/**
+ * Complete OAuth login after redirect callback
+ * @param {string} authorizationCode
+ * @param {string} returnedStateCode
+ * @param {string} provider
+ * @returns {Promise<{success: boolean, address?: string, error?: string}>}
+ */
+async function completeOAuthLogin(authorizationCode, returnedStateCode, provider) {
   if (!privyClient) return { success: false, error: 'Privy not configured' };
 
   state.isLoggingIn = true;
   state.error = null;
 
   try {
-    const authResult = await privyClient.loginWithOAuth({ provider });
+    const authResult = await privyClient.auth.oauth.loginWithCode(
+      authorizationCode, returnedStateCode, provider
+    );
     state.isAuthenticated = true;
     state.user = authResult.user;
 
     await _extractEmbeddedWallet(authResult.user);
 
-    console.log('[Privy] Social login as', state.embeddedWalletAddress);
+    console.log('[Privy] OAuth login as', state.embeddedWalletAddress);
     return { success: true, address: state.embeddedWalletAddress };
   } catch (err) {
     state.error = err.message;
@@ -172,7 +202,7 @@ async function loginWithSocial(provider) {
  */
 async function logout() {
   try {
-    if (privyClient) await privyClient.logout();
+    if (privyClient) await privyClient.auth.logout();
   } catch (err) {
     console.warn('[Privy] Logout error:', err);
   }
@@ -195,21 +225,21 @@ function getEmbeddedProvider() {
 }
 
 /**
- * Extract embedded wallet from Privy user object
+ * Extract embedded wallet from Privy user object and get its EIP-1193 provider
  * @private
  */
 async function _extractEmbeddedWallet(user) {
-  const embeddedWallet = user?.linkedAccounts?.find(
-    a => a.type === 'wallet' && a.walletClientType === 'privy'
-  );
+  // Use the SDK helper to find the embedded wallet
+  const PrivySDK = await import('@privy-io/js-sdk-core');
+  const embeddedWallet = PrivySDK.getUserEmbeddedEthereumWallet(user);
 
   if (embeddedWallet) {
     state.embeddedWalletAddress = embeddedWallet.address;
 
     // Get EIP-1193 provider for the embedded wallet
     try {
-      embeddedProvider = await privyClient.getEthereumProvider({
-        walletAddress: embeddedWallet.address,
+      embeddedProvider = await privyClient.embeddedWallet.getEthereumProvider({
+        wallet: embeddedWallet,
       });
     } catch (err) {
       console.warn('[Privy] Failed to get embedded provider:', err);
@@ -541,6 +571,7 @@ export const privyService = {
   loginWithEmail,
   verifyOtp,
   loginWithSocial,
+  completeOAuthLogin,
   logout,
   getEmbeddedProvider,
 

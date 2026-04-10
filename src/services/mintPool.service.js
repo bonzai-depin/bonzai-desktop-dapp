@@ -372,6 +372,20 @@ async function hasClaimedEpoch(epochId, poolIndex) {
 }
 
 /**
+ * Preview claimable amount for a specific epoch/pool
+ */
+async function previewClaim(epochId, poolIndex) {
+  try {
+    const contract = await getPoolContract(false);
+    const userAddress = web3Service.state.walletAddress;
+    if (!userAddress) return 0n;
+    return await contract.previewClaim(epochId, poolIndex, userAddress);
+  } catch {
+    return 0n;
+  }
+}
+
+/**
  * Check if user is registered for a specific epoch
  */
 async function isRegisteredForEpoch(epochId) {
@@ -405,6 +419,7 @@ export const mintPoolService = {
   claimEpochBatch,
   hasClaimedEpoch,
   isRegisteredForEpoch,
+  previewClaim,
 
   // Constants
   POOL_LABELS,

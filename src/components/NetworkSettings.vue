@@ -202,10 +202,10 @@
 
       <hr />
 
-      <!-- Private Pipeline Settings (Consumer Mode) -->
+      <!-- Private Networking (Consumer Mode) -->
       <div class="pipeline-section mt-5" v-if="networkMode === 'consumer'">
         <h2 class="section-title fira-sans-condensed-black-italic">
-          Private Pipeline Inference
+          Private Networking
         </h2>
 
         <div class="description-card pipeline">
@@ -221,9 +221,9 @@
           </div>
         </div>
 
-        <!-- Pipeline Activation Toggle -->
+        <!-- Private Mode Toggle -->
         <div class="orchestration-controls mt-4">
-          <div class="orchestration-label">Pipeline Inference</div>
+          <div class="orchestration-label">Private Mode</div>
           <div class="orchestration-toggle-row">
             <div class="orchestration-status-info">
               <span
@@ -233,7 +233,7 @@
                 {{ pipelineEnabled ? "check_circle" : "cancel" }}
               </span>
               <span>
-                {{ pipelineEnabled ? "Active — LLM requests use private distributed inference" : "Disabled — LLM requests use local inference" }}
+                {{ pipelineEnabled ? "Enabled — Your chat providers never see your conversation" : "Disabled — Your chat providers see all requests and responses" }}
               </span>
             </div>
             <button
@@ -247,9 +247,9 @@
         </div>
 
         <template v-if="pipelineEnabled">
-          <!-- Local Test Mode Toggle -->
+          <!-- Self Service Toggle -->
           <div class="orchestration-controls mt-3">
-            <div class="orchestration-label">Local Test Mode</div>
+            <div class="orchestration-label">Self Service</div>
             <div class="orchestration-toggle-row">
               <div class="orchestration-status-info">
                 <span
@@ -259,7 +259,7 @@
                   {{ pipelineLocalTest ? "check_circle" : "cancel" }}
                 </span>
                 <span>
-                  {{ pipelineLocalTest ? "Active — rpc-server running on this machine" : "Disabled — requires remote shard providers" }}
+                  {{ pipelineLocalTest ? "Enabled — running private inference on this machine" : "Disabled — requires remote providers" }}
                 </span>
               </div>
               <button
@@ -270,28 +270,19 @@
                 {{ pipelineLocalTest ? "Stop" : "Start" }}
               </button>
             </div>
-            <p class="control-help mt-2">
-              Starts a local rpc-server on port 50052 so you can validate the pipeline on a single machine
-              without needing a second device. In production, remote peers on the P2P network serve as shard providers.
-            </p>
             <div v-if="pipelineLocalTest && pipelineLocalTestStatus" class="mt-2">
               <span class="tag" :class="pipelineLocalTestStatus === 'running' ? 'is-success' : 'is-danger'">
                 <span class="material-symbols-outlined mr-1" style="font-size: 14px">
                   {{ pipelineLocalTestStatus === 'running' ? 'check_circle' : 'error' }}
                 </span>
-                rpc-server {{ pipelineLocalTestStatus }}
+                {{ pipelineLocalTestStatus }}
               </span>
             </div>
           </div>
 
-          <!-- Local Layer Proportion -->
+          <!-- Privacy Level -->
           <div class="orchestration-controls mt-3">
-            <div class="orchestration-label">Local Layer Proportion — {{ pipelineLocalProportion }}%</div>
-            <p class="control-help mb-3">
-              How much of the model runs on your device. Higher values keep more layers local for
-              stronger privacy, but require more of your GPU and leave less work for remote peers.
-              Lower values are faster but expose more layers to remote processing.
-            </p>
+            <div class="orchestration-label">Privacy Level — {{ pipelineLocalProportion }}%</div>
             <input
               type="range"
               class="pipeline-slider"
@@ -307,9 +298,16 @@
             </div>
           </div>
 
-          <!-- Differential Privacy Toggle -->
+          <!-- Extra Privacy Toggle -->
           <div class="orchestration-controls mt-3">
-            <div class="orchestration-label">Differential Privacy Noise</div>
+            <div class="orchestration-label">
+              Extra Privacy
+              <span
+                class="material-symbols-outlined ml-1 info-tooltip"
+                style="font-size: 16px; vertical-align: middle; cursor: help"
+                title="Adds mathematically calibrated noise to activation tensors before they leave your device. Makes model inversion attacks computationally infeasible. The model must tolerate the noise for coherent output."
+              >info</span>
+            </div>
             <div class="orchestration-toggle-row">
               <div class="orchestration-status-info">
                 <span
@@ -319,7 +317,7 @@
                   {{ pipelineDPEnabled ? "check_circle" : "cancel" }}
                 </span>
                 <span>
-                  {{ pipelineDPEnabled ? "Active — calibrated Gaussian noise added to tensor data" : "Disabled — tensors sent without noise" }}
+                  {{ pipelineDPEnabled ? "Enabled" : "Disabled" }}
                 </span>
               </div>
               <button
@@ -330,19 +328,17 @@
                 {{ pipelineDPEnabled ? "Disable" : "Enable" }}
               </button>
             </div>
-            <p class="control-help mt-2">
-              Adds mathematically calibrated noise to activation tensors before they leave your device.
-              Makes model inversion attacks computationally infeasible. The model must tolerate the noise
-              for coherent output — lower epsilon values add more noise (stronger privacy, lower quality).
-            </p>
 
             <template v-if="pipelineDPEnabled">
               <div class="mt-3">
-                <div class="orchestration-label">Privacy Budget (ε) — {{ pipelineEpsilon }}</div>
-                <p class="control-help mb-3">
-                  Controls the noise-to-signal ratio. ε = 2 adds significant noise (strong privacy, may reduce quality).
-                  ε = 16 adds minimal noise (weaker privacy, preserves quality). Default ε = 8 balances both.
-                </p>
+                <div class="orchestration-label">
+                  Extra Privacy Budget (ε) — {{ pipelineEpsilon }}
+                  <span
+                    class="material-symbols-outlined ml-1 info-tooltip"
+                    style="font-size: 16px; vertical-align: middle; cursor: help"
+                    title="Controls the noise-to-signal ratio. ε = 2 adds significant noise (strong privacy, may reduce quality). ε = 16 adds minimal noise (weaker privacy, preserves quality). Default ε = 8 balances both."
+                  >info</span>
+                </div>
                 <input
                   type="range"
                   class="pipeline-slider"
@@ -682,7 +678,7 @@
         v-if="networkMode === 'provider' && p2pStatus.started"
       >
         <h2 class="section-title fira-sans-condensed-black-italic">
-          Pipeline Pricing
+          Pricing
         </h2>
 
         <div class="pricing-currency-selector mb-4">
@@ -691,6 +687,13 @@
             Payment Currency
           </label>
           <div class="currency-toggle">
+            <button
+              class="button is-small"
+              :class="pricingCurrency === 'FREE' ? 'is-success' : ''"
+              @click="pricingCurrency = 'FREE'"
+            >
+              Free
+            </button>
             <button
               class="button is-small"
               :class="pricingCurrency === 'ETH' ? 'is-success' : ''"
@@ -707,14 +710,16 @@
             </button>
           </div>
           <span class="setting-hint">
-            {{ pricingCurrency === 'ETH'
-              ? 'Accept native ETH — no token approval needed'
-              : 'Accept USDC stablecoin — stable pricing'
+            {{ pricingCurrency === 'FREE'
+              ? 'All pipelines are free — no payment required from consumers'
+              : pricingCurrency === 'ETH'
+                ? 'Accept native ETH — no token approval needed'
+                : 'Accept USDC stablecoin — stable pricing'
             }}
           </span>
         </div>
 
-        <div class="pricing-grid">
+        <div v-if="pricingCurrency !== 'FREE'" class="pricing-grid">
           <!-- LLM -->
           <div class="pricing-item">
             <div class="pricing-header">
@@ -829,42 +834,21 @@
             </div>
           </div>
 
-          <!-- Companions -->
-          <div class="pricing-item">
-            <div class="pricing-header">
-              <span class="material-symbols-outlined">person_pin</span>
-              <span class="pricing-name">Companions</span>
-            </div>
-            <div class="pricing-input">
-              <input
-                type="number"
-                class="input"
-                v-model.number="pipelinePricing.companions"
-                step="0.001"
-                min="0"
-                placeholder="0.02"
-              />
-              <span class="pricing-unit">{{ pricingCurrency }} / message</span>
-            </div>
-            <span class="pricing-note">
-              Includes LLM + optional audio/image
-            </span>
-          </div>
+          <!-- Companions removed — billed per content type consumed -->
         </div>
 
         <hr class="mt-5 mb-5" />
 
         <h2 class="section-title fira-sans-condensed-black-italic">
-          <span class="material-symbols-outlined mr-2" style="vertical-align: middle">lock</span>
-          Pipeline Shard Provider
+          Private Networking
         </h2>
 
-        <div class="description-card">
-          <span class="material-symbols-outlined">info</span>
+        <div class="description-card pipeline">
+          <span class="material-symbols-outlined">lock</span>
           <div>
-            <strong>Serve Private Inference Shards</strong>
+            <strong>Structural Privacy Through Pipeline Parallelism</strong>
             <p>
-              Enable to serve as a pipeline shard provider. Your GPU will process
+              Enable to serve as a private inference provider. Your GPU will process
               partial transformer layers for consumers running private inference.
               You never see the consumer's prompt or output — only opaque tensor operations.
             </p>
@@ -874,7 +858,7 @@
         <div class="setting-group mt-4">
           <label class="setting-label">
             <span class="material-symbols-outlined">memory</span>
-            Shard Provider
+            Private Mode
           </label>
           <div class="relay-toggle">
             <label class="toggle">
@@ -884,8 +868,8 @@
               />
               <span class="toggle-slider"></span>
             </label>
-            <span class="toggle-label">
-              {{ shardProviderEnabled ? "Running (rpc-server active)" : "Disabled" }}
+            <span class="toggle-label" :style="shardProviderEnabled ? 'color: #39d582' : ''">
+              {{ shardProviderEnabled ? "Running" : "Disabled" }}
             </span>
           </div>
         </div>
@@ -893,7 +877,7 @@
         <hr class="mt-5 mb-5" />
 
         <h2 class="section-title fira-sans-condensed-black-italic">
-          Relay Settings
+          NAT Node Relay
         </h2>
 
         <div class="setting-group">
@@ -911,7 +895,7 @@
               <span class="toggle-slider"></span>
             </label>
             <span class="toggle-label">
-              {{ enableRelay ? "Enabled" : "Disabled" }}
+              {{ enableRelay ? "Enabled — helping peers behind NAT/firewalls connect to the network" : "Disabled" }}
               <span v-if="p2pStatus.natStatus !== 'public'" class="toggle-note">
                 (Requires public IP)
               </span>

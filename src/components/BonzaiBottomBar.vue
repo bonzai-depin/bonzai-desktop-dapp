@@ -114,7 +114,20 @@
             </div>
 
             <button
-              class="button is-danger"
+              class="button is-warning ml-2"
+              @click="refresh"
+              title="Refresh"
+            >
+              <span
+                class="material-symbols-outlined"
+                :class="{ spinning: isRefreshing }"
+              >
+                sync
+              </span>
+            </button>
+
+            <button
+              class="button is-danger ml-2"
               @click="disconnect"
               title="Disconnect"
             >
@@ -124,7 +137,7 @@
         </Transition>
       </div>
 
-      <!-- Right: Balance & Actions -->
+      <!-- Center: Balance & Actions -->
       <div class="balance-section fira-sans-condensed-black-italic">
         <div class="balance-display">
           <div class="bonzai-balance">
@@ -150,25 +163,18 @@
             @click="showRewardsModal = true"
             title="Rewards & Pool Revenue"
           >
-            <span class="material-symbols-outlined">trophy</span>
+            <span class="material-symbols-outlined mr-2">trophy</span>
             <span
               v-if="rewardsModalRef?.hasClaimableRewards"
               class="rewards-badge-dot"
             ></span>
-          </button>
-          <button
-            class="button is-warning ml-2"
-            @click="refresh"
-            title="Refresh"
-          >
-            <span
-              class="material-symbols-outlined"
-              :class="{ spinning: isRefreshing }"
-            >
-              sync
-            </span>
+            Rewards
           </button>
         </div>
+      </div>
+
+      <!-- Right: Model & Network -->
+      <div class="right-section">
         <div
           class="model-section"
           @click="openBrowseModels"
@@ -177,7 +183,6 @@
           <span class="material-symbols-outlined model-icon">neurology</span>
           <span
             class="model-name fira-sans-condensed-black-italic is-size-6"
-            
             style="height: 30px; line-height: 30px; text-transform: uppercase"
           >
             {{ currentModelName || "No Active Chat Model" }}
@@ -193,20 +198,20 @@
           </span>
         </div>
 
-          <button
-            class="p2p button"
-            :class="p2pButtonClass"
-            @click="showNetworkModal = true"
-            title="Peer-to-Peer Network"
+        <button
+          class="p2p button"
+          :class="p2pButtonClass"
+          @click="showNetworkModal = true"
+          title="Peer-to-Peer Network"
+        >
+          <span
+            class="material-symbols-outlined mr-2"
+            :class="{ 'pulse-icon': p2pStatus.started }"
           >
-            <span
-              class="material-symbols-outlined mr-2"
-              :class="{ 'pulse-icon': p2pStatus.started }"
-            >
-              {{ p2pModeIcon }}
-            </span>
-            {{ p2pModeLabel }}
-          </button>
+            {{ p2pModeIcon }}
+          </span>
+          {{ p2pModeLabel }}
+        </button>
       </div>
     </div>
 
@@ -357,67 +362,81 @@
 
     <!-- ═══ Privy Login Modal ═══ -->
     <Teleport to="body">
-      <Transition name="modal-fade">
+      <Transition name="fade">
         <div
           v-if="showPrivyLogin"
-          class="modal is-active privy-modal-overlay"
+          class="privy-modal-overlay"
           @click.self="closePrivyLogin"
         >
-          <div class="modal-content privy-modal">
+          <div class="privy-modal">
             <div class="privy-modal-header">
-              <h3>Sign In</h3>
-              <button class="delete" @click="closePrivyLogin"></button>
+              <h3 class="fira-sans-condensed-black-italic">
+                <span class="material-symbols-outlined mr-2" style="font-size: 24px; vertical-align: middle">login</span>
+                Sign In
+              </h3>
+              <button class="button is-danger is-small" @click="closePrivyLogin" title="Close">
+                <span class="material-symbols-outlined">close</span>
+              </button>
             </div>
 
             <div class="privy-modal-body">
-              <p class="privy-subtitle">No crypto wallet needed</p>
+              <p class="privy-subtitle">Sign in with email or social — no crypto wallet needed</p>
 
               <!-- Email Step -->
               <div v-if="privyStep === 'email'" class="privy-email-step">
+                <label class="privy-label">Email</label>
                 <input
                   v-model="privyEmail"
                   type="email"
                   class="input privy-input"
-                  placeholder="Enter your email"
+                  placeholder="you@example.com"
                   @keyup.enter="startPrivyEmail"
                   autofocus
                 />
                 <button
-                  class="button is-info is-fullwidth mt-3"
+                  class="button is-success is-fullwidth mt-4"
                   @click="startPrivyEmail"
                   :disabled="isConnecting"
+                  :class="{ 'is-loading': isConnecting }"
                 >
-                  {{ isConnecting ? "Sending..." : "Continue with Email" }}
+                  <span class="material-symbols-outlined mr-2">mail</span>
+                  Continue with Email
                 </button>
               </div>
 
               <!-- OTP Step -->
               <div v-else-if="privyStep === 'otp'" class="privy-otp-step">
-                <p class="privy-otp-hint">
-                  Check
-                  <strong>{{ privyEmail }}</strong>
-                  for a verification code
-                </p>
+                <div class="privy-otp-banner">
+                  <span class="material-symbols-outlined" style="font-size: 20px">mark_email_read</span>
+                  <p>
+                    Verification code sent to
+                    <strong>{{ privyEmail }}</strong>
+                  </p>
+                </div>
+                <label class="privy-label">Code</label>
                 <input
                   v-model="privyOtpCode"
                   type="text"
                   class="input privy-input"
-                  placeholder="Enter code"
+                  placeholder="000000"
                   maxlength="6"
                   @keyup.enter="verifyPrivyOtp"
                   autofocus
                 />
                 <button
-                  class="button is-info is-fullwidth mt-3"
+                  class="button is-success is-fullwidth mt-4"
                   @click="verifyPrivyOtp"
                   :disabled="isConnecting"
+                  :class="{ 'is-loading': isConnecting }"
                 >
-                  {{ isConnecting ? "Verifying..." : "Verify" }}
+                  <span class="material-symbols-outlined mr-2">verified</span>
+                  Verify
                 </button>
                 <button
-                  class="button is-ghost is-fullwidth mt-2"
+                  class="button is-dark is-fullwidth mt-2"
                   @click="privyStep = 'email'"
                 >
+                  <span class="material-symbols-outlined mr-2">arrow_back</span>
                   Back
                 </button>
               </div>
@@ -430,23 +449,28 @@
               <!-- Social Login -->
               <div class="privy-social-buttons">
                 <button
-                  class="button is-dark is-fullwidth mb-2"
+                  class="button is-dark is-fullwidth privy-social-btn"
                   @click="loginWithSocial('google')"
                   :disabled="isConnecting"
                 >
-                  <span class="btn-text">Continue with Google</span>
+                  <span class="material-symbols-outlined mr-2">public</span>
+                  Continue with Google
                 </button>
                 <button
-                  class="button is-dark is-fullwidth"
+                  class="button is-dark is-fullwidth privy-social-btn"
                   @click="loginWithSocial('apple')"
                   :disabled="isConnecting"
                 >
-                  <span class="btn-text">Continue with Apple</span>
+                  <span class="material-symbols-outlined mr-2">laptop_mac</span>
+                  Continue with Apple
                 </button>
               </div>
 
               <!-- Error -->
-              <p v-if="privyError" class="privy-error mt-3">{{ privyError }}</p>
+              <div v-if="privyError" class="privy-error-card mt-4">
+                <span class="material-symbols-outlined" style="font-size: 16px">error</span>
+                <span>{{ privyError }}</span>
+              </div>
             </div>
           </div>
         </div>
@@ -783,14 +807,9 @@ const formatFeature = (feature) =>
 // Actions
 const connect = async () => {
   await doConnect();
-  // After connecting, switch wallet to the selected mint network chain
-  if (isConnected.value) {
-    try {
-      await switchNetwork(mintNetwork.value);
-    } catch (e) {
-      console.warn("[BottomBar] Post-connect chain switch failed:", e.message);
-    }
-  }
+  // Don't force network switch on connect — the app operates on Base but
+  // UP-enabled wallets may connect on LUKSO. Network switch only happens
+  // when the user explicitly performs an on-chain action (mint, unlock, etc.)
 };
 
 const disconnect = async () => {
@@ -832,12 +851,6 @@ const verifyPrivyOtp = async () => {
     privyStep.value = "email";
     privyEmail.value = "";
     privyOtpCode.value = "";
-    // Post-connect chain switch
-    try {
-      await switchNetwork(mintNetwork.value);
-    } catch (e) {
-      console.warn("[BottomBar] Post-Privy chain switch:", e.message);
-    }
   } else if (result.error) {
     privyError.value = result.error;
   }
@@ -848,11 +861,6 @@ const loginWithSocial = async (provider) => {
   const result = await doConnectWithPrivy({ method: provider });
   if (result.success) {
     showPrivyLogin.value = false;
-    try {
-      await switchNetwork(mintNetwork.value);
-    } catch (e) {
-      console.warn("[BottomBar] Post-Privy chain switch:", e.message);
-    }
   } else if (result.error) {
     privyError.value = result.error;
   }
@@ -1042,6 +1050,7 @@ watch(
 
 /* Main Bar Content */
 .bar-content {
+  position: relative;
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -1317,8 +1326,19 @@ watch(
   );
 }
 
-/* Balance Section */
+/* Balance Section — absolute center */
 .balance-section {
+  position: absolute;
+  left: 50%;
+  transform: translateX(-50%);
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  z-index: 1;
+}
+
+/* Right Section */
+.right-section {
   flex: 0 0 auto;
   display: flex;
   align-items: center;
@@ -1969,67 +1989,110 @@ hr {
 }
 
 .privy-modal-overlay {
-  z-index: 10000;
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.85);
+  backdrop-filter: blur(16px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 10001;
 }
 
 .privy-modal {
-  background: #1a1a2e;
+  background: #0a0a0f;
   border: 1px solid rgba(255, 255, 255, 0.1);
   border-radius: 16px;
-  padding: 32px;
-  max-width: 380px;
+  max-width: 400px;
   width: 90vw;
-  margin: auto;
+  overflow: hidden;
 }
 
 .privy-modal-header {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  margin-bottom: 8px;
+  padding: 16px 24px;
+  background: rgba(0, 0, 0, 0.3);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.1);
 }
 
 .privy-modal-header h3 {
-  font-size: 20px;
-  font-weight: 700;
+  font-size: 18px;
   color: #fff;
   margin: 0;
+  display: flex;
+  align-items: center;
+}
+
+.privy-modal-body {
+  padding: 24px;
 }
 
 .privy-subtitle {
-  color: rgba(255, 255, 255, 0.5);
+  color: rgba(255, 255, 255, 0.45);
   font-size: 13px;
-  margin-bottom: 20px;
+  margin-bottom: 24px;
+}
+
+.privy-label {
+  display: block;
+  font-size: 12px;
+  color: rgba(255, 255, 255, 0.5);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  margin-bottom: 6px;
 }
 
 .privy-input {
-  background: rgba(255, 255, 255, 0.06);
-  border: 1px solid rgba(255, 255, 255, 0.15);
-  color: #fff;
-  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.06) !important;
+  border: 1px solid rgba(255, 255, 255, 0.12) !important;
+  color: #fff !important;
+  border-radius: 10px !important;
   padding: 12px 14px;
   font-size: 15px;
 }
 
 .privy-input::placeholder {
-  color: rgba(255, 255, 255, 0.3);
+  color: rgba(255, 255, 255, 0.25);
 }
 
 .privy-input:focus {
-  border-color: #6851ff;
-  box-shadow: 0 0 0 2px rgba(104, 81, 255, 0.2);
+  border-color: rgba(72, 199, 142, 0.5) !important;
+  box-shadow: none !important;
 }
 
-.privy-otp-hint {
-  color: rgba(255, 255, 255, 0.6);
+.privy-modal .button {
+  box-shadow: none !important;
+  border-radius: 10px;
+  font-weight: 600;
+}
+
+.privy-otp-banner {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  background: rgba(72, 199, 142, 0.08);
+  border: 1px solid rgba(72, 199, 142, 0.2);
+  border-radius: 10px;
+  padding: 12px 14px;
+  margin-bottom: 16px;
+  color: rgba(255, 255, 255, 0.7);
   font-size: 13px;
-  margin-bottom: 12px;
+}
+
+.privy-otp-banner .material-symbols-outlined {
+  color: #48c78e;
+}
+
+.privy-otp-banner strong {
+  color: #fff;
 }
 
 .privy-divider {
   display: flex;
   align-items: center;
-  margin: 20px 0;
+  margin: 24px 0;
   gap: 12px;
 }
 
@@ -2038,19 +2101,45 @@ hr {
   content: "";
   flex: 1;
   height: 1px;
-  background: rgba(255, 255, 255, 0.1);
+  background: rgba(255, 255, 255, 0.08);
 }
 
 .privy-divider span {
-  color: rgba(255, 255, 255, 0.3);
-  font-size: 12px;
+  color: rgba(255, 255, 255, 0.25);
+  font-size: 11px;
   text-transform: uppercase;
+  letter-spacing: 1px;
 }
 
-.privy-error {
-  color: #ff6b6b;
+.privy-social-buttons {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.privy-social-btn {
+  background: rgba(255, 255, 255, 0.06) !important;
+  border: 1px solid rgba(255, 255, 255, 0.1) !important;
+  color: rgba(255, 255, 255, 0.8) !important;
+  transition: all 0.2s ease;
+}
+
+.privy-social-btn:hover:not(:disabled) {
+  background: rgba(255, 255, 255, 0.1) !important;
+  border-color: rgba(255, 255, 255, 0.2) !important;
+  color: #fff !important;
+}
+
+.privy-error-card {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  background: rgba(241, 70, 104, 0.1);
+  border: 1px solid rgba(241, 70, 104, 0.25);
+  border-radius: 10px;
+  padding: 10px 14px;
+  color: #f14668;
   font-size: 13px;
-  text-align: center;
 }
 
 /* Rewards button badge */

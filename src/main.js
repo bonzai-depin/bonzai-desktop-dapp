@@ -1088,6 +1088,19 @@ ipcMain.handle("p2p-start", async (_event, options = {}) => {
 
       // Get provider settings
       const providerId = store.get("p2p.providerId", null);
+      const pricingCurrency = store.get("p2p.pricingCurrency", "ETH");
+
+      // Free mode — process without payment
+      if (pricingCurrency === "FREE") {
+        console.log(`[P2P] Free provider mode, processing without payment for ${remotePeer.slice(0, 12)}...`);
+        try {
+          const result = await routeInferenceRequest(request);
+          return { ok: true, result, freeInference: true };
+        } catch (err) {
+          return { ok: false, error: "inference_failed", detail: err.message };
+        }
+      }
+
       const pricePerToken = store.get("p2p.pricePerToken", "1000000000000"); // 0.000001 ETH per 1000 tokens
 
       // Check if this is a paid request (x402)
@@ -1148,10 +1161,13 @@ ipcMain.handle("p2p-start", async (_event, options = {}) => {
     // Register health handler
     node.onHealthRequest(async (request, remotePeer) => {
       const pipelines = store.get("p2p.pipelines", []);
+      const pricingCurrency = store.get("p2p.pricingCurrency", "ETH");
       return {
         ok: true,
         peerId: node.getPeerId(),
         pipelines,
+        pricingCurrency,
+        free: pricingCurrency === "FREE",
         version: app.getVersion(),
         uptime: process.uptime(),
       };

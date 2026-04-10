@@ -386,16 +386,29 @@
               </tr>
               <tr>
                 <td>
-                  <span class="material-symbols-outlined mr-1" style="vertical-align: middle; font-size: 18px">headphones</span>
-                  Audio
+                  <span class="material-symbols-outlined mr-1" style="vertical-align: middle; font-size: 18px">record_voice_over</span>
+                  Audio — TTS / Voice Cloning
                 </td>
                 <td class="has-text-right fira-sans-condensed-black-italic">
-                  <template v-if="specsData.performance.audio.count > 0">
-                    {{ specsData.performance.audio.avgElapsed.toFixed(1) }}s
+                  <template v-if="specsData.performance.audioTts.count > 0">
+                    {{ specsData.performance.audioTts.avgElapsed.toFixed(1) }}s
                   </template>
                   <span v-else class="has-text-grey">--</span>
                 </td>
-                <td class="has-text-right">{{ specsData.performance.audio.count }}</td>
+                <td class="has-text-right">{{ specsData.performance.audioTts.count }}</td>
+              </tr>
+              <tr>
+                <td>
+                  <span class="material-symbols-outlined mr-1" style="vertical-align: middle; font-size: 18px">music_note</span>
+                  Audio — Music
+                </td>
+                <td class="has-text-right fira-sans-condensed-black-italic">
+                  <template v-if="specsData.performance.audioMusic.count > 0">
+                    {{ specsData.performance.audioMusic.avgElapsed.toFixed(1) }}s
+                  </template>
+                  <span v-else class="has-text-grey">--</span>
+                </td>
+                <td class="has-text-right">{{ specsData.performance.audioMusic.count }}</td>
               </tr>
               <tr>
                 <td>
