@@ -1812,14 +1812,14 @@ export default {
     // ------------ LLM lyrics generation -----
     const lyricsError = ref("");
 
-    // Default LLM for lyrics generation
+    // Default LLM for lyrics generation — small and fast
     const LYRICS_LLM = {
-      modelname: "Meta Llama 3.1 8B Instruct",
-      filename: "meta-llama-3.1-8b-instruct-q4_k_m.gguf",
-      url: "https://huggingface.co/lmstudio-community/Meta-Llama-3.1-8B-Instruct-GGUF/resolve/main/Meta-Llama-3.1-8B-Instruct-Q4_K_M.gguf",
-      filesizeBytes: 4.92e9,
-      parameters: 8000000000,
-      context: 8192,
+      modelname: "Qwen3.5 0.8B",
+      filename: "qwen3.5-0.8b-q4_k_m.gguf",
+      url: "https://huggingface.co/unsloth/Qwen3.5-0.8B-GGUF/resolve/main/Qwen3.5-0.8B-Q4_K_M.gguf",
+      filesizeBytes: 0.6e9,
+      parameters: 800000000,
+      context: 131072,
     };
 
     const ensureLLMLoaded = async () => {
