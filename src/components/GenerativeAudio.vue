@@ -160,7 +160,7 @@
                   </label>
                 </div>
 
-                                <!-- ACCESS REQUIREMENTS -->
+                <!-- ACCESS REQUIREMENTS -->
                 <AccessRequirements
                   ref="accessRef"
                   level="LVL2"
@@ -170,7 +170,6 @@
 
                 <!-- MUSIC MODE INPUTS -->
                 <div v-if="mode === 'music'" class="mb-4">
-
                   <!-- ═══════════════════════════════════════════════════════════
                        SECTION 1: LYRICS GENERATION
                        ═══════════════════════════════════════════════════════════ -->
@@ -191,31 +190,40 @@
                           @keyup.enter="generateLyrics"
                         />
 
-                      <div class="is-pulled-right has-text-white vocal-lang-row">
-                        <div class="select is-dark is-size-5">
-                          <select v-model="musicVocalLanguage" style="height: 50px; border-color: #fff;">
-                            <option value="en">🇺🇸 English</option>
-                            <option value="zh">🇨🇳 Chinese</option>
-                            <option value="ja">🇯🇵 Japanese</option>
-                            <option value="ko">🇰🇷 Korean</option>
-                            <option value="es">🇪🇸 Spanish</option>
-                            <option value="fr">🇫🇷 French</option>
-                            <option value="de">🇩🇪 German</option>
-                            <option value="it">🇮🇹 Italian</option>
-                            <option value="pt">🇧🇷 Portuguese</option>
-                            <option value="ru">🇷🇺 Russian</option>
-                            <option value="other">🌐 Other...</option>
-                          </select>
+                        <div
+                          class="is-pulled-right has-text-white vocal-lang-row"
+                        >
+                          <div class="select is-dark is-size-5">
+                            <select
+                              v-model="musicVocalLanguage"
+                              style="height: 50px; border-color: #fff"
+                            >
+                              <option value="en">🇺🇸 English</option>
+                              <option value="zh">🇨🇳 Chinese</option>
+                              <option value="ja">🇯🇵 Japanese</option>
+                              <option value="ko">🇰🇷 Korean</option>
+                              <option value="es">🇪🇸 Spanish</option>
+                              <option value="fr">🇫🇷 French</option>
+                              <option value="de">🇩🇪 German</option>
+                              <option value="it">🇮🇹 Italian</option>
+                              <option value="pt">🇧🇷 Portuguese</option>
+                              <option value="ru">🇷🇺 Russian</option>
+                              <option value="other">🌐 Other...</option>
+                            </select>
+                          </div>
+                          <input
+                            v-if="musicVocalLanguage === 'other'"
+                            class="input is-dark is-medium custom-language-input is-pulled-right"
+                            type="text"
+                            v-model="customVocalLanguage"
+                            placeholder="e.g. Creole, Swahili, Hindi..."
+                            style="
+                              height: 50px;
+                              border-color: #fff;
+                              border-left: none;
+                            "
+                          />
                         </div>
-                        <input
-                          v-if="musicVocalLanguage === 'other'"
-                          class="input is-dark is-medium custom-language-input is-pulled-right"
-                          type="text"
-                          v-model="customVocalLanguage"
-                          placeholder="e.g. Creole, Swahili, Hindi..."
-                           style="height: 50px; border-color: #fff; border-left: none;"
-                        />
-                      </div>
                         <button
                           class="button is-medium is-info"
                           :class="{ 'is-loading': isGeneratingLyrics }"
@@ -638,43 +646,35 @@
                     </div>
                   </div>
 
-                  <div class="music-section mt-4 models__activity--payouts has-text-left">
-                                          <span
-                        class="fira-sans-condensed-black-italic has-text-brand is-size-1"
-                        style="width: auto !important"
-                      >
-                        Ready ?
-                      </span>
-                      <div class="control mt-5">
-                        <textarea
-                          class="textarea is-large"
-                          v-model="musicCaption"
-                          placeholder="pop rock, energetic, electric guitar, drums, male vocals, polished production, 120 BPM"
-                          rows="2"
-                          style="resize: none"
-                        ></textarea>
-                      </div>
+                  <div
+                    class="music-section mt-4 models__activity--payouts has-text-left"
+                  >
+                    <span
+                      class="fira-sans-condensed-black-italic has-text-brand is-size-1"
+                      style="width: auto !important"
+                    >
+                      Ready ?
+                    </span>
+                    <div class="control mt-5">
+                      <textarea
+                        class="textarea is-large"
+                        v-model="musicCaption"
+                        placeholder="pop rock, energetic, electric guitar, drums, male vocals, polished production, 120 BPM"
+                        rows="2"
+                        style="resize: none"
+                      ></textarea>
+                    </div>
                   </div>
 
                   <!-- Generate Button & Semantic Toggle -->
-                  <div class="music-section mt-4 models__activity--payouts generate-row">
-                    <button
-                      class="button is-success is-large generate-music-btn pl-2"
-                      :class="{ 'is-loading': isLoading }"
-                      :disabled="
-                        isLoading ||
-                        !canGenerateWithAccess ||
-                        (!musicCaption.trim() && selectedGenres.length === 0)
-                      "
-                      @click="generateMusic"
-                    >
-                      <span class="material-symbols-outlined mr-2 is-size-1">
-                        graphic_eq
-                      </span>
-                      <span>Make Music</span>
-                    </button>
-                    <div class="select is-dark is-large">
-                      <select v-model="musicQuality">
+                  <div
+                    class="music-section mt-4 models__activity--payouts generate-row"
+                  >
+                    <div class="select is-dark">
+                      <select
+                        v-model="musicQuality"
+                        style="height: 52px; position: relative; top: -6px"
+                      >
                         <option value="fast">Fast (v1.5)</option>
                         <option value="quality">Quality (v1.5 XL)</option>
                       </select>
@@ -686,7 +686,7 @@
                       id="music_semantic"
                       class="music-toggle"
                     />
-                    <label for="music_semantic" class="mr-2">
+                    <label for="music_semantic">
                       <span
                         class="material-symbols-outlined"
                         style="font-size: 32px !important"
@@ -711,6 +711,22 @@
                       </span>
                       Save Memory
                     </label>
+                    <button
+                      class="button is-warning is-medium generate-music-btn"
+                      style="margin-left: auto"
+                      :class="{ 'is-loading': isLoading }"
+                      :disabled="
+                        isLoading ||
+                        !canGenerateWithAccess ||
+                        (!musicCaption.trim() && selectedGenres.length === 0)
+                      "
+                      @click="generateMusic"
+                    >
+                      <span class="material-symbols-outlined mr-2 is-size-1">
+                        graphic_eq
+                      </span>
+                      <span>Make Music</span>
+                    </button>
                   </div>
                 </div>
 
@@ -1048,9 +1064,9 @@
                         :disabled="!!inference.nft"
                       >
                         <span class="material-symbols-outlined is-size-2 mr-1">
-                          {{ inference.nft ? 'check_circle' : 'token' }}
+                          {{ inference.nft ? "check_circle" : "token" }}
                         </span>
-                        {{ inference.nft ? 'Minted' : 'Mint' }}
+                        {{ inference.nft ? "Minted" : "Mint" }}
                       </button>
                     </div>
                   </li>
@@ -1141,18 +1157,22 @@ export default {
         try {
           content = await window.electronAPI.readFileAsBase64(audioPath);
         } catch (e) {
-          console.warn('[GenerativeAudio] Could not read audio file:', e);
+          console.warn("[GenerativeAudio] Could not read audio file:", e);
         }
       }
       mintTarget.value = {
-        inferenceType: 'audio',
+        inferenceType: "audio",
         inferenceId: inference.id,
         content,
-        contentType: isMp3 ? 'audio/mpeg' : 'audio/wav',
+        contentType: isMp3 ? "audio/mpeg" : "audio/wav",
         prompt: inference.question,
         generation: {
-          type: inference.isMusic ? 'music' : inference.hasClone ? 'voice-clone' : 'text-to-speech',
-          model: inference.model || 'kokoro',
+          type: inference.isMusic
+            ? "music"
+            : inference.hasClone
+              ? "voice-clone"
+              : "text-to-speech",
+          model: inference.model || "kokoro",
           timestamp: inference.timestamp,
           elapsedMs: inference.elapsedMs || null,
         },
@@ -1162,7 +1182,7 @@ export default {
     const onMinted = (result) => {
       // Trigger re-render for shallowRef
       const arr = [...inferences.value];
-      const inf = arr.find(i => i.id === mintTarget.value?.inferenceId);
+      const inf = arr.find((i) => i.id === mintTarget.value?.inferenceId);
       if (inf) inf.nft = result;
       inferences.value = arr;
       mintTarget.value = null;
@@ -1189,7 +1209,7 @@ export default {
     const musicShift = ref(4.0);
     const musicQuality = ref("fast"); // "fast" (v1.5 turbo 2B) or "quality" (v1.5 XL turbo 4B)
     const musicSemantic = ref(false); // Use 5Hz LLM for semantic audio codes
-    const musicOffload = ref(false);  // CPU offload (disabled by default for speed)
+    const musicOffload = ref(false); // CPU offload (disabled by default for speed)
     const musicVocalLanguage = ref("en");
     const customVocalLanguage = ref("");
     const songName = ref("");
@@ -1377,7 +1397,7 @@ export default {
       // Convert any other format to component format
       return {
         ...item,
-        question: item.prompt || item.question || '',
+        question: item.prompt || item.question || "",
         answer: {
           status: item.answer?.status || 200,
           data: {
@@ -1395,7 +1415,7 @@ export default {
         .map((item, idx) => {
           const norm = normalizeInference(item);
           if (!norm) {
-            console.warn('[GenerativeAudio] Skipping invalid inference:', item);
+            console.warn("[GenerativeAudio] Skipping invalid inference:", item);
             return null;
           }
           return {
@@ -1405,9 +1425,10 @@ export default {
         })
         .filter((item) => item && item.answer?.data?.audio_path);
 
-      console.log(`[GenerativeAudio] ${inferences.value.length} total, ${normalized.length} valid`);
-      return normalized
-        .reverse();
+      console.log(
+        `[GenerativeAudio] ${inferences.value.length} total, ${normalized.length} valid`,
+      );
+      return normalized.reverse();
     });
 
     // Displayed inferences (lazy loaded subset)
@@ -2654,7 +2675,12 @@ Remember: 6-10 syllables per line, use all appropriate structure tags. Write in 
             },
             id: uuid(),
             language: language.value,
-            model: mode.value === "music" ? (musicQuality.value === "quality" ? "ace-step-v1.5-xl-turbo" : "ace-step-v1.5-turbo") : "qwen3-tts",
+            model:
+              mode.value === "music"
+                ? musicQuality.value === "quality"
+                  ? "ace-step-v1.5-xl-turbo"
+                  : "ace-step-v1.5-turbo"
+                : "qwen3-tts",
             hasClone: mode.value === "clone",
             isMusic: mode.value === "music",
             voiceGender: voiceGender.value,
@@ -2696,9 +2722,14 @@ Remember: 6-10 syllables per line, use all appropriate structure tags. Write in 
 
           // Save to unified inference store with performance metadata
           addAudioInference(prompt, audioPath, {
-            pipeline: mode.value === 'music' ? 'music' : (mode.value === 'clone' ? 'audio_quality' : 'audio_turbo'),
+            pipeline:
+              mode.value === "music"
+                ? "music"
+                : mode.value === "clone"
+                  ? "audio_quality"
+                  : "audio_turbo",
             elapsed: elapsedMs / 1000,
-            source: 'bonzai',
+            source: "bonzai",
           });
 
           form.prompt = "";
@@ -2716,11 +2747,7 @@ Remember: 6-10 syllables per line, use all appropriate structure tags. Write in 
     };
 
     // ------------ request wrapper ---------
-    const requestWithDownloadTracking = async (
-      url,
-      payload,
-      onSuccess,
-    ) => {
+    const requestWithDownloadTracking = async (url, payload, onSuccess) => {
       try {
         isLoading.value = true;
         const headers = {};
@@ -3071,7 +3098,8 @@ Remember: 6-10 syllables per line, use all appropriate structure tags. Write in 
   height: 100%;
   width: 100%;
   background: url("../assets/bonzai_music.webp") no-repeat;
-  background-size: cover;  overflow: hidden;
+  background-size: cover;
+  overflow: hidden;
 }
 .models__deployment {
   position: relative;
