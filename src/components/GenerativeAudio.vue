@@ -683,6 +683,10 @@
                       <input type="checkbox" v-model="musicSemantic" />
                       Semantic
                     </label>
+                    <label class="checkbox has-text-light ml-3" style="display: flex; align-items: center; gap: 6px; font-size: 0.85rem">
+                      <input type="checkbox" v-model="musicOffload" />
+                      CPU Offload
+                    </label>
                   </div>
                 </div>
 
@@ -1161,6 +1165,7 @@ export default {
     const musicShift = ref(4.0);
     const musicQuality = ref("fast"); // "fast" (v1.5 turbo 2B) or "quality" (v1.5 XL turbo 4B)
     const musicSemantic = ref(false); // Use 5Hz LLM for semantic audio codes
+    const musicOffload = ref(false);  // CPU offload (disabled by default for speed)
     const musicVocalLanguage = ref("en");
     const customVocalLanguage = ref("");
     const songName = ref("");
@@ -1937,6 +1942,7 @@ Remember: 6-10 syllables per line, use all appropriate structure tags. Write in 
           musicShift.value = params.shift || 4.0;
           musicQuality.value = params.quality || "fast";
           musicSemantic.value = params.semantic || false;
+          musicOffload.value = params.offload || false;
           musicInstrumental.value = params.instrumental || false;
           musicVocalLanguage.value = params.vocalLanguage || "en";
           customVocalLanguage.value = params.customVocalLanguage || "";
@@ -2559,6 +2565,7 @@ Remember: 6-10 syllables per line, use all appropriate structure tags. Write in 
           vocal_language: vocalLang,
           song_name: songName.value.trim() || undefined,
           semantic: musicSemantic.value,
+          offload: musicOffload.value,
           auto_download: true,
         };
       } else if (mode.value === "clone" && synthesisBase64.value) {
@@ -2648,6 +2655,7 @@ Remember: 6-10 syllables per line, use all appropriate structure tags. Write in 
                 vocalLanguage: musicVocalLanguage.value,
                 customVocalLanguage: customVocalLanguage.value,
                 semantic: musicSemantic.value,
+                offload: musicOffload.value,
                 genres: [...selectedGenres.value],
                 moods: [...selectedMoods.value],
                 instruments: [...selectedInstruments.value],
@@ -2970,6 +2978,7 @@ Remember: 6-10 syllables per line, use all appropriate structure tags. Write in 
       musicShift,
       musicQuality,
       musicSemantic,
+      musicOffload,
       musicVocalLanguage,
       customVocalLanguage,
       songName,

@@ -3714,38 +3714,34 @@ def audio_quality_voices():
 # ACE-STEP MUSIC GENERATION
 # =============================================================================
 
-def _load_ace_step(quality="fast"):
+def _load_ace_step(quality="fast", offload_to_cpu=False):
     """Load or get cached ACE-Step v1.5 DiT handler.
 
     Args:
         quality: "fast" (v1.5 turbo, 2B) or "quality" (v1.5 XL turbo, 4B)
+        offload_to_cpu: Whether to offload model components to CPU between uses
     """
     global _ace_step_handlers
+    cache_key = f"{quality}_{offload_to_cpu}"
     with _ace_step_lock:
-        if quality in _ace_step_handlers:
-            return _ace_step_handlers[quality]
+        if cache_key in _ace_step_handlers:
+            return _ace_step_handlers[cache_key]
 
-        # Unload the other quality handler to free memory
-        other = "quality" if quality == "fast" else "fast"
-        if other in _ace_step_handlers:
-            logger.info(f"[ACE-Step] Unloading {other} handler to load {quality}")
-            del _ace_step_handlers[other]
-            gc.collect()
-            DeviceManager.free_memory()
+        # Unload any other handler to free memory (only one at a time)
+        for key in list(_ace_step_handlers.keys()):
+            logger.info(f"[ACE-Step] Unloading {key} handler to load {cache_key}")
+            del _ace_step_handlers[key]
+        gc.collect()
+        DeviceManager.free_memory()
 
         from acestep.handler import AceStepHandler
 
-        # Config for each quality mode
         if quality == "quality":
             config_path = "acestep-v15-xl-turbo"
             label = "XL Turbo (4B)"
-            dtype = torch.float16   # float16 for speed on XL
-            offload = False         # Keep on device — avoid CPU↔GPU shuffling
         else:
             config_path = "acestep-v15-turbo"
             label = "Turbo (2B)"
-            dtype = torch.float32   # float32 for turbo (small enough)
-            offload = (DeviceManager.get_device().type != "cuda")
 
         main_local = repo_local_dir(ACE_STEP_REPO)
         if not main_local.exists():
@@ -3780,19 +3776,10 @@ def _load_ace_step(quality="fast"):
             project_root=project_root,
             config_path=config_path,
             device=device_str,
-            offload_to_cpu=offload,
+            offload_to_cpu=offload_to_cpu,
         )
         if not success:
             raise RuntimeError(f"ACE-Step {label} init failed: {status_msg}")
-
-        # Force float16 for XL quality mode
-        if quality == "quality" and dtype == torch.float16:
-            try:
-                if hasattr(handler, 'dit') and handler.dit is not None:
-                    handler.dit = handler.dit.half()
-                    logger.info("[ACE-Step] XL model converted to float16")
-            except Exception as e:
-                logger.warning(f"[ACE-Step] float16 conversion failed: {e}")
 
         if is_mps:
             _original_load_model_context = handler._load_model_context
@@ -3812,8 +3799,8 @@ def _load_ace_step(quality="fast"):
             logger.info(f"ACE-Step {label}: MPS cache clearing patch applied")
 
         logger.info("ACE-Step: using stock tiled_decode (overlap-discard)")
-        _ace_step_handlers[quality] = handler
-        logger.info("ACE-Step v1.5 %s loaded (%s): %s", label, device_str, status_msg)
+        _ace_step_handlers[cache_key] = handler
+        logger.info("ACE-Step v1.5 %s loaded (%s, offload=%s): %s", label, device_str, offload_to_cpu, status_msg)
         return handler
 
 
@@ -3905,6 +3892,7 @@ def audio_music():
     instrumental = bool(data.get("instrumental", False))
     vocal_language = (data.get("vocal_language") or "en").strip()
     semantic = bool(data.get("semantic", False))
+    offload_to_cpu = bool(data.get("offload", False))  # CPU offload disabled by default
     auto_dl = bool(data.get("auto_download", False))
 
     # Memory check for semantic mode (LLM + DiT together need ~10GB)
@@ -3923,7 +3911,7 @@ def audio_music():
         prompt = f"{prompt}, {time_signature} time"
 
     # Log all music generation parameters for debugging
-    logger.info(f"[ACE-Step] Music generation params: quality={quality}, steps={steps}, duration={duration}, bpm={bpm}, "
+    logger.info(f"[ACE-Step] Music generation params: quality={quality}, offload={offload_to_cpu}, steps={steps}, duration={duration}, bpm={bpm}, "
                 f"guidance={guidance_scale}, seed={seed}, shift={shift}, instrumental={instrumental}, "
                 f"keyscale={keyscale}, vocal_language={vocal_language}, semantic={semantic}")
 
@@ -3938,7 +3926,7 @@ def audio_music():
         gc.collect()
         DeviceManager.free_memory()
 
-        dit_handler = _load_ace_step(quality=quality)
+        dit_handler = _load_ace_step(quality=quality, offload_to_cpu=offload_to_cpu)
 
         import random as _rng
         actual_seed = seed if seed >= 0 else _rng.randint(0, 2**31 - 1)
