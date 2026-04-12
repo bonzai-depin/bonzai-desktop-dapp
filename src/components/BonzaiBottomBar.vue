@@ -389,18 +389,17 @@
                 <input
                   v-model="privyEmail"
                   type="email"
-                  class="input privy-input"
+                  class="input privy-input is-large"
                   placeholder="you@example.com"
                   @keyup.enter="startPrivyEmail"
                   autofocus
                 />
                 <button
-                  class="button is-success is-fullwidth mt-4"
+                  class="button is-success is-fullwidth is-large mt-4"
                   @click="startPrivyEmail"
                   :disabled="isConnecting"
                   :class="{ 'is-loading': isConnecting }"
                 >
-                  <span class="material-symbols-outlined mr-2">mail</span>
                   Continue with Email
                 </button>
               </div>
@@ -418,26 +417,24 @@
                 <input
                   v-model="privyOtpCode"
                   type="text"
-                  class="input privy-input"
+                  class="input privy-input is-large"
                   placeholder="000000"
                   maxlength="6"
                   @keyup.enter="verifyPrivyOtp"
                   autofocus
                 />
                 <button
-                  class="button is-success is-fullwidth mt-4"
+                  class="button is-success is-fullwidth is-large mt-4"
                   @click="verifyPrivyOtp"
                   :disabled="isConnecting"
                   :class="{ 'is-loading': isConnecting }"
                 >
-                  <span class="material-symbols-outlined mr-2">verified</span>
                   Verify
                 </button>
                 <button
-                  class="button is-dark is-fullwidth mt-2"
+                  class="button is-dark is-fullwidth is-large mt-2"
                   @click="privyStep = 'email'"
                 >
-                  <span class="material-symbols-outlined mr-2">arrow_back</span>
                   Back
                 </button>
               </div>
@@ -450,19 +447,17 @@
               <!-- Social Login -->
               <div class="privy-social-buttons">
                 <button
-                  class="button is-dark is-fullwidth privy-social-btn"
+                  class="button is-dark is-fullwidth is-medium mt-3 privy-social-btn"
                   @click="loginWithSocial('google')"
                   :disabled="isConnecting"
                 >
-                  <span class="material-symbols-outlined mr-2">public</span>
                   Continue with Google
                 </button>
                 <button
-                  class="button is-dark is-fullwidth privy-social-btn"
+                  class="button is-dark is-fullwidth is-medium mt-3 privy-social-btn"
                   @click="loginWithSocial('apple')"
                   :disabled="isConnecting"
                 >
-                  <span class="material-symbols-outlined mr-2">laptop_mac</span>
                   Continue with Apple
                 </button>
               </div>

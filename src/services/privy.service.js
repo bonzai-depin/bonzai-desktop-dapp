@@ -58,8 +58,20 @@ async function initialize() {
     const PrivySDK = await import('@privy-io/js-sdk-core');
     const Privy = PrivySDK.default;
 
+    // Electron: use LocalStorage if available, fall back to InMemoryCache
+    let storage;
+    try {
+      storage = new PrivySDK.LocalStorage();
+      storage.put('__privy_test', true);
+      storage.del('__privy_test');
+    } catch {
+      console.warn('[Privy] localStorage not available, using InMemoryCache');
+      storage = new PrivySDK.InMemoryCache();
+    }
+
     privyClient = new Privy({
-      clientId: appId,
+      appId,
+      storage,
     });
 
     await privyClient.initialize();
