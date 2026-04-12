@@ -654,8 +654,18 @@ export const MODEL_REQUIREMENTS = {
     size: '~4 GB fast (2B) / ~18.8 GB quality (4B XL)',
     vram: '4 GB fast / 12 GB quality',
     description: 'AI music generation — Fast mode (v1.5 turbo, 2B params) or Quality mode (v1.5 XL turbo, 4B params, float16)',
-    llmRequired: 'llm_llama_3_1_8b',
-    llmNote: 'LLaMA 3.1 8B recommended for lyrics generation',
+  },
+
+  // Music Fast (2B only — for skills that need guaranteed fast music gen)
+  music_fast: {
+    name: 'ACE-Step v1.5 Fast',
+    type: 'audio',
+    pipeline: 'music',
+    endpoint: '/audio/music',
+    repo: 'ACE-Step/Ace-Step1.5',
+    size: '~4 GB',
+    vram: '4 GB',
+    description: 'Fast music generation (v1.5 turbo, 2B params)',
   },
 
   // Video Models
@@ -735,7 +745,7 @@ export const SKILL_MODEL_REQUIREMENTS = {
   'manga-to-anime-v1.0.0': ['llm_llama_3_1_8b', 'image_turbo', 'video_fast'],
   'hairstyle-studio-v1.0.0': ['llm_llama_3_1_8b', 'image_turbo'],
   'roleplay-companion-v1.0.0': ['llm_mythomax_13b', 'image_advanced', 'image_turbo'],
-  'live-streaming-v1.0.0': [], // No mandatory models — uses whatever LLM is loaded + optional media pipelines
+  'live-streaming-v1.0.0': ['image_turbo', 'audio_turbo', 'music_fast', 'video_fast'],
 };
 
 /**
@@ -4750,7 +4760,7 @@ export const liveStreamer = createSkillDefinition({
   hasCustomUI: true,
   requirements: {
     minLevel: 1,
-    requiredApis: [], // No mandatory APIs — uses whatever pipelines are available
+    requiredApis: ['image', 'audio'],
     requiredPermissions: [],
   },
   inputs: {
