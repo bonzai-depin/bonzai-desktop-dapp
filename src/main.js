@@ -1350,17 +1350,7 @@ ipcMain.handle("p2p-pipeline-infer", async (event, options) => {
       return { ok: false, error: "No model loaded. Load a model first." };
     }
 
-    // Unload node-llama-cpp model only on first pipeline request (session start).
-    // Once llama-server is running, node-llama-cpp stays unloaded — the pipeline
-    // session persists across messages until the user disables pipeline mode.
-    const { getActiveSession } = await getPipelineOrchestrator();
-    if (!getActiveSession() && (loadedModel || modelContext || modelSession)) {
-      console.log("[Pipeline] Unloading node-llama-cpp model to free GPU for llama-server...");
-      try { await unloadModel(); } catch (e) {
-        console.warn("[Pipeline] Model unload warning:", e.message);
-      }
-    }
-
+    // node-llama-cpp stays loaded — llama-server is a separate process
     const { runPipelineInference } = await getPipelineOrchestrator();
     const result = await runPipelineInference({
       modelPath: resolvedModelPath,
@@ -1639,13 +1629,7 @@ ipcMain.handle("inference-request", async (event, { pipeline, params }) => {
           modelPath = path.join(MODEL_DIR, currentLoadedModel.filename);
         }
 
-        // Only unload node-llama-cpp on first pipeline request (session start)
-        if (!activeSession && (loadedModel || modelContext || modelSession)) {
-          console.log("[Inference] Unloading node-llama-cpp for pipeline...");
-          try { await unloadModel(); } catch (e) {
-            console.warn("[Inference] Model unload warning:", e.message);
-          }
-        }
+        // node-llama-cpp stays loaded — llama-server is a separate process
 
         // Read selected providers and pass to orchestrator
         let selectedProvidersList = [];
