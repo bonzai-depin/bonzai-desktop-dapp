@@ -186,6 +186,7 @@
             style="height: 30px; line-height: 30px; text-transform: uppercase"
           >
             {{ currentModelName || "No Active Chat Model" }}
+            <span v-if="isPipelineModel" class="pipeline-mode-badge">PIPELINE</span>
           </span>
           <span
             v-if="alwaysLoaded"
@@ -562,6 +563,9 @@ const privyError = ref("");
 // Model state from shared store
 const currentModelName = computed(
   () => modelStore.state.current?.modelname || null,
+);
+const isPipelineModel = computed(
+  () => !!modelStore.state.current?.pipelineMode,
 );
 const alwaysLoaded = computed(() => modelStore.state.alwaysLoaded);
 
@@ -2128,6 +2132,20 @@ hr {
   background: rgba(255, 255, 255, 0.1) !important;
   border-color: rgba(255, 255, 255, 0.2) !important;
   color: #fff !important;
+}
+
+.pipeline-mode-badge {
+  display: inline-block;
+  font-size: 9px;
+  padding: 1px 6px;
+  border-radius: 3px;
+  background: rgba(72, 199, 142, 0.15);
+  color: #48c78e;
+  border: 1px solid rgba(72, 199, 142, 0.3);
+  font-weight: 800;
+  letter-spacing: 0.5px;
+  margin-left: 6px;
+  vertical-align: middle;
 }
 
 .privy-error-card {

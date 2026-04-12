@@ -1353,9 +1353,13 @@ ipcMain.handle("p2p-pipeline-infer", async (event, options) => {
     // Unload node-llama-cpp only when starting a new session
     const { getActiveSession } = await getPipelineOrchestrator();
     if (!getActiveSession() && (loadedModel || modelContext || modelSession)) {
+      const modelInfo = currentLoadedModel ? { ...currentLoadedModel } : null;
       console.log("[Pipeline] Unloading node-llama-cpp for new pipeline session...");
       try { await unloadModel(); } catch (e) {
         console.warn("[Pipeline] Model unload warning:", e.message);
+      }
+      if (mainWindow && !mainWindow.isDestroyed() && modelInfo) {
+        mainWindow.webContents.send("model-changed", { ...modelInfo, pipelineMode: true });
       }
     }
 
@@ -1640,9 +1644,18 @@ ipcMain.handle("inference-request", async (event, { pipeline, params }) => {
         // Unload node-llama-cpp only when starting a new session (frees GPU for llama-server).
         // Subsequent requests reuse the active session — no unload needed.
         if (!activeSession && (loadedModel || modelContext || modelSession)) {
+          // Preserve model info before unloading so the bottom bar can show it
+          const modelInfo = currentLoadedModel ? { ...currentLoadedModel } : null;
           console.log("[Inference] Unloading node-llama-cpp for new pipeline session...");
           try { await unloadModel(); } catch (e) {
             console.warn("[Inference] Model unload warning:", e.message);
+          }
+          // Notify renderer that pipeline has the model (not "No Active Chat Model")
+          if (mainWindow && !mainWindow.isDestroyed() && modelInfo) {
+            mainWindow.webContents.send("model-changed", {
+              ...modelInfo,
+              pipelineMode: true,
+            });
           }
         }
 

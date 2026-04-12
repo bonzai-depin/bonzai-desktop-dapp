@@ -1185,7 +1185,13 @@ watch(pipelineLocalTest, async (enabled) => {
 });
 
 // Persist pipeline settings
-watch(pipelineEnabled, (v) => window.electronAPI.store.set("p2p.pipeline.enabled", v));
+watch(pipelineEnabled, async (v) => {
+  await window.electronAPI.store.set("p2p.pipeline.enabled", v);
+  // End pipeline session when disabled — llama-server stops, model can be reloaded
+  if (!v && window.electronAPI.p2pPipelineCancel) {
+    await window.electronAPI.p2pPipelineCancel();
+  }
+});
 watch(pipelineLocalProportion, (v) => window.electronAPI.store.set("p2p.pipeline.localProportion", v));
 watch(pipelineDPEnabled, (v) => window.electronAPI.store.set("p2p.pipeline.dpEnabled", v));
 watch(pipelineEpsilon, (v) => window.electronAPI.store.set("p2p.pipeline.epsilon", v));
@@ -1603,6 +1609,11 @@ const loadSettings = async () => {
 // Save network mode when changed
 watch(networkMode, async (newMode) => {
   await window.electronAPI.store.set("p2p.networkMode", newMode);
+
+  // End pipeline session when leaving consumer mode
+  if (newMode !== 'consumer' && window.electronAPI.p2pPipelineCancel) {
+    await window.electronAPI.p2pPipelineCancel();
+  }
 
   // Auto-stop P2P when switching to local or consumer mode
   if (
