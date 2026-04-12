@@ -1054,6 +1054,9 @@ function requireAuthLevel(minLevel) {
 // P2P Network (libp2p) - Distributed Inference
 // ─────────────────────────────────────────────────────────────────────────────
 
+// Provider concurrency: one consumer request at a time
+let _providerBusy = false;
+
 /**
  * Start the P2P node for distributed inference
  * @param {Object} options Configuration options
@@ -1073,88 +1076,94 @@ ipcMain.handle("p2p-start", async (_event, options = {}) => {
     node.onInferenceRequest(async (request, remotePeer) => {
       console.log(`[P2P] Inference request from ${remotePeer}:`, request.pipeline);
 
-      // Check if this is self-inference or LAN inference — both are FREE
+      // Concurrency guard — one consumer at a time
+      if (_providerBusy) {
+        console.log(`[P2P] Provider busy, rejecting ${remotePeer.slice(0, 12)}`);
+        return { ok: false, error: "provider_busy", detail: "Provider is currently serving another consumer. Try again shortly." };
+      }
+
+      // ── Determine payment requirements ──
       const node = getP2PNode();
-      if (isSelfInference(remotePeer, localPeerId) || node.isLANPeer(remotePeer)) {
-        const inferenceType = node.isLANPeer(remotePeer) ? 'LAN' : 'self';
-        console.log(`[P2P] ${inferenceType} inference from ${remotePeer.slice(0, 12)}..., processing for free`);
-        try {
-          const result = await routeInferenceRequest(request);
-          return { ok: true, result, lanInference: inferenceType === 'LAN', selfInference: inferenceType === 'self' };
-        } catch (err) {
-          return { ok: false, error: "inference_failed", detail: err.message };
+      const isFreeRequest = isSelfInference(remotePeer, localPeerId)
+        || node.isLANPeer(remotePeer)
+        || store.get("p2p.pricingCurrency", "ETH") === "FREE";
+
+      // Paid request — validate payment before proceeding
+      let paymentInfo = null;
+      if (!isFreeRequest) {
+        const providerId = store.get("p2p.providerId", null);
+        const pricePerToken = store.get("p2p.pricePerToken", "1000000000000");
+
+        if (!request.payment) {
+          const requiredAmount = calculatePaymentAmount(request, pricePerToken);
+          return {
+            ok: false,
+            error: "payment_required",
+            status: 402,
+            payment: createPaymentRequest({ provider: providerId, amount: requiredAmount, service: request.pipeline }),
+          };
         }
-      }
 
-      // Get provider settings
-      const providerId = store.get("p2p.providerId", null);
-      const pricingCurrency = store.get("p2p.pricingCurrency", "ETH");
-
-      // Free mode — process without payment
-      if (pricingCurrency === "FREE") {
-        console.log(`[P2P] Free provider mode, processing without payment for ${remotePeer.slice(0, 12)}...`);
-        try {
-          const result = await routeInferenceRequest(request);
-          return { ok: true, result, freeInference: true };
-        } catch (err) {
-          return { ok: false, error: "inference_failed", detail: err.message };
-        }
-      }
-
-      const pricePerToken = store.get("p2p.pricePerToken", "1000000000000"); // 0.000001 ETH per 1000 tokens
-
-      // Check if this is a paid request (x402)
-      if (!request.payment) {
-        // Calculate required amount based on request
-        const requiredAmount = calculatePaymentAmount(request, pricePerToken);
-
-        // Return 402 Payment Required with x402 payment request
-        const paymentRequest = createPaymentRequest({
-          provider: providerId,
-          amount: requiredAmount,
-          service: request.pipeline,
+        const validation = await validatePayment(request.payment, {
+          expectedProviderId: providerId,
+          minAmount: calculatePaymentAmount(request, pricePerToken),
+          pipeline: request.pipeline,
         });
 
-        return {
-          ok: false,
-          error: "payment_required",
-          status: 402,
-          payment: paymentRequest,
-        };
+        if (!validation.valid) {
+          return { ok: false, error: "payment_invalid", detail: validation.error, status: 402 };
+        }
+        paymentInfo = { consumer: validation.consumer, amount: validation.amount };
       }
 
-      // Validate the x402 payment signature
-      const validation = await validatePayment(request.payment, {
-        expectedProviderId: providerId,
-        minAmount: calculatePaymentAmount(request, pricePerToken),
-        pipeline: request.pipeline,
-      });
-
-      if (!validation.valid) {
-        console.log(`[P2P] Payment validation failed: ${validation.error}`);
-        return {
-          ok: false,
-          error: "payment_invalid",
-          detail: validation.error,
-          status: 402,
-        };
-      }
-
-      console.log(`[P2P] Payment validated from ${validation.consumer}, amount: ${validation.amount}`);
-
-      // Payment valid - process the inference request
+      // ── Acquire lock and process ──
+      _providerBusy = true;
       try {
+        // Hot-swap LLM model if consumer requests a different one
+        const isLLM = request.pipeline === "llm" || request.pipeline?.startsWith("llm_");
+        if (isLLM && request.params?.model) {
+          const requestedModel = request.params.model.toLowerCase();
+          const currentFilename = (currentLoadedModel?.filename || "").toLowerCase();
+
+          // Check if the requested model name matches the loaded model
+          if (currentFilename && !currentFilename.includes(requestedModel.replace(/\s+/g, '-').toLowerCase())) {
+            // Find a matching .gguf file in MODEL_DIR
+            const files = fs.readdirSync(MODEL_DIR).filter(f => f.endsWith('.gguf') && !f.includes('-part'));
+            const match = files.find(f => {
+              const lower = f.toLowerCase();
+              // Match by model name: "Qwen 3.5 0.8B" → "qwen3.5-0.8b"
+              const normalized = requestedModel.replace(/[\s.]+/g, '').toLowerCase();
+              return lower.includes(normalized) || lower.replace(/[-_.]/g, '').includes(normalized);
+            });
+
+            if (match) {
+              console.log(`[P2P] Hot-swapping model: ${currentFilename} → ${match}`);
+              try {
+                await loadModel(null, { filename: match, forceReload: true });
+                console.log(`[P2P] Model hot-swap complete: ${match}`);
+              } catch (err) {
+                console.error(`[P2P] Model hot-swap failed: ${err.message}`);
+                return { ok: false, error: "model_swap_failed", detail: `Cannot load requested model: ${err.message}` };
+              }
+            } else {
+              console.warn(`[P2P] Requested model "${requestedModel}" not found in ${MODEL_DIR}`);
+              return { ok: false, error: "model_not_available", detail: `Model "${requestedModel}" is not downloaded on this provider.` };
+            }
+          }
+        }
+
         const result = await routeInferenceRequest(request);
-        return {
-          ok: true,
-          result,
-          payment: {
-            consumer: validation.consumer,
-            amount: validation.amount,
-          },
-        };
+
+        const response = { ok: true, result };
+        if (node.isLANPeer(remotePeer)) response.lanInference = true;
+        if (isSelfInference(remotePeer, localPeerId)) response.selfInference = true;
+        if (paymentInfo) response.payment = paymentInfo;
+        if (isFreeRequest) response.freeInference = true;
+        return response;
       } catch (err) {
         return { ok: false, error: "inference_failed", detail: err.message };
+      } finally {
+        _providerBusy = false;
       }
     });
 
@@ -1162,6 +1171,16 @@ ipcMain.handle("p2p-start", async (_event, options = {}) => {
     node.onHealthRequest(async (request, remotePeer) => {
       const pipelines = store.get("p2p.pipelines", []);
       const pricingCurrency = store.get("p2p.pricingCurrency", "ETH");
+
+      // Scan MODEL_DIR for available LLM models (.gguf files)
+      let availableModels = [];
+      try {
+        const files = fs.readdirSync(MODEL_DIR);
+        availableModels = files
+          .filter(f => f.endsWith('.gguf') && !f.includes('-part'))
+          .map(f => f.toLowerCase());
+      } catch { /* */ }
+
       return {
         ok: true,
         peerId: node.getPeerId(),
@@ -1170,6 +1189,9 @@ ipcMain.handle("p2p-start", async (_event, options = {}) => {
         free: pricingCurrency === "FREE",
         version: app.getVersion(),
         uptime: process.uptime(),
+        availableModels,
+        currentModel: currentLoadedModel?.filename || null,
+        busy: _providerBusy,
       };
     });
 
@@ -1699,17 +1721,42 @@ ipcMain.handle("inference-request", async (event, { pipeline, params }) => {
     if (providersRaw && node?.isStarted) {
       const providers = typeof providersRaw === "string" ? JSON.parse(providersRaw) : providersRaw;
       if (Array.isArray(providers) && providers.length > 0) {
-        // Randomize provider selection
-        const shuffled = [...providers].sort(() => Math.random() - 0.5);
+        const isLLM = pipeline === "llm" || pipeline.startsWith("llm_");
+        const requestedModel = isLLM ? (params?.model || currentLoadedModel?.filename || "").toLowerCase() : null;
+
+        // For LLM: filter to providers that have the requested model downloaded
+        // For non-LLM: all providers are eligible
+        let eligible = providers;
+        if (isLLM && requestedModel) {
+          eligible = providers.filter(p => {
+            if (!p.availableModels || p.availableModels.length === 0) return true; // No model info = assume capable
+            const normalizedReq = requestedModel.replace(/[\s.]+/g, '').toLowerCase();
+            return p.availableModels.some(m =>
+              m.includes(normalizedReq) || m.replace(/[-_.]/g, '').includes(normalizedReq)
+            );
+          });
+          if (eligible.length === 0) {
+            console.warn(`[Inference] No providers have model "${requestedModel}", falling back to local`);
+          }
+        }
+
+        // Randomize and try each eligible provider
+        const shuffled = [...eligible].sort(() => Math.random() - 0.5);
+        // Include model name in request so provider can hot-swap
+        const enrichedParams = isLLM && requestedModel ? { ...params, model: requestedModel } : params;
 
         for (const provider of shuffled) {
           try {
             console.log(`[Inference] Routing ${pipeline} to ${provider.peerId.slice(0, 12)}...`);
-            const response = await node.sendInferenceRequest(provider.peerId, { pipeline, params });
+            const response = await node.sendInferenceRequest(provider.peerId, { pipeline, params: enrichedParams });
             if (response?.ok) {
               return { ok: true, result: response.result, remote: true, peerId: provider.peerId, free: !!provider.free };
             }
-            console.warn(`[Inference] Provider ${provider.peerId.slice(0, 12)} failed, trying next...`);
+            if (response?.error === "provider_busy") {
+              console.log(`[Inference] Provider ${provider.peerId.slice(0, 12)} busy, trying next...`);
+              continue;
+            }
+            console.warn(`[Inference] Provider ${provider.peerId.slice(0, 12)} failed: ${response?.error || 'unknown'}`);
           } catch (err) {
             console.warn(`[Inference] Provider ${provider.peerId.slice(0, 12)} error: ${err.message}`);
           }

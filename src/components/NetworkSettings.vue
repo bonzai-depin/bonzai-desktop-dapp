@@ -415,6 +415,19 @@
                 <span>{{ truncateId(provider.peerId) }}</span>
               </div>
             </div>
+            <div class="provider-pipelines" v-if="provider.availableModels?.length">
+              <span
+                v-for="m in provider.availableModels.slice(0, 4)"
+                :key="m"
+                class="pipeline-tag"
+                style="font-size: 10px"
+              >
+                {{ m.replace('.gguf', '') }}
+              </span>
+              <span v-if="provider.availableModels.length > 4" class="more-tag">
+                +{{ provider.availableModels.length - 4 }}
+              </span>
+            </div>
             <div class="provider-pipelines" v-if="provider.pipelines?.length">
               <span
                 v-for="p in provider.pipelines.slice(0, 8)"
