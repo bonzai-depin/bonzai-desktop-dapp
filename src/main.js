@@ -1769,8 +1769,15 @@ ipcMain.handle("inference-request", async (event, { pipeline, params }) => {
         });
         return { ok: true, result, remote: true, pipeline: true };
       } catch (err) {
-        console.warn(`[Inference] Pipeline failed: ${err.message}, falling back to provider`);
-        // Fall through to provider selection
+        console.warn(`[Inference] Pipeline failed: ${err.message}, falling back`);
+        // Reload model if it was unloaded for the pipeline attempt
+        if (!modelSession && modelPath) {
+          console.log("[Inference] Reloading model after pipeline failure...");
+          try { await loadModel(null, { filename: path.basename(modelPath) }); } catch (e) {
+            console.warn("[Inference] Model reload failed:", e.message);
+          }
+        }
+        // Fall through to provider selection or local
       }
     }
 

@@ -167,32 +167,8 @@ async function ensureSession(modelPath, privacyConfig, onStatus) {
   let rpcAddresses;
   let tensorSplit;
 
-  if (config.localTest) {
-    status('Local test mode — connecting to localhost:50052...');
-    session.status = 'connecting';
-
-    // Verify rpc-server is reachable
-    try {
-      const net = await import('net');
-      await new Promise((resolve, reject) => {
-        const sock = net.default.createConnection({ host: '127.0.0.1', port: 50052 }, () => {
-          sock.destroy();
-          resolve();
-        });
-        sock.on('error', reject);
-        sock.setTimeout(3000, () => { sock.destroy(); reject(new Error('timeout')); });
-      });
-    } catch {
-      throw new Error(
-        'Local test rpc-server not reachable on port 50052. ' +
-        'Enable "Local Test Mode" in NetworkSettings first.'
-      );
-    }
-
-    rpcAddresses = '127.0.0.1:50052';
-    tensorSplit = `${localPct},${remotePct}`;
-    status(`Local test: tensor-split ${tensorSplit} (${meta.n_layer} layers)`);
-  } else {
+  // Unified shard discovery: check local rpc-server, LAN peers, selected providers, on-chain registry
+  {
     // P2P mode — use selected providers, LAN peers, or local rpc-server
     status('Discovering shard providers...');
     session.status = 'discovering';

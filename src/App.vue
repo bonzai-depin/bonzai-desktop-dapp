@@ -123,7 +123,7 @@
     ></progress>
   </div>
 
-  <div id="bonzai" class="columns">
+  <div id="bonzai" class="columns is-gapless">
     <div class="column is-4 is-paddingless">
       <div class="models tabs menu">
         <ul class="models__list">
@@ -646,6 +646,8 @@ body {
   -webkit-user-select: none;
   box-sizing: border-box !important;
   overflow: hidden;
+  height: 100%;
+  margin: 0;
 }
 
 /* Suppress scrollbars on all generative views — content scrolls via .models__deployment-install */
@@ -667,6 +669,7 @@ body {
   padding: 0 !important;
   position: relative;
   text-align: center;
+  min-height: 100%;
 }
 
 /* ═══════════════════════════════════════════════════════════════════════════
