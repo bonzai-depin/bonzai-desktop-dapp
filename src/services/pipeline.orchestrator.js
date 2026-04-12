@@ -193,36 +193,66 @@ async function ensureSession(modelPath, privacyConfig, onStatus) {
     tensorSplit = `${localPct},${remotePct}`;
     status(`Local test: tensor-split ${tensorSplit} (${meta.n_layer} layers)`);
   } else {
-    // P2P mode — check LAN peers first (free, low latency), then on-chain registry
+    // P2P mode — use selected providers, LAN peers, or local rpc-server
     status('Discovering shard providers...');
     session.status = 'discovering';
 
-    // Check for LAN shard providers via mDNS (free, direct connection)
+    // 1. Check selected providers passed from inference handler or discovered via mDNS
     const p2pNode = getP2PNode();
-    const lanPeers = p2pNode?.getLANPeers() || [];
-    const lanShardPeers = lanPeers.filter(p => p.lanAddress);
+    const selectedProviders = config.selectedProviders || [];
+
+    // Filter to LAN providers with known addresses
+    const lanShardPeers = selectedProviders.filter(p => p.lanAddress);
+
+    // Also check auto-discovered LAN peers not in selection
+    const discoveredLAN = (p2pNode?.getLANPeers() || []).filter(p => p.lanAddress);
+    for (const lp of discoveredLAN) {
+      if (!lanShardPeers.some(s => s.peerId === lp.peerId)) {
+        lanShardPeers.push(lp);
+      }
+    }
 
     if (lanShardPeers.length > 0) {
       status(`Found ${lanShardPeers.length} LAN shard provider(s) (free, direct connection)`);
-      // Connect directly to LAN rpc-server via IP — no tunnel, no payment
       rpcAddresses = lanShardPeers.map(p => `${p.lanAddress}:50052`).join(',');
       tensorSplit = `${localPct},${remotePct}`;
       status(`LAN pipeline: tensor-split ${tensorSplit}, rpc ${rpcAddresses}`);
     } else {
-      // Fall back to on-chain provider registry
-      let candidatePeers;
+      // 2. Check if local rpc-server is running (self-serve: same machine is both consumer + provider)
+      let localRpcAvailable = false;
       try {
-        candidatePeers = await getShardProviders(4, 1024);
-      } catch {
-        candidatePeers = [];
-      }
+        const net = await import('net');
+        await new Promise((resolve, reject) => {
+          const sock = net.default.createConnection({ host: '127.0.0.1', port: 50052 }, () => {
+            sock.destroy();
+            resolve();
+          });
+          sock.on('error', reject);
+          sock.setTimeout(2000, () => { sock.destroy(); reject(new Error('timeout')); });
+        });
+        localRpcAvailable = true;
+      } catch { /* */ }
 
-      if (candidatePeers.length === 0) {
-        throw new Error(
-          'No shard providers available. Enable "Local Test Mode" to test on this machine, ' +
-          'or connect to a LAN provider, or ensure remote providers are online.'
-        );
-      }
+      if (localRpcAvailable) {
+        status('Using local rpc-server on :50052 (self-serve)');
+        rpcAddresses = '127.0.0.1:50052';
+        tensorSplit = `${localPct},${remotePct}`;
+        status(`Self-serve pipeline: tensor-split ${tensorSplit}`);
+      } else {
+        // 3. Fall back to on-chain provider registry
+        let candidatePeers;
+        try {
+          candidatePeers = await getShardProviders(4, 1024);
+        } catch {
+          candidatePeers = [];
+        }
+
+        if (candidatePeers.length === 0) {
+          throw new Error(
+            'No shard providers available. Start your node in Provider mode, ' +
+            'connect to a LAN provider, or ensure remote providers are online.'
+          );
+        }
 
       status(`Found ${candidatePeers.length} shard provider(s)`);
       session.status = 'planning';
@@ -253,6 +283,7 @@ async function ensureSession(modelPath, privacyConfig, onStatus) {
       }
       rpcAddresses = session.tunnels.map((t) => `127.0.0.1:${t.localPort}`).join(',');
       status(`Tunnels established: ${rpcAddresses}`);
+      }
     }
   }
 

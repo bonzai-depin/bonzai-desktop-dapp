@@ -402,14 +402,21 @@ class BonzaiP2PNode {
       );
 
       if (lanAddr) {
+        const isNew = !this.lanPeers.has(peerId);
+        const lanIP = lanAddr.match(/\/ip4\/([\d.]+)\//)?.[1] || null;
         this.lanPeers.set(peerId, {
           peerId,
           multiaddrs: addrStrings,
-          lanAddress: lanAddr.match(/\/ip4\/([\d.]+)\//)?.[1] || null,
+          lanAddress: lanIP,
           discoveredAt: Date.now(),
           free: true,
         });
-        console.log(`[libp2p] Discovered LAN peer: ${peerId} at ${this.lanPeers.get(peerId).lanAddress}`);
+        console.log(`[libp2p] Discovered LAN peer: ${peerId} at ${lanIP}`);
+
+        // Notify main process of new LAN peer for desktop notification
+        if (isNew && this._onLANPeerDiscovered) {
+          this._onLANPeerDiscovered(peerId, lanIP);
+        }
       } else {
         console.log('[libp2p] Discovered peer:', peerId);
       }

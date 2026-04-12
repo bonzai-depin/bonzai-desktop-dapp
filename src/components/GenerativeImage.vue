@@ -478,6 +478,10 @@
                         "
                       />
                       <hr />
+                      <span v-if="inference.networkMode && inference.networkMode !== 'local'" class="network-mode-tag" :class="'nm-' + inference.networkMode" style="margin-bottom: 8px; display: inline-flex">
+                        <span class="material-symbols-outlined" style="font-size: 12px">{{ inference.networkMode === 'private' ? 'lock' : 'cloud' }}</span>
+                        {{ inference.networkMode === 'private' ? 'Private' : 'Remote' }}
+                      </span>
                       <button
                         class="button is-medium is-success copy is-pulled-right ml-5 mr-0 p-0 pl-1 pr-4"
                         @click="downloadImage(inference._originalIndex)"
@@ -596,6 +600,7 @@ import { v4 as uuid } from "uuid";
 import useClipboard from "vue-clipboard3";
 import axios from "axios";
 import { io } from "socket.io-client";
+import { useInferenceRouter } from "../composables/useInferenceRouter.js";
 
 // ═══════════════════════════════════════════════════════════════════════════
 // PERFORMANCE UTILITIES
@@ -649,6 +654,8 @@ export default {
   name: "GenerativeImage",
   components: { AccessRequirements, MintModal },
   setup() {
+    const { inferenceRequest } = useInferenceRouter();
+
     // ------------ injected from App -------
     const goAnimateToVideo = inject("goAnimateToVideo", () => {});
 
@@ -1442,9 +1449,12 @@ export default {
     // Socket is managed by the shared generationStore
 
     // ------------ actions -----------------
+    let _lastRoutingMode = 'local';
+
     const sendMessage = async (prompt) => {
       if (!prompt) return;
       if (!canGenerateWithAccess.value) return;
+      _lastRoutingMode = 'local';
 
       // Edit modes require an input image
       if (isEditMode.value && !uploadedImageBase64.value) return;
@@ -1515,6 +1525,7 @@ export default {
             model: modelName,
             pipeline: pipelineName,
             elapsedMs,
+            networkMode: _lastRoutingMode,
           };
           // Update shallowRef by replacing array (triggers reactivity)
           inferences.value = [...inferences.value, newInference];
@@ -1530,6 +1541,7 @@ export default {
             steps: form.steps,
             elapsed: elapsedMs / 1000,
             source: 'bonzai',
+            networkMode: _lastRoutingMode,
           });
 
           form.prompt = "";
@@ -1554,6 +1566,20 @@ export default {
     ) => {
       try {
         isLoading.value = true;
+
+        // Route through unified inference handler (handles local/consumer/provider)
+        if (payload.pipeline) {
+          const routed = await inferenceRequest(payload.pipeline, payload);
+          if (routed?.ok && routed.remote && routed.result) {
+            _lastRoutingMode = routed.pipeline ? 'private' : 'remote';
+            setBlocked("image", false);
+            stopGeneration("image");
+            await onSuccess({ status: 200, data: routed.result });
+            return;
+          }
+          // If local or failed, fall through to direct Flask call (supports download tracking)
+        }
+
         const headers = {};
         const res = await axios.post(url, payload, {
           headers,
@@ -2122,5 +2148,29 @@ ol.chat li {
     transform: scale(1.1);
     transform-origin: bottom left;
   }
+}
+
+.network-mode-tag {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  padding: 1px 8px;
+  border-radius: 4px;
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.nm-remote {
+  background: rgba(62, 142, 208, 0.15);
+  color: #3e8ed0;
+  border: 1px solid rgba(62, 142, 208, 0.3);
+}
+
+.nm-private {
+  background: rgba(72, 199, 142, 0.12);
+  color: #48c78e;
+  border: 1px solid rgba(72, 199, 142, 0.3);
 }
 </style>

@@ -186,10 +186,17 @@
                       </span>
                     </template>
 
-                    <!-- Paid skill, not purchased, wallet not connected: Connect Wallet -->
+                    <!-- Paid skill, not purchased, wallet not connected: Preview + Connect Wallet -->
                     <template v-else-if="!web3Store.isConnected">
                       <button
-                        class="button is-success is-medium"
+                        class="button is-info is-medium"
+                        @click="previewSkill(skill)"
+                      >
+                        <span class="material-symbols-outlined mr-1">visibility</span>
+                        Preview
+                      </button>
+                      <button
+                        class="button is-success is-medium ml-2"
                         @click="web3Store.connect()"
                       >
                         <span class="material-symbols-outlined mr-2">wallet</span>
@@ -201,10 +208,17 @@
                       </span>
                     </template>
 
-                    <!-- Paid skill, not purchased, wallet connected: Purchase -->
+                    <!-- Paid skill, not purchased, wallet connected: Preview + Purchase -->
                     <template v-else>
                       <button
-                        class="button is-warning is-medium"
+                        class="button is-info is-medium"
+                        @click="previewSkill(skill)"
+                      >
+                        <span class="material-symbols-outlined mr-1">visibility</span>
+                        Preview
+                      </button>
+                      <button
+                        class="button is-warning is-medium ml-2"
                         :class="{ 'is-loading': purchasingSkillId === skill.id }"
                         :disabled="purchasingSkillId === skill.id"
                         @click.stop="purchaseSkill(skill)"
@@ -386,6 +400,45 @@
                 </div>
               </div>
 
+              <!-- PURCHASE GATE (preview mode for unpurchased paid skills) -->
+              <div
+                v-if="isPreviewMode && selectedSkill && !isFreeSkill(selectedSkill) && !isSkillPurchased(selectedSkill.id)"
+                class="preview-purchase-gate"
+              >
+                <div class="preview-gate-content">
+                  <span class="material-symbols-outlined preview-gate-icon">lock</span>
+                  <h3 class="fira-sans-condensed-black-italic is-size-4 has-text-white">
+                    Preview Mode
+                  </h3>
+                  <p class="preview-gate-desc">
+                    Purchase this skill to unlock full access.
+                  </p>
+                  <div class="preview-gate-actions">
+                    <template v-if="!web3Store.isConnected">
+                      <button class="button is-success" @click="web3Store.connect()">
+                        <span class="material-symbols-outlined mr-2">wallet</span>
+                        Connect Wallet
+                      </button>
+                    </template>
+                    <template v-else>
+                      <button
+                        class="button is-warning"
+                        :class="{ 'is-loading': purchasingSkillId === selectedSkill.id }"
+                        :disabled="purchasingSkillId === selectedSkill.id"
+                        @click="purchaseSkill(selectedSkill)"
+                      >
+                        <span class="material-symbols-outlined mr-1">shopping_cart</span>
+                        Purchase
+                      </button>
+                    </template>
+                    <span class="skill-price-tag ml-3">
+                      <span class="skill-price-amount">{{ selectedSkill.price }}</span>
+                      <span class="skill-price-currency">USDC</span>
+                    </span>
+                  </div>
+                </div>
+              </div>
+
               <!-- POLYMARKET SKILL (modular component) -->
               <div
                 v-if="selectedSkillId === 'polymarket-top-performers-v1.0.0'"
@@ -450,6 +503,18 @@
                   @card-scanned="
                     showNotification('Card analysis complete!', 'success')
                   "
+                  @status-update="loadingMessage = $event"
+                />
+              </div>
+
+              <!-- LIVE STREAMER PLAYGROUND (modular component) -->
+              <div
+                v-else-if="selectedSkillId === 'live-streaming-v1.0.0'"
+                class="meditation-interface"
+              >
+                <LiveStreamerSkill
+                  :skill="selectedSkill"
+                  :model-available="isModelAvailable"
                   @status-update="loadingMessage = $event"
                 />
               </div>
@@ -951,6 +1016,7 @@ import DSLASkill from "./skills/DSLASkill.vue";
 import MeditationForgeSkill from "./skills/MeditationForgeSkill.vue";
 import VideoCaptioningSkill from "./skills/VideoCaptioningSkill.vue";
 import TCGScannerSkill from "./skills/TCGScannerSkill.vue";
+import LiveStreamerSkill from "./skills/LiveStreamerSkill.vue";
 import BrowseAgents from "./skills/BrowseAgents.vue";
 import {
   getSkillModelRequirements,
@@ -1023,6 +1089,7 @@ export default {
     MeditationForgeSkill,
     VideoCaptioningSkill,
     TCGScannerSkill,
+    LiveStreamerSkill,
     BrowseAgents,
   },
   setup() {
@@ -2107,8 +2174,16 @@ Return ONLY the JSON, no explanation.`;
       }
     };
 
+    const isPreviewMode = ref(false);
+
     const runSkill = (skill) => {
-      // Always navigate to skill UI - access gating happens inside the skill component
+      isPreviewMode.value = false;
+      selectSkillById(skill.id);
+      activeTab.value = "my-skills";
+    };
+
+    const previewSkill = (skill) => {
+      isPreviewMode.value = true;
       selectSkillById(skill.id);
       activeTab.value = "my-skills";
     };
@@ -2725,6 +2800,8 @@ Provide a concise analysis covering:
       openUnlockModal,
       refreshSkills,
       runSkill,
+      previewSkill,
+      isPreviewMode,
       availableSkills,
       isSkillPurchased,
       isFreeSkill,
@@ -3187,6 +3264,46 @@ p {
   color: rgba(255, 255, 255, 0.5);
   line-height: 1;
   padding-top: 0.1em;
+}
+
+/* Preview Purchase Gate */
+.preview-purchase-gate {
+  position: sticky;
+  top: 0;
+  z-index: 50;
+  margin-bottom: 16px;
+}
+
+.preview-gate-content {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding: 16px 24px;
+  background: rgba(255, 167, 38, 0.08);
+  border: 1px solid rgba(255, 167, 38, 0.3);
+  border-radius: 4px;
+  backdrop-filter: blur(12px);
+}
+
+.preview-gate-icon {
+  font-size: 28px;
+  color: rgba(255, 167, 38, 0.7);
+}
+
+.preview-gate-desc {
+  font-size: 13px;
+  color: rgba(255, 255, 255, 0.5);
+  margin: 0;
+}
+
+.preview-gate-actions {
+  display: flex;
+  align-items: center;
+  margin-left: auto;
+}
+
+.preview-gate-actions .button {
+  box-shadow: none;
 }
 
 .skill-inputs .field {

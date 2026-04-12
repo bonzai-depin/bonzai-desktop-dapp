@@ -350,6 +350,7 @@ async function loadData() {
     savedSessions = await window.electronAPI.store.get(STORAGE_KEY, {});
     channelMappings = await window.electronAPI.store.get(CHANNEL_MAPPING_KEY, {});
     networkSettings = await window.electronAPI.store.get(NETWORK_SETTINGS_KEY, networkSettings);
+
     loaded = true;
     console.log(`[OpenClaw] Loaded ${Object.keys(savedSessions).length} sessions, ${Object.keys(channelMappings).length} channels`);
   } catch (e) {
@@ -605,14 +606,21 @@ async function isSelfInference(remotePeerId) {
  * Execute inference - routes to local or remote based on settings
  */
 async function executeInference(channelId, pipeline, params) {
-  const remotePeerId = shouldUseRemoteProvider(channelId, pipeline);
-
-  if (remotePeerId) {
-    // Remote inference via P2P
-    return executeRemoteInference(remotePeerId, pipeline, params);
+  // Use unified inference router — respects network mode (local/consumer/provider)
+  if (window.electronAPI?.inferenceRequest) {
+    try {
+      const result = await window.electronAPI.inferenceRequest(pipeline, params);
+      if (result?.ok && result.result) return result.result;
+    } catch (e) {
+      console.warn(`[OpenClaw] Unified inference failed for ${pipeline}, falling back:`, e.message);
+    }
   }
 
-  // Local inference
+  // Fallback: legacy direct routing
+  const remotePeerId = shouldUseRemoteProvider(channelId, pipeline);
+  if (remotePeerId) {
+    return executeRemoteInference(remotePeerId, pipeline, params);
+  }
   return executeLocalInference(pipeline, params);
 }
 
@@ -1065,150 +1073,61 @@ function parseCommand(message) {
  * Handle !network commands for P2P provider discovery and selection
  */
 async function handleNetworkCommand(channelId, args) {
-  const subcommand = args[0]?.toLowerCase();
-  const mapping = getChannelMapping(channelId);
+  // Single command — show full network status
+  const status = await getNetworkStatus();
+  const networkMode = await window.electronAPI?.store?.get('p2p.networkMode', 'local');
+  const pipelineEnabled = await window.electronAPI?.store?.get('p2p.pipeline.enabled', false);
+  const providersRaw = await window.electronAPI?.store?.get('p2p.selectedProviders', '[]');
+  const providers = typeof providersRaw === 'string' ? JSON.parse(providersRaw) : (providersRaw || []);
 
-  switch (subcommand) {
-    case 'status': {
-      const status = await getNetworkStatus();
-      if (!status.started) {
-        return {
-          text: `**Network Status: Offline**
-Mode: ${networkSettings.mode}
+  // Mode description
+  let modeSection;
+  if (networkMode === 'consumer') {
+    modeSection = `Mode: **Consumer**${pipelineEnabled ? ' — Private Pipeline (LLM parallelism)' : ''}`;
+  } else if (networkMode === 'provider') {
+    modeSection = 'Mode: **Provider** — serving inference + RPC shards';
+  } else {
+    modeSection = 'Mode: **Local** — all inference on this machine';
+  }
 
-P2P node is not running. Use \`!bonzai network start\` to connect.`,
-        };
-      }
-      return {
-        text: `**Network Status: Online**
-Mode: ${networkSettings.mode}
+  // P2P status
+  let p2pSection;
+  if (status.started) {
+    p2pSection = `P2P: **Online**
 Peer ID: \`${status.peerId}\`
 Connected Peers: ${status.connectedPeers || 0}
-NAT Status: ${status.natStatus || 'unknown'}
-Using Relay: ${status.isUsingRelay ? 'Yes' : 'No'}
-
-Current Provider: ${mapping.network.provider || 'local'}`,
-      };
-    }
-
-    case 'start': {
-      const result = await ensureP2PStarted();
-      if (result.started) {
-        return { text: `**P2P Started**\nPeer ID: \`${result.peerId}\`` };
-      }
-      return { text: `**Failed to start P2P**\n${result.error || 'Unknown error'}` };
-    }
-
-    case 'stop': {
-      try {
-        await window.electronAPI.p2pStop();
-        return { text: '**P2P Stopped**' };
-      } catch (e) {
-        return { text: `**Failed to stop P2P**\n${e.message}` };
-      }
-    }
-
-    case 'providers': {
-      const pipeline = args[1] || null;
-      const providers = await discoverProviders(pipeline);
-
-      if (providers.length === 0) {
-        return {
-          text: `**No Providers Found**
-${pipeline ? `No providers available for pipeline: ${pipeline}` : 'No providers registered on the network.'}
-
-Note: Provider discovery requires deployed contracts on Base.`,
-        };
-      }
-
-      const lines = providers.map(p => {
-        const pipelines = p.pipelines.slice(0, 3).join(', ');
-        return `- \`${p.peerId.slice(0, 12)}...\` | $${p.pricePerToken}/1K tokens | ${pipelines}${p.pipelines.length > 3 ? '...' : ''}`;
-      });
-
-      return {
-        text: `**Available Providers** ${pipeline ? `(${pipeline})` : ''}
-${lines.join('\n')}
-
-Use \`!bonzai network use <peerId>\` to select a provider.`,
-      };
-    }
-
-    case 'use': {
-      const target = args[1]?.toLowerCase();
-      if (!target) {
-        return { text: 'Usage: `!bonzai network use <local|auto|peerId>`' };
-      }
-
-      if (target === 'local') {
-        mapping.network.provider = 'local';
-        await saveChannelMappings();
-        return { text: '**Using Local Inference**\nAll requests will use your local models.' };
-      }
-
-      if (target === 'auto') {
-        mapping.network.provider = 'auto';
-        await saveChannelMappings();
-        return { text: '**Using Auto Provider Selection**\nWill automatically select the cheapest available provider.' };
-      }
-
-      // Assume it's a peer ID
-      mapping.network.provider = target;
-      await saveChannelMappings();
-      return { text: `**Using Provider**\nPeer ID: \`${target}\`` };
-    }
-
-    case 'mode': {
-      const mode = args[1]?.toLowerCase();
-      if (!['local', 'remote'].includes(mode)) {
-        return {
-          text: `**Current Mode:** ${networkSettings.mode}
-
-Available modes:
-- \`local\` - Use local BonzAI Desktop (free)
-- \`remote\` - Use remote P2P providers (paid with ETH)
-
-Use \`!bonzai network mode <mode>\` to change.`,
-        };
-      }
-
-      networkSettings.mode = mode;
-      await saveNetworkSettings();
-
-      if (mode === 'remote') {
-        // Start P2P node when switching to remote mode
-        await ensureP2PStarted();
-      }
-
-      return { text: `**Mode:** ${mode === 'local' ? 'Local (free)' : 'Remote (paid)'}` };
-    }
-
-    case 'pipelines': {
-      const lines = Object.entries(PIPELINES).map(([id, info]) => {
-        return `- \`${id}\` (${info.type}) - ${info.description}`;
-      });
-      return {
-        text: `**Available Pipelines**
-
-${lines.join('\n')}
-
-Use \`!bonzai network providers <pipeline>\` to find providers for a specific pipeline.`,
-      };
-    }
-
-    default:
-      return {
-        text: `**Network Commands**
-
-\`!bonzai network status\` - Show P2P status and current provider
-\`!bonzai network start\` - Start P2P node
-\`!bonzai network stop\` - Stop P2P node
-\`!bonzai network providers [pipeline]\` - Discover providers
-\`!bonzai network use <local|auto|peerId>\` - Select provider
-\`!bonzai network mode [local|provider]\` - Set network mode
-\`!bonzai network pipelines\` - List available pipelines`,
-      };
+NAT: ${status.natStatus || 'unknown'}`;
+  } else {
+    p2pSection = 'P2P: **Offline**';
   }
+
+  // Providers
+  let providerSection;
+  if (providers.length === 0) {
+    providerSection = 'Providers: none selected';
+  } else {
+    const lines = providers.map(p => {
+      const label = p.lanAddress ? `${p.lanAddress} (LAN, free)` : `${p.peerId.slice(0, 16)}...`;
+      return `  - \`${label}\``;
+    });
+    providerSection = `Providers: ${providers.length} selected\n${lines.join('\n')}`;
+  }
+
+  // Pipelines
+  const pipelineLines = Object.entries(PIPELINES).map(([id, info]) => `  - \`${id}\` — ${info.description}`);
+  const pipelineSection = `Pipelines:\n${pipelineLines.join('\n')}`;
+
+  return {
+    text: `**BonzAI Network**
+
+${modeSection}
+${p2pSection}
+${providerSection}
+
+${pipelineSection}
+
+Configure in the BonzAI desktop application → P2P Network settings.`,
+  };
 }
 
 /**
@@ -2201,24 +2120,8 @@ async function handleCommand(channelId, cmd, webhookData = {}) {
       return handleAutonomousCommand(channelId, cmd.args);
 
     case 'mode': {
-      const mode = cmd.args[0]?.toLowerCase();
-      if (!['local', 'remote'].includes(mode)) {
-        return {
-          text: `**Current Mode:** ${networkSettings.mode}
-
-\`!bonzai mode local\` - Use local BonzAI Desktop (free)
-\`!bonzai mode remote\` - Use remote P2P providers (paid with USDC)`,
-        };
-      }
-
-      networkSettings.mode = mode;
-      await saveNetworkSettings();
-
-      if (mode === 'remote') {
-        await ensureP2PStarted();
-      }
-
-      return { text: `**Mode:** ${mode === 'local' ? 'Local (free)' : 'Remote (paid)'}` };
+      // Redirect to !bonzai network
+      return handleNetworkCommand(channelId, []);
     }
 
     case 'model': {
@@ -2432,9 +2335,7 @@ Total: ${Object.keys(MODEL_REQUIREMENTS).filter(k => MODEL_REQUIREMENTS[k].type 
         text: `**BonzAI Commands**
 All commands use the \`!bonzai\` prefix (or \`/bonzai\` for Hermes).
 
-**Mode**
-\`!bonzai mode local\` - Use local BonzAI (free)
-\`!bonzai mode remote\` - Use remote providers (paid with ETH)
+**Model**
 \`!bonzai model <name>\` - Load specific LLM model
 
 **Roleplay**
@@ -2470,10 +2371,8 @@ All commands use the \`!bonzai\` prefix (or \`/bonzai\` for Hermes).
 \`!bonzai skill info <id>\` - Show skill details
 \`!bonzai skill run <id> [inputs]\` - Execute a skill
 
-**Network (P2P)**
-\`!bonzai network status\` - Show P2P status
-\`!bonzai network providers [pipeline]\` - Find providers
-\`!bonzai network use <peerId>\` - Select provider
+**Network**
+\`!bonzai network\` - Show full network status (mode, providers, pipelines)
 
 \`!bonzai models\` - List LLM models
 \`!bonzai help\` - Show this help`,

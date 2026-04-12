@@ -735,6 +735,7 @@ export const SKILL_MODEL_REQUIREMENTS = {
   'manga-to-anime-v1.0.0': ['llm_llama_3_1_8b', 'image_turbo', 'video_fast'],
   'hairstyle-studio-v1.0.0': ['llm_llama_3_1_8b', 'image_turbo'],
   'roleplay-companion-v1.0.0': ['llm_mythomax_13b', 'image_advanced', 'image_turbo'],
+  'live-streaming-v1.0.0': ['llm_llama_3_1_8b', 'image_turbo', 'audio_turbo', 'music', 'video_fast'],
 };
 
 /**
@@ -4734,6 +4735,41 @@ export const tcgAnalysis = createSkillDefinition({
 });
 
 // ═══════════════════════════════════════════════════════════════════════════
+// 2c. LIVE STREAMER PLAYGROUND (Entertainment — Chat→OBS AI generation bridge)
+// ═══════════════════════════════════════════════════════════════════════════
+
+export const liveStreamer = createSkillDefinition({
+  id: 'live-streaming-v1.0.0',
+  name: 'Live Streaming Playground',
+  description: 'Connect your stream chat to BonzAI. Viewers generate images, audio, music, video, and text live on stream via chat commands. Integrates with OBS Studio, supports Twitch, YouTube, Kick, and Discord. Community polls, content moderation, and Companion bot presence included.',
+  version: '1.0.0',
+  author: { address: '0x8Ff3b2e823b33BeE30e699bB1b6BBc8F622fEa89', name: 'BonzAI', verified: true },
+  category: 'entertainment',
+  price: 19.99,
+  tags: ['streaming', 'twitch', 'obs', 'live', 'chat', 'overlay', 'youtube', 'kick', 'discord', 'interactive'],
+  hasCustomUI: true,
+  requirements: {
+    minLevel: 1,
+    requiredApis: ['llm', 'image', 'audio'],
+    requiredPermissions: [],
+  },
+  inputs: {
+    platform: { type: 'select', default: 'twitch', label: 'Chat Platform', options: ['twitch', 'youtube', 'kick', 'discord'] },
+  },
+  prompt: { system: 'You are a live stream AI assistant.', task: 'Process viewer chat commands and generate AI content.', outputFormat: { type: 'text' } },
+  tools: { bonzai: [], mcp: [] },
+  execution: {
+    type: 'custom',
+    entrypoint: 'LiveStreamerSkill',
+    async execute(inputs, context) {
+      context.updateStatus?.('Live Streamer is handled by the custom UI component.');
+      return { success: true };
+    },
+  },
+  metadata: { createdAt: '2026-04-10T00:00:00Z', updatedAt: '2026-04-10T00:00:00Z', license: 'MIT' },
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
 // 3. VIRTUAL STAGING PRO (Housing)
 // ═══════════════════════════════════════════════════════════════════════════
 
@@ -7223,6 +7259,7 @@ export const flagshipSkills = [
   meditationForge,          // Meditation Forge
   videoCaptioning,          // Video Captioning
   tcgAnalysis,              // Trading Card Game Analysis
+  liveStreamer,             // Live Streaming Playground
 ];
 
 // Export memory management functions for use by components

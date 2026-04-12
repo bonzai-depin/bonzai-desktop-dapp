@@ -373,10 +373,26 @@ export const initialize = () => {
 const USDC_ADDRESS_BASE = '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913';
 const DEFAULT_SKILL_PRICE_USDC = 10_000_000; // 10 USDC (6 decimals)
 
+/**
+ * Compute on-chain skill ID matching BonzaiSkillRegistry.registerSkill() encoding.
+ * Contract: skillId = keccak256(abi.encode(name, version, msg.sender))
+ *
+ * If a pre-computed mapping exists in CONFIG.skillRegistry.skillIdMap, use that.
+ * Otherwise fall back to ethers.id(localSkillId) for compatibility.
+ */
+function getOnChainSkillId(localSkillId) {
+  const map = CONFIG.skillRegistry?.skillIdMap;
+  if (map && map[localSkillId]) return map[localSkillId];
+  // Fallback: hash the local ID string (won't match contract-generated IDs)
+  return ethers.id(localSkillId);
+}
+
 const SKILL_REGISTRY_ABI = [
-  'function hasUserPurchased(address user, bytes32 skillId) view returns (bool)',
-  'function purchaseSkill(bytes32 skillId) external',
-  'function skillPrice(bytes32 skillId) view returns (uint256)',
+  'function userHasPurchased(address user, bytes32 skillId) view returns (bool)',
+  'function purchaseSkill(bytes32 skillId, uint256 maxPrice) external',
+  'function getSkill(bytes32 skillId) view returns (tuple(bytes32 id, address author, string name, string version, string category, string ipfsHash, uint256 purchasePrice, uint256 runningFee, bool isActive, bool isVerified, bool adminDeactivated, uint256 totalPurchases, uint256 totalExecutions, uint256 totalRevenue, uint256 createdAt, uint256 updatedAt))',
+  'function registerSkill(string name, string version, string category, string ipfsHash, uint256 purchasePrice, uint256 runningFee) external returns (bytes32)',
+  'function getSkillsPaginated(uint256 offset, uint256 limit) view returns (bytes32[])',
 ];
 
 const USDC_ABI = [
@@ -418,8 +434,8 @@ export async function hasPurchasedSkill(skillId) {
     if (registry) {
       const userAddress = web3Service.state.walletAddress;
       if (userAddress) {
-        const skillIdBytes = ethers.id(skillId);
-        return await registry.hasUserPurchased(userAddress, skillIdBytes);
+        const skillIdBytes = getOnChainSkillId(skillId);
+        return await registry.userHasPurchased(userAddress, skillIdBytes);
       }
     }
   } catch (e) {
@@ -469,10 +485,12 @@ export async function purchaseSkillUSDC(skillId, price = DEFAULT_SKILL_PRICE_USD
       console.log('[SkillPurchase] USDC approved');
     }
 
-    // 5. Call registry.purchaseSkill(skillIdBytes)
+    // 5. Call registry.purchaseSkill(skillIdBytes, maxPrice)
     const registry = new ethers.Contract(registryAddress, SKILL_REGISTRY_ABI, signer);
-    const skillIdBytes = ethers.id(skillId);
-    const tx = await registry.purchaseSkill(skillIdBytes);
+    // Skill IDs on-chain are keccak256(abi.encode(name, version, author))
+    // but we store them locally as string IDs. Use ethers.id() as the canonical encoding.
+    const skillIdBytes = getOnChainSkillId(skillId);
+    const tx = await registry.purchaseSkill(skillIdBytes, BigInt(price));
     const receipt = await tx.wait();
 
     // 6. Store purchase locally for offline access

@@ -1173,6 +1173,23 @@ ipcMain.handle("p2p-start", async (_event, options = {}) => {
       };
     });
 
+    // Desktop notification when LAN peer discovered
+    node._onLANPeerDiscovered = (discoveredPeerId, lanIP) => {
+      const { Notification } = require("electron");
+      if (Notification.isSupported()) {
+        const notification = new Notification({
+          title: "BonzAI — LAN Provider Found",
+          body: `Discovered a BonzAI node at ${lanIP || "local network"}. Free inference available.`,
+          silent: false,
+        });
+        notification.show();
+      }
+      // Forward to renderer for in-app notification
+      if (mainWindow && !mainWindow.isDestroyed()) {
+        mainWindow.webContents.send("lan-peer-discovered", { peerId: discoveredPeerId, lanIP });
+      }
+    };
+
     return {
       ok: true,
       peerId,
@@ -1289,11 +1306,13 @@ ipcMain.handle("p2p-lan-peers", async () => {
   if (!node?.isStarted) return { ok: true, peers: [] };
 
   const lanPeers = node.getLANPeers();
-  // Health check each LAN peer to get capabilities (pipelines, version)
+  // Health check each LAN peer to get capabilities, version, and latency
   const enriched = await Promise.all(lanPeers.map(async (peer) => {
     try {
+      const start = Date.now();
       const health = await node.checkPeerHealth(peer.peerId);
-      return { ...peer, ...health, online: true };
+      const latencyMs = Date.now() - start;
+      return { ...peer, ...health, latencyMs, online: true };
     } catch {
       return { ...peer, online: false };
     }
@@ -1580,6 +1599,119 @@ async function routeInferenceRequest(request) {
 
   return response.json();
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// CONSUMER-SIDE INFERENCE ROUTING
+// Routes to local Flask/OpenClaw or to selected remote/LAN provider via P2P
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Unified inference routing for all generation types.
+ *
+ * Reads network mode from store and routes accordingly:
+ * - local / provider → local Flask/OpenClaw
+ * - consumer + pipeline + LLM → pipeline orchestrator (parallelism across all selected providers)
+ * - consumer (no pipeline, or non-LLM) → random provider from selection, fallback to local
+ */
+ipcMain.handle("inference-request", async (event, { pipeline, params }) => {
+  try {
+    const networkMode = store.get("p2p.networkMode", "local");
+
+    // ── LOCAL or PROVIDER mode: always local ──
+    if (networkMode !== "consumer") {
+      const result = await routeInferenceRequest({ pipeline, params });
+      return { ok: true, result, remote: false };
+    }
+
+    // ── CONSUMER mode ──
+    const pipelineEnabled = store.get("p2p.pipeline.enabled", false);
+    const isLLM = pipeline === "llm" || pipeline.startsWith("llm_");
+
+    // Pipeline parallelism (LLM only)
+    if (pipelineEnabled && isLLM) {
+      try {
+        const { runPipelineInference } = await getPipelineOrchestrator();
+
+        // Resolve model path
+        let modelPath = null;
+        if (currentLoadedModel?.filename) {
+          modelPath = path.join(MODEL_DIR, currentLoadedModel.filename);
+        }
+
+        const { getActiveSession } = await getPipelineOrchestrator();
+        if (!getActiveSession() && (loadedModel || modelContext || modelSession)) {
+          console.log("[Inference] Unloading node-llama-cpp for pipeline...");
+          try { await unloadModel(); } catch (e) {
+            console.warn("[Inference] Model unload warning:", e.message);
+          }
+        }
+
+        // Read selected providers and pass to orchestrator
+        let selectedProvidersList = [];
+        const spRaw = store.get("p2p.selectedProviders", null);
+        if (spRaw) {
+          selectedProvidersList = typeof spRaw === "string" ? JSON.parse(spRaw) : spRaw;
+        }
+
+        const privacyConfig = {
+          localProportion: store.get("p2p.pipeline.localProportion", 25),
+          dpEnabled: store.get("p2p.pipeline.dpEnabled", false),
+          epsilon: store.get("p2p.pipeline.epsilon", 8),
+          localTest: store.get("p2p.pipeline.localTest", false),
+          selectedProviders: Array.isArray(selectedProvidersList) ? selectedProvidersList : [],
+        };
+
+        const result = await runPipelineInference({
+          modelPath,
+          request: params,
+          privacyConfig,
+          onToken: (chunk) => {
+            event.sender.send("pipeline-token", chunk);
+          },
+          onStatus: (msg) => {
+            event.sender.send("pipeline-status", msg);
+          },
+        });
+        return { ok: true, result, remote: true, pipeline: true };
+      } catch (err) {
+        console.warn(`[Inference] Pipeline failed: ${err.message}, falling back to provider`);
+        // Fall through to provider selection
+      }
+    }
+
+    // ── Provider selection (random from selected providers) ──
+    const node = getP2PNode();
+    const providersRaw = store.get("p2p.selectedProviders", null);
+
+    if (providersRaw && node?.isStarted) {
+      const providers = typeof providersRaw === "string" ? JSON.parse(providersRaw) : providersRaw;
+      if (Array.isArray(providers) && providers.length > 0) {
+        // Randomize provider selection
+        const shuffled = [...providers].sort(() => Math.random() - 0.5);
+
+        for (const provider of shuffled) {
+          try {
+            console.log(`[Inference] Routing ${pipeline} to ${provider.peerId.slice(0, 12)}...`);
+            const response = await node.sendInferenceRequest(provider.peerId, { pipeline, params });
+            if (response?.ok) {
+              return { ok: true, result: response.result, remote: true, peerId: provider.peerId, free: !!provider.free };
+            }
+            console.warn(`[Inference] Provider ${provider.peerId.slice(0, 12)} failed, trying next...`);
+          } catch (err) {
+            console.warn(`[Inference] Provider ${provider.peerId.slice(0, 12)} error: ${err.message}`);
+          }
+        }
+        console.warn("[Inference] All providers failed, falling back to local");
+      }
+    }
+
+    // Fallback to local
+    const result = await routeInferenceRequest({ pipeline, params });
+    return { ok: true, result, remote: false };
+  } catch (err) {
+    return { ok: false, error: err.message };
+  }
+});
 
 // ─────────────────────────────────────────────────────────────────────────────
 // App version

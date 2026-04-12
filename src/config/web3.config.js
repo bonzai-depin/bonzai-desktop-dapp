@@ -183,6 +183,16 @@ export const CONFIG = {
     defaultSkillPrice: 9_990_000, // 9.99 USDC
     paymentToken: 'USDC',
 
+    // Mapping: local skill ID → on-chain bytes32 skill ID
+    // Populated by scripts/register-skills.js after on-chain registration
+    skillIdMap: {
+      // 'polymarket-top-performers-v1.0.0': '0x...',
+      // 'prediction-market-maker-v1.0.0': '0x...',
+      // 'meditation-forge-v1.0.0': '0x...',
+      // 'tcg-analysis-v1.0.0': '0x...',
+      // 'live-streaming-v1.0.0': '0x...',
+    },
+
     // Default pricing for new skills
     defaultPricing: {
       purchasePrice: 9.99, // USDC (one-time lifetime fee)

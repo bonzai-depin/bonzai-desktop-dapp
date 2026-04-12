@@ -237,6 +237,10 @@
                       @ {{ inference.tokensPerSecond }} tok/s
                     </span>
                   </span>
+                  <span v-if="inference.networkMode && inference.networkMode !== 'local'" class="network-mode-tag" :class="'nm-' + inference.networkMode">
+                    <span class="material-symbols-outlined" style="font-size: 12px">{{ inference.networkMode === 'private' ? 'lock' : 'cloud' }}</span>
+                    {{ inference.networkMode === 'private' ? 'Private' : 'Remote' }}
+                  </span>
                 </div>
                 <vue-markdown :source="inference.answer.text" />
                 <span
@@ -610,6 +614,10 @@
                       @ {{ inference.tokensPerSecond }} tok/s
                     </span>
                   </span>
+                  <span v-if="inference.networkMode && inference.networkMode !== 'local'" class="network-mode-tag" :class="'nm-' + inference.networkMode">
+                    <span class="material-symbols-outlined" style="font-size: 12px">{{ inference.networkMode === 'private' ? 'lock' : 'cloud' }}</span>
+                    {{ inference.networkMode === 'private' ? 'Private' : 'Remote' }}
+                  </span>
                 </div>
                 <vue-markdown :source="inference.answer.text" />
                 <span
@@ -873,6 +881,7 @@ const computeMemoryRequirements = (model, options = {}) => {
 import GenerativeImage from "./GenerativeImage.vue";
 import AccessRequirements from "./AccessRequirements.vue";
 import { requestOpenNetworkModal } from "../services/level.service.js";
+import { useInferenceRouter } from "../composables/useInferenceRouter.js";
 
 export default {
   name: "GenerativeText",
@@ -883,6 +892,8 @@ export default {
     MintModal,
   },
   setup() {
+    const { inferenceRequest } = useInferenceRouter();
+
     // ------------ NFT Minting ---------
     const mintTarget = ref(null);
 
@@ -2076,6 +2087,7 @@ export default {
       try {
         let assistantResult;
         let tokenCount = 0;
+        let routingMode = 'local'; // 'local' | 'remote' | 'private'
         const startTime = performance.now();
 
         // Check if we have an attached image and current model is multimodal
@@ -2086,43 +2098,98 @@ export default {
             attachedImage.value.dataUrl,
           );
         } else {
-          // Stream text-only inference (with fallback to non-streaming)
-          const chatOpts = {};
-          if (!reasoningEnabled.value) chatOpts.thoughtTokens = 0;
+          // Unified inference routing — main process decides local vs remote vs pipeline
+          // Subscribe to token streams (works for both local chatStream and pipeline tokens)
+          const pipelineUnsub = window.electronAPI.onPipelineToken?.((chunk) => {
+            tokenCount++;
+            streamingText.value += chunk;
+            const arr = inferences.value;
+            const last = arr[arr.length - 1];
+            if (last && last.answer.id === answerId) {
+              last.answer.text = streamingText.value;
+              const elapsed = (performance.now() - startTime) / 1000;
+              if (elapsed > 0.1)
+                last.tokensPerSecond = (tokenCount / elapsed).toFixed(1);
+              inferences.value = [...arr];
+            }
+          });
 
-          const canStream =
-            typeof window.electronAPI.chatStream === "function" &&
-            typeof window.electronAPI.onChatToken === "function";
-
-          if (canStream) {
-            // Subscribe to token stream
-            const unsubscribe = window.electronAPI.onChatToken((chunk) => {
-              tokenCount++;
-              streamingText.value += chunk;
-              // Update the last inference's answer text in-place
-              const arr = inferences.value;
-              const last = arr[arr.length - 1];
-              if (last && last.answer.id === answerId) {
-                last.answer.text = streamingText.value;
-                // Live tok/s update
-                const elapsed = (performance.now() - startTime) / 1000;
-                if (elapsed > 0.1)
-                  last.tokensPerSecond = (tokenCount / elapsed).toFixed(1);
-                inferences.value = [...arr];
-              }
+          try {
+            const result = await inferenceRequest('llm', {
+              messages: [{ role: 'user', content: prompt }],
+              model: currentModel.value?.modelname,
+              prompt, // for pipeline orchestrator
+              maxTokens: 2048,
             });
 
-            try {
-              assistantResult = await window.electronAPI.chatStream(
-                prompt,
-                chatOpts,
-              );
-            } finally {
-              unsubscribe();
+            if (result?.ok && result.result) {
+              if (result.pipeline) {
+                routingMode = 'private';
+                assistantResult = result.result?.text || streamingText.value || '';
+              } else if (result.remote) {
+                routingMode = 'remote';
+                // Remote provider: extract from OpenAI-compatible response
+                const text = result.result?.choices?.[0]?.message?.content || JSON.stringify(result.result);
+                assistantResult = text;
+                tokenCount = text.split(/\s+/).length;
+                streamingText.value = text;
+                const arr = inferences.value;
+                const last = arr[arr.length - 1];
+                if (last && last.answer.id === answerId) {
+                  last.answer.text = text;
+                  inferences.value = [...arr];
+                }
+              } else {
+                // Local: result came from routeInferenceRequest (OpenClaw)
+                const text = result.result?.choices?.[0]?.message?.content || JSON.stringify(result.result);
+                assistantResult = text;
+                tokenCount = text.split(/\s+/).length;
+                streamingText.value = text;
+                const arr = inferences.value;
+                const last = arr[arr.length - 1];
+                if (last && last.answer.id === answerId) {
+                  last.answer.text = text;
+                  inferences.value = [...arr];
+                }
+              }
+            } else {
+              // Fallback: direct local streaming via node-llama-cpp
+              const chatOpts = {};
+              if (!reasoningEnabled.value) chatOpts.thoughtTokens = 0;
+
+              const canStream =
+                typeof window.electronAPI.chatStream === "function" &&
+                typeof window.electronAPI.onChatToken === "function";
+
+              if (canStream) {
+                const unsubscribe = window.electronAPI.onChatToken((chunk) => {
+                  tokenCount++;
+                  streamingText.value += chunk;
+                  const arr = inferences.value;
+                  const last = arr[arr.length - 1];
+                  if (last && last.answer.id === answerId) {
+                    last.answer.text = streamingText.value;
+                    const elapsed = (performance.now() - startTime) / 1000;
+                    if (elapsed > 0.1)
+                      last.tokensPerSecond = (tokenCount / elapsed).toFixed(1);
+                    inferences.value = [...arr];
+                  }
+                });
+
+                try {
+                  assistantResult = await window.electronAPI.chatStream(
+                    prompt,
+                    chatOpts,
+                  );
+                } finally {
+                  unsubscribe();
+                }
+              } else {
+                assistantResult = await window.electronAPI.chat(prompt, chatOpts);
+              }
             }
-          } else {
-            // Fallback: non-streaming (old preload without chatStream)
-            assistantResult = await window.electronAPI.chat(prompt, chatOpts);
+          } finally {
+            if (pipelineUnsub) pipelineUnsub();
           }
         }
 
@@ -2139,6 +2206,7 @@ export default {
         if (last && last.answer.id === answerId) {
           last.answer.text = assistantResult;
           last.tokensPerSecond = finalTokPerSec;
+          last.networkMode = routingMode;
           inferences.value = [...arr];
         }
 
@@ -2158,6 +2226,7 @@ export default {
           tokensPerSecond: finalTokPerSec,
           elapsed: elapsedSec,
           source: 'bonzai',
+          networkMode: routingMode,
         });
 
         resetForm();
@@ -2635,6 +2704,32 @@ div.desc p {
 .answer__tps {
   color: #48c774;
   font-weight: 700;
+}
+
+.network-mode-tag {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  padding: 1px 8px;
+  border-radius: 4px;
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  margin-left: 8px;
+  vertical-align: middle;
+}
+
+.nm-remote {
+  background: rgba(62, 142, 208, 0.15);
+  color: #3e8ed0;
+  border: 1px solid rgba(62, 142, 208, 0.3);
+}
+
+.nm-private {
+  background: rgba(72, 199, 142, 0.12);
+  color: #48c78e;
+  border: 1px solid rgba(72, 199, 142, 0.3);
 }
 
 .models__deployment-install .card {

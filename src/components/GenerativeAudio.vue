@@ -1012,6 +1012,10 @@
                           <span class="material-symbols-outlined is-size-6 mr-1">record_voice_over</span>
                           TTS
                         </span>
+                        <span v-if="inference.networkMode && inference.networkMode !== 'local'" class="tag ml-2" :class="inference.networkMode === 'private' ? 'is-success is-light' : 'is-info is-light'">
+                          <span class="material-symbols-outlined is-size-6 mr-1">{{ inference.networkMode === 'private' ? 'lock' : 'cloud' }}</span>
+                          {{ inference.networkMode === 'private' ? 'Private' : 'Remote' }}
+                        </span>
                       </div>
                       <!-- Audio Player -->
                       <div
@@ -1120,6 +1124,7 @@ import { v4 as uuid } from "uuid";
 import useClipboard from "vue-clipboard3";
 import axios from "axios";
 import { io } from "socket.io-client";
+import { useInferenceRouter } from "../composables/useInferenceRouter.js";
 import {
   generationStore,
   ensureGenerationSocket,
@@ -1149,6 +1154,8 @@ export default {
     MintModal,
   },
   setup() {
+    const { inferenceRequest } = useInferenceRouter();
+
     // ------------ NFT Minting ---------
     const mintTarget = ref(null);
 
@@ -2592,9 +2599,12 @@ Remember: 6-10 syllables per line, use all appropriate structure tags. Write in 
     const voiceGender = ref("female");
 
     // ------------ actions -----------------
+    let _lastRoutingMode = 'local';
+
     const sendMessage = async (prompt) => {
       if (!prompt) return;
       if (!canGenerateWithAccess.value) return;
+      _lastRoutingMode = 'local';
 
       let payload;
 
@@ -2730,6 +2740,7 @@ Remember: 6-10 syllables per line, use all appropriate structure tags. Write in 
                 production: [...selectedProduction.value],
               },
             }),
+            networkMode: _lastRoutingMode,
           };
 
           // Update shallowRef by replacing array (triggers reactivity)
@@ -2747,6 +2758,7 @@ Remember: 6-10 syllables per line, use all appropriate structure tags. Write in 
                   : "audio_turbo",
             elapsed: elapsedMs / 1000,
             source: "bonzai",
+            networkMode: _lastRoutingMode,
           });
 
           form.prompt = "";
@@ -2767,6 +2779,19 @@ Remember: 6-10 syllables per line, use all appropriate structure tags. Write in 
     const requestWithDownloadTracking = async (url, payload, onSuccess) => {
       try {
         isLoading.value = true;
+
+        // Route through unified inference handler
+        if (payload.pipeline) {
+          const routed = await inferenceRequest(payload.pipeline, payload);
+          if (routed?.ok && routed.remote && routed.result) {
+            _lastRoutingMode = routed.pipeline ? 'private' : 'remote';
+            setBlocked("audio", false);
+            stopGeneration("audio");
+            await onSuccess({ status: 200, data: routed.result });
+            return;
+          }
+        }
+
         const headers = {};
         const res = await axios.post(url, payload, {
           headers,

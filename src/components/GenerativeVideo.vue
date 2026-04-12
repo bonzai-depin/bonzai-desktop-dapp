@@ -460,6 +460,10 @@
                         "
                       ></video>
                       <div class="pb-5 mb-5 mt-5">
+                        <span v-if="inference.networkMode && inference.networkMode !== 'local'" class="tag mr-3" :class="inference.networkMode === 'private' ? 'is-success is-light' : 'is-info is-light'">
+                          <span class="material-symbols-outlined is-size-6 mr-1">{{ inference.networkMode === 'private' ? 'lock' : 'cloud' }}</span>
+                          {{ inference.networkMode === 'private' ? 'Private' : 'Remote' }}
+                        </span>
                         <button
                           class="button is-medium is-success copy is-pulled-right ml-5 mr-0 p-0 pl-1 pr-4"
                           @click="downloadVideo(inference._originalIndex)"
@@ -562,6 +566,7 @@ import { v4 as uuid } from "uuid";
 import useClipboard from "vue-clipboard3";
 import axios from "axios";
 import { io } from "socket.io-client";
+import { useInferenceRouter } from "../composables/useInferenceRouter.js";
 import AccessRequirements from "./AccessRequirements.vue";
 import MintModal from "./MintModal.vue";
 import { requestOpenNetworkModal } from "../services/level.service.js";
@@ -614,6 +619,8 @@ export default {
   components: { AccessRequirements, MintModal },
   props: { existingImageBase64: { type: String, default: "" } },
   setup(props) {
+    const { inferenceRequest } = useInferenceRouter();
+
     // ------------ NFT Minting ---------
     const mintTarget = ref(null);
 
@@ -1338,6 +1345,19 @@ export default {
     const requestWithDownloadTracking = async (url, payload, onSuccess) => {
       try {
         isLoading.value = true;
+
+        // Route through unified inference handler
+        if (payload.pipeline) {
+          const routed = await inferenceRequest(payload.pipeline, payload);
+          if (routed?.ok && routed.remote && routed.result) {
+            _lastRoutingMode = routed.pipeline ? 'private' : 'remote';
+            setBlocked("video", false);
+            stopGeneration("video");
+            await onSuccess({ status: 200, data: routed.result });
+            return;
+          }
+        }
+
         const headers = {};
         const res = await axios.post(url, payload, {
           headers,
@@ -1427,11 +1447,14 @@ export default {
         reader.readAsDataURL(file);
       });
 
+    let _lastRoutingMode = 'local';
+
     const sendMessage = async (prompt) => {
       if (!prompt) return;
       // For i2v mode, require an image
       if (mode.value === "i2v" && !hasAnyImage.value) return;
       if (!hasAccess.value) return;
+      _lastRoutingMode = 'local';
 
       // LTX-2 size mappings - SAFE VALUES for tiled VAE decoder
       // These dimensions produce latent sizes that divide evenly by the tile stride
@@ -1500,6 +1523,7 @@ export default {
             id: uuid(),
             model: 'ltx-2',
             elapsedMs,
+            networkMode: _lastRoutingMode,
           };
           inferences.value = [...inferences.value, newInference];
           hasCopy.value = [...hasCopy.value, false];
@@ -1516,6 +1540,7 @@ export default {
               fps: fps.value,
               elapsed: elapsedMs / 1000,
               source: 'bonzai',
+              networkMode: _lastRoutingMode,
             },
           );
 

@@ -160,6 +160,7 @@ export const addTextInference = async (question, answerText, metadata = {}) => {
     tokensPerSecond: metadata.tokensPerSecond || null,
     elapsed: metadata.elapsed || null,
     source: metadata.source || 'bonzai',
+    networkMode: metadata.networkMode || 'local', // 'local' | 'remote' | 'private'
     hardware: hardware || null,
   };
 
@@ -200,6 +201,7 @@ export const addImageInference = async (prompt, imageData, metadata = {}) => {
     steps: metadata.steps,
     elapsed: metadata.elapsed || null,
     source: metadata.source || 'bonzai',
+    networkMode: metadata.networkMode || 'local',
     hardware: hardware || null,
   };
 
@@ -240,6 +242,7 @@ export const addVideoInference = async (prompt, videoPath, metadata = {}) => {
     height: metadata.height,
     elapsed: metadata.elapsed || null,
     source: metadata.source || 'bonzai',
+    networkMode: metadata.networkMode || 'local',
     hardware: hardware || null,
   };
 
@@ -278,6 +281,7 @@ export const addAudioInference = async (prompt, audioPath, metadata = {}) => {
     sampleRate: metadata.sampleRate,
     elapsed: metadata.elapsed || null,
     source: metadata.source || 'bonzai',
+    networkMode: metadata.networkMode || 'local',
     hardware: hardware || null,
   };
 

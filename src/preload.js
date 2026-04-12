@@ -226,6 +226,23 @@ contextBridge.exposeInMainWorld("electronAPI", {
    */
   p2pLANPeers: () => ipcRenderer.invoke("p2p-lan-peers"),
 
+  /**
+   * Route an inference request — automatically sends to selected provider (LAN/remote)
+   * or falls back to local Flask/OpenClaw.
+   * @param {string} pipeline - Pipeline name (e.g. 'image_turbo', 'audio_turbo', 'llm')
+   * @param {Object} params - Request parameters
+   * @returns {Promise<{ok: boolean, result?: Object, remote?: boolean, error?: string}>}
+   */
+  inferenceRequest: (pipeline, params) => ipcRenderer.invoke("inference-request", { pipeline, params }),
+
+  /**
+   * Listen for LAN peer discovery events (from main process)
+   */
+  onLANPeerDiscovered: (handler) => {
+    ipcRenderer.on("lan-peer-discovered", handler);
+    return () => ipcRenderer.removeListener("lan-peer-discovered", handler);
+  },
+
   // ─────────────────────────────────────────────────────────────────────────────
   // Pipeline Private Inference (v2)
   // ─────────────────────────────────────────────────────────────────────────────

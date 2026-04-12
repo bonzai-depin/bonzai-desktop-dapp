@@ -386,39 +386,50 @@
             v-for="provider in lanProviders"
             :key="provider.peerId"
             class="provider-card"
-            :class="{ selected: selectedProvider?.peerId === provider.peerId }"
+            :class="{ selected: isProviderSelected(provider.peerId) }"
             @click="selectProvider(provider)"
           >
             <div class="provider-header">
               <span class="material-symbols-outlined provider-icon" style="color: #39d582">wifi</span>
               <div class="provider-info">
                 <span class="provider-id">
-                  {{ truncateId(provider.peerId) }}
+                  {{ provider.lanAddress || truncateId(provider.peerId) }}
                 </span>
                 <span class="provider-status online">Online</span>
               </div>
-              <div style="margin-left: auto; display: flex; gap: 6px">
+              <div style="margin-left: auto; display: flex; gap: 6px; align-items: center">
+                <span v-if="provider.latencyMs" class="tag is-dark" :title="provider.latencyMs + 'ms'">
+                  {{ provider.latencyMs }}ms
+                </span>
                 <span class="tag is-success">LAN</span>
                 <span class="tag is-info">FREE</span>
               </div>
             </div>
-            <div class="provider-pricing" v-if="provider.lanAddress">
+            <div class="provider-pricing">
+              <div class="price-row" v-if="provider.version">
+                <span>Version:</span>
+                <span>v{{ provider.version }}</span>
+              </div>
               <div class="price-row">
-                <span>Address:</span>
-                <span>{{ provider.lanAddress }}</span>
+                <span>Peer ID:</span>
+                <span>{{ truncateId(provider.peerId) }}</span>
               </div>
             </div>
             <div class="provider-pipelines" v-if="provider.pipelines?.length">
               <span
-                v-for="p in provider.pipelines.slice(0, 6)"
+                v-for="p in provider.pipelines.slice(0, 8)"
                 :key="p"
                 class="pipeline-tag"
               >
                 {{ p }}
               </span>
-              <span v-if="provider.pipelines.length > 6" class="more-tag">
-                +{{ provider.pipelines.length - 6 }}
+              <span v-if="provider.pipelines.length > 8" class="more-tag">
+                +{{ provider.pipelines.length - 8 }}
               </span>
+            </div>
+            <div v-if="isProviderSelected(provider.peerId)" class="provider-selected-badge">
+              <span class="material-symbols-outlined mr-1" style="font-size: 14px">check_circle</span>
+              Selected
             </div>
           </div>
         </div>
@@ -459,7 +470,7 @@
               :key="provider.peerId"
               class="provider-card"
               :class="{
-                selected: selectedProvider?.peerId === provider.peerId,
+                selected: isProviderSelected(provider.peerId),
               }"
               @click="selectProvider(provider)"
             >
@@ -543,12 +554,11 @@
           </div>
         </div>
 
-        <div class="selected-provider-info mt-4" v-if="selectedProvider">
+        <div class="selected-provider-info mt-4" v-if="selectedProviders.length > 0">
           <div class="notification is-success is-light">
             <span class="material-symbols-outlined mr-2">check_circle</span>
-            Connected to
-            <strong>{{ truncateId(selectedProvider.peerId) }}</strong>
-            . Inference requests will be routed to this provider.
+            {{ selectedProviders.length }} provider{{ selectedProviders.length > 1 ? 's' : '' }} selected.
+            Inference requests will be routed to {{ selectedProviders.length > 1 ? 'a random provider' : 'this provider' }}.
           </div>
         </div>
       </div>
@@ -840,43 +850,6 @@
         <hr class="mt-5 mb-5" />
 
         <h2 class="section-title fira-sans-condensed-black-italic">
-          Private Networking
-        </h2>
-
-        <div class="description-card pipeline">
-          <span class="material-symbols-outlined">lock</span>
-          <div>
-            <strong>Structural Privacy Through Pipeline Parallelism</strong>
-            <p>
-              Enable to serve as a private inference provider. Your GPU will process
-              partial transformer layers for consumers running private inference.
-              You never see the consumer's prompt or output — only opaque tensor operations.
-            </p>
-          </div>
-        </div>
-
-        <div class="setting-group mt-4">
-          <label class="setting-label">
-            <span class="material-symbols-outlined">memory</span>
-            Private Mode
-          </label>
-          <div class="relay-toggle">
-            <label class="toggle">
-              <input
-                type="checkbox"
-                v-model="shardProviderEnabled"
-              />
-              <span class="toggle-slider"></span>
-            </label>
-            <span class="toggle-label" :style="shardProviderEnabled ? 'color: #39d582' : ''">
-              {{ shardProviderEnabled ? "Running" : "Disabled" }}
-            </span>
-          </div>
-        </div>
-
-        <hr class="mt-5 mb-5" />
-
-        <h2 class="section-title fira-sans-condensed-black-italic">
           NAT Node Relay
         </h2>
 
@@ -1154,7 +1127,7 @@ const isSelfTesting = ref(false);
 
 // Consumer mode state
 const availableProviders = ref([]);
-const selectedProvider = ref(null);
+const selectedProviders = ref([]); // Array of selected provider objects
 const isRefreshingProviders = ref(false);
 const providerHistory = ref({});
 
@@ -1370,6 +1343,18 @@ const startP2P = async () => {
       console.log("[NetworkSettings] P2P node started:", result.peerId);
       await refreshStatus();
 
+      // Provider mode: auto-start rpc-server for pipeline shard serving
+      if (networkMode.value === 'provider') {
+        console.log("[NetworkSettings] Provider mode — starting rpc-server for shard serving...");
+        const shardRes = await window.electronAPI.p2pShardStart({ port: 50052 });
+        if (shardRes.ok) {
+          shardProviderEnabled.value = true;
+          console.log("[NetworkSettings] rpc-server started on :50052");
+        } else {
+          console.warn("[NetworkSettings] rpc-server failed:", shardRes.error);
+        }
+      }
+
       // Save pipeline pricing and currency
       await window.electronAPI.store.set(
         "p2p.pipelinePricing",
@@ -1392,6 +1377,11 @@ const stopP2P = async () => {
   isStopping.value = true;
 
   try {
+    // Stop rpc-server if running
+    if (shardProviderEnabled.value) {
+      await window.electronAPI.p2pShardStop();
+      shardProviderEnabled.value = false;
+    }
     await window.electronAPI.p2pStop();
     console.log("[NetworkSettings] P2P node stopped");
     p2pStatus.value = {
@@ -1449,12 +1439,23 @@ const refreshProviders = async () => {
   }
 };
 
+const isProviderSelected = (peerId) => {
+  return selectedProviders.value.some(p => p.peerId === peerId);
+};
+
 const selectProvider = async (provider) => {
-  selectedProvider.value = provider;
-  // Save selected provider
+  const idx = selectedProviders.value.findIndex(p => p.peerId === provider.peerId);
+  if (idx >= 0) {
+    // Deselect
+    selectedProviders.value.splice(idx, 1);
+  } else {
+    // Add to selection
+    selectedProviders.value.push(provider);
+  }
+  // Persist
   await window.electronAPI.store.set(
-    "p2p.selectedProvider",
-    JSON.stringify(provider),
+    "p2p.selectedProviders",
+    JSON.stringify(selectedProviders.value),
   );
 };
 
@@ -1557,8 +1558,8 @@ const loadSettings = async () => {
     );
     const savedRelayFee = await window.electronAPI.store.get("p2p.relayFee", 5);
     const savedCurrency = await window.electronAPI.store.get("p2p.pricingCurrency", "ETH");
-    const savedProvider = await window.electronAPI.store.get(
-      "p2p.selectedProvider",
+    const savedProviders = await window.electronAPI.store.get(
+      "p2p.selectedProviders",
       null,
     );
 
@@ -1575,10 +1576,10 @@ const loadSettings = async () => {
       }
     }
 
-    // Load selected provider for consumer mode
-    if (savedProvider) {
+    // Load selected providers for consumer mode
+    if (savedProviders) {
       try {
-        selectedProvider.value = JSON.parse(savedProvider);
+        selectedProviders.value = typeof savedProviders === 'string' ? JSON.parse(savedProviders) : savedProviders;
       } catch (e) {
         console.warn("[NetworkSettings] Failed to parse saved provider:", e);
       }
@@ -1634,6 +1635,14 @@ onMounted(async () => {
   pollLANProviders();
   lanPollInterval = setInterval(pollLANProviders, 10000);
 
+  // Listen for real-time LAN peer discovery notifications
+  if (window.electronAPI?.onLANPeerDiscovered) {
+    lanPeerCleanup = window.electronAPI.onLANPeerDiscovered((_event, data) => {
+      console.log('[NetworkSettings] LAN peer discovered:', data.lanIP);
+      pollLANProviders(); // Immediately refresh LAN list
+    });
+  }
+
   statusInterval = setInterval(() => {
     if (p2pStatus.value.started) {
       refreshStatus();
@@ -1641,9 +1650,12 @@ onMounted(async () => {
   }, 10000);
 });
 
+let lanPeerCleanup = null;
+
 onUnmounted(() => {
   if (statusInterval) clearInterval(statusInterval);
   if (lanPollInterval) clearInterval(lanPollInterval);
+  if (lanPeerCleanup) lanPeerCleanup();
 });
 </script>
 
@@ -2050,6 +2062,18 @@ hr {
 .price-row span:last-child {
   color: #fff;
   font-family: "JetBrains Mono", monospace;
+}
+
+.provider-selected-badge {
+  display: flex;
+  align-items: center;
+  margin-top: 10px;
+  padding: 6px 10px;
+  border-radius: 6px;
+  background: rgba(16, 185, 129, 0.12);
+  color: #39d582;
+  font-size: 12px;
+  font-weight: 600;
 }
 
 .provider-pipelines {
