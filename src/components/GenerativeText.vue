@@ -1348,6 +1348,35 @@ export default {
         context: 262144,
         thinking: true,
       },
+      // ─── REAP (Redundancy-Eliminated Active Parameters) pruned MoE models ──
+      qwen3_5_28_B_a3b_reap: {
+        modelname: "Qwen 3.5 28B A3B REAP",
+        modeldesc:
+          "28B-parameter REAP-pruned MoE Qwen 3.5 model with 3B active parameters per token and 262K context. Expert pruning reduces size from 35B to 28B while retaining quality. Q4_K_M quantization. Best for: efficient reasoning with lower memory footprint than the full 35B MoE.",
+        url: "https://huggingface.co/barozp/Qwen-3.5-28B-A3B-REAP-GGUF/resolve/main/Qwen-3.5-28B-A3B-REAP-Q4_K_M.gguf",
+        filename: "qwen-3.5-28b-a3b-reap-q4_k_m.gguf",
+        filesize: "16.1 GB",
+        filesizeBytes: 17.26e9,
+        parameters: 28240000000,
+        activeParameters: 3000000000,
+        isMoE: true,
+        context: 262144,
+        thinking: true,
+      },
+      gemma_4_21_B_a4b_reap: {
+        modelname: "Gemma 4 21B A4B REAP",
+        modeldesc:
+          "21B-parameter REAP-pruned MoE Gemma 4 model with 4B active parameters per token and 262K context. Expert-pruned for efficiency while retaining instruction-following quality. Q4_K_M quantization. Best for: fast multimodal reasoning with low memory on consumer hardware.",
+        url: "https://huggingface.co/barozp/gemma-4-21b-a4b-it-REAP-GGUF/resolve/main/gemma-4-21b-a4b-it-REAP-Q4_K_M.gguf",
+        filename: "gemma-4-21b-a4b-it-reap-q4_k_m.gguf",
+        filesize: "12.9 GB",
+        filesizeBytes: 13.83e9,
+        parameters: 21340000000,
+        activeParameters: 4000000000,
+        isMoE: true,
+        context: 262144,
+      },
+
       qwen3_5_122_B_a10b_q2: {
         modelname: "Qwen 3.5 122B A10B",
         modeldesc:
