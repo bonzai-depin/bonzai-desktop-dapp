@@ -983,6 +983,33 @@ onMounted(async () => {
   // Listen for auth needs-reauth events
   window.addEventListener("auth:needs-reauth", handleNeedsReauth);
   window.addEventListener("auth:expired", handleNeedsReauth);
+
+  // Listen for connect request from other components (e.g. skill purchase)
+  window.addEventListener("bonzai:open-connect", () => {
+    showPrivyLogin.value = true;
+  });
+
+  // Handle Privy OAuth callback from deep link
+  if (window.electronAPI?.onPrivyOAuthCallback) {
+    window.electronAPI.onPrivyOAuthCallback(async (_event, url) => {
+      try {
+        const parsed = new URL(url);
+        const code = parsed.searchParams.get("code");
+        const state = parsed.searchParams.get("state");
+        const provider = parsed.searchParams.get("provider") || "google";
+        if (code && state) {
+          const result = await doConnectWithPrivy({ method: "oauth_callback", authorizationCode: code, returnedStateCode: state, provider });
+          if (result.success) {
+            showPrivyLogin.value = false;
+          } else {
+            privyError.value = result.error || "OAuth sign-in failed";
+          }
+        }
+      } catch (e) {
+        privyError.value = e.message || "OAuth callback failed";
+      }
+    });
+  }
 });
 
 onUnmounted(() => {

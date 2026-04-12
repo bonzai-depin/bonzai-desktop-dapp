@@ -238,6 +238,14 @@ contextBridge.exposeInMainWorld("electronAPI", {
   /**
    * Listen for LAN peer discovery events (from main process)
    */
+  /**
+   * Listen for Privy OAuth callback (deep link from browser)
+   */
+  onPrivyOAuthCallback: (handler) => {
+    ipcRenderer.on("privy-oauth-callback", handler);
+    return () => ipcRenderer.removeListener("privy-oauth-callback", handler);
+  },
+
   onLANPeerDiscovered: (handler) => {
     ipcRenderer.on("lan-peer-discovered", handler);
     return () => ipcRenderer.removeListener("lan-peer-discovered", handler);

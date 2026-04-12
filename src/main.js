@@ -607,6 +607,34 @@ protocol.registerSchemesAsPrivileged([
   { scheme: "local-video", privileges: { bypassCSP: true, stream: true, supportFetchAPI: true, corsEnabled: true } },
 ]);
 
+// Register bonzai:// protocol for OAuth callbacks
+if (process.defaultApp) {
+  app.setAsDefaultProtocolClient("bonzai", process.execPath, [path.resolve(process.argv[1])]);
+} else {
+  app.setAsDefaultProtocolClient("bonzai");
+}
+
+// Handle deep links (macOS: open-url, Windows/Linux: second-instance)
+app.on("open-url", (_event, url) => {
+  if (url.startsWith("bonzai://auth/callback")) {
+    // Forward OAuth callback to renderer for Privy to complete
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.webContents.send("privy-oauth-callback", url);
+      mainWindow.focus();
+    }
+  }
+});
+
+app.on("second-instance", (_event, argv) => {
+  const url = argv.find(a => a.startsWith("bonzai://"));
+  if (url && url.startsWith("bonzai://auth/callback")) {
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.webContents.send("privy-oauth-callback", url);
+      mainWindow.focus();
+    }
+  }
+});
+
 app.whenReady().then(() => {
   protocol.handle("app", (req) => {
     const { pathname } = new URL(req.url);

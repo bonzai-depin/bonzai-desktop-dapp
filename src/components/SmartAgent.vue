@@ -186,29 +186,7 @@
                       </span>
                     </template>
 
-                    <!-- Paid skill, not purchased, wallet not connected: Preview + Connect Wallet -->
-                    <template v-else-if="!web3Store.isConnected">
-                      <button
-                        class="button is-info is-medium"
-                        @click="previewSkill(skill)"
-                      >
-                        <span class="material-symbols-outlined mr-1">visibility</span>
-                        Preview
-                      </button>
-                      <button
-                        class="button is-success is-medium ml-2"
-                        @click="web3Store.connect()"
-                      >
-                        <span class="material-symbols-outlined mr-2">wallet</span>
-                        Connect Wallet
-                      </button>
-                      <span class="skill-price-tag ml-5">
-                        <span class="skill-price-amount">{{ skill.price }}</span>
-                        <span class="skill-price-currency">USDC</span>
-                      </span>
-                    </template>
-
-                    <!-- Paid skill, not purchased, wallet connected: Preview + Purchase -->
+                    <!-- Paid skill, not purchased: Preview + Purchase (wallet connects silently if needed) -->
                     <template v-else>
                       <button
                         class="button is-info is-medium"
@@ -414,13 +392,6 @@
                     Purchase this skill to unlock full access.
                   </p>
                   <div class="preview-gate-actions">
-                    <template v-if="!web3Store.isConnected">
-                      <button class="button is-success" @click="web3Store.connect()">
-                        <span class="material-symbols-outlined mr-2">wallet</span>
-                        Connect Wallet
-                      </button>
-                    </template>
-                    <template v-else>
                       <button
                         class="button is-warning"
                         :class="{ 'is-loading': purchasingSkillId === selectedSkill.id }"
@@ -430,7 +401,6 @@
                         <span class="material-symbols-outlined mr-1">shopping_cart</span>
                         Purchase
                       </button>
-                    </template>
                     <span class="skill-price-tag ml-3">
                       <span class="skill-price-amount">{{ selectedSkill.price }}</span>
                       <span class="skill-price-currency">USDC</span>
@@ -2156,12 +2126,20 @@ Return ONLY the JSON, no explanation.`;
 
     const handlePurchaseSkill = async (skill) => {
       if (purchasingSkillId.value) return;
+
+      // If not connected, prompt connection first
+      if (!web3Store.isConnected) {
+        showNotification("Sign in or connect wallet to purchase", "info");
+        // Emit event to open connection UI in bottom bar
+        window.dispatchEvent(new CustomEvent("bonzai:open-connect"));
+        return;
+      }
+
       purchasingSkillId.value = skill.id;
       try {
-        const priceUsdc = (skill.price || 10) * 1_000_000; // Convert to 6-decimal USDC units
+        const priceUsdc = (skill.price || 10) * 1_000_000;
         const result = await purchaseSkillUSDC(skill.id, priceUsdc);
         if (result.success) {
-          // Add to reactive set for immediate UI update
           purchasedSkillIds.value = new Set([...purchasedSkillIds.value, skill.id]);
           showNotification(`Purchased ${skill.name}!`, "success");
         } else {

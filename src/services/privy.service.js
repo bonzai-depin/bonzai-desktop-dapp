@@ -539,6 +539,49 @@ function buildMintOnlyPolicy(contractAddress) {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
+// FUNDING (Coinbase Onramp for USDC on Base)
+// ═══════════════════════════════════════════════════════════════════════════
+
+/**
+ * Get a Coinbase onramp URL to fund the embedded wallet with USDC on Base.
+ * Opens in external browser — user pays with credit card / bank.
+ *
+ * @param {string} amount - Amount in USDC (e.g. "20")
+ * @returns {Promise<{url: string} | {error: string}>}
+ */
+async function getFundingUrl(amount = '20') {
+  if (!privyClient) return { error: 'Privy not initialized' };
+  if (!state.embeddedWalletAddress) return { error: 'No embedded wallet' };
+
+  try {
+    const PrivySDK = await import('@privy-io/js-sdk-core');
+
+    // Initialize Coinbase onramp session via Privy
+    const initResult = await privyClient.funding.coinbase.initOnRampSession({
+      addresses: [{
+        address: state.embeddedWalletAddress,
+        blockchains: ['base'],
+      }],
+    });
+
+    // Generate the onramp URL
+    const { url } = PrivySDK.getCoinbaseOnRampUrl({
+      appId: import.meta.env.VITE_PRIVY_APP_ID,
+      input: initResult,
+      amount,
+      blockchain: 'base',
+      asset: 'USDC',
+      experience: 'buy',
+    });
+
+    return { url: url.toString() };
+  } catch (err) {
+    console.error('[Privy] Funding URL failed:', err);
+    return { error: err.message };
+  }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
 // INTERNAL HELPERS
 // ═══════════════════════════════════════════════════════════════════════════
 
@@ -583,6 +626,9 @@ export const privyService = {
   getServerWalletBalance,
   getServerWalletSigner,
   deleteServerWalletMapping,
+
+  // Funding
+  getFundingUrl,
 
   // Policies
   setWalletPolicy,

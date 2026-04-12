@@ -802,6 +802,13 @@ export const connectWithPrivy = async (options = {}) => {
       loginResult = await privyService.verifyOtp(email, otpCode);
     } else if (method === 'google' || method === 'apple') {
       loginResult = await privyService.loginWithSocial(method);
+    } else if (method === 'oauth_callback') {
+      // Complete OAuth flow from deep link callback
+      loginResult = await privyService.completeOAuthLogin(
+        options.authorizationCode,
+        options.returnedStateCode,
+        options.provider,
+      );
     } else {
       throw new Error(`Unsupported Privy login method: ${method}`);
     }

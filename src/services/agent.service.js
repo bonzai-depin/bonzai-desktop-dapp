@@ -458,26 +458,64 @@ export async function purchaseSkillUSDC(skillId, price = DEFAULT_SKILL_PRICE_USD
   state.error = null;
 
   try {
-    // 1. Ensure on Base
-    const currentChainId = web3Service.state.chainId;
-    if (currentChainId !== 8453) {
-      throw new Error('Please switch to Base network to purchase skills with USDC');
+    // 1. Auto-connect wallet if not connected (supports both Privy and Reown)
+    if (!web3Service.state.isConnected) {
+      // Try to restore Privy session silently
+      try {
+        const { privyService } = await import('./privy.service.js');
+        await privyService.initialize();
+        if (privyService.state.isAuthenticated && privyService.state.embeddedWalletAddress) {
+          await web3Service.connectWithPrivy({ method: 'email', otpCode: '__restore__' }).catch(() => {});
+        }
+      } catch { /* Privy not configured or no session */ }
+
+      if (!web3Service.state.isConnected) {
+        throw new Error('Please connect your wallet or sign in to purchase skills.');
+      }
     }
 
-    // 2. Get signer
+    // 2. Ensure on Base — auto-switch if needed
+    if (web3Service.state.currentChainId !== 8453) {
+      console.log('[SkillPurchase] Switching to Base...');
+      await web3Service.switchToBase();
+    }
+
+    // 3. Get signer
     const signer = await web3Service.getSigner();
     const userAddress = await signer.getAddress();
 
-    // 3. Get registry contract
+    // 4. Get registry contract
     const registryAddress = CONFIG.skillRegistry?.contractAddress;
     if (!registryAddress) {
       throw new Error('Skill registry contract not yet deployed');
     }
 
-    // 4. Check/set USDC allowance for SkillRegistry
+    // 5. Check USDC balance
     const usdcContract = new ethers.Contract(USDC_ADDRESS_BASE, USDC_ABI, signer);
-    const currentAllowance = await usdcContract.allowance(userAddress, registryAddress);
+    const balance = await usdcContract.balanceOf(userAddress);
+    if (balance < BigInt(price)) {
+      const needed = (Number(price) / 1_000_000).toFixed(2);
+      const has = (Number(balance) / 1_000_000).toFixed(2);
 
+      // For Privy users: offer Coinbase onramp to fund wallet
+      if (web3Service.state.authProvider === 'privy') {
+        try {
+          const { privyService } = await import('./privy.service.js');
+          const funding = await privyService.getFundingUrl(needed);
+          if (funding.url) {
+            const { shell } = await import('electron');
+            shell.openExternal(funding.url);
+            throw new Error(`Insufficient USDC (have ${has}, need ${needed}). A funding page has been opened in your browser — purchase USDC with credit card, then retry.`);
+          }
+        } catch (e) {
+          if (e.message.includes('funding page')) throw e; // Re-throw our custom message
+        }
+      }
+      throw new Error(`Insufficient USDC. Need ${needed} USDC, have ${has} USDC. Add funds to your wallet on Base.`);
+    }
+
+    // 6. Check/set USDC allowance for SkillRegistry
+    const currentAllowance = await usdcContract.allowance(userAddress, registryAddress);
     if (currentAllowance < BigInt(price)) {
       console.log('[SkillPurchase] Approving USDC spend...');
       const approveTx = await usdcContract.approve(registryAddress, BigInt(price));
@@ -485,10 +523,8 @@ export async function purchaseSkillUSDC(skillId, price = DEFAULT_SKILL_PRICE_USD
       console.log('[SkillPurchase] USDC approved');
     }
 
-    // 5. Call registry.purchaseSkill(skillIdBytes, maxPrice)
+    // 7. Call registry.purchaseSkill(skillIdBytes, maxPrice)
     const registry = new ethers.Contract(registryAddress, SKILL_REGISTRY_ABI, signer);
-    // Skill IDs on-chain are keccak256(abi.encode(name, version, author))
-    // but we store them locally as string IDs. Use ethers.id() as the canonical encoding.
     const skillIdBytes = getOnChainSkillId(skillId);
     const tx = await registry.purchaseSkill(skillIdBytes, BigInt(price));
     const receipt = await tx.wait();
