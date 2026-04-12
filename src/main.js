@@ -1171,6 +1171,7 @@ ipcMain.handle("p2p-start", async (_event, options = {}) => {
     node.onHealthRequest(async (request, remotePeer) => {
       const pipelines = store.get("p2p.pipelines", []);
       const pricingCurrency = store.get("p2p.pricingCurrency", "ETH");
+      const FLASK_PORT = process.env.BONZAI_SERVER_PORT || 65000;
 
       // Scan MODEL_DIR for available LLM models (.gguf files)
       let availableModels = [];
@@ -1181,10 +1182,36 @@ ipcMain.handle("p2p-start", async (_event, options = {}) => {
           .map(f => f.toLowerCase());
       } catch { /* */ }
 
+      // Check which Flask pipelines are ready (models downloaded)
+      const readyPipelines = [];
+      const flaskPipelines = ['image_turbo', 'image_quality', 'image_standard', 'audio_turbo', 'audio_quality', 'music', 'video_fast', 'vision'];
+      try {
+        const checks = await Promise.all(flaskPipelines.map(async (p) => {
+          try {
+            const res = await fetch(`http://127.0.0.1:${FLASK_PORT}/pipelines/plan`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ pipeline: p }),
+              signal: AbortSignal.timeout(3000),
+            });
+            if (res.ok) {
+              const data = await res.json();
+              return data.ok ? p : null;
+            }
+          } catch { /* */ }
+          return null;
+        }));
+        readyPipelines.push(...checks.filter(Boolean));
+      } catch { /* Flask may not be running */ }
+
+      // LLM is ready if any .gguf exists
+      if (availableModels.length > 0) readyPipelines.push('llm');
+
       return {
         ok: true,
         peerId: node.getPeerId(),
         pipelines,
+        readyPipelines,
         pricingCurrency,
         free: pricingCurrency === "FREE",
         version: app.getVersion(),
@@ -1616,6 +1643,11 @@ async function routeInferenceRequest(request) {
     body: JSON.stringify(requestParams),
   });
 
+  if (response.status === 202) {
+    // Model not downloaded — Flask wants to prefetch. This is meaningless for remote consumers.
+    throw new Error(`Pipeline "${pipeline}" model not downloaded on this provider.`);
+  }
+
   if (!response.ok) {
     const error = await response.text();
     throw new Error(`Inference failed (${response.status}): ${error}`);
@@ -1724,12 +1756,12 @@ ipcMain.handle("inference-request", async (event, { pipeline, params }) => {
         const isLLM = pipeline === "llm" || pipeline.startsWith("llm_");
         const requestedModel = isLLM ? (params?.model || currentLoadedModel?.filename || "").toLowerCase() : null;
 
-        // For LLM: filter to providers that have the requested model downloaded
-        // For non-LLM: all providers are eligible
+        // Filter to providers that can handle this request
         let eligible = providers;
         if (isLLM && requestedModel) {
+          // LLM: filter by model availability
           eligible = providers.filter(p => {
-            if (!p.availableModels || p.availableModels.length === 0) return true; // No model info = assume capable
+            if (!p.availableModels || p.availableModels.length === 0) return true;
             const normalizedReq = requestedModel.replace(/[\s.]+/g, '').toLowerCase();
             return p.availableModels.some(m =>
               m.includes(normalizedReq) || m.replace(/[-_.]/g, '').includes(normalizedReq)
@@ -1737,6 +1769,15 @@ ipcMain.handle("inference-request", async (event, { pipeline, params }) => {
           });
           if (eligible.length === 0) {
             console.warn(`[Inference] No providers have model "${requestedModel}", falling back to local`);
+          }
+        } else if (!isLLM) {
+          // Non-LLM: filter by ready pipeline
+          eligible = providers.filter(p => {
+            if (!p.readyPipelines || p.readyPipelines.length === 0) return true;
+            return p.readyPipelines.includes(pipeline);
+          });
+          if (eligible.length === 0) {
+            console.warn(`[Inference] No providers have pipeline "${pipeline}" ready, falling back to local`);
           }
         }
 

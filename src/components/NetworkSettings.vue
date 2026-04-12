@@ -428,16 +428,17 @@
                 +{{ provider.availableModels.length - 4 }}
               </span>
             </div>
-            <div class="provider-pipelines" v-if="provider.pipelines?.length">
+            <div class="provider-pipelines" v-if="provider.readyPipelines?.length || provider.pipelines?.length">
               <span
-                v-for="p in provider.pipelines.slice(0, 8)"
+                v-for="p in (provider.readyPipelines || provider.pipelines || []).slice(0, 8)"
                 :key="p"
                 class="pipeline-tag"
+                :class="{ ready: provider.readyPipelines?.includes(p) }"
               >
                 {{ p }}
               </span>
-              <span v-if="provider.pipelines.length > 8" class="more-tag">
-                +{{ provider.pipelines.length - 8 }}
+              <span v-if="(provider.readyPipelines || provider.pipelines || []).length > 8" class="more-tag">
+                +{{ (provider.readyPipelines || provider.pipelines || []).length - 8 }}
               </span>
             </div>
             <div v-if="isProviderSelected(provider.peerId)" class="provider-selected-badge">
@@ -2610,13 +2611,18 @@ hr {
 }
 
 .pipeline-tag {
-  background: rgba(16, 185, 129, 0.2);
-  color: var(--bonzai-green);
+  background: rgba(255, 255, 255, 0.08);
+  color: rgba(255, 255, 255, 0.5);
   font-size: 0.75rem;
   padding: 4px 10px;
   border-radius: 999px;
   font-family: "JetBrains Mono", monospace;
   font-weight: 600;
+}
+
+.pipeline-tag.ready {
+  background: rgba(16, 185, 129, 0.2);
+  color: var(--bonzai-green);
 }
 
 .overall-status {
