@@ -1703,6 +1703,11 @@ ipcMain.handle("inference-request", async (event, { pipeline, params }) => {
 
     // ── LOCAL or PROVIDER mode: always local ──
     if (networkMode !== "consumer") {
+      const isLLM = pipeline === "llm" || pipeline.startsWith("llm_");
+      if (isLLM) {
+        // LLM: let the component use chatStream directly (streaming + node-llama-cpp)
+        return { ok: false, useLocal: true };
+      }
       const result = await routeInferenceRequest({ pipeline, params });
       return { ok: true, result, remote: false };
     }
@@ -1842,6 +1847,12 @@ ipcMain.handle("inference-request", async (event, { pipeline, params }) => {
     }
 
     // Fallback to local
+    const isLLMLocal = pipeline === "llm" || pipeline.startsWith("llm_");
+    if (isLLMLocal) {
+      // LLM: signal "not handled" so the component uses chatStream (node-llama-cpp with streaming)
+      return { ok: false, useLocal: true };
+    }
+    // Non-LLM: route through Flask directly
     const result = await routeInferenceRequest({ pipeline, params });
     return { ok: true, result, remote: false };
   } catch (err) {

@@ -494,10 +494,10 @@
           <div class="level">
             <div class="level-left">
               <div class="level-item">
-                <h1 class="fira-sans-condensed-black-italic">
+                <h1 class="fira-sans-condensed-black-italic is-size-1">
                   <span
                     class="material-symbols-outlined mr-2"
-                    style="font-size: 92px !important"
+                    style="font-size: 64px !important"
                   >
                     chat
                   </span>
@@ -2168,20 +2168,11 @@ export default {
                   last.answer.text = text;
                   inferences.value = [...arr];
                 }
-              } else {
-                // Local: result came from routeInferenceRequest (OpenClaw)
-                const text = result.result?.choices?.[0]?.message?.content || JSON.stringify(result.result);
-                assistantResult = text;
-                tokenCount = text.split(/\s+/).length;
-                streamingText.value = text;
-                const arr = inferences.value;
-                const last = arr[arr.length - 1];
-                if (last && last.answer.id === answerId) {
-                  last.answer.text = text;
-                  inferences.value = [...arr];
-                }
               }
-            } else {
+            }
+
+            // useLocal or no result: fall through to local streaming
+            if (!assistantResult) {
               // Fallback: direct local streaming via node-llama-cpp
               const chatOpts = {};
               if (!reasoningEnabled.value) chatOpts.thoughtTokens = 0;
