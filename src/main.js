@@ -1630,16 +1630,17 @@ ipcMain.handle("inference-request", async (event, { pipeline, params }) => {
     // Pipeline parallelism (LLM only)
     if (pipelineEnabled && isLLM) {
       try {
-        const { runPipelineInference } = await getPipelineOrchestrator();
+        const { runPipelineInference, getActiveSession } = await getPipelineOrchestrator();
 
-        // Resolve model path
-        let modelPath = null;
-        if (currentLoadedModel?.filename) {
+        // Reuse model path from active session, or resolve from loaded model
+        const activeSession = getActiveSession();
+        let modelPath = activeSession?.modelPath || null;
+        if (!modelPath && currentLoadedModel?.filename) {
           modelPath = path.join(MODEL_DIR, currentLoadedModel.filename);
         }
 
-        const { getActiveSession } = await getPipelineOrchestrator();
-        if (!getActiveSession() && (loadedModel || modelContext || modelSession)) {
+        // Only unload node-llama-cpp on first pipeline request (session start)
+        if (!activeSession && (loadedModel || modelContext || modelSession)) {
           console.log("[Inference] Unloading node-llama-cpp for pipeline...");
           try { await unloadModel(); } catch (e) {
             console.warn("[Inference] Model unload warning:", e.message);
