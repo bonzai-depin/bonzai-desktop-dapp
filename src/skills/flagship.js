@@ -735,7 +735,7 @@ export const SKILL_MODEL_REQUIREMENTS = {
   'manga-to-anime-v1.0.0': ['llm_llama_3_1_8b', 'image_turbo', 'video_fast'],
   'hairstyle-studio-v1.0.0': ['llm_llama_3_1_8b', 'image_turbo'],
   'roleplay-companion-v1.0.0': ['llm_mythomax_13b', 'image_advanced', 'image_turbo'],
-  'live-streaming-v1.0.0': ['llm_llama_3_1_8b', 'image_turbo', 'audio_turbo', 'music', 'video_fast'],
+  'live-streaming-v1.0.0': [], // No mandatory models — uses whatever LLM is loaded + optional media pipelines
 };
 
 /**
@@ -4750,7 +4750,7 @@ export const liveStreamer = createSkillDefinition({
   hasCustomUI: true,
   requirements: {
     minLevel: 1,
-    requiredApis: ['llm', 'image', 'audio'],
+    requiredApis: [], // No mandatory APIs — uses whatever pipelines are available
     requiredPermissions: [],
   },
   inputs: {
