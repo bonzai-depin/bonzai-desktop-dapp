@@ -4775,7 +4775,7 @@ export const liveStreamer = createSkillDefinition({
   version: '1.0.0',
   author: { address: '0x8Ff3b2e823b33BeE30e699bB1b6BBc8F622fEa89', name: 'BonzAI', verified: true },
   category: 'entertainment',
-  price: 19.99,
+  price: 49.99,
   tags: ['streaming', 'twitch', 'obs', 'live', 'chat', 'overlay', 'youtube', 'kick', 'discord', 'interactive'],
   hasCustomUI: true,
   requirements: {

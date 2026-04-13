@@ -741,10 +741,10 @@ export default {
     const monetizationEnabled = ref(false);
     const generationPrices = reactive({
       image: 0.50,
-      audio: 0.25,
-      music: 1.00,
-      video: 2.00,
-      '3d': 1.00,
+      audio: 0.50,
+      music: 1.50,
+      video: 2.50,
+      '3d': 1.50,
     });
     // Fan wallets: platform:username → { walletId, address }
     const fanWallets = reactive(new Map());
@@ -1007,14 +1007,9 @@ export default {
       }
       if (msg === '!level' || msg === '!mint') { logActivity(user, platform, msg.slice(1)); return; }
 
-      // Wallet linking
+      // Wallet linking — direct fans to bonzai.sh/link
       if (msg === '!link') {
-        const wallet = await ensureFanWallet(user, platform);
-        if (wallet) {
-          logActivity(user, platform, `wallet linked: ${wallet.address.slice(0, 10)}...`);
-        } else {
-          logActivity(user, platform, 'wallet linking failed');
-        }
+        logActivity(user, platform, 'requested wallet link → bonzai.sh/link');
         return;
       }
 
@@ -1024,7 +1019,7 @@ export default {
         if (wallet) {
           logActivity(user, platform, `wallet: ${wallet.address.slice(0, 10)}...`);
         } else {
-          logActivity(user, platform, 'no wallet — type !link first');
+          logActivity(user, platform, 'no wallet — visit bonzai.sh/link');
         }
         return;
       }

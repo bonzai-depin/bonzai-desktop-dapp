@@ -56,7 +56,7 @@ const SKILLS_TO_REGISTER = [
     version: "1.0.0",
     category: "entertainment",
     ipfsHash: "bafkreigxyz_livestreamer_placeholder",
-    purchasePrice: 19_990_000n, // 19.99 USDC
+    purchasePrice: 49_990_000n, // 49.99 USDC
     runningFee: 0n,
   },
 ];
