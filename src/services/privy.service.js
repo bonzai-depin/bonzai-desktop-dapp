@@ -237,26 +237,86 @@ function getEmbeddedProvider() {
 }
 
 /**
- * Extract embedded wallet from Privy user object and get its EIP-1193 provider
+ * Extract embedded wallet from Privy user object.
+ * In Electron, the iframe-based embedded provider doesn't work.
+ * Instead, we look up the wallet ID via the Privy API (main process)
+ * and create an IPC-backed EIP-1193 provider.
  * @private
  */
 async function _extractEmbeddedWallet(user) {
-  // Use the SDK helper to find the embedded wallet
   const PrivySDK = await import('@privy-io/js-sdk-core');
   const embeddedWallet = PrivySDK.getUserEmbeddedEthereumWallet(user);
 
-  if (embeddedWallet) {
-    state.embeddedWalletAddress = embeddedWallet.address;
+  if (!embeddedWallet) return;
 
-    // Get EIP-1193 provider for the embedded wallet
-    try {
-      embeddedProvider = await privyClient.embeddedWallet.getEthereumProvider({
-        wallet: embeddedWallet,
-      });
-    } catch (err) {
-      console.warn('[Privy] Failed to get embedded provider:', err);
+  state.embeddedWalletAddress = embeddedWallet.address;
+
+  // Look up wallet ID via main process (Privy API with App Secret)
+  try {
+    const walletInfo = await window.electronAPI?.privy?.getWalletByAddress?.(embeddedWallet.address);
+    if (walletInfo?.walletId) {
+      // Create IPC-backed EIP-1193 provider (routes signing through main process → Privy API)
+      embeddedProvider = _createIpcProvider(walletInfo.walletId, embeddedWallet.address);
+      console.log('[Privy] Created IPC-backed provider for embedded wallet:', embeddedWallet.address);
+    } else {
+      console.warn('[Privy] Could not resolve wallet ID for', embeddedWallet.address);
     }
+  } catch (err) {
+    console.warn('[Privy] Failed to set up embedded provider:', err.message);
   }
+}
+
+/**
+ * Create an EIP-1193 compatible provider backed by Privy API via IPC.
+ * Routes eth_sendTransaction and eth_signTypedData_v4 through the main process.
+ * @private
+ */
+function _createIpcProvider(walletId, address) {
+  return {
+    request: async ({ method, params }) => {
+      switch (method) {
+        case 'eth_requestAccounts':
+        case 'eth_accounts':
+          return [address];
+
+        case 'eth_chainId':
+          return '0x2105'; // Base (8453)
+
+        case 'eth_sendTransaction': {
+          const tx = params[0];
+          const result = await window.electronAPI.privy.sendTransaction(walletId, {
+            caip2: 'eip155:8453',
+            method: 'eth_sendTransaction',
+            params: { transaction: tx },
+          });
+          if (result.error) throw new Error(result.error);
+          return result.hash;
+        }
+
+        case 'eth_signTypedData_v4': {
+          const typedData = JSON.parse(params[1]);
+          const result = await window.electronAPI.privy.signTypedData(walletId, {
+            caip2: 'eip155:8453',
+            method: 'eth_signTypedData_v4',
+            params: { domain: typedData.domain, types: typedData.types, message: typedData.message },
+          });
+          if (result.error) throw new Error(result.error);
+          return result.signature;
+        }
+
+        case 'personal_sign': {
+          // Not yet supported via Privy API — fall through
+          throw new Error('personal_sign not supported for Privy embedded wallets');
+        }
+
+        default:
+          // For read-only RPC calls, use a public provider
+          const { ethers } = await import('ethers');
+          const rpc = new ethers.JsonRpcProvider('https://base.llamarpc.com');
+          return rpc.send(method, params || []);
+      }
+    },
+  };
 }
 
 // ═══════════════════════════════════════════════════════════════════════════

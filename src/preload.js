@@ -66,6 +66,8 @@ contextBridge.exposeInMainWorld("electronAPI", {
       ipcRenderer.invoke("privy:sign-typed-data", { walletId, typedData }),
     getWallet: (walletId) =>
       ipcRenderer.invoke("privy:get-wallet", walletId),
+    getWalletByAddress: (address) =>
+      ipcRenderer.invoke("privy:get-wallet-by-address", address),
     setPolicy: (walletId, policy) =>
       ipcRenderer.invoke("privy:set-policy", { walletId, policy }),
   },

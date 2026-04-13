@@ -831,6 +831,22 @@ ipcMain.handle("privy:get-wallet", async (_event, walletId) => {
   }
 });
 
+ipcMain.handle("privy:get-wallet-by-address", async (_event, address) => {
+  try {
+    // List wallets and find by address
+    const data = await privyFetch("/wallets?chain_type=ethereum&limit=20");
+    const wallets = data?.data || data?.wallets || [];
+    const match = wallets.find(w => w.address?.toLowerCase() === address?.toLowerCase());
+    if (match) {
+      return { walletId: match.id, address: match.address };
+    }
+    return { error: `No Privy wallet found for address ${address}` };
+  } catch (err) {
+    console.error("[Privy] Get wallet by address failed:", err.message);
+    return { error: err.message };
+  }
+});
+
 ipcMain.handle("privy:set-policy", async (_event, { walletId, policy }) => {
   try {
     return await privyFetch(`/wallets/${walletId}/policy`, {
