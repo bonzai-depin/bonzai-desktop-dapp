@@ -96,6 +96,16 @@ jobs:
           find "$TORCH_DIR" -name "libtorch_python*" -delete 2>/dev/null || true
           find "$TORCH_DIR" -name "libc10d*" -delete 2>/dev/null || true
           find "$TORCH_DIR" -type d -name "caffe2" -exec rm -rf {} + 2>/dev/null || true
+          # Remove cuBLAS (huge, only needed for large GEMM — inference uses cuBLASLt instead)
+          find "$TORCH_DIR" -name "libcublas.so*" -delete 2>/dev/null || true
+          # Remove nvptx compiler libs (JIT compilation, not needed at runtime)
+          find "$TORCH_DIR" -name "libnvptxcompiler*" -delete 2>/dev/null || true
+          # Remove Triton (JIT kernel compiler, not needed for inference)
+          find "$(python -c 'import site; print(site.getsitepackages()[0])')" -type d -name "triton" -exec rm -rf {} + 2>/dev/null || true
+          # Remove test/benchmark files from torch
+          find "$TORCH_DIR" -type d -name "test" -exec rm -rf {} + 2>/dev/null || true
+          find "$TORCH_DIR" -type d -name "benchmarks" -exec rm -rf {} + 2>/dev/null || true
+
           find "$TORCH_DIR" -name "*.so" -exec strip --strip-debug {} + 2>/dev/null || true
           find "$TORCH_DIR" -name "*.so.*" -exec strip --strip-debug {} + 2>/dev/null || true
 
@@ -208,11 +218,49 @@ jobs:
           rm -rf binaries/
           df -h /
 
-      - name: Build .deb package
+      # Strip Electron app to reduce .deb size below GitHub's 2GB limit
+      - name: Strip app for size
+        run: |
+          APP="out/BonzAI-linux-x64"
+          echo "App size before stripping: $(du -sh "$APP" | cut -f1)"
+
+          # Strip debug symbols from all .so files in the app
+          find "$APP" -name "*.so" -exec strip --strip-debug {} + 2>/dev/null || true
+          find "$APP" -name "*.so.*" -exec strip --strip-debug {} + 2>/dev/null || true
+          find "$APP" -name "*.node" -exec strip --strip-debug {} + 2>/dev/null || true
+
+          # Remove unnecessary Electron/Chromium files
+          rm -rf "$APP/resources/app/node_modules/.cache" 2>/dev/null || true
+          rm -rf "$APP/resources/app/node_modules/**/test" 2>/dev/null || true
+          rm -rf "$APP/resources/app/node_modules/**/tests" 2>/dev/null || true
+          rm -rf "$APP/resources/app/node_modules/**/__tests__" 2>/dev/null || true
+          rm -rf "$APP/resources/app/node_modules/**/docs" 2>/dev/null || true
+          rm -rf "$APP/resources/app/node_modules/**/example" 2>/dev/null || true
+          rm -rf "$APP/resources/app/node_modules/**/examples" 2>/dev/null || true
+          find "$APP/resources/app/node_modules" -name "*.md" -delete 2>/dev/null || true
+          find "$APP/resources/app/node_modules" -name "*.ts" ! -name "*.d.ts" -delete 2>/dev/null || true
+          find "$APP/resources/app/node_modules" -name "*.map" -delete 2>/dev/null || true
+          find "$APP/resources/app/node_modules" -name "CHANGELOG*" -delete 2>/dev/null || true
+          find "$APP/resources/app/node_modules" -name "LICENSE*" -delete 2>/dev/null || true
+          find "$APP/resources/app/node_modules" -name "README*" -delete 2>/dev/null || true
+
+          # Remove Electron locales except English
+          LOCALES_DIR="$APP/locales"
+          if [ -d "$LOCALES_DIR" ]; then
+            find "$LOCALES_DIR" -name "*.pak" ! -name "en-US.pak" -delete 2>/dev/null || true
+          fi
+
+          # Remove source maps from Chromium
+          find "$APP" -name "*.js.map" -delete 2>/dev/null || true
+
+          echo "App size after stripping: $(du -sh "$APP" | cut -f1)"
+
+      - name: Build .deb package (xz compressed)
         run: |
           TAG="${{ env.TAG }}"
           mkdir -p out/make
 
+          # Build with electron-installer-debian
           npx electron-installer-debian \
             --src out/BonzAI-linux-x64 \
             --dest out/make \
@@ -228,70 +276,47 @@ jobs:
             --options.categories "Utility;Science;ArtificialIntelligence" \
             --options.section misc
 
-          # Rename to include version and arch
+          # Rename
           DEB=$(ls out/make/*.deb | head -1)
           if [ -n "$DEB" ]; then
             mv "$DEB" "out/make/BonzAI-${TAG}-linux-amd64.deb"
           fi
 
-          echo "Package created:"
-          ls -lh out/make/
+          DEB_PATH="out/make/BonzAI-${TAG}-linux-amd64.deb"
+          DEB_SIZE=$(stat --format='%s' "$DEB_PATH")
+          echo "DEB size: $(echo $DEB_SIZE | numfmt --to=iec)"
 
-      # Unpacked app is redundant now that .deb is built
-      - name: Remove unpacked app
-        run: |
-          rm -rf out/BonzAI-linux-x64/
-          df -h /
+          # If still over 2GB, repack with xz compression (dpkg-deb -Zxz)
+          if [ "$DEB_SIZE" -gt 2000000000 ]; then
+            echo "DEB exceeds 2GB, repacking with xz compression..."
+            REPACK_DIR=$(mktemp -d)
+            dpkg-deb -R "$DEB_PATH" "$REPACK_DIR"
+            dpkg-deb -Zxz -b "$REPACK_DIR" "$DEB_PATH"
+            rm -rf "$REPACK_DIR"
+            echo "Repacked DEB size: $(stat --format='%s' "$DEB_PATH" | numfmt --to=iec)"
+          fi
+
+          echo "Final package:"
+          ls -lh out/make/
 
       - name: Disk report
         if: always()
         run: |
-          echo "=== Disk usage ==="
-          df -h
-          echo "=== Largest directories ==="
-          du -sh /home/runner/work/*/*/* 2>/dev/null | sort -rh | head -20
-          echo "=== pip cache ==="
-          pip cache info || true
-
-      - name: Compress package
-        run: |
-          TAG="${{ env.TAG }}"
-          DEB="out/make/BonzAI-${TAG}-linux-amd64.deb"
-
-          if [ -f "$DEB" ]; then
-            DEB_SIZE=$(stat --format='%s' "$DEB")
-            echo "DEB size: $(echo $DEB_SIZE | numfmt --to=iec)"
-
-            # If .deb exceeds 2GB GitHub limit, repackage as tar.xz
-            if [ "$DEB_SIZE" -gt 2000000000 ]; then
-              echo "DEB exceeds 2GB, creating compressed tar.xz instead..."
-              cd out/make
-              # Extract .deb contents and repackage with xz compression
-              mkdir -p deb-extract
-              dpkg-deb -x "BonzAI-${TAG}-linux-amd64.deb" deb-extract/
-              dpkg-deb -e "BonzAI-${TAG}-linux-amd64.deb" deb-extract/DEBIAN/
-              tar -cJf "BonzAI-${TAG}-linux-amd64.tar.xz" -C deb-extract .
-              rm "BonzAI-${TAG}-linux-amd64.deb"
-              cd ../..
-              echo "Compressed package:"
-              ls -lh out/make/
-            fi
-          fi
+          df -h /
+          du -sh out/make/* 2>/dev/null || true
 
       - name: Create Release & Upload
         run: |
           TAG="${{ env.TAG }}"
+          ASSET="out/make/BonzAI-${TAG}-linux-amd64.deb"
 
-          # Upload whichever package exists (.deb or .tar.xz)
-          for ASSET in out/make/BonzAI-${TAG}-linux-amd64.*; do
-            if [ -f "$ASSET" ]; then
-              echo "Uploading: $ASSET ($(stat --format='%s' "$ASSET" | numfmt --to=iec))"
-              gh release upload "${TAG}" "$ASSET" --clobber \
-                || gh release create "${TAG}" "$ASSET" \
-                  --title "BonzAI v${TAG}" \
-                  --generate-notes
-            fi
-          done
+          if [ -f "$ASSET" ]; then
+            echo "Uploading: $ASSET ($(stat --format='%s' "$ASSET" | numfmt --to=iec))"
+            gh release upload "${TAG}" "$ASSET" --clobber \
+              || gh release create "${TAG}" "$ASSET" \
+                --title "BonzAI v${TAG}" \
+                --generate-notes
+          fi
 
           echo "Released Linux build for v${TAG}"
 
