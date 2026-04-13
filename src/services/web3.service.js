@@ -856,7 +856,7 @@ export const connectWithPrivy = async (options = {}) => {
             if (['eth_sendTransaction', 'eth_signTypedData_v4', 'personal_sign'].includes(method)) {
               return window.electronAPI.wallet.signRequest({ method, params });
             }
-            const rpc = new ethers.JsonRpcProvider('https://base.llamarpc.com');
+            const rpc = new ethers.JsonRpcProvider(CONFIG.networks?.base?.rpc || 'https://mainnet.base.org');
             return rpc.send(method, params || []);
           },
         };

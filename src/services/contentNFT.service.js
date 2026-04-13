@@ -1119,7 +1119,7 @@ export async function fetchNFT3DCode(tokenId) {
     const contractAddress = CONFIG.contentNFT?.base?.contractAddress;
     if (!contractAddress) throw new Error('Content NFT contract not configured');
 
-    const provider = new ethers.JsonRpcProvider(CONFIG.networks?.base?.rpc || 'https://base.llamarpc.com');
+    const provider = new ethers.JsonRpcProvider(CONFIG.networks?.base?.rpc || 'https://mainnet.base.org');
     const contract = new ethers.Contract(
       contractAddress,
       ['function tokenURI(uint256 tokenId) view returns (string)'],

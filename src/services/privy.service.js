@@ -15,6 +15,7 @@
  */
 
 import { reactive } from 'vue';
+import { CONFIG } from '../config/web3.config.js';
 
 // ═══════════════════════════════════════════════════════════════════════════
 // STATE
@@ -303,7 +304,7 @@ function _createBrowserViewProvider(address) {
         default: {
           // Read-only RPC calls — direct to public provider
           const { ethers } = await import('ethers');
-          const rpc = new ethers.JsonRpcProvider('https://base.llamarpc.com');
+          const rpc = new ethers.JsonRpcProvider(_getRpcUrl(8453));
           return rpc.send(method, params || []);
         }
       }
@@ -571,10 +572,10 @@ async function _storeWalletMapping(companionId, data) {
 
 function _getRpcUrl(chainId) {
   const RPC_URLS = {
-    8453: 'https://base.llamarpc.com',
-    42161: 'https://arb1.arbitrum.io/rpc',
-    1: 'https://eth.llamarpc.com',
-    42: 'https://rpc.mainnet.lukso.network',
+    8453: CONFIG?.networks?.base?.rpc || 'https://mainnet.base.org',
+    42161: CONFIG?.networks?.arbitrum?.rpc || 'https://arb1.arbitrum.io/rpc',
+    1: CONFIG?.networks?.ethereum?.rpc || 'https://eth.llamarpc.com',
+    42: CONFIG?.networks?.lukso?.rpc || 'https://rpc.mainnet.lukso.network',
   };
   return RPC_URLS[chainId] || RPC_URLS[8453];
 }

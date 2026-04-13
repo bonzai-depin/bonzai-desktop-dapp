@@ -51,7 +51,7 @@ const RATE_WINDOW_MS = 60_000;      // 1 minute window
 const SUPPORTED_CHAINS = {
   8453: { // Base (primary - cheap gas)
     name: 'Base',
-    rpc: 'https://base.llamarpc.com',
+    rpc: CONFIG?.networks?.base?.rpc || 'https://mainnet.base.org',
     explorer: 'https://basescan.org',
   },
   42161: { // Arbitrum

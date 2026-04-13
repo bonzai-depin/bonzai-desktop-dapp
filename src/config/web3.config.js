@@ -50,13 +50,13 @@ export const CONFIG = {
       chainId: 8453,
       chainIdHex: "0x2105",
       name: "Base",
-      rpc: "https://base.llamarpc.com",
+      rpc: import.meta.env.VITE_ALCHEMY_API_KEY
+        ? `https://base-mainnet.g.alchemy.com/v2/${import.meta.env.VITE_ALCHEMY_API_KEY}`
+        : "https://mainnet.base.org",
       rpcFallbacks: [
-        "https://base-rpc.publicnode.com",
-        "https://1rpc.io/base",
-        "https://base.drpc.org",
-        "https://base.meowrpc.com",
         "https://mainnet.base.org",
+        "https://base.llamarpc.com",
+        "https://base-rpc.publicnode.com",
       ],
       explorer: "https://basescan.org",
       currency: { name: "Ether", symbol: "ETH", decimals: 18 },
@@ -374,7 +374,9 @@ export const CONFIG = {
     supportedChains: {
       8453: { // Base (primary - cheap gas ~$0.001)
         name: "Base",
-        rpc: "https://base.llamarpc.com",
+        rpc: import.meta.env.VITE_ALCHEMY_API_KEY
+          ? `https://base-mainnet.g.alchemy.com/v2/${import.meta.env.VITE_ALCHEMY_API_KEY}`
+          : "https://mainnet.base.org",
         explorer: "https://basescan.org",
         enabled: true,
       },

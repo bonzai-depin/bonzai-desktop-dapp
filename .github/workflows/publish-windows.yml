@@ -131,6 +131,7 @@ jobs:
         env:
           VITE_PINATA_JWT: ${{ secrets.PINATA_JWT }}
           VITE_PRIVY_APP_ID: ${{ secrets.PRIVY_APP_ID }}
+          VITE_ALCHEMY_API_KEY: ${{ secrets.ALCHEMY_API_KEY }}
           PRIVY_APP_SECRET: ${{ secrets.PRIVY_APP_SECRET }}
         run: npm run build:vite
 

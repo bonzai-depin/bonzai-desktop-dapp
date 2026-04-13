@@ -15,6 +15,7 @@
  */
 
 import { ethers } from 'ethers';
+import { CONFIG } from '../config/web3.config.js';
 
 // ═══════════════════════════════════════════════════════════════════════════
 // CONFIGURATION
@@ -24,7 +25,7 @@ import { ethers } from 'ethers';
 const BASE_CONFIG = {
   chainId: 8453,
   name: 'Base',
-  rpc: 'https://base.llamarpc.com',
+  rpc: CONFIG?.networks?.base?.rpc || 'https://mainnet.base.org',
   explorer: 'https://basescan.org',
 };
 

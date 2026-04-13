@@ -101,7 +101,7 @@ async function getPoolContract(withSigner = false) {
     provider = await web3Service.getProvider('base');
   } catch { /* */ }
   if (!provider) {
-    provider = new ethers.JsonRpcProvider('https://mainnet.base.org');
+    provider = new ethers.JsonRpcProvider(CONFIG.networks?.base?.rpc || 'https://mainnet.base.org');
   }
   return new ethers.Contract(poolAddress, MINT_POOL_ABI, provider);
 }
