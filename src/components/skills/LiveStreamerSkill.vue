@@ -458,6 +458,48 @@
 
       <hr />
 
+      <!-- Monetization -->
+      <h3 class="fira-sans-condensed-black-italic is-size-5 has-text-white mb-3">Fan Payments</h3>
+      <span class="category-selector" style="grid-template-columns: repeat(2, 1fr); max-width: 300px">
+        <input type="radio" name="monetization" id="monetization_free" :checked="!monetizationEnabled" @change="monetizationEnabled = false" />
+        <label for="monetization_free" class="radio category pt-3 pb-3">Free</label>
+        <input type="radio" name="monetization" id="monetization_paid" :checked="monetizationEnabled" @change="monetizationEnabled = true" />
+        <label for="monetization_paid" class="radio category pt-3 pb-3">Paid (USDC)</label>
+      </span>
+
+      <div v-if="monetizationEnabled" class="notification config-card mt-4 has-text-left">
+        <h4 class="fira-sans-condensed-black-italic is-size-5 mb-3">Price Per Generation (USDC)</h4>
+        <div v-for="ct in contentTypes" :key="ct.id" class="field is-horizontal mb-2">
+          <div class="field-label is-normal" style="flex: 0 0 100px">
+            <label class="label has-text-white" style="font-size: 13px">
+              <span class="material-symbols-outlined mr-1" style="font-size: 16px; vertical-align: middle">{{ ct.icon }}</span>
+              {{ ct.label }}
+            </label>
+          </div>
+          <div class="field-body">
+            <div class="field has-addons">
+              <div class="control">
+                <input v-model.number="generationPrices[ct.id]" type="number" class="input config-input is-small" step="0.01" min="0" style="width: 90px" />
+              </div>
+              <div class="control">
+                <a class="button is-static is-small">USDC</a>
+              </div>
+            </div>
+          </div>
+        </div>
+        <p class="help mt-3">80% to you, 20% to BonzAI treasury. Fans type <code>!link</code> in chat to connect their wallet.</p>
+        <hr />
+        <h4 class="fira-sans-condensed-black-italic is-size-5 mb-3">Your Payout Wallet</h4>
+        <div class="field">
+          <div class="control">
+            <input v-model="streamerWallet" type="text" class="input config-input" placeholder="0x... (Base address for receiving 80% of fan payments)" @change="saveStreamerWallet" />
+          </div>
+          <p class="help mt-2">Your wallet on Base to receive streamer share. Leave empty to use your connected wallet.</p>
+        </div>
+      </div>
+
+      <hr />
+
       <!-- Content Types -->
       <h3 class="fira-sans-condensed-black-italic is-size-5 has-text-white mb-3">Enabled Content Types</h3>
       <span class="category-selector">
@@ -523,7 +565,7 @@
     </div>
 
     <!-- ═══ STICKY PiP PREVIEW (bottom-right) ═══ -->
-    <div class="pip-container" :class="{ 'is-active': isLive || lastOutput || currentGeneration }">
+    <div class="pip-container mb-5 pr-5" :class="{ 'is-active': isLive || lastOutput || currentGeneration }">
       <div class="pip-display">
         <div class="pip-bg" :style="previewBgStyle">
           <div class="pip-overlay"></div>
@@ -695,6 +737,128 @@ export default {
       } catch { /* */ }
     }
 
+    // ═══ MONETIZATION ═══
+    const monetizationEnabled = ref(false);
+    const generationPrices = reactive({
+      image: 0.50,
+      audio: 0.25,
+      music: 1.00,
+      video: 2.00,
+      '3d': 1.00,
+    });
+    // Fan wallets: platform:username → { walletId, address }
+    const fanWallets = reactive(new Map());
+
+    async function loadFanWallets() {
+      try {
+        const saved = await window.electronAPI?.store?.get('live-streamer-fan-wallets', null);
+        if (saved) {
+          for (const [k, v] of Object.entries(saved)) fanWallets.set(k, v);
+        }
+      } catch { /* */ }
+    }
+
+    async function saveFanWallets() {
+      try {
+        await window.electronAPI?.store?.set('live-streamer-fan-wallets', Object.fromEntries(fanWallets));
+      } catch { /* */ }
+    }
+
+    /**
+     * Create or retrieve a Privy server wallet for a fan.
+     * @param {string} user - Chat username
+     * @param {string} platform - Platform (twitch, tiktok, etc.)
+     * @returns {Promise<{walletId: string, address: string}|null>}
+     */
+    async function ensureFanWallet(user, platform) {
+      const key = `${platform}:${user.toLowerCase()}`;
+      if (fanWallets.has(key)) return fanWallets.get(key);
+
+      try {
+        const result = await window.electronAPI?.privy?.ensureUserWallet?.({
+          userId: `fan-${key}`,
+        });
+        if (result?.walletId && result?.address) {
+          fanWallets.set(key, result);
+          saveFanWallets();
+          return result;
+        }
+      } catch (err) {
+        console.warn(`[LiveStreamer] Fan wallet creation failed for ${key}:`, err.message);
+      }
+      return null;
+    }
+
+    /**
+     * Charge a fan for generation. Sends USDC from fan wallet to streamer (80%) + treasury (20%).
+     * @returns {Promise<boolean>} true if payment succeeded
+     */
+    async function chargeFan(user, platform, contentType) {
+      if (!monetizationEnabled.value) return true; // Free mode
+
+      const price = generationPrices[contentType] || 0;
+      if (price <= 0) return true;
+
+      const fanWallet = await ensureFanWallet(user, platform);
+      if (!fanWallet) {
+        logActivity(user, platform, `no wallet linked — type !link to connect`);
+        return false;
+      }
+
+      const priceUsdc = Math.round(price * 1_000_000); // 6 decimals
+      const streamerShare = Math.round(priceUsdc * 0.8);
+      const treasuryShare = priceUsdc - streamerShare;
+
+      // Get streamer wallet address (configured or connected wallet)
+      let streamerAddress = await window.electronAPI?.store?.get('live-streamer-wallet', null);
+      if (!streamerAddress) {
+        // Fall back to connected wallet
+        try {
+          const { web3Service } = await import('../../services/web3.service.js');
+          streamerAddress = web3Service.state.walletAddress;
+        } catch { /* */ }
+      }
+      if (!streamerAddress) {
+        logActivity('system', platform, 'No wallet connected — generation is free');
+        return true;
+      }
+
+      const TREASURY = '0x8Ff3b2e823b33BeE30e699bB1b6BBc8F622fEa89';
+      const USDC_BASE = '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913';
+
+      try {
+        // Transfer USDC from fan wallet: 80% to streamer, 20% to treasury
+        const { ethers } = await import('ethers');
+        const erc20Data = (to, amount) => {
+          const iface = new ethers.Interface(['function transfer(address to, uint256 amount) returns (bool)']);
+          return iface.encodeFunctionData('transfer', [to, amount]);
+        };
+
+        // Send to streamer (80%)
+        const tx1 = await window.electronAPI.privy.sendTransaction(fanWallet.walletId, {
+          caip2: 'eip155:8453',
+          method: 'eth_sendTransaction',
+          params: { transaction: { to: USDC_BASE, data: erc20Data(streamerAddress, streamerShare), value: '0x0' } },
+        });
+        if (tx1.error) throw new Error(tx1.error);
+
+        // Send to treasury (20%)
+        const tx2 = await window.electronAPI.privy.sendTransaction(fanWallet.walletId, {
+          caip2: 'eip155:8453',
+          method: 'eth_sendTransaction',
+          params: { transaction: { to: USDC_BASE, data: erc20Data(TREASURY, treasuryShare), value: '0x0' } },
+        });
+        if (tx2.error) throw new Error(tx2.error);
+
+        stats.revenue = (parseFloat(stats.revenue) + price).toFixed(2);
+        logActivity(user, platform, `paid $${price.toFixed(2)} USDC`);
+        return true;
+      } catch (err) {
+        logActivity(user, platform, `payment failed: ${err.message}`);
+        return false;
+      }
+    }
+
     // ═══ SETTINGS ═══
     const companionEnabled = computed(() => !!selectedCompanionId.value);
     const maxQueueSize = ref(20);
@@ -706,6 +870,11 @@ export default {
       { id: '3d', label: '3D', icon: '3d_rotation' },
     ];
     const enabledTypes = ref(['image', 'audio', 'music', 'video', '3d']);
+    const streamerWallet = ref('');
+
+    async function saveStreamerWallet() {
+      await window.electronAPI?.store?.set('live-streamer-wallet', streamerWallet.value || null);
+    }
 
     // ═══ STATS ═══
     const stats = reactive({ totalGenerations: 0, uniqueViewers: 0, mints: 0, revenue: '0', byType: {} });
@@ -822,7 +991,7 @@ export default {
     const userCooldowns = new Map();
     const viewerSet = new Set();
 
-    function handleChatMessage(user, message, platform) {
+    async function handleChatMessage(user, message, platform) {
       const msg = message.trim();
       if (msg.startsWith('!bl ')) { handleStreamerCommand(msg.slice(4).trim()); return; }
       if (msg.startsWith('!vote ') && activePoll.value) {
@@ -837,6 +1006,29 @@ export default {
         return;
       }
       if (msg === '!level' || msg === '!mint') { logActivity(user, platform, msg.slice(1)); return; }
+
+      // Wallet linking
+      if (msg === '!link') {
+        const wallet = await ensureFanWallet(user, platform);
+        if (wallet) {
+          logActivity(user, platform, `wallet linked: ${wallet.address.slice(0, 10)}...`);
+        } else {
+          logActivity(user, platform, 'wallet linking failed');
+        }
+        return;
+      }
+
+      // Balance check
+      if (msg === '!balance') {
+        const wallet = fanWallets.get(`${platform}:${user.toLowerCase()}`);
+        if (wallet) {
+          logActivity(user, platform, `wallet: ${wallet.address.slice(0, 10)}...`);
+        } else {
+          logActivity(user, platform, 'no wallet — type !link first');
+        }
+        return;
+      }
+
       if (!msg.startsWith('!bonzai ')) return;
       if (bannedUsers.value.includes(user.toLowerCase())) return;
       const now = Date.now();
@@ -857,6 +1049,10 @@ export default {
       const blocked = blocklist.value.split('\n').filter(w => w.trim());
       if (blocked.some(w => prompt.toLowerCase().includes(w.trim().toLowerCase()))) return;
       if (queue.value.length >= maxQueueSize.value) return;
+
+      // Charge fan if monetization is enabled
+      const paid = await chargeFan(user, platform, type);
+      if (!paid) return;
 
       queue.value.push({ id: Date.now() + Math.random(), user, platform, type, prompt, timestamp: Date.now() });
       logActivity(user, platform, `queued ${type}: "${prompt.slice(0, 50)}"`);
@@ -973,7 +1169,7 @@ export default {
 
     // ═══ PERSISTENCE ═══
     async function saveConfig() {
-      try { await window.electronAPI?.store?.set('live-streamer', { chatPlatform: chatPlatform.value, twitchChannel: twitchChannel.value, tiktokUsername: tiktokUsername.value, obsUrl: obsUrl.value, cooldownSeconds: cooldownSeconds.value, nsfwFilter: nsfwFilter.value, blocklist: blocklist.value, bannedUsers: bannedUsers.value, selectedCompanionId: selectedCompanionId.value, pollDuration: pollDuration.value, maxQueueSize: maxQueueSize.value, enabledTypes: enabledTypes.value, sourceMappings: sourceMappings.map(m => ({ type: m.type, sourceName: m.sourceName })) }); } catch { /* */ }
+      try { await window.electronAPI?.store?.set('live-streamer', { chatPlatform: chatPlatform.value, twitchChannel: twitchChannel.value, tiktokUsername: tiktokUsername.value, obsUrl: obsUrl.value, cooldownSeconds: cooldownSeconds.value, nsfwFilter: nsfwFilter.value, blocklist: blocklist.value, bannedUsers: bannedUsers.value, selectedCompanionId: selectedCompanionId.value, pollDuration: pollDuration.value, maxQueueSize: maxQueueSize.value, enabledTypes: enabledTypes.value, monetizationEnabled: monetizationEnabled.value, generationPrices: { ...generationPrices }, sourceMappings: sourceMappings.map(m => ({ type: m.type, sourceName: m.sourceName })) }); } catch { /* */ }
     }
     async function loadConfig() {
       try {
@@ -991,11 +1187,19 @@ export default {
         if (c.pollDuration) pollDuration.value = c.pollDuration;
         if (c.maxQueueSize) maxQueueSize.value = c.maxQueueSize;
         if (c.enabledTypes) enabledTypes.value = c.enabledTypes;
+        if (c.monetizationEnabled != null) monetizationEnabled.value = c.monetizationEnabled;
+        if (c.generationPrices) Object.assign(generationPrices, c.generationPrices);
         if (c.sourceMappings) for (const s of c.sourceMappings) { const m = sourceMappings.find(x => x.type === s.type); if (m) m.sourceName = s.sourceName; }
       } catch { /* */ }
     }
 
-    onMounted(() => { loadCompanions(); loadConfig(); });
+    onMounted(async () => {
+      loadCompanions();
+      loadConfig();
+      loadFanWallets();
+      const savedWallet = await window.electronAPI?.store?.get('live-streamer-wallet', null);
+      if (savedWallet) streamerWallet.value = savedWallet;
+    });
     onUnmounted(() => {
       if (chatClient?.disconnect) chatClient.disconnect();
       if (obsWs?.disconnect) obsWs.disconnect();
@@ -1012,6 +1216,7 @@ export default {
       activePoll, pollDuration, pollPercentA, pollPercentB,
       cooldownSeconds, nsfwFilter, blocklist, bannedUsers, banInput, banUser,
       companions, selectedCompanionId, selectedCompanion, companionEnabled, getImageSrc,
+      monetizationEnabled, generationPrices, streamerWallet, saveStreamerWallet,
       maxQueueSize, contentTypes, enabledTypes, toggleContentType,
       stats, statCards, activityLog, formatTime, previewBgStyle,
       statusMessage, statusType,
