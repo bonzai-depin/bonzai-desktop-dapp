@@ -253,18 +253,45 @@ jobs:
           echo "=== pip cache ==="
           pip cache info || true
 
+      - name: Compress package
+        run: |
+          TAG="${{ env.TAG }}"
+          DEB="out/make/BonzAI-${TAG}-linux-amd64.deb"
+
+          if [ -f "$DEB" ]; then
+            DEB_SIZE=$(stat --format='%s' "$DEB")
+            echo "DEB size: $(echo $DEB_SIZE | numfmt --to=iec)"
+
+            # If .deb exceeds 2GB GitHub limit, repackage as tar.xz
+            if [ "$DEB_SIZE" -gt 2000000000 ]; then
+              echo "DEB exceeds 2GB, creating compressed tar.xz instead..."
+              cd out/make
+              # Extract .deb contents and repackage with xz compression
+              mkdir -p deb-extract
+              dpkg-deb -x "BonzAI-${TAG}-linux-amd64.deb" deb-extract/
+              dpkg-deb -e "BonzAI-${TAG}-linux-amd64.deb" deb-extract/DEBIAN/
+              tar -cJf "BonzAI-${TAG}-linux-amd64.tar.xz" -C deb-extract .
+              rm "BonzAI-${TAG}-linux-amd64.deb"
+              cd ../..
+              echo "Compressed package:"
+              ls -lh out/make/
+            fi
+          fi
+
       - name: Create Release & Upload
         run: |
           TAG="${{ env.TAG }}"
-          ASSET="out/make/BonzAI-${TAG}-linux-amd64.deb"
 
-          if [ -f "$ASSET" ]; then
-            echo "Uploading: $ASSET ($(stat --format='%s' "$ASSET" | numfmt --to=iec))"
-            gh release upload "${TAG}" "$ASSET" --clobber \
-              || gh release create "${TAG}" "$ASSET" \
-                --title "BonzAI v${TAG}" \
-                --generate-notes
-          fi
+          # Upload whichever package exists (.deb or .tar.xz)
+          for ASSET in out/make/BonzAI-${TAG}-linux-amd64.*; do
+            if [ -f "$ASSET" ]; then
+              echo "Uploading: $ASSET ($(stat --format='%s' "$ASSET" | numfmt --to=iec))"
+              gh release upload "${TAG}" "$ASSET" --clobber \
+                || gh release create "${TAG}" "$ASSET" \
+                  --title "BonzAI v${TAG}" \
+                  --generate-notes
+            fi
+          done
 
           echo "Released Linux build for v${TAG}"
 

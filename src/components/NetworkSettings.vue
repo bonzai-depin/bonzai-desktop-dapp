@@ -1201,9 +1201,28 @@ watch(pipelineLocalTest, async (enabled) => {
 // Persist pipeline settings
 watch(pipelineEnabled, async (v) => {
   await window.electronAPI.store.set("p2p.pipeline.enabled", v);
-  // End pipeline session when disabled — llama-server stops, model can be reloaded
-  if (!v && window.electronAPI.p2pPipelineCancel) {
-    await window.electronAPI.p2pPipelineCancel();
+  if (v) {
+    // Auto-start rpc-server for self-serve pipeline (consumer mode)
+    if (networkMode.value === 'consumer') {
+      console.log("[NetworkSettings] Starting local rpc-server for self-serve pipeline...");
+      const res = await window.electronAPI.p2pShardStart({ port: 50052 });
+      if (res.ok) {
+        shardProviderEnabled.value = true;
+        console.log("[NetworkSettings] Local rpc-server started on :50052");
+      } else {
+        console.warn("[NetworkSettings] rpc-server start failed:", res.error);
+      }
+    }
+  } else {
+    // End pipeline session when disabled
+    if (window.electronAPI.p2pPipelineCancel) {
+      await window.electronAPI.p2pPipelineCancel();
+    }
+    // Stop rpc-server if it was started for self-serve
+    if (shardProviderEnabled.value) {
+      await window.electronAPI.p2pShardStop();
+      shardProviderEnabled.value = false;
+    }
   }
 });
 watch(pipelineLocalProportion, (v) => window.electronAPI.store.set("p2p.pipeline.localProportion", v));
