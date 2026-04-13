@@ -739,6 +739,22 @@ ipcMain.handle("confirm-transaction", async (_event, details) => {
 
 const PRIVY_API_BASE = "https://api.privy.io/v1";
 
+// Load .env for Privy credentials (Vite only injects VITE_* into renderer, not main process)
+function _loadEnvPrivy() {
+  if (process.env.VITE_PRIVY_APP_ID && process.env.PRIVY_APP_SECRET) return;
+  try {
+    const envPath = path.join(process.cwd(), ".env");
+    if (fs.existsSync(envPath)) {
+      const lines = fs.readFileSync(envPath, "utf8").split("\n");
+      for (const line of lines) {
+        const match = line.match(/^(VITE_PRIVY_APP_ID|PRIVY_APP_SECRET)\s*=\s*(.+)/);
+        if (match) process.env[match[1]] = match[2].trim().replace(/^["']|["']$/g, "");
+      }
+    }
+  } catch { /* */ }
+}
+_loadEnvPrivy();
+
 function getPrivyHeaders() {
   const appId = process.env.VITE_PRIVY_APP_ID;
   const appSecret = process.env.PRIVY_APP_SECRET;
