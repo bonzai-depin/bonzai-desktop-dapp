@@ -87,17 +87,20 @@ function findLlamaServerBinary() {
   const arch = process.arch;
   const ext = process.platform === 'win32' ? '.exe' : '';
   const name = `llama-server${ext}`;
-
-  const devPath = path.join(process.cwd(), 'bin', `${platform}-${arch}`, name);
-  if (fs.existsSync(devPath)) return devPath;
-
   const resourcesPath = process.resourcesPath || '';
-  if (resourcesPath) {
-    const packagedPath = path.join(resourcesPath, 'server', 'llama-runtime', `${platform}-${arch}`, name);
-    if (fs.existsSync(packagedPath)) return packagedPath;
-  }
 
-  throw new Error(`llama-server binary not found. Run 'npm run build:rpc' first.`);
+  const searchPaths = [
+    path.join(process.cwd(), 'bin', `${platform}-${arch}`, name),
+    // electron-packager bundles app source under Resources/app/
+    resourcesPath ? path.join(resourcesPath, 'app', 'bin', `${platform}-${arch}`, name) : null,
+    // electron-forge copies to Resources/server/llama-runtime/
+    resourcesPath ? path.join(resourcesPath, 'server', 'llama-runtime', `${platform}-${arch}`, name) : null,
+  ].filter(Boolean);
+
+  const found = searchPaths.find(p => fs.existsSync(p));
+  if (found) return found;
+
+  throw new Error(`llama-server binary not found at: ${searchPaths.join(', ')}`);
 }
 
 // ═══════════════════════════════════════════════════════════════════════════

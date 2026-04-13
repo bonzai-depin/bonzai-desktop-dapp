@@ -1669,13 +1669,17 @@ ipcMain.handle("p2p-shard-start", async (_event, options = {}) => {
   const ext = process.platform === "win32" ? ".exe" : "";
   const binName = `rpc-server${ext}`;
 
-  let binPath = path.join(process.cwd(), "bin", `${platform}-${arch}`, binName);
-  if (!fs.existsSync(binPath) && process.resourcesPath) {
-    binPath = path.join(process.resourcesPath, "server", "llama-runtime", `${platform}-${arch}`, binName);
-  }
+  const searchPaths = [
+    path.join(process.cwd(), "bin", `${platform}-${arch}`, binName),
+    // electron-packager bundles app source under Resources/app/
+    process.resourcesPath ? path.join(process.resourcesPath, "app", "bin", `${platform}-${arch}`, binName) : null,
+    // electron-forge copies to Resources/server/llama-runtime/
+    process.resourcesPath ? path.join(process.resourcesPath, "server", "llama-runtime", `${platform}-${arch}`, binName) : null,
+  ].filter(Boolean);
 
-  if (!fs.existsSync(binPath)) {
-    return { ok: false, error: `rpc-server binary not found. Run 'npm run build:rpc' first.` };
+  let binPath = searchPaths.find(p => fs.existsSync(p));
+  if (!binPath) {
+    return { ok: false, error: `rpc-server binary not found at: ${searchPaths.join(', ')}` };
   }
 
   // Clear quarantine on macOS
