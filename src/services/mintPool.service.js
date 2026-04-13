@@ -63,6 +63,7 @@ const state = reactive({
   // Epoch info
   currentEpoch: 0,
   epochDuration: 0,
+  genesisTime: 0,
   latestFinalizedEpoch: null,  // Most recent finalized epoch info
 
   // Lifetime stats
@@ -111,9 +112,10 @@ async function fetchPoolStats() {
     const userAddress = web3Service.state.walletAddress;
 
     // Fetch core data
-    const [currentEpoch, epochDuration, deposited, thresholds, claimed] = await Promise.all([
+    const [currentEpoch, epochDuration, genesisTime, deposited, thresholds, claimed] = await Promise.all([
       contract.currentEpoch(),
       contract.epochDuration(),
+      contract.genesisTime(),
       contract.getAllTotalDeposited(),
       contract.getAllPoolThresholds(),
       contract.totalClaimed(),
@@ -121,6 +123,7 @@ async function fetchPoolStats() {
 
     state.currentEpoch = Number(currentEpoch);
     state.epochDuration = Number(epochDuration);
+    state.genesisTime = Number(genesisTime);
     state.totalClaimed = parseFloat(ethers.formatEther(claimed));
 
     for (let i = 0; i < 6; i++) {
@@ -129,7 +132,7 @@ async function fetchPoolStats() {
     }
 
     // Fetch latest finalized epoch info (current - 1, if it exists)
-    if (state.currentEpoch > 0) {
+    if (state.currentEpoch >= 1) {
       const prevEpochId = state.currentEpoch - 1;
       const [epochInfo, epochDeposits] = await Promise.all([
         contract.getEpochInfo(prevEpochId),

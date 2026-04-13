@@ -378,14 +378,10 @@ async function loadData() {
   try {
     await mintPoolService.fetchPoolStats();
 
-    // Calculate epoch end time
-    if (poolState.value.currentEpoch > 0 && poolState.value.epochDuration > 0) {
-      // Epoch end = genesis + (currentEpoch + 1) * epochDuration
-      // We approximate from the latest finalized epoch data if available
-      const latestFinalized = poolState.value.latestFinalizedEpoch;
-      if (latestFinalized?.endTime) {
-        epochEndTime.value = latestFinalized.endTime + poolState.value.epochDuration;
-      }
+    // Calculate epoch end time: genesis + (currentEpoch + 1) * epochDuration
+    if (poolState.value.epochDuration > 0 && poolState.value.genesisTime > 0) {
+      epochEndTime.value = poolState.value.genesisTime +
+        (poolState.value.currentEpoch + 1) * poolState.value.epochDuration;
     }
 
     // Load claimable epochs (check previous epochs)
