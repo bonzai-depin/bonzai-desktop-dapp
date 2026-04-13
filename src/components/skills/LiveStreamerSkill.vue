@@ -765,32 +765,19 @@ export default {
     }
 
     /**
-     * Create or retrieve a Privy server wallet for a fan.
-     * @param {string} user - Chat username
-     * @param {string} platform - Platform (twitch, tiktok, etc.)
-     * @returns {Promise<{walletId: string, address: string}|null>}
+     * Look up a fan's wallet address by their chat username.
+     * Fans register their wallet + username on bonzai.sh/link.
+     * The mapping is stored locally (synced when fan types !bonzai commands).
      */
-    async function ensureFanWallet(user, platform) {
+    function getFanWallet(user, platform) {
       const key = `${platform}:${user.toLowerCase()}`;
-      if (fanWallets.has(key)) return fanWallets.get(key);
-
-      try {
-        const result = await window.electronAPI?.privy?.ensureUserWallet?.({
-          userId: `fan-${key}`,
-        });
-        if (result?.walletId && result?.address) {
-          fanWallets.set(key, result);
-          saveFanWallets();
-          return result;
-        }
-      } catch (err) {
-        console.warn(`[LiveStreamer] Fan wallet creation failed for ${key}:`, err.message);
-      }
-      return null;
+      return fanWallets.get(key) || null;
     }
 
     /**
-     * Charge a fan for generation. Sends USDC from fan wallet to streamer (80%) + treasury (20%).
+     * Charge a fan for generation via USDC transferFrom.
+     * Non-custodial: the fan pre-approved USDC spending on bonzai.sh/link.
+     * The streamer's wallet calls transferFrom to pull USDC from the fan.
      * @returns {Promise<boolean>} true if payment succeeded
      */
     async function chargeFan(user, platform, contentType) {
@@ -799,20 +786,19 @@ export default {
       const price = generationPrices[contentType] || 0;
       if (price <= 0) return true;
 
-      const fanWallet = await ensureFanWallet(user, platform);
-      if (!fanWallet) {
-        logActivity(user, platform, `no wallet linked — type !link to connect`);
+      const fanWallet = getFanWallet(user, platform);
+      if (!fanWallet?.address) {
+        logActivity(user, platform, 'no wallet linked — visit bonzai.sh/link');
         return false;
       }
 
-      const priceUsdc = Math.round(price * 1_000_000); // 6 decimals
+      const priceUsdc = Math.round(price * 1_000_000);
       const streamerShare = Math.round(priceUsdc * 0.8);
       const treasuryShare = priceUsdc - streamerShare;
 
-      // Get streamer wallet address (configured or connected wallet)
+      // Get streamer wallet (connected wallet or configured payout address)
       let streamerAddress = await window.electronAPI?.store?.get('live-streamer-wallet', null);
       if (!streamerAddress) {
-        // Fall back to connected wallet
         try {
           const { web3Service } = await import('../../services/web3.service.js');
           streamerAddress = web3Service.state.walletAddress;
@@ -827,28 +813,21 @@ export default {
       const USDC_BASE = '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913';
 
       try {
-        // Transfer USDC from fan wallet: 80% to streamer, 20% to treasury
+        // Use the streamer's signer to call transferFrom on the fan's approved USDC
+        const { web3Service } = await import('../../services/web3.service.js');
+        const signer = await web3Service.getSigner();
         const { ethers } = await import('ethers');
-        const erc20Data = (to, amount) => {
-          const iface = new ethers.Interface(['function transfer(address to, uint256 amount) returns (bool)']);
-          return iface.encodeFunctionData('transfer', [to, amount]);
-        };
+        const usdc = new ethers.Contract(USDC_BASE, [
+          'function transferFrom(address from, address to, uint256 amount) returns (bool)',
+        ], signer);
 
-        // Send to streamer (80%)
-        const tx1 = await window.electronAPI.privy.sendTransaction(fanWallet.walletId, {
-          caip2: 'eip155:8453',
-          method: 'eth_sendTransaction',
-          params: { transaction: { to: USDC_BASE, data: erc20Data(streamerAddress, streamerShare), value: '0x0' } },
-        });
-        if (tx1.error) throw new Error(tx1.error);
+        // 80% to streamer
+        const tx1 = await usdc.transferFrom(fanWallet.address, streamerAddress, streamerShare);
+        await tx1.wait();
 
-        // Send to treasury (20%)
-        const tx2 = await window.electronAPI.privy.sendTransaction(fanWallet.walletId, {
-          caip2: 'eip155:8453',
-          method: 'eth_sendTransaction',
-          params: { transaction: { to: USDC_BASE, data: erc20Data(TREASURY, treasuryShare), value: '0x0' } },
-        });
-        if (tx2.error) throw new Error(tx2.error);
+        // 20% to treasury
+        const tx2 = await usdc.transferFrom(fanWallet.address, TREASURY, treasuryShare);
+        await tx2.wait();
 
         stats.revenue = (parseFloat(stats.revenue) + price).toFixed(2);
         logActivity(user, platform, `paid $${price.toFixed(2)} USDC`);
@@ -1007,16 +986,10 @@ export default {
       }
       if (msg === '!level' || msg === '!mint') { logActivity(user, platform, msg.slice(1)); return; }
 
-      // Wallet linking — direct fans to bonzai.sh/link
-      if (msg === '!link') {
-        logActivity(user, platform, 'requested wallet link → bonzai.sh/link');
-        return;
-      }
-
-      // Balance check
-      if (msg === '!balance') {
-        const wallet = fanWallets.get(`${platform}:${user.toLowerCase()}`);
-        if (wallet) {
+      // Balance check — fans manage wallets at bonzai.sh/link
+      if (msg === '!balance' || msg === '!link' || msg === '!wallet') {
+        const wallet = getFanWallet(user, platform);
+        if (wallet?.address) {
           logActivity(user, platform, `wallet: ${wallet.address.slice(0, 10)}...`);
         } else {
           logActivity(user, platform, 'no wallet — visit bonzai.sh/link');

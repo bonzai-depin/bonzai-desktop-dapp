@@ -58,8 +58,6 @@ contextBridge.exposeInMainWorld("electronAPI", {
   // Privy Server Wallet (agent wallets via Privy API, secret stays in main)
   // ─────────────────────────────────────────────────────────────────────────
   privy: {
-    ensureUserWallet: (opts) =>
-      ipcRenderer.invoke("privy:ensure-user-wallet", opts),
     createServerWallet: (opts) =>
       ipcRenderer.invoke("privy:create-server-wallet", opts),
     sendTransaction: (walletId, tx) =>
@@ -73,6 +71,27 @@ contextBridge.exposeInMainWorld("electronAPI", {
     setPolicy: (walletId, policy) =>
       ipcRenderer.invoke("privy:set-policy", { walletId, policy }),
   },
+
+  // ─────────────────────────────────────────────────────────────────────────
+  // Non-Custodial Wallet Bridge (BrowserView → bonzai.sh/wallet)
+  // User controls their own keys. Desktop app delegates signing.
+  // ─────────────────────────────────────────────────────────────────────────
+  wallet: {
+    open: (opts) => ipcRenderer.invoke("wallet:open", opts),
+    signRequest: (request) => ipcRenderer.invoke("wallet:sign-request", request),
+    getAddress: () => ipcRenderer.invoke("wallet:get-address"),
+    close: () => ipcRenderer.invoke("wallet:close"),
+  },
+
+  /**
+   * Listen for wallet address from BrowserView bridge
+   */
+  onWalletAddress: (handler) => {
+    const wrapped = (_event, address) => handler(address);
+    ipcRenderer.on("wallet:address", wrapped);
+    return () => ipcRenderer.removeListener("wallet:address", wrapped);
+  },
+
   // ─────────────────────────────────────────────────────────────────────────
   // Open Wallet Standard (OWS) — encrypted vault-based wallets via NAPI-RS
   // ─────────────────────────────────────────────────────────────────────────

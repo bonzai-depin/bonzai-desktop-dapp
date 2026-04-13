@@ -786,35 +786,132 @@ async function privyFetch(endpoint, options = {}) {
  * Unlike agent wallets, this is the user's primary wallet for purchases/minting.
  * Uses userId as idempotency key so the same user always gets the same wallet.
  */
-ipcMain.handle("privy:ensure-user-wallet", async (_event, { userId }) => {
+// ─────────────────────────────────────────────────────────────────────────────
+// NON-CUSTODIAL WALLET BRIDGE (BrowserView → bonzai.sh/wallet)
+// User's embedded wallet lives in the browser. Desktop delegates signing
+// to a BrowserView that loads bonzai.sh/wallet?mode=embedded.
+// ─────────────────────────────────────────────────────────────────────────────
+
+let walletView = null;
+let walletViewReady = false;
+const pendingSignRequests = new Map(); // id → { resolve, reject }
+
+ipcMain.handle("wallet:open", async (_event, { email }) => {
   try {
-    // Check if we already have this user's wallet cached
-    const cached = store.get(`privy-user-wallet-${userId}`, null);
-    if (cached?.walletId && cached?.address) {
-      // Verify it still exists
-      try {
-        await privyFetch(`/wallets/${cached.walletId}`);
-        return cached;
-      } catch { /* wallet deleted or invalid, recreate */ }
+    if (walletView && !walletView.webContents.isDestroyed()) {
+      // Already open — just focus
+      return { ok: true };
     }
 
-    // Create a new server wallet for this user
-    const data = await privyFetch("/wallets", {
-      method: "POST",
-      body: JSON.stringify({
-        chain_type: "ethereum",
-        idempotency_key: `bonzai-user-${userId}`,
-      }),
+    const { BrowserView } = require("electron");
+    walletView = new BrowserView({
+      webPreferences: {
+        nodeIntegration: false,
+        contextIsolation: true,
+      },
     });
 
-    const result = { walletId: data.id, address: data.address };
-    store.set(`privy-user-wallet-${userId}`, result);
-    console.log(`[Privy] User wallet created: ${data.address}`);
-    return result;
+    // Position at bottom of main window (signing confirmation area)
+    const bounds = mainWindow.getBounds();
+    const viewHeight = Math.min(400, Math.round(bounds.height * 0.5));
+    mainWindow.addBrowserView(walletView);
+    walletView.setBounds({
+      x: 0,
+      y: bounds.height - viewHeight,
+      width: bounds.width,
+      height: viewHeight,
+    });
+    walletView.setAutoResize({ width: true });
+
+    const walletUrl = app.isPackaged
+      ? `https://bonzai.sh/wallet?mode=embedded&email=${encodeURIComponent(email || '')}`
+      : `http://localhost:1337/wallet?mode=embedded&email=${encodeURIComponent(email || '')}`;
+
+    walletView.webContents.loadURL(walletUrl);
+
+    // Listen for messages from the wallet page
+    walletViewReady = false;
+    walletView.webContents.on("did-finish-load", () => {
+      // Inject message listener
+      walletView.webContents.executeJavaScript(`
+        window.addEventListener('message', (e) => {
+          // Forward to Electron
+        });
+        // The wallet page posts BONZAI_WALLET_READY and BONZAI_SIGN_RESPONSE
+        // These are picked up via the console message hack below
+      `);
+    });
+
+    // Listen for postMessage responses via console.log bridge
+    walletView.webContents.on("console-message", (_e, _level, message) => {
+      try {
+        if (message.startsWith("BONZAI:")) {
+          const data = JSON.parse(message.slice(7));
+          if (data.type === "BONZAI_WALLET_READY") {
+            walletViewReady = true;
+            console.log("[Wallet] BrowserView ready");
+          } else if (data.type === "BONZAI_SIGN_RESPONSE") {
+            const pending = pendingSignRequests.get(data.id);
+            if (pending) {
+              if (data.error) pending.reject(new Error(data.error));
+              else pending.resolve(data.result);
+              pendingSignRequests.delete(data.id);
+            }
+          } else if (data.type === "BONZAI_WALLET_ADDRESS") {
+            store.set("privy-embedded-wallet-address", data.address);
+            console.log("[Wallet] Address received:", data.address);
+            if (mainWindow && !mainWindow.isDestroyed()) {
+              mainWindow.webContents.send("wallet:address", data.address);
+            }
+          }
+        }
+      } catch { /* not a BONZAI message */ }
+    });
+
+    return { ok: true };
   } catch (err) {
-    console.error("[Privy] Ensure user wallet failed:", err.message);
-    return { error: err.message };
+    console.error("[Wallet] BrowserView open failed:", err.message);
+    return { ok: false, error: err.message };
   }
+});
+
+ipcMain.handle("wallet:sign-request", async (_event, request) => {
+  if (!walletView || walletView.webContents.isDestroyed()) {
+    throw new Error("Wallet not open. Sign in first.");
+  }
+
+  const id = `sign-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+
+  return new Promise((resolve, reject) => {
+    pendingSignRequests.set(id, { resolve, reject });
+
+    // Send signing request to wallet page
+    walletView.webContents.executeJavaScript(`
+      window.postMessage(${JSON.stringify({ type: 'BONZAI_SIGN_REQUEST', id, ...request })}, '*');
+    `);
+
+    // Timeout after 2 minutes
+    setTimeout(() => {
+      if (pendingSignRequests.has(id)) {
+        pendingSignRequests.delete(id);
+        reject(new Error("Signing request timed out"));
+      }
+    }, 120000);
+  });
+});
+
+ipcMain.handle("wallet:get-address", async () => {
+  return store.get("privy-embedded-wallet-address", null);
+});
+
+ipcMain.handle("wallet:close", async () => {
+  if (walletView && !walletView.webContents.isDestroyed()) {
+    mainWindow.removeBrowserView(walletView);
+    walletView.webContents.destroy();
+    walletView = null;
+    walletViewReady = false;
+  }
+  return { ok: true };
 });
 
 ipcMain.handle("privy:create-server-wallet", async (_event, { companionId }) => {

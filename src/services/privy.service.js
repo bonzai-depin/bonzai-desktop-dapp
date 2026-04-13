@@ -237,11 +237,11 @@ function getEmbeddedProvider() {
 }
 
 /**
- * Ensure the user has a Privy server wallet and create an IPC-backed provider.
+ * Set up user wallet via BrowserView bridge to bonzai.sh/wallet.
  *
- * In Electron, Privy's iframe-based embedded wallet doesn't work (no iframe).
- * Instead, we use a server-side wallet created via the Privy Wallet API.
- * The main process holds the App Secret and signs transactions on behalf of the user.
+ * Non-custodial: the user's embedded wallet lives in the browser (bonzai.sh).
+ * The desktop app delegates all signing to the BrowserView via postMessage.
+ * BonzAI never has access to the user's keys.
  *
  * @param {Object} user - Privy authenticated user object
  * @private
@@ -250,27 +250,40 @@ async function _extractEmbeddedWallet(user) {
   if (!user?.id) return;
 
   try {
-    // Get or create a server wallet for this Privy user
-    const walletInfo = await window.electronAPI?.privy?.ensureUserWallet?.({ userId: user.id });
+    // Open BrowserView to bonzai.sh/wallet for embedded wallet
+    const email = user.linked_accounts?.find(a => a.type === 'email')?.address || '';
+    const result = await window.electronAPI?.wallet?.open?.({ email });
+    if (!result?.ok) {
+      console.warn('[Privy] BrowserView open failed');
+      return;
+    }
 
-    if (walletInfo?.walletId && walletInfo?.address) {
-      state.embeddedWalletAddress = walletInfo.address;
-      embeddedProvider = _createIpcProvider(walletInfo.walletId, walletInfo.address);
-      console.log('[Privy] Server wallet ready:', walletInfo.address);
-    } else {
-      console.warn('[Privy] Failed to provision user wallet:', walletInfo?.error || 'unknown');
+    // Listen for wallet address from BrowserView
+    const cleanup = window.electronAPI?.onWalletAddress?.((address) => {
+      state.embeddedWalletAddress = address;
+      embeddedProvider = _createBrowserViewProvider(address);
+      console.log('[Privy] Non-custodial wallet connected:', address);
+    });
+
+    // Check if address was already cached from a previous session
+    const cached = await window.electronAPI?.wallet?.getAddress?.();
+    if (cached) {
+      state.embeddedWalletAddress = cached;
+      embeddedProvider = _createBrowserViewProvider(cached);
+      console.log('[Privy] Wallet restored from cache:', cached);
     }
   } catch (err) {
-    console.warn('[Privy] Failed to set up wallet:', err.message);
+    console.warn('[Privy] Wallet bridge failed:', err.message);
   }
 }
 
 /**
- * Create an EIP-1193 compatible provider backed by Privy API via IPC.
- * Routes eth_sendTransaction and eth_signTypedData_v4 through the main process.
+ * Create an EIP-1193 compatible provider backed by the BrowserView bridge.
+ * Signing requests are delegated to bonzai.sh/wallet (user confirms in browser).
+ * Read-only RPC calls go directly through a public provider.
  * @private
  */
-function _createIpcProvider(walletId, address) {
+function _createBrowserViewProvider(address) {
   return {
     request: async ({ method, params }) => {
       switch (method) {
@@ -281,38 +294,18 @@ function _createIpcProvider(walletId, address) {
         case 'eth_chainId':
           return '0x2105'; // Base (8453)
 
-        case 'eth_sendTransaction': {
-          const tx = params[0];
-          const result = await window.electronAPI.privy.sendTransaction(walletId, {
-            caip2: 'eip155:8453',
-            method: 'eth_sendTransaction',
-            params: { transaction: tx },
-          });
-          if (result.error) throw new Error(result.error);
-          return result.hash;
-        }
+        case 'eth_sendTransaction':
+        case 'eth_signTypedData_v4':
+        case 'personal_sign':
+          // Delegate to BrowserView — user confirms in bonzai.sh/wallet
+          return window.electronAPI.wallet.signRequest({ method, params });
 
-        case 'eth_signTypedData_v4': {
-          const typedData = JSON.parse(params[1]);
-          const result = await window.electronAPI.privy.signTypedData(walletId, {
-            caip2: 'eip155:8453',
-            method: 'eth_signTypedData_v4',
-            params: { domain: typedData.domain, types: typedData.types, message: typedData.message },
-          });
-          if (result.error) throw new Error(result.error);
-          return result.signature;
-        }
-
-        case 'personal_sign': {
-          // Not yet supported via Privy API — fall through
-          throw new Error('personal_sign not supported for Privy embedded wallets');
-        }
-
-        default:
-          // For read-only RPC calls, use a public provider
+        default: {
+          // Read-only RPC calls — direct to public provider
           const { ethers } = await import('ethers');
           const rpc = new ethers.JsonRpcProvider('https://base.llamarpc.com');
           return rpc.send(method, params || []);
+        }
       }
     },
   };
