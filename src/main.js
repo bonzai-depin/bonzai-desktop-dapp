@@ -765,6 +765,42 @@ async function privyFetch(endpoint, options = {}) {
   return data;
 }
 
+/**
+ * Get or create the user's own Privy server wallet.
+ * Unlike agent wallets, this is the user's primary wallet for purchases/minting.
+ * Uses userId as idempotency key so the same user always gets the same wallet.
+ */
+ipcMain.handle("privy:ensure-user-wallet", async (_event, { userId }) => {
+  try {
+    // Check if we already have this user's wallet cached
+    const cached = store.get(`privy-user-wallet-${userId}`, null);
+    if (cached?.walletId && cached?.address) {
+      // Verify it still exists
+      try {
+        await privyFetch(`/wallets/${cached.walletId}`);
+        return cached;
+      } catch { /* wallet deleted or invalid, recreate */ }
+    }
+
+    // Create a new server wallet for this user
+    const data = await privyFetch("/wallets", {
+      method: "POST",
+      body: JSON.stringify({
+        chain_type: "ethereum",
+        idempotency_key: `bonzai-user-${userId}`,
+      }),
+    });
+
+    const result = { walletId: data.id, address: data.address };
+    store.set(`privy-user-wallet-${userId}`, result);
+    console.log(`[Privy] User wallet created: ${data.address}`);
+    return result;
+  } catch (err) {
+    console.error("[Privy] Ensure user wallet failed:", err.message);
+    return { error: err.message };
+  }
+});
+
 ipcMain.handle("privy:create-server-wallet", async (_event, { companionId }) => {
   try {
     const data = await privyFetch("/wallets", {

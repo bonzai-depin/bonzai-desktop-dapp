@@ -58,6 +58,8 @@ contextBridge.exposeInMainWorld("electronAPI", {
   // Privy Server Wallet (agent wallets via Privy API, secret stays in main)
   // ─────────────────────────────────────────────────────────────────────────
   privy: {
+    ensureUserWallet: (opts) =>
+      ipcRenderer.invoke("privy:ensure-user-wallet", opts),
     createServerWallet: (opts) =>
       ipcRenderer.invoke("privy:create-server-wallet", opts),
     sendTransaction: (walletId, tx) =>

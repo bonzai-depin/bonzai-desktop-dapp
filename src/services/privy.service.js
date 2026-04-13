@@ -237,32 +237,31 @@ function getEmbeddedProvider() {
 }
 
 /**
- * Extract embedded wallet from Privy user object.
- * In Electron, the iframe-based embedded provider doesn't work.
- * Instead, we look up the wallet ID via the Privy API (main process)
- * and create an IPC-backed EIP-1193 provider.
+ * Ensure the user has a Privy server wallet and create an IPC-backed provider.
+ *
+ * In Electron, Privy's iframe-based embedded wallet doesn't work (no iframe).
+ * Instead, we use a server-side wallet created via the Privy Wallet API.
+ * The main process holds the App Secret and signs transactions on behalf of the user.
+ *
+ * @param {Object} user - Privy authenticated user object
  * @private
  */
 async function _extractEmbeddedWallet(user) {
-  const PrivySDK = await import('@privy-io/js-sdk-core');
-  const embeddedWallet = PrivySDK.getUserEmbeddedEthereumWallet(user);
+  if (!user?.id) return;
 
-  if (!embeddedWallet) return;
-
-  state.embeddedWalletAddress = embeddedWallet.address;
-
-  // Look up wallet ID via main process (Privy API with App Secret)
   try {
-    const walletInfo = await window.electronAPI?.privy?.getWalletByAddress?.(embeddedWallet.address);
-    if (walletInfo?.walletId) {
-      // Create IPC-backed EIP-1193 provider (routes signing through main process → Privy API)
-      embeddedProvider = _createIpcProvider(walletInfo.walletId, embeddedWallet.address);
-      console.log('[Privy] Created IPC-backed provider for embedded wallet:', embeddedWallet.address);
+    // Get or create a server wallet for this Privy user
+    const walletInfo = await window.electronAPI?.privy?.ensureUserWallet?.({ userId: user.id });
+
+    if (walletInfo?.walletId && walletInfo?.address) {
+      state.embeddedWalletAddress = walletInfo.address;
+      embeddedProvider = _createIpcProvider(walletInfo.walletId, walletInfo.address);
+      console.log('[Privy] Server wallet ready:', walletInfo.address);
     } else {
-      console.warn('[Privy] Could not resolve wallet ID for', embeddedWallet.address);
+      console.warn('[Privy] Failed to provision user wallet:', walletInfo?.error || 'unknown');
     }
   } catch (err) {
-    console.warn('[Privy] Failed to set up embedded provider:', err.message);
+    console.warn('[Privy] Failed to set up wallet:', err.message);
   }
 }
 
