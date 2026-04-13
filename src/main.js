@@ -914,96 +914,89 @@ ipcMain.handle("wallet:close", async () => {
   return { ok: true };
 });
 
-ipcMain.handle("privy:create-server-wallet", async (_event, { companionId }) => {
+// ─────────────────────────────────────────────────────────────────────────────
+// SESSION SIGNER — Companion wallet access (non-custodial)
+//
+// The user creates their companion wallet on bonzai.sh/wallet and authorizes
+// BonzAI's session signer key. The desktop app uses this key to sign
+// companion transactions via the Privy Wallet API — within the user's
+// spending policy. BonzAI never owns the wallet.
+// ─────────────────────────────────────────────────────────────────────────────
+
+// Generate or load session signer keypair (Ed25519 for Privy authorization signatures)
+function _ensureSessionSignerKey() {
+  let signerKey = store.get("privy-session-signer-private-key", null);
+  let signerPublicKey = store.get("privy-session-signer-public-key", null);
+
+  if (!signerKey || !signerPublicKey) {
+    // Generate a new keypair using Node.js crypto
+    const crypto = require("crypto");
+    const { privateKey, publicKey } = crypto.generateKeyPairSync("ed25519");
+    signerKey = privateKey.export({ type: "pkcs8", format: "pem" });
+    signerPublicKey = publicKey.export({ type: "spki", format: "der" }).toString("hex");
+    store.set("privy-session-signer-private-key", signerKey);
+    store.set("privy-session-signer-public-key", signerPublicKey);
+    console.log("[Privy] Generated new session signer keypair");
+  }
+
+  return { privateKey: signerKey, publicKey: signerPublicKey };
+}
+
+// Get the session signer public key (for registering on bonzai.sh/wallet)
+ipcMain.handle("privy:get-session-signer-id", async () => {
+  const { publicKey } = _ensureSessionSignerKey();
+  return { signerId: publicKey };
+});
+
+// Sign a companion wallet transaction using the session signer
+// This calls the Privy Wallet API with an authorization signature
+ipcMain.handle("privy:companion-rpc", async (_event, { walletId, method, caip2, params }) => {
   try {
-    const data = await privyFetch("/wallets", {
+    const { privateKey } = _ensureSessionSignerKey();
+    const appId = process.env.VITE_PRIVY_APP_ID;
+    if (!appId) throw new Error("VITE_PRIVY_APP_ID not configured");
+
+    const url = `https://api.privy.io/v1/wallets/${walletId}/rpc`;
+    const body = { method, caip2: caip2 || "eip155:8453", params };
+    const timestamp = Math.floor(Date.now() / 1000);
+
+    // Generate authorization signature using session signer key
+    const crypto = require("crypto");
+    const signerKey = crypto.createPrivateKey(privateKey);
+    const payload = JSON.stringify({
+      version: 1,
       method: "POST",
-      body: JSON.stringify({
-        chain_type: "ethereum",
-        // Tag with companion ID for traceability
-        idempotency_key: `bonzai-agent-${companionId}-${Date.now()}`,
-      }),
+      url,
+      body,
+      timestamp,
+      headers: { "privy-app-id": appId },
     });
-    return { walletId: data.id, address: data.address };
-  } catch (err) {
-    console.error("[Privy] Create wallet failed:", err.message);
-    return { error: err.message };
-  }
-});
+    const signature = crypto.sign(null, Buffer.from(payload), signerKey).toString("base64");
 
-ipcMain.handle("privy:send-transaction", async (_event, { walletId, tx }) => {
-  try {
-    const data = await privyFetch(`/wallets/${walletId}/rpc`, {
+    // Call Privy Wallet API with authorization signature
+    const response = await fetch(url, {
       method: "POST",
-      body: JSON.stringify({
-        method: tx.method || "eth_sendTransaction",
-        caip2: tx.caip2 || "eip155:8453",
-        params: tx.params,
-      }),
+      headers: {
+        "Content-Type": "application/json",
+        "privy-app-id": appId,
+        "Authorization": `Bearer ${signature}`,
+        "X-Privy-Authorization-Timestamp": String(timestamp),
+      },
+      body: JSON.stringify(body),
     });
-    return { hash: data.data?.hash || data.hash || data.result };
-  } catch (err) {
-    console.error("[Privy] Send transaction failed:", err.message);
-    return { error: err.message };
-  }
-});
 
-ipcMain.handle("privy:sign-typed-data", async (_event, { walletId, typedData }) => {
-  try {
-    const data = await privyFetch(`/wallets/${walletId}/rpc`, {
-      method: "POST",
-      body: JSON.stringify({
-        method: typedData.method || "eth_signTypedData_v4",
-        caip2: typedData.caip2 || "eip155:8453",
-        params: {
-          typed_data: {
-            domain: typedData.params?.domain || typedData.domain,
-            types: typedData.params?.types || typedData.types,
-            message: typedData.params?.message || typedData.message,
-          },
-        },
-      }),
-    });
-    return { signature: data.data?.signature || data.signature || data.result };
-  } catch (err) {
-    console.error("[Privy] Sign typed data failed:", err.message);
-    return { error: err.message };
-  }
-});
-
-ipcMain.handle("privy:get-wallet", async (_event, walletId) => {
-  try {
-    return await privyFetch(`/wallets/${walletId}`);
-  } catch (err) {
-    console.error("[Privy] Get wallet failed:", err.message);
-    return { error: err.message };
-  }
-});
-
-ipcMain.handle("privy:get-wallet-by-address", async (_event, address) => {
-  try {
-    // List wallets and find by address
-    const data = await privyFetch("/wallets?chain_type=ethereum&limit=20");
-    const wallets = data?.data || data?.wallets || [];
-    const match = wallets.find(w => w.address?.toLowerCase() === address?.toLowerCase());
-    if (match) {
-      return { walletId: match.id, address: match.address };
+    const data = await response.json();
+    if (!response.ok) {
+      throw new Error(data?.message || data?.error || `Privy API error ${response.status}`);
     }
-    return { error: `No Privy wallet found for address ${address}` };
-  } catch (err) {
-    console.error("[Privy] Get wallet by address failed:", err.message);
-    return { error: err.message };
-  }
-});
 
-ipcMain.handle("privy:set-policy", async (_event, { walletId, policy }) => {
-  try {
-    return await privyFetch(`/wallets/${walletId}/policy`, {
-      method: "PUT",
-      body: JSON.stringify(policy),
-    });
+    return {
+      hash: data.data?.hash || data.hash || data.result,
+      signature: data.data?.signature || data.signature,
+      result: data.data || data,
+    };
   } catch (err) {
-    console.error("[Privy] Set policy failed:", err.message);
+    console.error("[Privy] Companion RPC failed:", err.message);
     return { error: err.message };
   }
 });

@@ -312,127 +312,86 @@ function _createBrowserViewProvider(address) {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
-// SERVER WALLETS (Agent Wallets — via IPC to main process)
+// COMPANION WALLET (Session Signer — non-custodial autonomous actions)
+//
+// The user creates the companion wallet on bonzai.sh/wallet (embedded wallet,
+// user owns the keys). They authorize BonzAI's session signer key to act
+// within spending rules. The desktop app uses the session signer to sign
+// companion transactions via IPC → main process → Privy Wallet API.
+//
+// BonzAI NEVER owns the companion wallet. The user can revoke at any time.
 // ═══════════════════════════════════════════════════════════════════════════
 
 /**
- * Create a Privy server-side wallet for a companion agent.
- * The wallet is created via the main process (which holds the App Secret).
- *
- * @param {string} companionId - Companion identifier
- * @returns {Promise<{address: string, walletId: string}>}
+ * Get the BonzAI session signer public key.
+ * This key must be registered on bonzai.sh/wallet by the user.
  */
-async function createServerWallet(companionId) {
-  const existing = await getServerWalletMapping(companionId);
-  if (existing) {
-    console.log('[Privy] Server wallet already exists for', companionId, ':', existing.address);
-    return existing;
-  }
-
-  const result = await window.electronAPI.privy.createServerWallet({ companionId });
-
-  if (!result?.address || !result?.walletId) {
-    throw new Error(result?.error || 'Failed to create Privy server wallet');
-  }
-
-  // Store the mapping locally
-  await _storeWalletMapping(companionId, {
-    walletId: result.walletId,
-    address: result.address,
-    createdAt: Date.now(),
-  });
-
-  console.log('[Privy] Created server wallet for', companionId, ':', result.address);
-  return { address: result.address, walletId: result.walletId };
+async function getSessionSignerId() {
+  const result = await window.electronAPI?.privy?.getSessionSignerId?.();
+  return result?.signerId || null;
 }
 
 /**
- * Get the server wallet address for a companion
- * @param {string} companionId
- * @returns {Promise<string|null>}
+ * Get the companion wallet address for a companion.
+ * Stored locally when the user links it from bonzai.sh/wallet.
  */
-async function getServerWalletAddress(companionId) {
-  const mapping = await getServerWalletMapping(companionId);
-  return mapping?.address || null;
-}
-
-/**
- * Check if a server wallet exists for a companion
- * @param {string} companionId
- * @returns {Promise<boolean>}
- */
-async function hasServerWallet(companionId) {
-  const mapping = await getServerWalletMapping(companionId);
-  return !!mapping;
-}
-
-/**
- * Get server wallet mapping from Electron Store
- * @param {string} companionId
- * @returns {Promise<{walletId: string, address: string, createdAt: number}|null>}
- */
-async function getServerWalletMapping(companionId) {
+async function getCompanionWalletAddress(companionId) {
   const key = `${WALLET_MAPPING_PREFIX}${companionId}`;
-  return await window.electronAPI?.store?.get(key, null);
+  const data = await window.electronAPI?.store?.get(key, null);
+  return data?.address || null;
 }
 
 /**
- * Get ETH balance for a companion's server wallet
- * @param {string} companionId
- * @param {number} chainId
- * @returns {Promise<string>} Balance in ETH
+ * Store the companion wallet mapping (address + wallet ID from bonzai.sh/wallet).
  */
-async function getServerWalletBalance(companionId, chainId = 8453) {
-  const mapping = await getServerWalletMapping(companionId);
-  if (!mapping) throw new Error(`No Privy server wallet for companion ${companionId}`);
+async function setCompanionWallet(companionId, { address, walletId }) {
+  const key = `${WALLET_MAPPING_PREFIX}${companionId}`;
+  await window.electronAPI?.store?.set(key, { address, walletId, linkedAt: Date.now() });
+}
 
-  // Use direct RPC provider for balance query (no need for Privy API)
+/**
+ * Get ETH balance for a companion's wallet.
+ */
+async function getCompanionBalance(companionId, chainId = 8453) {
+  const address = await getCompanionWalletAddress(companionId);
+  if (!address) return '0';
+
   const { ethers } = await import('ethers');
   const rpcUrl = _getRpcUrl(chainId);
   const provider = new ethers.JsonRpcProvider(rpcUrl);
-  const balance = await provider.getBalance(mapping.address);
+  const balance = await provider.getBalance(address);
   return ethers.formatEther(balance);
 }
 
 /**
- * Delete server wallet mapping (does not delete the Privy wallet itself)
- * @param {string} companionId
- */
-async function deleteServerWalletMapping(companionId) {
-  const key = `${WALLET_MAPPING_PREFIX}${companionId}`;
-  await window.electronAPI?.store?.delete(key);
-}
-
-// ═══════════════════════════════════════════════════════════════════════════
-// PRIVY SERVER SIGNER (ethers Signer interface via IPC)
-// ═══════════════════════════════════════════════════════════════════════════
-
-/**
- * Get an ethers-compatible signer for a companion's Privy server wallet.
- * This object implements the subset of the ethers Signer interface used by
- * x402Executor and purchaseExecutor — all signing goes through IPC → main → Privy API.
+ * Get an ethers-compatible signer for a companion wallet.
+ * Uses the session signer key to authorize transactions via Privy Wallet API.
+ * The user must have authorized this key on bonzai.sh/wallet.
  *
  * @param {string} companionId
  * @param {number} chainId
- * @returns {Promise<PrivyServerSigner>}
+ * @returns {Promise<CompanionSigner>}
  */
-async function getServerWalletSigner(companionId, chainId = 8453) {
-  const mapping = await getServerWalletMapping(companionId);
-  if (!mapping) throw new Error(`No Privy server wallet for companion ${companionId}`);
+async function getCompanionSigner(companionId, chainId = 8453) {
+  const key = `${WALLET_MAPPING_PREFIX}${companionId}`;
+  const mapping = await window.electronAPI?.store?.get(key, null);
+  if (!mapping?.walletId || !mapping?.address) {
+    throw new Error(`Companion wallet not linked for ${companionId}. Set it up on bonzai.sh/wallet.`);
+  }
 
-  return new PrivyServerSigner(mapping.walletId, mapping.address, chainId);
+  return new CompanionSigner(mapping.walletId, mapping.address, chainId);
 }
 
 /**
- * Ethers-compatible signer backed by Privy server wallet.
- * All operations are proxied through IPC to the main process.
+ * Ethers-compatible signer backed by Privy session signer.
+ * Transactions are authorized by BonzAI's session signer key
+ * and executed via the Privy Wallet API. The user owns the wallet.
  */
-class PrivyServerSigner {
+class CompanionSigner {
   constructor(walletId, address, chainId) {
     this._walletId = walletId;
     this.address = address;
     this._chainId = chainId;
-    // ethers compatibility
     this.provider = new Proxy({}, {
       get: (_, prop) => {
         if (prop === 'getNetwork') return async () => ({ chainId: BigInt(chainId) });
@@ -445,17 +404,13 @@ class PrivyServerSigner {
     return this.address;
   }
 
-  /**
-   * Send a transaction via Privy server wallet
-   * @param {Object} tx - { to, value, data, gasLimit }
-   * @returns {Promise<Object>} Transaction response with .wait()
-   */
   async sendTransaction(tx) {
     const caip2 = `eip155:${this._chainId}`;
-    const result = await window.electronAPI.privy.sendTransaction(this._walletId, {
+    const result = await window.electronAPI.privy.companionRpc(
+      this._walletId,
+      'eth_sendTransaction',
       caip2,
-      method: 'eth_sendTransaction',
-      params: {
+      {
         transaction: {
           to: tx.to,
           value: tx.value ? `0x${BigInt(tx.value).toString(16)}` : '0x0',
@@ -463,85 +418,45 @@ class PrivyServerSigner {
           ...(tx.gasLimit ? { gas: `0x${BigInt(tx.gasLimit).toString(16)}` } : {}),
         },
       },
-    });
+    );
 
     if (result.error) throw new Error(result.error);
 
     const txHash = result.hash;
-    const rpcUrl = _getRpcUrl(this._chainId);
     const { ethers } = await import('ethers');
-    const provider = new ethers.JsonRpcProvider(rpcUrl);
+    const provider = new ethers.JsonRpcProvider(_getRpcUrl(this._chainId));
 
-    // Return object compatible with ethers TransactionResponse
     return {
       hash: txHash,
       from: this.address,
       to: tx.to,
-      wait: async () => {
-        const receipt = await provider.waitForTransaction(txHash, 1, 60000);
-        return receipt;
-      },
+      wait: async () => provider.waitForTransaction(txHash, 1, 60000),
     };
   }
 
-  /**
-   * Sign EIP-712 typed data via Privy server wallet
-   */
   async signTypedData(domain, types, value) {
     const caip2 = `eip155:${this._chainId}`;
-    const result = await window.electronAPI.privy.signTypedData(this._walletId, {
+    const result = await window.electronAPI.privy.companionRpc(
+      this._walletId,
+      'eth_signTypedData_v4',
       caip2,
-      method: 'eth_signTypedData_v4',
-      params: { domain, types, message: value },
-    });
+      { domain, types, message: value },
+    );
 
     if (result.error) throw new Error(result.error);
     return result.signature;
   }
 
-  /**
-   * Connect to a provider (ethers compatibility)
-   */
   connect(provider) {
-    const signer = new PrivyServerSigner(this._walletId, this.address, this._chainId);
-    signer.provider = provider;
-    return signer;
+    const s = new CompanionSigner(this._walletId, this.address, this._chainId);
+    s.provider = provider;
+    return s;
   }
 }
 
-// ═══════════════════════════════════════════════════════════════════════════
-// POLICY MANAGEMENT
-// ═══════════════════════════════════════════════════════════════════════════
-
-/**
- * Set a spending policy on a companion's server wallet.
- * Policies are enforced server-side by Privy — no local spending limit checks needed.
- *
- * @param {string} companionId
- * @param {Object} policy - Privy policy configuration
- * @returns {Promise<{success: boolean}>}
- */
-async function setWalletPolicy(companionId, policy) {
-  const mapping = await getServerWalletMapping(companionId);
-  if (!mapping) throw new Error(`No Privy server wallet for companion ${companionId}`);
-
-  const result = await window.electronAPI.privy.setPolicy(mapping.walletId, policy);
-  if (result.error) throw new Error(result.error);
-
-  console.log('[Privy] Policy set for', companionId);
-  return { success: true };
-}
-
-/**
- * Build default agent wallet policy (spending limits only)
- * @param {Object} options
- * @param {string} options.maxTransactionEth - Max per-tx (default: 0.001)
- * @param {string} options.dailyLimitEth - Max daily (default: 0.005)
- * @returns {Object} Privy policy config
- */
+// Policy building helper (used by bonzai.sh/wallet for display purposes)
 function buildAgentWalletPolicy(options = {}) {
   const maxTx = options.maxTransactionEth || '0.001';
-  // dailyLimitEth reserved for Privy's time-based policy rules when available
   void options.dailyLimitEth;
 
   return {
@@ -674,7 +589,7 @@ export const privyService = {
   // Initialization
   initialize,
 
-  // Auth (embedded wallet)
+  // Auth (embedded wallet via BrowserView bridge)
   loginWithEmail,
   verifyOtp,
   loginWithSocial,
@@ -682,25 +597,19 @@ export const privyService = {
   logout,
   getEmbeddedProvider,
 
-  // Server wallets (agent wallets)
-  createServerWallet,
-  getServerWalletAddress,
-  hasServerWallet,
-  getServerWalletMapping,
-  getServerWalletBalance,
-  getServerWalletSigner,
-  deleteServerWalletMapping,
-
-  // Funding
-  getFundingUrl,
+  // Companion wallet (session signer — non-custodial)
+  getSessionSignerId,
+  getCompanionWalletAddress,
+  setCompanionWallet,
+  getCompanionBalance,
+  getCompanionSigner,
 
   // Policies
-  setWalletPolicy,
   buildAgentWalletPolicy,
   buildMintOnlyPolicy,
 
   // Signer class (for type checking)
-  PrivyServerSigner,
+  CompanionSigner,
 };
 
 export default privyService;

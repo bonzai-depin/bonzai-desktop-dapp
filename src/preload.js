@@ -58,18 +58,11 @@ contextBridge.exposeInMainWorld("electronAPI", {
   // Privy Server Wallet (agent wallets via Privy API, secret stays in main)
   // ─────────────────────────────────────────────────────────────────────────
   privy: {
-    createServerWallet: (opts) =>
-      ipcRenderer.invoke("privy:create-server-wallet", opts),
-    sendTransaction: (walletId, tx) =>
-      ipcRenderer.invoke("privy:send-transaction", { walletId, tx }),
-    signTypedData: (walletId, typedData) =>
-      ipcRenderer.invoke("privy:sign-typed-data", { walletId, typedData }),
-    getWallet: (walletId) =>
-      ipcRenderer.invoke("privy:get-wallet", walletId),
-    getWalletByAddress: (address) =>
-      ipcRenderer.invoke("privy:get-wallet-by-address", address),
-    setPolicy: (walletId, policy) =>
-      ipcRenderer.invoke("privy:set-policy", { walletId, policy }),
+    // Session signer for companion wallets (non-custodial)
+    getSessionSignerId: () =>
+      ipcRenderer.invoke("privy:get-session-signer-id"),
+    companionRpc: (walletId, method, caip2, params) =>
+      ipcRenderer.invoke("privy:companion-rpc", { walletId, method, caip2, params }),
   },
 
   // ─────────────────────────────────────────────────────────────────────────
