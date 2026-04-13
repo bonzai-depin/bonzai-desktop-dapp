@@ -270,10 +270,10 @@
                 {{ pipelineLocalTest ? "Stop" : "Start" }}
               </button>
             </div>
-            <div v-if="pipelineLocalTest && pipelineLocalTestStatus" class="mt-2">
-              <span class="tag" :class="pipelineLocalTestStatus === 'running' ? 'is-success' : 'is-danger'">
+            <div v-if="pipelineLocalTestStatus" class="mt-2">
+              <span class="tag" :class="pipelineLocalTestStatus === 'running' ? 'is-success' : pipelineLocalTestStatus === 'starting' ? 'is-warning' : 'is-danger'" style="white-space: normal; height: auto; max-width: 100%">
                 <span class="material-symbols-outlined mr-1" style="font-size: 14px">
-                  {{ pipelineLocalTestStatus === 'running' ? 'check_circle' : 'error' }}
+                  {{ pipelineLocalTestStatus === 'running' ? 'check_circle' : pipelineLocalTestStatus === 'starting' ? 'hourglass_empty' : 'error' }}
                 </span>
                 {{ pipelineLocalTestStatus }}
               </span>
@@ -1187,8 +1187,7 @@ watch(pipelineLocalTest, async (enabled) => {
       pipelineLocalTestStatus.value = 'running';
       await window.electronAPI.store.set("p2p.pipeline.localTest", true);
     } else {
-      pipelineLocalTestStatus.value = 'failed';
-      console.error("[Pipeline] Local test rpc-server failed:", res.error);
+      pipelineLocalTestStatus.value = res.error || 'failed';
       pipelineLocalTest.value = false;
     }
   } else {
@@ -1201,27 +1200,10 @@ watch(pipelineLocalTest, async (enabled) => {
 // Persist pipeline settings
 watch(pipelineEnabled, async (v) => {
   await window.electronAPI.store.set("p2p.pipeline.enabled", v);
-  if (v) {
-    // Auto-start rpc-server for self-serve pipeline (consumer mode)
-    if (networkMode.value === 'consumer') {
-      console.log("[NetworkSettings] Starting local rpc-server for self-serve pipeline...");
-      const res = await window.electronAPI.p2pShardStart({ port: 50052 });
-      if (res.ok) {
-        shardProviderEnabled.value = true;
-        console.log("[NetworkSettings] Local rpc-server started on :50052");
-      } else {
-        console.warn("[NetworkSettings] rpc-server start failed:", res.error);
-      }
-    }
-  } else {
+  if (!v) {
     // End pipeline session when disabled
     if (window.electronAPI.p2pPipelineCancel) {
       await window.electronAPI.p2pPipelineCancel();
-    }
-    // Stop rpc-server if it was started for self-serve
-    if (shardProviderEnabled.value) {
-      await window.electronAPI.p2pShardStop();
-      shardProviderEnabled.value = false;
     }
   }
 });
