@@ -447,14 +447,14 @@
               <!-- Social Login -->
               <div class="privy-social-buttons">
                 <button
-                  class="button is-dark is-fullwidth is-medium mt-3 privy-social-btn"
+                  class="button is-dark is-fullwidth is-large privy-social-btn"
                   @click="loginWithSocial('google')"
                   :disabled="isConnecting"
                 >
                   Continue with Google
                 </button>
                 <button
-                  class="button is-dark is-fullwidth is-medium mt-3 privy-social-btn"
+                  class="button is-dark is-fullwidth is-large privy-social-btn"
                   @click="loginWithSocial('apple')"
                   :disabled="isConnecting"
                 >
@@ -2158,6 +2158,8 @@ hr {
 
 .pipeline-mode-badge {
   display: inline-block;
+  height: 24px;
+  line-height: 22px;
   font-size: 9px;
   padding: 1px 6px;
   border-radius: 3px;
