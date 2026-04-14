@@ -1240,13 +1240,25 @@ let _providerBusy = false;
 ipcMain.handle("p2p-start", async (_event, options = {}) => {
   try {
     console.log("[P2P] Starting libp2p node...");
+    const node = getP2PNode();
+
+    // If already started, just return current state
+    if (node?.isStarted) {
+      console.log("[P2P] Node already running");
+      return {
+        ok: true,
+        peerId: node.getPeerId(),
+        multiaddrs: node.getMultiaddrs(),
+      };
+    }
+
     const peerId = await startP2PNode(options);
 
-    // Register inference handler that routes to local servers
-    const node = getP2PNode();
-    const localPeerId = node.getPeerId();
+    // Register inference handler that routes to local servers (only once)
+    const startedNode = getP2PNode();
+    const localPeerId = startedNode.getPeerId();
 
-    node.onInferenceRequest(async (request, remotePeer) => {
+    startedNode.onInferenceRequest(async (request, remotePeer) => {
       console.log(`[P2P] Inference request from ${remotePeer}:`, request.pipeline);
 
       // Concurrency guard — one consumer at a time
@@ -1341,7 +1353,7 @@ ipcMain.handle("p2p-start", async (_event, options = {}) => {
     });
 
     // Register health handler
-    node.onHealthRequest(async (request, remotePeer) => {
+    startedNode.onHealthRequest(async (request, remotePeer) => {
       const pipelines = store.get("p2p.pipelines", []);
       const pricingCurrency = store.get("p2p.pricingCurrency", "ETH");
       const FLASK_PORT = process.env.BONZAI_SERVER_PORT || 65000;
@@ -1396,7 +1408,7 @@ ipcMain.handle("p2p-start", async (_event, options = {}) => {
     });
 
     // Desktop notification when LAN peer discovered
-    node._onLANPeerDiscovered = (discoveredPeerId, lanIP) => {
+    startedNode._onLANPeerDiscovered = (discoveredPeerId, lanIP) => {
       const { Notification } = require("electron");
       if (Notification.isSupported()) {
         const notification = new Notification({

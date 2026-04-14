@@ -783,95 +783,44 @@ export const connectWithPrivy = async (options = {}) => {
   state.error = null;
 
   try {
-    const { privyService } = await import('./privy.service.js');
-    await privyService.initialize();
+    // No desktop-side Privy auth — the wallet window handles everything.
+    // Just wait for the wallet address to arrive from the wallet window.
+    const walletAddress = await new Promise((resolve, reject) => {
+      const timeout = setTimeout(() => reject(new Error('Wallet setup timed out. Open the wallet window and sign in.')), 60000);
 
-    const { method, email, otpCode } = options;
-
-    // Step 1: Handle login flow
-    if (method === 'email' && !otpCode) {
-      // Send OTP — return early, user needs to provide code
-      const result = await privyService.loginWithEmail(email);
-      state.isConnecting = false;
-      state._connectStartTime = null;
-      return result;
-    }
-
-    let loginResult;
-    if (method === 'email' && otpCode) {
-      loginResult = await privyService.verifyOtp(email, otpCode);
-    } else if (method === 'google' || method === 'apple') {
-      loginResult = await privyService.loginWithSocial(method);
-    } else if (method === 'oauth_callback') {
-      // Complete OAuth flow from deep link callback
-      loginResult = await privyService.completeOAuthLogin(
-        options.authorizationCode,
-        options.returnedStateCode,
-        options.provider,
-      );
-    } else {
-      throw new Error(`Unsupported Privy login method: ${method}`);
-    }
-
-    if (!loginResult.success) {
-      throw new Error(loginResult.error || 'Privy login failed');
-    }
-
-    // Step 2: Wait for BrowserView to provide the embedded wallet
-    // The BrowserView loads bonzai.sh/wallet asynchronously — we need to wait
-    // for the wallet address to arrive via the onWalletAddress listener.
-    let privyProvider = privyService.getEmbeddedProvider();
-
-    if (!privyProvider) {
-      // Wait for the BrowserView to report the wallet address (up to 30s)
-      const walletAddress = await new Promise((resolve, reject) => {
-        const timeout = setTimeout(() => reject(new Error('Wallet setup timed out. Please try again.')), 30000);
-
-        // Check if cached address is available immediately
-        window.electronAPI?.wallet?.getAddress?.().then(cached => {
-          if (cached) {
-            clearTimeout(timeout);
-            resolve(cached);
-          }
-        });
-
-        // Also listen for the real-time address event
-        const cleanup = window.electronAPI?.onWalletAddress?.((address) => {
+      // Check if address was already cached from a previous session
+      window.electronAPI?.wallet?.getAddress?.().then(cached => {
+        if (cached) {
           clearTimeout(timeout);
-          if (cleanup) cleanup();
-          resolve(address);
-        });
+          resolve(cached);
+        }
       });
 
-      // Provider should now be set by _extractEmbeddedWallet's listener
-      privyProvider = privyService.getEmbeddedProvider();
+      // Listen for address from the wallet window
+      const cleanup = window.electronAPI?.onWalletAddress?.((address) => {
+        clearTimeout(timeout);
+        if (cleanup) cleanup();
+        resolve(address);
+      });
+    });
 
-      // If still not available, create one from the cached address
-      if (!privyProvider && walletAddress) {
-        // The BrowserView is open — create a provider that delegates signing to it
-        privyProvider = {
-          request: async ({ method, params }) => {
-            if (['eth_requestAccounts', 'eth_accounts'].includes(method)) return [walletAddress];
-            if (method === 'eth_chainId') return '0x2105';
-            if (['eth_sendTransaction', 'eth_signTypedData_v4', 'personal_sign'].includes(method)) {
-              return window.electronAPI.wallet.signRequest({ method, params });
-            }
-            const rpc = new ethers.JsonRpcProvider(CONFIG.networks?.base?.rpc || 'https://mainnet.base.org');
-            return rpc.send(method, params || []);
-          },
-        };
-      }
-    }
+    // Create a provider that delegates signing to the wallet window
+    const privyProvider = {
+      request: async ({ method, params }) => {
+        if (['eth_requestAccounts', 'eth_accounts'].includes(method)) return [walletAddress];
+        if (method === 'eth_chainId') return '0x2105';
+        if (['eth_sendTransaction', 'eth_signTypedData_v4', 'personal_sign'].includes(method)) {
+          return window.electronAPI.wallet.signRequest({ method, params });
+        }
+        const rpc = new ethers.JsonRpcProvider(CONFIG.networks?.base?.rpc || 'https://mainnet.base.org');
+        return rpc.send(method, params || []);
+      },
+    };
 
-    if (!privyProvider) {
-      throw new Error('Wallet not available. Visit bonzai.sh/wallet to set up your wallet first.');
-    }
-
-    // Step 3: Plug into existing ethers flow
     eip1193Provider = privyProvider;
     browserProvider = new ethers.BrowserProvider(eip1193Provider);
 
-    state.walletAddress = loginResult.address || privyService.state.embeddedWalletAddress;
+    state.walletAddress = walletAddress;
     state.isConnected = true;
     state.authProvider = 'privy';
     state.walletType = 'privy';

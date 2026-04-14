@@ -381,88 +381,16 @@
             </div>
 
             <div class="privy-modal-body">
-              <p class="privy-subtitle">Sign in with email or social — no crypto wallet needed</p>
+              <p class="privy-subtitle">Sign in with email — no crypto wallet needed. Your wallet opens in a secure window.</p>
 
-              <!-- Email Step -->
-              <div v-if="privyStep === 'email'" class="privy-email-step">
-                <label class="privy-label">Email</label>
-                <input
-                  v-model="privyEmail"
-                  type="email"
-                  class="input privy-input is-large"
-                  placeholder="you@example.com"
-                  @keyup.enter="startPrivyEmail"
-                  autofocus
-                />
-                <button
-                  class="button is-success is-fullwidth is-large mt-4"
-                  @click="startPrivyEmail"
-                  :disabled="isConnecting"
-                  :class="{ 'is-loading': isConnecting }"
-                >
-                  Continue with Email
-                </button>
-              </div>
+              <button
+                class="button is-success is-fullwidth is-large mt-4"
+                @click="openPrivyWallet"
+              >
+                <span class="material-symbols-outlined mr-2">open_in_new</span>
+                Open Wallet
+              </button>
 
-              <!-- OTP Step -->
-              <div v-else-if="privyStep === 'otp'" class="privy-otp-step">
-                <div class="privy-otp-banner">
-                  <span class="material-symbols-outlined" style="font-size: 20px">mark_email_read</span>
-                  <p>
-                    Verification code sent to
-                    <strong>{{ privyEmail }}</strong>
-                  </p>
-                </div>
-                <label class="privy-label">Code</label>
-                <input
-                  v-model="privyOtpCode"
-                  type="text"
-                  class="input privy-input is-large"
-                  placeholder="000000"
-                  maxlength="6"
-                  @keyup.enter="verifyPrivyOtp"
-                  autofocus
-                />
-                <button
-                  class="button is-success is-fullwidth is-large mt-4"
-                  @click="verifyPrivyOtp"
-                  :disabled="isConnecting"
-                  :class="{ 'is-loading': isConnecting }"
-                >
-                  Verify
-                </button>
-                <button
-                  class="button is-dark is-fullwidth is-large mt-2"
-                  @click="privyStep = 'email'"
-                >
-                  Back
-                </button>
-              </div>
-
-              <!-- Divider -->
-              <div class="privy-divider">
-                <span>or</span>
-              </div>
-
-              <!-- Social Login -->
-              <div class="privy-social-buttons">
-                <button
-                  class="button is-dark is-fullwidth is-large privy-social-btn"
-                  @click="loginWithSocial('google')"
-                  :disabled="isConnecting"
-                >
-                  Continue with Google
-                </button>
-                <button
-                  class="button is-dark is-fullwidth is-large privy-social-btn"
-                  @click="loginWithSocial('apple')"
-                  :disabled="isConnecting"
-                >
-                  Continue with Apple
-                </button>
-              </div>
-
-              <!-- Error -->
               <div v-if="privyError" class="privy-error-card mt-4">
                 <span class="material-symbols-outlined" style="font-size: 16px">error</span>
                 <span>{{ privyError }}</span>
@@ -815,44 +743,18 @@ const disconnect = async () => {
   await doDisconnect();
 };
 
-// ── Privy Login Flow ─────────────────────────────────────────────────────
+// ── Privy Login Flow (via wallet window) ────────────────────────────────
 
-const startPrivyEmail = async () => {
-  privyError.value = "";
-  if (!privyEmail.value?.trim()) {
-    privyError.value = "Enter your email address";
+const openPrivyWallet = async () => {
+  showPrivyLogin.value = false;
+  // Open the wallet window — user authenticates there, not in the desktop app
+  const result = await window.electronAPI?.wallet?.open?.({ email: '' });
+  if (!result?.ok) {
+    privyError.value = 'Failed to open wallet window';
     return;
   }
-  const result = await doConnectWithPrivy({
-    method: "email",
-    email: privyEmail.value.trim(),
-  });
-  if (result.needsOtp) {
-    privyStep.value = "otp";
-  } else if (result.error) {
-    privyError.value = result.error;
-  }
-};
-
-const verifyPrivyOtp = async () => {
-  privyError.value = "";
-  if (!privyOtpCode.value?.trim()) {
-    privyError.value = "Enter the verification code";
-    return;
-  }
-  const result = await doConnectWithPrivy({
-    method: "email",
-    email: privyEmail.value.trim(),
-    otpCode: privyOtpCode.value.trim(),
-  });
-  if (result.success) {
-    showPrivyLogin.value = false;
-    privyStep.value = "email";
-    privyEmail.value = "";
-    privyOtpCode.value = "";
-  } else if (result.error) {
-    privyError.value = result.error;
-  }
+  // Start listening for the wallet address from the wallet window
+  doConnectWithPrivy({});
 };
 
 const loginWithSocial = async (provider) => {
