@@ -107,259 +107,6 @@
         </div>
       </div>
 
-      <hr />
-
-      <!-- Agentic Orchestration -->
-      <div class="orchestration-section mt-5 mb-5">
-        <h2 class="section-title fira-sans-condensed-black-italic">
-          Agentic Orchestration
-        </h2>
-
-        <div class="description-card orchestration">
-          <span class="material-symbols-outlined">info</span>
-          <div>
-            <strong>Multi-Channel Smart Agent</strong>
-            <p>
-              Connect BonzAI to agentic orchestration platforms via an OpenAI-compatible API on port 3002.
-              Orchestrate media generation and companion interactions from your favourite messaging applications
-              (iMessage, WhatsApp, Telegram, Discord) through OpenClaw or Hermes Agent.
-            </p>
-          </div>
-        </div>
-
-        <!-- OpenClaw Toggle -->
-        <div class="orchestration-controls mt-4">
-          <div class="orchestration-label">OpenClaw</div>
-          <div v-if="!openclawInstalled" class="orchestration-status not-installed">
-            <span class="material-symbols-outlined mr-2">info</span>
-            <span>Not installed</span>
-          </div>
-          <div v-else class="orchestration-toggle-row">
-            <div class="orchestration-status-info">
-              <span
-                class="material-symbols-outlined mr-2"
-                :class="openclawEnabled ? 'icon-success' : 'icon-muted'"
-              >
-                {{ openclawEnabled ? "check_circle" : "cancel" }}
-              </span>
-              <span>
-                {{ openclawEnabled ? "Enabled" : "Disabled" }}
-              </span>
-            </div>
-            <button
-              class="button is-small"
-              :class="openclawEnabled ? 'is-danger' : 'is-success'"
-              :disabled="openclawToggling"
-              @click="toggleOpenClaw"
-            >
-              <span
-                v-if="openclawToggling"
-                class="material-symbols-outlined mr-1 spinning"
-              >
-                progress_activity
-              </span>
-              {{ openclawEnabled ? "Disable" : "Enable" }}
-            </button>
-          </div>
-        </div>
-
-        <!-- Hermes Agent Toggle -->
-        <div class="orchestration-controls mt-3">
-          <div class="orchestration-label">Hermes</div>
-          <div v-if="!hermesInstalled" class="orchestration-status not-installed">
-            <span class="material-symbols-outlined mr-2">info</span>
-            <span>Not installed</span>
-          </div>
-          <div v-else class="orchestration-toggle-row">
-            <div class="orchestration-status-info">
-              <span
-                class="material-symbols-outlined mr-2"
-                :class="hermesEnabled ? 'icon-success' : 'icon-muted'"
-              >
-                {{ hermesEnabled ? "check_circle" : "cancel" }}
-              </span>
-              <span>
-                {{ hermesEnabled ? "Enabled" : "Disabled" }}
-              </span>
-            </div>
-            <button
-              class="button is-small"
-              :class="hermesEnabled ? 'is-danger' : 'is-success'"
-              :disabled="hermesToggling"
-              @click="toggleHermes"
-            >
-              <span
-                v-if="hermesToggling"
-                class="material-symbols-outlined mr-1 spinning"
-              >
-                progress_activity
-              </span>
-              {{ hermesEnabled ? "Disable" : "Enable" }}
-            </button>
-          </div>
-        </div>
-      </div>
-
-      <hr />
-
-      <!-- Private Networking (Consumer Mode) -->
-      <div class="pipeline-section mt-5" v-if="networkMode === 'consumer'">
-        <h2 class="section-title fira-sans-condensed-black-italic">
-          Private Networking
-        </h2>
-
-        <div class="description-card pipeline">
-          <span class="material-symbols-outlined">lock</span>
-          <div>
-            <strong>Structural Privacy Through Pipeline Parallelism</strong>
-            <p>
-              Split LLM inference across multiple peers so no single peer sees your prompt or output.
-              Your device keeps the tokenizer, embedding, first and last transformer layers, unembedding,
-              and sampling locally. Remote peers only process opaque activation tensors — float16 math
-              operations with no access to text, tokens, or vocabulary.
-            </p>
-          </div>
-        </div>
-
-        <!-- Private Mode Toggle -->
-        <div class="orchestration-controls mt-4">
-          <div class="orchestration-label">Private Mode</div>
-          <div class="orchestration-toggle-row">
-            <div class="orchestration-status-info">
-              <span
-                class="material-symbols-outlined mr-2"
-                :class="pipelineEnabled ? 'icon-success' : 'icon-muted'"
-              >
-                {{ pipelineEnabled ? "check_circle" : "cancel" }}
-              </span>
-              <span>
-                {{ pipelineEnabled ? "Enabled — Your chat providers never see your conversation" : "Disabled — Your chat providers see all requests and responses" }}
-              </span>
-            </div>
-            <button
-              class="button is-small"
-              :class="pipelineEnabled ? 'is-danger' : 'is-success'"
-              @click="pipelineEnabled = !pipelineEnabled"
-            >
-              {{ pipelineEnabled ? "Disable" : "Enable" }}
-            </button>
-          </div>
-        </div>
-
-        <template v-if="pipelineEnabled">
-          <!-- Self Service Toggle -->
-          <div class="orchestration-controls mt-3">
-            <div class="orchestration-label">Self Service</div>
-            <div class="orchestration-toggle-row">
-              <div class="orchestration-status-info">
-                <span
-                  class="material-symbols-outlined mr-2"
-                  :class="pipelineLocalTest ? 'icon-success' : 'icon-muted'"
-                >
-                  {{ pipelineLocalTest ? "check_circle" : "cancel" }}
-                </span>
-                <span>
-                  {{ pipelineLocalTest ? "Enabled — running private inference on this machine" : "Disabled — requires remote providers" }}
-                </span>
-              </div>
-              <button
-                class="button is-small"
-                :class="pipelineLocalTest ? 'is-danger' : 'is-success'"
-                @click="pipelineLocalTest = !pipelineLocalTest"
-              >
-                {{ pipelineLocalTest ? "Stop" : "Start" }}
-              </button>
-            </div>
-            <div v-if="pipelineLocalTestStatus" class="mt-2">
-              <span class="tag" :class="pipelineLocalTestStatus === 'running' ? 'is-success' : pipelineLocalTestStatus === 'starting' ? 'is-warning' : 'is-danger'" style="white-space: normal; height: auto; max-width: 100%">
-                <span class="material-symbols-outlined mr-1" style="font-size: 14px">
-                  {{ pipelineLocalTestStatus === 'running' ? 'check_circle' : pipelineLocalTestStatus === 'starting' ? 'hourglass_empty' : 'error' }}
-                </span>
-                {{ pipelineLocalTestStatus }}
-              </span>
-            </div>
-          </div>
-
-          <!-- Privacy Level -->
-          <div class="orchestration-controls mt-3">
-            <div class="orchestration-label">Privacy Level — {{ pipelineLocalProportion }}%</div>
-            <input
-              type="range"
-              class="pipeline-slider"
-              min="25"
-              max="75"
-              step="5"
-              v-model.number="pipelineLocalProportion"
-            />
-            <div class="slider-labels">
-              <span>25% — Faster</span>
-              <span class="fira-sans-condensed-black-italic" style="color: #fff">{{ pipelineLocalProportion }}%</span>
-              <span>75% — More Private</span>
-            </div>
-          </div>
-
-          <!-- Extra Privacy Toggle -->
-          <div class="orchestration-controls mt-3">
-            <div class="orchestration-label">
-              Extra Privacy
-              <span
-                class="material-symbols-outlined ml-1 info-tooltip"
-                style="font-size: 16px; vertical-align: middle; cursor: help"
-                title="Adds mathematically calibrated noise to activation tensors before they leave your device. Makes model inversion attacks computationally infeasible. The model must tolerate the noise for coherent output."
-              >info</span>
-            </div>
-            <div class="orchestration-toggle-row">
-              <div class="orchestration-status-info">
-                <span
-                  class="material-symbols-outlined mr-2"
-                  :class="pipelineDPEnabled ? 'icon-success' : 'icon-muted'"
-                >
-                  {{ pipelineDPEnabled ? "check_circle" : "cancel" }}
-                </span>
-                <span>
-                  {{ pipelineDPEnabled ? "Enabled" : "Disabled" }}
-                </span>
-              </div>
-              <button
-                class="button is-small"
-                :class="pipelineDPEnabled ? 'is-danger' : 'is-success'"
-                @click="pipelineDPEnabled = !pipelineDPEnabled"
-              >
-                {{ pipelineDPEnabled ? "Disable" : "Enable" }}
-              </button>
-            </div>
-
-            <template v-if="pipelineDPEnabled">
-              <div class="mt-3">
-                <div class="orchestration-label">
-                  Extra Privacy Budget (ε) — {{ pipelineEpsilon }}
-                  <span
-                    class="material-symbols-outlined ml-1 info-tooltip"
-                    style="font-size: 16px; vertical-align: middle; cursor: help"
-                    title="Controls the noise-to-signal ratio. ε = 2 adds significant noise (strong privacy, may reduce quality). ε = 16 adds minimal noise (weaker privacy, preserves quality). Default ε = 8 balances both."
-                  >info</span>
-                </div>
-                <input
-                  type="range"
-                  class="pipeline-slider"
-                  min="2"
-                  max="16"
-                  step="1"
-                  v-model.number="pipelineEpsilon"
-                />
-                <div class="slider-labels">
-                  <span>ε = 2 — Strong Privacy</span>
-                  <span class="fira-sans-condensed-black-italic" style="color: #fff">ε = {{ pipelineEpsilon }}</span>
-                  <span>ε = 16 — High Quality</span>
-                </div>
-              </div>
-            </template>
-          </div>
-        </template>
-
-        <PipelineStatus class="mt-4" />
-      </div>
-
       <!-- Node Status (consumer + provider) -->
       <div class="status-section mt-5" v-if="networkMode === 'consumer' || networkMode === 'provider'">
         <h2 class="section-title fira-sans-condensed-black-italic">
@@ -631,6 +378,109 @@
         </div>
       </div>
 
+      <!-- Private Networking (Consumer Mode — after providers) -->
+      <div class="pipeline-section mt-5" v-if="networkMode === 'consumer'">
+        <h2 class="section-title fira-sans-condensed-black-italic">Private Networking</h2>
+        <div class="description-card pipeline">
+          <span class="material-symbols-outlined">lock</span>
+          <div>
+            <strong>Structural Privacy Through Pipeline Parallelism</strong>
+            <p>Split LLM inference across multiple peers so no single peer sees your prompt or output. Your device keeps the tokenizer, embedding, first and last transformer layers locally. Remote peers only process opaque activation tensors.</p>
+          </div>
+        </div>
+        <div class="orchestration-controls mt-4">
+          <div class="orchestration-label">Private Mode</div>
+          <div class="orchestration-toggle-row">
+            <div class="orchestration-status-info">
+              <span class="material-symbols-outlined mr-2" :class="pipelineEnabled ? 'icon-success' : 'icon-muted'">{{ pipelineEnabled ? "check_circle" : "cancel" }}</span>
+              <span>{{ pipelineEnabled ? "Enabled — providers never see your conversation" : "Disabled — providers see all requests and responses" }}</span>
+            </div>
+            <button class="button is-small" :class="pipelineEnabled ? 'is-danger' : 'is-success'" @click="pipelineEnabled = !pipelineEnabled">{{ pipelineEnabled ? "Disable" : "Enable" }}</button>
+          </div>
+        </div>
+        <template v-if="pipelineEnabled">
+          <div class="orchestration-controls mt-3">
+            <div class="orchestration-label">Self Service</div>
+            <div class="orchestration-toggle-row">
+              <div class="orchestration-status-info">
+                <span class="material-symbols-outlined mr-2" :class="pipelineLocalTest ? 'icon-success' : 'icon-muted'">{{ pipelineLocalTest ? "check_circle" : "cancel" }}</span>
+                <span>{{ pipelineLocalTest ? "Running private inference on this machine" : "Requires remote providers" }}</span>
+              </div>
+              <button class="button is-small" :class="pipelineLocalTest ? 'is-danger' : 'is-success'" @click="pipelineLocalTest = !pipelineLocalTest">{{ pipelineLocalTest ? "Stop" : "Start" }}</button>
+            </div>
+            <div v-if="pipelineLocalTestStatus" class="mt-2">
+              <span class="tag" :class="pipelineLocalTestStatus === 'running' ? 'is-success' : pipelineLocalTestStatus === 'starting' ? 'is-warning' : 'is-danger'" style="white-space: normal; height: auto; max-width: 100%">
+                <span class="material-symbols-outlined mr-1" style="font-size: 14px">{{ pipelineLocalTestStatus === 'running' ? 'check_circle' : pipelineLocalTestStatus === 'starting' ? 'hourglass_empty' : 'error' }}</span>
+                {{ pipelineLocalTestStatus }}
+              </span>
+            </div>
+          </div>
+          <div class="orchestration-controls mt-3">
+            <div class="orchestration-label">Privacy Level — {{ pipelineLocalProportion }}%</div>
+            <input type="range" class="pipeline-slider" min="25" max="75" step="5" v-model.number="pipelineLocalProportion" />
+            <div class="slider-labels"><span>25% — Faster</span><span class="fira-sans-condensed-black-italic" style="color: #fff">{{ pipelineLocalProportion }}%</span><span>75% — More Private</span></div>
+          </div>
+          <div class="orchestration-controls mt-3">
+            <div class="orchestration-label">Extra Privacy <span class="material-symbols-outlined ml-1 info-tooltip" style="font-size: 16px; vertical-align: middle; cursor: help" title="Adds calibrated noise to activation tensors. Makes model inversion attacks infeasible.">info</span></div>
+            <div class="orchestration-toggle-row">
+              <div class="orchestration-status-info">
+                <span class="material-symbols-outlined mr-2" :class="pipelineDPEnabled ? 'icon-success' : 'icon-muted'">{{ pipelineDPEnabled ? "check_circle" : "cancel" }}</span>
+                <span>{{ pipelineDPEnabled ? "Enabled" : "Disabled" }}</span>
+              </div>
+              <button class="button is-small" :class="pipelineDPEnabled ? 'is-danger' : 'is-success'" @click="pipelineDPEnabled = !pipelineDPEnabled">{{ pipelineDPEnabled ? "Disable" : "Enable" }}</button>
+            </div>
+            <template v-if="pipelineDPEnabled">
+              <div class="mt-3">
+                <div class="orchestration-label">Privacy Budget (ε) — {{ pipelineEpsilon }}</div>
+                <input type="range" class="pipeline-slider" min="2" max="16" step="1" v-model.number="pipelineEpsilon" />
+                <div class="slider-labels"><span>ε = 2 — Strong Privacy</span><span class="fira-sans-condensed-black-italic" style="color: #fff">ε = {{ pipelineEpsilon }}</span><span>ε = 16 — High Quality</span></div>
+              </div>
+            </template>
+          </div>
+        </template>
+        <PipelineStatus class="mt-4" />
+      </div>
+
+      <!-- Agentic Orchestration (consumer + provider) -->
+      <div class="orchestration-section mt-5 mb-5" v-if="networkMode === 'consumer' || networkMode === 'provider'">
+        <h2 class="section-title fira-sans-condensed-black-italic">Agentic Orchestration</h2>
+        <div class="description-card orchestration">
+          <span class="material-symbols-outlined">info</span>
+          <div>
+            <strong>Multi-Channel Smart Agent</strong>
+            <p>Connect BonzAI to agentic orchestration platforms via an OpenAI-compatible API on port 3002. Orchestrate media generation and companion interactions from your messaging applications (WhatsApp, Telegram, Discord) through OpenClaw or Hermes.</p>
+          </div>
+        </div>
+        <div class="orchestration-controls mt-4">
+          <div class="orchestration-label">OpenClaw</div>
+          <div v-if="!openclawInstalled" class="orchestration-status not-installed"><span class="material-symbols-outlined mr-2">info</span><span>Not installed</span></div>
+          <div v-else class="orchestration-toggle-row">
+            <div class="orchestration-status-info">
+              <span class="material-symbols-outlined mr-2" :class="openclawEnabled ? 'icon-success' : 'icon-muted'">{{ openclawEnabled ? "check_circle" : "cancel" }}</span>
+              <span>{{ openclawEnabled ? "Enabled" : "Disabled" }}</span>
+            </div>
+            <button class="button is-small" :class="openclawEnabled ? 'is-danger' : 'is-success'" :disabled="openclawToggling" @click="toggleOpenClaw">
+              <span v-if="openclawToggling" class="material-symbols-outlined mr-1 spinning">progress_activity</span>
+              {{ openclawEnabled ? "Disable" : "Enable" }}
+            </button>
+          </div>
+        </div>
+        <div class="orchestration-controls mt-3">
+          <div class="orchestration-label">Hermes</div>
+          <div v-if="!hermesInstalled" class="orchestration-status not-installed"><span class="material-symbols-outlined mr-2">info</span><span>Not installed</span></div>
+          <div v-else class="orchestration-toggle-row">
+            <div class="orchestration-status-info">
+              <span class="material-symbols-outlined mr-2" :class="hermesEnabled ? 'icon-success' : 'icon-muted'">{{ hermesEnabled ? "check_circle" : "cancel" }}</span>
+              <span>{{ hermesEnabled ? "Enabled" : "Disabled" }}</span>
+            </div>
+            <button class="button is-small" :class="hermesEnabled ? 'is-danger' : 'is-success'" :disabled="hermesToggling" @click="toggleHermes">
+              <span v-if="hermesToggling" class="material-symbols-outlined mr-1 spinning">progress_activity</span>
+              {{ hermesEnabled ? "Disable" : "Enable" }}
+            </button>
+          </div>
+        </div>
+      </div>
+
       <!-- Provider Settings (when in provider mode) -->
       <div
         class="provider-section mt-5"
@@ -847,24 +697,52 @@
 
       <hr />
 
-      <!-- Network Test -->
+      <!-- Network Test + Peer Connection Test -->
       <div class="test-section mt-5">
-        <h2 class="section-title fira-sans-condensed-black-italic">
-          Network Test
-        </h2>
+        <div style="display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 12px">
+          <h2 class="section-title fira-sans-condensed-black-italic" style="margin: 0">
+            Network Test
+          </h2>
+          <div style="display: flex; gap: 8px; align-items: center">
+            <button
+              class="button is-success is-medium"
+              @click="runSelfTest"
+              :disabled="isSelfTesting"
+            >
+              <span v-if="isSelfTesting" class="loader mr-2"></span>
+              <span class="material-symbols-outlined mr-2">monitor_heart</span>
+              {{ isSelfTesting ? "Testing..." : "Run" }}
+            </button>
+            <template v-if="p2pStatus.started">
+              <div class="field has-addons" style="margin: 0">
+                <div class="control">
+                  <input
+                    type="text"
+                    class="input"
+                    v-model="testPeerId"
+                    placeholder="Peer ID (12D3KooW...)"
+                    style="max-width: 220px"
+                  />
+                </div>
+                <div class="control">
+                  <button
+                    class="button is-success"
+                    @click="testConnection"
+                    :disabled="!testPeerId || isTesting"
+                    style="box-shadow: none"
+                    title="Test Peer Connection"
+                  >
+                    <span v-if="isTesting" class="loader mr-1"></span>
+                    <span class="material-symbols-outlined">cable</span>
+                  </button>
+                </div>
+              </div>
+            </template>
+          </div>
+        </div>
 
-        <div class="test-panel">
-          <button
-            class="button is-success is-medium"
-            @click="runSelfTest"
-            :disabled="isSelfTesting"
-          >
-            <span v-if="isSelfTesting" class="loader mr-2"></span>
-            <span class="material-symbols-outlined mr-2">monitor_heart</span>
-            {{ isSelfTesting ? "Testing..." : "Run" }}
-          </button>
-
-          <div v-if="selfTestResults" class="self-test-results mt-4">
+        <div class="test-panel mt-4">
+          <div v-if="selfTestResults" class="self-test-results">
             <!-- Text Endpoint (Port 3002) -->
             <div class="test-result-row" :class="{ success: selfTestResults.openclaw?.ok, error: !selfTestResults.openclaw?.ok && selfTestResults.openclaw?.error !== 'No orchestrator enabled', warning: selfTestResults.openclaw?.error === 'No orchestrator enabled' }">
               <span class="material-symbols-outlined mr-2 test-icon" :class="selfTestResults.openclaw?.ok ? 'icon-success' : selfTestResults.openclaw?.error === 'No orchestrator enabled' ? 'icon-warning' : 'icon-error'">
@@ -947,55 +825,11 @@
         </div>
       </div>
 
-      <!-- Connection Test -->
-      <div class="test-section" v-if="p2pStatus.started">
-        <hr />
-        <h2 class="section-title fira-sans-condensed-black-italic mt-5">
-          Peer Connection Test
-        </h2>
-
-        <div class="test-panel">
-          <div class="field has-addons">
-            <div class="control is-expanded">
-              <input
-                type="text"
-                class="input is-large"
-                v-model="testPeerId"
-                placeholder="Enter peer ID to test connection (12D3KooW...)"
-              />
-            </div>
-            <div class="control">
-              <button
-                class="button is-success is-large"
-                @click="testConnection"
-                :disabled="!testPeerId || isTesting"
-                style="box-shadow: none"
-              >
-                <span v-if="isTesting" class="loader mr-2"></span>
-                <span class="material-symbols-outlined">
-                  {{ isTesting ? "hourglass_empty" : "cable" }}
-                </span>
-              </button>
-            </div>
-          </div>
-
-          <div
-            v-if="testResult"
-            class="test-result"
-            :class="{ success: testResult.ok, error: !testResult.ok }"
-          >
-            <span class="material-symbols-outlined mr-2">
-              {{ testResult.ok ? "check_circle" : "error" }}
-            </span>
-            <span v-if="testResult.ok">
-              Connected! Peer supports
-              {{ testResult.pipelines?.length || 0 }} pipelines
-            </span>
-            <span v-else>
-              {{ testResult.error || "Connection failed" }}
-            </span>
-          </div>
-        </div>
+      <!-- Peer Connection Test Result (inline with Network Test) -->
+      <div v-if="testResult" class="test-result mt-3" :class="{ success: testResult.ok, error: !testResult.ok }">
+        <span class="material-symbols-outlined mr-2">{{ testResult.ok ? "check_circle" : "error" }}</span>
+        <span v-if="testResult.ok">Connected! Peer supports {{ testResult.pipelines?.length || 0 }} pipelines</span>
+        <span v-else>{{ testResult.error || "Connection failed" }}</span>
       </div>
     </div>
   </div>
