@@ -163,9 +163,9 @@
         </div>
       </div>
 
-      <!-- Network Address Translation (NAT) (provider mode, below Node Status) -->
+      <!-- Network Address Translation (provider mode, below Node Status) -->
       <div class="mt-5 mb-5" v-if="networkMode === 'provider'">
-        <h2 class="section-title fira-sans-condensed-black-italic">Network Address Translation (NAT)</h2>
+        <h2 class="section-title fira-sans-condensed-black-italic">Network Address Translation</h2>
         <div class="orchestration-controls mt-4">
           <div class="orchestration-label">Act as Relay</div>
           <div class="orchestration-toggle-row">
@@ -524,6 +524,8 @@
       </div>
 
       <!-- Provider Settings (when in provider mode) -->
+      <hr v-if="networkMode === 'provider' && p2pStatus.started" />
+
       <div
         class="provider-section mt-5"
         v-if="networkMode === 'provider' && p2pStatus.started"
@@ -579,11 +581,9 @@
             </div>
             <div class="pricing-input">
               <input
-                type="number"
+                type="text" inputmode="decimal" pattern="[0-9.]*"
                 class="input"
                 v-model.number="pipelinePricing.llm"
-                step="0.0001"
-                min="0"
                 placeholder="0.0001"
               />
               <span class="pricing-unit">{{ pricingCurrency }} / 1K tokens</span>
@@ -598,11 +598,9 @@
             </div>
             <div class="pricing-input">
               <input
-                type="number"
+                type="text" inputmode="decimal" pattern="[0-9.]*"
                 class="input"
                 v-model.number="pipelinePricing.image"
-                step="0.001"
-                min="0"
                 placeholder="0.01"
               />
               <span class="pricing-unit">{{ pricingCurrency }} / image</span>
@@ -617,11 +615,9 @@
             </div>
             <div class="pricing-input">
               <input
-                type="number"
+                type="text" inputmode="decimal" pattern="[0-9.]*"
                 class="input"
                 v-model.number="pipelinePricing.audio"
-                step="0.0001"
-                min="0"
                 placeholder="0.001"
               />
               <span class="pricing-unit">{{ pricingCurrency }} / second</span>
@@ -636,11 +632,9 @@
             </div>
             <div class="pricing-input">
               <input
-                type="number"
+                type="text" inputmode="decimal" pattern="[0-9.]*"
                 class="input"
                 v-model.number="pipelinePricing.music"
-                step="0.01"
-                min="0"
                 placeholder="0.05"
               />
               <span class="pricing-unit">{{ pricingCurrency }} / second</span>
@@ -655,11 +649,9 @@
             </div>
             <div class="pricing-input">
               <input
-                type="number"
+                type="text" inputmode="decimal" pattern="[0-9.]*"
                 class="input"
                 v-model.number="pipelinePricing.video"
-                step="0.01"
-                min="0"
                 placeholder="0.10"
               />
               <span class="pricing-unit">{{ pricingCurrency }} / second</span>
@@ -674,11 +666,9 @@
             </div>
             <div class="pricing-input">
               <input
-                type="number"
+                type="text" inputmode="decimal" pattern="[0-9.]*"
                 class="input"
                 v-model.number="pipelinePricing.vision"
-                step="0.001"
-                min="0"
                 placeholder="0.005"
               />
               <span class="pricing-unit">{{ pricingCurrency }} / image</span>
