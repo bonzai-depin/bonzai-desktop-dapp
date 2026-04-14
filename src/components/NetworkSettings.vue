@@ -250,6 +250,8 @@
         </div>
       </div>
 
+      <hr v-if="networkMode === 'consumer'" />
+
       <!-- Consumer Mode: Remote Provider Selection -->
       <div class="consumer-section mt-5" v-if="networkMode === 'consumer'">
         <h2 class="section-title fira-sans-condensed-black-italic">
@@ -378,6 +380,8 @@
         </div>
       </div>
 
+      <hr v-if="networkMode === 'consumer'" />
+
       <!-- Private Networking (Consumer Mode — after providers) -->
       <div class="pipeline-section mt-5" v-if="networkMode === 'consumer'">
         <h2 class="section-title fira-sans-condensed-black-italic">Private Networking</h2>
@@ -440,6 +444,8 @@
         </template>
         <PipelineStatus class="mt-4" />
       </div>
+
+      <hr v-if="networkMode === 'consumer' || networkMode === 'provider'" />
 
       <!-- Agentic Orchestration (consumer + provider) -->
       <div class="orchestration-section mt-5 mb-5" v-if="networkMode === 'consumer' || networkMode === 'provider'">
@@ -697,52 +703,24 @@
 
       <hr />
 
-      <!-- Network Test + Peer Connection Test -->
+      <!-- Network Test -->
       <div class="test-section mt-5">
-        <div style="display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 12px">
-          <h2 class="section-title fira-sans-condensed-black-italic" style="margin: 0">
-            Network Test
-          </h2>
-          <div style="display: flex; gap: 8px; align-items: center">
-            <button
-              class="button is-success is-medium"
-              @click="runSelfTest"
-              :disabled="isSelfTesting"
-            >
-              <span v-if="isSelfTesting" class="loader mr-2"></span>
-              <span class="material-symbols-outlined mr-2">monitor_heart</span>
-              {{ isSelfTesting ? "Testing..." : "Run" }}
-            </button>
-            <template v-if="p2pStatus.started">
-              <div class="field has-addons" style="margin: 0">
-                <div class="control">
-                  <input
-                    type="text"
-                    class="input"
-                    v-model="testPeerId"
-                    placeholder="Peer ID (12D3KooW...)"
-                    style="max-width: 220px"
-                  />
-                </div>
-                <div class="control">
-                  <button
-                    class="button is-success"
-                    @click="testConnection"
-                    :disabled="!testPeerId || isTesting"
-                    style="box-shadow: none"
-                    title="Test Peer Connection"
-                  >
-                    <span v-if="isTesting" class="loader mr-1"></span>
-                    <span class="material-symbols-outlined">cable</span>
-                  </button>
-                </div>
-              </div>
-            </template>
-          </div>
-        </div>
+        <h2 class="section-title fira-sans-condensed-black-italic">
+          Network Test
+        </h2>
 
-        <div class="test-panel mt-4">
-          <div v-if="selfTestResults" class="self-test-results">
+        <div class="test-panel">
+          <button
+            class="button is-success is-medium"
+            @click="runSelfTest"
+            :disabled="isSelfTesting"
+          >
+            <span v-if="isSelfTesting" class="loader mr-2"></span>
+            <span class="material-symbols-outlined mr-2">monitor_heart</span>
+            {{ isSelfTesting ? "Testing..." : "Run" }}
+          </button>
+
+          <div v-if="selfTestResults" class="self-test-results mt-4">
             <!-- Text Endpoint (Port 3002) -->
             <div class="test-result-row" :class="{ success: selfTestResults.openclaw?.ok, error: !selfTestResults.openclaw?.ok && selfTestResults.openclaw?.error !== 'No orchestrator enabled', warning: selfTestResults.openclaw?.error === 'No orchestrator enabled' }">
               <span class="material-symbols-outlined mr-2 test-icon" :class="selfTestResults.openclaw?.ok ? 'icon-success' : selfTestResults.openclaw?.error === 'No orchestrator enabled' ? 'icon-warning' : 'icon-error'">
@@ -773,63 +751,82 @@
             </div>
 
             <!-- P2P Node -->
-            <div
-              class="test-result-row"
-              :class="{
-                success: selfTestResults.p2p?.ok,
-                error: !selfTestResults.p2p?.ok,
-              }"
-            >
-              <span
-                class="material-symbols-outlined mr-2 test-icon"
-                :class="selfTestResults.p2p?.ok ? 'icon-success' : 'icon-error'"
-              >
+            <div class="test-result-row" :class="{ success: selfTestResults.p2p?.ok, error: !selfTestResults.p2p?.ok }">
+              <span class="material-symbols-outlined mr-2 test-icon" :class="selfTestResults.p2p?.ok ? 'icon-success' : 'icon-error'">
                 {{ selfTestResults.p2p?.ok ? "check_circle" : "error" }}
               </span>
               <div class="test-result-content">
-                <strong>P2P Node</strong>
+                <strong>Peer-to-Peer Node</strong>
                 <span class="test-result-detail">
-                  {{
-                    selfTestResults.p2p?.ok
-                      ? `Peer ID: ${truncatedPeerId}`
-                      : selfTestResults.p2p?.error || "Not started"
-                  }}
+                  {{ selfTestResults.p2p?.ok ? `Peer ID: ${truncatedPeerId}` : selfTestResults.p2p?.error || "Not started" }}
                 </span>
               </div>
             </div>
 
             <!-- Overall Status -->
-            <div
-              class="overall-status mt-3"
-              :class="{
-                ready: selfTestResults.ready,
-                'not-ready': !selfTestResults.ready,
-              }"
-            >
-              <span
-                class="material-symbols-outlined mr-2 test-icon"
-                :class="selfTestResults.ready ? 'icon-success' : 'icon-warning'"
-              >
+            <div class="overall-status mt-3" :class="{ ready: selfTestResults.ready, 'not-ready': !selfTestResults.ready }">
+              <span class="material-symbols-outlined mr-2 test-icon" :class="selfTestResults.ready ? 'icon-success' : 'icon-warning'">
                 {{ selfTestResults.ready ? "rocket_launch" : "warning" }}
               </span>
               <span class="has-text-white" v-if="selfTestResults.ready">
                 {{ networkMode === 'consumer' ? 'Ready to consume inference!' : 'Ready to serve inference!' }}
               </span>
               <span v-else>
-                {{
-                  selfTestResults.readyMessage || "Some services need attention"
-                }}
+                {{ selfTestResults.readyMessage || "Some services need attention" }}
               </span>
             </div>
           </div>
         </div>
       </div>
 
-      <!-- Peer Connection Test Result (inline with Network Test) -->
-      <div v-if="testResult" class="test-result mt-3" :class="{ success: testResult.ok, error: !testResult.ok }">
-        <span class="material-symbols-outlined mr-2">{{ testResult.ok ? "check_circle" : "error" }}</span>
-        <span v-if="testResult.ok">Connected! Peer supports {{ testResult.pipelines?.length || 0 }} pipelines</span>
-        <span v-else>{{ testResult.error || "Connection failed" }}</span>
+      <!-- Peer Connection Test -->
+      <div class="test-section" v-if="p2pStatus.started">
+        <hr />
+        <h2 class="section-title fira-sans-condensed-black-italic mt-5">
+          Peer Connection Test
+        </h2>
+
+        <div class="test-panel">
+          <div class="field has-addons">
+            <div class="control is-expanded">
+              <input
+                type="text"
+                class="input is-large"
+                v-model="testPeerId"
+                placeholder="Enter peer ID to test connection (12D3KooW...)"
+              />
+            </div>
+            <div class="control">
+              <button
+                class="button is-success is-large"
+                @click="testConnection"
+                :disabled="!testPeerId || isTesting"
+                style="box-shadow: none"
+              >
+                <span v-if="isTesting" class="loader mr-2"></span>
+                <span class="material-symbols-outlined">
+                  {{ isTesting ? "hourglass_empty" : "cable" }}
+                </span>
+              </button>
+            </div>
+          </div>
+
+          <div
+            v-if="testResult"
+            class="test-result mt-3"
+            :class="{ success: testResult.ok, error: !testResult.ok }"
+          >
+            <span class="material-symbols-outlined mr-2">
+              {{ testResult.ok ? "check_circle" : "error" }}
+            </span>
+            <span v-if="testResult.ok">
+              Connected! Peer supports {{ testResult.pipelines?.length || 0 }} pipelines
+            </span>
+            <span v-else>
+              {{ testResult.error || "Connection failed" }}
+            </span>
+          </div>
+        </div>
       </div>
     </div>
   </div>
