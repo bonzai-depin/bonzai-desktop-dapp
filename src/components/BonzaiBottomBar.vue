@@ -32,7 +32,7 @@
 
             <button
               class="button is-info"
-              @click="showPrivyLogin = true"
+              @click="openPrivyWallet"
               :disabled="isConnecting"
               title="Sign in with email — no crypto wallet needed"
             >

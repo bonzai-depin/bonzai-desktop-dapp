@@ -803,7 +803,6 @@ ipcMain.handle("wallet:open", async (_event, { email }) => {
       return { ok: true };
     }
 
-    const { BrowserWindow } = require("electron");
     walletView = new BrowserWindow({
       width: 480,
       height: 700,
