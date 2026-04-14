@@ -545,12 +545,14 @@ const needsReauth = computed(() => {
 const pendingOps = computed(() => vaultStatus.value.pendingOperations);
 
 const authStatusClass = computed(() => {
+  if (authProvider.value === 'privy') return "is-success"; // Privy manages its own session
   if (needsReauth.value) return "is-danger";
   if (tokenExpiringSoon.value) return "is-warning";
   return "is-success";
 });
 
 const authStatusText = computed(() => {
+  if (authProvider.value === 'privy') return "Privy";
   if (needsReauth.value) return "Expired";
   if (tokenExpiringSoon.value) return "Expiring";
   return "Active";

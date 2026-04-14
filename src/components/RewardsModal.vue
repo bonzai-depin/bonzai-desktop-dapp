@@ -265,7 +265,7 @@
 </template>
 
 <script setup>
-import { ref, computed, onMounted, onUnmounted } from 'vue';
+import { ref, computed, watch, onMounted, onUnmounted } from 'vue';
 import { mintPoolService } from '../services/mintPool.service.js';
 import { getUnclaimedRevenue, claimAllRevenue } from '../services/skillOwnership.service.js';
 import { web3Service } from '../services/web3.service.js';
@@ -536,6 +536,11 @@ onMounted(() => {
   countdownInterval = setInterval(() => {
     now.value = Math.floor(Date.now() / 1000);
   }, 1000);
+});
+
+// Re-fetch when wallet connects or balances change
+watch([isConnected, walletAddress], ([connected, addr]) => {
+  if (connected && addr) loadData();
 });
 
 onUnmounted(() => {

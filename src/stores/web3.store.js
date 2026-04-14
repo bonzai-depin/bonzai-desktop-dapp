@@ -183,22 +183,14 @@ export const useWeb3Store = defineStore('web3', () => {
     // First refresh the token balances
     await web3Service.fetchAllBalances();
 
-    // Then ensure authentication is still valid
-    // This will prompt for signature if token is expired and refresh fails
-    if (isConnected.value && !authService.isAuthenticated()) {
-      console.log("[Web3Store] Token expired during balance refresh, attempting re-auth...");
+    // Ensure Flask JWT authentication is valid (not needed for Privy users)
+    if (isConnected.value && web3Service.state.authProvider !== 'privy' && !authService.isAuthenticated()) {
       try {
-        // Try refresh token first (uses HttpOnly cookie, no signature needed)
         await authService.refreshToken();
-        console.log("[Web3Store] Token refreshed successfully");
-      } catch (e) {
-        console.log("[Web3Store] Token refresh failed, attempting re-authentication...");
-        // If refresh fails, try full re-authentication (will prompt for signature)
+      } catch {
         try {
           await authService.reAuthenticate();
-        } catch (authErr) {
-          console.warn("[Web3Store] Re-authentication failed:", authErr.message);
-        }
+        } catch { /* */ }
       }
     }
   };
