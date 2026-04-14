@@ -158,6 +158,21 @@ async function fetchPoolStats() {
 
     // Fetch user qualification and registration if wallet connected
     if (userAddress) {
+      // Check BonzaiUnlock status — unlocked users qualify for all pools
+      let isUnlocked = false;
+      try {
+        const unlockAddress = CONFIG.levelUnlock?.registryAddress;
+        if (unlockAddress) {
+          const unlockProvider = new ethers.JsonRpcProvider(CONFIG.networks?.base?.rpc || 'https://mainnet.base.org');
+          const unlockContract = new ethers.Contract(
+            unlockAddress,
+            ['function hasUnlocked(address) view returns (bool)'],
+            unlockProvider,
+          );
+          isUnlocked = await unlockContract.hasUnlocked(userAddress);
+        }
+      } catch { /* unlock contract may not be available */ }
+
       const qualifyPromises = [];
       for (let i = 0; i < 6; i++) {
         qualifyPromises.push(contract.qualifiesForPool(userAddress, i));
@@ -169,7 +184,8 @@ async function fetchPoolStats() {
       ]);
 
       for (let i = 0; i < 6; i++) {
-        state.userQualifies[i] = qualResults[i];
+        // Unlocked users qualify for ALL pools regardless of balance
+        state.userQualifies[i] = isUnlocked || qualResults[i];
       }
       state.isRegisteredCurrentEpoch = isRegistered;
       state.registeredBalance = parseFloat(ethers.formatEther(regBalance));

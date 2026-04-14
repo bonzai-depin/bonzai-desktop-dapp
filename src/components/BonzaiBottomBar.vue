@@ -919,8 +919,8 @@ onUnmounted(() => {
   window.removeEventListener("auth:expired", handleNeedsReauth);
 });
 
-watch(isConnected, async (connected) => {
-  if (connected) {
+watch([isConnected, walletAddress], async ([connected, addr]) => {
+  if (connected && addr) {
     await checkAllLevels();
   }
 });
