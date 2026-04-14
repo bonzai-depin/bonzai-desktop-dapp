@@ -809,6 +809,7 @@ export const connectWithPrivy = async (options = {}) => {
       request: async ({ method, params }) => {
         if (['eth_requestAccounts', 'eth_accounts'].includes(method)) return [walletAddress];
         if (method === 'eth_chainId') return '0x2105';
+        if (method === 'wallet_switchEthereumChain') return null; // Always on Base
         if (['eth_sendTransaction', 'eth_signTypedData_v4', 'personal_sign'].includes(method)) {
           return window.electronAPI.wallet.signRequest({ method, params });
         }
