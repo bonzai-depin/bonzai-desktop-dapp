@@ -578,7 +578,7 @@
       </div>
 
       <!-- P2P Status Panel -->
-      <div class="status-section mt-5" v-if="networkMode === 'provider'">
+      <div class="status-section mt-5" v-if="networkMode === 'consumer' || networkMode === 'provider'">
         <h2 class="section-title fira-sans-condensed-black-italic">
           Node Status
         </h2>

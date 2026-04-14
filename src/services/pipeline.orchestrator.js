@@ -197,7 +197,7 @@ async function ensureSession(modelPath, privacyConfig, onStatus) {
       tensorSplit = `${localPct},${remotePct}`;
       status(`LAN pipeline: tensor-split ${tensorSplit}, rpc ${rpcAddresses}`);
     } else {
-      // 2. Check if local rpc-server is running (self-serve: same machine is both consumer + provider)
+      // 2. Check if local rpc-server is running (Self Service mode — same machine testing)
       let localRpcAvailable = false;
       try {
         const net = await import('net');
