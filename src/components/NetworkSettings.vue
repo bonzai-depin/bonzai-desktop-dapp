@@ -163,6 +163,42 @@
         </div>
       </div>
 
+      <!-- NAT Node Relay (provider mode, below Node Status) -->
+      <div class="mt-5 mb-5" v-if="networkMode === 'provider'">
+        <h2 class="section-title fira-sans-condensed-black-italic">NAT Node Relay</h2>
+        <div class="orchestration-controls mt-4">
+          <div class="orchestration-label">Act as Relay</div>
+          <div class="orchestration-toggle-row">
+            <div class="orchestration-status-info">
+              <span class="material-symbols-outlined mr-2" :class="enableRelay ? 'icon-success' : 'icon-muted'">
+                {{ enableRelay ? "check_circle" : "cancel" }}
+              </span>
+              <span>
+                {{ enableRelay ? "Enabled — helping peers behind NAT connect" : "Disabled" }}
+                <span v-if="p2pStatus.natStatus !== 'public'" style="opacity: 0.5"> (requires public IP)</span>
+              </span>
+            </div>
+            <button
+              class="button is-small"
+              :class="enableRelay ? 'is-danger' : 'is-success'"
+              :disabled="p2pStatus.natStatus !== 'public'"
+              @click="enableRelay = !enableRelay"
+            >
+              {{ enableRelay ? "Disable" : "Enable" }}
+            </button>
+          </div>
+        </div>
+        <div v-if="enableRelay" class="orchestration-controls mt-3">
+          <div class="orchestration-label">Relay Fee — {{ relayFee }}%</div>
+          <input type="range" class="pipeline-slider" min="1" max="10" step="1" v-model.number="relayFee" />
+          <div class="slider-labels">
+            <span>1%</span>
+            <span class="fira-sans-condensed-black-italic" style="color: #fff">{{ relayFee }}%</span>
+            <span>10%</span>
+          </div>
+        </div>
+      </div>
+
       <!-- LAN Providers (auto-discovered via mDNS, free) -->
       <div class="consumer-section mt-5" v-if="networkMode === 'consumer' && lanProviders.length > 0">
         <h2 class="section-title fira-sans-condensed-black-italic">
@@ -534,7 +570,7 @@
           </span>
         </div>
 
-        <div v-if="pricingCurrency !== 'FREE'" class="pricing-grid">
+        <div v-if="pricingCurrency !== 'FREE'" class="pricing-grid" lang="en">
           <!-- LLM -->
           <div class="pricing-item">
             <div class="pricing-header">
@@ -652,53 +688,7 @@
           <!-- Companions removed — billed per content type consumed -->
         </div>
 
-        <hr class="mt-5 mb-5" />
-
-        <h2 class="section-title fira-sans-condensed-black-italic">
-          NAT Node Relay
-        </h2>
-
-        <div class="setting-group">
-          <label class="setting-label">
-            <span class="material-symbols-outlined">router</span>
-            Act as Relay
-          </label>
-          <div class="relay-toggle">
-            <label class="toggle">
-              <input
-                type="checkbox"
-                v-model="enableRelay"
-                :disabled="p2pStatus.natStatus !== 'public'"
-              />
-              <span class="toggle-slider"></span>
-            </label>
-            <span class="toggle-label">
-              {{ enableRelay ? "Enabled — helping peers behind NAT/firewalls connect to the network" : "Disabled" }}
-              <span v-if="p2pStatus.natStatus !== 'public'" class="toggle-note">
-                (Requires public IP)
-              </span>
-            </span>
-          </div>
-        </div>
-
-        <div class="setting-group" v-if="enableRelay">
-          <label class="setting-label">
-            <span class="material-symbols-outlined">percent</span>
-            Relay Fee (%)
-          </label>
-          <input
-            type="number"
-            class="input"
-            v-model.number="relayFee"
-            step="1"
-            min="1"
-            max="10"
-            placeholder="5"
-          />
-          <span class="setting-hint">
-            Earn {{ relayFee }}% of relayed inference fees
-          </span>
-        </div>
+        <!-- Companions removed — billed per content type consumed -->
       </div>
 
       <hr />
@@ -1001,7 +991,7 @@ const toggleHermes = async () => {
 };
 
 // Payment currency (ETH or USDC)
-const pricingCurrency = ref("ETH");
+const pricingCurrency = ref("FREE");
 
 // Per-pipeline pricing
 const pipelinePricing = ref({
@@ -1295,7 +1285,7 @@ const loadSettings = async () => {
       false,
     );
     const savedRelayFee = await window.electronAPI.store.get("p2p.relayFee", 5);
-    const savedCurrency = await window.electronAPI.store.get("p2p.pricingCurrency", "ETH");
+    const savedCurrency = await window.electronAPI.store.get("p2p.pricingCurrency", "FREE");
     const savedProviders = await window.electronAPI.store.get(
       "p2p.selectedProviders",
       null,
