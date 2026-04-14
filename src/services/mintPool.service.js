@@ -74,6 +74,9 @@ const state = reactive({
   // User qualification (based on current balance)
   userQualifies: [false, false, false, false, false, false],
 
+  // BonzaiUnlock status
+  allUnlocked: false,
+
   // User registration status for current epoch
   isRegisteredCurrentEpoch: false,
   registeredBalance: 0,
@@ -183,8 +186,9 @@ async function fetchPoolStats() {
         contract.registeredBalances(state.currentEpoch, userAddress),
       ]);
 
+      state.allUnlocked = isUnlocked;
+
       for (let i = 0; i < 6; i++) {
-        // Unlocked users qualify for ALL pools regardless of balance
         state.userQualifies[i] = isUnlocked || qualResults[i];
       }
       state.isRegisteredCurrentEpoch = isRegistered;

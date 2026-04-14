@@ -309,17 +309,29 @@ const POOL_ICONS = ['chat', 'headphones', 'image', 'movie', '3d_rotation', 'exer
 const POOL_THRESHOLDS = [1000, 5000, 10000, 25000, 33000, 50000];
 
 const pools = computed(() => {
-  return mintPoolService.POOL_LABELS.map((label, index) => ({
-    label,
-    icon: POOL_ICONS[index],
-    balance: poolState.value.totalDeposited[index] || 0,
-    threshold: poolState.value.poolThresholds[index]
+  // Total BONZAI balance across ALL chains (Ethereum + Arbitrum + Base)
+  const totalBalance = web3Service.state.balances?.total || 0;
+  // Check if user has unlocked all levels via 1 ETH payment
+  const allUnlocked = poolState.value.allUnlocked || false;
+
+  return mintPoolService.POOL_LABELS.map((label, index) => {
+    const threshold = poolState.value.poolThresholds[index]
       ? parseFloat(ethers.formatEther(
           ethers.parseEther(poolState.value.poolThresholds[index].toString())
         ))
-      : POOL_THRESHOLDS[index],
-    qualified: poolState.value.userQualifies[index] || false,
-  }));
+      : POOL_THRESHOLDS[index];
+
+    // Qualify if: unlocked OR multi-chain total balance >= threshold
+    const qualified = allUnlocked || totalBalance >= threshold;
+
+    return {
+      label,
+      icon: POOL_ICONS[index],
+      balance: poolState.value.totalDeposited[index] || 0,
+      threshold,
+      qualified,
+    };
+  });
 });
 
 const totalPoolBalance = computed(() => {
