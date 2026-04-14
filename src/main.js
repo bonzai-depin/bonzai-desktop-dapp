@@ -798,49 +798,32 @@ const pendingSignRequests = new Map(); // id → { resolve, reject }
 
 ipcMain.handle("wallet:open", async (_event, { email }) => {
   try {
-    if (walletView && !walletView.webContents.isDestroyed()) {
-      // Already open — just focus
+    if (walletView && !walletView.isDestroyed()) {
+      walletView.focus();
       return { ok: true };
     }
 
-    const { BrowserView } = require("electron");
-    walletView = new BrowserView({
+    const { BrowserWindow } = require("electron");
+    walletView = new BrowserWindow({
+      width: 480,
+      height: 700,
+      parent: mainWindow,
+      modal: false,
+      show: true,
+      title: "BonzAI Wallet",
       webPreferences: {
         nodeIntegration: false,
         contextIsolation: true,
       },
     });
 
-    // Position at bottom of main window (signing confirmation area)
-    const bounds = mainWindow.getBounds();
-    const viewHeight = Math.min(400, Math.round(bounds.height * 0.5));
-    mainWindow.addBrowserView(walletView);
-    walletView.setBounds({
-      x: 0,
-      y: bounds.height - viewHeight,
-      width: bounds.width,
-      height: viewHeight,
-    });
-    walletView.setAutoResize({ width: true });
-
     const walletUrl = app.isPackaged
       ? `https://bonzai.sh/wallet?mode=embedded&email=${encodeURIComponent(email || '')}`
       : `http://localhost:1337/wallet?mode=embedded&email=${encodeURIComponent(email || '')}`;
 
-    walletView.webContents.loadURL(walletUrl);
+    walletView.loadURL(walletUrl);
 
-    // Listen for messages from the wallet page
     walletViewReady = false;
-    walletView.webContents.on("did-finish-load", () => {
-      // Inject message listener
-      walletView.webContents.executeJavaScript(`
-        window.addEventListener('message', (e) => {
-          // Forward to Electron
-        });
-        // The wallet page posts BONZAI_WALLET_READY and BONZAI_SIGN_RESPONSE
-        // These are picked up via the console message hack below
-      `);
-    });
 
     // Listen for postMessage responses via console.log bridge
     walletView.webContents.on("console-message", (_e, _level, message) => {
@@ -849,7 +832,7 @@ ipcMain.handle("wallet:open", async (_event, { email }) => {
           const data = JSON.parse(message.slice(7));
           if (data.type === "BONZAI_WALLET_READY") {
             walletViewReady = true;
-            console.log("[Wallet] BrowserView ready");
+            console.log("[Wallet] Wallet window ready");
           } else if (data.type === "BONZAI_SIGN_RESPONSE") {
             const pending = pendingSignRequests.get(data.id);
             if (pending) {
@@ -868,15 +851,20 @@ ipcMain.handle("wallet:open", async (_event, { email }) => {
       } catch { /* not a BONZAI message */ }
     });
 
+    walletView.on("closed", () => {
+      walletView = null;
+      walletViewReady = false;
+    });
+
     return { ok: true };
   } catch (err) {
-    console.error("[Wallet] BrowserView open failed:", err.message);
+    console.error("[Wallet] Wallet window open failed:", err.message);
     return { ok: false, error: err.message };
   }
 });
 
 ipcMain.handle("wallet:sign-request", async (_event, request) => {
-  if (!walletView || walletView.webContents.isDestroyed()) {
+  if (!walletView || walletView.isDestroyed()) {
     throw new Error("Wallet not open. Sign in first.");
   }
 
@@ -905,9 +893,8 @@ ipcMain.handle("wallet:get-address", async () => {
 });
 
 ipcMain.handle("wallet:close", async () => {
-  if (walletView && !walletView.webContents.isDestroyed()) {
-    mainWindow.removeBrowserView(walletView);
-    walletView.webContents.destroy();
+  if (walletView && !walletView.isDestroyed()) {
+    walletView.close();
     walletView = null;
     walletViewReady = false;
   }
