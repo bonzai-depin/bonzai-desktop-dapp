@@ -383,7 +383,7 @@
       <hr v-if="networkMode === 'consumer'" />
 
       <!-- Private Networking (Consumer Mode — after providers) -->
-      <div class="pipeline-section mt-5" v-if="networkMode === 'consumer'">
+      <div class="pipeline-section mt-5 mb-5" v-if="networkMode === 'consumer'">
         <h2 class="section-title fira-sans-condensed-black-italic">Private Networking</h2>
         <div class="description-card pipeline">
           <span class="material-symbols-outlined">lock</span>
