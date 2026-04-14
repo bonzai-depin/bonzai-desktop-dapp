@@ -119,19 +119,19 @@
                             <span class="material-symbols-outlined mr-1" style="font-size: 14px;">how_to_reg</span>
                             Registered
                           </span>
-                          <span v-else-if="!pool.qualified" class="tag is-dark">
-                            Not Eligible
-                          </span>
                           <button
-                            v-else
+                            v-else-if="pool.qualified"
                             class="button is-success is-small is-fullwidth"
                             @click="handleRegister"
                             :disabled="isRegistering"
                             :class="{ 'is-loading': isRegistering }"
                           >
                             <span class="material-symbols-outlined mr-1" style="font-size: 16px;">app_registration</span>
-                            Register
+                            Register for Epoch #{{ poolState.currentEpoch }}
                           </button>
+                          <span v-else class="tag is-dark" style="white-space: normal; height: auto">
+                            Hold {{ pool.threshold.toLocaleString() }} BONZAI or unlock with 1 ETH
+                          </span>
                         </div>
                       </div>
                     </div>
