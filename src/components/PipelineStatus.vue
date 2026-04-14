@@ -1,101 +1,66 @@
 <template>
-  <div class="pipeline-status" v-if="session.active">
-    <div class="pipeline-header">
-      <span class="material-symbols-outlined mr-2" style="vertical-align: middle; color: #39d582">
-        lock
-      </span>
-      <span class="fira-sans-condensed-black-italic has-text-white">Private Pipeline</span>
-      <span class="tag is-success is-light ml-2">{{ session.status }}</span>
-      <span class="tag is-info is-light ml-2" v-if="session.requestCount">
-        {{ session.requestCount }} request{{ session.requestCount > 1 ? 's' : '' }}
+  <div class="pipeline-audit" v-if="session.active">
+    <!-- Accordion Header -->
+    <div class="audit-header" @click="expanded = !expanded">
+      <div class="audit-header-left">
+        <span class="material-symbols-outlined" style="color: #39d582; font-size: 20px">lock</span>
+        <span class="fira-sans-condensed-black-italic has-text-white">Privacy Audit</span>
+        <span class="audit-meta">
+          {{ session.privacyAudit?.localLayers || '?' }} local / {{ session.privacyAudit?.remoteLayers || '?' }} remote layers
+          &middot; split {{ session.privacyAudit?.tensorSplit || '--' }}
+        </span>
+      </div>
+      <span class="material-symbols-outlined chevron" :class="{ open: expanded }">
+        expand_more
       </span>
     </div>
 
-    <div class="pipeline-details mt-3">
-      <div class="pipeline-stat">
-        <span class="stat-label">Peers</span>
-        <span class="stat-value fira-sans-condensed-black-italic">
-          {{ session.privacyAudit?.localTest ? 'local test' : session.peersUsed }}
-        </span>
-      </div>
-      <div class="pipeline-stat">
-        <span class="stat-label">Layers</span>
-        <span class="stat-value fira-sans-condensed-black-italic">
-          {{ session.privacyAudit?.localLayers || '?' }} local / {{ session.privacyAudit?.remoteLayers || '?' }} remote
-        </span>
-      </div>
-      <div class="pipeline-stat">
-        <span class="stat-label">Split</span>
-        <span class="stat-value fira-sans-condensed-black-italic">
-          {{ session.privacyAudit?.tensorSplit || '--' }}
-        </span>
-      </div>
-    </div>
-
-    <!-- Privacy Audit -->
-    <div class="privacy-audit mt-4" v-if="session.privacyAudit && showAudit">
-      <div class="audit-section">
-        <h4 class="audit-title">
-          <span class="material-symbols-outlined mr-1" style="font-size: 16px; color: #39d582">verified_user</span>
+    <!-- Accordion Body -->
+    <div v-if="expanded" class="audit-body">
+      <!-- What stays on your device -->
+      <div class="audit-section safe">
+        <div class="audit-section-title">
+          <span class="material-symbols-outlined" style="font-size: 16px">verified_user</span>
           What stays on your device
-        </h4>
-        <ul class="audit-list safe">
-          <li v-for="item in session.privacyAudit.whatClientKeeps" :key="item">
-            <span class="material-symbols-outlined" style="font-size: 14px">check</span>
+        </div>
+        <ul>
+          <li v-for="item in session.privacyAudit?.whatClientKeeps" :key="item">
+            <span class="material-symbols-outlined" style="font-size: 13px">check</span>
             {{ item }}
           </li>
         </ul>
       </div>
 
-      <div class="audit-section mt-3">
-        <h4 class="audit-title">
-          <span class="material-symbols-outlined mr-1" style="font-size: 16px; color: #f0ad4e">visibility</span>
+      <!-- What the remote peer sees -->
+      <div class="audit-section warn">
+        <div class="audit-section-title">
+          <span class="material-symbols-outlined" style="font-size: 16px">visibility</span>
           What the remote peer sees
-        </h4>
-        <ul class="audit-list neutral">
-          <li v-for="item in session.privacyAudit.whatPeerSees" :key="item">
-            <span class="material-symbols-outlined" style="font-size: 14px">remove</span>
+        </div>
+        <ul>
+          <li v-for="item in session.privacyAudit?.whatPeerSees" :key="item">
+            <span class="material-symbols-outlined" style="font-size: 13px">remove</span>
             {{ item }}
           </li>
         </ul>
       </div>
 
-      <div class="audit-section mt-3">
-        <h4 class="audit-title">
-          <span class="material-symbols-outlined mr-1" style="font-size: 16px; color: #39d582">shield</span>
-          What the remote peer NEVER sees
-        </h4>
-        <ul class="audit-list protected">
-          <li v-for="item in session.privacyAudit.whatPeerNeverSees" :key="item">
-            <span class="material-symbols-outlined" style="font-size: 14px">block</span>
+      <!-- What the remote peer NEVER sees -->
+      <div class="audit-section protected">
+        <div class="audit-section-title">
+          <span class="material-symbols-outlined" style="font-size: 16px">shield</span>
+          What the remote peer never sees
+        </div>
+        <ul>
+          <li v-for="item in session.privacyAudit?.whatPeerNeverSees" :key="item">
+            <span class="material-symbols-outlined" style="font-size: 13px">block</span>
             {{ item }}
           </li>
         </ul>
       </div>
-    </div>
 
-    <!-- Status Message -->
-    <div class="pipeline-message mt-2" v-if="statusMessage">
-      <span class="is-size-7" style="opacity: 0.7">{{ statusMessage }}</span>
-    </div>
-
-    <div class="mt-3" style="display: flex; gap: 8px">
-      <button
-        class="button is-small"
-        :class="showAudit ? 'is-info' : 'is-info is-light'"
-        @click="showAudit = !showAudit"
-      >
-        <span class="material-symbols-outlined mr-1" style="font-size: 16px">policy</span>
-        {{ showAudit ? 'Hide' : 'Show' }} Privacy Audit
-      </button>
-      <button
-        class="button is-danger is-small"
-        @click="cancel"
-        :disabled="cancelling"
-      >
-        <span class="material-symbols-outlined mr-1" style="font-size: 16px">cancel</span>
-        {{ cancelling ? 'Stopping...' : 'Stop Pipeline' }}
-      </button>
+      <!-- Status line -->
+      <div v-if="statusMessage" class="audit-status">{{ statusMessage }}</div>
     </div>
   </div>
 </template>
@@ -116,8 +81,7 @@ const session = reactive({
 });
 
 const statusMessage = ref('');
-const cancelling = ref(false);
-const showAudit = ref(false);
+const expanded = ref(false);
 let pollInterval = null;
 let statusUnsub = null;
 
@@ -138,18 +102,9 @@ async function pollStatus() {
   } catch {}
 }
 
-async function cancel() {
-  cancelling.value = true;
-  try {
-    await window.electronAPI.p2pPipelineCancel();
-  } catch {}
-  cancelling.value = false;
-  session.active = false;
-}
-
 onMounted(() => {
   pollStatus();
-  pollInterval = setInterval(pollStatus, 2000);
+  pollInterval = setInterval(pollStatus, 3000);
   statusUnsub = window.electronAPI.onPipelineStatus?.((msg) => {
     statusMessage.value = msg;
   });
@@ -162,88 +117,96 @@ onUnmounted(() => {
 </script>
 
 <style scoped>
-.pipeline-status {
-  background: rgba(57, 213, 130, 0.08);
-  border: 1px solid rgba(57, 213, 130, 0.25);
-  border-radius: 12px;
-  padding: 1em;
-  margin-bottom: 1em;
+.pipeline-audit {
+  background: rgba(57, 213, 130, 0.06);
+  border: 1px solid rgba(57, 213, 130, 0.2);
+  border-radius: 10px;
+  overflow: hidden;
 }
 
-.pipeline-header {
+.audit-header {
   display: flex;
   align-items: center;
-  font-size: 1rem;
+  justify-content: space-between;
+  padding: 12px 16px;
+  cursor: pointer;
+  user-select: none;
+  transition: background 0.15s;
 }
 
-.pipeline-details {
+.audit-header:hover {
+  background: rgba(57, 213, 130, 0.04);
+}
+
+.audit-header-left {
   display: flex;
-  gap: 1.5em;
-  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
 }
 
-.pipeline-stat {
+.audit-meta {
+  font-size: 12px;
+  color: rgba(255, 255, 255, 0.4);
+  margin-left: 8px;
+}
+
+.chevron {
+  font-size: 20px;
+  color: rgba(255, 255, 255, 0.4);
+  transition: transform 0.2s;
+}
+
+.chevron.open {
+  transform: rotate(180deg);
+}
+
+.audit-body {
+  padding: 0 16px 16px;
   display: flex;
   flex-direction: column;
-}
-
-.stat-label {
-  font-size: 0.7rem;
-  color: rgba(255, 255, 255, 0.5);
-  text-transform: uppercase;
-  letter-spacing: 0.05em;
-}
-
-.stat-value {
-  font-size: 1rem;
-  color: #fff;
-}
-
-.privacy-audit {
-  background: rgba(0, 0, 0, 0.2);
-  border-radius: 8px;
-  padding: 0.75em;
+  gap: 12px;
 }
 
 .audit-section {
-  padding: 0;
+  padding: 10px 12px;
+  border-radius: 8px;
+  background: rgba(0, 0, 0, 0.15);
 }
 
-.audit-title {
-  font-size: 0.85rem;
-  color: rgba(255, 255, 255, 0.9);
+.audit-section-title {
   display: flex;
   align-items: center;
-  margin: 0 0 0.4em 0;
+  gap: 6px;
+  font-size: 13px;
+  font-weight: 600;
+  margin-bottom: 6px;
 }
 
-.audit-list {
+.audit-section.safe .audit-section-title { color: rgba(57, 213, 130, 0.9); }
+.audit-section.warn .audit-section-title { color: rgba(240, 173, 78, 0.9); }
+.audit-section.protected .audit-section-title { color: rgba(57, 213, 130, 0.75); }
+
+.audit-section ul {
   list-style: none;
   padding: 0;
   margin: 0;
 }
 
-.audit-list li {
+.audit-section li {
   display: flex;
   align-items: center;
   gap: 6px;
-  font-size: 0.8rem;
+  font-size: 12px;
   padding: 2px 0;
 }
 
-.audit-list.safe li {
-  color: rgba(57, 213, 130, 0.85);
-}
+.audit-section.safe li { color: rgba(57, 213, 130, 0.7); }
+.audit-section.warn li { color: rgba(240, 173, 78, 0.7); }
+.audit-section.protected li { color: rgba(57, 213, 130, 0.6); }
 
-.audit-list.neutral li {
-  color: rgba(240, 173, 78, 0.85);
-}
-
-.audit-list.protected li {
-  color: rgba(57, 213, 130, 0.7);
-}
-
-.pipeline-message {
-  min-height: 1.2em;
+.audit-status {
+  font-size: 11px;
+  color: rgba(255, 255, 255, 0.35);
+  padding-top: 4px;
 }
 </style>

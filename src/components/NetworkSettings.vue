@@ -360,7 +360,61 @@
         <PipelineStatus class="mt-4" />
       </div>
 
-      <hr v-if="networkMode === 'consumer'" />
+      <!-- Node Status (consumer + provider) -->
+      <div class="status-section mt-5" v-if="networkMode === 'consumer' || networkMode === 'provider'">
+        <h2 class="section-title fira-sans-condensed-black-italic">
+          Node Status
+        </h2>
+        <div class="status-panel mt-3 mb-3" :class="{ online: p2pStatus.started, offline: !p2pStatus.started }">
+          <div class="status-row">
+            <span class="status-label">Status</span>
+            <span class="status-value">
+              <span class="status-indicator" :class="{ online: p2pStatus.started }"></span>
+              {{ p2pStatus.started ? "Online" : "Offline" }}
+            </span>
+          </div>
+          <template v-if="p2pStatus.started">
+            <hr />
+            <div class="status-row">
+              <span class="status-label">Peer ID</span>
+              <span class="status-value peer-id" @click="copyPeerId">
+                {{ truncatedPeerId }}
+                <span class="material-symbols-outlined copy-icon">content_copy</span>
+              </span>
+            </div>
+            <hr />
+            <div class="status-row">
+              <span class="status-label">Connected Peers</span>
+              <span class="status-value">{{ p2pStatus.connectedPeers || 0 }}</span>
+            </div>
+            <hr />
+            <div class="status-row">
+              <span class="status-label">NAT Status</span>
+              <span class="status-value" :class="natStatusClass">
+                <span class="material-symbols-outlined mr-1">
+                  {{ p2pStatus.natStatus === "public" ? "public" : p2pStatus.natStatus === "relayed" ? "sync_alt" : "help" }}
+                </span>
+                {{ formatNatStatus(p2pStatus.natStatus) }}
+              </span>
+            </div>
+          </template>
+        </div>
+        <div class="control-buttons mb-3">
+          <button v-if="!p2pStatus.started" class="button is-success is-medium" @click="startP2P" :disabled="isStarting">
+            <span v-if="isStarting" class="loader mr-2"></span>
+            <span class="material-symbols-outlined mr-2">play_arrow</span>
+            {{ isStarting ? "Starting..." : "Start Node" }}
+          </button>
+          <button v-else class="button is-danger is-medium" @click="stopP2P" :disabled="isStopping">
+            <span v-if="isStopping" class="loader mr-2"></span>
+            <span class="material-symbols-outlined mr-2">stop</span>
+            {{ isStopping ? "Stopping..." : "Stop Node" }}
+          </button>
+          <button class="button is-warning is-medium ml-2" @click="refreshStatus" :disabled="isRefreshing">
+            <span class="material-symbols-outlined" :class="{ spinning: isRefreshing }">refresh</span>
+          </button>
+        </div>
+      </div>
 
       <!-- LAN Providers (auto-discovered via mDNS, free) -->
       <div class="consumer-section mt-5" v-if="networkMode === 'consumer' && lanProviders.length > 0">
@@ -574,125 +628,6 @@
             {{ selectedProviders.length }} provider{{ selectedProviders.length > 1 ? 's' : '' }} selected.
             Inference requests will be routed to {{ selectedProviders.length > 1 ? 'a random provider' : 'this provider' }}.
           </div>
-        </div>
-      </div>
-
-      <!-- P2P Status Panel -->
-      <div class="status-section mt-5" v-if="networkMode === 'consumer' || networkMode === 'provider'">
-        <h2 class="section-title fira-sans-condensed-black-italic">
-          Node Status
-        </h2>
-
-        <div
-          class="status-panel mt-5 mb-5"
-          :class="{ online: p2pStatus.started, offline: !p2pStatus.started }"
-        >
-          <div class="status-row">
-            <span class="status-label">Status</span>
-            <span class="status-value">
-              <span
-                class="status-indicator"
-                :class="{ online: p2pStatus.started }"
-              ></span>
-              {{ p2pStatus.started ? "Online" : "Offline" }}
-            </span>
-          </div>
-          <hr />
-          <template v-if="p2pStatus.started">
-            <div class="status-row">
-              <span class="status-label">Peer ID</span>
-              <span class="status-value peer-id" @click="copyPeerId">
-                {{ truncatedPeerId }}
-                <span class="material-symbols-outlined copy-icon">
-                  content_copy
-                </span>
-              </span>
-            </div>
-            <hr />
-            <div class="status-row">
-              <span class="status-label">Connected Peers</span>
-              <span class="status-value">
-                {{ p2pStatus.connectedPeers || 0 }}
-              </span>
-            </div>
-            <hr />
-            <div class="status-row">
-              <span class="status-label">NAT Status</span>
-              <span class="status-value" :class="natStatusClass">
-                <span class="material-symbols-outlined mr-1">
-                  {{
-                    p2pStatus.natStatus === "public"
-                      ? "public"
-                      : p2pStatus.natStatus === "relayed"
-                        ? "sync_alt"
-                        : "help"
-                  }}
-                </span>
-                {{ formatNatStatus(p2pStatus.natStatus) }}
-              </span>
-            </div>
-            <hr />
-            <div class="status-row" v-if="p2pStatus.isUsingRelay">
-              <span class="status-label">Relay Connections</span>
-              <span class="status-value">
-                {{ p2pStatus.relayConnections || 0 }}
-              </span>
-            </div>
-
-            <div class="multiaddrs" v-if="p2pStatus.multiaddrs?.length">
-              <span class="status-label">Listening Addresses</span>
-              <div class="addr-list">
-                <code
-                  v-for="addr in p2pStatus.multiaddrs.slice(0, 3)"
-                  :key="addr"
-                  class="addr"
-                >
-                  {{ addr }}
-                </code>
-                <span v-if="p2pStatus.multiaddrs.length > 3" class="more-addrs">
-                  +{{ p2pStatus.multiaddrs.length - 3 }} more
-                </span>
-              </div>
-            </div>
-          </template>
-        </div>
-
-        <!-- Start/Stop Button -->
-        <div class="control-buttons mb-5">
-          <button
-            v-if="!p2pStatus.started"
-            class="button is-success is-medium"
-            @click="startP2P"
-            :disabled="isStarting"
-          >
-            <span v-if="isStarting" class="loader mr-2"></span>
-            <span class="material-symbols-outlined mr-2">play_arrow</span>
-            {{ isStarting ? "Starting..." : "Start Node" }}
-          </button>
-
-          <button
-            v-else
-            class="button is-danger is-medium"
-            @click="stopP2P"
-            :disabled="isStopping"
-          >
-            <span v-if="isStopping" class="loader mr-2"></span>
-            <span class="material-symbols-outlined mr-2">stop</span>
-            {{ isStopping ? "Stopping..." : "Stop Node" }}
-          </button>
-
-          <button
-            class="button is-warning is-medium ml-2"
-            @click="refreshStatus"
-            :disabled="isRefreshing"
-          >
-            <span
-              class="material-symbols-outlined"
-              :class="{ spinning: isRefreshing }"
-            >
-              refresh
-            </span>
-          </button>
         </div>
       </div>
 
@@ -910,7 +845,9 @@
         </div>
       </div>
 
-      <!-- Self-Test (Local Inference Routing) -->
+      <hr />
+
+      <!-- Network Test -->
       <div class="test-section mt-5">
         <h2 class="section-title fira-sans-condensed-black-italic">
           Network Test
@@ -928,83 +865,32 @@
           </button>
 
           <div v-if="selfTestResults" class="self-test-results mt-4">
-            <!-- Flask Server (Diffusion) -->
-            <div
-              class="test-result-row"
-              :class="{
-                success: selfTestResults.flask?.ok,
-                error: !selfTestResults.flask?.ok,
-              }"
-            >
-              <span
-                class="material-symbols-outlined mr-2 test-icon"
-                :class="
-                  selfTestResults.flask?.ok ? 'icon-success' : 'icon-error'
-                "
-              >
-                {{ selfTestResults.flask?.ok ? "check_circle" : "error" }}
+            <!-- Text Endpoint (Port 3002) -->
+            <div class="test-result-row" :class="{ success: selfTestResults.openclaw?.ok, error: !selfTestResults.openclaw?.ok && selfTestResults.openclaw?.error !== 'No orchestrator enabled', warning: selfTestResults.openclaw?.error === 'No orchestrator enabled' }">
+              <span class="material-symbols-outlined mr-2 test-icon" :class="selfTestResults.openclaw?.ok ? 'icon-success' : selfTestResults.openclaw?.error === 'No orchestrator enabled' ? 'icon-warning' : 'icon-error'">
+                {{ selfTestResults.openclaw?.ok ? "check_circle" : selfTestResults.openclaw?.error === "No orchestrator enabled" ? "info" : "error" }}
               </span>
               <div class="test-result-content">
-                <strong>Flask Server (Port 65000)</strong>
+                <strong>Text Endpoint (Port 3002)</strong>
                 <span class="test-result-detail">
-                  {{
-                    selfTestResults.flask?.ok
-                      ? `Image, Audio, Video & Companion Pipelines`
-                      : selfTestResults.flask?.error || "Not responding"
-                  }}
+                  {{ selfTestResults.openclaw?.ok ? 'LLM text generation' : selfTestResults.openclaw?.error || 'Not responding' }}
                 </span>
-                <div
-                  v-if="selfTestResults.flask?.pipelines?.length"
-                  class="pipeline-tags"
-                >
-                  <span
-                    v-for="p in selfTestResults.flask.pipelines"
-                    :key="p"
-                    class="pipeline-tag"
-                  >
-                    {{ p }}
-                  </span>
-                </div>
               </div>
             </div>
 
-            <!-- OpenClaw Server (LLM) -->
-            <div
-              class="test-result-row"
-              :class="{
-                success: selfTestResults.openclaw?.ok,
-                error: !selfTestResults.openclaw?.ok,
-                warning:
-                  selfTestResults.openclaw?.error === 'No orchestrator enabled',
-              }"
-            >
-              <span
-                class="material-symbols-outlined mr-2 test-icon"
-                :class="
-                  selfTestResults.openclaw?.ok
-                    ? 'icon-success'
-                    : selfTestResults.openclaw?.error === 'No orchestrator enabled'
-                      ? 'icon-warning'
-                      : 'icon-error'
-                "
-              >
-                {{
-                  selfTestResults.openclaw?.ok
-                    ? "check_circle"
-                    : selfTestResults.openclaw?.error === "No orchestrator enabled"
-                      ? "info"
-                      : "error"
-                }}
+            <!-- Other Endpoints (Port 65000) -->
+            <div class="test-result-row" :class="{ success: selfTestResults.flask?.ok, error: !selfTestResults.flask?.ok }">
+              <span class="material-symbols-outlined mr-2 test-icon" :class="selfTestResults.flask?.ok ? 'icon-success' : 'icon-error'">
+                {{ selfTestResults.flask?.ok ? "check_circle" : "error" }}
               </span>
               <div class="test-result-content">
-                <strong>Orchestration Server (Port 3002)</strong>
+                <strong>Other Endpoints (Port 65000)</strong>
                 <span class="test-result-detail">
-                  {{
-                    selfTestResults.openclaw?.ok
-                      ? `Text Generation & Chat`
-                      : selfTestResults.openclaw?.error || "Not responding"
-                  }}
+                  {{ selfTestResults.flask?.ok ? 'Image, audio, video, vision' : selfTestResults.flask?.error || 'Not responding' }}
                 </span>
+                <div v-if="selfTestResults.flask?.pipelines?.length" class="pipeline-tags">
+                  <span v-for="p in selfTestResults.flask.pipelines" :key="p" class="pipeline-tag">{{ p }}</span>
+                </div>
               </div>
             </div>
 
@@ -1049,7 +935,7 @@
                 {{ selfTestResults.ready ? "rocket_launch" : "warning" }}
               </span>
               <span class="has-text-white" v-if="selfTestResults.ready">
-                Ready to serve as a provider!
+                {{ networkMode === 'consumer' ? 'Ready to consume inference!' : 'Ready to serve inference!' }}
               </span>
               <span v-else>
                 {{
@@ -1630,16 +1516,17 @@ watch(networkMode, async (newMode) => {
     await window.electronAPI.p2pPipelineCancel();
   }
 
-  // Auto-stop P2P when switching to local or consumer mode
-  if (
-    (newMode === "local" || newMode === "consumer") &&
-    p2pStatus.value.started
-  ) {
+  if (newMode === 'local' && p2pStatus.value.started) {
     await stopP2P();
   }
 
+  // Auto-start P2P when switching to consumer or provider mode
+  if ((newMode === 'consumer' || newMode === 'provider') && !p2pStatus.value.started) {
+    await startP2P();
+  }
+
   // Refresh providers when switching to consumer mode
-  if (newMode === "consumer") {
+  if (newMode === 'consumer') {
     await refreshProviders();
   }
 });
