@@ -534,42 +534,24 @@
           Pricing
         </h2>
 
-        <div class="pricing-currency-selector mb-4">
-          <label class="setting-label">
-            <span class="material-symbols-outlined">payments</span>
-            Payment Currency
+        <div class="control mb-4 has-text-left mode-selector">
+          <input v-model="pricingCurrency" value="FREE" id="currency_free" type="radio" name="pricingCurrency" />
+          <label for="currency_free" class="radio mr-3">
+            <span class="material-symbols-outlined" style="font-size: 32px !important">money_off</span>
+            Free
           </label>
-          <div class="currency-toggle">
-            <button
-              class="button is-small"
-              :class="pricingCurrency === 'FREE' ? 'is-success' : ''"
-              @click="pricingCurrency = 'FREE'"
-            >
-              Free
-            </button>
-            <button
-              class="button is-small"
-              :class="pricingCurrency === 'ETH' ? 'is-success' : ''"
-              @click="pricingCurrency = 'ETH'"
-            >
-              ETH
-            </button>
-            <button
-              class="button is-small"
-              :class="pricingCurrency === 'USDC' ? 'is-success' : ''"
-              @click="pricingCurrency = 'USDC'"
-            >
-              USDC
-            </button>
-          </div>
-          <span class="setting-hint">
-            {{ pricingCurrency === 'FREE'
-              ? 'All pipelines are free — no payment required from consumers'
-              : pricingCurrency === 'ETH'
-                ? 'Accept native ETH — no token approval needed'
-                : 'Accept USDC stablecoin — stable pricing'
-            }}
-          </span>
+
+          <input v-model="pricingCurrency" value="ETH" id="currency_eth" type="radio" name="pricingCurrency" />
+          <label for="currency_eth" class="radio mr-3">
+            <span class="material-symbols-outlined" style="font-size: 32px !important">currency_exchange</span>
+            ETH
+          </label>
+
+          <input v-model="pricingCurrency" value="USDC" id="currency_usdc" type="radio" name="pricingCurrency" />
+          <label for="currency_usdc" class="radio mr-3">
+            <span class="material-symbols-outlined" style="font-size: 32px !important">paid</span>
+            USDC
+          </label>
         </div>
 
         <div v-if="pricingCurrency !== 'FREE'" class="pricing-grid" lang="en">
