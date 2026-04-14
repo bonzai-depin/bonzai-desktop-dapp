@@ -163,9 +163,9 @@
         </div>
       </div>
 
-      <!-- NAT Node Relay (provider mode, below Node Status) -->
+      <!-- Network Address Translation (NAT) (provider mode, below Node Status) -->
       <div class="mt-5 mb-5" v-if="networkMode === 'provider'">
-        <h2 class="section-title fira-sans-condensed-black-italic">NAT Node Relay</h2>
+        <h2 class="section-title fira-sans-condensed-black-italic">Network Address Translation (NAT)</h2>
         <div class="orchestration-controls mt-4">
           <div class="orchestration-label">Act as Relay</div>
           <div class="orchestration-toggle-row">
