@@ -5,7 +5,8 @@ import "@openzeppelin/contracts/access/Ownable.sol";
 import "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
 import "@openzeppelin/contracts/utils/Pausable.sol";
 import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
-import "@openzeppelin/contracts/token/ERC721/IERC721.sol";
+import "@openzeppelin/contracts/utils/introspection/ERC165.sol";
+import {IReceiver} from "./cre/IReceiver.sol";
 
 interface IBonzaiUnlock {
     function hasUnlocked(address user) external view returns (bool);
@@ -20,40 +21,30 @@ interface IBonzaiUnlock {
  * Time-based epochs:
  *   Epochs advance automatically based on block.timestamp. The current epoch
  *   is always computed as (block.timestamp - genesisTime) / epochDuration.
- *   No manual finalizeEpoch() call is needed — epoch boundaries are implicit.
  *
- * Distribution model:
- *   1. Deposits accumulate during each epoch (1 week) from BonzaiContent
- *      mint fees and BonzaiRoyaltySplitter secondary sales.
- *   2. During the active epoch, BONZAI holders register their balance
- *      on-chain by calling registerForEpoch(). Registration locks the
- *      caller's BONZAI balance at that moment — one registration per
- *      wallet per epoch. Registrant must hold at least poolThresholds[0]
- *      (the lowest LVL threshold) to prevent dilution from sub-threshold
- *      registrations.
- *   3. When the epoch ends (time-based), it becomes claimable immediately.
- *   4. Registered holders claim proportional share from past pools.
- *      Share = poolDeposits * registeredBalance / totalRegistered.
- *   5. Claims are valid during epoch N+1 only (1-epoch window).
- *      Starting from epoch N+2, unclaimed funds can be swept to treasury.
+ * Multi-chain balance verification (Chainlink CRE):
+ *   1. User calls registerForEpoch() — emits RegistrationRequested event.
+ *   2. A Chainlink CRE workflow (log-triggered) detects the event, fetches
+ *      BONZAI balanceOf() on Ethereum and Arbitrum via RPC, and pushes the
+ *      cross-chain total to this contract via the Chainlink Forwarder.
+ *   3. onReport() receives the verified balance, adds the on-chain Base
+ *      balance, and completes registration.
+ *   4. Same flow for confirmClaim(): user requests, CRE verifies, callback
+ *      confirms.
  *
  * Anti-gaming:
- *   - Registration requires minimum balance (poolThresholds[0]) to prevent
- *     sub-threshold wallets from diluting the totalRegistered denominator.
- *   - At claim time, balanceOf(msg.sender) >= registeredBalance is enforced,
- *     preventing register-then-sell attacks.
- *   - Split-wallet registration inflates totalRegistered proportionally,
- *     making it self-penalizing and insolvency-proof.
+ *   - Oracle-verified multi-chain balance prevents inflated registrations.
+ *   - Base balance verified on-chain via bonzaiToken.balanceOf().
+ *   - 256-block gap between confirmClaim callback and claimEpoch prevents
+ *     flash loan bypass.
+ *   - Split-wallet registration is self-penalizing and insolvency-proof.
  *
  * Pool thresholds match the LVL system:
  *   [1K, 5K, 10K, 25K, 33K, 50K] BONZAI tokens.
  */
-contract BonzaiMintPool is Ownable, ReentrancyGuard, Pausable {
-    /// @notice BONZAI ERC-20 token
+contract BonzaiMintPool is Ownable, ReentrancyGuard, Pausable, ERC165, IReceiver {
+    /// @notice BONZAI ERC-20 token (on Base)
     IERC20 public bonzaiToken;
-
-    /// @notice BonzaiCompanions ERC-721 contract (required for claiming)
-    IERC721 public companionNFT;
 
     /// @notice Treasury address for swept/surplus funds
     address public treasury;
@@ -65,7 +56,6 @@ contract BonzaiMintPool is Ownable, ReentrancyGuard, Pausable {
     uint256 public constant NUM_POOLS = 6;
 
     /// @notice Minimum block gap between confirmClaim and claimEpoch (flash loan protection)
-    /// On Base (~2s blocks): 256 blocks ≈ 8.5 minutes
     uint256 public constant MIN_CLAIM_BLOCK_GAP = 256;
 
     /// @notice LVL thresholds per pool (in token units with 18 decimals)
@@ -73,18 +63,13 @@ contract BonzaiMintPool is Ownable, ReentrancyGuard, Pausable {
 
     /// @notice Snapshotted thresholds per epoch (frozen at first registration)
     mapping(uint256 => uint256[6]) public epochThresholds;
-
-    /// @notice Whether an epoch's thresholds have been snapshotted
     mapping(uint256 => bool) public epochThresholdSnapshotted;
 
     // ═══════════════════════════════════════════════════════════════════════════
     // TIME-BASED EPOCH CONFIG
     // ═══════════════════════════════════════════════════════════════════════════
 
-    /// @notice Genesis timestamp — epoch 0 starts here
     uint256 public immutable genesisTime;
-
-    /// @notice Duration of each epoch in seconds (1 week, immutable)
     uint256 public immutable epochDuration;
 
     // ═══════════════════════════════════════════════════════════════════════════
@@ -92,61 +77,52 @@ contract BonzaiMintPool is Ownable, ReentrancyGuard, Pausable {
     // ═══════════════════════════════════════════════════════════════════════════
 
     struct EpochData {
-        uint256[6] poolDeposits;        // ETH deposited during this epoch per pool
-        uint256 totalRegistered;         // Sum of all registered BONZAI balances
+        uint256[6] poolDeposits;
+        uint256 totalRegistered;
     }
 
-    /// @notice Epoch data by index
     mapping(uint256 => EpochData) public epochs;
-
-    /// @notice Registered BONZAI balance per wallet per epoch (locked at registration time)
     mapping(uint256 => mapping(address => uint256)) public registeredBalances;
-
-    /// @notice Tracks claimed status: epochId => wallet => poolIndex => claimed
     mapping(uint256 => mapping(address => mapping(uint8 => bool))) public hasClaimed;
-
-    /// @notice Tracks total ETH claimed per epoch per pool (for sweep accounting)
     mapping(uint256 => uint256[6]) public epochClaimedPerPool;
-
-    /// @notice Whether an epoch has been swept
     mapping(uint256 => bool) public epochSwept;
-
-    /// @notice Block number at which a user confirmed their balance for claiming.
-    ///         Must be set via confirmClaim() before calling claimEpoch/claimEpochBatch.
-    ///         Claim must happen in a LATER block than confirmation to prevent
-    ///         single-transaction flash loan bypass.
     mapping(uint256 => mapping(address => uint256)) public claimConfirmedBlock;
+
+    // ═══════════════════════════════════════════════════════════════════════════
+    // CHAINLINK CRE
+    // ═══════════════════════════════════════════════════════════════════════════
+
+    /// @notice Chainlink Forwarder address — only this address can call onReport
+    address public forwarder;
+
+    /// @notice Request types for pending CRE callbacks
+    enum RequestType { NONE, REGISTER, CONFIRM_CLAIM }
+
+    /// @notice Pending oracle request per user per epoch
+    struct PendingRequest {
+        RequestType requestType;
+        uint256 epochId;
+    }
+
+    /// @notice Active pending request per user (only one at a time)
+    mapping(address => PendingRequest) public pendingRequests;
 
     // ═══════════════════════════════════════════════════════════════════════════
     // LIFETIME STATS
     // ═══════════════════════════════════════════════════════════════════════════
 
-    /// @notice Lifetime deposited ETH per pool (across all epochs)
     uint256[6] public totalDeposited;
-
-    /// @notice Total ETH claimed across all epochs
     uint256 public totalClaimed;
-
-    /// @notice Total ETH swept from expired epochs
     uint256 public totalSwept;
 
     // ═══════════════════════════════════════════════════════════════════════════
     // AUTHORIZED DEPOSITORS
     // ═══════════════════════════════════════════════════════════════════════════
 
-    /// @notice BonzaiContent contract (primary depositor)
     address public contentContract;
-
-    /// @notice BonzaiRoyaltySplitter contract (secondary depositor)
     address public royaltySplitter;
-
-    /// @notice BonzaiUniswapHook contract (tertiary depositor — hook fee share)
     address public feeHook;
-
-    /// @notice Authorized minters (collection clones from BonzaiCollectiblesFactory)
     mapping(address => bool) public authorizedMinters;
-
-    /// @notice Factory contract authorized to register new minters
     address public collectiblesFactory;
 
     // ═══════════════════════════════════════════════════════════════════════════
@@ -156,46 +132,49 @@ contract BonzaiMintPool is Ownable, ReentrancyGuard, Pausable {
     event PoolDeposit(uint8 indexed poolIndex, uint256 amount, address indexed depositor, uint256 indexed epochId);
     event EpochClaimed(uint256 indexed epochId, uint8 indexed poolIndex, address indexed claimer, uint256 amount);
     event Registered(uint256 indexed epochId, address indexed wallet, uint256 balance);
+    event RegistrationRequested(uint256 indexed epochId, address indexed wallet);
+    event ConfirmClaimRequested(uint256 indexed epochId, address indexed wallet);
+    event ClaimConfirmed(uint256 indexed epochId, address indexed wallet, uint256 balance, uint256 blockNumber);
     event ContentContractUpdated(address indexed oldContract, address indexed newContract);
     event RoyaltySplitterUpdated(address indexed oldSplitter, address indexed newSplitter);
     event FeeHookUpdated(address indexed oldHook, address indexed newHook);
     event AuthorizedMinterUpdated(address indexed minter, bool authorized);
     event CollectiblesFactoryUpdated(address indexed oldFactory, address indexed newFactory);
     event PoolThresholdUpdated(uint8 indexed poolIndex, uint256 oldThreshold, uint256 newThreshold);
-    event CompanionNFTUpdated(address indexed oldNFT, address indexed newNFT);
     event UnclaimedSwept(uint256 indexed epochId, uint256 amount);
-    event ClaimConfirmed(uint256 indexed epochId, address indexed wallet, uint256 balance, uint256 blockNumber);
     event TreasuryUpdated(address indexed oldTreasury, address indexed newTreasury);
     event EpochThresholdsSnapshotted(uint256 indexed epochId);
+    event UnclaimedRecirculated(uint256 indexed fromEpoch, uint256 indexed toEpoch, uint256 amount);
 
     // ═══════════════════════════════════════════════════════════════════════════
     // CONSTRUCTOR
     // ═══════════════════════════════════════════════════════════════════════════
 
     /**
-     * @param _bonzaiToken BONZAI ERC-20 token address
-     * @param _thresholds Array of 6 thresholds in full token units (e.g. 1000 = 1000 * 1e18)
-     * @param _epochDuration Duration of each epoch in seconds (e.g. 604800 = 7 days)
+     * @param _bonzaiToken BONZAI ERC-20 token address (on Base)
+     * @param _thresholds Array of 6 thresholds in full token units
+     * @param _epochDuration Duration of each epoch in seconds
      * @param _treasury Treasury address for swept/surplus funds
+     * @param _forwarder Chainlink CRE Forwarder address on Base
      */
     constructor(
         address _bonzaiToken,
         uint256[6] memory _thresholds,
         uint256 _epochDuration,
-        address _treasury
+        address _treasury,
+        address _forwarder
     ) Ownable(msg.sender) {
         require(_bonzaiToken != address(0), "Invalid token address");
         require(_epochDuration > 0, "Invalid epoch duration");
         require(_treasury != address(0), "Invalid treasury address");
-        treasury = _treasury;
+        require(_forwarder != address(0), "Invalid forwarder address");
 
         bonzaiToken = IERC20(_bonzaiToken);
         epochDuration = _epochDuration;
+        treasury = _treasury;
+        forwarder = _forwarder;
 
-        // Align genesis to the start of next Monday 00:00 UTC.
-        // Unix epoch (Jan 1 1970) was a Thursday, so Monday = day 4 of the week.
-        // dayOfWeek: 0=Thu, 1=Fri, 2=Sat, 3=Sun, 4=Mon, 5=Tue, 6=Wed
-        uint256 dayOfWeek = (block.timestamp / 1 days + 4) % 7; // 0=Mon … 6=Sun
+        uint256 dayOfWeek = (block.timestamp / 1 days + 4) % 7;
         uint256 todayStart = (block.timestamp / 1 days) * 1 days;
         uint256 daysUntilMonday = dayOfWeek == 0 ? 7 : (7 - dayOfWeek);
         genesisTime = todayStart + daysUntilMonday * 1 days;
@@ -210,101 +189,56 @@ contract BonzaiMintPool is Ownable, ReentrancyGuard, Pausable {
     }
 
     // ═══════════════════════════════════════════════════════════════════════════
-    // EPOCH COMPUTATION (time-based, no manual finalization)
+    // EPOCH COMPUTATION
     // ═══════════════════════════════════════════════════════════════════════════
 
-    /**
-     * @notice Compute the current epoch index from block.timestamp.
-     *         epoch = (block.timestamp - genesisTime) / epochDuration
-     *         Returns 0 before genesis (epoch 0 starts at genesisTime).
-     */
     function currentEpoch() public view returns (uint256) {
         if (block.timestamp < genesisTime) return 0;
         return (block.timestamp - genesisTime) / epochDuration;
     }
 
-    /**
-     * @notice Whether the pool system has started (genesis reached).
-     */
     function hasStarted() public view returns (bool) {
         return block.timestamp >= genesisTime;
     }
 
-    /**
-     * @notice Get the start time of a given epoch
-     */
     function epochStartTime(uint256 epochId) public view returns (uint256) {
         return genesisTime + (epochId * epochDuration);
     }
 
-    /**
-     * @notice Get the end time of a given epoch
-     */
     function epochEndTime(uint256 epochId) public view returns (uint256) {
         return genesisTime + ((epochId + 1) * epochDuration);
     }
 
-    /**
-     * @notice Check if an epoch has ended (is finalized)
-     */
     function isEpochFinalized(uint256 epochId) public view returns (bool) {
         return block.timestamp >= epochEndTime(epochId);
     }
 
     // ═══════════════════════════════════════════════════════════════════════════
-    // REGISTRATION
+    // REGISTRATION (user request → CRE workflow → onReport callback)
     // ═══════════════════════════════════════════════════════════════════════════
 
     /**
-     * @notice Register your BONZAI balance for the current epoch.
-     *         Must be called during the active epoch (before it ends).
-     *         Locks your balance at registration time — one registration per wallet per epoch.
-     *         Requires at least poolThresholds[0] (lowest LVL) to prevent
-     *         sub-threshold dilution of the totalRegistered denominator.
+     * @notice Request registration for the current epoch.
+     *         Emits RegistrationRequested which triggers the CRE workflow.
+     *         The workflow fetches cross-chain balances and calls onReport().
      */
     function registerForEpoch() external {
         uint256 epochId = currentEpoch();
         require(registeredBalances[epochId][msg.sender] == 0, "Already registered");
+        require(pendingRequests[msg.sender].requestType == RequestType.NONE, "Request pending");
 
-        // Snapshot thresholds on first registration of this epoch
-        if (!epochThresholdSnapshotted[epochId]) {
-            for (uint8 i = 0; i < NUM_POOLS;) {
-                epochThresholds[epochId][i] = poolThresholds[i];
-                unchecked { i++; }
-            }
-            epochThresholdSnapshotted[epochId] = true;
-            emit EpochThresholdsSnapshotted(epochId);
-        }
+        pendingRequests[msg.sender] = PendingRequest({
+            requestType: RequestType.REGISTER,
+            epochId: epochId
+        });
 
-        uint256 balance = bonzaiToken.balanceOf(msg.sender);
-        require(balance > 0, "Must hold BONZAI tokens");
-
-        // Unlocked users bypass the level threshold — they can register with any positive balance
-        // Their reward share is still proportional to their actual BONZAI balance
-        bool isUnlocked = false;
-        if (address(unlockContract) != address(0)) {
-            try unlockContract.hasUnlocked(msg.sender) returns (bool result) {
-                isUnlocked = result;
-            } catch {}
-        }
-        if (!isUnlocked) {
-            require(balance >= epochThresholds[epochId][0], "Below minimum threshold");
-        }
-
-        registeredBalances[epochId][msg.sender] = balance;
-        epochs[epochId].totalRegistered += balance;
-
-        emit Registered(epochId, msg.sender, balance);
+        emit RegistrationRequested(epochId, msg.sender);
     }
 
     // ═══════════════════════════════════════════════════════════════════════════
-    // DEPOSIT (called by BonzaiContent or BonzaiRoyaltySplitter)
+    // DEPOSIT
     // ═══════════════════════════════════════════════════════════════════════════
 
-    /**
-     * @notice Deposit ETH into a specific content-type pool for the current epoch
-     * @param poolIndex Pool index (0-5)
-     */
     function depositForPool(uint8 poolIndex) external payable {
         require(
             msg.sender == contentContract || msg.sender == royaltySplitter || msg.sender == feeHook || authorizedMinters[msg.sender],
@@ -321,50 +255,113 @@ contract BonzaiMintPool is Ownable, ReentrancyGuard, Pausable {
     }
 
     // ═══════════════════════════════════════════════════════════════════════════
-    // CLAIM CONFIRMATION (flash loan protection)
+    // CLAIM CONFIRMATION (user request → CRE workflow → onReport callback)
     // ═══════════════════════════════════════════════════════════════════════════
 
     /**
-     * @notice Confirm your balance before claiming from a past epoch.
-     *         Must be called in a SEPARATE BLOCK before claimEpoch/claimEpochBatch.
-     *         This two-step process prevents flash loan bypass of the balance check:
-     *         a flash loan must be repaid within a single transaction and cannot
-     *         span across blocks.
-     *
-     * @param epochId The epoch you intend to claim from
+     * @notice Request balance confirmation before claiming.
+     *         Emits ConfirmClaimRequested which triggers the CRE workflow.
      */
     function confirmClaim(uint256 epochId) external {
         require(isEpochFinalized(epochId), "Epoch not ended yet");
         uint256 current = currentEpoch();
         require(current == epochId + 1, "Claim window closed");
+        require(registeredBalances[epochId][msg.sender] > 0, "Not registered for this epoch");
+        require(pendingRequests[msg.sender].requestType == RequestType.NONE, "Request pending");
 
-        uint256 balance = registeredBalances[epochId][msg.sender];
-        require(balance > 0, "Not registered for this epoch");
-        require(
-            bonzaiToken.balanceOf(msg.sender) >= balance,
-            "Balance dropped below registered amount"
-        );
+        pendingRequests[msg.sender] = PendingRequest({
+            requestType: RequestType.CONFIRM_CLAIM,
+            epochId: epochId
+        });
 
-        claimConfirmedBlock[epochId][msg.sender] = block.number;
+        emit ConfirmClaimRequested(epochId, msg.sender);
+    }
 
-        emit ClaimConfirmed(epochId, msg.sender, balance, block.number);
+    // ═══════════════════════════════════════════════════════════════════════════
+    // CHAINLINK CRE CALLBACK (called by Forwarder)
+    // ═══════════════════════════════════════════════════════════════════════════
+
+    /**
+     * @notice Receives verified cross-chain balance from the CRE workflow.
+     * @param metadata CRE metadata (workflowId, workflowName, workflowOwner)
+     * @param report ABI-encoded (address user, uint256 crossChainBalance)
+     */
+    function onReport(
+        bytes calldata metadata,
+        bytes calldata report
+    ) external override {
+        require(msg.sender == forwarder, "Only forwarder");
+
+        (address user, uint256 crossChainBalance) = abi.decode(report, (address, uint256));
+
+        PendingRequest memory req = pendingRequests[user];
+        require(req.requestType != RequestType.NONE, "No pending request");
+
+        // Clear pending request
+        delete pendingRequests[user];
+
+        // Add verifiable Base balance on-chain
+        uint256 baseBalance = bonzaiToken.balanceOf(user);
+        uint256 totalBalance = crossChainBalance + baseBalance;
+
+        if (req.requestType == RequestType.REGISTER) {
+            _completeRegistration(user, req.epochId, totalBalance);
+        } else {
+            _completeConfirmClaim(user, req.epochId, totalBalance);
+        }
+    }
+
+    function _completeRegistration(address user, uint256 epochId, uint256 balance) internal {
+        // Guard: epoch may have changed between request and callback
+        if (epochId != currentEpoch()) return;
+        if (registeredBalances[epochId][user] > 0) return;
+        if (balance == 0) return;
+
+        // Snapshot thresholds on first registration
+        if (!epochThresholdSnapshotted[epochId]) {
+            for (uint8 i = 0; i < NUM_POOLS;) {
+                epochThresholds[epochId][i] = poolThresholds[i];
+                unchecked { i++; }
+            }
+            epochThresholdSnapshotted[epochId] = true;
+            emit EpochThresholdsSnapshotted(epochId);
+        }
+
+        // Unlocked users bypass threshold
+        bool isUnlocked = false;
+        if (address(unlockContract) != address(0)) {
+            try unlockContract.hasUnlocked(user) returns (bool result) {
+                isUnlocked = result;
+            } catch {}
+        }
+        if (!isUnlocked && balance < epochThresholds[epochId][0]) return;
+
+        registeredBalances[epochId][user] = balance;
+        epochs[epochId].totalRegistered += balance;
+
+        emit Registered(epochId, user, balance);
+    }
+
+    function _completeConfirmClaim(address user, uint256 epochId, uint256 currentBalance) internal {
+        if (currentEpoch() != epochId + 1) return;
+
+        uint256 registeredBal = registeredBalances[epochId][user];
+        if (registeredBal == 0) return;
+        if (currentBalance < registeredBal) return;
+
+        claimConfirmedBlock[epochId][user] = block.number;
+        emit ClaimConfirmed(epochId, user, registeredBal, block.number);
+    }
+
+    /// @inheritdoc ERC165
+    function supportsInterface(bytes4 interfaceId) public view virtual override(ERC165, IERC165) returns (bool) {
+        return interfaceId == type(IReceiver).interfaceId || super.supportsInterface(interfaceId);
     }
 
     // ═══════════════════════════════════════════════════════════════════════════
     // CLAIM
     // ═══════════════════════════════════════════════════════════════════════════
 
-    /**
-     * @notice Claim proportional share from a past epoch's pool.
-     *         Must have registered during the epoch AND still hold at least the
-     *         registered balance at claim time. This prevents register-then-sell gaming.
-     *         Claims are valid during the next epoch only (1-epoch grace period):
-     *         epoch N is claimable during epoch N+1. Sweep opens at N+2.
-     *         Requires prior confirmClaim() call in a separate block (flash loan protection).
-     *
-     * @param epochId The epoch to claim from (must have ended)
-     * @param poolIndex Pool index (0-5)
-     */
     function claimEpoch(
         uint256 epochId,
         uint8 poolIndex
@@ -373,11 +370,9 @@ contract BonzaiMintPool is Ownable, ReentrancyGuard, Pausable {
         require(isEpochFinalized(epochId), "Epoch not ended yet");
         require(!hasClaimed[epochId][msg.sender][poolIndex], "Already claimed");
 
-        // Grace period: claims valid during epoch N+1 only
         uint256 current = currentEpoch();
         require(current == epochId + 1, "Claim window closed");
 
-        // Flash loan protection: must have confirmed balance at least 256 blocks ago
         uint256 confirmedBlock = claimConfirmedBlock[epochId][msg.sender];
         require(confirmedBlock > 0, "Must call confirmClaim first");
         require(block.number >= confirmedBlock + MIN_CLAIM_BLOCK_GAP, "Must wait 256 blocks after confirmClaim");
@@ -385,7 +380,6 @@ contract BonzaiMintPool is Ownable, ReentrancyGuard, Pausable {
         uint256 balance = registeredBalances[epochId][msg.sender];
         require(balance > 0, "Not registered for this epoch");
 
-        // Unlocked users bypass per-pool thresholds — can claim from all pools
         bool isUnlocked = false;
         if (address(unlockContract) != address(0)) {
             try unlockContract.hasUnlocked(msg.sender) returns (bool result) {
@@ -401,9 +395,6 @@ contract BonzaiMintPool is Ownable, ReentrancyGuard, Pausable {
 
         EpochData storage epoch = epochs[epochId];
         require(epoch.totalRegistered > 0, "No registrations");
-
-        // Must still hold at least the registered balance to prevent register-then-sell
-        require(bonzaiToken.balanceOf(msg.sender) >= balance, "Balance dropped below registered amount");
 
         uint256 epochDeposits = epoch.poolDeposits[poolIndex];
         require(epochDeposits > 0, "No deposits in this pool");
@@ -421,23 +412,15 @@ contract BonzaiMintPool is Ownable, ReentrancyGuard, Pausable {
         emit EpochClaimed(epochId, poolIndex, msg.sender, amount);
     }
 
-    /**
-     * @notice Batch claim from multiple pools for a past epoch.
-     *         Requires prior confirmClaim() call in a separate block (flash loan protection).
-     * @param epochId The epoch to claim from
-     * @param poolIndices Array of pool indices to claim from
-     */
     function claimEpochBatch(
         uint256 epochId,
         uint8[] calldata poolIndices
     ) external nonReentrant whenNotPaused {
         require(isEpochFinalized(epochId), "Epoch not ended yet");
 
-        // Grace period: claims valid during epoch N+1 only
         uint256 current = currentEpoch();
         require(current == epochId + 1, "Claim window closed");
 
-        // Flash loan protection: must have confirmed balance at least 256 blocks ago
         uint256 confirmedBlock = claimConfirmedBlock[epochId][msg.sender];
         require(confirmedBlock > 0, "Must call confirmClaim first");
         require(block.number >= confirmedBlock + MIN_CLAIM_BLOCK_GAP, "Must wait 256 blocks after confirmClaim");
@@ -448,10 +431,6 @@ contract BonzaiMintPool is Ownable, ReentrancyGuard, Pausable {
         EpochData storage epoch = epochs[epochId];
         require(epoch.totalRegistered > 0, "No registrations");
 
-        // Must still hold at least the registered balance to prevent register-then-sell
-        require(bonzaiToken.balanceOf(msg.sender) >= balance, "Balance dropped below registered amount");
-
-        // Unlocked users bypass per-pool thresholds
         bool isUnlocked = false;
         if (address(unlockContract) != address(0)) {
             try unlockContract.hasUnlocked(msg.sender) returns (bool result) {
@@ -465,7 +444,6 @@ contract BonzaiMintPool is Ownable, ReentrancyGuard, Pausable {
             uint8 poolIndex = poolIndices[i];
             require(poolIndex < NUM_POOLS, "Invalid pool index");
 
-            // Use snapshotted thresholds — unlocked users skip threshold check
             bool meetsThreshold = isUnlocked;
             if (!isUnlocked) {
                 uint256 threshold = epochThresholdSnapshotted[epochId]
@@ -502,87 +480,53 @@ contract BonzaiMintPool is Ownable, ReentrancyGuard, Pausable {
     // VIEW FUNCTIONS
     // ═══════════════════════════════════════════════════════════════════════════
 
-    /**
-     * @notice Get all pool deposits for a specific epoch
-     */
     function getEpochDeposits(uint256 epochId) external view returns (uint256[6] memory) {
         return epochs[epochId].poolDeposits;
     }
 
-    /**
-     * @notice Get full epoch info
-     */
     function getEpochInfo(uint256 epochId) external view returns (
-        uint256 startTime,
-        uint256 endTime,
-        uint256 totalRegistered,
-        bool finalized
+        uint256 startTime, uint256 endTime, uint256 totalRegistered, bool finalized
     ) {
-        return (
-            epochStartTime(epochId),
-            epochEndTime(epochId),
-            epochs[epochId].totalRegistered,
-            isEpochFinalized(epochId)
-        );
+        return (epochStartTime(epochId), epochEndTime(epochId), epochs[epochId].totalRegistered, isEpochFinalized(epochId));
     }
 
-    /**
-     * @notice Get lifetime deposited totals across all epochs
-     */
-    function getAllTotalDeposited() external view returns (uint256[6] memory) {
-        return totalDeposited;
-    }
+    function getAllTotalDeposited() external view returns (uint256[6] memory) { return totalDeposited; }
+    function getAllPoolThresholds() external view returns (uint256[6] memory) { return poolThresholds; }
 
-    /**
-     * @notice Get all pool thresholds
-     */
-    function getAllPoolThresholds() external view returns (uint256[6] memory) {
-        return poolThresholds;
-    }
-
-    /**
-     * @notice Check if user qualifies for a pool (based on current balance)
-     * @dev For epoch claims, the registered balance is used instead
-     */
     function qualifiesForPool(address user, uint8 poolIndex) external view returns (bool) {
         if (poolIndex >= NUM_POOLS) return false;
-        return bonzaiToken.balanceOf(user) >= poolThresholds[poolIndex];
+        uint256 epochId = currentEpoch();
+        uint256 regBalance = registeredBalances[epochId][user];
+        if (regBalance > 0) return regBalance >= poolThresholds[poolIndex];
+        return false;
     }
 
-    /**
-     * @notice Preview claim amount for an epoch/pool for a registered user
-     */
-    function previewClaim(
-        uint256 epochId,
-        uint8 poolIndex,
-        address user
-    ) external view returns (uint256) {
+    function previewClaim(uint256 epochId, uint8 poolIndex, address user) external view returns (uint256) {
         if (poolIndex >= NUM_POOLS) return 0;
         if (!isEpochFinalized(epochId)) return 0;
         EpochData storage epoch = epochs[epochId];
         uint256 balance = registeredBalances[epochId][user];
-        if (balance < poolThresholds[poolIndex]) return 0;
+        if (balance == 0) return 0;
+
+        uint256 threshold = epochThresholdSnapshotted[epochId]
+            ? epochThresholds[epochId][poolIndex] : poolThresholds[poolIndex];
+        bool isUnlocked = false;
+        if (address(unlockContract) != address(0)) {
+            try unlockContract.hasUnlocked(user) returns (bool result) { isUnlocked = result; } catch {}
+        }
+        if (!isUnlocked && balance < threshold) return 0;
         if (epoch.totalRegistered == 0) return 0;
         return (epoch.poolDeposits[poolIndex] * balance) / epoch.totalRegistered;
     }
 
-    /**
-     * @notice Check if a user has claimed a specific pool in a specific epoch
-     */
     function hasClaimedEpoch(uint256 epochId, address user, uint8 poolIndex) external view returns (bool) {
         return hasClaimed[epochId][user][poolIndex];
     }
 
-    /**
-     * @notice Check if a user is registered for a specific epoch
-     */
     function isRegistered(uint256 epochId, address user) external view returns (bool) {
         return registeredBalances[epochId][user] > 0;
     }
 
-    /**
-     * @notice Get total claimed per pool for an epoch
-     */
     function getEpochClaimedPerPool(uint256 epochId) external view returns (uint256[6] memory) {
         return epochClaimedPerPool[epochId];
     }
@@ -590,6 +534,11 @@ contract BonzaiMintPool is Ownable, ReentrancyGuard, Pausable {
     // ═══════════════════════════════════════════════════════════════════════════
     // ADMIN FUNCTIONS
     // ═══════════════════════════════════════════════════════════════════════════
+
+    function setForwarder(address _forwarder) external onlyOwner {
+        require(_forwarder != address(0), "Invalid address");
+        forwarder = _forwarder;
+    }
 
     function setTreasury(address _treasury) external onlyOwner {
         require(_treasury != address(0), "Invalid address");
@@ -619,23 +568,10 @@ contract BonzaiMintPool is Ownable, ReentrancyGuard, Pausable {
         emit FeeHookUpdated(old, _hook);
     }
 
-    function setCompanionNFT(address _nft) external onlyOwner {
-        require(_nft != address(0), "Invalid address");
-        address old = address(companionNFT);
-        companionNFT = IERC721(_nft);
-        emit CompanionNFTUpdated(old, _nft);
-    }
-
     function setUnlockContract(address _unlock) external onlyOwner {
         unlockContract = IBonzaiUnlock(_unlock);
     }
 
-    /**
-     * @notice Authorize or deauthorize a minter (e.g. collection clone from factory).
-     *         Can be called by the contract owner or the authorized collectibles factory.
-     * @param minter The address to authorize/deauthorize
-     * @param authorized Whether to authorize (true) or deauthorize (false)
-     */
     function setAuthorizedMinter(address minter, bool authorized) external {
         require(msg.sender == owner() || msg.sender == collectiblesFactory, "Unauthorized");
         require(minter != address(0), "Invalid address");
@@ -643,67 +579,34 @@ contract BonzaiMintPool is Ownable, ReentrancyGuard, Pausable {
         emit AuthorizedMinterUpdated(minter, authorized);
     }
 
-    /**
-     * @notice Set the collectibles factory address (authorized to register minters)
-     * @param _factory The factory contract address
-     */
     function setCollectiblesFactory(address _factory) external onlyOwner {
         address old = collectiblesFactory;
         collectiblesFactory = _factory;
         emit CollectiblesFactoryUpdated(old, _factory);
     }
 
-    /**
-     * @notice Update the BONZAI threshold for a pool.
-     * @dev WARNING: Takes effect immediately, including for active claim windows.
-     *      Users who registered in epoch N may be affected when claiming in epoch N+1
-     *      if the threshold changes between registration and claim. To avoid disrupting
-     *      active claimants, threshold changes should be announced at least 1 epoch in
-     *      advance and applied only after the current claim window closes.
-     * @param poolIndex Pool index (0-5)
-     * @param threshold New threshold in full token units (e.g. 1000 = 1000 tokens),
-     *        same format as the constructor. Stored as threshold * 1e18.
-     */
     function setPoolThreshold(uint8 poolIndex, uint256 threshold) external onlyOwner {
         require(poolIndex < NUM_POOLS, "Invalid pool index");
         require(threshold > 0, "Threshold cannot be zero");
-
         uint256 newThreshold = threshold * 1e18;
-
-        // Enforce ascending order relative to neighbors
-        if (poolIndex > 0) {
-            require(newThreshold >= poolThresholds[poolIndex - 1], "Must be >= previous pool threshold");
-        }
-        if (poolIndex < NUM_POOLS - 1) {
-            require(newThreshold <= poolThresholds[poolIndex + 1], "Must be <= next pool threshold");
-        }
-
+        if (poolIndex > 0) require(newThreshold >= poolThresholds[poolIndex - 1], "Must be >= previous pool threshold");
+        if (poolIndex < NUM_POOLS - 1) require(newThreshold <= poolThresholds[poolIndex + 1], "Must be <= next pool threshold");
         uint256 old = poolThresholds[poolIndex];
         poolThresholds[poolIndex] = newThreshold;
         emit PoolThresholdUpdated(poolIndex, old, newThreshold);
     }
 
-    /**
-     * @notice Sweep unclaimed ETH from old epochs to owner.
-     *         Can only be called after the claim window has closed
-     *         (currentEpoch >= epochId + 2, i.e. claim window was epoch N+1 only).
-     * @param epochId Epoch to sweep
-     */
     function sweepUnclaimed(uint256 epochId) external onlyOwner {
         require(isEpochFinalized(epochId), "Epoch not ended");
         require(currentEpoch() >= epochId + 2, "Claim window still open");
         require(!epochSwept[epochId], "Already swept");
-
         epochSwept[epochId] = true;
-
         uint256 sweepAmount = 0;
         EpochData storage epoch = epochs[epochId];
         for (uint8 i = 0; i < NUM_POOLS; ) {
-            uint256 unclaimed = epoch.poolDeposits[i] - epochClaimedPerPool[epochId][i];
-            sweepAmount += unclaimed;
+            sweepAmount += epoch.poolDeposits[i] - epochClaimedPerPool[epochId][i];
             unchecked { i++; }
         }
-
         if (sweepAmount > 0) {
             totalSwept += sweepAmount;
             (bool ok, ) = treasury.call{value: sweepAmount}("");
@@ -712,45 +615,30 @@ contract BonzaiMintPool is Ownable, ReentrancyGuard, Pausable {
         }
     }
 
-    /// @notice Recirculate unclaimed epoch funds into the current active epoch
     function recirculateUnclaimed(uint256 epochId) external onlyOwner {
         uint256 current = currentEpoch();
         require(current >= epochId + 2, "Claim window still open");
         require(!epochSwept[epochId], "Already swept/recirculated");
-
         epochSwept[epochId] = true;
         uint256 totalRecirculated;
-
         for (uint8 i = 0; i < NUM_POOLS;) {
             uint256 deposited = epochs[epochId].poolDeposits[i];
             uint256 claimed = epochClaimedPerPool[epochId][i];
             uint256 unclaimed = deposited > claimed ? deposited - claimed : 0;
             if (unclaimed > 0) {
                 epochs[current].poolDeposits[i] += unclaimed;
-                totalDeposited[i] += unclaimed;
                 totalRecirculated += unclaimed;
             }
             unchecked { ++i; }
         }
-
         if (totalRecirculated > 0) {
             emit UnclaimedRecirculated(epochId, current, totalRecirculated);
         }
     }
 
-    event UnclaimedRecirculated(uint256 indexed fromEpoch, uint256 indexed toEpoch, uint256 amount);
+    function pause() external onlyOwner { _pause(); }
+    function unpause() external onlyOwner { _unpause(); }
 
-    function pause() external onlyOwner {
-        _pause();
-    }
-
-    function unpause() external onlyOwner {
-        _unpause();
-    }
-
-    /**
-     * @notice Recover ERC20 tokens sent to contract by mistake
-     */
     function recoverERC20(address token, uint256 amount) external onlyOwner {
         (bool success, bytes memory data) = token.call(
             abi.encodeWithSignature("transfer(address,uint256)", treasury, amount)
@@ -758,28 +646,19 @@ contract BonzaiMintPool is Ownable, ReentrancyGuard, Pausable {
         require(success && (data.length == 0 || abi.decode(data, (bool))), "Transfer failed");
     }
 
-    /**
-     * @notice Withdraw ETH surplus (rounding dust, direct transfers, etc.)
-     *         that is NOT accountable to any epoch's deposited-but-unclaimed funds.
-     * @dev accountable = sum(totalDeposited) - totalClaimed - totalSwept
-     *      withdrawable = address(this).balance - accountable
-     */
     function withdrawETH() external onlyOwner {
         uint256 totalDepositedAll = 0;
         for (uint8 i = 0; i < NUM_POOLS; ) {
             totalDepositedAll += totalDeposited[i];
             unchecked { i++; }
         }
-
         uint256 accountable = totalDepositedAll - totalClaimed - totalSwept;
         uint256 balance = address(this).balance;
         require(balance > accountable, "No surplus ETH to withdraw");
-
         uint256 surplus = balance - accountable;
         (bool sent, ) = treasury.call{value: surplus}("");
         require(sent, "ETH transfer failed");
     }
 
-    /// @notice Allow contract to receive ETH directly (for edge cases)
     receive() external payable {}
 }

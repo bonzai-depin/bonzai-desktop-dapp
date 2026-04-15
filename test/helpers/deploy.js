@@ -38,24 +38,25 @@ async function deployMintPool() {
   const [owner, user1, user2, user3, treasury] = await ethers.getSigners();
 
   const token = await deployMockERC20();
+
+  // Deploy mock CRE forwarder
+  const MockFunctionsRouter = await ethers.getContractFactory("MockFunctionsRouter");
+  const router = await MockFunctionsRouter.deploy();
+
   const BonzaiMintPool = await ethers.getContractFactory("BonzaiMintPool");
   const mintPool = await BonzaiMintPool.deploy(
     await token.getAddress(),
     POOL_THRESHOLDS,
     EPOCH_DURATION,
-    treasury.address
+    treasury.address,
+    await router.getAddress()
   );
-
-  // Deploy companion NFT and wire it into the MintPool
-  const MockBonzaiCompanions = await ethers.getContractFactory("MockBonzaiCompanions");
-  const companionNFT = await MockBonzaiCompanions.deploy();
-  await mintPool.setCompanionNFT(await companionNFT.getAddress());
 
   // Genesis is next Monday 00:00 UTC — advance time so tests start in epoch 0
   const genesis = await mintPool.genesisTime();
   await time.increaseTo(genesis);
 
-  return { mintPool, token, companionNFT, owner, user1, user2, user3, treasury };
+  return { mintPool, token, router, owner, user1, user2, user3, treasury };
 }
 
 /**

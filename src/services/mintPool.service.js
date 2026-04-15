@@ -48,6 +48,8 @@ const MINT_POOL_ABI = [
   'event PoolDeposit(uint8 indexed poolIndex, uint256 amount, address indexed depositor, uint256 indexed epochId)',
   'event EpochClaimed(uint256 indexed epochId, uint8 indexed poolIndex, address indexed claimer, uint256 amount)',
   'event Registered(uint256 indexed epochId, address indexed wallet, uint256 balance)',
+  'event RegistrationRequested(uint256 indexed epochId, address indexed wallet)',
+  'event ConfirmClaimRequested(uint256 indexed epochId, address indexed wallet)',
   'event ClaimConfirmed(uint256 indexed epochId, address indexed wallet, uint256 balance, uint256 blockNumber)',
 ];
 
@@ -205,11 +207,12 @@ async function fetchPoolStats() {
 }
 
 /**
- * Register BONZAI balance for the current epoch.
- * Must be called during the active epoch (before finalization).
- * Locks your balance at registration time.
+ * Register for the current epoch.
+ * Sends a Chainlink Functions request to fetch cross-chain BONZAI balances.
+ * The contract callback adds Base balance on-chain and completes registration.
+ * Registration is async — the user must wait for the oracle callback.
  *
- * @returns {Promise<{success: boolean, txHash?: string, balance?: number, error?: string}>}
+ * @returns {Promise<{success: boolean, txHash?: string, error?: string}>}
  */
 async function registerForEpoch() {
   state.isRegistering = true;
@@ -220,20 +223,20 @@ async function registerForEpoch() {
 
     const contract = await getPoolContract(true);
 
-    console.log(`[MintPool] Registering for epoch ${state.currentEpoch}...`);
+    console.log(`[MintPool] Requesting registration for epoch ${state.currentEpoch}...`);
     const tx = await contract.registerForEpoch();
-    console.log(`[MintPool] Registration tx sent: ${tx.hash}`);
+    console.log(`[MintPool] Registration request tx sent: ${tx.hash}`);
 
     const receipt = await tx.wait();
-    console.log(`[MintPool] Registration confirmed in block ${receipt.blockNumber}`);
+    console.log(`[MintPool] Registration request confirmed in block ${receipt.blockNumber}`);
 
-    // Parse Registered event for balance
-    let registeredBalance = 0;
+    // Parse RegistrationRequested event for requestId
+    let requestId = null;
     for (const log of receipt.logs) {
       try {
         const parsed = contract.interface.parseLog(log);
-        if (parsed?.name === 'Registered') {
-          registeredBalance = parseFloat(ethers.formatEther(parsed.args.balance));
+        if (parsed?.name === 'RegistrationRequested') {
+          requestId = parsed.args.requestId;
           break;
         }
       } catch {
@@ -241,13 +244,14 @@ async function registerForEpoch() {
       }
     }
 
-    await fetchPoolStats();
+    console.log(`[MintPool] Oracle request sent: ${requestId}. Waiting for callback...`);
 
     return {
       success: true,
       txHash: receipt.hash,
-      balance: registeredBalance,
+      requestId,
       epochId: state.currentEpoch,
+      pending: true,
     };
   } catch (e) {
     console.error('[MintPool] registerForEpoch failed:', e);
@@ -260,6 +264,8 @@ async function registerForEpoch() {
 
 /**
  * Confirm balance before claiming (flash loan protection).
+ * Sends a Chainlink Functions request to re-verify the user still holds
+ * >= registered balance. The callback sets the confirmed block.
  * Must be called in a separate block BEFORE claimEpoch/claimEpochBatch.
  *
  * @param {number} epochId - Epoch to confirm claim for
@@ -274,14 +280,14 @@ async function confirmClaim(epochId) {
 
     const contract = await getPoolContract(true);
 
-    console.log(`[MintPool] Confirming claim for epoch ${epochId}...`);
+    console.log(`[MintPool] Requesting claim confirmation for epoch ${epochId}...`);
     const tx = await contract.confirmClaim(epochId);
-    console.log(`[MintPool] Confirm claim tx sent: ${tx.hash}`);
+    console.log(`[MintPool] Confirm claim request tx sent: ${tx.hash}`);
 
     const receipt = await tx.wait();
-    console.log(`[MintPool] Confirm claim confirmed in block ${receipt.blockNumber}`);
+    console.log(`[MintPool] Confirm claim request confirmed in block ${receipt.blockNumber}`);
 
-    return { success: true, txHash: receipt.hash, epochId };
+    return { success: true, txHash: receipt.hash, epochId, pending: true };
   } catch (e) {
     console.error('[MintPool] confirmClaim failed:', e);
     state.error = e.message;

@@ -27,13 +27,18 @@ describe("Integration Tests", function () {
     const MockERC20 = await ethers.getContractFactory("MockERC20");
     const bonzaiToken = await MockERC20.deploy("BONZAI", "BONZAI");
 
+    // Deploy mock Chainlink Functions router
+    const MockFunctionsRouter = await ethers.getContractFactory("MockFunctionsRouter");
+    const router = await MockFunctionsRouter.deploy();
+
     // Deploy MintPool
     const BonzaiMintPool = await ethers.getContractFactory("BonzaiMintPool");
     const mintPool = await BonzaiMintPool.deploy(
       await bonzaiToken.getAddress(),
       POOL_THRESHOLDS,
       EPOCH_DURATION,
-      treasury.address
+      treasury.address,
+      await router.getAddress()
     );
 
     // Advance time to genesis (next Monday 00:00 UTC)
@@ -73,25 +78,36 @@ describe("Integration Tests", function () {
     // Authorize depositors on MintPool
     await mintPool.setRoyaltySplitter(await splitter.getAddress());
 
-    // Deploy companion NFT and wire into MintPool (required for claiming)
-    const MockBonzaiCompanions = await ethers.getContractFactory("MockBonzaiCompanions");
-    const companionNFT = await MockBonzaiCompanions.deploy();
-    await mintPool.setCompanionNFT(await companionNFT.getAddress());
-
     // Mint BONZAI tokens to users
     await bonzaiToken.mint(user1.address, ethers.parseEther("50000"));
     await bonzaiToken.mint(user2.address, ethers.parseEther("10000"));
 
-    // Mint companion NFTs to users (required for claiming rewards)
-    await companionNFT.mintTo(user1.address);
-    await companionNFT.mintTo(user2.address);
-
-    return { bonzaiToken, mintPool, companionNFT, content, content2, factory, splitter, owner, treasury, user1, user2 };
+    return { bonzaiToken, mintPool, router, content, content2, factory, splitter, owner, treasury, user1, user2 };
   }
 
   // ═══════════════════════════════════════════════════════════════════════════
   // HELPERS
   // ═══════════════════════════════════════════════════════════════════════════
+
+  /** Register user for current epoch via CRE forwarder. */
+  async function registerUser(mintPool, router, user, _balance) {
+    await mintPool.connect(user).registerForEpoch();
+    const poolAddress = await mintPool.getAddress();
+    const report = ethers.AbiCoder.defaultAbiCoder().encode(
+      ["address", "uint256"], [user.address, 0]
+    );
+    await router.deliverReport(poolAddress, report);
+  }
+
+  /** Confirm claim via CRE forwarder. */
+  async function confirmUserClaim(mintPool, router, user, epochId, _balance) {
+    await mintPool.connect(user).confirmClaim(epochId);
+    const poolAddress = await mintPool.getAddress();
+    const report = ethers.AbiCoder.defaultAbiCoder().encode(
+      ["address", "uint256"], [user.address, 0]
+    );
+    await router.deliverReport(poolAddress, report);
+  }
 
   /** Mint a content NFT with default parameters */
   async function mintContent(content, signer, contentType = CONTENT_TYPE.IMAGE) {
@@ -317,11 +333,13 @@ describe("Integration Tests", function () {
 
   describe("3. Full Epoch Lifecycle", function () {
     it("should allow register -> deposit -> advance -> confirmClaim -> mine -> claimEpoch", async function () {
-      const { content, mintPool, bonzaiToken, user1 } =
+      const { content, mintPool, bonzaiToken, router, owner, user1 } =
         await loadFixture(deployIntegration);
 
-      // 1. User registers for epoch 0
-      await mintPool.connect(user1).registerForEpoch();
+      const user1Balance = ethers.parseEther("50000");
+
+      // 1. User registers for epoch 0 via oracle
+      await registerUser(mintPool, router, user1, user1Balance);
       expect(await mintPool.isRegistered(0, user1.address)).to.be.true;
 
       // 2. Content mint deposits ETH to pool
@@ -336,8 +354,8 @@ describe("Integration Tests", function () {
       expect(await mintPool.currentEpoch()).to.equal(1);
       expect(await mintPool.isEpochFinalized(0)).to.be.true;
 
-      // 4. Confirm claim
-      await mintPool.connect(user1).confirmClaim(0);
+      // 4. Confirm claim via oracle
+      await confirmUserClaim(mintPool, router, user1, 0, user1Balance);
 
       // 5. Mine 256 blocks
       await mine(MIN_CLAIM_BLOCK_GAP);
@@ -358,14 +376,16 @@ describe("Integration Tests", function () {
     });
 
     it("should distribute proportionally when two users register with different balances", async function () {
-      const { content, content2, mintPool, bonzaiToken, user1, user2 } =
+      const { content, content2, mintPool, bonzaiToken, router, owner, user1, user2 } =
         await loadFixture(deployIntegration);
 
       // user1 has 50000 BONZAI, user2 has 10000 BONZAI
+      const user1Balance = ethers.parseEther("50000");
+      const user2Balance = ethers.parseEther("10000");
 
-      // Both register for epoch 0
-      await mintPool.connect(user1).registerForEpoch();
-      await mintPool.connect(user2).registerForEpoch();
+      // Both register for epoch 0 via oracle
+      await registerUser(mintPool, router, user1, user1Balance);
+      await registerUser(mintPool, router, user2, user2Balance);
 
       // Deposit via content mint (user1's collection)
       await mintContent(content, user1, CONTENT_TYPE.TEXT);
@@ -375,17 +395,15 @@ describe("Integration Tests", function () {
       // Advance epoch
       await time.increase(EPOCH_DURATION);
 
-      // Both confirm
-      await mintPool.connect(user1).confirmClaim(0);
-      await mintPool.connect(user2).confirmClaim(0);
+      // Both confirm via oracle
+      await confirmUserClaim(mintPool, router, user1, 0, user1Balance);
+      await confirmUserClaim(mintPool, router, user2, 0, user2Balance);
 
       // Mine blocks
       await mine(MIN_CLAIM_BLOCK_GAP);
 
       // user1: 50000 / (50000 + 10000) = 5/6 of pool
       // user2: 10000 / (50000 + 10000) = 1/6 of pool
-      const user1Balance = ethers.parseEther("50000");
-      const user2Balance = ethers.parseEther("10000");
       const totalRegistered = user1Balance + user2Balance;
 
       const user1Share = (poolAmt * user1Balance) / totalRegistered;
@@ -407,10 +425,12 @@ describe("Integration Tests", function () {
     });
 
     it("should batch claim across multiple pools in a single transaction", async function () {
-      const { content, mintPool, user1 } = await loadFixture(deployIntegration);
+      const { content, mintPool, router, owner, user1 } = await loadFixture(deployIntegration);
 
-      // Register
-      await mintPool.connect(user1).registerForEpoch();
+      const user1Balance = ethers.parseEther("50000");
+
+      // Register via oracle
+      await registerUser(mintPool, router, user1, user1Balance);
 
       // Deposit into multiple pools
       await mintContent(content, user1, CONTENT_TYPE.TEXT);
@@ -422,8 +442,8 @@ describe("Integration Tests", function () {
       // Advance epoch
       await time.increase(EPOCH_DURATION);
 
-      // Confirm + mine
-      await mintPool.connect(user1).confirmClaim(0);
+      // Confirm + mine via oracle
+      await confirmUserClaim(mintPool, router, user1, 0, user1Balance);
       await mine(MIN_CLAIM_BLOCK_GAP);
 
       // Batch claim all three pools
@@ -447,10 +467,12 @@ describe("Integration Tests", function () {
     });
 
     it("should sweep unclaimed funds to treasury after epoch N+2", async function () {
-      const { content, mintPool, owner, treasury, user1 } = await loadFixture(deployIntegration);
+      const { content, mintPool, router, owner, treasury, user1 } = await loadFixture(deployIntegration);
+
+      const user1Balance = ethers.parseEther("50000");
 
       // Register and deposit in epoch 0
-      await mintPool.connect(user1).registerForEpoch();
+      await registerUser(mintPool, router, user1, user1Balance);
       await mintContent(content, user1, CONTENT_TYPE.IMAGE);
 
       const poolAmt = expectedPoolAmount();
@@ -469,27 +491,33 @@ describe("Integration Tests", function () {
       expect(await mintPool.epochSwept(0)).to.be.true;
     });
 
-    it("should revert claim when user balance drops below registered amount", async function () {
-      const { content2, mintPool, bonzaiToken, user2, user1 } =
+    it("should not confirm claim when balance drops below registered amount", async function () {
+      const { content2, mintPool, bonzaiToken, router, owner, user2, user1 } =
         await loadFixture(deployIntegration);
 
-      // user2 has 10000 BONZAI, registers
-      await mintPool.connect(user2).registerForEpoch();
+      const user2Balance = ethers.parseEther("10000");
+
+      // user2 has 10000 BONZAI, registers via oracle
+      await registerUser(mintPool, router, user2, user2Balance);
       await mintContent(content2, user2, CONTENT_TYPE.TEXT);
 
       // Advance epoch
       await time.increase(EPOCH_DURATION);
 
-      // user2 sells all tokens (transfers away to user1)
-      await bonzaiToken.connect(user2).transfer(
-        user1.address,
-        ethers.parseEther("10000")
-      );
+      // user2 sells tokens before confirm callback
+      await bonzaiToken.connect(user2).transfer(user1.address, ethers.parseEther("5000"));
 
-      // Confirm should fail because balance dropped
-      await expect(
-        mintPool.connect(user2).confirmClaim(0)
-      ).to.be.revertedWith("Balance dropped below registered amount");
+      // confirmClaim sends request; oracle returns 0 cross-chain,
+      // Base balance is now 5000 < 10000 registered => callback silently skips
+      await mintPool.connect(user2).confirmClaim(0);
+      const poolAddress = await mintPool.getAddress();
+      const report = ethers.AbiCoder.defaultAbiCoder().encode(
+        ["address", "uint256"], [user2.address, 0]
+      );
+      await router.deliverReport(poolAddress, report);
+
+      // Claim should NOT be confirmed
+      expect(await mintPool.claimConfirmedBlock(0, user2.address)).to.equal(0);
     });
   });
 
@@ -499,15 +527,17 @@ describe("Integration Tests", function () {
 
   describe("4. Multi-Epoch Flow", function () {
     it("should support claim in epoch 1 + new deposits + register -> claim in epoch 2", async function () {
-      const { content, mintPool, bonzaiToken, user1 } =
+      const { content, mintPool, bonzaiToken, router, owner, user1 } =
         await loadFixture(deployIntegration);
 
       const imagePool = expectedPoolAmount(CONTENT_TYPE.IMAGE);
       const textPool = expectedPoolAmount(CONTENT_TYPE.TEXT);
       const audioPool = expectedPoolAmount(CONTENT_TYPE.AUDIO);
 
+      const user1Balance = ethers.parseEther("50000");
+
       // ── Epoch 0 ──
-      await mintPool.connect(user1).registerForEpoch();
+      await registerUser(mintPool, router, user1, user1Balance);
       await mintContent(content, user1, CONTENT_TYPE.IMAGE);
 
       // Advance to epoch 1
@@ -515,13 +545,13 @@ describe("Integration Tests", function () {
       expect(await mintPool.currentEpoch()).to.equal(1);
 
       // Claim epoch 0
-      await mintPool.connect(user1).confirmClaim(0);
+      await confirmUserClaim(mintPool, router, user1, 0, user1Balance);
       await mine(MIN_CLAIM_BLOCK_GAP);
       await mintPool.connect(user1).claimEpoch(0, CONTENT_TYPE.IMAGE);
       expect(await mintPool.totalClaimed()).to.equal(imagePool);
 
       // ── Epoch 1 ── (register + deposit within epoch 1)
-      await mintPool.connect(user1).registerForEpoch();
+      await registerUser(mintPool, router, user1, user1Balance);
       await mintContent(content, user1, CONTENT_TYPE.TEXT);
       await mintContent(content, user1, CONTENT_TYPE.AUDIO);
 
@@ -530,7 +560,7 @@ describe("Integration Tests", function () {
       expect(await mintPool.currentEpoch()).to.equal(2);
 
       // Claim epoch 1
-      await mintPool.connect(user1).confirmClaim(1);
+      await confirmUserClaim(mintPool, router, user1, 1, user1Balance);
       await mine(MIN_CLAIM_BLOCK_GAP);
 
       // Batch claim both pools from epoch 1
@@ -541,16 +571,19 @@ describe("Integration Tests", function () {
     });
 
     it("should maintain correct totalClaimed, totalDeposited, totalSwept across epochs", async function () {
-      const { content, content2, mintPool, bonzaiToken, owner, user1, user2 } =
+      const { content, content2, mintPool, bonzaiToken, router, owner, user1, user2 } =
         await loadFixture(deployIntegration);
 
       const imagePool = expectedPoolAmount(CONTENT_TYPE.IMAGE);
       const textPool = expectedPoolAmount(CONTENT_TYPE.TEXT);
       const audioPool = expectedPoolAmount(CONTENT_TYPE.AUDIO);
 
+      const user1Balance = ethers.parseEther("50000");
+      const user2Balance = ethers.parseEther("10000");
+
       // ── Epoch 0 ──
       // user1 registers and we deposit
-      await mintPool.connect(user1).registerForEpoch();
+      await registerUser(mintPool, router, user1, user1Balance);
       await mintContent(content, user1, CONTENT_TYPE.IMAGE);
       await mintContent(content, user1, CONTENT_TYPE.TEXT);
 
@@ -558,13 +591,13 @@ describe("Integration Tests", function () {
       await time.increase(EPOCH_DURATION);
 
       // user1 claims IMAGE but not TEXT from epoch 0
-      await mintPool.connect(user1).confirmClaim(0);
+      await confirmUserClaim(mintPool, router, user1, 0, user1Balance);
       await mine(MIN_CLAIM_BLOCK_GAP);
       await mintPool.connect(user1).claimEpoch(0, CONTENT_TYPE.IMAGE);
 
       // ── Epoch 1 ──
       // user2 registers and deposits (AUDIO=pool 1, user2 has 10K which qualifies for pool 1=5K threshold)
-      await mintPool.connect(user2).registerForEpoch();
+      await registerUser(mintPool, router, user2, user2Balance);
       await mintContent(content2, user2, CONTENT_TYPE.AUDIO);
 
       // Advance to epoch 2 (epoch 0 claim window closes, epoch 1 claim window opens)
@@ -574,7 +607,7 @@ describe("Integration Tests", function () {
       await mintPool.sweepUnclaimed(0);
 
       // user2 claims AUDIO from epoch 1
-      await mintPool.connect(user2).confirmClaim(1);
+      await confirmUserClaim(mintPool, router, user2, 1, user2Balance);
       await mine(MIN_CLAIM_BLOCK_GAP);
       await mintPool.connect(user2).claimEpoch(1, CONTENT_TYPE.AUDIO);
 
@@ -604,12 +637,15 @@ describe("Integration Tests", function () {
 
   describe("5. Cross-Contract Accounting", function () {
     it("should balance content mints + royalty distributions + claims with no ETH stuck", async function () {
-      const { content, content2, mintPool, splitter, bonzaiToken, owner, treasury, user1, user2 } =
+      const { content, content2, mintPool, splitter, bonzaiToken, router, owner, treasury, user1, user2 } =
         await loadFixture(deployIntegration);
 
+      const user1Balance = ethers.parseEther("50000");
+      const user2Balance = ethers.parseEther("10000");
+
       // ── Epoch 0: Content mints + royalty distribution ──
-      await mintPool.connect(user1).registerForEpoch();
-      await mintPool.connect(user2).registerForEpoch();
+      await registerUser(mintPool, router, user1, user1Balance);
+      await registerUser(mintPool, router, user2, user2Balance);
 
       // 3 content mints (user1 on their collection, user2 on theirs)
       await mintContent(content, user1, CONTENT_TYPE.IMAGE);
@@ -627,9 +663,9 @@ describe("Integration Tests", function () {
       // Advance to epoch 1
       await time.increase(EPOCH_DURATION);
 
-      // Both users confirm and claim
-      await mintPool.connect(user1).confirmClaim(0);
-      await mintPool.connect(user2).confirmClaim(0);
+      // Both users confirm and claim via oracle
+      await confirmUserClaim(mintPool, router, user1, 0, user1Balance);
+      await confirmUserClaim(mintPool, router, user2, 0, user2Balance);
       await mine(MIN_CLAIM_BLOCK_GAP);
 
       const user1BalBefore = await ethers.provider.getBalance(user1.address);
@@ -682,13 +718,15 @@ describe("Integration Tests", function () {
     });
 
     it("should allow MintPool surplus withdrawal after all claims and sweeps", async function () {
-      const { content, mintPool, bonzaiToken, owner, treasury, user1 } =
+      const { content, mintPool, bonzaiToken, router, owner, treasury, user1 } =
         await loadFixture(deployIntegration);
 
       const poolAmt = expectedPoolAmount();
 
-      // Register and deposit
-      await mintPool.connect(user1).registerForEpoch();
+      const user1Balance = ethers.parseEther("50000");
+
+      // Register and deposit via oracle
+      await registerUser(mintPool, router, user1, user1Balance);
       await mintContent(content, user1, CONTENT_TYPE.IMAGE);
 
       // Send extra ETH directly to MintPool (simulating edge case / stuck ETH)
@@ -701,8 +739,8 @@ describe("Integration Tests", function () {
       // Advance to epoch 1
       await time.increase(EPOCH_DURATION);
 
-      // Claim
-      await mintPool.connect(user1).confirmClaim(0);
+      // Claim via oracle
+      await confirmUserClaim(mintPool, router, user1, 0, user1Balance);
       await mine(MIN_CLAIM_BLOCK_GAP);
       await mintPool.connect(user1).claimEpoch(0, CONTENT_TYPE.IMAGE);
 
