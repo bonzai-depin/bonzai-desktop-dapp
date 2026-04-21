@@ -1,18 +1,44 @@
 /**
- * BonzAI Agent Service
- *
- * Manages smart agent lifecycle:
- * - Purchase: One-time USDC payment to own an agent (via BonzaiSkillRegistry)
- * - Running Fee: USDC transferred per execution (via BonzaiSkillRegistry)
- *
- * All payments are in USDC (6 decimals) to avoid sell pressure on BONZAI token.
+ * Agent Service — purchase + per-execution USDC fees via BonzaiSkillRegistry.
  * Revenue split: 80% to companion co-owners, 20% to skill author.
+ *
+ * Env gating:
+ * - `isDevMode()` returns true in Vite dev or when VITE_MOCK_PURCHASES=1 →
+ *   purchases are mocked locally (no on-chain call, no fee collected).
+ * - Production (packaged build) always uses the real USDC flow against
+ *   BonzaiSkillRegistry on Base (requires CONFIG.skillRegistry.contractAddress).
  */
 
 import { ethers } from 'ethers';
 import { reactive, readonly } from 'vue';
 import { CONFIG } from '../config/web3.config.js';
 import { web3Service } from './web3.service.js';
+
+// ═══════════════════════════════════════════════════════════════════════════
+// ENV GATING — dev mocks vs prod on-chain
+// ═══════════════════════════════════════════════════════════════════════════
+
+/**
+ * True when purchases/fees should be mocked locally.
+ * - Vite dev mode (`npm run start`): always mocked
+ * - Explicit override via `VITE_MOCK_PURCHASES=1` (e.g. for staging builds)
+ * - Packaged production builds: never mocked
+ */
+export function isDevMode() {
+  try {
+    if (import.meta.env?.VITE_MOCK_PURCHASES === '1') return true;
+    if (import.meta.env?.DEV === true) return true;
+    if (import.meta.env?.MODE === 'development') return true;
+  } catch {
+    // `import.meta` unavailable in non-ESM contexts — fall through
+  }
+  return false;
+}
+
+/** True only if the SkillRegistry contract address is configured. */
+export function skillRegistryReady() {
+  return !!CONFIG.skillRegistry?.contractAddress;
+}
 
 // ═══════════════════════════════════════════════════════════════════════════
 // ABI DEFINITIONS
@@ -26,7 +52,6 @@ const ERC20_ABI = [
   'function decimals() view returns (uint8)',
 ];
 
-// Optional: If you want on-chain agent registry
 const AGENT_REGISTRY_ABI = [
   'function hasPurchased(address user, bytes32 agentId) view returns (bool)',
   'function purchaseAgent(bytes32 agentId) payable',
@@ -38,20 +63,12 @@ const AGENT_REGISTRY_ABI = [
 // ═══════════════════════════════════════════════════════════════════════════
 
 const state = reactive({
-  // Purchased agents (agentId => boolean)
   purchasedAgents: {},
-  
-  // Running fee config (USDC, 6 decimals — value in human units)
-  runningFee: CONFIG.agents?.runningFee || 1, // 1 USDC per execution
-  purchasePrice: CONFIG.agents?.purchasePrice || 10, // 10 USDC one-time purchase
-  
-  // Loading states
+  runningFee: CONFIG.agents?.runningFee || 1,
+  purchasePrice: CONFIG.agents?.purchasePrice || 10,
   isPurchasing: false,
   isPayingFee: false,
-  
-  // Transaction history
   transactions: [],
-  
   error: null,
 });
 
@@ -104,40 +121,23 @@ const savePurchase = (agentId, txHash) => {
 // AGENT PURCHASE (0.1 ETH)
 // ═══════════════════════════════════════════════════════════════════════════
 
-/**
- * Check if user has purchased an agent
- * @param {string} agentId - Unique agent identifier
- */
 export const hasPurchasedAgent = (agentId) => {
   loadPurchases();
   return !!state.purchasedAgents[agentId];
 };
 
-/**
- * Purchase an agent/skill
- * Currently mocked until BonzaiSkillRegistry contract is deployed and battle-tested
- *
- * @param {string} agentId - Unique agent/skill identifier
- * @returns {Promise<{success: boolean, txHash?: string, error?: string, mock?: boolean}>}
- */
 export const purchaseAgent = async (agentId) => {
   state.isPurchasing = true;
   state.error = null;
 
   try {
-    // TODO: Enable real purchases after BonzaiSkillRegistry is deployed
-    // For now, always use mock purchase for testing
-    const ENABLE_REAL_PURCHASES = false;
-
-    if (!ENABLE_REAL_PURCHASES) {
-      // Mock purchase for development/testing
-      console.log('[Agent] Mock purchase for:', agentId);
+    // Dev mode: mock the purchase so local testing doesn't hit mainnet.
+    // Production: real ETH transfer to treasury.
+    if (isDevMode()) {
       const mockTxHash = `mock-${Date.now()}-${Math.random().toString(36).substring(7)}`;
 
-      // Save mock purchase locally
       savePurchase(agentId, mockTxHash);
 
-      // Log mock transaction
       state.transactions.push({
         type: 'agent-purchase',
         agentId,
@@ -151,7 +151,6 @@ export const purchaseAgent = async (agentId) => {
       return { success: true, txHash: mockTxHash, mock: true };
     }
 
-    // Real purchase flow (disabled until contract deployed)
     const signer = await web3Service.getSigner();
     const treasury = CONFIG.treasury?.address || CONFIG.agents?.feeRecipient;
 
@@ -161,7 +160,6 @@ export const purchaseAgent = async (agentId) => {
 
     const price = ethers.parseEther(state.purchasePrice);
 
-    // Send ETH to treasury
     const tx = await signer.sendTransaction({
       to: treasury,
       value: price,
@@ -169,10 +167,8 @@ export const purchaseAgent = async (agentId) => {
 
     const receipt = await tx.wait();
 
-    // Save purchase locally
     savePurchase(agentId, receipt.hash);
 
-    // Log transaction
     state.transactions.push({
       type: 'agent-purchase',
       agentId,
@@ -197,18 +193,11 @@ export const purchaseAgent = async (agentId) => {
 // RUNNING FEE (USDC per execution, via BonzaiSkillRegistry)
 // ═══════════════════════════════════════════════════════════════════════════
 
-/**
- * Check if user has enough USDC for running fee
- */
+// TODO: Check USDC balance on Base when BonzaiSkillRegistry is deployed
 export const hasEnoughForRunningFee = () => {
-  // TODO: Check USDC balance on Base when BonzaiSkillRegistry is deployed
-  // For now, always return true (mock mode)
   return true;
 };
 
-/**
- * Get USDC contract instance on Base
- */
 const getUsdcContract = async (withSigner = false) => {
   const usdcAddress = CONFIG.tokens?.USDC?.base;
   if (!usdcAddress) throw new Error('USDC address not configured for Base');
@@ -222,27 +211,19 @@ const getUsdcContract = async (withSigner = false) => {
   return new ethers.Contract(usdcAddress, ERC20_ABI, provider);
 };
 
-/**
- * Pay running fee (USDC via BonzaiSkillRegistry.recordExecution)
- * Currently mocked until BonzaiSkillRegistry contract is deployed and battle-tested.
- * When enabled, this calls registry.recordExecution(skillId) which pulls USDC from the user.
- * Revenue split: 80% to companion co-owners, 20% to skill author.
- *
- * @param {string} agentId - For logging purposes
- * @returns {Promise<{success: boolean, txHash?: string, error?: string, mock?: boolean}>}
- */
 export const payRunningFee = async (agentId) => {
   state.isPayingFee = true;
   state.error = null;
 
   try {
-    // TODO: Enable real fee payments after BonzaiSkillRegistry is deployed on Base
-    // When enabled: approve USDC to SkillRegistry, then call recordExecution(skillId)
-    const ENABLE_REAL_FEES = false;
+    // Dev mode: mock the running fee. Production: real USDC via
+    // BonzaiSkillRegistry.recordExecution(skillId). Not yet wired for prod;
+    // running fees are 0 in the contract today, so the mock path is also
+    // taken in prod until running-fee collection is enabled.
+    const ENABLE_RUNNING_FEE_COLLECTION = skillRegistryReady()
+      && CONFIG.skillRegistry?.enforceRunningFee === true;
 
-    if (!ENABLE_REAL_FEES) {
-      // Mock fee payment for development/testing
-      console.log('[Agent] Mock USDC fee payment for:', agentId);
+    if (isDevMode() || !ENABLE_RUNNING_FEE_COLLECTION) {
       const mockTxHash = `mock-fee-${Date.now()}-${Math.random().toString(36).substring(7)}`;
 
       state.transactions.push({
@@ -258,7 +239,6 @@ export const payRunningFee = async (agentId) => {
       return { success: true, txHash: mockTxHash, mock: true };
     }
 
-    // Real fee payment flow via BonzaiSkillRegistry (disabled until deployed)
     if (!hasEnoughForRunningFee()) {
       throw new Error(`Insufficient USDC balance. Need ${state.runningFee} USDC to run this skill.`);
     }
@@ -276,19 +256,9 @@ export const payRunningFee = async (agentId) => {
   }
 };
 
-/**
- * Execute agent with automatic fee payment
- * This is the main entry point for running an agent
- * 
- * @param {Object} agent - Agent definition
- * @param {Object} inputs - User inputs
- * @param {Object} context - Execution context
- * @returns {Promise<{success: boolean, results?: any, error?: string}>}
- */
 export const executeAgentWithFee = async (agent, inputs, context = {}) => {
   const agentId = agent.id || agent.name;
-  
-  // Step 1: Check if purchased
+
   if (!hasPurchasedAgent(agentId)) {
     return { 
       success: false, 
@@ -297,7 +267,6 @@ export const executeAgentWithFee = async (agent, inputs, context = {}) => {
     };
   }
   
-  // Step 2: Check balance
   if (!hasEnoughForRunningFee()) {
     return { 
       success: false, 
@@ -308,7 +277,6 @@ export const executeAgentWithFee = async (agent, inputs, context = {}) => {
     };
   }
   
-  // Step 3: Pay running fee
   context.updateStatus?.('Paying running fee...');
   const feeResult = await payRunningFee(agentId);
   
@@ -320,7 +288,6 @@ export const executeAgentWithFee = async (agent, inputs, context = {}) => {
     };
   }
   
-  // Step 4: Execute agent
   try {
     context.updateStatus?.('Executing agent...');
     const results = await agent.execute(inputs, context);
@@ -344,24 +311,15 @@ export const executeAgentWithFee = async (agent, inputs, context = {}) => {
 // UTILITIES
 // ═══════════════════════════════════════════════════════════════════════════
 
-/**
- * Get agent purchase info
- */
 export const getAgentPurchaseInfo = (agentId) => {
   loadPurchases();
   return state.purchasedAgents[agentId] || null;
 };
 
-/**
- * Get all transactions for current user
- */
 export const getTransactionHistory = () => {
   return [...state.transactions].reverse();
 };
 
-/**
- * Initialize service (load purchases for connected wallet)
- */
 export const initialize = () => {
   loadPurchases();
 };
@@ -421,28 +379,71 @@ async function getSkillRegistryContract(withSigner = false) {
 
 /**
  * Check if a skill has been purchased by the current user.
- * Checks on-chain via BonzaiSkillRegistry.hasUserPurchased() first,
- * then falls back to local store for offline access.
+ *
+ * - **Dev mode**: always returns `true` (skills free locally).
+ * - **Prod**: on-chain check via `BonzaiSkillRegistry.userHasPurchased()`.
+ *   No localStorage fallback — caching is done via `loadPurchasedSkillsOnChain()`
+ *   which populates a verified set at mount time.
  *
  * @param {string} skillId
  * @returns {Promise<boolean>}
  */
 export async function hasPurchasedSkill(skillId) {
-  // Try on-chain check first
+  if (isDevMode()) return true;
   try {
     const registry = await getSkillRegistryContract();
-    if (registry) {
-      const userAddress = web3Service.state.walletAddress;
-      if (userAddress) {
-        const skillIdBytes = getOnChainSkillId(skillId);
-        return await registry.userHasPurchased(userAddress, skillIdBytes);
-      }
-    }
+    if (!registry) return false;
+    const userAddress = web3Service.state.walletAddress;
+    if (!userAddress) return false;
+    const skillIdBytes = getOnChainSkillId(skillId);
+    return await registry.userHasPurchased(userAddress, skillIdBytes);
   } catch (e) {
-    console.warn('[SkillPurchase] On-chain check failed, using local:', e.message);
+    console.warn('[SkillPurchase] On-chain check failed:', e.message);
+    return false;
   }
-  // Fallback to local store
-  return !!(await window.electronAPI?.store?.get(`skill-purchased-${skillId}`));
+}
+
+/**
+ * Batch-query on-chain purchase state for a list of skill IDs. Used on wallet
+ * connect to rebuild the UI's purchase set from authoritative state (no trust
+ * in localStorage). Returns a Set of purchased skill IDs.
+ *
+ * In dev mode, returns all IDs as "purchased" so skills are usable locally.
+ *
+ * @param {string[]} skillIds
+ * @returns {Promise<Set<string>>}
+ */
+export async function loadPurchasedSkillsOnChain(skillIds) {
+  const purchased = new Set();
+  if (!skillIds?.length) return purchased;
+
+  if (isDevMode()) {
+    skillIds.forEach((id) => purchased.add(id));
+    return purchased;
+  }
+
+  try {
+    const registry = await getSkillRegistryContract();
+    if (!registry) return purchased;
+    const userAddress = web3Service.state.walletAddress;
+    if (!userAddress) return purchased;
+
+    const results = await Promise.all(
+      skillIds.map(async (id) => {
+        try {
+          const skillIdBytes = getOnChainSkillId(id);
+          const ok = await registry.userHasPurchased(userAddress, skillIdBytes);
+          return ok ? id : null;
+        } catch {
+          return null;
+        }
+      })
+    );
+    results.filter(Boolean).forEach((id) => purchased.add(id));
+  } catch (e) {
+    console.warn('[SkillPurchase] Batch load failed:', e.message);
+  }
+  return purchased;
 }
 
 /**
@@ -476,7 +477,6 @@ export async function purchaseSkillUSDC(skillId, price = DEFAULT_SKILL_PRICE_USD
 
     // 2. Ensure on Base — auto-switch if needed
     if (web3Service.state.currentChainId !== 8453) {
-      console.log('[SkillPurchase] Switching to Base...');
       await web3Service.switchToBase();
     }
 
@@ -517,10 +517,8 @@ export async function purchaseSkillUSDC(skillId, price = DEFAULT_SKILL_PRICE_USD
     // 6. Check/set USDC allowance for SkillRegistry
     const currentAllowance = await usdcContract.allowance(userAddress, registryAddress);
     if (currentAllowance < BigInt(price)) {
-      console.log('[SkillPurchase] Approving USDC spend...');
       const approveTx = await usdcContract.approve(registryAddress, BigInt(price));
       await approveTx.wait();
-      console.log('[SkillPurchase] USDC approved');
     }
 
     // 7. Call registry.purchaseSkill(skillIdBytes, maxPrice)
@@ -529,14 +527,12 @@ export async function purchaseSkillUSDC(skillId, price = DEFAULT_SKILL_PRICE_USD
     const tx = await registry.purchaseSkill(skillIdBytes, BigInt(price));
     const receipt = await tx.wait();
 
-    // 6. Store purchase locally for offline access
     await window.electronAPI?.store?.set(`skill-purchased-${skillId}`, {
       purchasedAt: Date.now(),
       txHash: receipt.hash,
       price,
     });
 
-    // Also save in localStorage for immediate UI update
     savePurchase(skillId, receipt.hash);
 
     state.transactions.push({
@@ -548,7 +544,6 @@ export async function purchaseSkillUSDC(skillId, price = DEFAULT_SKILL_PRICE_USD
       timestamp: Date.now(),
     });
 
-    console.log('[SkillPurchase] Skill purchased on-chain:', receipt.hash);
     return { success: true, txHash: receipt.hash };
   } catch (e) {
     const error = e.shortMessage || e.message || String(e);
@@ -574,7 +569,10 @@ export const agentService = {
 
   // USDC Skill Purchase (on-chain)
   hasPurchasedSkill,
+  loadPurchasedSkillsOnChain,
   purchaseSkillUSDC,
+  isDevMode,
+  skillRegistryReady,
   
   // Running fee
   hasEnoughForRunningFee,

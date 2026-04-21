@@ -4,9 +4,10 @@
  * Manages companion co-ownership of skills on the BonzaiSkillOwnership contract (Base).
  * Handles registration, deregistration, revenue claiming, and cross-chain attestation.
  *
- * Revenue flow:
- *   SkillRegistry.purchaseSkill() → 80% ETH → SkillOwnership.distributeRevenue()
+ * Revenue flow (USDC-only marketplace):
+ *   SkillRegistry.purchaseSkill() → 80% USDC → SkillOwnership.distributeRevenueUSDC()
  *   → weighted by BONZAI_balance * profileScore → credited to companion wallets
+ *   → claimable via claimRevenueUSDC().
  */
 
 import { ethers } from 'ethers';
@@ -24,17 +25,21 @@ const SKILL_OWNERSHIP_ABI = [
   // Registration
   'function registerCompanion(bytes32 skillId, uint256 companionTokenId, address companionWallet, uint8 profileScore, uint256 attestationDeadline, bytes attestation) external',
   'function deregisterCompanion(bytes32 skillId, uint256 companionTokenId) external',
+  'function updateCompanionRegistration(bytes32 skillId, uint256 companionTokenId, address newWallet, uint8 newProfileScore, uint256 attestationDeadline, bytes attestation) external',
 
-  // Revenue
-  'function distributeRevenue(bytes32 skillId, uint256 amount) external payable',
-  'function claimRevenue() external',
+  // Signer management (admin-only on-chain, read-only for everyone else)
+  'function attestationSigner() view returns (address)',
+
+  // Events (for historical distribution breakdown)
+  'event CompanionRevenueShare(bytes32 indexed skillId, address indexed wallet, uint256 indexed companionTokenId, uint256 share, uint256 weight, uint256 totalWeight, uint256 timestamp)',
+  'event RevenueDistributedUSDC(bytes32 indexed skillId, uint256 totalAmount, uint256 recipientCount, uint256 timestamp)',
+
+  // Revenue (USDC-only marketplace — ETH variants retired)
   'function distributeRevenueUSDC(bytes32 skillId, uint256 amount) external',
   'function claimRevenueUSDC() external',
 
   // Views
-  'function unclaimedRevenue(address wallet) view returns (uint256)',
   'function unclaimedRevenueUSDC(address wallet) view returns (uint256)',
-  'function unclaimedRevenuePerSkill(address wallet, bytes32 skillId) view returns (uint256)',
   'function getSkillCompanions(bytes32 skillId) view returns (tuple(uint256 companionTokenId, address companionWallet, address ownerAddress, uint8 profileScore, uint256 registeredAt, bool active)[])',
   'function getSkillCompanionCount(bytes32 skillId) view returns (uint256)',
   'function isCompanionRegistered(uint256 companionTokenId, bytes32 skillId) view returns (bool)',
@@ -156,22 +161,49 @@ export async function deregisterCompanionFromSkill(skillId, companionTokenId) {
   return await tx.wait();
 }
 
+/**
+ * Update a companion's on-chain registration for a skill. Used when the
+ * companion's spending habits (profile score for the skill category) change
+ * or the agent wallet is rotated. Re-runs the attestation flow with the
+ * current values.
+ *
+ * @param {string} skillId - bytes32 skill ID
+ * @param {number} companionTokenId
+ * @param {string} newWallet - fresh agent wallet address
+ * @param {number} newProfileScore - updated category score (5..10)
+ * @returns {Promise<ethers.TransactionReceipt>}
+ */
+export async function updateCompanionRegistration(
+  skillId,
+  companionTokenId,
+  newWallet,
+  newProfileScore
+) {
+  const { signature, deadline } = await requestAttestation(
+    skillId,
+    companionTokenId,
+    newWallet,
+    web3Service.state.walletAddress,
+    newProfileScore
+  );
+  const contract = await getContract(true);
+  const tx = await contract.updateCompanionRegistration(
+    skillId,
+    companionTokenId,
+    newWallet,
+    newProfileScore,
+    deadline,
+    signature
+  );
+  return await tx.wait();
+}
+
 // ═══════════════════════════════════════════════════════════════════════════
 // REVENUE
 // ═══════════════════════════════════════════════════════════════════════════
 
 /**
- * Claim all accumulated revenue
- * @returns {Promise<ethers.TransactionReceipt>}
- */
-export async function claimAllRevenue() {
-  const contract = await getContract(true);
-  const tx = await contract.claimRevenue();
-  return await tx.wait();
-}
-
-/**
- * Claim all accumulated USDC revenue
+ * Claim all accumulated USDC revenue.
  * @returns {Promise<ethers.TransactionReceipt>}
  */
 export async function claimAllRevenueUSDC() {
@@ -180,8 +212,42 @@ export async function claimAllRevenueUSDC() {
   return await tx.wait();
 }
 
+/** Alias for back-compat — ETH variant was retired; this now claims USDC. */
+export const claimAllRevenue = claimAllRevenueUSDC;
+
 /**
- * Get total unclaimed USDC revenue for a wallet
+ * Fetch the distribution history for a wallet. Indexes
+ * `CompanionRevenueShare` events emitted by `distributeRevenueUSDC()` where
+ * this wallet was a recipient. Each entry includes the skill ID, share in
+ * USDC (6 decimals), weight-on-total ratio, and block timestamp.
+ *
+ * @param {string} walletAddress
+ * @param {number} [fromBlock=0] Optional lower bound; default scans from genesis.
+ *                               Pass a recent block for faster queries on chains
+ *                               with heavy history (e.g. last 10K blocks).
+ * @returns {Promise<Array<{skillId, share, weight, totalWeight, ratio, companionTokenId, blockNumber, txHash, timestamp}>>}
+ */
+export async function getDistributionHistory(walletAddress, fromBlock = 0) {
+  const contract = await getContract();
+  if (!contract) return [];
+  const filter = contract.filters.CompanionRevenueShare(null, walletAddress);
+  const events = await contract.queryFilter(filter, fromBlock, 'latest');
+  return events.map((ev) => ({
+    skillId: ev.args.skillId,
+    wallet: ev.args.wallet,
+    companionTokenId: ev.args.companionTokenId.toString(),
+    share: ev.args.share.toString(),          // raw USDC (6 decimals)
+    weight: ev.args.weight.toString(),
+    totalWeight: ev.args.totalWeight.toString(),
+    ratio: Number(ev.args.weight) / Number(ev.args.totalWeight || 1n),
+    timestamp: Number(ev.args.timestamp),
+    blockNumber: ev.blockNumber,
+    txHash: ev.transactionHash,
+  })).sort((a, b) => b.blockNumber - a.blockNumber);
+}
+
+/**
+ * Get total unclaimed USDC revenue for a wallet.
  * @param {string} walletAddress - Wallet to query
  * @returns {Promise<string>} Unclaimed USDC amount (raw, 6 decimals)
  */
@@ -197,17 +263,17 @@ export async function getUnclaimedRevenueUSDC(walletAddress) {
 }
 
 /**
- * Get total unclaimed revenue for a wallet
- * @param {string} walletAddress - Wallet to query
- * @returns {Promise<string>} Unclaimed ETH amount (formatted)
+ * Back-compat wrapper — returns USDC amount formatted as a human-readable
+ * decimal string (e.g. "12.50" for 12,500,000 raw units). Callers that used
+ * to treat the return as ETH should update their labels to "USDC".
+ * @param {string} walletAddress
+ * @returns {Promise<string>}
  */
 export async function getUnclaimedRevenue(walletAddress) {
+  const raw = await getUnclaimedRevenueUSDC(walletAddress);
   try {
-    const contract = await getContract();
-    const amount = await contract.unclaimedRevenue(walletAddress);
-    return ethers.formatEther(amount);
-  } catch (err) {
-    console.warn('Failed to fetch unclaimed revenue:', err.message);
+    return ethers.formatUnits(raw, 6);
+  } catch {
     return '0';
   }
 }
@@ -418,6 +484,66 @@ export async function getAttestationSignerAddress() {
 }
 
 /**
+ * Fetch the attestation signer address currently configured on the contract.
+ * Returns `null` if the contract address isn't configured or the read fails.
+ *
+ * @returns {Promise<string|null>}
+ */
+export async function getOnChainAttestationSigner() {
+  try {
+    const contract = await getContract();
+    if (!contract) return null;
+    return await contract.attestationSigner();
+  } catch (e) {
+    console.warn('[SkillOwnership] Failed to read attestationSigner:', e.message);
+    return null;
+  }
+}
+
+/**
+ * Check whether the on-chain attestation signer matches the locally-derived
+ * signer. If they don't match, registration attestations will revert with
+ * `InvalidAttestation`. Returns a diagnostic object the admin UI can render.
+ *
+ * @returns {Promise<{local: string, onChain: string|null, matches: boolean, ready: boolean}>}
+ */
+export async function checkAttestationSignerState() {
+  const [local, onChain] = await Promise.all([
+    getAttestationSignerAddress(),
+    getOnChainAttestationSigner(),
+  ]);
+  const matches = !!onChain && !!local && onChain.toLowerCase() === local.toLowerCase();
+  return {
+    local,
+    onChain,
+    matches,
+    ready: matches,
+  };
+}
+
+/**
+ * Admin-only: push the locally-derived attestation signer address to the
+ * BonzaiSkillOwnership contract. Must be called by the contract owner's
+ * signer (typically the deployer). Safe to call repeatedly — idempotent if
+ * the signer address hasn't changed.
+ *
+ * @returns {Promise<ethers.TransactionReceipt>}
+ */
+export async function syncAttestationSignerToContract() {
+  const localAddress = await getAttestationSignerAddress();
+  const existing = await getOnChainAttestationSigner();
+  if (existing && existing.toLowerCase() === localAddress.toLowerCase()) {
+    console.log('[SkillOwnership] Attestation signer already synced:', localAddress);
+    return null;
+  }
+  const contract = await getContract(true);
+  const tx = await contract.setAttestationSigner(localAddress);
+  const receipt = await tx.wait();
+  console.log('[SkillOwnership] Attestation signer synced to contract:', localAddress, 'tx:', receipt.hash);
+  return receipt;
+}
+
+/**
  * Produce a cross-chain attestation signature.
  *
  * The message matches the Solidity _verifyAttestation() in BonzaiSkillOwnership.sol:
@@ -470,6 +596,7 @@ export const skillOwnershipService = {
   getContract,
   registerCompanionForSkill,
   deregisterCompanionFromSkill,
+  updateCompanionRegistration,
   claimAllRevenue,
   claimAllRevenueUSDC,
   getUnclaimedRevenue,
@@ -481,6 +608,10 @@ export const skillOwnershipService = {
   getStats,
   requestAttestation,
   getAttestationSignerAddress,
+  getOnChainAttestationSigner,
+  checkAttestationSignerState,
+  syncAttestationSignerToContract,
+  getDistributionHistory,
   getCategoryIndex,
   CATEGORY_INDICES,
 };

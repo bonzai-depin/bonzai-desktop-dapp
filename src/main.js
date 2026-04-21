@@ -245,6 +245,8 @@ const killPort = async (port = PY_SERVER_PORT) => {
           () => resolve()
         );
       });
+      // Wait for Windows to release the socket after taskkill
+      await new Promise((resolve) => setTimeout(resolve, 1000));
     } else {
       // Get PIDs first, then kill if any exist
       const result = await new Promise((resolve) => {
@@ -343,12 +345,13 @@ const startPythonSubprocess = async () => {
     PYTHONDONTWRITEBYTECODE: "1",
     // Ensure HOME is set (required for some libraries)
     HOME: homeDir,
-    // Ensure TMPDIR is set (PyInstaller extracts here)
+    // Ensure temp dir is set (PyInstaller extracts here)
     TMPDIR: tmpDir,
+    ...(process.platform === "win32" && { TEMP: tmpDir, TMP: tmpDir }),
     // Add the binary's directory to PATH (helps find co-located libs)
-    PATH: `${launch.cwd}:${process.env.PATH || ""}`,
-    // Ensure shell is available
-    SHELL: process.env.SHELL || "/bin/bash",
+    PATH: `${launch.cwd}${path.delimiter}${process.env.PATH || ""}`,
+    // Ensure shell is available (Windows has no SHELL env)
+    ...(process.platform !== "win32" && { SHELL: process.env.SHELL || "/bin/bash" }),
     // Locale settings (prevents some encoding issues)
     LANG: process.env.LANG || "en_US.UTF-8",
     LC_ALL: process.env.LC_ALL || "en_US.UTF-8",
@@ -1257,7 +1260,7 @@ ipcMain.handle("p2p-start", async (_event, options = {}) => {
     const startedNode = getP2PNode();
     const localPeerId = startedNode.getPeerId();
 
-    startedNode.onInferenceRequest(async (request, remotePeer) => {
+    await startedNode.onInferenceRequest(async (request, remotePeer) => {
       console.log(`[P2P] Inference request from ${remotePeer}:`, request.pipeline);
 
       // Concurrency guard — one consumer at a time
@@ -1352,7 +1355,7 @@ ipcMain.handle("p2p-start", async (_event, options = {}) => {
     });
 
     // Register health handler
-    startedNode.onHealthRequest(async (request, remotePeer) => {
+    await startedNode.onHealthRequest(async (request, remotePeer) => {
       const pipelines = store.get("p2p.pipelines", []);
       const pricingCurrency = store.get("p2p.pricingCurrency", "ETH");
       const FLASK_PORT = process.env.BONZAI_SERVER_PORT || 65000;
@@ -1709,7 +1712,7 @@ ipcMain.handle("p2p-shard-start", async (_event, options = {}) => {
   const node = getP2PNode();
   if (node?.isStarted) {
     const { registerRPCTunnelHandler } = await getPipelineTunnel();
-    registerRPCTunnelHandler(node, rpcPort);
+    await registerRPCTunnelHandler(node, rpcPort);
   }
 
   return { ok: true, rpcPort };
@@ -1857,6 +1860,27 @@ async function routeInferenceRequest(request) {
  * - consumer + pipeline + LLM → pipeline orchestrator (parallelism across all selected providers)
  * - consumer (no pipeline, or non-LLM) → random provider from selection, fallback to local
  */
+/**
+ * Ensure a model session is loaded before signalling `useLocal: true` to the
+ * caller. Without this, a cold-start chatStream throws "Model not loaded",
+ * which is what the renderer was hitting when the P2P orchestrator unloaded
+ * the model or when local mode had never loaded one explicitly.
+ *
+ * Returns true if a session is ready (or was just brought up), false if no
+ * model info is available to reload from.
+ */
+async function ensureLocalLLMReady() {
+  if (modelSession) return true;
+  if (!currentLoadedModel?.filename) return false;
+  try {
+    await loadModel(null, { ...currentLoadedModel });
+    return !!modelSession;
+  } catch (e) {
+    console.warn("[Inference] Failed to restore local model session:", e.message);
+    return false;
+  }
+}
+
 ipcMain.handle("inference-request", async (event, { pipeline, params }) => {
   try {
     const networkMode = store.get("p2p.networkMode", "local");
@@ -1865,7 +1889,17 @@ ipcMain.handle("inference-request", async (event, { pipeline, params }) => {
     if (networkMode !== "consumer") {
       const isLLM = pipeline === "llm" || pipeline.startsWith("llm_");
       if (isLLM) {
-        // LLM: let the component use chatStream directly (streaming + node-llama-cpp)
+        // LLM: let the component use chatStream directly (streaming + node-llama-cpp).
+        // Make sure a model session exists — if the user previously ran in
+        // consumer mode, it may have been unloaded.
+        const ready = await ensureLocalLLMReady();
+        if (!ready) {
+          return {
+            ok: false,
+            useLocal: true,
+            error: "No local model loaded. Pick a model in the Chat tab first.",
+          };
+        }
         return { ok: false, useLocal: true };
       }
       const result = await routeInferenceRequest({ pipeline, params });
@@ -1935,13 +1969,9 @@ ipcMain.handle("inference-request", async (event, { pipeline, params }) => {
         return { ok: true, result, remote: true, pipeline: true };
       } catch (err) {
         console.warn(`[Inference] Pipeline failed: ${err.message}, falling back`);
-        // Reload model if it was unloaded for the pipeline attempt
-        if (!modelSession && modelPath) {
-          console.log("[Inference] Reloading model after pipeline failure...");
-          try { await loadModel(null, { filename: path.basename(modelPath) }); } catch (e) {
-            console.warn("[Inference] Model reload failed:", e.message);
-          }
-        }
+        // Reload model if the pipeline unloaded it. `modelPath` was scoped
+        // to the try-block, so we rely on `currentLoadedModel` instead.
+        await ensureLocalLLMReady();
         // Fall through to provider selection or local
       }
     }
@@ -2006,10 +2036,19 @@ ipcMain.handle("inference-request", async (event, { pipeline, params }) => {
       }
     }
 
-    // Fallback to local
+    // Fallback to local — all remote providers exhausted or unavailable.
     const isLLMLocal = pipeline === "llm" || pipeline.startsWith("llm_");
     if (isLLMLocal) {
-      // LLM: signal "not handled" so the component uses chatStream (node-llama-cpp with streaming)
+      // Re-hydrate the local model session before signalling useLocal so the
+      // follow-up chatStream call doesn't fail with "Model not loaded".
+      const ready = await ensureLocalLLMReady();
+      if (!ready) {
+        return {
+          ok: false,
+          useLocal: true,
+          error: "Remote providers failed and no local model is loaded. Pick one in the Chat tab to fall back.",
+        };
+      }
       return { ok: false, useLocal: true };
     }
     // Non-LLM: route through Flask directly
@@ -2672,6 +2711,24 @@ ipcMain.handle("save-base64-to-file", async (_event, filePath, base64Data) => {
 const OPENCLAW_MODELS_PATH = path.join(os.homedir(), ".openclaw", "agents", "main", "agent", "models.json");
 const OPENCLAW_CONFIG_PATH = path.join(os.homedir(), ".openclaw", "openclaw.json");
 
+/**
+ * Resolve the SKILL.md manifest path for an agent harness.
+ * Looks in dev (repo) and packaged (Resources) locations so the toggle
+ * works identically in both. Returns an absolute path or null.
+ */
+function resolveBundledSkillManifest(name) {
+  const candidates = [
+    path.join(__dirname, "..", name, "SKILL.md"),                       // dev
+    path.join(process.resourcesPath || "", name, "SKILL.md"),           // packaged
+    path.join(app.getAppPath(), name, "SKILL.md"),                       // packaged asar
+    path.join(app.getAppPath(), "..", name, "SKILL.md"),                 // packaged outside asar
+  ];
+  for (const c of candidates) {
+    try { if (c && fs.existsSync(c)) return c; } catch {}
+  }
+  return null;
+}
+
 ipcMain.handle("openclaw-get-enabled", async () => {
   try {
     if (fs.existsSync(OPENCLAW_CONFIG_PATH)) {
@@ -2802,11 +2859,15 @@ ipcMain.handle("hermes-set-enabled", async (_event, enabled) => {
         fs.mkdirSync(HERMES_BONZAI_SKILL_DIR, { recursive: true });
       }
 
-      // Copy SKILL.md from our hermes/ directory
-      const sourceSkill = path.join(__dirname, "..", "hermes", "SKILL.md");
+      // Copy SKILL.md from our bundled hermes/ dir. Always overwrite — when
+      // the user upgrades BonzAI, their Hermes install should pick up the
+      // refreshed manifest automatically on next toggle-on.
+      const sourceSkill = resolveBundledSkillManifest("hermes");
       const destSkill = path.join(HERMES_BONZAI_SKILL_DIR, "SKILL.md");
-      if (fs.existsSync(sourceSkill)) {
+      if (sourceSkill && fs.existsSync(sourceSkill)) {
         fs.copyFileSync(sourceSkill, destSkill);
+      } else {
+        console.warn("[Hermes] SKILL.md not found in bundled resources — toggle proceeding but skill file not installed");
       }
 
       // 2. Add BonzAI as custom OpenAI-compatible endpoint in .env
@@ -3435,13 +3496,6 @@ let modelSession = undefined;
 let loadedModel = undefined; // The actual llama model object (holds GPU memory)
 let currentLoadedModel = null; // Track currently loaded model for multimodal support
 let alwaysLoadedEnabled = false; // When true, LLM stays in memory (still allows hot-swap)
-
-// DEPRECATED: MiniCPM-V vision model is now handled server-side via diffuser.py
-// These constants are kept for backwards compatibility only
-const MINICPM_V_MODEL = {
-  filename: "minicpm-v-4_5-q4_k_m.gguf",
-  mmproj: "mmproj-model-f16.gguf",
-};
 
 // Query current loaded model and always-loaded setting
 ipcMain.handle("model-get-loaded", () => {
@@ -4476,9 +4530,6 @@ function computeMaxContextForModel(currentModel, sysInfo) {
   const activeParams = currentModel.activeParameters || currentModel.parameters || 0;
   const totalParams = currentModel.parameters || 0;
 
-  const ramBytes = sysInfo.ramAvailable || sysInfo.ram || 0;
-  const ramGB = ramBytes / 1024 ** 3;
-
   const vramMB = sysInfo.vram || 0;
   const vramGB = vramMB / 1024;
 
@@ -4487,14 +4538,28 @@ function computeMaxContextForModel(currentModel, sysInfo) {
   const isMac = process.platform === "darwin";
   const isUnified = isMac && vramMB === 0; // typical for Apple Silicon
 
+  // On unified memory, `os.freemem()` / `sysInfo.ramAvailable` reports only
+  // "inactive" RAM — macOS counts cached pages as in-use, so on a 64GB Mac
+  // under normal load freemem can report <200MB while there are tens of GB
+  // of evictable cache. That bogus reading collapsed memBudget to ~0 and
+  // forced context to the minimum fallback (512).
+  //
+  // The KV-cache allocation itself triggers page reclamation when pressured,
+  // so budgeting from total RAM × a headroom factor is safer than trusting
+  // a live "free" number. On discrete-VRAM systems we still want freemem
+  // so we don't fill host RAM that the user needs for the desktop.
+  const ramTotalGB = (sysInfo.ram || 0) / 1024 ** 3;
+  const ramFreeGB = (sysInfo.ramAvailable || sysInfo.ram || 0) / 1024 ** 3;
+  const ramGB = isUnified ? ramTotalGB : ramFreeGB;
+
   // 1. Memory budget — how much RAM/VRAM we can safely use
   let memBudgetGB;
   if (isUnified) {
-    memBudgetGB = ramGB * 0.7; // 30% headroom for OS + apps
+    memBudgetGB = ramGB * 0.7; // 30% headroom for OS + apps (against TOTAL)
   } else if (vramGB > 0) {
     memBudgetGB = Math.min(ramGB * 0.8, vramGB * 0.8);
   } else {
-    memBudgetGB = ramGB * 0.8; // CPU-only
+    memBudgetGB = ramGB * 0.8; // CPU-only, discrete system, use free RAM
   }
 
   // 2. Estimate model weight memory
@@ -4905,21 +4970,11 @@ async function chat(_event, input) {
     throw new Error("Model not loaded");
   }
 
-  // Support both legacy string input and new object format
-  let userMessage, maxTokens, temperature, thoughtTokens;
-  if (typeof input === 'string') {
-    userMessage = input;
-    maxTokens = 2048; // Default
-    temperature = undefined;
-    thoughtTokens = undefined;
-  } else {
-    userMessage = input.message;
-    maxTokens = input.maxTokens || 2048;
-    temperature = input.temperature;
-    thoughtTokens = input.thoughtTokens;
-  }
-
-  const returnMetadata = typeof input === 'object' && input.returnMetadata;
+  const userMessage = input.message;
+  const maxTokens = input.maxTokens || 2048;
+  const temperature = input.temperature;
+  const thoughtTokens = input.thoughtTokens;
+  const returnMetadata = input.returnMetadata;
 
   let tokenCount = 0;
   let firstTokenTime = null;
@@ -5033,33 +5088,28 @@ async function unloadModel(_event, { force } = {}) {
   return true;
 }
 
-// DEPRECATED: Vision is now handled server-side via diffuser.py /vision/analyze endpoint
-// This function is kept for backwards compatibility but will always return an error
+// Vision chat is handled server-side via /vision/analyze — this stub remains for IPC compat
 async function chatWithVision(_event, { message, imageBase64 }) {
   throw new Error(
     "Vision has been moved to server-side. " +
-    "Use the /vision/analyze endpoint on the diffuser server instead. " +
-    "This provides better performance and model support via the full HuggingFace transformers library."
+    "Use the /vision/analyze endpoint on the diffuser server instead."
   );
 }
 
-// DEPRECATED: Vision model is now downloaded via server-side pipeline
-// Check if mmproj file exists (kept for backwards compatibility)
+// Check if mmproj file exists for multimodal GGUF models
 function checkMmproj(_event, mmprojFilename) {
-  const normalizedName = normalizeModelFilename(mmprojFilename || MINICPM_V_MODEL.mmproj);
+  if (!mmprojFilename) return false;
+  const normalizedName = normalizeModelFilename(mmprojFilename);
   const mmprojPath = path.join(MODEL_DIR, normalizedName);
   return fs.existsSync(mmprojPath);
 }
 
-// DEPRECATED: Vision model is now downloaded via server-side pipeline
-// This function is kept for backwards compatibility
+// Download mmproj vision projector for multimodal GGUF models
 async function downloadMmproj(event, { url, filename }) {
-  console.warn("[Mmproj Download] DEPRECATED: Use server-side pipeline prefetch instead");
-  const targetFilename = filename || MINICPM_V_MODEL.mmproj;
-  if (!url) {
-    throw new Error("URL is required for mmproj download");
+  if (!url || !filename) {
+    throw new Error("URL and filename are required for mmproj download");
   }
-  return downloadModel(event, url, targetFilename);
+  return downloadModel(event, url, filename);
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -5150,6 +5200,32 @@ function startOpenClawAPIServer() {
         scenarios: scenarios.length,
         rendererReady: mainWindow && !mainWindow.isDestroyed(),
       }));
+      return;
+    }
+
+    // Manifest discovery — serves the SKILL.md files so any external agent
+    // harness can GET the BonzAI capability description without needing the
+    // repo on disk. Supports `?agent=openclaw` (default) and `?agent=hermes`.
+    if (req.method === "GET" && url.pathname === "/manifest") {
+      const agent = (url.searchParams.get("agent") || "openclaw").toLowerCase();
+      const manifestName = agent === "hermes" ? "hermes" : "openclaw";
+      const manifestPath = resolveBundledSkillManifest(manifestName);
+      if (!manifestPath || !fs.existsSync(manifestPath)) {
+        res.writeHead(404, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ error: `manifest not found for ${agent}` }));
+        return;
+      }
+      try {
+        const content = fs.readFileSync(manifestPath, "utf8");
+        res.writeHead(200, {
+          "Content-Type": "text/markdown; charset=utf-8",
+          "X-Manifest-Agent": manifestName,
+        });
+        res.end(content);
+      } catch (e) {
+        res.writeHead(500, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ error: e.message }));
+      }
       return;
     }
 

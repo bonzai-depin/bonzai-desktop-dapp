@@ -52,8 +52,23 @@
           <div class="models__activity--payouts">
             <div class="columns">
               <div class="column is-12">
-                <!-- MODEL / MODE / DURATION / FPS / RESOLUTION OPTIONS -->
+                <!-- MODEL SELECTOR -->
+                <div class="control mb-3 has-text-left">
+                  <input v-model="videoModel" value="fast" id="vm_fast" type="radio" name="video_model" checked />
+                  <label for="vm_fast" class="radio mr-2">
+                    <span class="material-symbols-outlined" style="font-size: 32px !important">bolt</span>
+                    Fast
+                  </label>
+                  <input v-model="videoModel" value="quality" id="vm_quality" type="radio" name="video_model" />
+                  <label for="vm_quality" class="radio mr-2">
+                    <span class="material-symbols-outlined" style="font-size: 32px !important">auto_awesome</span>
+                    Quality
+                  </label>
+                </div>
+
+                <!-- MODE / DURATION / FPS / RESOLUTION OPTIONS -->
                 <div class="control mb-5 has-text-left">
+                  <template v-if="videoModel === 'fast'">
                   <input
                     v-model="mode"
                     :value="'t2v'"
@@ -87,120 +102,68 @@
                     </span>
                     From Image
                   </label>
+                  </template>
+
+                  <template v-if="videoModel === 'quality'">
+                  <span class="tag is-info is-light">Image-to-Video only</span>
+                  </template>
 
                   <!-- DURATION TOGGLES -->
                   <span class="control">
-                    <input
-                      v-model="duration"
-                      :value="5"
-                      id="video_duration_5s"
-                      type="radio"
-                      name="video_duration"
-                      checked
-                    />
-                    <label for="video_duration_5s" class="radio duration">
-                      5s
-                    </label>
-                    <input
-                      v-model="duration"
-                      :value="10"
-                      id="video_duration_10s"
-                      type="radio"
-                      name="video_duration"
-                    />
-                    <label for="video_duration_10s" class="radio duration">
-                      10s
-                    </label>
+                    <template v-if="videoModel === 'quality'">
+                      <input v-model="duration" :value="2" id="video_duration_2s" type="radio" name="video_duration" checked />
+                      <label for="video_duration_2s" class="radio duration">2s</label>
+                      <input v-model="duration" :value="3" id="video_duration_3s" type="radio" name="video_duration" />
+                      <label for="video_duration_3s" class="radio duration">3s</label>
+                      <input v-model="duration" :value="5" id="video_duration_5s_q" type="radio" name="video_duration" />
+                      <label for="video_duration_5s_q" class="radio duration">5s</label>
+                    </template>
+                    <template v-else>
+                      <input v-model="duration" :value="5" id="video_duration_5s" type="radio" name="video_duration" checked />
+                      <label for="video_duration_5s" class="radio duration">5s</label>
+                      <input v-model="duration" :value="10" id="video_duration_10s" type="radio" name="video_duration" />
+                      <label for="video_duration_10s" class="radio duration">10s</label>
+                    </template>
                   </span>
 
-                  <!-- FPS TOGGLES -->
-                  <span class="control">
-                    <input
-                      v-model="fps"
-                      :value="12"
-                      id="video_fps_12"
-                      type="radio"
-                      name="video_fps"
-                      checked
-                    />
-                    <label for="video_fps_12" class="radio fps">
-                      12fps
-                    </label>
-                    <input
-                      v-model="fps"
-                      :value="24"
-                      id="video_fps_24"
-                      type="radio"
-                      name="video_fps"
-                    />
-                    <label for="video_fps_24" class="radio fps">
-                      24fps
-                    </label>
-                    <input
-                      v-model="fps"
-                      :value="48"
-                      id="video_fps_48"
-                      type="radio"
-                      name="video_fps"
-                    />
-                    <label for="video_fps_48" class="radio fps">
-                      48fps
-                    </label>
+                  <!-- FPS (fixed 16fps for Wan2.2, selectable for LTX-2) -->
+                  <span v-if="videoModel === 'fast'" class="control">
+                    <input v-model="fps" :value="12" id="video_fps_12" type="radio" name="video_fps" checked />
+                    <label for="video_fps_12" class="radio fps">12fps</label>
+                    <input v-model="fps" :value="24" id="video_fps_24" type="radio" name="video_fps" />
+                    <label for="video_fps_24" class="radio fps">24fps</label>
+                    <input v-model="fps" :value="48" id="video_fps_48" type="radio" name="video_fps" />
+                    <label for="video_fps_48" class="radio fps">48fps</label>
+                  </span>
+                  <span v-else class="control">
+                    <input v-model="wanFps" :value="8" id="wan_fps_8" type="radio" name="wan_fps" checked />
+                    <label for="wan_fps_8" class="radio fps">8fps</label>
+                    <input v-model="wanFps" :value="16" id="wan_fps_16" type="radio" name="wan_fps" />
+                    <label for="wan_fps_16" class="radio fps">16fps</label>
                   </span>
 
-                  <!-- RESOLUTION TOGGLES -->
+                  <!-- RESOLUTION TOGGLES (real resolutions shown for quality mode) -->
                   <span class="control resolution-toggles">
-                    <input
-                      v-model="quality"
-                      :value="'480p'"
-                      id="video_quality_480p"
-                      type="radio"
-                      name="video_quality"
-                      checked
-                    />
-                    <label for="video_quality_480p" class="radio quality">
-                      480p
-                    </label>
-                    <input
-                      v-model="quality"
-                      :value="'540p'"
-                      id="video_quality_540p"
-                      type="radio"
-                      name="video_quality"
-                    />
-                    <label for="video_quality_540p" class="radio quality">
-                      540p
-                    </label>
-                    <input
-                      v-model="quality"
-                      :value="'720p'"
-                      id="video_quality_720p"
-                      type="radio"
-                      name="video_quality"
-                    />
-                    <label for="video_quality_720p" class="radio quality">
-                      720p
-                    </label>
-                    <input
-                      v-model="quality"
-                      :value="'1080p'"
-                      id="video_quality_1080p"
-                      type="radio"
-                      name="video_quality"
-                    />
-                    <label for="video_quality_1080p" class="radio quality">
-                      1080p
-                    </label>
-                    <input
-                      v-model="quality"
-                      :value="'4k'"
-                      id="video_quality_4k"
-                      type="radio"
-                      name="video_quality"
-                    />
-                    <label for="video_quality_4k" class="radio quality mr-0">
-                      4K
-                    </label>
+                    <template v-if="videoModel === 'quality'">
+                      <input v-model="quality" value="480p" id="vq_480" type="radio" name="video_quality" checked />
+                      <label for="vq_480" class="radio quality">320×512</label>
+                      <input v-model="quality" value="540p" id="vq_540" type="radio" name="video_quality" />
+                      <label for="vq_540" class="radio quality">384×672</label>
+                      <input v-model="quality" value="720p" id="vq_720" type="radio" name="video_quality" />
+                      <label for="vq_720" class="radio quality">480×832</label>
+                      <input v-model="quality" value="1080p" id="vq_1080" type="radio" name="video_quality" />
+                      <label for="vq_1080" class="radio quality mr-0">576×1024</label>
+                    </template>
+                    <template v-else>
+                      <input v-model="quality" value="480p" id="video_quality_480p" type="radio" name="video_quality" checked />
+                      <label for="video_quality_480p" class="radio quality">480p</label>
+                      <input v-model="quality" value="540p" id="video_quality_540p" type="radio" name="video_quality" />
+                      <label for="video_quality_540p" class="radio quality">540p</label>
+                      <input v-model="quality" value="720p" id="video_quality_720p" type="radio" name="video_quality" />
+                      <label for="video_quality_720p" class="radio quality">720p</label>
+                      <input v-model="quality" value="1080p" id="video_quality_1080p" type="radio" name="video_quality" />
+                      <label for="video_quality_1080p" class="radio quality mr-0">1080p</label>
+                    </template>
                   </span>
                 </div>
 
@@ -488,10 +451,12 @@
                         <button
                           class="button is-medium is-success copy is-pulled-left p-0 pl-1 pr-1"
                           @click="
+                            form.prompt = inference.question;
                             copy(inference.question);
                             setCopied(inference._originalIndex);
                             scrollToTop();
                           "
+                          title="Reuse this prompt"
                         >
                           <span
                             class="material-symbols-outlined is-size-2"
@@ -659,9 +624,11 @@ export default {
     };
 
     const mode = ref("i2v"); // "t2v" (text-to-video) or "i2v" (image-to-video)
-    const quality = ref("480p");  // 480p, 540p, 720p, 1080p, 4k (default 480p for quality)
+    const videoModel = ref("fast"); // "fast" (LTX-2) or "quality" (Wan2.2)
+    const quality = ref("480p");  // 480p, 540p, 720p, 1080p
     const duration = ref(5);       // seconds: 5 or 10 (default 5s for good motion)
     const fps = ref(12);           // 12 or 24 (default 12fps for memory efficiency)
+    const wanFps = ref(8);          // 8 or 16 (default 8fps for Wan2.2)
     const isLoading = ref(false);
     const form = reactive({ prompt: "" });
     // Use shallowRef for inferences - video data is large
@@ -827,11 +794,12 @@ export default {
       () => hasAccess.value && !isLoading.value
     );
 
-    // Can generate: for t2v mode, just need access; for i2v mode, also need an image
+    // Can generate: for t2v mode, just need access; for i2v/quality mode, also need an image
     const canGenerate = computed(() => {
       if (isLoading.value) return false;
+      if (videoModel.value === "quality") return hasAnyImage.value; // Wan2.2 is always I2V
       if (mode.value === "t2v") return true;
-      return hasAnyImage.value; // i2v requires image
+      return hasAnyImage.value;
     });
 
     const readiness = reactive({
@@ -868,8 +836,8 @@ export default {
         )
     );
 
-    const endpointForMode = () => "/video";
-    const pipelineForMode = () => "video_fast";
+    const endpointForMode = () => videoModel.value === "quality" ? "/video/quality" : "/video";
+    const pipelineForMode = () => videoModel.value === "quality" ? "video_quality" : "video_fast";
 
     const normalizeFramesForLTX2 = (frames) => {
       // LTX-2 frames must be 8n+1
@@ -1068,6 +1036,7 @@ export default {
     // Pipeline names relevant to this view
     const VIDEO_PIPELINES = [
       "video_fast", "ltx2_video_gguf", "ltx2_video", "ltx_video",
+      "video_quality", "wan_i2v",
     ];
 
     const isRelevantPipeline = (pipelineName) => {
@@ -1456,19 +1425,24 @@ export default {
       if (!hasAccess.value) return;
       _lastRoutingMode = 'local';
 
-      // LTX-2 size mappings - SAFE VALUES for tiled VAE decoder
-      // These dimensions produce latent sizes that divide evenly by the tile stride
-      // Values: [height, width] for landscape orientation
-      const sizeMaps = {
-        "480p":  [448, 640],    // latent: 56x80
-        "540p":  [512, 960],    // latent: 64x120
-        "720p":  [704, 1280],   // latent: 88x160
-        "1080p": [1088, 1920],  // latent: 136x240
-        "4k":    [2112, 3840],  // latent: 264x480
+      const isQuality = videoModel.value === "quality";
+
+      // Size mappings: [height, width] for landscape orientation
+      const ltxSizeMaps = {
+        "480p":  [448, 640],
+        "540p":  [512, 960],
+        "720p":  [704, 1280],
+        "1080p": [1088, 1920],
+      };
+      const wanSizeMaps = {
+        "480p":  [320, 512],
+        "540p":  [384, 672],
+        "720p":  [480, 832],
+        "1080p": [576, 1024],
       };
 
-      // Get base dimensions based on quality selection
-      let [h, w] = sizeMaps[quality.value] || sizeMaps["480p"];
+      const activeMaps = isQuality ? wanSizeMaps : ltxSizeMaps;
+      let [h, w] = activeMaps[quality.value] || activeMaps["480p"];
 
       // For i2v mode, swap dimensions for portrait images
       // For t2v mode, default to landscape
@@ -1476,25 +1450,34 @@ export default {
         [h, w] = [w, h];
       }
 
-      // LTX-2: Frames must be 8n+1
-      // Compute from duration and fps: frames = fps * duration + 1
-      const frameRate = fps.value;
-      const frames = frameRate * duration.value + 1;
+      const frameRate = isQuality ? wanFps.value : fps.value;
+      const frames = isQuality ? (duration.value * wanFps.value + 1) : (frameRate * duration.value + 1);
 
-      const payload = {
-        mode: mode.value,  // "t2v" or "i2v"
-        prompt: prompt,
-        height: h,
-        width: w,
-        frames: frames,
-        frame_rate: frameRate,
-        steps: 10,                               // Both distilled: 10 steps
-        guidance_scale: 1,                       // Both distilled: CFG=1
-        auto_download: true,
-      };
+      const payload = isQuality
+        ? {
+            prompt: prompt,
+            height: h,
+            width: w,
+            num_frames: frames,
+            fps: wanFps.value,
+            num_inference_steps: 4,
+            guidance_scale: 1.0,
+            auto_download: true,
+          }
+        : {
+            mode: mode.value,
+            prompt: prompt,
+            height: h,
+            width: w,
+            frames: frames,
+            frame_rate: frameRate,
+            steps: 10,
+            guidance_scale: 1,
+            auto_download: true,
+          };
 
-      // Only include image for i2v mode
-      if (mode.value === "i2v") {
+      // Include image for i2v mode (LTX-2) or always for Wan2.2 (I2V only)
+      if (mode.value === "i2v" || isQuality) {
         payload.image_base64 =
           uploadedImageBase64.value || (props.existingImageBase64 || "").trim();
       }
@@ -1521,7 +1504,7 @@ export default {
             question: `${mode.value}-i2v`,
             answer: { data: response.data },
             id: uuid(),
-            model: 'ltx-2',
+            model: isQuality ? 'wan2.2-14b' : 'ltx-2',
             elapsedMs,
             networkMode: _lastRoutingMode,
           };
@@ -1535,7 +1518,7 @@ export default {
             `${mode.value}-i2v`,
             response.data.video_path || response.data.video_url,
             {
-              pipeline: 'video_fast',
+              pipeline: pipelineForMode(),
               duration: duration.value,
               fps: fps.value,
               elapsed: elapsedMs / 1000,
@@ -1750,11 +1733,21 @@ export default {
       { immediate: true }
     );
 
+    // Re-probe when switching between fast (LTX-2) and quality (Wan2.2)
+    watch(videoModel, (newModel) => {
+      // Reset duration and quality to mode-appropriate defaults
+      duration.value = newModel === "quality" ? 2 : 5;
+      quality.value = "480p";
+      probeCurrentMode();
+    });
+
     return {
       mode,
+      videoModel,
       quality,
       duration,
       fps,
+      wanFps,
       form,
       isLoading,
       inferences,

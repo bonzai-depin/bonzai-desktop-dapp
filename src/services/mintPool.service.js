@@ -16,6 +16,7 @@ import { ethers } from 'ethers';
 import { reactive, readonly, computed } from 'vue';
 import { CONFIG } from '../config/web3.config.js';
 import { web3Service } from './web3.service.js';
+import { POOL_LABELS as SHARED_POOL_LABELS } from '../constants/index.js';
 
 // BonzaiMintPool ABI (time-based epochs, on-chain registration)
 const MINT_POOL_ABI = [
@@ -53,7 +54,7 @@ const MINT_POOL_ABI = [
   'event ClaimConfirmed(uint256 indexed epochId, address indexed wallet, uint256 balance, uint256 blockNumber)',
 ];
 
-const POOL_LABELS = ['Text', 'Audio', 'Image', 'Video', '3D', 'Training'];
+const POOL_LABELS = SHARED_POOL_LABELS;
 
 // Service state
 const state = reactive({

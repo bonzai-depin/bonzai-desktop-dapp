@@ -3659,7 +3659,7 @@ export default {
         maxPurchaseAmount: "0.001", // Max ETH per transaction (~$2)
         dailySpendingLimit: "0.005", // Max ETH per day (~$10)
       },
-      // Moltbook connection state (kept for backwards compat with loadMoltbookCredentials)
+      // Moltbook connection state
       moltbook: {
         enabled: false,
       },
@@ -9884,34 +9884,6 @@ export default {
 
 .companion-card.is-saved-custom:hover {
   border-color: rgba(50, 115, 220, 0.7);
-}
-
-/* Export button for companion cards (legacy - kept for compatibility) */
-.export-custom-btn {
-  position: absolute;
-  top: -24px;
-  left: -24px;
-  background: rgba(50, 115, 220, 0.9);
-  border: none;
-  border-radius: 50%;
-  width: 48px;
-  height: 48px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  cursor: pointer;
-  opacity: 0;
-  transition: opacity 0.2s;
-  color: #fff;
-  padding: 0;
-}
-
-.companion-card.is-saved-custom:hover .export-custom-btn {
-  opacity: 1;
-}
-
-.export-custom-btn:hover {
-  background: rgba(50, 115, 220, 1);
 }
 
 /* User Profile Section */

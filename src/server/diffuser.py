@@ -131,6 +131,7 @@ from diffusers import (
     StableDiffusionXLPipeline,
     StableDiffusionXLImg2ImgPipeline,
     GGUFQuantizationConfig,
+    QuantoConfig,
     Flux2KleinPipeline,
     ZImagePipeline,
     ZImageTransformer2DModel,
@@ -138,6 +139,10 @@ from diffusers import (
     LTX2ImageToVideoPipeline,
     LTX2VideoTransformer3DModel,
     AutoencoderKLLTX2Audio,
+    WanImageToVideoPipeline,
+    WanTransformer3DModel,
+    AutoencoderKLWan,
+    UniPCMultistepScheduler,
 )
 from diffusers.utils import load_image, export_to_video
 from diffusers.hooks import apply_group_offloading
@@ -224,7 +229,44 @@ LTX2_GGUF_URL = "https://huggingface.co/3ndetz/LTX2-Rapid-Merges-GGUF/resolve/ma
 LTX2_I2V_LORA_REPO = "MachineDelusions/LTX-2_Image2Video_Adapter_LoRa"
 LTX2_I2V_LORA_FILENAME = "LTX-2-Image2Vid-Adapter.safetensors"
 
+# Wan2.2 I2V 14B — High-quality image-to-video (GGUF quantized)
+# Two-stage denoising: high-noise transformer (coarse structure, 90% of steps)
+# + low-noise transformer (fine details, last 10% of steps). boundary_ratio=0.9.
+WAN_REPO = "Wan-AI/Wan2.2-I2V-A14B-Diffusers"
+WAN_GGUF_REPO = "bullerwins/Wan2.2-I2V-A14B-GGUF"
+WAN_GGUF_HIGH = "wan2.2_i2v_high_noise_14b_q2_k.gguf"
+WAN_GGUF_LOW = "wan2.2_i2v_low_noise_14b_q2_k.gguf"
+WAN_GGUF_HIGH_URL = f"https://huggingface.co/{WAN_GGUF_REPO}/resolve/main/wan2.2_i2v_high_noise_14B_Q2_K.gguf"
+WAN_GGUF_LOW_URL = f"https://huggingface.co/{WAN_GGUF_REPO}/resolve/main/wan2.2_i2v_low_noise_14B_Q2_K.gguf"
+WAN_VAE = "wan2.1_vae.safetensors"
+WAN_VAE_URL = "https://huggingface.co/QuantStack/Wan2.2-I2V-A14B-GGUF/resolve/main/VAE/Wan2.1_VAE.safetensors"
+WAN_LORA_CDN = "https://pub-c63241af101045fb837462e5c4c67e33.r2.dev"
+# All 4 LoRAs loaded simultaneously: general + animation for each noise stage.
+# High-noise LoRAs go into transformer, low-noise into transformer_2.
+WAN_LORAS = {
+    "general_low": f"{WAN_LORA_CDN}/wan_lora_general_low.safetensors",
+    "general_high": f"{WAN_LORA_CDN}/wan_lora_general_high.safetensors",
+    "animation_low": f"{WAN_LORA_CDN}/wan_lora_animation_low.safetensors",
+    "animation_high": f"{WAN_LORA_CDN}/wan_lora_animation_high.safetensors",
+}
+# Lightning distillation LoRAs — reduce steps from 20-30 to 4, no CFG needed
+WAN_LIGHTNING_REPO = "lightx2v/Wan2.2-Lightning"
+WAN_LIGHTNING_HIGH = "wan_lightning_high_noise.safetensors"
+WAN_LIGHTNING_LOW = "wan_lightning_low_noise.safetensors"
+WAN_LIGHTNING_HIGH_URL = f"https://huggingface.co/{WAN_LIGHTNING_REPO}/resolve/main/Wan2.2-I2V-A14B-4steps-lora-rank64-Seko-V1/high_noise_model.safetensors"
+WAN_LIGHTNING_LOW_URL = f"https://huggingface.co/{WAN_LIGHTNING_REPO}/resolve/main/Wan2.2-I2V-A14B-4steps-lora-rank64-Seko-V1/low_noise_model.safetensors"
 
+# --- /video/test (Wan 2.2 I2V — FastDM Lightning merge + Q2 GGUF) ---
+# Used by wan_i2v_video_test() below. Loads Q2_K GGUF transformer weights from
+# QuantStack, applies the FastDM Lightning-merged model's config (diffusers
+# architecture metadata) so the pipeline construction works with the merged
+# scheduler/config without downloading the full bf16 weights. Per discussion
+# thread #1 on the FastDM repo: 4 steps, guidance_scale=1.0, UniPC + flow_shift=8.
+WAN_TEST_BASE_REPO = "Wan-AI/Wan2.2-I2V-A14B-Diffusers"
+WAN_TEST_MERGE_REPO = "FastDM/Wan2.2-I2V-A14B-Merge-Lightning-V1.0-Diffusers"
+WAN_TEST_GGUF_REPO = "QuantStack/Wan2.2-I2V-A14B-GGUF"
+WAN_TEST_GGUF_HIGH = "HighNoise/Wan2.2-I2V-A14B-HighNoise-Q2_K.gguf"
+WAN_TEST_GGUF_LOW = "LowNoise/Wan2.2-I2V-A14B-LowNoise-Q2_K.gguf"
 
 # Kokoro TTS - Fast, lightweight TTS with multiple voices (ONNX)
 # Supports male and female voices with style control
@@ -1251,6 +1293,15 @@ REPO_SPECS = {
         "extra_dirs": [],
         "fallback_any_weights": True,
     },
+    # Google TimesFM 2.0 (500M): ships as torch_model.ckpt (not safetensors).
+    # The default fallback_any_weights check misses .ckpt files, so we
+    # explicitly require the checkpoint and config here.
+    "google/timesfm-2.0-500m-pytorch": {
+        "must_files": ["torch_model.ckpt"],
+        "must_tokenizers": [],
+        "must_weight_dirs": [],
+        "extra_dirs": [],
+    },
 }
 
 DEFAULT_SPEC = {"must_files": ["model_index.json"], "must_weight_dirs": [], "must_tokenizers": [], "fallback_any_weights": True}
@@ -1310,6 +1361,22 @@ def _repo_completeness(repo_id: str) -> Dict[str, Any]:
     root = repo_local_dir(repo_id)
     report = {"repo": repo_id, "root": str(root), "exists": root.exists(), "ok": False, "missing": []}
     if not root.exists():
+        # Some models are downloaded via `huggingface_hub.hf_hub_download` /
+        # `snapshot_download` which default to `~/.cache/huggingface/hub`.
+        # Fall back to the HF cache so a pre-existing install isn't reported
+        # as missing. We check for a conventional marker file per repo and
+        # trust the presence of that marker as "ready".
+        fallback_marker = {
+            "google/timesfm-2.0-500m-pytorch": "torch_model.ckpt",
+        }.get(repo_id)
+        if fallback_marker:
+            try:
+                from huggingface_hub import try_to_load_from_cache
+                cached = try_to_load_from_cache(repo_id, filename=fallback_marker)
+                if cached:
+                    return {"repo": repo_id, "root": str(cached), "exists": True, "ok": True, "missing": []}
+            except Exception:
+                pass
         report["missing"].append("<entire repo>")
         return report
     # Treat empty directories as non-existent (likely failed/interrupted download)
@@ -1520,6 +1587,21 @@ def _plan_for(pipeline: str) -> Dict[str, Any]:
             "repos_to_fetch": [LTX2_REPO],
             "single_files": [],
         }
+    if pipeline in ("video_quality", "wan_i2v"):
+        # Wan2.2 I2V 14B: repo (text_encoder, tokenizer, scheduler, image_processor, config)
+        # Quanto int8: full repo (both transformers loaded from repo, quantized on the fly)
+        # + 4 style LoRAs + 2 Lightning LoRAs
+        return {
+            "repos_to_fetch": [WAN_REPO],
+            "single_files": [
+                _sf("wan_lora_general_high.safetensors", WAN_LORAS["general_high"]),
+                _sf("wan_lora_general_low.safetensors", WAN_LORAS["general_low"]),
+                _sf("wan_lora_animation_high.safetensors", WAN_LORAS["animation_high"]),
+                _sf("wan_lora_animation_low.safetensors", WAN_LORAS["animation_low"]),
+                _sf(WAN_LIGHTNING_HIGH, WAN_LIGHTNING_HIGH_URL),
+                _sf(WAN_LIGHTNING_LOW, WAN_LIGHTNING_LOW_URL),
+            ],
+        }
 
     # Vision pipeline (Qwen3.5-0.8B 4-bit MLX — Apple Silicon)
     if pipeline in ("vision", "qwen35_vision"):
@@ -1532,6 +1614,10 @@ def _plan_for(pipeline: str) -> Dict[str, Any]:
     # OCR pipeline (GLM-OCR 4-bit MLX — Apple Silicon)
     if pipeline in ("ocr", "glm_ocr"):
         return {"repos_to_fetch": [GLM_OCR_MLX_MODEL_ID], "single_files": []}
+
+    # Time-series forecast pipeline (Google TimesFM 2.0 500M)
+    if pipeline in ("forecast", "timesfm"):
+        return {"repos_to_fetch": [TIMESFM_REPO], "single_files": []}
 
     raise ValueError(f"Unknown pipeline: {pipeline}")
 
@@ -4143,6 +4229,8 @@ def ltx2_gguf_video():
 
         if device.type == "mps":
             os.environ["DIFFUSERS_ATTENTION_BACKEND"] = "eager"
+            # Allow PyTorch MPS to use swap when GPU memory is full (prevents OOM crash)
+            os.environ["PYTORCH_MPS_HIGH_WATERMARK_RATIO"] = "0.0"
 
         # Select dtype based on device
         # Note: MPS needs bfloat16 to avoid black screen (float16 causes NaN)
@@ -4241,15 +4329,15 @@ def ltx2_gguf_video():
             )
 
             # Load I2V Adapter LoRA for better image-to-video quality
-            # try:
-            #     logger.info("[LTX-2 GGUF] Loading I2V Adapter LoRA...")
-            #     pipe.load_lora_weights(
-            #         LTX2_I2V_LORA_REPO,
-            #         weight_name=LTX2_I2V_LORA_FILENAME,
-            #     )
-            #     logger.info("[LTX-2 GGUF] I2V Adapter LoRA loaded successfully")
-            # except Exception as e:
-            #     logger.warning(f"[LTX-2 GGUF] Failed to load I2V LoRA (continuing without it): {e}")
+            try:
+                logger.info("[LTX-2 GGUF] Loading I2V Adapter LoRA...")
+                pipe.load_lora_weights(
+                    LTX2_I2V_LORA_REPO,
+                    weight_name=LTX2_I2V_LORA_FILENAME,
+                )
+                logger.info("[LTX-2 GGUF] I2V Adapter LoRA loaded successfully")
+            except Exception as e:
+                logger.warning(f"[LTX-2 GGUF] Failed to load I2V LoRA (continuing without it): {e}")
 
         # Enable memory optimizations
         # Newer diffusers loads sub-models (VAE) on meta device via low_cpu_mem_usage;
@@ -4264,7 +4352,19 @@ def ltx2_gguf_video():
                         LTX2_REPO, subfolder=attr_name, torch_dtype=model_dtype, low_cpu_mem_usage=False,
                     )
                     setattr(pipe, attr_name, reloaded)
-        pipe.enable_model_cpu_offload()
+
+        # Group offloading: offloads blocks of layers to CPU between forward passes.
+        # More memory-efficient than enable_model_cpu_offload (whole-model level)
+        # and compatible with GGUF quantized models (unlike enable_sequential_cpu_offload).
+        from diffusers.hooks import apply_group_offloading
+        apply_group_offloading(pipe.transformer, onload_device=device, offload_device="cpu", offload_type="block_level", num_blocks_per_group=1)
+        apply_group_offloading(pipe.text_encoder, onload_device=device, offload_device="cpu", offload_type="leaf_level")
+        # Apply leaf-level offloading to all remaining pipeline nn.Module components
+        for component_name in ["connectors", "audio_vae", "vocoder"]:
+            component = getattr(pipe, component_name, None)
+            if component is not None and isinstance(component, torch.nn.Module):
+                apply_group_offloading(component, onload_device=device, offload_device="cpu", offload_type="leaf_level")
+        pipe.vae.to(device)
 
         # Enable tiling for high resolutions (720p+ = ~900K pixels)
         # Tiling causes padding errors when latent dimensions are too small
@@ -4302,6 +4402,11 @@ def ltx2_gguf_video():
             except Exception as e:
                 logger.warning(f"[LTX-2 GGUF] Failed to encode custom audio (continuing without it): {e}")
                 audio_latents = None
+
+        # Free cached MPS memory before generation to avoid OOM during encode_prompt
+        if torch.backends.mps.is_available():
+            torch.mps.empty_cache()
+            gc.collect()
 
         # Generate video with audio
         if mode == "t2v":
@@ -4438,6 +4543,733 @@ def ltx2_gguf_video():
             os.environ.pop("TRANSFORMERS_OFFLINE", None)
         else:
             os.environ["TRANSFORMERS_OFFLINE"] = _ltx_old_transformers_offline
+
+
+# =============================================================================
+# REST API: VIDEO QUALITY — Wan2.2 I2V 14B (GGUF)
+# =============================================================================
+
+@app.route("/video/quality", methods=["POST"])
+def wan_i2v_video():
+    """
+    Wan2.2 I2V 14B — High-quality image-to-video generation.
+
+    Uses Q2_K GGUF quantized transformer (~5.3GB) with group offloading.
+    Two noise schedules control motion intensity:
+    - "low": subtle, realistic motion (default)
+    - "high": dynamic, expressive motion
+
+    Optional LoRA styles: "general" (default) or "animation".
+    The LoRA matching the noise schedule is auto-selected.
+    """
+    data = request.get_json(force=True) or {}
+
+    prompt = (data.get("prompt") or "").strip()
+    negative_prompt = (data.get("negative_prompt") or "").strip() or \
+        "Bright tones, overexposed, static, blurry details, subtitles, style, artwork, painting, picture, still, gray overall, worst quality, low quality, JPEG artifacts, ugly, incomplete, extra fingers, poorly drawn hands, poorly drawn face, deformed, disfigured, malformed limbs, fused fingers, still image, messy background, three legs, many people in background, walking backwards"
+    image_b64 = (data.get("image_base64") or "").strip()
+    image_url = (data.get("image_url") or "").strip()
+    H = int(data.get("height", 320))
+    W = int(data.get("width", 512))
+    num_frames = int(data.get("num_frames", 33))
+    output_fps = int(data.get("fps", 8))
+    steps = int(data.get("num_inference_steps", 4))
+    guidance = float(data.get("guidance_scale", 1.0))
+    seed = data.get("seed")
+    auto_dl = bool(data.get("auto_download", False))
+
+    if not prompt:
+        return jsonify({"error": "Missing 'prompt'"}), 400
+    if not image_b64 and not image_url:
+        return jsonify({"error": "Provide 'image_base64' or 'image_url'"}), 400
+
+    _mps_clear_memory()
+
+    guard = _ensure_files_present_or_start("video_quality", auto_download=auto_dl)
+    if guard:
+        return guard
+
+    gen_id = genbus.new("wan_i2v", {
+        "endpoint": "/video/quality", "w": W, "h": H, "frames": num_frames,
+    })
+
+    _wan_offline = _is_pipeline_complete("video_quality")
+    _wan_old_hf_offline = os.environ.get("HF_HUB_OFFLINE")
+    _wan_old_transformers_offline = os.environ.get("TRANSFORMERS_OFFLINE")
+    if _wan_offline:
+        os.environ["HF_HUB_OFFLINE"] = "1"
+        os.environ["TRANSFORMERS_OFFLINE"] = "1"
+
+    pipe = None
+
+    try:
+        device = DeviceManager.get_device()
+        gc.collect()
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+        if torch.backends.mps.is_available():
+            torch.mps.empty_cache()
+
+        if device.type == "mps":
+            os.environ["PYTORCH_MPS_HIGH_WATERMARK_RATIO"] = "0.0"
+
+        # bfloat16 for transformer compute — avoids float16 NaN on MPS
+        # and halves memory vs float32. VAE decodes separately in float32.
+        model_dtype = torch.bfloat16
+
+        genbus.progress(gen_id, "loading", 1, 4)
+
+        # Load source image
+        if image_url:
+            pil_image = load_image(image_url).convert("RGB")
+        else:
+            pil_image = Image.open(io.BytesIO(base64.b64decode(image_b64))).convert("RGB")
+
+        # Resize to target dimensions preserving aspect ratio (cover + center crop)
+        import numpy as _np
+        src_w, src_h = pil_image.size
+        scale = max(W / src_w, H / src_h)
+        new_w, new_h = int(src_w * scale), int(src_h * scale)
+        resized = pil_image.resize((new_w, new_h), Image.LANCZOS)
+        crop_x, crop_y = (new_w - W) // 2, (new_h - H) // 2
+        pil_image = resized.crop((crop_x, crop_y, crop_x + W, crop_y + H))
+
+        logger.info(f"[Wan2.2] Generating {num_frames} frames @ {W}x{H}, {steps} steps")
+
+        genbus.progress(gen_id, "loading model", 2, 4)
+
+        # Wan2.2 two-stage denoising with quanto int8 quantization.
+        # First run: load each transformer individually, quantize, save to disk,
+        # free memory between them — halves the load-time memory peak vs. loading
+        # both transformers simultaneously via PipelineQuantizationConfig.
+        # Subsequent runs: load the pre-quantized snapshots directly from disk.
+        # No GGUF — diffusers GGUF dequantization is broken on MPS.
+        quanto_cache = MODEL_DIR / "wan22_i2v_quanto_int8"
+        t_cache = quanto_cache / "transformer"
+        t2_cache = quanto_cache / "transformer_2"
+        cache_ready = (t_cache / "config.json").exists() and (t2_cache / "config.json").exists()
+
+        if not cache_ready:
+            logger.info("[Wan2.2] No quanto cache — quantizing from full-precision (one-time, ~20min)")
+            quanto_cache.mkdir(parents=True, exist_ok=True)
+
+            logger.info("[Wan2.2] Quantizing transformer (high-noise)")
+            t_tmp = WanTransformer3DModel.from_pretrained(
+                WAN_REPO, subfolder="transformer", torch_dtype=model_dtype,
+                quantization_config=QuantoConfig(weights_dtype="int8"),
+            )
+            t_tmp.save_pretrained(str(t_cache))
+            del t_tmp
+            gc.collect()
+            if torch.backends.mps.is_available():
+                torch.mps.empty_cache()
+
+            logger.info("[Wan2.2] Quantizing transformer_2 (low-noise)")
+            t2_tmp = WanTransformer3DModel.from_pretrained(
+                WAN_REPO, subfolder="transformer_2", torch_dtype=model_dtype,
+                quantization_config=QuantoConfig(weights_dtype="int8"),
+            )
+            t2_tmp.save_pretrained(str(t2_cache))
+            del t2_tmp
+            gc.collect()
+            if torch.backends.mps.is_available():
+                torch.mps.empty_cache()
+            logger.info(f"[Wan2.2] Quanto cache saved to {quanto_cache}")
+
+        logger.info(f"[Wan2.2] Loading pre-quantized transformers from {quanto_cache}")
+        transformer = WanTransformer3DModel.from_pretrained(str(t_cache), torch_dtype=model_dtype)
+        transformer_2 = WanTransformer3DModel.from_pretrained(str(t2_cache), torch_dtype=model_dtype)
+
+        # Load VAE in fp32 (not quantized)
+        vae = AutoencoderKLWan.from_pretrained(
+            WAN_REPO, subfolder="vae", torch_dtype=torch.float32,
+        )
+
+        pipe = WanImageToVideoPipeline.from_pretrained(
+            WAN_REPO,
+            vae=vae,
+            transformer=transformer,
+            transformer_2=transformer_2,
+            torch_dtype=model_dtype,
+        )
+        # Equal contribution from both noise experts
+        pipe._internal_dict["boundary_ratio"] = 0.5
+        logger.info(f"[Wan2.2] boundary_ratio={pipe.config.boundary_ratio}, transformer_2={'yes' if pipe.transformer_2 is not None else 'NO'}")
+
+        # Lightning 4-step distillation uses a tighter sigma schedule than the
+        # non-distilled default (shift=8) — shift=5 is the Seko V1 recommendation.
+        pipe.scheduler.config.shift = 5.0
+        logger.info("[Wan2.2] Scheduler shift=5.0")
+
+        # Use model-level CPU offload instead of group_offloading:
+        # group_offloading assigns moved tensors via `tensor.data = src.to(device)`,
+        # which strips quanto's WeightQBytesTensor subclass wiring (inner _data/_scale
+        # bindings) and leaves weights effectively on CPU at compute time. Model-level
+        # offload uses `module.to(device)`, which recurses through quanto tensors
+        # correctly. Pages one transformer + encoders on-device at a time; peak ~14GB
+        # (one int8 transformer) + activations.
+        pipe.vae.to(dtype=torch.float32)
+        pipe.enable_model_cpu_offload(device=device)
+
+        gc.collect()
+        if torch.backends.mps.is_available():
+            torch.mps.empty_cache()
+
+        # Baseline: Lightning-only. Style LoRAs disabled for now.
+        loaded_adapters = []
+        # for lora_key in ["general_high", "animation_high"]:
+        #     lora_path = MODEL_DIR / f"wan_lora_{lora_key}.safetensors"
+        #     if lora_path.exists():
+        #         try:
+        #             pipe.load_lora_weights(str(lora_path), adapter_name=lora_key)
+        #             loaded_adapters.append(lora_key)
+        #             logger.info(f"[Wan2.2] LoRA → transformer: {lora_key}")
+        #         except Exception as e:
+        #             logger.warning(f"[Wan2.2] Failed to load LoRA {lora_key}: {e}")
+        #
+        # for lora_key in ["general_low", "animation_low"]:
+        #     lora_path = MODEL_DIR / f"wan_lora_{lora_key}.safetensors"
+        #     if lora_path.exists():
+        #         try:
+        #             pipe.load_lora_weights(str(lora_path), adapter_name=lora_key, load_into_transformer_2=True)
+        #             loaded_adapters.append(lora_key)
+        #             logger.info(f"[Wan2.2] LoRA → transformer_2: {lora_key}")
+        #         except Exception as e:
+        #             logger.warning(f"[Wan2.2] Failed to load LoRA {lora_key}: {e}")
+
+        # Lightning distillation LoRAs (Seko I2V rank64, 4-step)
+        lightning_high = MODEL_DIR / WAN_LIGHTNING_HIGH
+        if lightning_high.exists():
+            try:
+                pipe.load_lora_weights(str(lightning_high), adapter_name="lightning_high")
+                loaded_adapters.append("lightning_high")
+                logger.info("[Wan2.2] Lightning LoRA → transformer: high_noise")
+            except Exception as e:
+                logger.warning(f"[Wan2.2] Failed to load Lightning high: {e}")
+        lightning_low = MODEL_DIR / WAN_LIGHTNING_LOW
+        if lightning_low.exists():
+            try:
+                pipe.load_lora_weights(str(lightning_low), adapter_name="lightning_low", load_into_transformer_2=True)
+                loaded_adapters.append("lightning_low")
+                logger.info("[Wan2.2] Lightning LoRA → transformer_2: low_noise")
+            except Exception as e:
+                logger.warning(f"[Wan2.2] Failed to load Lightning low: {e}")
+
+        if loaded_adapters:
+            # Seko V1 rank64 is designed for 1.0/1.0 on both experts.
+            adapter_weights = []
+            for name in loaded_adapters:
+                if name == "lightning_high":
+                    adapter_weights.append(1.0)
+                elif name == "lightning_low":
+                    adapter_weights.append(1.0)
+                elif "general" in name:
+                    adapter_weights.append(0.7)
+                elif "animation" in name:
+                    adapter_weights.append(0.5)
+                else:
+                    adapter_weights.append(1.0)
+            pipe.set_adapters(loaded_adapters, adapter_weights)
+            logger.info(f"[Wan2.2] Active adapters: {list(zip(loaded_adapters, adapter_weights))}")
+
+        genbus.progress(gen_id, "generating", 3, 4)
+
+        gc.collect()
+        if torch.backends.mps.is_available():
+            torch.mps.empty_cache()
+
+        generator = torch.Generator(device="cpu").manual_seed(int(seed)) if seed else None
+
+        output = pipe(
+            image=pil_image,
+            prompt=prompt,
+            negative_prompt=negative_prompt,
+            height=H,
+            width=W,
+            num_frames=num_frames,
+            num_inference_steps=steps,
+            guidance_scale=guidance,
+            generator=generator,
+        )
+
+        video_frames = output.frames[0]
+
+        # Save video
+        files_dir = MODEL_DIR / "files"
+        files_dir.mkdir(parents=True, exist_ok=True)
+        out_path = str(files_dir / f"wan_i2v_{gen_id}.mp4")
+        export_to_video(video_frames, out_path, fps=output_fps)
+
+        genbus.progress(gen_id, "complete", 4, 4)
+        genbus.finish(gen_id, {"video_path": out_path})
+
+        logger.info(f"[Wan2.2] Video saved to {out_path}")
+
+        return jsonify({
+            "generation_id": gen_id,
+            "video_path": out_path,
+            "frames": num_frames,
+            "fps": output_fps,
+            "width": W,
+            "height": H,
+        })
+
+    except Exception as e:
+        logger.exception("[Wan2.2] Generation failed")
+        genbus.error(gen_id, str(e))
+        return jsonify({"error": str(e)}), 500
+
+    finally:
+        if pipe is not None:
+            del pipe
+        gc.collect()
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+        if torch.backends.mps.is_available():
+            torch.mps.empty_cache()
+
+        if _wan_old_hf_offline is None:
+            os.environ.pop("HF_HUB_OFFLINE", None)
+        else:
+            os.environ["HF_HUB_OFFLINE"] = _wan_old_hf_offline
+        if _wan_old_transformers_offline is None:
+            os.environ.pop("TRANSFORMERS_OFFLINE", None)
+        else:
+            os.environ["TRANSFORMERS_OFFLINE"] = _wan_old_transformers_offline
+
+
+# =============================================================================
+# REST API: VIDEO TEST — Wan2.2 I2V 14B (FastDM Lightning merge + Q2 GGUF)
+# =============================================================================
+#
+# Alternate Wan 2.2 pipeline per the FastDM discussion thread:
+#   https://huggingface.co/FastDM/Wan2.2-I2V-A14B-Merge-Lightning-V1.0-Diffusers/discussions/1
+#
+# Strategy:
+#   - Load Q2_K GGUF transformer weights directly via `from_single_file` with
+#     `GGUFQuantizationConfig` (bypasses the bf16 download peak entirely —
+#     the file on disk IS quantized).
+#   - Pass `config="FastDM/...Merge-Lightning-..."` so the Lightning LoRA is
+#     baked in at pipeline-construction time; no separate LoRA loading.
+#   - UniPCMultistepScheduler with `flow_shift=8.0`, 4 steps, guidance 1.0
+#     (FastDM team recommendation for avoiding the blur regression).
+#   - `apply_group_offloading` at `leaf_level` for the transformers —
+#     block_level is incompatible with quanto tensors (see /video/quality
+#     fix note) but GGUF is read-only dequant and tolerates leaf offload.
+#
+# Known caveat: diffusers GGUF dequantization has been flaky on MPS in the
+# past; this endpoint is the testing surface for whether the new pipeline
+# path is usable there.
+
+
+@app.route("/video/test", methods=["POST"])
+def wan_i2v_video_test():
+    """
+    Wan2.2 I2V 14B — TEST endpoint using FastDM Lightning-merged config + Q2 GGUF.
+
+    Same request/response shape as /video/quality. Separate endpoint so we
+    can run A/B comparisons against the production /video/quality path
+    without disturbing its cache or parameters.
+    """
+    data = request.get_json(force=True) or {}
+
+    prompt = (data.get("prompt") or "").strip()
+    negative_prompt = (data.get("negative_prompt") or "").strip() or \
+        "Bright tones, overexposed, static, blurry details, subtitles, style, artwork, painting, picture, still, gray overall, worst quality, low quality, JPEG artifacts, ugly, incomplete, extra fingers, poorly drawn hands, poorly drawn face, deformed, disfigured, malformed limbs, fused fingers, still image, messy background, three legs, many people in background, walking backwards"
+    image_b64 = (data.get("image_base64") or "").strip()
+    image_url = (data.get("image_url") or "").strip()
+    H = int(data.get("height", 480))
+    W = int(data.get("width", 832))
+    num_frames = int(data.get("num_frames", 81))
+    output_fps = int(data.get("fps", 16))
+    # FastDM team recommendation for the Lightning-merged weights: 4 steps, CFG 1.
+    steps = int(data.get("num_inference_steps", 4))
+    guidance = float(data.get("guidance_scale", 1.0))
+    seed = data.get("seed")
+
+    if not prompt:
+        return jsonify({"error": "Missing 'prompt'"}), 400
+    if not image_b64 and not image_url:
+        return jsonify({"error": "Provide 'image_base64' or 'image_url'"}), 400
+
+    _mps_clear_memory()
+
+    gen_id = genbus.new("wan_i2v_test", {
+        "endpoint": "/video/test", "w": W, "h": H, "frames": num_frames,
+    })
+
+    pipe = None
+
+    try:
+        from huggingface_hub import hf_hub_download
+
+        device = DeviceManager.get_device()
+        gc.collect()
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+        if torch.backends.mps.is_available():
+            torch.mps.empty_cache()
+
+        if device.type == "mps":
+            os.environ["PYTORCH_MPS_HIGH_WATERMARK_RATIO"] = "0.0"
+
+        model_dtype = torch.bfloat16
+
+        genbus.progress(gen_id, "loading", 1, 4)
+
+        # Load source image
+        if image_url:
+            pil_image = load_image(image_url).convert("RGB")
+        else:
+            pil_image = Image.open(io.BytesIO(base64.b64decode(image_b64))).convert("RGB")
+
+        # Resize preserving aspect ratio to target dims (cover + center crop)
+        src_w, src_h = pil_image.size
+        scale = max(W / src_w, H / src_h)
+        new_w, new_h = int(src_w * scale), int(src_h * scale)
+        resized = pil_image.resize((new_w, new_h), Image.LANCZOS)
+        crop_x, crop_y = (new_w - W) // 2, (new_h - H) // 2
+        pil_image = resized.crop((crop_x, crop_y, crop_x + W, crop_y + H))
+
+        logger.info(f"[Wan2.2-test] Generating {num_frames} frames @ {W}x{H}, {steps} steps (FastDM merge + Q2 GGUF)")
+
+        genbus.progress(gen_id, "loading model", 2, 4)
+
+        # Download GGUF shards via HF hub (cached under MODEL_DIR via HF_HOME env).
+        high_path = hf_hub_download(repo_id=WAN_TEST_GGUF_REPO, filename=WAN_TEST_GGUF_HIGH)
+        low_path = hf_hub_download(repo_id=WAN_TEST_GGUF_REPO, filename=WAN_TEST_GGUF_LOW)
+        logger.info(f"[Wan2.2-test] GGUF shards ready: high={high_path} low={low_path}")
+
+        transformer_high = WanTransformer3DModel.from_single_file(
+            high_path,
+            quantization_config=GGUFQuantizationConfig(compute_dtype=model_dtype),
+            config=WAN_TEST_MERGE_REPO,
+            subfolder="transformer",
+            torch_dtype=model_dtype,
+        )
+        transformer_low = WanTransformer3DModel.from_single_file(
+            low_path,
+            quantization_config=GGUFQuantizationConfig(compute_dtype=model_dtype),
+            config=WAN_TEST_MERGE_REPO,
+            subfolder="transformer_2",
+            torch_dtype=model_dtype,
+        )
+
+        vae = AutoencoderKLWan.from_pretrained(
+            WAN_TEST_BASE_REPO, subfolder="vae", torch_dtype=torch.float32,
+        )
+
+        pipe = WanImageToVideoPipeline.from_pretrained(
+            WAN_TEST_BASE_REPO,
+            transformer=transformer_high,
+            transformer_2=transformer_low,
+            vae=vae,
+            torch_dtype=model_dtype,
+        )
+
+        # Per discussion thread #1: UniPC scheduler with flow_shift=8.
+        pipe.scheduler = UniPCMultistepScheduler.from_config(
+            pipe.scheduler.config, flow_shift=8.0,
+        )
+        # Lightning merge uses 4 steps split evenly between high/low experts.
+        pipe._internal_dict["boundary_ratio"] = 0.5
+        logger.info(f"[Wan2.2-test] scheduler=UniPC flow_shift=8.0 boundary_ratio=0.5 steps={steps} guidance={guidance}")
+
+        # Group offloading: leaf_level for both transformers. `block_level`
+        # was incompatible with quanto's WeightQBytesTensor wrapping; GGUF
+        # uses diffusers' built-in dequant and works with leaf_level.
+        from diffusers.hooks import apply_group_offloading
+        apply_group_offloading(pipe.transformer, onload_device=device, offload_device="cpu", offload_type="leaf_level")
+        apply_group_offloading(pipe.transformer_2, onload_device=device, offload_device="cpu", offload_type="leaf_level")
+        apply_group_offloading(pipe.text_encoder, onload_device=device, offload_device="cpu", offload_type="leaf_level")
+        for component_name in ["image_encoder"]:
+            component = getattr(pipe, component_name, None)
+            if component is not None and isinstance(component, torch.nn.Module):
+                apply_group_offloading(component, onload_device=device, offload_device="cpu", offload_type="leaf_level")
+        pipe.vae.to(dtype=torch.float32)
+        apply_group_offloading(pipe.vae, onload_device=device, offload_device="cpu", offload_type="leaf_level")
+
+        gc.collect()
+        if torch.backends.mps.is_available():
+            torch.mps.empty_cache()
+
+        genbus.progress(gen_id, "generating", 3, 4)
+
+        generator = torch.Generator(device="cpu").manual_seed(int(seed)) if seed else None
+
+        output = pipe(
+            image=pil_image,
+            prompt=prompt,
+            negative_prompt=negative_prompt,
+            height=H,
+            width=W,
+            num_frames=num_frames,
+            num_inference_steps=steps,
+            guidance_scale=guidance,
+            generator=generator,
+        )
+
+        video_frames = output.frames[0]
+
+        files_dir = MODEL_DIR / "files"
+        files_dir.mkdir(parents=True, exist_ok=True)
+        out_path = str(files_dir / f"wan_i2v_test_{gen_id}.mp4")
+        export_to_video(video_frames, out_path, fps=output_fps)
+
+        genbus.progress(gen_id, "complete", 4, 4)
+        genbus.finish(gen_id, {"video_path": out_path})
+
+        logger.info(f"[Wan2.2-test] Video saved to {out_path}")
+
+        return jsonify({
+            "generation_id": gen_id,
+            "video_path": out_path,
+            "frames": num_frames,
+            "fps": output_fps,
+            "width": W,
+            "height": H,
+            "variant": "fastdm-merge-q2-gguf",
+        })
+
+    except Exception as e:
+        logger.exception("[Wan2.2-test] Generation failed")
+        genbus.error(gen_id, str(e))
+        return jsonify({"error": str(e)}), 500
+
+    finally:
+        if pipe is not None:
+            del pipe
+        gc.collect()
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+        if torch.backends.mps.is_available():
+            torch.mps.empty_cache()
+
+
+# =============================================================================
+# REST API: TIME-SERIES FORECASTING — Google TimesFM 2.0 (500M)
+# =============================================================================
+#
+# Single-endpoint forecast path for the Chart Forecaster skill. Accepts a raw
+# 1-D time series (daily closes typically) and returns TimesFM's point
+# forecast plus 80%/95% quantile bands so the UI can shade confidence.
+#
+# Model: google/timesfm-2.0-500m-pytorch — 500M params, context up to 2048,
+# horizon up to 128 per call (we chunk if the caller asks for more).
+#
+# Cached under MODEL_DIR via HF_HOME so the first /forecast call downloads,
+# subsequent calls load instantly.
+
+_TIMESFM_CACHE = {"model": None}
+TIMESFM_REPO = "google/timesfm-2.0-500m-pytorch"
+TIMESFM_CONTEXT_LEN = 2048
+TIMESFM_HORIZON_PER_CALL = 128
+
+
+def _get_timesfm():
+    """Lazy-load TimesFM 2.0 into the cache. Returns the TimesFm instance."""
+    if _TIMESFM_CACHE["model"] is not None:
+        return _TIMESFM_CACHE["model"]
+    try:
+        import timesfm
+    except ImportError as e:
+        raise RuntimeError(
+            "timesfm package not installed. Run `pip install timesfm` in the server venv."
+        ) from e
+
+    device = DeviceManager.get_device()
+    backend = "gpu" if device.type in ("cuda", "mps") else "cpu"
+
+    logger.info(f"[TimesFM] Loading {TIMESFM_REPO} (backend={backend})")
+    tfm = timesfm.TimesFm(
+        hparams=timesfm.TimesFmHparams(
+            backend=backend,
+            per_core_batch_size=32,
+            horizon_len=TIMESFM_HORIZON_PER_CALL,
+            num_layers=50,
+            use_positional_embedding=False,
+            context_len=TIMESFM_CONTEXT_LEN,
+        ),
+        checkpoint=timesfm.TimesFmCheckpoint(huggingface_repo_id=TIMESFM_REPO),
+    )
+    _TIMESFM_CACHE["model"] = tfm
+    logger.info("[TimesFM] Ready")
+    return tfm
+
+
+@app.route("/forecast/history", methods=["POST"])
+def forecast_history():
+    """Proxy historical OHLC history from CoinGecko (crypto) or Yahoo Finance
+    (stocks). Renderer-side fetches to Yahoo fail with CORS in Electron; the
+    Flask server has no such restriction. Returns `[{t, v}, ...]`."""
+    data = request.get_json(force=True) or {}
+    symbol = (data.get("symbol") or "").strip()
+    asset_type = (data.get("assetType") or "crypto").strip().lower()
+    days = int(data.get("days", 365))
+    if not symbol:
+        return jsonify({"error": "symbol required"}), 400
+
+    import requests as _req
+    try:
+        if asset_type == "crypto":
+            # Mapping kept here mirrors the client-side list; kept minimal
+            # because CoinGecko IDs don't always match tickers.
+            coingecko_map = {
+                "BTC": "bitcoin", "ETH": "ethereum", "SOL": "solana",
+                "BNB": "binancecoin", "XRP": "ripple", "DOGE": "dogecoin",
+                "ADA": "cardano", "AVAX": "avalanche-2", "LINK": "chainlink",
+                "DOT": "polkadot",
+            }
+            coingecko_id = coingecko_map.get(symbol.upper(), symbol.lower())
+            url = (
+                f"https://api.coingecko.com/api/v3/coins/{coingecko_id}"
+                f"/market_chart?vs_currency=usd&days={days}&interval=daily"
+            )
+            r = _req.get(url, timeout=20)
+            r.raise_for_status()
+            body = r.json()
+            series = [
+                {"t": int(t // 1000), "v": float(v)}
+                for (t, v) in (body.get("prices") or [])
+            ]
+        else:
+            # Yahoo Finance public chart API — requires a browser-like
+            # user-agent header to avoid 401.
+            if days <= 365:
+                yahoo_range = "1y"
+            elif days <= 730:
+                yahoo_range = "2y"
+            elif days <= 1825:
+                yahoo_range = "5y"
+            else:
+                yahoo_range = "max"
+            url = (
+                f"https://query1.finance.yahoo.com/v8/finance/chart/"
+                f"{symbol}?range={yahoo_range}&interval=1d"
+            )
+            r = _req.get(
+                url,
+                timeout=20,
+                headers={
+                    "User-Agent": (
+                        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
+                        "AppleWebKit/537.36 (KHTML, like Gecko) "
+                        "Chrome/120.0.0.0 Safari/537.36"
+                    ),
+                    "Accept": "application/json",
+                },
+            )
+            r.raise_for_status()
+            body = r.json()
+            result = (body.get("chart", {}).get("result") or [None])[0]
+            if not result:
+                return jsonify({"error": "no data from Yahoo Finance"}), 502
+            times = result.get("timestamp", [])
+            closes = (result.get("indicators", {}).get("quote") or [{}])[0].get("close", [])
+            series = []
+            for i in range(len(times)):
+                if i < len(closes) and closes[i] is not None:
+                    series.append({"t": int(times[i]), "v": float(closes[i])})
+            if days > 0:
+                series = series[-days:]
+
+        return jsonify({"symbol": symbol, "assetType": asset_type, "series": series})
+    except Exception as e:
+        logger.exception("[forecast/history] fetch failed for %s/%s", asset_type, symbol)
+        return jsonify({"error": str(e), "symbol": symbol, "assetType": asset_type}), 502
+
+
+@app.route("/forecast", methods=["POST"])
+def forecast_timeseries():
+    """
+    Forecast a 1-D time series using Google TimesFM 2.0 (500M).
+
+    Request JSON:
+        {
+            "series": [float, ...],   // recent history (most recent at end)
+            "horizon": int,           // # future points to forecast (1..512)
+            "freq": int               // 0=hourly, 1=daily, 2=weekly (default 1)
+        }
+
+    Response JSON:
+        {
+            "forecast": [float, ...],       // point forecast
+            "lower80":  [float, ...],       // 80% PI lower
+            "upper80":  [float, ...],       // 80% PI upper
+            "lower95":  [float, ...],       // 95% PI lower
+            "upper95":  [float, ...],       // 95% PI upper
+            "model": "google/timesfm-2.0-500m-pytorch"
+        }
+    """
+    import numpy as _np
+    data = request.get_json(force=True) or {}
+    series = data.get("series")
+    if not isinstance(series, list) or len(series) < 16:
+        return jsonify({"error": "Provide `series` as a list of >=16 numeric points."}), 400
+
+    try:
+        history = _np.asarray(series, dtype=_np.float32)
+    except Exception as e:
+        return jsonify({"error": f"Invalid series: {e}"}), 400
+
+    horizon = int(data.get("horizon", 30))
+    horizon = max(1, min(512, horizon))
+    freq = int(data.get("freq", 1))  # 0 hourly, 1 daily, 2 weekly
+
+    try:
+        tfm = _get_timesfm()
+    except Exception as e:
+        logger.exception("[TimesFM] Failed to load model")
+        return jsonify({"error": str(e)}), 500
+
+    # Trim to context_len to stay within the model's window.
+    if history.shape[0] > TIMESFM_CONTEXT_LEN:
+        history = history[-TIMESFM_CONTEXT_LEN:]
+
+    try:
+        # TimesFM's native horizon is 128 per call. Chunk by rolling the input.
+        remaining = horizon
+        point_forecast = []
+        quantiles = []  # list of 10-element arrays (10%, 20%, ..., 100%)
+        ctx = history.copy()
+        while remaining > 0:
+            step = min(remaining, TIMESFM_HORIZON_PER_CALL)
+            point, quant = tfm.forecast([ctx], freq=[freq])
+            # point[0] shape: (TIMESFM_HORIZON_PER_CALL,)
+            # quant[0] shape: (TIMESFM_HORIZON_PER_CALL, 10)
+            point_chunk = point[0][:step]
+            quant_chunk = quant[0][:step]
+            point_forecast.extend(point_chunk.tolist())
+            quantiles.extend(quant_chunk.tolist())
+            # Roll context forward: append the point forecast, trim oldest.
+            ctx = _np.concatenate([ctx, point_chunk], axis=0)[-TIMESFM_CONTEXT_LEN:]
+            remaining -= step
+
+        q = _np.array(quantiles)  # shape (horizon, 10)
+        # TimesFM quantile columns are at 0.1, 0.2, ..., 1.0 (i.e. 10%..100%).
+        # 80% PI: quantile 0.1 → 0.9  → indices 0 and 8
+        # 95% PI: quantile 0.025 → 0.975 — not exact in 10-quantile output,
+        # so we approximate with 0.1/0.9 shifted outward by 1.5x the band.
+        lower80 = q[:, 0].tolist()
+        upper80 = q[:, 8].tolist()
+        mean = _np.array(point_forecast)
+        band80 = (q[:, 8] - q[:, 0]) * 0.5
+        lower95 = (mean - band80 * 1.5).tolist()
+        upper95 = (mean + band80 * 1.5).tolist()
+
+        return jsonify({
+            "forecast": [float(x) for x in point_forecast],
+            "lower80": [float(x) for x in lower80],
+            "upper80": [float(x) for x in upper80],
+            "lower95": [float(x) for x in lower95],
+            "upper95": [float(x) for x in upper95],
+            "horizon": horizon,
+            "freq": freq,
+            "model": TIMESFM_REPO,
+        })
+    except Exception as e:
+        logger.exception("[TimesFM] Forecast failed")
+        return jsonify({"error": str(e)}), 500
 
 
 # =============================================================================
@@ -5781,14 +6613,10 @@ def memory_clear():
         unloaded = []
         preserved = []
 
-        # Unload ACE-Step v1.5 DiT handler
-        global _ace_step_dit
-        if _ace_step_dit is not None:
-            try:
-                del _ace_step_dit
-            except:
-                pass
-            _ace_step_dit = None
+        # Unload ACE-Step v1.5 DiT handlers
+        global _ace_step_handlers
+        if _ace_step_handlers:
+            _ace_step_handlers.clear()
             unloaded.append("ace_step_music")
 
         # Unload ACE-Step v1.5 LLM handler (for quality mode)

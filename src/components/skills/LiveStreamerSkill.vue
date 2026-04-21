@@ -633,6 +633,9 @@
 
 <script>
 import { ref, reactive, computed, onMounted, onUnmounted } from 'vue';
+import { hasPurchasedSkill, isDevMode } from '../../services/agent.service.js';
+
+const SKILL_ID = 'live-streaming-v1.0.0';
 
 export default {
   name: 'LiveStreamerSkill',
@@ -888,6 +891,10 @@ export default {
     let chatClient = null;
 
     async function connectChat() {
+      if (!isDevMode() && !(await hasPurchasedSkill(SKILL_ID))) {
+        showStatus('Skill not purchased — live streaming blocked.', 'error');
+        return;
+      }
       chatConnecting.value = true;
       emit('status-update', `Connecting to ${chatPlatform.value}...`);
       try {
@@ -1040,6 +1047,10 @@ export default {
     let isProcessing = false;
     async function processQueue() {
       if (isProcessing || isPaused.value || queue.value.length === 0) return;
+      if (!isDevMode() && !(await hasPurchasedSkill(SKILL_ID))) {
+        console.warn('[LiveStreamer] Skill not purchased — queue processing blocked.');
+        return;
+      }
       isProcessing = true;
       const item = queue.value.shift();
       currentGeneration.value = item;

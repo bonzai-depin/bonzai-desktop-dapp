@@ -133,6 +133,53 @@
       </div>
     </div>
 
+    <!-- Whale Pulse — live feed of recent large positions from top traders.
+         Auto-refreshes every 30s while visible. Click any row to jump to
+         that market card below. -->
+    <div
+      v-if="whalePulse.length > 0 || isLoadingPulse"
+      class="models__activity--payouts mt-5 mb-4 has-text-left"
+    >
+      <h4 class="fira-sans-condensed-black-italic is-size-3 has-text-white mb-3">
+        <span class="material-symbols-outlined is-size-2 mr-2" style="color: var(--bulma-warning)">
+          water_drop
+        </span>
+        Whale Pulse
+        <span class="is-size-7 has-text-grey-light ml-2">
+          <span
+            class="material-symbols-outlined"
+            :class="{ rotating: isLoadingPulse }"
+            style="font-size: 14px; vertical-align: middle"
+          >autorenew</span>
+          auto-refreshes every 30s
+        </span>
+      </h4>
+      <div v-if="whalePulse.length === 0 && isLoadingPulse" class="has-text-grey-light is-size-7">
+        Scanning top traders for new positions…
+      </div>
+      <div v-else class="whale-pulse-feed">
+        <div
+          v-for="(pulse, pIdx) in whalePulse.slice(0, 8)"
+          :key="pIdx"
+          class="whale-pulse-row"
+        >
+          <span class="tag is-warning fira-sans-condensed-black-italic">
+            #{{ pulse.rank }}
+          </span>
+          <span class="whale-pulse-question">{{ pulse.question }}</span>
+          <span class="tag is-info">
+            {{ pulse.outcome }} @ {{ (pulse.price * 100).toFixed(0) }}%
+          </span>
+          <span class="tag is-success">
+            ${{ formatNumber(pulse.size) }}
+          </span>
+          <span class="is-size-7 has-text-grey-light ml-2">
+            {{ formatRelativeTime(pulse.seenAt) }}
+          </span>
+        </div>
+      </div>
+    </div>
+
     <!-- Analysis Results -->
     <div v-if="analysisHistory.length > 0" class="analysis-history">
       <div
@@ -220,6 +267,29 @@
                   ${{ formatNumber(rec.conviction.totalSize) }}
                 </span>
               </div>
+              <!-- YES/NO price bar — visualizes market conviction at a glance. -->
+              <div class="price-bar mt-3">
+                <div
+                  class="price-bar-yes"
+                  :style="{ width: (rec.market.currentPrice * 100).toFixed(1) + '%' }"
+                >
+                  <span class="price-bar-label">
+                    {{ rec.outcome }} {{ (rec.market.currentPrice * 100).toFixed(0) }}¢
+                  </span>
+                </div>
+                <div
+                  class="price-bar-no"
+                  :style="{ width: ((1 - rec.market.currentPrice) * 100).toFixed(1) + '%' }"
+                >
+                  <span class="price-bar-label">
+                    {{ rec.outcome === 'YES' ? 'NO' : 'YES' }} {{ ((1 - rec.market.currentPrice) * 100).toFixed(0) }}¢
+                  </span>
+                </div>
+              </div>
+              <div class="is-size-7 has-text-grey-light mt-2">
+                Suggested copy: <strong>${{ formatNumber(rec.conviction.totalSize * 0.1 / rec.conviction.traderCount) }}</strong>
+                (10% of avg whale size)
+              </div>
             </div>
 
             <!-- Traders holding this position -->
@@ -298,9 +368,14 @@
 </template>
 
 <script>
-import { ref, reactive, computed, onMounted } from 'vue';
+import { ref, reactive, computed, onMounted, onBeforeUnmount } from 'vue';
 import VueMarkdown from 'vue-markdown-render';
 import polymarketAgent from '../polymarketAgent.js';
+import { hasPurchasedSkill, isDevMode } from '../../services/agent.service.js';
+
+const SKILL_ID = 'polymarket-top-performers-v1.0.0';
+const WHALE_PULSE_INTERVAL_MS = 30_000;
+const WHALE_PULSE_MIN_SIZE = 5_000;  // only flag positions ≥ $5k
 
 export default {
   name: 'PolymarketSkill',
@@ -324,6 +399,12 @@ export default {
     const selectedConviction = ref(2);
     const analysisHistory = ref([]);
     const investmentTheses = reactive({});
+
+    // Whale pulse — recent large positions from top traders.
+    const whalePulse = ref([]);
+    const isLoadingPulse = ref(false);
+    const seenPositions = new Set();
+    let pulseTimer = null;
 
     // Configuration
     const categories = polymarketAgent.categories;
@@ -368,6 +449,12 @@ export default {
     };
 
     const runAnalysis = async () => {
+      // Purchase gate: SmartAgent also shows a preview screen, but this
+      // guards programmatic calls (console, extensions) that bypass the UI.
+      if (!isDevMode() && !(await hasPurchasedSkill(SKILL_ID))) {
+        console.warn('[Polymarket] Skill not purchased — execution blocked.');
+        return;
+      }
       isAnalyzing.value = true;
       emit('analyzing', true);
       Object.keys(investmentTheses).forEach((k) => delete investmentTheses[k]);
@@ -456,8 +543,79 @@ Be direct and analytical.`;
       }
     };
 
+    // ─── Whale Pulse polling ─────────────────────────────────────────────
+    // Re-uses the polymarket fetchTool pipeline via the agent's execute()
+    // layer. Pulls top-10 traders for the current timeframe + fetches their
+    // recent positions; anything new (unseen in this session) that's > size
+    // threshold becomes a "pulse" entry.
+    // Uses the same Electron-side polymarket proxy the main agent already uses.
+    // Keeps params tight so we don't hammer the API from this skill alone.
+    const fetchViaProxy = async (endpoint, params = {}) => {
+      if (!window.polymarketProxy?.fetch) return null;
+      return window.polymarketProxy.fetch(endpoint, params);
+    };
+
+    const pollWhalePulse = async () => {
+      if (isLoadingPulse.value) return;
+      if (!isDevMode() && !(await hasPurchasedSkill(SKILL_ID))) return;
+      isLoadingPulse.value = true;
+      try {
+        const leaderboard = await fetchViaProxy('leaderboard', {
+          category: 'OVERALL', timePeriod: 'DAY', orderBy: 'PNL', limit: 10,
+        });
+        if (!Array.isArray(leaderboard) || leaderboard.length === 0) return;
+
+        const newPulses = [];
+        for (const trader of leaderboard.slice(0, 5)) {
+          if (!trader?.proxyWallet) continue;
+          try {
+            const positions = await fetchViaProxy('positions', {
+              user: trader.proxyWallet,
+              sizeThreshold: WHALE_PULSE_MIN_SIZE,
+              limit: 10,
+              sortBy: 'CURRENT',
+            });
+            for (const pos of positions || []) {
+              const sig = `${trader.proxyWallet}:${pos.conditionId || pos.title}:${pos.outcome}:${pos.size}`;
+              if (seenPositions.has(sig)) continue;
+              seenPositions.add(sig);
+              newPulses.push({
+                rank: trader.rank,
+                wallet: trader.proxyWallet,
+                question: pos.title || '(unknown market)',
+                outcome: pos.outcome,
+                size: pos.size,
+                price: pos.price || pos.currentPrice || 0.5,
+                seenAt: Date.now(),
+                slug: pos.slug || null,
+              });
+            }
+          } catch { /* per-trader failure is fine */ }
+        }
+        whalePulse.value = [...newPulses, ...whalePulse.value].slice(0, 40);
+      } catch (e) {
+        console.warn('[Polymarket] Whale pulse poll failed:', e?.message);
+      } finally {
+        isLoadingPulse.value = false;
+      }
+    };
+
+    const formatRelativeTime = (ts) => {
+      const delta = (Date.now() - ts) / 1000;
+      if (delta < 60) return 'just now';
+      if (delta < 3600) return `${Math.floor(delta / 60)}m ago`;
+      return `${Math.floor(delta / 3600)}h ago`;
+    };
+
     onMounted(() => {
       runAnalysis();
+      // First pulse shortly after mount to populate the feed; then interval.
+      setTimeout(pollWhalePulse, 3000);
+      pulseTimer = setInterval(pollWhalePulse, WHALE_PULSE_INTERVAL_MS);
+    });
+
+    onBeforeUnmount(() => {
+      if (pulseTimer) { clearInterval(pulseTimer); pulseTimer = null; }
     });
 
     return {
@@ -469,7 +627,10 @@ Be direct and analytical.`;
       categories,
       periods,
       convictionLevels,
+      whalePulse,
+      isLoadingPulse,
       formatNumber,
+      formatRelativeTime,
       selectCategoryAndAnalyze,
       selectTimePeriodAndAnalyze,
       selectConvictionAndAnalyze,
@@ -606,5 +767,61 @@ Be direct and analytical.`;
   color: rgba(255, 255, 255, 0.8);
   margin-bottom: 0.5em;
   text-align: left;
+}
+
+/* Whale pulse feed — compact live rows of recent large positions. */
+.whale-pulse-feed {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.whale-pulse-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  background: rgba(255, 255, 255, 0.03);
+  border-left: 3px solid var(--bulma-warning);
+  border-radius: 4px;
+  font-size: 13px;
+}
+.whale-pulse-question {
+  flex: 1;
+  color: rgba(255, 255, 255, 0.9);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* YES/NO price bar — horizontal split that visualizes market conviction. */
+.price-bar {
+  display: flex;
+  height: 28px;
+  border-radius: 4px;
+  overflow: hidden;
+  background: rgba(0, 0, 0, 0.4);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+}
+.price-bar-yes,
+.price-bar-no {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: width 0.3s ease;
+  color: white;
+  font-weight: 700;
+  font-size: 12px;
+}
+.price-bar-yes {
+  background: linear-gradient(90deg, #2cbb5d, #54d17b);
+}
+.price-bar-no {
+  background: linear-gradient(90deg, #d1534c, #e67a73);
+}
+.price-bar-label {
+  padding: 0 8px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 </style>

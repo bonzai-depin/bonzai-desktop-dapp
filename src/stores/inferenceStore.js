@@ -7,6 +7,48 @@
 import { shallowReactive, readonly, computed } from 'vue';
 import { v4 as uuid } from 'uuid';
 
+/**
+ * @typedef {Object} HardwareSpecs
+ * @property {string} cpu - CPU model name
+ * @property {number} cpuCores - Number of CPU cores
+ * @property {number} cpuThreads - Number of CPU threads
+ * @property {number} cpuSpeed - CPU speed in GHz
+ * @property {string} gpu - GPU model name
+ * @property {number} ram - Total RAM in GB
+ * @property {number} memBudget - Available memory budget in GB
+ * @property {number} vram - Available VRAM in GB
+ * @property {string} os - Operating system name
+ * @property {string} arch - CPU architecture
+ * @property {string} platform - Platform identifier
+ */
+
+/**
+ * @typedef {Object} InferenceMetadata
+ * @property {string} [model] - Model identifier used for generation
+ * @property {number} [tokensUsed] - Number of tokens consumed
+ * @property {number|null} [tokensPerSecond] - Generation speed
+ * @property {number|null} [elapsed] - Elapsed time in milliseconds
+ * @property {string} [source] - Inference source ("bonzai" | provider ID)
+ * @property {'local'|'remote'|'private'} [networkMode] - Network mode used
+ * @property {string} [pipeline] - Pipeline name (for image/audio/video)
+ * @property {number} [width] - Output width (images/video)
+ * @property {number} [height] - Output height (images/video)
+ * @property {number} [steps] - Inference steps (images)
+ * @property {string} [image_path] - Local file path for saved images
+ */
+
+/**
+ * @typedef {Object} InferenceRecord
+ * @property {string} id - Unique record ID (UUID)
+ * @property {string} type - Content type ("text"|"image"|"video"|"audio"|"object")
+ * @property {number} timestamp - Unix timestamp in milliseconds
+ * @property {string} createdAt - ISO 8601 timestamp
+ * @property {string} question - Input prompt
+ * @property {Object} answer - Output data (structure varies by type)
+ * @property {Object|null} nft - NFT minting data if minted
+ * @property {HardwareSpecs|null} hardware - Hardware snapshot at generation time
+ */
+
 const STORE_KEYS = {
   textInferences: 'unifiedTextInferences',
   imageInferences: 'unifiedImageInferences',
@@ -135,13 +177,18 @@ export const initializeStore = async () => {
     state.audioInferences.length +
     state.objectInferences.length;
     
-  console.log(`[InferenceStore] Initialized with ${state.totalInferences} total inferences`);
 };
 
 // ==================== Text/Chat Inferences ====================
 
 // Format matches GenerativeText.vue component expectations:
 // { id, question, answer: { text, id }, ...metadata }
+/**
+ * @param {string} question - User prompt
+ * @param {string} answerText - LLM response text
+ * @param {InferenceMetadata} [metadata] - Generation metadata
+ * @returns {Promise<InferenceRecord>}
+ */
 export const addTextInference = async (question, answerText, metadata = {}) => {
   const recordId = uuid();
   const hardware = await getHardwareSpecs();
@@ -180,6 +227,12 @@ export const loadTextInferences = async () => {
 // Format matches GenerativeImage.vue component expectations:
 // { id, question, answer: { status, data: { image, image_path } }, ...metadata }
 
+/**
+ * @param {string} prompt - Image generation prompt
+ * @param {string} imageData - Base64-encoded image data
+ * @param {InferenceMetadata} [metadata] - Generation metadata
+ * @returns {Promise<InferenceRecord>}
+ */
 export const addImageInference = async (prompt, imageData, metadata = {}) => {
   const hardware = await getHardwareSpecs();
   const record = {
@@ -221,6 +274,12 @@ export const loadImageInferences = async () => {
 // Format matches GenerativeVideo.vue component expectations:
 // { id, question, answer: { status, data: { video_path } }, ...metadata }
 
+/**
+ * @param {string} prompt - Video generation prompt
+ * @param {string} videoPath - Local file path to generated video
+ * @param {InferenceMetadata & {duration?: number, fps?: number}} [metadata] - Generation metadata
+ * @returns {Promise<InferenceRecord>}
+ */
 export const addVideoInference = async (prompt, videoPath, metadata = {}) => {
   const hardware = await getHardwareSpecs();
   const record = {
@@ -262,6 +321,12 @@ export const loadVideoInferences = async () => {
 // Format matches GenerativeAudio.vue component expectations:
 // { id, question, answer: { status, data: { audio_path } }, ...metadata }
 
+/**
+ * @param {string} prompt - Audio generation prompt
+ * @param {string} audioPath - Local file path to generated audio
+ * @param {InferenceMetadata & {duration?: number, sampleRate?: number}} [metadata] - Generation metadata
+ * @returns {Promise<InferenceRecord>}
+ */
 export const addAudioInference = async (prompt, audioPath, metadata = {}) => {
   const hardware = await getHardwareSpecs();
   const record = {
@@ -299,6 +364,12 @@ export const loadAudioInferences = async () => {
 
 // ==================== 3D Object Inferences ====================
 
+/**
+ * @param {string} prompt - 3D generation prompt
+ * @param {string} code - Generated Three.js code
+ * @param {InferenceMetadata & {mode?: string}} [metadata] - Generation metadata
+ * @returns {Promise<InferenceRecord>}
+ */
 export const addObjectInference = async (prompt, code, metadata = {}) => {
   const hardware = await getHardwareSpecs();
   const record = createInferenceRecord('object', {
@@ -371,6 +442,15 @@ export const clearObjectInferences = async () => {
 
 /**
  * Mark an inference as having been minted as an NFT
+ * @param {'text'|'image'|'video'|'audio'|'object'} type - Inference type
+ * @param {string} inferenceId - UUID of the inference record
+ * @param {Object} nftData - NFT minting result
+ * @param {string|number} nftData.tokenId - On-chain token ID
+ * @param {string} nftData.contractAddress - NFT contract address
+ * @param {string} nftData.transactionHash - Minting transaction hash
+ * @param {number} [nftData.chainId] - Chain ID (default: 8453 Base)
+ * @param {string} [nftData.explorerUrl] - Block explorer URL
+ * @returns {Promise<boolean>} True if inference was found and updated
  */
 export const markAsMinted = async (type, inferenceId, nftData) => {
   const storeKey = STORE_KEYS[`${type}Inferences`] || STORE_KEYS[`${type}Datasets`];

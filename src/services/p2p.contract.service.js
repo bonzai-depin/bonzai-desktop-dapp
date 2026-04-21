@@ -91,8 +91,8 @@ export const PIPELINE_CATEGORY_IDS = {
   image_turbo: 1,
   image_quality: 2,
   image_standard: 3,
-  image_advanced: 2, // deprecated: routes to image_quality
-  // Audio pipelines (5 is deprecated)
+  image_advanced: 2, // shares P2P category with image_quality
+  // Audio pipelines
   audio_turbo: 6,
   audio_quality: 7,
   // Music pipeline (ACE-Step)
@@ -123,15 +123,12 @@ export const MODEL_TO_CATEGORY = {
   llm_phi_4_mini: 0,
   llm_yi_coder_9b: 0,
   llm_glm_4_7_q2: 0,
-  llm_glm_4_7_q4: 0,
+  llm_glm_4_7: 0,
   llm_glm_4_7_q8: 0,
   llm_qwen3_coder_next: 0,
   // Other pipelines map directly
   ...PIPELINE_CATEGORY_IDS,
 };
-
-// Legacy alias
-export const PIPELINE_IDS = PIPELINE_CATEGORY_IDS;
 
 // ═══════════════════════════════════════════════════════════════════════════
 // CONTRACT INITIALIZATION
@@ -219,7 +216,7 @@ export async function registerProvider(options) {
     } = options;
 
     // Convert pipeline names to IDs
-    const pipelineIds = pipelines.map((p) => PIPELINE_IDS[p] ?? 0);
+    const pipelineIds = pipelines.map((p) => PIPELINE_CATEGORY_IDS[p] ?? 0);
 
     const contract = await getRegistryContract(true);
 
@@ -326,7 +323,7 @@ export async function getProviderByPeerId(peerId) {
  */
 export async function getProvidersForPipeline(pipeline) {
   try {
-    const pipelineId = typeof pipeline === "string" ? PIPELINE_IDS[pipeline] : pipeline;
+    const pipelineId = typeof pipeline === "string" ? PIPELINE_CATEGORY_IDS[pipeline] : pipeline;
     const contract = await getRegistryContract(false);
     const providers = await contract.getProvidersForPipeline(pipelineId);
     return providers.map(formatProvider);
@@ -650,7 +647,7 @@ function formatProvider(provider) {
   }
 
   // Map pipeline IDs back to names
-  const pipelineNames = Object.entries(PIPELINE_IDS);
+  const pipelineNames = Object.entries(PIPELINE_CATEGORY_IDS);
   const pipelines = provider.pipelines.map((id) => {
     const entry = pipelineNames.find(([, v]) => v === Number(id));
     return entry ? entry[0] : `unknown_${id}`;
@@ -747,7 +744,7 @@ export function areContractsDeployed() {
 export default {
   // Constants
   PaymentToken,
-  PIPELINE_IDS,
+  PIPELINE_CATEGORY_IDS,
 
   // Registration
   registerProvider,

@@ -88,25 +88,7 @@ contract BonzaiSkillOwnership is Ownable, ReentrancyGuard, Pausable {
     /// @notice Companion token ID => skill ID => index in skillCompanions array (+ 1, 0 = not registered)
     mapping(uint256 => mapping(bytes32 => uint256)) private _companionSkillIndex;
 
-    /// @notice Wallet => total unclaimed revenue in ETH
-    mapping(address => uint256) public unclaimedRevenue;
-
-    /// @notice Wallet => skill ID => unclaimed revenue in ETH (for UI display)
-    mapping(address => mapping(bytes32 => uint256)) public unclaimedRevenuePerSkill;
-
-    /// @notice Wallet => list of skill IDs with unclaimed revenue (for zeroing on claim)
-    mapping(address => bytes32[]) private _walletSkills;
-
-    /// @notice Wallet => skill ID => whether already tracked in _walletSkills
-    mapping(address => mapping(bytes32 => bool)) private _walletSkillTracked;
-
-    /// @notice Total revenue distributed through this contract
-    uint256 public totalRevenueDistributed;
-
-    /// @notice Total revenue claimed from this contract
-    uint256 public totalRevenueClaimed;
-
-    /// @notice USDC token for USDC revenue distribution
+    /// @notice USDC token — the only currency this marketplace distributes.
     IERC20 public usdcToken;
 
     /// @notice Wallet => total unclaimed USDC revenue
@@ -144,19 +126,6 @@ contract BonzaiSkillOwnership is Ownable, ReentrancyGuard, Pausable {
         uint256 timestamp
     );
 
-    event RevenueDistributed(
-        bytes32 indexed skillId,
-        uint256 totalAmount,
-        uint256 recipientCount,
-        uint256 timestamp
-    );
-
-    event RevenueClaimed(
-        address indexed wallet,
-        uint256 amount,
-        uint256 timestamp
-    );
-
     event RevenueFallbackToTreasury(
         bytes32 indexed skillId,
         uint256 amount,
@@ -167,6 +136,18 @@ contract BonzaiSkillOwnership is Ownable, ReentrancyGuard, Pausable {
         bytes32 indexed skillId,
         uint256 totalAmount,
         uint256 recipientCount,
+        uint256 timestamp
+    );
+
+    /// @notice Per-recipient payout detail — emitted for every non-zero share
+    /// so historical distribution breakdowns can be reconstructed off-chain.
+    event CompanionRevenueShare(
+        bytes32 indexed skillId,
+        address indexed wallet,
+        uint256 indexed companionTokenId,
+        uint256 share,
+        uint256 weight,
+        uint256 totalWeight,
         uint256 timestamp
     );
 
@@ -207,7 +188,7 @@ contract BonzaiSkillOwnership is Ownable, ReentrancyGuard, Pausable {
     error NoRevenueToClaim();
     error TransferFailed(address recipient);
     error NotNFTOwner(address caller, uint256 tokenId);
-    error NoSurplusETH();
+    error NoSurplus();
     error BonzaiTokenUpdated_TransferFailed();
 
     // ═══════════════════════════════════════════════════════════════════════════
@@ -380,98 +361,6 @@ contract BonzaiSkillOwnership is Ownable, ReentrancyGuard, Pausable {
     // ═══════════════════════════════════════════════════════════════════════════
 
     /**
-     * @notice Distribute purchase revenue to registered companion co-owners
-     * @param skillId The skill being purchased
-     * @dev Called by BonzaiSkillRegistry.purchaseSkill() with ETH attached (msg.value).
-     *      Second param is the amount for ABI compatibility but msg.value is used.
-     *      Distribution is weighted by: BONZAI_balance(companionWallet) * profileScore
-     *      If no co-owners registered, revenue goes to treasury.
-     */
-    function distributeRevenue(
-        bytes32 skillId,
-        uint256 /* amount */
-    ) external payable onlySkillRegistry nonReentrant whenNotPaused {
-        CompanionRegistration[] storage companions = skillCompanions[skillId];
-
-        // Fallback: no co-owners, send to treasury
-        if (companions.length == 0) {
-            (bool success, ) = treasury.call{value: msg.value}("");
-            if (!success) revert TransferFailed(treasury);
-
-            emit RevenueFallbackToTreasury(skillId, msg.value, block.timestamp);
-            return;
-        }
-
-        // Calculate weights for all eligible companions
-        uint256 totalWeight = 0;
-        uint256[] memory weights = new uint256[](companions.length);
-        uint256 activeCount = 0;
-
-        for (uint256 i = 0; i < companions.length; ) {
-            // Skip companions whose NFT is no longer owned by the registrant
-            try companionNFT.ownerOf(companions[i].companionTokenId) returns (address currentOwner) {
-                if (currentOwner != companions[i].ownerAddress) {
-                    unchecked { i++; }
-                    continue;
-                }
-            } catch {
-                unchecked { i++; }
-                continue;
-            }
-
-            uint256 bonzaiBalance = bonzaiToken.balanceOf(companions[i].companionWallet);
-            // Normalize balance to whole tokens (divide by 1e18) to prevent
-            // overflow when multiplying by profileScore. Minimum 1 for score-only weight.
-            uint256 normalizedBalance = bonzaiBalance / 1e18;
-            if (normalizedBalance == 0) normalizedBalance = 1;
-            weights[i] = normalizedBalance * uint256(companions[i].profileScore);
-            totalWeight += weights[i];
-            activeCount++;
-            unchecked { i++; }
-        }
-
-        // Fallback: all companions have zero weight
-        if (totalWeight == 0 || activeCount == 0) {
-            (bool success, ) = treasury.call{value: msg.value}("");
-            if (!success) revert TransferFailed(treasury);
-
-            emit RevenueFallbackToTreasury(skillId, msg.value, block.timestamp);
-            return;
-        }
-
-        // Distribute proportionally, crediting unclaimed balances
-        uint256 distributed = 0;
-        for (uint256 i = 0; i < companions.length; ) {
-            if (weights[i] > 0) {
-                uint256 share = (msg.value * weights[i]) / totalWeight;
-                if (share > 0) {
-                    address wallet = companions[i].companionWallet;
-                    // Track skill for this wallet (only once, never re-added)
-                    if (!_walletSkillTracked[wallet][skillId]) {
-                        _walletSkills[wallet].push(skillId);
-                        _walletSkillTracked[wallet][skillId] = true;
-                    }
-                    unclaimedRevenue[wallet] += share;
-                    unclaimedRevenuePerSkill[wallet][skillId] += share;
-                    distributed += share;
-                }
-            }
-            unchecked { i++; }
-        }
-
-        // Dust goes to treasury (rounding remainder)
-        uint256 dust = msg.value - distributed;
-        if (dust > 0) {
-            (bool success, ) = treasury.call{value: dust}("");
-            if (!success) revert TransferFailed(treasury);
-        }
-
-        totalRevenueDistributed += (msg.value - dust);
-
-        emit RevenueDistributed(skillId, msg.value, activeCount, block.timestamp);
-    }
-
-    /**
      * @notice Distribute USDC purchase revenue to registered companion co-owners
      * @param skillId The skill being purchased
      * @param amount The USDC amount to distribute (must be pre-approved and transferred to this contract)
@@ -530,7 +419,9 @@ contract BonzaiSkillOwnership is Ownable, ReentrancyGuard, Pausable {
             return;
         }
 
-        // Distribute proportionally, crediting unclaimed USDC balances
+        // Distribute proportionally, crediting unclaimed USDC balances.
+        // Emit a per-recipient event so historical distribution breakdowns
+        // can be reconstructed off-chain without needing new storage.
         uint256 distributed = 0;
         for (uint256 i = 0; i < companions.length; ) {
             if (weights[i] > 0) {
@@ -539,6 +430,15 @@ contract BonzaiSkillOwnership is Ownable, ReentrancyGuard, Pausable {
                     address wallet = companions[i].companionWallet;
                     unclaimedRevenueUSDC[wallet] += share;
                     distributed += share;
+                    emit CompanionRevenueShare(
+                        skillId,
+                        wallet,
+                        companions[i].companionTokenId,
+                        share,
+                        weights[i],
+                        totalWeight,
+                        block.timestamp
+                    );
                 }
             }
             unchecked { i++; }
@@ -558,32 +458,6 @@ contract BonzaiSkillOwnership is Ownable, ReentrancyGuard, Pausable {
     // ═══════════════════════════════════════════════════════════════════════════
     // REVENUE CLAIMING
     // ═══════════════════════════════════════════════════════════════════════════
-
-    /**
-     * @notice Claim all accumulated revenue
-     * @dev Sends ETH to caller. Uses checks-effects-interactions pattern.
-     */
-    function claimRevenue() external nonReentrant {
-        uint256 amount = unclaimedRevenue[msg.sender];
-        if (amount == 0) revert NoRevenueToClaim();
-
-        // Effects before interactions
-        unclaimedRevenue[msg.sender] = 0;
-        totalRevenueClaimed += amount;
-
-        // Zero all per-skill entries for this wallet (keep _walletSkills intact to prevent quadratic re-growth)
-        bytes32[] storage skills = _walletSkills[msg.sender];
-        for (uint256 i = 0; i < skills.length; ) {
-            delete unclaimedRevenuePerSkill[msg.sender][skills[i]];
-            unchecked { i++; }
-        }
-
-        // Transfer ETH
-        (bool success, ) = msg.sender.call{value: amount}("");
-        if (!success) revert TransferFailed(msg.sender);
-
-        emit RevenueClaimed(msg.sender, amount, block.timestamp);
-    }
 
     /**
      * @notice Claim all accumulated USDC revenue
@@ -768,30 +642,34 @@ contract BonzaiSkillOwnership is Ownable, ReentrancyGuard, Pausable {
 
     /**
      * @notice Get unclaimed revenue for a wallet per skill
-     * @param wallet The wallet address
-     * @param skillId The skill ID
-     * @return Unclaimed ETH amount
+     * @dev Per-skill breakdown was ETH-only and retired with USDC-only payout.
+     *      Kept as a no-op getter for ABI compatibility; returns 0 always.
+     * @return 0 (per-skill tracking not maintained in USDC-only marketplace)
      */
-    function getUnclaimedRevenuePerSkill(address wallet, bytes32 skillId)
+    function getUnclaimedRevenuePerSkill(address /* wallet */, bytes32 /* skillId */)
         external
-        view
+        pure
         returns (uint256)
     {
-        return unclaimedRevenuePerSkill[wallet][skillId];
+        return 0;
     }
 
     /**
-     * @notice Get contract statistics
-     * @return _totalDistributed Total ETH distributed
-     * @return _totalClaimed Total ETH claimed
-     * @return _contractBalance Current ETH balance
+     * @notice Get contract statistics (USDC).
+     * @return _totalDistributed Total USDC distributed (6 decimals)
+     * @return _totalClaimed Total USDC claimed (6 decimals)
+     * @return _contractBalance Current USDC balance held by contract
      */
     function getStats() external view returns (
         uint256 _totalDistributed,
         uint256 _totalClaimed,
         uint256 _contractBalance
     ) {
-        return (totalRevenueDistributed, totalRevenueClaimed, address(this).balance);
+        return (
+            totalRevenueDistributedUSDC,
+            totalRevenueClaimedUSDC,
+            usdcToken.balanceOf(address(this))
+        );
     }
 
     // ═══════════════════════════════════════════════════════════════════════════
@@ -897,24 +775,18 @@ contract BonzaiSkillOwnership is Ownable, ReentrancyGuard, Pausable {
     }
 
     /**
-     * @notice Withdraw surplus ETH that is NOT owed to co-owners.
-     * @dev accountable = totalRevenueDistributed - totalRevenueClaimed
-     *      surplus = address(this).balance - accountable
+     * @notice Withdraw surplus USDC that is NOT owed to co-owners.
+     * @dev accountable = totalRevenueDistributedUSDC - totalRevenueClaimedUSDC
+     *      surplus = usdcToken.balanceOf(this) - accountable
      */
     function withdrawSurplus() external onlyOwner {
-        uint256 accountable = totalRevenueDistributed - totalRevenueClaimed;
-        uint256 balance = address(this).balance;
-        if (balance <= accountable) revert NoSurplusETH();
+        uint256 accountable = totalRevenueDistributedUSDC - totalRevenueClaimedUSDC;
+        uint256 balance = usdcToken.balanceOf(address(this));
+        if (balance <= accountable) revert NoSurplus();
 
         uint256 surplus = balance - accountable;
-        (bool success, ) = owner().call{value: surplus}("");
-        if (!success) revert TransferFailed(owner());
+        usdcToken.safeTransfer(owner(), surplus);
     }
 
     // ═══════════════════════════════════════════════════════════════════════════
-    // RECEIVE
-    // ═══════════════════════════════════════════════════════════════════════════
-
-    /// @notice Accept ETH from SkillRegistry
-    receive() external payable {}
 }

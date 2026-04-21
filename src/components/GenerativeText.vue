@@ -701,6 +701,13 @@ import useClipboard from "vue-clipboard3";
 import MintModal from "./MintModal.vue";
 import { modelStore } from "../stores/modelStore.js";
 import { addTextInference } from "../stores/inferenceStore.js";
+import {
+  LLM_BASE_MODELS,
+  LLM_TIER_ORDER,
+  LLM_TIER_LABELS,
+  listAllLLMs,
+  resolveLLM,
+} from "../skills/flagship.js";
 
 // Debounce utility for persistence
 const debounce = (fn, delay) => {
@@ -953,590 +960,56 @@ export default {
       hasAccess.value = access;
     };
 
-    const availableModels = ref({
-      codestral_22_B: {
-        modelname: "Codestral 22B",
-        modeldesc:
-          "22B-parameter Codestral model from Mistral AI with a 32,768-token context window. Specialized for code generation across 80+ programming languages with Fill-in-Middle support. Best for: dedicated coding copilot, multi-language development, and code completion tasks.",
-        url: "https://huggingface.co/bartowski/Codestral-22B-v0.1-GGUF/resolve/main/Codestral-22B-v0.1-Q4_K_M.gguf",
-        filename: "codestral-22b-v0.1-q4_k_m.gguf",
-        filesize: "13.3 GB",
-        filesizeBytes: 13.3e9,
-        parameters: 22000000000,
-        context: 32768,
-      },
-
-      deepseek_R1_1_5_B: {
-        modelname: "DeepSeek R1 1.5B",
-        modeldesc:
-          "1.5B-parameter DeepSeek-R1 distilled model on the Qwen backbone with a 32,768-token context window. Designed to pack strong chain-of-thought style reasoning into a tiny footprint. Best for: background reasoning agents and math/code helpers on very modest hardware.",
-        url: "https://huggingface.co/unsloth/DeepSeek-R1-Distill-Qwen-1.5B-GGUF/resolve/main/DeepSeek-R1-Distill-Qwen-1.5B-Q4_K_M.gguf",
-        filename: "deepseek-r1-distill-qwen-1.5b-q4_k_m.gguf",
-        filesize: "1.12 GB",
-        filesizeBytes: 1.12e9,
-        parameters: 1500000000,
-        context: 32768,
-        thinking: true,
-      },
-
-      deepseek_R1_7_B: {
-        modelname: "DeepSeek R1 7B",
-        modeldesc:
-          "7B-parameter DeepSeek-R1 distilled Qwen model with a 32,768-token context window. Provides strong open-weight reasoning for math, code, and analytical tasks. Best for: primary local assistant focused on chain-of-thought reasoning and tool use on a single modern GPU.",
-        url: "https://huggingface.co/unsloth/DeepSeek-R1-Distill-Qwen-7B-GGUF/resolve/main/DeepSeek-R1-Distill-Qwen-7B-Q4_K_M.gguf",
-        filename: "deepseek-r1-distill-qwen-7b-q4_k_m.gguf",
-        filesize: "4.68 GB",
-        filesizeBytes: 4.68e9,
-        parameters: 7000000000,
-        context: 32768,
-        thinking: true,
-      },
-
-      deepseek_R1_32_B: {
-        modelname: "DeepSeek R1 32B",
-        modeldesc:
-          "32B-parameter DeepSeek-R1 distilled Qwen model with a 32,768-token context window. High-end local reasoning model targeting complex multi-step problems and code. Best for: workstation or multi-GPU setups that need near frontier-level open reasoning quality.",
-        url: "https://huggingface.co/unsloth/DeepSeek-R1-Distill-Qwen-32B-GGUF/resolve/main/DeepSeek-R1-Distill-Qwen-32B-Q4_K_M.gguf",
-        filename: "deepseek-r1-distill-qwen-32b-q4_k_m.gguf",
-        filesize: "19.85 GB",
-        filesizeBytes: 19.85e9,
-        parameters: 32000000000,
-        context: 32768,
-        thinking: true,
-      },
-
-      gemma_3_1_B: {
-        modelname: "Gemma 3 1B",
-        modeldesc:
-          "1B-parameter Gemma 3 instruction-tuned model from Google with a 32,768-token context window. A compact, efficient chat and reasoning model. Best for: lightweight multilingual assistants, summarization, and everyday QA on laptops or edge devices.",
-        url: "https://huggingface.co/unsloth/gemma-3-1b-it-GGUF/resolve/main/gemma-3-1b-it-Q4_K_M.gguf",
-        filename: "gemma-3-1b-it-q4_k_m.gguf",
-        filesize: "806 MB",
-        filesizeBytes: 806e6,
-        parameters: 1000000000,
-        context: 32768,
-      },
-
-      gemma_3_12_B: {
-        modelname: "Gemma 3 12B",
-        modeldesc:
-          "12B-parameter Gemma 3 instruction-tuned model from Google with a 32,768-token context window. A compact, efficient chat and reasoning model. Best for: lightweight multilingual assistants, summarization, and everyday QA on laptops or edge devices.",
-        url: "https://huggingface.co/unsloth/gemma-3-12b-it-GGUF/resolve/main/gemma-3-12b-it-UD-Q4_K_XL.gguf",
-        filename: "gemma-3-12b-it-ud-q4_k_xl.gguf",
-        filesize: "7.43 GB",
-        filesizeBytes: 7.43e9,
-        parameters: 12000000000,
-        context: 131072,
-      },
-
-      gpt_oss_20_B: {
-        modelname: "GPT-OSS 20B",
-        modeldesc:
-          "20B-parameter GPT-OSS model with a long context window (up to around 131,072 tokens depending on runtime). Open-weight alternative to proprietary GPT-style models. Best for: demanding local reasoning, tool-using agents, and advanced coding on high-end hardware.",
-        url: "https://huggingface.co/unsloth/gpt-oss-20b-GGUF/resolve/main/gpt-oss-20b-Q4_K_M.gguf",
-        filename: "gpt-oss-20b-q4_k_m.gguf",
-        filesize: "11.6 GB",
-        filesizeBytes: 11.6e9,
-        parameters: 20000000000,
-        context: 131072,
-      },
-
-      hermes_4_14_B: {
-        modelname: "Hermes 4 14B",
-        modeldesc:
-          "14B-parameter Hermes 4 hybrid reasoning model from Nous Research based on Qwen 3 14B with a 32,768-token context window. Features explicit <think> reasoning mode for deliberation. Best for: advanced reasoning, code generation, structured JSON outputs, and creative tasks.",
-        url: "https://huggingface.co/bartowski/NousResearch_Hermes-4-14B-GGUF/resolve/main/NousResearch_Hermes-4-14B-Q4_K_M.gguf",
-        filename: "nousresearch_hermes-4-14b-q4_k_m.gguf",
-        filesize: "8.99 GB",
-        filesizeBytes: 8.99e9,
-        parameters: 14000000000,
-        context: 32768,
-      },
-
-      llama_2_7_B: {
-        modelname: "LLaMA 2 7B",
-        modeldesc:
-          "7B-parameter LLaMA 2 chat model from Meta with a 4,096-token context window. Classic open-weight assistant baseline. Best for: compatibility with older llama.cpp tooling, simple chatbots, and lightweight coding helpers.",
-        url: "https://huggingface.co/TheBloke/Llama-2-7B-Chat-GGUF/resolve/main/llama-2-7b-chat.Q4_K_M.gguf",
-        filename: "llama-2-7b-chat-q4_k_m.gguf",
-        filesize: "4.08 GB",
-        filesizeBytes: 4.08e9,
-        parameters: 7000000000,
-        context: 4096,
-      },
-
-      llama_3_1_8_B: {
-        modelname: "LLaMA 3.1 8B",
-        modeldesc:
-          "8B-parameter LLaMA 3.1 instruct model from Meta with a 131,072-token context window. Modern, strong general-purpose assistant with good multilingual and coding performance. Best for: main local chat and coding assistant on a single recent GPU.",
-        url: "https://huggingface.co/lmstudio-community/Meta-Llama-3.1-8B-Instruct-GGUF/resolve/main/Meta-Llama-3.1-8B-Instruct-Q4_K_M.gguf",
-        filename: "meta-llama-3.1-8b-instruct-q4_k_m.gguf",
-        filesize: "4.92 GB",
-        filesizeBytes: 4.92e9,
-        parameters: 8000000000,
-        context: 131072,
-      },
-
-      mistral_7_B: {
-        modelname: "Mistral 7B",
-        modeldesc:
-          "7B-parameter Mistral Instruct v0.2 model from Mistral AI with a 32,768-token context window. Efficient and fast with strong instruction following. Best for: multilingual chat, summarization, and tools/agent orchestration on a single consumer GPU.",
-        url: "https://huggingface.co/TheBloke/Mistral-7B-Instruct-v0.2-GGUF/resolve/main/mistral-7b-instruct-v0.2.Q4_K_M.gguf",
-        filename: "mistral-7b-instruct-v0.2-q4_k_m.gguf",
-        filesize: "4.37 GB",
-        filesizeBytes: 4.37e9,
-        parameters: 7000000000,
-        context: 32768,
-      },
-
-      mythomax_l2_13_B: {
-        modelname: "MythoMax L2 13B",
-        modeldesc:
-          "13B-parameter MythoMax L2 model combining MythoLogic-L2 and Huginn with a 4,096-token context window. Exceptional creative writing and roleplay capabilities with nuanced character portrayal. Best for: interactive fiction, roleplay companions, and creative storytelling.",
-        url: "https://huggingface.co/TheBloke/MythoMax-L2-13B-GGUF/resolve/main/mythomax-l2-13b.Q4_K_M.gguf",
-        filename: "mythomax-l2-13b.q4_k_m.gguf",
-        filesize: "7.87 GB",
-        filesizeBytes: 7.87e9,
-        parameters: 13000000000,
-        context: 4096,
-      },
-
-      phi_3_3_8_B: {
-        modelname: "Phi-3 Mini 3.8B",
-        modeldesc:
-          "3.8B-parameter Phi-3 Mini model from Microsoft with a 4,096-token context window. Trained on curated synthetic and filtered web data for strong small-model reasoning. Best for: very fast local chatbots, short-context coding, and educational assistants on CPU or iGPU.",
-        url: "https://huggingface.co/microsoft/Phi-3-mini-4k-instruct-gguf/resolve/main/Phi-3-mini-4k-instruct-q4.gguf",
-        filename: "phi-3-mini-4k-instruct-q4.gguf",
-        filesize: "2.39 GB",
-        filesizeBytes: 2.39e9,
-        parameters: 3800000000,
-        context: 4096,
-      },
-
-      phi_4_3_8_B: {
-        modelname: "Phi-4 Mini 3.8B",
-        modeldesc:
-          "3.8B-parameter Phi-4 Mini instruction-tuned model from Microsoft with a 128,000-token context window. Long-context, reasoning-focused small model. Best for: document QA, longer chats, and compact local assistants that still handle large prompts.",
-        url: "https://huggingface.co/unsloth/Phi-4-mini-instruct-GGUF/resolve/main/Phi-4-mini-instruct-Q4_K_M.gguf",
-        filename: "phi-4-mini-instruct-q4_k_m.gguf",
-        filesize: "2.49 GB",
-        filesizeBytes: 2.49e9,
-        parameters: 3800000000,
-        context: 128000,
-      },
-
-      yi_coder_9_B: {
-        modelname: "Yi-Coder 9B Chat",
-        modeldesc:
-          "9B-parameter Yi-Coder Chat model from 01.AI with 128K context window. First sub-10B model to pass 20% on LiveCodeBench. Supports 52 programming languages. Best for: capable coding assistant on modest hardware, long-context code understanding.",
-        url: "https://huggingface.co/bartowski/Yi-Coder-9B-Chat-GGUF/resolve/main/Yi-Coder-9B-Chat-Q5_K_M.gguf",
-        filename: "yi-coder-9b-chat-q5_k_m.gguf",
-        filesize: "6.26 GB",
-        filesizeBytes: 6.26e9,
-        parameters: 9000000000,
-        context: 131072,
-      },
-
-      yi_1_5_coder_9_B: {
-        modelname: "Yi-Coder 1.5 9B Chat",
-        modeldesc:
-          "9B-parameter Yi-Coder Chat model from 01.AI with 128K context window. First sub-10B model to pass 20% on LiveCodeBench. Supports 52 programming languages. Best for: capable coding assistant on modest hardware, long-context code understanding.",
-        url: "https://huggingface.co/bartowski/Yi-1.5-9B-Chat-GGUF/resolve/main/Yi-1.5-9B-Chat-Q5_K_M.gguf",
-        filename: "yi1.5-coder-9b-chat-q5_k_m.gguf",
-        filesize: "6.26 GB",
-        filesizeBytes: 6.26e9,
-        parameters: 9000000000,
-        context: 131072,
-      },
-
-      glm_4_7_flash_q2: {
-        modelname: "GLM 4.7 Flash Q2",
-        modeldesc:
-          "30B-parameter Mixture-of-Experts model from Zhipu AI with only 3B active parameters per forward pass and 200K context. Q2_K_XL quantization for fastest inference and lowest memory. Best for: uncensored creative writing, coding assistance, and general-purpose AI on consumer hardware.",
-        url: "https://huggingface.co/unsloth/GLM-4.7-Flash-GGUF/resolve/main/GLM-4.7-Flash-UD-Q2_K_XL.gguf",
-        filename: "glm-4.7-flash-ud-q2_k_xl.gguf",
-        filesize: "11.9 GB",
-        filesizeBytes: 11.9e9,
-        parameters: 30000000000,
-        activeParameters: 3000000000,
-        isMoE: true,
-        layers: 47,
-        kvHeads: 20,
-        headDim: 64,
-        context: 200000,
-      },
-
-      glm_4_7_flash_q4: {
-        modelname: "GLM 4.7 Flash Q4",
-        modeldesc:
-          "30B-parameter Mixture-of-Experts model from Zhipu AI with only 3B active parameters per forward pass and 200K context. Q4_K_XL quantization for balanced quality and speed. Best for: uncensored creative writing, coding assistance, reasoning, and general-purpose AI.",
-        url: "https://huggingface.co/unsloth/GLM-4.7-Flash-GGUF/resolve/main/GLM-4.7-Flash-UD-Q4_K_XL.gguf",
-        filename: "glm-4.7-flash-ud-q4_k_xl.gguf",
-        filesize: "17.5 GB",
-        filesizeBytes: 17.5e9,
-        parameters: 30000000000,
-        activeParameters: 3000000000,
-        isMoE: true,
-        layers: 47,
-        kvHeads: 20,
-        headDim: 64,
-        context: 200000,
-      },
-
-      glm_4_7_flash_q8: {
-        modelname: "GLM 4.7 Flash Q8",
-        modeldesc:
-          "30B-parameter Mixture-of-Experts model from Zhipu AI with only 3B active parameters per forward pass and 200K context. Q8_K_XL quantization for highest quality output. Best for: maximum fidelity creative writing, coding, and reasoning when memory allows.",
-        url: "https://huggingface.co/unsloth/GLM-4.7-Flash-GGUF/resolve/main/GLM-4.7-Flash-UD-Q8_K_XL.gguf",
-        filename: "glm-4.7-flash-ud-q8_k_xl.gguf",
-        filesize: "35.6 GB",
-        filesizeBytes: 35.6e9,
-        parameters: 30000000000,
-        activeParameters: 3000000000,
-        isMoE: true,
-        layers: 47,
-        kvHeads: 20,
-        headDim: 64,
-        context: 200000,
-      },
-
-      qwen3_coder_next_80_B: {
-        modelname: "Qwen 3 Coder Next 80B A3B",
-        modeldesc:
-          "80B-parameter Mixture-of-Experts Qwen3-Coder-Next model with only 3B active parameters per token and a native 262,144-token context window. Hybrid architecture (Gated DeltaNet + Gated Attention + MoE with 512 experts) designed for coding agents and long-horizon agentic reasoning. Best for: advanced coding copilots, multi-file refactoring, complex tool use, and IDE-integrated development agents.",
-        url: "https://huggingface.co/unsloth/Qwen3-Coder-Next-GGUF/resolve/main/Qwen3-Coder-Next-Q4_K_M.gguf",
-        filename: "qwen3-coder-next-q4_k_m.gguf",
-        filesize: "48.5 GB",
-        filesizeBytes: 48.5e9,
-        parameters: 80000000000,
-        activeParameters: 3000000000,
-        isMoE: true,
-        context: 262144,
-      },
-
-      qwen3_5_27_B: {
-        modelname: "Qwen 3.5 27B",
-        modeldesc:
-          "27B-parameter Qwen 3.5 hybrid attention model combining DeltaNet linear attention with Gated Attention and a native 262,144-token context window. Q2_K quantization fits 32GB unified memory. Best for: advanced reasoning, creative writing, coding, and vision-capable tasks on Apple Silicon.",
-        url: "https://huggingface.co/unsloth/Qwen3.5-27B-GGUF/resolve/main/Qwen3.5-27B-UD-Q2_K_XL.gguf",
-        filename: "qwen3.5-27b-ud-q2_k_xl.gguf",
-        filesize: "11.2 GB",
-        filesizeBytes: 11.2e9,
-        parameters: 27000000000,
-        activeParameters: 8000000000,
-        context: 262144,
-        thinking: true,
-      },
-
-      nanbeige_4_1_3_B: {
-        modelname: "Nanbeige 4.1 3B",
-        modeldesc:
-          "3B-parameter Nanbeige 4.1 model fine-tuned via SFT and RL for reasoning, preference alignment, and agentic capabilities. Supports English and Chinese. Excels at code, math, and multi-step reasoning in a compact package. Best for: lightweight reasoning tasks, code generation, tool use, and 3D object generation.",
-        url: "https://huggingface.co/Edge-Quant/Nanbeige4.1-3B-Q4_K_M-GGUF/resolve/main/nanbeige4.1-3b-q4_k_m.gguf",
-        filename: "nanbeige4.1-3b-q4_k_m.gguf",
-        filesize: "2.44 GB",
-        filesizeBytes: 2.44e9,
-        parameters: 3000000000,
-        context: 32768,
-      },
-
-      // ─── Qwen 3.5 Family (thinking models) ─────────────────────────────
-      qwen3_5_0_8_B: {
-        modelname: "Qwen 3.5 0.8B",
-        modeldesc:
-          "0.8B-parameter Qwen 3.5 ultra-compact hybrid model with Gated DeltaNet + Gated Attention and 131K context. The smallest Qwen3.5, ideal for fast captioning, lightweight assistants, and edge deployment. Best for: video captioning, quick summarization, and background agents on any hardware.",
-        url: "https://huggingface.co/unsloth/Qwen3.5-0.8B-GGUF/resolve/main/Qwen3.5-0.8B-Q4_K_M.gguf",
-        filename: "qwen3.5-0.8b-q4_k_m.gguf",
-        filesize: "600 MB",
-        filesizeBytes: 600e6,
-        parameters: 800000000,
-        context: 131072,
-      },
-
-      qwen3_5_9_B_q4: {
-        modelname: "Qwen 3.5 9B Q4",
-        modeldesc:
-          "9B-parameter Qwen 3.5 hybrid model with Gated DeltaNet + Gated Attention and 262K context. Q4_K_XL quantization. Fast dense architecture ideal for code generation, reasoning, and creative tasks. Best for: high-quality output with fast inference on 16GB+ machines.",
-        url: "https://huggingface.co/unsloth/Qwen3.5-9B-GGUF/resolve/main/Qwen3.5-9B-UD-Q4_K_XL.gguf",
-        filename: "qwen3.5-9b-ud-q4_k_xl.gguf",
-        filesize: "5.97 GB",
-        filesizeBytes: 5.97e9,
-        parameters: 9000000000,
-        context: 262144,
-        thinking: true,
-      },
-
-      qwen3_5_27_B_q4: {
-        modelname: "Qwen 3.5 27B Q4",
-        modeldesc:
-          "27B-parameter Qwen 3.5 hybrid attention model with Q4_K_XL quantization and 262K context. Higher fidelity than Q2_K at the cost of more memory. Best for: users with 48GB+ unified memory wanting better quality Qwen 3.5 output.",
-        url: "https://huggingface.co/unsloth/Qwen3.5-27B-GGUF/resolve/main/Qwen3.5-27B-UD-Q4_K_XL.gguf",
-        filename: "qwen3.5-27b-ud-q4_k_xl.gguf",
-        filesize: "16.7 GB",
-        filesizeBytes: 16.7e9,
-        parameters: 27000000000,
-        activeParameters: 8000000000,
-        context: 262144,
-        thinking: true,
-      },
-      qwen3_5_27_B_q8: {
-        modelname: "Qwen 3.5 27B Q8",
-        modeldesc:
-          "27B-parameter Qwen 3.5 hybrid attention model with Q8_K_XL quantization and 262K context. Near-lossless quality for maximum fidelity. Best for: workstations with 64GB+ memory wanting the best Qwen 3.5 27B quality.",
-        url: "https://huggingface.co/unsloth/Qwen3.5-27B-GGUF/resolve/main/Qwen3.5-27B-UD-Q8_K_XL.gguf",
-        filename: "qwen3.5-27b-ud-q8_k_xl.gguf",
-        filesize: "32.4 GB",
-        filesizeBytes: 32.4e9,
-        parameters: 27000000000,
-        activeParameters: 8000000000,
-        context: 262144,
-        thinking: true,
-      },
-      qwen3_5_35_B_a3b_iq3: {
-        modelname: "Qwen 3.5 35B A3B IQ3",
-        modeldesc:
-          "35B-parameter MoE Qwen 3.5 model with only 3B active parameters per token and 262K context. IQ3_XXS quantization — compact 3-bit with superior accuracy via Unsloth Dynamic quant. Best for: high-quality 3D code generation and reasoning on consumer hardware.",
-        url: "https://huggingface.co/unsloth/Qwen3.5-35B-A3B-GGUF/resolve/main/Qwen3.5-35B-A3B-UD-IQ3_XXS.gguf",
-        filename: "qwen3.5-35b-a3b-ud-iq3_xxs.gguf",
-        filesize: "13.1 GB",
-        filesizeBytes: 13.1e9,
-        parameters: 35000000000,
-        activeParameters: 3000000000,
-        isMoE: true,
-        context: 262144,
-        thinking: true,
-      },
-      qwen3_5_35_B_a3b_q2: {
-        modelname: "Qwen 3.5 35B A3B",
-        modeldesc:
-          "35B-parameter MoE Qwen 3.5 model with only 3B active parameters per token and 262K context. Q2_K_XL quantization. Ultra-efficient MoE architecture for fast inference. Best for: lightweight yet capable reasoning on consumer hardware.",
-        url: "https://huggingface.co/unsloth/Qwen3.5-35B-A3B-GGUF/resolve/main/Qwen3.5-35B-A3B-UD-Q2_K_XL.gguf",
-        filename: "qwen3.5-35b-a3b-ud-q2_k_xl.gguf",
-        filesize: "12.9 GB",
-        filesizeBytes: 12.9e9,
-        parameters: 35000000000,
-        activeParameters: 3000000000,
-        isMoE: true,
-        context: 262144,
-        thinking: true,
-      },
-      qwen3_5_35_B_a3b_q4: {
-        modelname: "Qwen 3.5 35B A3B Q4",
-        modeldesc:
-          "35B-parameter MoE Qwen 3.5 model with 3B active parameters. Q4_K_XL quantization for higher fidelity. Best for: users wanting better quality MoE inference with moderate memory.",
-        url: "https://huggingface.co/unsloth/Qwen3.5-35B-A3B-GGUF/resolve/main/Qwen3.5-35B-A3B-UD-Q4_K_XL.gguf",
-        filename: "qwen3.5-35b-a3b-ud-q4_k_xl.gguf",
-        filesize: "20.6 GB",
-        filesizeBytes: 20.6e9,
-        parameters: 35000000000,
-        activeParameters: 3000000000,
-        isMoE: true,
-        context: 262144,
-        thinking: true,
-      },
-      qwen3_5_35_B_a3b_q8: {
-        modelname: "Qwen 3.5 35B A3B Q8",
-        modeldesc:
-          "35B-parameter MoE Qwen 3.5 model with 3B active parameters. Q8_K_XL near-lossless quantization. Best for: maximum quality MoE inference on systems with 64GB+ memory.",
-        url: "https://huggingface.co/unsloth/Qwen3.5-35B-A3B-GGUF/resolve/main/Qwen3.5-35B-A3B-UD-Q8_K_XL.gguf",
-        filename: "qwen3.5-35b-a3b-ud-q8_k_xl.gguf",
-        filesize: "38.7 GB",
-        filesizeBytes: 38.7e9,
-        parameters: 35000000000,
-        activeParameters: 3000000000,
-        isMoE: true,
-        context: 262144,
-        thinking: true,
-      },
-      // ─── REAP (Redundancy-Eliminated Active Parameters) pruned MoE models ──
-      qwen3_5_28_B_a3b_reap: {
-        modelname: "Qwen 3.5 28B A3B REAP",
-        modeldesc:
-          "28B-parameter REAP-pruned MoE Qwen 3.5 model with 3B active parameters per token and 262K context. Expert pruning reduces size from 35B to 28B while retaining quality. Q4_K_M quantization. Best for: efficient reasoning with lower memory footprint than the full 35B MoE.",
-        url: "https://huggingface.co/barozp/Qwen-3.5-28B-A3B-REAP-GGUF/resolve/main/Qwen-3.5-28B-A3B-REAP-Q4_K_M.gguf",
-        filename: "qwen-3.5-28b-a3b-reap-q4_k_m.gguf",
-        filesize: "16.1 GB",
-        filesizeBytes: 17.26e9,
-        parameters: 28240000000,
-        activeParameters: 3000000000,
-        isMoE: true,
-        context: 262144,
-        thinking: true,
-      },
-      gemma_4_21_B_a4b_reap: {
-        modelname: "Gemma 4 21B A4B REAP",
-        modeldesc:
-          "21B-parameter REAP-pruned MoE Gemma 4 model with 4B active parameters per token and 262K context. Expert-pruned for efficiency while retaining instruction-following quality. Q4_K_M quantization. Best for: fast multimodal reasoning with low memory on consumer hardware.",
-        url: "https://huggingface.co/barozp/gemma-4-21b-a4b-it-REAP-GGUF/resolve/main/gemma-4-21b-a4b-it-REAP-Q4_K_M.gguf",
-        filename: "gemma-4-21b-a4b-it-reap-q4_k_m.gguf",
-        filesize: "12.9 GB",
-        filesizeBytes: 13.83e9,
-        parameters: 21340000000,
-        activeParameters: 4000000000,
-        isMoE: true,
-        context: 262144,
-      },
-
-      qwen3_5_122_B_a10b_q2: {
-        modelname: "Qwen 3.5 122B A10B",
-        modeldesc:
-          "122B-parameter MoE Qwen 3.5 model with 10B active parameters and 262K context. Q2_K_XL quantization. Frontier-class reasoning with efficient MoE inference. Best for: high-end workstations with 64GB+ memory.",
-        url: "https://huggingface.co/unsloth/Qwen3.5-122B-A10B-GGUF/resolve/main/Qwen3.5-122B-A10B-UD-Q2_K_XL.gguf",
-        filename: "qwen3.5-122b-a10b-ud-q2_k_xl.gguf",
-        filesize: "46.7 GB",
-        filesizeBytes: 46.7e9,
-        parameters: 122000000000,
-        activeParameters: 10000000000,
-        isMoE: true,
-        context: 262144,
-        thinking: true,
-      },
-      qwen3_5_122_B_a10b_q4: {
-        modelname: "Qwen 3.5 122B A10B Q4",
-        modeldesc:
-          "122B-parameter MoE Qwen 3.5 model with 10B active parameters. Q4_K_XL quantization (3 shards). Best for: multi-GPU or 128GB+ memory systems wanting high-quality frontier reasoning.",
-        url: "https://huggingface.co/unsloth/Qwen3.5-122B-A10B-GGUF/resolve/main/Qwen3.5-122B-A10B-UD-Q4_K_XL-00001-of-00003.gguf",
-        filename: "qwen3.5-122b-a10b-ud-q4_k_xl-00001-of-00003.gguf",
-        filesize: "68.4 GB",
-        filesizeBytes: 68.4e9,
-        parameters: 122000000000,
-        activeParameters: 10000000000,
-        isMoE: true,
-        context: 262144,
-        thinking: true,
-      },
-      qwen3_5_397_B_a17b_q2: {
-        modelname: "Qwen 3.5 397B A17B",
-        modeldesc:
-          "397B-parameter MoE Qwen 3.5 model with 17B active parameters and 262K context. Q2_K_XL quantization. The largest Qwen 3.5 variant for maximum reasoning capability. Best for: multi-GPU clusters or 256GB+ memory systems.",
-        url: "https://huggingface.co/unsloth/Qwen3.5-397B-A17B-GGUF/resolve/main/Qwen3.5-397B-A17B-UD-Q2_K_XL-00001-of-00005.gguf",
-        filename: "qwen3.5-397b-a17b-ud-q2_k_xl-00001-of-00005.gguf",
-        filesize: "149 GB",
-        filesizeBytes: 149e9,
-        parameters: 397000000000,
-        activeParameters: 17000000000,
-        isMoE: true,
-        context: 262144,
-        thinking: true,
-      },
-      qwen3_5_397_B_a17b_q4: {
-        modelname: "Qwen 3.5 397B A17B Q4",
-        modeldesc:
-          "397B-parameter MoE Qwen 3.5 model with 17B active parameters. Q4_K_XL quantization (6 shards). Best for: maximum quality on multi-GPU clusters with 384GB+ total memory.",
-        url: "https://huggingface.co/unsloth/Qwen3.5-397B-A17B-GGUF/resolve/main/Qwen3.5-397B-A17B-UD-Q4_K_XL-00001-of-00006.gguf",
-        filename: "qwen3.5-397b-a17b-ud-q4_k_xl-00001-of-00006.gguf",
-        filesize: "219 GB",
-        filesizeBytes: 219e9,
-        parameters: 397000000000,
-        activeParameters: 17000000000,
-        isMoE: true,
-        context: 262144,
-        thinking: true,
-      },
-
-      // ─── Kimi K2.5 (thinking model, MoE 1T/32B) ──────────────────────
-      kimi_k2_5_q4: {
-        modelname: "Kimi K2.5 Q4",
-        modeldesc:
-          "1T-parameter MoE model from Moonshot AI with 32B active parameters and 256K context. Q4_K_XL quantization (13 shards). One of the largest open-weight models available. Best for: frontier-class reasoning on multi-GPU clusters with 1TB+ total memory.",
-        url: "https://huggingface.co/unsloth/Kimi-K2.5-GGUF/resolve/main/Kimi-K2.5-UD-Q4_K_XL-00001-of-00013.gguf",
-        filename: "kimi-k2.5-ud-q4_k_xl-00001-of-00013.gguf",
-        filesize: "622 GB",
-        filesizeBytes: 622e9,
-        parameters: 1000000000000,
-        activeParameters: 32000000000,
-        isMoE: true,
-        context: 256000,
-        thinking: true,
-      },
-
-      // ─── MiniMax M2.5 (thinking model, MoE 229B/10B) ─────────────────
-      minimax_m2_5_q4: {
-        modelname: "MiniMax M2.5 Q4",
-        modeldesc:
-          "229B-parameter MoE model from MiniMax with 10B active parameters and 205K context. Q4_K_XL quantization (4 shards). Strong reasoning and code generation at moderate MoE scale. Best for: high-end workstations with 192GB+ memory.",
-        url: "https://huggingface.co/unsloth/MiniMax-M2.5-GGUF/resolve/main/MiniMax-M2.5-UD-Q4_K_XL-00001-of-00004.gguf",
-        filename: "minimax-m2.5-ud-q4_k_xl-00001-of-00004.gguf",
-        filesize: "131 GB",
-        filesizeBytes: 131e9,
-        parameters: 229000000000,
-        activeParameters: 10000000000,
-        isMoE: true,
-        context: 205000,
-        thinking: true,
-      },
-
-      // ─── Devstral Small 2 24B (coding-focused, dense) ─────────────────
-      devstral_24_B_q2: {
-        modelname: "Devstral 24B",
-        modeldesc:
-          "24B-parameter dense coding model from Mistral AI with 256K context. Q2_K_XL quantization. Specialized for code generation, debugging, and software engineering tasks. Best for: dedicated coding copilot on consumer GPUs with 16GB+ VRAM.",
-        url: "https://huggingface.co/unsloth/Devstral-Small-2-24B-Instruct-2512-GGUF/resolve/main/Devstral-Small-2-24B-Instruct-2512-UD-Q2_K_XL.gguf",
-        filename: "devstral-small-2-24b-instruct-2512-ud-q2_k_xl.gguf",
-        filesize: "9.29 GB",
-        filesizeBytes: 9.29e9,
-        parameters: 24000000000,
-        context: 256000,
-      },
-      devstral_24_B_q4: {
-        modelname: "Devstral 24B Q4",
-        modeldesc:
-          "24B-parameter dense coding model from Mistral AI with 256K context. Q4_K_XL quantization for higher fidelity code generation. Best for: serious development work on systems with 24GB+ VRAM.",
-        url: "https://huggingface.co/unsloth/Devstral-Small-2-24B-Instruct-2512-GGUF/resolve/main/Devstral-Small-2-24B-Instruct-2512-UD-Q4_K_XL.gguf",
-        filename: "devstral-small-2-24b-instruct-2512-ud-q4_k_xl.gguf",
-        filesize: "14.5 GB",
-        filesizeBytes: 14.5e9,
-        parameters: 24000000000,
-        context: 256000,
-      },
-      devstral_24_B_q8: {
-        modelname: "Devstral 24B Q8",
-        modeldesc:
-          "24B-parameter dense coding model from Mistral AI with 256K context. Q8_K_XL near-lossless quantization. Best for: maximum code generation quality on workstations with 48GB+ memory.",
-        url: "https://huggingface.co/unsloth/Devstral-Small-2-24B-Instruct-2512-GGUF/resolve/main/Devstral-Small-2-24B-Instruct-2512-UD-Q8_K_XL.gguf",
-        filename: "devstral-small-2-24b-instruct-2512-ud-q8_k_xl.gguf",
-        filesize: "29 GB",
-        filesizeBytes: 29e9,
-        parameters: 24000000000,
-        context: 256000,
-      },
-
-      // ─── Ministral 3 (compact, dense) ─────────────────────────────────
-      ministral_3_3_B_q4: {
-        modelname: "Ministral 3B",
-        modeldesc:
-          "3B-parameter compact instruction model from Mistral AI with 256K context. Q4_K_XL quantization. Ultra-lightweight for edge deployment. Best for: fast local assistants, embedded systems, and quick code helpers on minimal hardware.",
-        url: "https://huggingface.co/unsloth/Ministral-3-3B-Instruct-2512-GGUF/resolve/main/Ministral-3-3B-Instruct-2512-UD-Q4_K_XL.gguf",
-        filename: "ministral-3-3b-instruct-2512-ud-q4_k_xl.gguf",
-        filesize: "2.19 GB",
-        filesizeBytes: 2.19e9,
-        parameters: 3000000000,
-        context: 256000,
-      },
-      ministral_3_8_B_q4: {
-        modelname: "Ministral 8B",
-        modeldesc:
-          "8B-parameter instruction model from Mistral AI with 256K context. Q4_K_XL quantization. Strong general-purpose performance in a compact package. Best for: versatile local assistant with long context on a single consumer GPU.",
-        url: "https://huggingface.co/unsloth/Ministral-3-8B-Instruct-2512-GGUF/resolve/main/Ministral-3-8B-Instruct-2512-UD-Q4_K_XL.gguf",
-        filename: "ministral-3-8b-instruct-2512-ud-q4_k_xl.gguf",
-        filesize: "5.29 GB",
-        filesizeBytes: 5.29e9,
-        parameters: 8000000000,
-        context: 256000,
-      },
-
-      qwen3_5_4B: {
-        modelname: "Qwen 3.5 4B",
-        modeldesc:
-          "4B-parameter hybrid Qwen 3.5 model with Gated DeltaNet + Gated Attention and 262K context. Q4_K_M quantization. Compact and fast. Best for: efficient local inference, code generation, and 3D scene crafting on modest hardware.",
-        url: "https://huggingface.co/unsloth/Qwen3.5-4B-GGUF/resolve/main/Qwen3.5-4B-Q4_K_M.gguf",
-        filename: "qwen3.5-4b-q4_k_m.gguf",
-        filesize: "2.8 GB",
-        filesizeBytes: 2.8e9,
-        parameters: 4000000000,
-        context: 262144,
-      },
+    // ─── Derived from LLM_BASE_MODELS (flagship.js) ──────────────────────
+    // Each (base model × tier) becomes a picker entry. Source of truth is the
+    // base registry; this block just maps to the shape this component expects
+    // (modelname / modeldesc / filesize rather than name / description / size).
+    const _entryFromResolved = (entry) => ({
+      baseKey: entry.baseKey,
+      tier: entry.tier,
+      availableTiers: entry.availableTiers,
+      modelname: entry.name,
+      modeldesc: entry.description,
+      url: entry.url,
+      filename: entry.filename,
+      filesize: entry.size,
+      filesizeBytes: entry.filesizeBytes,
+      parameters: entry.parameters,
+      activeParameters: entry.activeParameters,
+      isMoE: entry.isMoE,
+      context: entry.context,
+      thinking: entry.thinking,
+      layers: entry.layers,
+      kvHeads: entry.kvHeads,
+      headDim: entry.headDim,
+      shards: entry.shards,
     });
+
+    const availableModels = ref(
+      Object.fromEntries(
+        listAllLLMs().map((entry) => [
+          entry.key.replace(/^llm_/, ""),
+          _entryFromResolved(entry),
+        ])
+      )
+    );
+
+    // ─── Tier state per base model (for future tier-dropdown UI) ────────
+    // Default tier is Q4; per-base overrides allow the picker to highlight
+    // the active tier card. Wired but not yet surfaced as a dropdown — each
+    // tier currently appears as its own card in the list.
+    const tierByBase = ref(
+      Object.fromEntries(
+        Object.keys(LLM_BASE_MODELS).map((baseKey) => [
+          baseKey,
+          LLM_BASE_MODELS[baseKey].tiers.q4 ? "q4" : Object.keys(LLM_BASE_MODELS[baseKey].tiers)[0],
+        ])
+      )
+    );
+
+    const setTierForBase = (baseKey, tier) => {
+      tierByBase.value[baseKey] = tier;
+    };
 
     const sortedModels = computed(() =>
       Object.values(availableModels.value).sort((a, b) =>
@@ -1544,17 +1017,9 @@ export default {
       )
     );
 
-    const currentModel = ref({
-      modelname: "Qwen 3.5 0.8B",
-      modeldesc:
-        "0.8B-parameter Qwen 3.5 ultra-compact hybrid model with Gated DeltaNet + Gated Attention and 131K context. The smallest Qwen3.5, ideal for fast captioning, lightweight assistants, and edge deployment. Best for: video captioning, quick summarization, and background agents on any hardware.",
-      url: "https://huggingface.co/unsloth/Qwen3.5-0.8B-GGUF/resolve/main/Qwen3.5-0.8B-Q4_K_M.gguf",
-      filename: "qwen3.5-0.8b-q4_k_m.gguf",
-      filesize: "600 MB",
-      filesizeBytes: 600e6,
-      parameters: 800000000,
-      context: 131072,
-    });
+    // Default model sourced from the registry — Qwen3.5 0.8B Q4 is the
+    // lightest option and always has a single tier, so it's safe as a start.
+    const currentModel = ref(_entryFromResolved(resolveLLM("qwen3_5_0_8b")));
 
     const pickModel = async (model) => {
       currentModel.value = { ...model };

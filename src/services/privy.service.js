@@ -78,7 +78,6 @@ async function initialize() {
     await privyClient.initialize();
 
     state.isInitialized = true;
-    console.log('[Privy] Client initialized');
   } catch (err) {
     console.error('[Privy] Initialization failed:', err);
     state.error = err.message;
@@ -131,7 +130,6 @@ async function verifyOtp(email, code) {
 
     await _extractEmbeddedWallet(authResult.user);
 
-    console.log('[Privy] Logged in as', state.embeddedWalletAddress);
     return { success: true, address: state.embeddedWalletAddress };
   } catch (err) {
     state.error = err.message;
@@ -200,7 +198,6 @@ async function completeOAuthLogin(authorizationCode, returnedStateCode, provider
 
     await _extractEmbeddedWallet(authResult.user);
 
-    console.log('[Privy] OAuth login as', state.embeddedWalletAddress);
     return { success: true, address: state.embeddedWalletAddress };
   } catch (err) {
     state.error = err.message;
@@ -263,7 +260,6 @@ async function _extractEmbeddedWallet(user) {
     const cleanup = window.electronAPI?.onWalletAddress?.((address) => {
       state.embeddedWalletAddress = address;
       embeddedProvider = _createBrowserViewProvider(address);
-      console.log('[Privy] Non-custodial wallet connected:', address);
     });
 
     // Check if address was already cached from a previous session
@@ -271,7 +267,6 @@ async function _extractEmbeddedWallet(user) {
     if (cached) {
       state.embeddedWalletAddress = cached;
       embeddedProvider = _createBrowserViewProvider(cached);
-      console.log('[Privy] Wallet restored from cache:', cached);
     }
   } catch (err) {
     console.warn('[Privy] Wallet bridge failed:', err.message);

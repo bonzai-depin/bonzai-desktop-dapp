@@ -60,9 +60,9 @@ export class OWSEthersSigner extends ethers.AbstractSigner {
    * Converts ethers-style (domain, types, value) into OWS's single JSON envelope:
    * { types: { EIP712Domain: [...], ...types }, primaryType, domain, message: value }
    *
-   * @param {Object} domain - EIP-712 domain
-   * @param {Object} types - Type definitions (without EIP712Domain)
-   * @param {Object} value - Message values
+   * @param {ethers.TypedDataDomain} domain - EIP-712 domain (name, version, chainId, verifyingContract, salt)
+   * @param {Record<string, Array<{name: string, type: string}>>} types - Type definitions (without EIP712Domain)
+   * @param {Record<string, unknown>} value - Message values matching the primary type
    * @returns {Promise<string>} Signature hex
    */
   async signTypedData(domain, types, value) {
@@ -103,7 +103,7 @@ export class OWSEthersSigner extends ethers.AbstractSigner {
 
   /**
    * Sign a transaction.
-   * @param {ethers.TransactionLike} tx
+   * @param {ethers.TransactionRequest} tx - Transaction to sign
    * @returns {Promise<string>} Signed transaction hex
    */
   async signTransaction(tx) {
@@ -135,8 +135,8 @@ export class OWSEthersSigner extends ethers.AbstractSigner {
 
 /**
  * Recursively convert BigInt values to strings for JSON serialization.
- * @param {*} obj
- * @returns {*}
+ * @param {bigint|string|number|boolean|null|undefined|Array|Record<string, unknown>} obj
+ * @returns {string|number|boolean|null|undefined|Array|Record<string, unknown>}
  */
 function serializeBigInts(obj) {
   if (typeof obj === 'bigint') return obj.toString();

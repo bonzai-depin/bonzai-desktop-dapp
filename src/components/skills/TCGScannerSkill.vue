@@ -446,7 +446,10 @@
 import { ref, computed, onMounted, onUnmounted } from "vue";
 import { v4 as uuid } from "uuid";
 import { getAuthHeaders } from "../../services/auth.service.js";
+import { hasPurchasedSkill, isDevMode } from "../../services/agent.service.js";
 import MintModal from "../MintModal.vue";
+
+const SKILL_ID = "tcg-analysis-v1.0.0";
 
 const API_BASE =
   (typeof process !== "undefined" && process.env?.VITE_API_BASE) ||
@@ -1262,6 +1265,10 @@ Only include keys where you can see the value. Skip keys with no visible data.`,
     // ─── Main Analysis Pipeline ───────────────────────────────────────
     async function analyzeCard() {
       if (!frontBase64.value || isScanning.value || !modelReady.value) return;
+      if (!isDevMode() && !(await hasPurchasedSkill(SKILL_ID))) {
+        console.warn("[TCGScanner] Skill not purchased — execution blocked.");
+        return;
+      }
 
       isScanning.value = true;
       showNotification("Analyzing card...", "info", 0);

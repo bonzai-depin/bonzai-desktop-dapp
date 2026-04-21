@@ -8,6 +8,36 @@
 import { ethers } from "ethers";
 
 // ═══════════════════════════════════════════════════════════════════════════
+// TYPE DEFINITIONS
+// ═══════════════════════════════════════════════════════════════════════════
+
+/**
+ * @typedef {Object} GenerationMeta
+ * @property {string} [type] - Content type (e.g. 'image', 'audio', 'video')
+ * @property {string} [model] - Model identifier used for generation
+ * @property {string} [modelVersion] - Model version string
+ * @property {string} [promptHash] - Hash of the prompt used
+ * @property {number} [timestamp] - Unix timestamp of generation
+ */
+
+/**
+ * @typedef {Object} AttributionMeta
+ * @property {string} [creator] - Creator wallet address
+ * @property {string} [platform] - Platform wallet address
+ */
+
+/**
+ * @typedef {Object} UploadReceipt
+ * @property {string} transactionId - IPFS CID
+ * @property {string} timestamp - Upload timestamp from Pinata
+ * @property {null} signature - Always null for Pinata uploads
+ * @property {string} url - IPFS URI (ipfs://CID)
+ * @property {string} gatewayUrl - HTTP gateway URL
+ * @property {number} size - Content size in bytes
+ * @property {Array<{name: string, value: string}>} tags - Key-value metadata tags
+ */
+
+// ═══════════════════════════════════════════════════════════════════════════
 // CONFIGURATION
 // ═══════════════════════════════════════════════════════════════════════════
 
@@ -50,11 +80,15 @@ let _initialized = false;
 // INITIALIZATION (lightweight — no wallet needed for Pinata)
 // ═══════════════════════════════════════════════════════════════════════════
 
+/**
+ * Initialize the storage service (verifies Pinata credentials).
+ * @param {unknown} [_provider] - Unused (kept for API compat with previous Irys-based service)
+ * @returns {Promise<boolean>} True if initialization succeeded
+ */
 export async function initStorage(_provider) {
   // Verify credentials are available
   getAuthHeaders();
   _initialized = true;
-  console.log("[Storage] Pinata IPFS ready");
   return true;
 }
 
@@ -134,6 +168,9 @@ function extFromMime(contentType) {
 
 /**
  * Build Pinata keyvalues from generation + attribution tags.
+ * @param {GenerationMeta} [generation] - Generation metadata
+ * @param {AttributionMeta} [attribution] - Attribution metadata
+ * @returns {Record<string, string>} Key-value pairs for Pinata metadata
  */
 function buildKeyValues(generation = {}, attribution = {}) {
   const kv = { "App-Name": "BonzAI", "App-Version": "2.0.0" };
@@ -158,9 +195,9 @@ function buildKeyValues(generation = {}, attribution = {}) {
  * @param {Object} params
  * @param {Uint8Array|ArrayBuffer|Blob|string} params.data - Content to upload
  * @param {string} params.contentType - MIME type
- * @param {Object} params.generation - Generation metadata
- * @param {Object} params.attribution - Attribution metadata
- * @returns {Object} Upload receipt
+ * @param {GenerationMeta} [params.generation] - Generation metadata
+ * @param {AttributionMeta} [params.attribution] - Attribution metadata
+ * @returns {Promise<UploadReceipt>} Upload receipt
  */
 export async function uploadContent({
   data,
@@ -207,8 +244,6 @@ export async function uploadContent({
   const result = await res.json();
   const cid = result.IpfsHash;
 
-  console.log(`[Storage] Uploaded: ${cid}`);
-  console.log(`[Storage] URL: ${PINATA_GATEWAY}/${cid}`);
 
   return {
     transactionId: cid,
@@ -227,6 +262,14 @@ export async function uploadContent({
 // UPLOAD — pinJSONToIPFS (metadata)
 // ═══════════════════════════════════════════════════════════════════════════
 
+/**
+ * Upload JSON metadata to IPFS via Pinata.
+ *
+ * @param {Record<string, unknown>} metadata - JSON-serializable metadata object
+ * @param {GenerationMeta} [generation] - Generation metadata tags
+ * @param {AttributionMeta} [attribution] - Attribution metadata tags
+ * @returns {Promise<UploadReceipt>} Upload receipt
+ */
 export async function uploadMetadata(
   metadata,
   generation = {},
@@ -256,7 +299,6 @@ export async function uploadMetadata(
   const result = await res.json();
   const cid = result.IpfsHash;
 
-  console.log(`[Storage] Metadata uploaded: ${cid}`);
 
   return {
     transactionId: cid,
@@ -273,6 +315,16 @@ export async function uploadMetadata(
 // UPLOAD — base64 convenience
 // ═══════════════════════════════════════════════════════════════════════════
 
+/**
+ * Upload base64-encoded content to IPFS via Pinata.
+ *
+ * @param {Object} params
+ * @param {string} params.base64Data - Base64-encoded content (with or without data URI prefix)
+ * @param {string} params.contentType - MIME type
+ * @param {GenerationMeta} [params.generation] - Generation metadata
+ * @param {AttributionMeta} [params.attribution] - Attribution metadata
+ * @returns {Promise<UploadReceipt>} Upload receipt
+ */
 export async function uploadBase64({
   base64Data,
   contentType,
@@ -294,6 +346,14 @@ export async function uploadBase64({
 // UPLOAD — file from path (Electron only)
 // ═══════════════════════════════════════════════════════════════════════════
 
+/**
+ * Upload a file from disk to IPFS via Pinata (Electron only).
+ *
+ * @param {string} filePath - Absolute path to the file
+ * @param {GenerationMeta} [generation] - Generation metadata
+ * @param {AttributionMeta} [attribution] - Attribution metadata
+ * @returns {Promise<UploadReceipt>} Upload receipt
+ */
 export async function uploadFile(filePath, generation, attribution) {
   const fs = typeof window !== "undefined" && window.require?.("fs");
   if (!fs) throw new Error("File upload only available in Electron");
@@ -326,11 +386,21 @@ export async function uploadFile(filePath, generation, attribution) {
 // RETRIEVAL & VERIFICATION
 // ═══════════════════════════════════════════════════════════════════════════
 
+/**
+ * Fetch content from IPFS by CID.
+ * @param {string} cid - IPFS content identifier
+ * @returns {Promise<Response>} Fetch response
+ */
 export async function fetchContent(cid) {
   const url = `${PINATA_GATEWAY}/${cid}`;
   return fetch(url);
 }
 
+/**
+ * Fetch content with provenance metadata.
+ * @param {string} cid - IPFS content identifier
+ * @returns {Promise<{content: Blob, provenance: {transactionId: string, owner: null, timestamp: null, tags: Record<string, never>}}>}
+ */
 export async function fetchWithProvenance(cid) {
   const response = await fetchContent(cid);
   if (!response.ok) throw new Error(`Failed to fetch: ${response.status}`);
@@ -346,6 +416,12 @@ export async function fetchWithProvenance(cid) {
   };
 }
 
+/**
+ * Verify content integrity by comparing keccak256 hash.
+ * @param {string} cid - IPFS content identifier
+ * @param {string} expectedHash - Expected keccak256 hash (0x-prefixed)
+ * @returns {Promise<boolean>} True if content matches expected hash
+ */
 export async function verifyContentIntegrity(cid, expectedHash) {
   const response = await fetchContent(cid);
   const buffer = await response.arrayBuffer();
@@ -357,6 +433,13 @@ export async function verifyContentIntegrity(cid, expectedHash) {
 // UPLOAD — JSON convenience (alias for uploadMetadata)
 // ═══════════════════════════════════════════════════════════════════════════
 
+/**
+ * Upload JSON to IPFS (alias for uploadMetadata).
+ * @param {Record<string, unknown>} json - JSON-serializable object
+ * @param {GenerationMeta} [generation] - Generation metadata tags
+ * @param {AttributionMeta} [attribution] - Attribution metadata tags
+ * @returns {Promise<UploadReceipt>} Upload receipt
+ */
 export async function uploadJSON(json, generation = {}, attribution = {}) {
   return uploadMetadata(json, generation, attribution);
 }

@@ -430,7 +430,6 @@ Each user gets their own collection clone (ERC-1167) via BonzaiCollectiblesFacto
 - 6 pools (one per level/content type)
 - Weekly epochs (604,800 seconds)
 - BONZAI holders register per epoch → claim proportional share after finalization
-- **Companion required**: Must own at least 1 Companion NFT to claim rewards (enforced at `confirmClaim`)
 - 256-block gap enforcement (flash loan protection)
 - Pool thresholds: [1000, 5000, 10000, 25000, 33000, 50000] BONZAI
 - Revenue sources: content mint fees (20%), hook pool fees, royalty splitter distributions

@@ -171,12 +171,69 @@
                 <tr>
                   <th>Skill</th>
                   <th class="has-text-right">Unclaimed Revenue</th>
+                  <th></th>
                 </tr>
               </thead>
               <tbody>
                 <tr v-for="skill in companionOwnedSkills" :key="skill.skillId">
                   <td>{{ skill.name || skill.skillId.slice(0, 10) + '...' }}</td>
-                  <td class="has-text-right">{{ skill.unclaimed }} ETH</td>
+                  <td class="has-text-right">{{ skill.unclaimed }} USDC</td>
+                  <td class="has-text-right">
+                    <button
+                      class="button is-small is-info is-outlined"
+                      :class="{ 'is-loading': updatingSkillId === skill.skillId }"
+                      :disabled="!!updatingSkillId"
+                      @click="updateRegistrationForSkill(skill)"
+                      title="Re-attest to refresh spending profile / agent wallet on-chain"
+                    >
+                      Update
+                    </button>
+                  </td>
+                </tr>
+              </tbody>
+            </table>
+
+            <!-- Historical distribution breakdown -->
+            <h4 class="subtitle is-5 mb-2 mt-4">
+              <span class="material-symbols-outlined mr-1" style="vertical-align: middle">history</span>
+              Distribution History
+              <button
+                class="button is-small is-text ml-2"
+                :class="{ 'is-loading': isLoadingHistory }"
+                @click="loadDistributionHistory"
+                title="Refresh"
+              >
+                <span class="material-symbols-outlined" style="font-size: 16px">refresh</span>
+              </button>
+            </h4>
+            <div v-if="distributionHistory.length === 0 && !isLoadingHistory" class="has-text-grey-light is-size-7 mb-3">
+              No distributions yet. Revenue entries appear here after a skill purchase pays out to this companion.
+            </div>
+            <table v-else class="table is-fullwidth is-size-7 is-narrow">
+              <thead>
+                <tr>
+                  <th>When</th>
+                  <th>Skill</th>
+                  <th class="has-text-right">Share</th>
+                  <th class="has-text-right">Weight</th>
+                  <th></th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr v-for="d in distributionHistory.slice(0, 20)" :key="d.txHash + d.blockNumber">
+                  <td :title="new Date(d.timestamp * 1000).toISOString()">
+                    {{ formatRelativeTime(d.timestamp) }}
+                  </td>
+                  <td>{{ d.skillName || d.skillId.slice(0, 10) + '...' }}</td>
+                  <td class="has-text-right">{{ formatUsdc(d.share) }} USDC</td>
+                  <td class="has-text-right" :title="'weight ' + d.weight + ' / ' + d.totalWeight">
+                    {{ (d.ratio * 100).toFixed(1) }}%
+                  </td>
+                  <td>
+                    <a :href="'https://basescan.org/tx/' + d.txHash" target="_blank" rel="noopener" class="is-size-7">
+                      <span class="material-symbols-outlined" style="font-size: 14px">open_in_new</span>
+                    </a>
+                  </td>
                 </tr>
               </tbody>
             </table>
@@ -323,6 +380,19 @@
           </p>
           <div v-if="registrationError" class="notification is-danger is-light mb-3">
             {{ registrationError }}
+          </div>
+          <div v-if="signerState && !signerState.ready" class="notification is-warning is-light mb-3">
+            <strong>Attestation signer not configured.</strong>
+            <br />
+            Local: <code>{{ signerState.local }}</code>
+            <br />
+            On-chain: <code>{{ signerState.onChain || 'not set' }}</code>
+            <br />
+            <span class="is-size-7">
+              Registration will fail until the contract owner runs
+              <code>scripts/sync-attestation-signer.js</code>.
+              See <code>docs/ATTESTATION_SIGNER_SETUP.md</code>.
+            </span>
           </div>
           <div v-if="eligibleSkills.length === 0" class="notification is-warning is-light">
             No eligible skills found. Your companion needs a spending profile score of at least 5 in a skill's category.
@@ -753,6 +823,7 @@ import { web3Service, switchNetwork } from "../../services/web3.service.js";
 import { walletProviderService } from "../../services/walletProvider.service.js";
 import { owsMigrationService } from "../../services/owsMigration.service.js";
 import { SKILL_CATEGORY_META } from "../../skills/types.js";
+import { validateCompanionAge } from "../../skills/flagship.js";
 import ContextBanner from "../ContextBanner.vue";
 
 export default {
@@ -1057,17 +1128,63 @@ export default {
             const skillData = props.skills.find(s => s.onChain?.id === skillId);
             return {
               skillId,
+              category: skillData?.category,
               name: skillData?.name || 'Unknown Skill',
               unclaimed: parseFloat(unclaimed).toFixed(6),
             };
           })
         );
+
+        // Kick off history fetch in parallel with the above — non-blocking.
+        loadDistributionHistory();
       } catch (err) {
         console.warn('Failed to load companion skills:', err);
         companionOwnedSkills.value = [];
       } finally {
         isLoadingSkills.value = false;
       }
+    }
+
+    // ─── Distribution history (CompanionRevenueShare events) ────────────
+    const distributionHistory = ref([]);
+    const isLoadingHistory = ref(false);
+
+    async function loadDistributionHistory() {
+      if (!selectedCompanion.value?.agentWallet) {
+        distributionHistory.value = [];
+        return;
+      }
+      isLoadingHistory.value = true;
+      try {
+        const events = await skillOwnershipService.getDistributionHistory(
+          selectedCompanion.value.agentWallet
+        );
+        // Enrich with human-readable skill name where we can resolve it.
+        const skillLookup = new Map(
+          (props.skills || []).map((s) => [s.onChain?.id, s])
+        );
+        distributionHistory.value = events.map((e) => ({
+          ...e,
+          skillName: skillLookup.get(e.skillId)?.name || null,
+        }));
+      } catch (err) {
+        console.warn('Failed to load distribution history:', err);
+      } finally {
+        isLoadingHistory.value = false;
+      }
+    }
+
+    function formatRelativeTime(unixSec) {
+      const delta = Date.now() / 1000 - unixSec;
+      if (delta < 60) return 'just now';
+      if (delta < 3600) return `${Math.floor(delta / 60)}m ago`;
+      if (delta < 86400) return `${Math.floor(delta / 3600)}h ago`;
+      if (delta < 30 * 86400) return `${Math.floor(delta / 86400)}d ago`;
+      return new Date(unixSec * 1000).toISOString().slice(0, 10);
+    }
+
+    function formatUsdc(raw) {
+      return (Number(raw) / 1_000_000).toFixed(2);
     }
 
     async function claimRevenue() {
@@ -1087,12 +1204,67 @@ export default {
     }
 
     const registrationError = ref(null);
+    const updatingSkillId = ref(null);
+    const signerState = ref(null);
+
+    // Check attestation signer state when the register modal opens so we can
+    // warn the user before they waste gas. Only re-fetch once per session
+    // unless explicitly refreshed.
+    watch(showRegisterModal, async (open) => {
+      if (!open || signerState.value) return;
+      try {
+        signerState.value = await skillOwnershipService.checkAttestationSignerState();
+      } catch (e) {
+        console.warn("[BrowseAgents] Failed to check signer state:", e.message);
+      }
+    });
+
+    async function updateRegistrationForSkill(skill) {
+      if (!selectedCompanion.value || updatingSkillId.value) return;
+      updatingSkillId.value = skill.skillId;
+      registrationError.value = null;
+      try {
+        const companion = selectedCompanion.value;
+        const ageCheck = validateCompanionAge(companion);
+        if (!ageCheck.valid) {
+          registrationError.value = ageCheck.reason || 'Companion failed age validation.';
+          return;
+        }
+        // Derive current profile score from the companion's spending habits.
+        // Skill category is stored on the on-chain record; look it up by name
+        // if available, else fall back to 5 (minimum acceptable).
+        const category = skill.category || skill.skill?.category;
+        const profileScore = category
+          ? (companion.spendingHabits?.[category] || 5)
+          : 5;
+        await skillOwnershipService.updateCompanionRegistration(
+          skill.skillId,
+          companion.tokenId,
+          companion.agentWallet,
+          profileScore
+        );
+        await loadCompanionSkills(companion);
+      } catch (err) {
+        console.error('Failed to update registration:', err);
+        registrationError.value = err.message || 'Update failed.';
+      } finally {
+        updatingSkillId.value = null;
+      }
+    }
 
     async function registerForSkill(skill) {
       if (!selectedCompanion.value) return;
       registeringSkillId.value = skill.id;
       registrationError.value = null;
       try {
+        // Safety: refuse to register a companion that fails age validation,
+        // even if it slipped past earlier checks (e.g. imported from a file).
+        const ageCheck = validateCompanionAge(selectedCompanion.value);
+        if (!ageCheck.valid) {
+          registrationError.value = ageCheck.reason || 'Companion failed age validation.';
+          return;
+        }
+
         const profileScore = selectedCompanion.value.spendingHabits[skill.category] || 0;
         await skillOwnershipService.registerCompanionForSkill(
           skill.onChain?.id || skill.id,
@@ -1308,6 +1480,14 @@ export default {
       closeCompanionModal,
       claimRevenue,
       registerForSkill,
+      updatingSkillId,
+      updateRegistrationForSkill,
+      signerState,
+      distributionHistory,
+      isLoadingHistory,
+      loadDistributionHistory,
+      formatRelativeTime,
+      formatUsdc,
       closeBackupModal,
       copyPrivateKey,
       loadLeaderboard,

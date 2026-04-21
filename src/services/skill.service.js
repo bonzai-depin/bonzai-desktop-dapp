@@ -1,8 +1,5 @@
 /**
- * BonzAI Skill Service
- *
- * Core service for loading, validating, and executing skills.
- * Supports both local built-in skills and on-chain registry skills.
+ * Skill Service — loading, validation, and execution of built-in and on-chain skills.
  */
 
 import {
@@ -11,15 +8,15 @@ import {
 } from '../skills/types.js';
 
 import { flagshipSkills } from '../skills/flagship.js';
+import { hasPurchasedSkill, isDevMode } from './agent.service.js';
 
-// Skill cache by ID
+/** A skill is paid if it carries a positive `price` (USDC). */
+function isPaidSkill(skill) {
+  return typeof skill?.price === 'number' && skill.price > 0;
+}
+
 const skillCache = new Map();
 
-/**
- * Load all flagship skills
- * These are the premium skills including finance and consumer experience skills
- * @returns {Promise<SkillDefinition[]>}
- */
 export async function loadFlagshipSkills() {
   const skills = [];
 
@@ -29,63 +26,32 @@ export async function loadFlagshipSkills() {
       if (validation.valid) {
         skillCache.set(skill.id, skill);
         skills.push(skill);
-        console.log(`[SkillService] Loaded flagship skill: ${skill.name} (${skill.id})`);
       } else {
         console.warn(`[SkillService] Invalid flagship skill ${skill.id}:`, validation.errors);
       }
     }
   }
 
-  console.log(`[SkillService] Loaded ${skills.length} flagship skills`);
   return skills;
 }
 
-/**
- * Initialize all skills
- * Call this on app startup
- * @returns {Promise<{ skills: SkillDefinition[] }>}
- */
 export async function initializeSkills() {
-  console.log('[SkillService] Initializing skills...');
-
   const skills = await loadFlagshipSkills();
-
-  console.log(`[SkillService] Initialization complete: ${skills.length} skills`);
-
   return { skills };
 }
 
-/**
- * Get a skill by ID (from cache or load if needed)
- * @param {string} skillId - Skill identifier
- * @returns {SkillDefinition|null}
- */
 export function getSkill(skillId) {
   return skillCache.get(skillId) || null;
 }
 
-/**
- * Get all cached skills
- * @returns {SkillDefinition[]}
- */
 export function getAllSkills() {
   return Array.from(skillCache.values());
 }
 
-/**
- * Get skills filtered by category
- * @param {string} category - Category to filter by
- * @returns {SkillDefinition[]}
- */
 export function getSkillsByCategory(category) {
   return getAllSkills().filter(s => s.category === category);
 }
 
-/**
- * Search skills by name or description
- * @param {string} query - Search query
- * @returns {SkillDefinition[]}
- */
 export function searchSkills(query) {
   const lower = query.toLowerCase();
   return getAllSkills().filter(
@@ -95,16 +61,9 @@ export function searchSkills(query) {
   );
 }
 
-/**
- * Build the system prompt for a skill
- * @param {SkillDefinition} skill - Skill definition
- * @param {Object} inputs - User-provided inputs
- * @returns {string}
- */
 export function buildSkillSystemPrompt(skill, inputs = {}) {
   let systemPrompt = skill.prompt.system;
 
-  // Replace input placeholders in system prompt
   for (const [key, value] of Object.entries(inputs)) {
     const placeholder = `{{${key}}}`;
     systemPrompt = systemPrompt.replace(new RegExp(placeholder, 'g'), String(value));
@@ -113,16 +72,9 @@ export function buildSkillSystemPrompt(skill, inputs = {}) {
   return systemPrompt;
 }
 
-/**
- * Build the task prompt for a skill
- * @param {SkillDefinition} skill - Skill definition
- * @param {Object} inputs - User-provided inputs
- * @returns {string}
- */
 export function buildSkillTaskPrompt(skill, inputs = {}) {
   let taskPrompt = skill.prompt.task;
 
-  // Replace input placeholders in task prompt
   for (const [key, value] of Object.entries(inputs)) {
     const placeholder = `{{${key}}}`;
     taskPrompt = taskPrompt.replace(new RegExp(placeholder, 'g'), String(value));
@@ -131,12 +83,6 @@ export function buildSkillTaskPrompt(skill, inputs = {}) {
   return taskPrompt;
 }
 
-/**
- * Validate user inputs against skill input schema
- * @param {SkillDefinition} skill - Skill definition
- * @param {Object} inputs - User-provided inputs
- * @returns {{ valid: boolean, errors: string[], normalizedInputs: Object }}
- */
 export function validateSkillInputs(skill, inputs = {}) {
   const errors = [];
   const normalizedInputs = {};
@@ -200,30 +146,14 @@ export function validateSkillInputs(skill, inputs = {}) {
   };
 }
 
-/**
- * Get tools for a skill in BonzAI app context
- * @param {SkillDefinition} skill - Skill definition
- * @returns {BonzaiTool[]}
- */
 export function getSkillToolsForBonzai(skill) {
   return skill.tools?.bonzai || [];
 }
 
-/**
- * Get tools for a skill in MCP context
- * @param {SkillDefinition} skill - Skill definition
- * @returns {MCPTool[]}
- */
 export function getSkillToolsForMCP(skill) {
   return skill.tools?.mcp || [];
 }
 
-/**
- * Execute a BonzAI tool via the electron proxy
- * @param {BonzaiTool} tool - Tool definition
- * @param {Object} args - Tool arguments
- * @returns {Promise<any>}
- */
 export async function executeBonzaiTool(tool, args) {
   if (!window.electronAPI?.polymarketProxy && tool.proxy === 'polymarketProxy') {
     throw new Error('Polymarket proxy not available');
@@ -252,13 +182,6 @@ export async function executeBonzaiTool(tool, args) {
   }
 }
 
-/**
- * Prepare a skill for execution with given inputs
- * Returns prompts and tools ready for AI inference
- * @param {string} skillId - Skill identifier
- * @param {Object} inputs - User-provided inputs
- * @returns {{ systemPrompt: string, taskPrompt: string, tools: BonzaiTool[], skill: SkillDefinition }|null}
- */
 export function prepareSkillExecution(skillId, inputs = {}) {
   const skill = getSkill(skillId);
   if (!skill) {
@@ -281,21 +204,28 @@ export function prepareSkillExecution(skillId, inputs = {}) {
   };
 }
 
-/**
- * Execute a skill with given inputs
- * Handles both prompt-based and embedded execution
- * @param {string} skillId - Skill identifier
- * @param {Object} inputs - User-provided inputs
- * @param {Object} context - Execution context (onProgress, etc.)
- * @returns {Promise<any>} - Skill execution result
- */
 export async function executeSkill(skillId, inputs = {}, context = {}) {
   const skill = getSkill(skillId);
   if (!skill) {
     throw new Error(`Skill not found: ${skillId}`);
   }
 
-  // Validate inputs
+  // Service-level purchase gate. Defense in depth vs. UI bypass: components
+  // should ALSO check purchase state, but this guard covers any path that
+  // reaches executeSkill directly. Dev mode bypasses (see isDevMode).
+  if (isPaidSkill(skill) && !isDevMode()) {
+    const purchased = await hasPurchasedSkill(skill.id);
+    if (!purchased) {
+      return {
+        success: false,
+        requiresPurchase: true,
+        skill: { id: skill.id, name: skill.name, category: skill.category },
+        error: `Skill "${skill.name}" requires purchase (${skill.price} USDC).`,
+        executedAt: new Date().toISOString(),
+      };
+    }
+  }
+
   const validation = validateSkillInputs(skill, inputs);
   if (!validation.valid) {
     throw new Error(`Invalid inputs: ${validation.errors.join(', ')}`);
@@ -303,9 +233,7 @@ export async function executeSkill(skillId, inputs = {}, context = {}) {
 
   const normalizedInputs = validation.normalizedInputs;
 
-  // Check if skill has an embedded execute function
   if (skill.execution?.execute && typeof skill.execution.execute === 'function') {
-    console.log(`[SkillService] Executing embedded skill: ${skill.name}`);
     try {
       const result = await skill.execution.execute(normalizedInputs, context);
       return {
@@ -335,7 +263,6 @@ export async function executeSkill(skillId, inputs = {}, context = {}) {
     }
   }
 
-  // For prompt-based skills, return prepared execution data
   const prepared = prepareSkillExecution(skillId, inputs);
   if (!prepared) {
     throw new Error(`Failed to prepare skill execution: ${skillId}`);
@@ -357,34 +284,13 @@ export async function executeSkill(skillId, inputs = {}, context = {}) {
   };
 }
 
-// Export service object
 export const skillService = {
-  // Loaders
-  loadFlagshipSkills,
-  initializeSkills,
-
-  // Getters
-  getSkill,
-  getAllSkills,
-  getSkillsByCategory,
-  searchSkills,
-
-  // Prompts
-  buildSkillSystemPrompt,
-  buildSkillTaskPrompt,
-
-  // Validation
+  loadFlagshipSkills, initializeSkills,
+  getSkill, getAllSkills, getSkillsByCategory, searchSkills,
+  buildSkillSystemPrompt, buildSkillTaskPrompt,
   validateSkillInputs,
-
-  // Tools
-  getSkillToolsForBonzai,
-  getSkillToolsForMCP,
-  executeBonzaiTool,
-
-  // Execution
-  prepareSkillExecution,
-  executeSkill,
-
+  getSkillToolsForBonzai, getSkillToolsForMCP, executeBonzaiTool,
+  prepareSkillExecution, executeSkill,
 };
 
 export default skillService;

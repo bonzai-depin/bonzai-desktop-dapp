@@ -15,6 +15,10 @@ import { walletProviderService } from './walletProvider.service.js';
 import { coinbaseAgentWalletService } from './coinbaseAgentWallet.service.js';
 import * as skillOwnershipService from './skillOwnership.service.js';
 import { flagshipSkills } from '../skills/flagship.js';
+import {
+  SPENDING_CATEGORIES_ORDER,
+  packSpendingProfile as sharedPackSpendingProfile,
+} from '../constants/index.js';
 
 const BONZAI_TOKEN_ABI = [
   'function totalSupply() view returns (uint256)',
@@ -184,17 +188,11 @@ async function mintCompanionMultiNetwork(params, network = 'base') {
 
 /**
  * Pack 12 spending categories (values 1-10) into a uint96.
- * Categories: education, entertainment, fashion, finance, food, healthcare,
- *             housing, beauty, reading, social, travel, sports
+ * Delegates to shared implementation in constants/index.js which defines
+ * the canonical category order matching BonzaiCompanions.sol.
  */
 function packSpendingProfile(habits) {
-  const cats = ['education', 'entertainment', 'fashion', 'finance', 'food', 'healthcare',
-                'housing', 'beauty', 'reading', 'social', 'travel', 'sports'];
-  let packed = 0n;
-  cats.forEach((cat, i) => {
-    packed |= BigInt(Math.min(Math.max(habits[cat] || 0, 0), 15)) << BigInt(i * 4);
-  });
-  return packed;
+  return sharedPackSpendingProfile(habits);
 }
 
 /**
@@ -364,11 +362,7 @@ function buildERC8004RegistrationWithSpending(params, spendingHabits = {}) {
   ];
 
   // Add spending categories as numeric traits (OpenSea shows bar charts)
-  const spendingCategories = [
-    'education', 'entertainment', 'fashion', 'finance', 'food', 'healthcare',
-    'housing', 'beauty', 'reading', 'social', 'travel', 'sports',
-  ];
-  for (const cat of spendingCategories) {
+  for (const cat of SPENDING_CATEGORIES_ORDER) {
     if (spendingHabits[cat] != null) {
       attributes.push({
         trait_type: cat.charAt(0).toUpperCase() + cat.slice(1),
@@ -660,9 +654,7 @@ function mapMetadataToCompanion(metadata, tokenId, onChainData) {
   // Build spending habits from bonzai section or attributes
   let spendingHabits = bonzai.spendingHabits || {};
   if (!spendingHabits || Object.keys(spendingHabits).length === 0) {
-    const cats = ['education', 'entertainment', 'fashion', 'finance', 'food', 'healthcare',
-                  'housing', 'beauty', 'reading', 'social', 'travel', 'sports'];
-    for (const cat of cats) {
+    for (const cat of SPENDING_CATEGORIES_ORDER) {
       const attr = (metadata.attributes || []).find(
         a => a.trait_type?.toLowerCase() === cat
       );

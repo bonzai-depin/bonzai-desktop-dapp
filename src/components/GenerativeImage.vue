@@ -503,10 +503,12 @@
                       <button
                         class="button is-medium is-success copy is-pulled-left p-0 pl-1 pr-1"
                         @click="
+                          form.prompt = inference.question;
                           copy(inference.question);
                           setCopied(inference._originalIndex);
                           scrollToTop();
                         "
+                        title="Reuse this prompt"
                       >
                         <span
                           class="material-symbols-outlined is-size-2"
@@ -1225,14 +1227,10 @@ export default {
         missing: Number.isFinite(r.missing) ? r.missing : null,
         root: r.root || null,
       }));
-      // Check for missing GGUFs from gguf_status (legacy) or required_files (new)
-      const ggufs = Array.isArray(data?.gguf_status) ? data.gguf_status : [];
       const requiredFiles = Array.isArray(data?.required_files)
         ? data.required_files
         : [];
-      const missG = ggufs.filter((g) => g && g.configured && !g.exists);
-      const missReq = requiredFiles.filter((f) => f && !f.ok && !f.exists);
-      const allMissing = [...missG, ...missReq];
+      const allMissing = requiredFiles.filter((f) => f && !f.ok && !f.exists);
       readiness.missingGguf = allMissing.length > 0;
       readiness.ggufNames = allMissing.map((g) =>
         (g.path || g.name || "").split("/").pop(),

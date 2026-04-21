@@ -616,7 +616,7 @@ async function executeInference(channelId, pipeline, params) {
     }
   }
 
-  // Fallback: legacy direct routing
+  // Direct routing fallback
   const remotePeerId = shouldUseRemoteProvider(channelId, pipeline);
   if (remotePeerId) {
     return executeRemoteInference(remotePeerId, pipeline, params);

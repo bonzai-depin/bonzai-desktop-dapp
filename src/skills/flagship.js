@@ -166,6 +166,401 @@ export function sanitizeCompanionAge(companion) {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
+// LLM BASE MODELS — one entry per model with per-tier download resolution.
+// Tiers: 'q2' (Q2_K_XL-class), 'q4' (Q4_K_M-class, default), 'q8' (Q8_0-class).
+// `file` is the HuggingFace filename (mixed case); local filename is lowercased
+// at download time by main.js. UD-* variants are preferred when published by
+// the upstream repo (unsloth); fall back to plain quants otherwise.
+// ═══════════════════════════════════════════════════════════════════════════
+
+export const LLM_BASE_MODELS = {
+  // --- Compact models (dense, <=4B) --------------------------------------
+  deepseek_r1_1_5b: {
+    name: 'DeepSeek R1 Distill 1.5B',
+    description: 'Lightweight reasoning model with chain-of-thought',
+    parameters: 1.5e9, context: 32768, thinking: true,
+    tiers: {
+      q4: { repo: 'unsloth/DeepSeek-R1-Distill-Qwen-1.5B-GGUF', file: 'DeepSeek-R1-Distill-Qwen-1.5B-Q4_K_M.gguf', size: 1.12, vram: 2 },
+    },
+  },
+  gemma_3_1b: {
+    name: 'Gemma 3 1B',
+    description: 'Ultra-lightweight Google Gemma',
+    parameters: 1e9, context: 32768,
+    tiers: {
+      q4: { repo: 'unsloth/gemma-3-1b-it-GGUF', file: 'gemma-3-1b-it-Q4_K_M.gguf', size: 0.806, vram: 2 },
+    },
+  },
+  gemma_3_12b: {
+    name: 'Gemma 3 12B',
+    description: 'Google Gemma 3 12B instruction-tuned',
+    parameters: 12e9, context: 131072,
+    tiers: {
+      q4: { repo: 'unsloth/gemma-3-12b-it-GGUF', file: 'gemma-3-12b-it-UD-Q4_K_XL.gguf', size: 7.43, vram: 10 },
+    },
+  },
+  qwen3_5_0_8b: {
+    name: 'Qwen3.5 0.8B',
+    description: 'Ultra-compact 0.8B Qwen3.5 hybrid model with 131K context',
+    parameters: 0.8e9, context: 131072,
+    tiers: {
+      q4: { repo: 'unsloth/Qwen3.5-0.8B-GGUF', file: 'Qwen3.5-0.8B-Q4_K_M.gguf', size: 0.6, vram: 2 },
+    },
+  },
+  qwen3_5_4b: {
+    name: 'Qwen3.5 4B',
+    description: 'Compact 4B hybrid model with Gated DeltaNet + Gated Attention, 262K context',
+    parameters: 4e9, context: 262144,
+    tiers: {
+      q4: { repo: 'unsloth/Qwen3.5-4B-GGUF', file: 'Qwen3.5-4B-Q4_K_M.gguf', size: 2.8, vram: 4 },
+    },
+  },
+  phi_3_mini: {
+    name: 'Phi-3 Mini 4K',
+    description: 'Microsoft Phi-3 compact model',
+    parameters: 3.8e9, context: 4096,
+    tiers: {
+      q4: { repo: 'microsoft/Phi-3-mini-4k-instruct-gguf', file: 'Phi-3-mini-4k-instruct-q4.gguf', size: 2.39, vram: 4 },
+    },
+  },
+  phi_4_mini: {
+    name: 'Phi-4 Mini',
+    description: 'Microsoft Phi-4 latest compact model with 128K context',
+    parameters: 3.8e9, context: 128000,
+    tiers: {
+      q4: { repo: 'unsloth/Phi-4-mini-instruct-GGUF', file: 'Phi-4-mini-instruct-Q4_K_M.gguf', size: 2.49, vram: 4 },
+    },
+  },
+  nanbeige_4_1_3b: {
+    name: 'Nanbeige 4.1 3B',
+    description: 'Compact 3B reasoning model with code, math, and agentic capabilities',
+    parameters: 3e9, context: 32768,
+    tiers: {
+      q4: { repo: 'Edge-Quant/Nanbeige4.1-3B-Q4_K_M-GGUF', file: 'nanbeige4.1-3b-q4_k_m.gguf', size: 2.44, vram: 4 },
+    },
+  },
+  ministral_3b: {
+    name: 'Ministral 3B',
+    description: 'Mistral Ministral 3B compact model with 256K context',
+    parameters: 3e9, context: 256000,
+    tiers: {
+      q4: { repo: 'unsloth/Ministral-3-3B-Instruct-2512-GGUF', file: 'Ministral-3-3B-Instruct-2512-UD-Q4_K_XL.gguf', size: 2.19, vram: 4 },
+    },
+  },
+
+  // --- Medium models (7-14B) ---------------------------------------------
+  deepseek_r1_7b: {
+    name: 'DeepSeek R1 Distill 7B',
+    description: 'Balanced reasoning model with chain-of-thought',
+    parameters: 7e9, context: 32768, thinking: true,
+    tiers: {
+      q4: { repo: 'unsloth/DeepSeek-R1-Distill-Qwen-7B-GGUF', file: 'DeepSeek-R1-Distill-Qwen-7B-Q4_K_M.gguf', size: 4.68, vram: 6 },
+    },
+  },
+  llama_2_7b: {
+    name: 'LLaMA 2 7B Chat',
+    description: 'Meta LLaMA 2 chat model',
+    parameters: 7e9, context: 4096,
+    tiers: {
+      q4: { repo: 'TheBloke/Llama-2-7B-Chat-GGUF', file: 'llama-2-7b-chat.Q4_K_M.gguf', size: 4.08, vram: 6 },
+    },
+  },
+  llama_3_1_8b: {
+    name: 'LLaMA 3.1 8B',
+    description: 'Meta LLaMA 3.1 instruct with 128K context',
+    parameters: 8e9, context: 131072,
+    tiers: {
+      q4: { repo: 'lmstudio-community/Meta-Llama-3.1-8B-Instruct-GGUF', file: 'Meta-Llama-3.1-8B-Instruct-Q4_K_M.gguf', size: 4.92, vram: 6 },
+    },
+  },
+  mistral_7b: {
+    name: 'Mistral 7B Instruct',
+    description: 'Mistral 7B instruction-tuned model',
+    parameters: 7e9, context: 32768,
+    tiers: {
+      q4: { repo: 'TheBloke/Mistral-7B-Instruct-v0.2-GGUF', file: 'mistral-7b-instruct-v0.2.Q4_K_M.gguf', size: 4.37, vram: 6 },
+    },
+  },
+  ministral_8b: {
+    name: 'Ministral 8B',
+    description: 'Mistral Ministral 8B general-purpose model with 256K context',
+    parameters: 8e9, context: 256000,
+    tiers: {
+      q4: { repo: 'unsloth/Ministral-3-8B-Instruct-2512-GGUF', file: 'Ministral-3-8B-Instruct-2512-UD-Q4_K_XL.gguf', size: 5.29, vram: 8 },
+    },
+  },
+  qwen3_5_9b: {
+    name: 'Qwen3.5 9B',
+    description: 'Qwen3.5 9B hybrid model with Gated DeltaNet + Gated Attention, 262K context',
+    parameters: 9e9, context: 262144, thinking: true,
+    tiers: {
+      q4: { repo: 'unsloth/Qwen3.5-9B-GGUF', file: 'Qwen3.5-9B-UD-Q4_K_XL.gguf', size: 5.97, vram: 8 },
+    },
+  },
+  yi_coder_9b: {
+    name: 'Yi Coder 9B',
+    description: 'Yi code-specialized 9B model',
+    parameters: 9e9, context: 131072,
+    tiers: {
+      q4: { repo: 'bartowski/Yi-Coder-9B-Chat-GGUF', file: 'Yi-Coder-9B-Chat-Q5_K_M.gguf', size: 6.26, vram: 8 },
+    },
+  },
+  mythomax_13b: {
+    name: 'MythoMax L2 13B',
+    description: 'Excellent for creative roleplay and storytelling',
+    parameters: 13e9, context: 4096,
+    tiers: {
+      q4: { repo: 'TheBloke/MythoMax-L2-13B-GGUF', file: 'mythomax-l2-13b.Q4_K_M.gguf', size: 7.87, vram: 10 },
+    },
+  },
+  hermes_4_14b: {
+    name: 'Hermes 4 14B',
+    description: 'Uncensored creative LLM with <think> reasoning',
+    parameters: 14e9, context: 32768, thinking: true,
+    tiers: {
+      q4: { repo: 'bartowski/NousResearch_Hermes-4-14B-GGUF', file: 'NousResearch_Hermes-4-14B-Q4_K_M.gguf', size: 8.99, vram: 10 },
+    },
+  },
+
+  // --- Large dense models (20-32B) ---------------------------------------
+  gpt_oss_20b: {
+    name: 'GPT-OSS 20B',
+    description: 'Open-source GPT-style 20B model',
+    parameters: 20e9, context: 131072,
+    tiers: {
+      q4: { repo: 'unsloth/gpt-oss-20b-GGUF', file: 'gpt-oss-20b-Q4_K_M.gguf', size: 11.6, vram: 14 },
+    },
+  },
+  codestral_22b: {
+    name: 'Codestral 22B',
+    description: 'Mistral code-specialized 22B',
+    parameters: 22e9, context: 32768,
+    tiers: {
+      q4: { repo: 'bartowski/Codestral-22B-v0.1-GGUF', file: 'Codestral-22B-v0.1-Q4_K_M.gguf', size: 13.3, vram: 16 },
+    },
+  },
+  devstral_24b: {
+    name: 'Devstral 24B',
+    description: 'Mistral Devstral 24B dense coding model with 256K context',
+    parameters: 24e9, context: 256000,
+    tiers: {
+      q2: { repo: 'unsloth/Devstral-Small-2-24B-Instruct-2512-GGUF', file: 'Devstral-Small-2-24B-Instruct-2512-UD-Q2_K_XL.gguf', size: 9.29, vram: 12 },
+      q4: { repo: 'unsloth/Devstral-Small-2-24B-Instruct-2512-GGUF', file: 'Devstral-Small-2-24B-Instruct-2512-UD-Q4_K_XL.gguf', size: 14.5, vram: 18 },
+      q8: { repo: 'unsloth/Devstral-Small-2-24B-Instruct-2512-GGUF', file: 'Devstral-Small-2-24B-Instruct-2512-UD-Q8_K_XL.gguf', size: 29, vram: 32 },
+    },
+  },
+  qwen3_5_27b: {
+    name: 'Qwen3.5 27B',
+    description: 'Qwen3.5 27B hybrid attention model with 262K context',
+    parameters: 27e9, activeParameters: 8e9, context: 262144, thinking: true,
+    tiers: {
+      q2: { repo: 'unsloth/Qwen3.5-27B-GGUF', file: 'Qwen3.5-27B-UD-Q2_K_XL.gguf', size: 11.2, vram: 14 },
+      q4: { repo: 'unsloth/Qwen3.5-27B-GGUF', file: 'Qwen3.5-27B-UD-Q4_K_XL.gguf', size: 16.7, vram: 20 },
+      q8: { repo: 'unsloth/Qwen3.5-27B-GGUF', file: 'Qwen3.5-27B-UD-Q8_K_XL.gguf', size: 32.4, vram: 36 },
+    },
+  },
+  deepseek_r1_32b: {
+    name: 'DeepSeek R1 Distill 32B',
+    description: 'Large reasoning model with advanced chain-of-thought',
+    parameters: 32e9, context: 32768, thinking: true,
+    tiers: {
+      q4: { repo: 'unsloth/DeepSeek-R1-Distill-Qwen-32B-GGUF', file: 'DeepSeek-R1-Distill-Qwen-32B-Q4_K_M.gguf', size: 19.85, vram: 24 },
+    },
+  },
+
+  // --- Dense 30B+ --------------------------------------------------------
+  gemma_4_31b_it: {
+    name: 'Gemma 4 31B IT',
+    description: 'Google Gemma 4 31B instruction-tuned, dense, 256K context, multimodal (text+image)',
+    parameters: 31e9, context: 262144,
+    tiers: {
+      q2: { repo: 'unsloth/gemma-4-31B-it-GGUF', file: 'gemma-4-31B-it-UD-Q2_K_XL.gguf', size: 11.8, vram: 16 },
+      q4: { repo: 'unsloth/gemma-4-31B-it-GGUF', file: 'gemma-4-31B-it-Q4_K_M.gguf', size: 18.3, vram: 24 },
+      q8: { repo: 'unsloth/gemma-4-31B-it-GGUF', file: 'gemma-4-31B-it-Q8_0.gguf', size: 32.6, vram: 36 },
+    },
+  },
+
+  // --- MoE compact (30B/3B active) --------------------------------------
+  glm_4_7: {
+    name: 'GLM 4.7 Flash',
+    description: 'GLM 4.7 Flash MoE (30B total, 3B active, 200K context) — uncensored creative + coding',
+    parameters: 30e9, activeParameters: 3e9, isMoE: true, context: 200000,
+    layers: 47, kvHeads: 20, headDim: 64,
+    tiers: {
+      q2: { repo: 'unsloth/GLM-4.7-Flash-GGUF', file: 'GLM-4.7-Flash-UD-Q2_K_XL.gguf', size: 11.9, vram: 14 },
+      q4: { repo: 'unsloth/GLM-4.7-Flash-GGUF', file: 'GLM-4.7-Flash-UD-Q4_K_XL.gguf', size: 17.5, vram: 20 },
+      q8: { repo: 'unsloth/GLM-4.7-Flash-GGUF', file: 'GLM-4.7-Flash-UD-Q8_K_XL.gguf', size: 35.6, vram: 38 },
+    },
+  },
+
+  // --- MoE 30B+ ---------------------------------------------------------
+  qwen3_5_28b_a3b_reap: {
+    name: 'Qwen3.5 28B A3B REAP',
+    description: 'REAP-pruned 28B MoE with 3B active params — efficient reasoning',
+    parameters: 28.24e9, activeParameters: 3e9, isMoE: true, context: 262144, thinking: true,
+    tiers: {
+      q4: { repo: 'barozp/Qwen-3.5-28B-A3B-REAP-GGUF', file: 'Qwen-3.5-28B-A3B-REAP-Q4_K_M.gguf', size: 17.26, vram: 18 },
+    },
+  },
+  gemma_4_21b_a4b_reap: {
+    name: 'Gemma 4 21B A4B REAP',
+    description: 'REAP-pruned 21B MoE Gemma 4 with 4B active params',
+    parameters: 21.34e9, activeParameters: 4e9, isMoE: true, context: 262144,
+    tiers: {
+      q4: { repo: 'barozp/gemma-4-21b-a4b-it-REAP-GGUF', file: 'gemma-4-21b-a4b-it-REAP-Q4_K_M.gguf', size: 13.83, vram: 14 },
+    },
+  },
+  qwen3_5_35b_a3b: {
+    name: 'Qwen3.5 35B A3B',
+    description: 'Qwen3.5 35B MoE with 3B active params, 262K context',
+    parameters: 35e9, activeParameters: 3e9, isMoE: true, context: 262144, thinking: true,
+    tiers: {
+      q2: { repo: 'unsloth/Qwen3.5-35B-A3B-GGUF', file: 'Qwen3.5-35B-A3B-UD-Q2_K_XL.gguf', size: 12.9, vram: 16 },
+      q4: { repo: 'unsloth/Qwen3.5-35B-A3B-GGUF', file: 'Qwen3.5-35B-A3B-UD-Q4_K_XL.gguf', size: 20.6, vram: 24 },
+      q8: { repo: 'unsloth/Qwen3.5-35B-A3B-GGUF', file: 'Qwen3.5-35B-A3B-UD-Q8_K_XL.gguf', size: 38.7, vram: 42 },
+    },
+  },
+  qwen_3_6_35b_a3b: {
+    name: 'Qwen3.6 35B A3B',
+    description: 'Qwen3.6 35B MoE with 3B active params, 256 experts (8 routed + 1 shared), 256K native context (up to 1M with YaRN)',
+    parameters: 35e9, activeParameters: 3e9, isMoE: true, context: 262144, thinking: true,
+    tiers: {
+      q2: { repo: 'unsloth/Qwen3.6-35B-A3B-GGUF', file: 'Qwen3.6-35B-A3B-UD-Q2_K_XL.gguf', size: 12.3, vram: 16 },
+      q4: { repo: 'unsloth/Qwen3.6-35B-A3B-GGUF', file: 'Qwen3.6-35B-A3B-UD-Q4_K_M.gguf', size: 22.1, vram: 24 },
+      q8: { repo: 'unsloth/Qwen3.6-35B-A3B-GGUF', file: 'Qwen3.6-35B-A3B-Q8_0.gguf', size: 36.9, vram: 42 },
+    },
+  },
+  qwen3_coder_next: {
+    name: 'Qwen3 Coder Next',
+    description: 'Qwen3 Coder Next 80B MoE with 3B active params, 262K context, hybrid DeltaNet+GatedAttention',
+    parameters: 80e9, activeParameters: 3e9, isMoE: true, context: 262144,
+    tiers: {
+      q4: { repo: 'unsloth/Qwen3-Coder-Next-GGUF', file: 'Qwen3-Coder-Next-Q4_K_M.gguf', size: 48.5, vram: 52 },
+    },
+  },
+
+  // --- MoE 100B+ (sharded) ----------------------------------------------
+  qwen3_5_122b_a10b: {
+    name: 'Qwen3.5 122B A10B',
+    description: 'Qwen3.5 122B MoE with 10B active params',
+    parameters: 122e9, activeParameters: 10e9, isMoE: true, context: 262144, thinking: true,
+    tiers: {
+      q2: { repo: 'unsloth/Qwen3.5-122B-A10B-GGUF', file: 'Qwen3.5-122B-A10B-UD-Q2_K_XL.gguf', size: 46.7, vram: 52 },
+      q4: { repo: 'unsloth/Qwen3.5-122B-A10B-GGUF', file: 'Qwen3.5-122B-A10B-UD-Q4_K_XL-00001-of-00003.gguf', size: 68.4, vram: 72, shards: 3 },
+    },
+  },
+  minimax_m2_5: {
+    name: 'MiniMax M2.5',
+    description: 'MiniMax M2.5 229B MoE with 10B active params, 205K context',
+    parameters: 229e9, activeParameters: 10e9, isMoE: true, context: 205000, thinking: true,
+    tiers: {
+      q4: { repo: 'unsloth/MiniMax-M2.5-GGUF', file: 'MiniMax-M2.5-UD-Q4_K_XL-00001-of-00004.gguf', size: 131, vram: 140, shards: 4 },
+    },
+  },
+  qwen3_5_397b_a17b: {
+    name: 'Qwen3.5 397B A17B',
+    description: 'Qwen3.5 397B MoE with 17B active params (frontier)',
+    parameters: 397e9, activeParameters: 17e9, isMoE: true, context: 262144, thinking: true,
+    tiers: {
+      q2: { repo: 'unsloth/Qwen3.5-397B-A17B-GGUF', file: 'Qwen3.5-397B-A17B-UD-Q2_K_XL-00001-of-00005.gguf', size: 149, vram: 160, shards: 5 },
+      q4: { repo: 'unsloth/Qwen3.5-397B-A17B-GGUF', file: 'Qwen3.5-397B-A17B-UD-Q4_K_XL-00001-of-00006.gguf', size: 219, vram: 230, shards: 6 },
+    },
+  },
+  kimi_k2_5: {
+    name: 'Kimi K2.5',
+    description: 'Kimi K2.5 1T MoE with 32B active params, 256K context',
+    parameters: 1e12, activeParameters: 32e9, isMoE: true, context: 256000, thinking: true,
+    tiers: {
+      q4: { repo: 'unsloth/Kimi-K2.5-GGUF', file: 'Kimi-K2.5-UD-Q4_K_XL-00001-of-00013.gguf', size: 622, vram: 640, shards: 13 },
+    },
+  },
+};
+
+// Tier order for UI rendering (smallest → largest)
+export const LLM_TIER_ORDER = ['q2', 'q4', 'q8'];
+
+// Human-readable tier labels
+export const LLM_TIER_LABELS = {
+  q2: 'Q2_K_XL',
+  q4: 'Q4_K_M',
+  q8: 'Q8_0',
+};
+
+/**
+ * Resolve a (baseKey, tier) pair into a full model download descriptor.
+ * Returns the same shape that MODEL_REQUIREMENTS entries have: `name`, `type`,
+ * `filename` (lowercase), `url`, `size`, `filesizeBytes`, `vram`, `description`,
+ * plus carry-over metadata (`parameters`, `context`, `thinking`, etc.).
+ *
+ * Returns `null` if the base model or tier doesn't exist.
+ */
+export function resolveLLM(baseKey, tier = 'q4') {
+  const model = LLM_BASE_MODELS[baseKey];
+  if (!model) return null;
+  const spec = model.tiers[tier];
+  if (!spec) return null;
+
+  const url = `https://huggingface.co/${spec.repo}/resolve/main/${spec.file}`;
+  const filename = spec.file.toLowerCase();
+  const tierLabel = LLM_TIER_LABELS[tier];
+  const availableTiers = Object.keys(model.tiers);
+  const hasMultipleTiers = availableTiers.length > 1;
+
+  return {
+    key: `llm_${baseKey}${tier === 'q4' ? '' : `_${tier}`}`,
+    baseKey,
+    tier,
+    availableTiers,
+    name: hasMultipleTiers ? `${model.name} ${tierLabel}` : model.name,
+    type: 'llm',
+    filename,
+    url,
+    size: spec.size >= 1 ? `${spec.size} GB` : `${Math.round(spec.size * 1000)} MB`,
+    filesizeBytes: Math.round(spec.size * 1e9),
+    vram: `${spec.vram} GB`,
+    description: model.description,
+    parameters: model.parameters,
+    activeParameters: model.activeParameters,
+    isMoE: model.isMoE || false,
+    context: model.context,
+    thinking: model.thinking || false,
+    layers: model.layers,
+    kvHeads: model.kvHeads,
+    headDim: model.headDim,
+    shards: spec.shards,
+  };
+}
+
+/**
+ * List all available LLM descriptors across every base model × tier.
+ * Used by the UI to render the model picker and by MODEL_REQUIREMENTS
+ * generation. Entries sorted by model name + tier order.
+ */
+export function listAllLLMs() {
+  const entries = [];
+  for (const baseKey of Object.keys(LLM_BASE_MODELS)) {
+    for (const tier of LLM_TIER_ORDER) {
+      const resolved = resolveLLM(baseKey, tier);
+      if (resolved) entries.push(resolved);
+    }
+  }
+  return entries;
+}
+
+/**
+ * Build MODEL_REQUIREMENTS entries for every LLM (base × tier).
+ * Default tier (Q4) keeps the unsuffixed key `llm_<base>`; non-default
+ * tiers get suffixed keys `llm_<base>_q2` / `llm_<base>_q8`.
+ */
+function _generateLLMRequirements() {
+  const out = {};
+  for (const resolved of listAllLLMs()) {
+    out[resolved.key] = resolved;
+  }
+  return out;
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
 // MODEL REQUIREMENTS DEFINITIONS
 // ═══════════════════════════════════════════════════════════════════════════
 
@@ -174,431 +569,8 @@ export function sanitizeCompanionAge(companion) {
  * Each model has: name, type, endpoint/filename, size, and required flag
  */
 export const MODEL_REQUIREMENTS = {
-  // ═══════════════════════════════════════════════════════════════════════════
-  // LLM Models (21 models from GenerativeText)
-  // ═══════════════════════════════════════════════════════════════════════════
-  llm_codestral_22b: {
-    name: 'Codestral 22B',
-    type: 'llm',
-    filename: 'codestral-22b-v0.1-q4_k_m.gguf',
-    url: 'https://huggingface.co/bartowski/Codestral-22B-v0.1-GGUF/resolve/main/Codestral-22B-v0.1-Q4_K_M.gguf',
-    size: '13 GB',
-    filesizeBytes: 13.3e9,
-    vram: '16 GB',
-    description: 'Mistral code-specialized 22B model',
-  },
-  llm_deepseek_r1_1_5b: {
-    name: 'DeepSeek R1 Distill 1.5B',
-    type: 'llm',
-    filename: 'deepseek-r1-distill-qwen-1.5b-q4_k_m.gguf',
-    url: 'https://huggingface.co/unsloth/DeepSeek-R1-Distill-Qwen-1.5B-GGUF/resolve/main/DeepSeek-R1-Distill-Qwen-1.5B-Q4_K_M.gguf',
-    size: '1.1 GB',
-    filesizeBytes: 1.12e9,
-    vram: '2 GB',
-    description: 'Lightweight reasoning model with chain-of-thought',
-  },
-  llm_deepseek_r1_7b: {
-    name: 'DeepSeek R1 Distill 7B',
-    type: 'llm',
-    filename: 'deepseek-r1-distill-qwen-7b-q4_k_m.gguf',
-    url: 'https://huggingface.co/unsloth/DeepSeek-R1-Distill-Qwen-7B-GGUF/resolve/main/DeepSeek-R1-Distill-Qwen-7B-Q4_K_M.gguf',
-    size: '4.7 GB',
-    filesizeBytes: 4.68e9,
-    vram: '6 GB',
-    description: 'Balanced reasoning model with chain-of-thought',
-  },
-  llm_deepseek_r1_32b: {
-    name: 'DeepSeek R1 Distill 32B',
-    type: 'llm',
-    filename: 'deepseek-r1-distill-qwen-32b-q4_k_m.gguf',
-    url: 'https://huggingface.co/unsloth/DeepSeek-R1-Distill-Qwen-32B-GGUF/resolve/main/DeepSeek-R1-Distill-Qwen-32B-Q4_K_M.gguf',
-    size: '19 GB',
-    filesizeBytes: 19.85e9,
-    vram: '24 GB',
-    description: 'Large reasoning model with advanced chain-of-thought',
-  },
-  llm_gemma_3_1b: {
-    name: 'Gemma 3 1B',
-    type: 'llm',
-    filename: 'gemma-3-1b-it-q4_k_m.gguf',
-    url: 'https://huggingface.co/unsloth/gemma-3-1b-it-GGUF/resolve/main/gemma-3-1b-it-Q4_K_M.gguf',
-    size: '0.8 GB',
-    filesizeBytes: 806e6,
-    vram: '2 GB',
-    description: 'Ultra-lightweight Google Gemma model',
-  },
-  llm_gpt_oss_20b: {
-    name: 'GPT-OSS 20B',
-    type: 'llm',
-    filename: 'gpt-oss-20b-q4_k_m.gguf',
-    url: 'https://huggingface.co/unsloth/gpt-oss-20b-GGUF/resolve/main/gpt-oss-20b-Q4_K_M.gguf',
-    size: '12 GB',
-    filesizeBytes: 11.6e9,
-    vram: '14 GB',
-    description: 'Open-source GPT-style 20B model',
-  },
-  llm_hermes_4_14b: {
-    name: 'Hermes 4 14B',
-    type: 'llm',
-    filename: 'nousresearch_hermes-4-14b-q4_k_m.gguf',
-    url: 'https://huggingface.co/bartowski/NousResearch_Hermes-4-14B-GGUF/resolve/main/NousResearch_Hermes-4-14B-Q4_K_M.gguf',
-    size: '8.99 GB',
-    filesizeBytes: 8.99e9,
-    vram: '10 GB',
-    description: 'Uncensored creative LLM with <think> reasoning',
-  },
-  llm_llama_2_7b: {
-    name: 'LLaMA 2 7B Chat',
-    type: 'llm',
-    filename: 'llama-2-7b-chat-q4_k_m.gguf',
-    url: 'https://huggingface.co/TheBloke/Llama-2-7B-Chat-GGUF/resolve/main/llama-2-7b-chat.Q4_K_M.gguf',
-    size: '4 GB',
-    filesizeBytes: 4.08e9,
-    vram: '6 GB',
-    description: 'Meta LLaMA 2 chat model',
-  },
-  llm_llama_3_1_8b: {
-    name: 'LLaMA 3.1 8B',
-    type: 'llm',
-    filename: 'meta-llama-3.1-8b-instruct-q4_k_m.gguf',
-    url: 'https://huggingface.co/lmstudio-community/Meta-Llama-3.1-8B-Instruct-GGUF/resolve/main/Meta-Llama-3.1-8B-Instruct-Q4_K_M.gguf',
-    size: '4.92 GB',
-    filesizeBytes: 4.92e9,
-    vram: '6 GB',
-    description: 'General-purpose LLM for text generation',
-  },
-  llm_mistral_7b: {
-    name: 'Mistral 7B Instruct',
-    type: 'llm',
-    filename: 'mistral-7b-instruct-v0.2-q4_k_m.gguf',
-    url: 'https://huggingface.co/TheBloke/Mistral-7B-Instruct-v0.2-GGUF/resolve/main/mistral-7b-instruct-v0.2.Q4_K_M.gguf',
-    size: '4.4 GB',
-    filesizeBytes: 4.37e9,
-    vram: '6 GB',
-    description: 'Mistral 7B instruction-tuned model',
-  },
-  llm_mythomax_13b: {
-    name: 'MythoMax L2 13B',
-    type: 'llm',
-    filename: 'mythomax-l2-13b.q4_k_m.gguf',
-    url: 'https://huggingface.co/TheBloke/MythoMax-L2-13B-GGUF/resolve/main/mythomax-l2-13b.Q4_K_M.gguf',
-    size: '7.87 GB',
-    filesizeBytes: 7.87e9,
-    vram: '10 GB',
-    description: 'Excellent for creative roleplay and storytelling',
-  },
-  llm_phi_3_mini: {
-    name: 'Phi-3 Mini 4K',
-    type: 'llm',
-    filename: 'phi-3-mini-4k-instruct-q4.gguf',
-    url: 'https://huggingface.co/microsoft/Phi-3-mini-4k-instruct-gguf/resolve/main/Phi-3-mini-4k-instruct-q4.gguf',
-    size: '2.4 GB',
-    filesizeBytes: 2.39e9,
-    vram: '4 GB',
-    description: 'Microsoft Phi-3 compact model',
-  },
-  llm_phi_4_mini: {
-    name: 'Phi-4 Mini',
-    type: 'llm',
-    filename: 'phi-4-mini-instruct-q4_k_m.gguf',
-    url: 'https://huggingface.co/unsloth/Phi-4-mini-instruct-GGUF/resolve/main/Phi-4-mini-instruct-Q4_K_M.gguf',
-    size: '2.5 GB',
-    filesizeBytes: 2.49e9,
-    vram: '4 GB',
-    description: 'Microsoft Phi-4 latest compact model',
-  },
-  llm_glm_4_7_q2: {
-    name: 'GLM 4.7 Flash Q2',
-    type: 'llm',
-    filename: 'glm-4.7-flash-ud-q2_k_xl.gguf',
-    url: 'https://huggingface.co/unsloth/GLM-4.7-Flash-GGUF/resolve/main/GLM-4.7-Flash-UD-Q2_K_XL.gguf',
-    size: '11.9 GB',
-    filesizeBytes: 11.9e9,
-    vram: '14 GB',
-    description: 'GLM 4.7 Flash (30B MoE, 3B active) — fastest quantization, lowest memory',
-  },
-  llm_glm_4_7_q4: {
-    name: 'GLM 4.7 Flash Q4',
-    type: 'llm',
-    filename: 'glm-4.7-flash-ud-q4_k_xl.gguf',
-    url: 'https://huggingface.co/unsloth/GLM-4.7-Flash-GGUF/resolve/main/GLM-4.7-Flash-UD-Q4_K_XL.gguf',
-    size: '17.5 GB',
-    filesizeBytes: 17.5e9,
-    vram: '20 GB',
-    description: 'GLM 4.7 Flash (30B MoE, 3B active) — balanced quality and speed',
-  },
-  llm_glm_4_7_q8: {
-    name: 'GLM 4.7 Flash Q8',
-    type: 'llm',
-    filename: 'glm-4.7-flash-ud-q8_k_xl.gguf',
-    url: 'https://huggingface.co/unsloth/GLM-4.7-Flash-GGUF/resolve/main/GLM-4.7-Flash-UD-Q8_K_XL.gguf',
-    size: '35.6 GB',
-    filesizeBytes: 35.6e9,
-    vram: '38 GB',
-    description: 'GLM 4.7 Flash (30B MoE, 3B active) — highest quality, most memory',
-  },
-  llm_yi_coder_9b: {
-    name: 'Yi Coder 9B',
-    type: 'llm',
-    filename: 'yi-coder-9b-chat-q5_k_m.gguf',
-    url: 'https://huggingface.co/bartowski/Yi-Coder-9B-Chat-GGUF/resolve/main/Yi-Coder-9B-Chat-Q5_K_M.gguf',
-    size: '5.7 GB',
-    filesizeBytes: 6.26e9,
-    vram: '8 GB',
-    description: 'Yi code-specialized 9B model',
-  },
-  llm_qwen3_coder_next: {
-    name: 'Qwen3 Coder Next',
-    type: 'llm',
-    filename: 'qwen3-coder-next-q4_k_m.gguf',
-    url: 'https://huggingface.co/unsloth/Qwen3-Coder-Next-GGUF/resolve/main/Qwen3-Coder-Next-Q4_K_M.gguf',
-    size: '5 GB',
-    filesizeBytes: 48.5e9,
-    vram: '6 GB',
-    description: 'Qwen3 Coder Next generation model',
-  },
-  llm_nanbeige_4_1_3b: {
-    name: 'Nanbeige 4.1 3B',
-    type: 'llm',
-    filename: 'nanbeige4.1-3b-q4_k_m.gguf',
-    url: 'https://huggingface.co/Edge-Quant/Nanbeige4.1-3B-Q4_K_M-GGUF/resolve/main/nanbeige4.1-3b-q4_k_m.gguf',
-    size: '2.4 GB',
-    filesizeBytes: 2.44e9,
-    vram: '4 GB',
-    description: 'Compact 3B reasoning model with code, math, and agentic capabilities',
-  },
-  llm_qwen3_5_28b_a3b_reap: {
-    name: 'Qwen 3.5 28B A3B REAP',
-    type: 'llm',
-    filename: 'qwen-3.5-28b-a3b-reap-q4_k_m.gguf',
-    url: 'https://huggingface.co/barozp/Qwen-3.5-28B-A3B-REAP-GGUF/resolve/main/Qwen-3.5-28B-A3B-REAP-Q4_K_M.gguf',
-    size: '16.1 GB',
-    filesizeBytes: 17.26e9,
-    vram: '18 GB',
-    description: 'REAP-pruned 28B MoE Qwen 3.5 with 3B active params — efficient reasoning at lower memory',
-  },
-  llm_gemma_4_21b_a4b_reap: {
-    name: 'Gemma 4 21B A4B REAP',
-    type: 'llm',
-    filename: 'gemma-4-21b-a4b-it-reap-q4_k_m.gguf',
-    url: 'https://huggingface.co/barozp/gemma-4-21b-a4b-it-REAP-GGUF/resolve/main/gemma-4-21b-a4b-it-REAP-Q4_K_M.gguf',
-    size: '12.9 GB',
-    filesizeBytes: 13.83e9,
-    vram: '14 GB',
-    description: 'REAP-pruned 21B MoE Gemma 4 with 4B active params — fast instruction following',
-  },
-  llm_qwen3_5_0_8b: {
-    name: 'Qwen3.5 0.8B',
-    type: 'llm',
-    filename: 'qwen3.5-0.8b-q4_k_m.gguf',
-    url: 'https://huggingface.co/unsloth/Qwen3.5-0.8B-GGUF/resolve/main/Qwen3.5-0.8B-Q4_K_M.gguf',
-    size: '0.6 GB',
-    filesizeBytes: 0.6e9,
-    vram: '2 GB',
-    description: 'Ultra-compact 0.8B Qwen3.5 hybrid model with 131K context — ideal for fast captioning and lightweight tasks',
-  },
-
-  llm_qwen3_5_4b: {
-    name: 'Qwen3.5 4B',
-    type: 'llm',
-    filename: 'qwen3.5-4b-q4_k_m.gguf',
-    url: 'https://huggingface.co/unsloth/Qwen3.5-4B-GGUF/resolve/main/Qwen3.5-4B-Q4_K_M.gguf',
-    size: '2.8 GB',
-    filesizeBytes: 2.8e9,
-    vram: '4 GB',
-    description: 'Compact 4B hybrid model with Gated DeltaNet + Gated Attention and 262K context',
-  },
-  llm_qwen3_5_9b_q4: {
-    name: 'Qwen3.5 9B Q4',
-    type: 'llm',
-    filename: 'qwen3.5-9b-ud-q4_k_xl.gguf',
-    url: 'https://huggingface.co/unsloth/Qwen3.5-9B-GGUF/resolve/main/Qwen3.5-9B-UD-Q4_K_XL.gguf',
-    size: '5.97 GB',
-    filesizeBytes: 5.97e9,
-    vram: '8 GB',
-    description: 'Qwen3.5 9B hybrid model with Gated DeltaNet + Gated Attention and 262K context (Q4_K_XL)',
-  },
-  llm_qwen3_5_27b: {
-    name: 'Qwen3.5 27B',
-    type: 'llm',
-    filename: 'qwen3.5-27b-ud-q2_k_xl.gguf',
-    url: 'https://huggingface.co/unsloth/Qwen3.5-27B-GGUF/resolve/main/Qwen3.5-27B-UD-Q2_K_XL.gguf',
-    size: '11.2 GB',
-    filesizeBytes: 11.2e9,
-    vram: '14 GB',
-    description: 'Qwen3.5 27B hybrid attention model with 262K context (Q2_K, fits 32GB unified)',
-  },
-  llm_qwen3_5_27b_q4: {
-    name: 'Qwen3.5 27B Q4',
-    type: 'llm',
-    filename: 'qwen3.5-27b-ud-q4_k_xl.gguf',
-    url: 'https://huggingface.co/unsloth/Qwen3.5-27B-GGUF/resolve/main/Qwen3.5-27B-UD-Q4_K_XL.gguf',
-    size: '16.7 GB',
-    filesizeBytes: 16.7e9,
-    vram: '20 GB',
-    description: 'Qwen3.5 27B hybrid attention Q4_K_XL quantization',
-  },
-  llm_qwen3_5_27b_q8: {
-    name: 'Qwen3.5 27B Q8',
-    type: 'llm',
-    filename: 'qwen3.5-27b-ud-q8_k_xl.gguf',
-    url: 'https://huggingface.co/unsloth/Qwen3.5-27B-GGUF/resolve/main/Qwen3.5-27B-UD-Q8_K_XL.gguf',
-    size: '32.4 GB',
-    filesizeBytes: 32.4e9,
-    vram: '36 GB',
-    description: 'Qwen3.5 27B hybrid attention Q8_K_XL near-lossless',
-  },
-  llm_qwen3_5_35b_a3b_iq3: {
-    name: 'Qwen3.5 35B A3B IQ3',
-    type: 'llm',
-    filename: 'qwen3.5-35b-a3b-ud-iq3_xxs.gguf',
-    url: 'https://huggingface.co/unsloth/Qwen3.5-35B-A3B-GGUF/resolve/main/Qwen3.5-35B-A3B-UD-IQ3_XXS.gguf',
-    size: '13.1 GB',
-    filesizeBytes: 13.1e9,
-    vram: '16 GB',
-    description: 'Qwen3.5 35B MoE with 3B active params (IQ3_XXS, compact 3-bit)',
-  },
-  llm_qwen3_5_35b_a3b_q2: {
-    name: 'Qwen3.5 35B A3B',
-    type: 'llm',
-    filename: 'qwen3.5-35b-a3b-ud-q2_k_xl.gguf',
-    url: 'https://huggingface.co/unsloth/Qwen3.5-35B-A3B-GGUF/resolve/main/Qwen3.5-35B-A3B-UD-Q2_K_XL.gguf',
-    size: '12.9 GB',
-    filesizeBytes: 12.9e9,
-    vram: '16 GB',
-    description: 'Qwen3.5 35B MoE with 3B active params (Q2_K_XL)',
-  },
-  llm_qwen3_5_35b_a3b_q4: {
-    name: 'Qwen3.5 35B A3B Q4',
-    type: 'llm',
-    filename: 'qwen3.5-35b-a3b-ud-q4_k_xl.gguf',
-    url: 'https://huggingface.co/unsloth/Qwen3.5-35B-A3B-GGUF/resolve/main/Qwen3.5-35B-A3B-UD-Q4_K_XL.gguf',
-    size: '20.6 GB',
-    filesizeBytes: 20.6e9,
-    vram: '24 GB',
-    description: 'Qwen3.5 35B MoE with 3B active params (Q4_K_XL)',
-  },
-  llm_qwen3_5_35b_a3b_q8: {
-    name: 'Qwen3.5 35B A3B Q8',
-    type: 'llm',
-    filename: 'qwen3.5-35b-a3b-ud-q8_k_xl.gguf',
-    url: 'https://huggingface.co/unsloth/Qwen3.5-35B-A3B-GGUF/resolve/main/Qwen3.5-35B-A3B-UD-Q8_K_XL.gguf',
-    size: '38.7 GB',
-    filesizeBytes: 38.7e9,
-    vram: '42 GB',
-    description: 'Qwen3.5 35B MoE with 3B active params (Q8_K_XL)',
-  },
-  llm_qwen3_5_122b_a10b_q2: {
-    name: 'Qwen3.5 122B A10B',
-    type: 'llm',
-    filename: 'qwen3.5-122b-a10b-ud-q2_k_xl.gguf',
-    url: 'https://huggingface.co/unsloth/Qwen3.5-122B-A10B-GGUF/resolve/main/Qwen3.5-122B-A10B-UD-Q2_K_XL.gguf',
-    size: '46.7 GB',
-    filesizeBytes: 46.7e9,
-    vram: '52 GB',
-    description: 'Qwen3.5 122B MoE with 10B active params (Q2_K_XL)',
-  },
-  llm_qwen3_5_122b_a10b_q4: {
-    name: 'Qwen3.5 122B A10B Q4',
-    type: 'llm',
-    filename: 'qwen3.5-122b-a10b-ud-q4_k_xl-00001-of-00003.gguf',
-    url: 'https://huggingface.co/unsloth/Qwen3.5-122B-A10B-GGUF/resolve/main/Qwen3.5-122B-A10B-UD-Q4_K_XL-00001-of-00003.gguf',
-    size: '68.4 GB',
-    filesizeBytes: 68.4e9,
-    vram: '72 GB',
-    description: 'Qwen3.5 122B MoE with 10B active params (Q4_K_XL, 3 shards)',
-  },
-  llm_qwen3_5_397b_a17b_q2: {
-    name: 'Qwen3.5 397B A17B',
-    type: 'llm',
-    filename: 'qwen3.5-397b-a17b-ud-q2_k_xl-00001-of-00005.gguf',
-    url: 'https://huggingface.co/unsloth/Qwen3.5-397B-A17B-GGUF/resolve/main/Qwen3.5-397B-A17B-UD-Q2_K_XL-00001-of-00005.gguf',
-    size: '149 GB',
-    filesizeBytes: 149e9,
-    vram: '160 GB',
-    description: 'Qwen3.5 397B MoE with 17B active params (Q2_K_XL, 5 shards)',
-  },
-  llm_qwen3_5_397b_a17b_q4: {
-    name: 'Qwen3.5 397B A17B Q4',
-    type: 'llm',
-    filename: 'qwen3.5-397b-a17b-ud-q4_k_xl-00001-of-00006.gguf',
-    url: 'https://huggingface.co/unsloth/Qwen3.5-397B-A17B-GGUF/resolve/main/Qwen3.5-397B-A17B-UD-Q4_K_XL-00001-of-00006.gguf',
-    size: '219 GB',
-    filesizeBytes: 219e9,
-    vram: '230 GB',
-    description: 'Qwen3.5 397B MoE with 17B active params (Q4_K_XL, 6 shards)',
-  },
-  llm_kimi_k2_5_q4: {
-    name: 'Kimi K2.5 Q4',
-    type: 'llm',
-    filename: 'kimi-k2.5-ud-q4_k_xl-00001-of-00013.gguf',
-    url: 'https://huggingface.co/unsloth/Kimi-K2.5-GGUF/resolve/main/Kimi-K2.5-UD-Q4_K_XL-00001-of-00013.gguf',
-    size: '622 GB',
-    filesizeBytes: 622e9,
-    vram: '640 GB',
-    description: 'Kimi K2.5 1T MoE with 32B active params (Q4_K_XL, 13 shards)',
-  },
-  llm_minimax_m2_5_q4: {
-    name: 'MiniMax M2.5 Q4',
-    type: 'llm',
-    filename: 'minimax-m2.5-ud-q4_k_xl-00001-of-00004.gguf',
-    url: 'https://huggingface.co/unsloth/MiniMax-M2.5-GGUF/resolve/main/MiniMax-M2.5-UD-Q4_K_XL-00001-of-00004.gguf',
-    size: '131 GB',
-    filesizeBytes: 131e9,
-    vram: '140 GB',
-    description: 'MiniMax M2.5 229B MoE with 10B active params (Q4_K_XL, 4 shards)',
-  },
-  llm_devstral_24b_q2: {
-    name: 'Devstral 24B',
-    type: 'llm',
-    filename: 'devstral-small-2-24b-instruct-2512-ud-q2_k_xl.gguf',
-    url: 'https://huggingface.co/unsloth/Devstral-Small-2-24B-Instruct-2512-GGUF/resolve/main/Devstral-Small-2-24B-Instruct-2512-UD-Q2_K_XL.gguf',
-    size: '9.29 GB',
-    filesizeBytes: 9.29e9,
-    vram: '12 GB',
-    description: 'Mistral Devstral 24B coding model (Q2_K_XL)',
-  },
-  llm_devstral_24b_q4: {
-    name: 'Devstral 24B Q4',
-    type: 'llm',
-    filename: 'devstral-small-2-24b-instruct-2512-ud-q4_k_xl.gguf',
-    url: 'https://huggingface.co/unsloth/Devstral-Small-2-24B-Instruct-2512-GGUF/resolve/main/Devstral-Small-2-24B-Instruct-2512-UD-Q4_K_XL.gguf',
-    size: '14.5 GB',
-    filesizeBytes: 14.5e9,
-    vram: '18 GB',
-    description: 'Mistral Devstral 24B coding model (Q4_K_XL)',
-  },
-  llm_devstral_24b_q8: {
-    name: 'Devstral 24B Q8',
-    type: 'llm',
-    filename: 'devstral-small-2-24b-instruct-2512-ud-q8_k_xl.gguf',
-    url: 'https://huggingface.co/unsloth/Devstral-Small-2-24B-Instruct-2512-GGUF/resolve/main/Devstral-Small-2-24B-Instruct-2512-UD-Q8_K_XL.gguf',
-    size: '29 GB',
-    filesizeBytes: 29e9,
-    vram: '32 GB',
-    description: 'Mistral Devstral 24B coding model (Q8_K_XL)',
-  },
-  llm_ministral_3b_q4: {
-    name: 'Ministral 3B',
-    type: 'llm',
-    filename: 'ministral-3-3b-instruct-2512-ud-q4_k_xl.gguf',
-    url: 'https://huggingface.co/unsloth/Ministral-3-3B-Instruct-2512-GGUF/resolve/main/Ministral-3-3B-Instruct-2512-UD-Q4_K_XL.gguf',
-    size: '2.19 GB',
-    filesizeBytes: 2.19e9,
-    vram: '4 GB',
-    description: 'Mistral Ministral 3B compact model (Q4_K_XL)',
-  },
-  llm_ministral_8b_q4: {
-    name: 'Ministral 8B',
-    type: 'llm',
-    filename: 'ministral-3-8b-instruct-2512-ud-q4_k_xl.gguf',
-    url: 'https://huggingface.co/unsloth/Ministral-3-8B-Instruct-2512-GGUF/resolve/main/Ministral-3-8B-Instruct-2512-UD-Q4_K_XL.gguf',
-    size: '5.29 GB',
-    filesizeBytes: 5.29e9,
-    vram: '8 GB',
-    description: 'Mistral Ministral 8B general-purpose model (Q4_K_XL)',
-  },
-
+  // LLMs are generated from LLM_BASE_MODELS above.
+  ..._generateLLMRequirements(),
   // Image Generation Models (keys match pipeline names)
   image_turbo: {
     name: 'FLUX Klein',
@@ -674,6 +646,17 @@ export const MODEL_REQUIREMENTS = {
     size: '~4 GB fast (2B) / ~18.8 GB quality (4B XL)',
     vram: '4 GB fast / 12 GB quality',
     description: 'AI music generation — Fast mode (v1.5 turbo, 2B params) or Quality mode (v1.5 XL turbo, 4B params, float16)',
+    // The lyrics generation step in GenerativeAudio uses Qwen3.5 4B as an
+    // on-device enhancer. It's a hard dependency for the music flow: without
+    // it, the "Generate Lyrics" button stays disabled. Listing it as an
+    // additional file makes the skill downloader fetch it alongside ACE-Step.
+    additionalFiles: [{
+      name: 'qwen3.5-4b-q4_k_m.gguf',
+      url: 'https://huggingface.co/unsloth/Qwen3.5-4B-GGUF/resolve/main/Qwen3.5-4B-Q4_K_M.gguf',
+      size: '~2.8 GB',
+      filesizeBytes: 2.8e9,
+      description: 'Qwen3.5 4B — lyrics enhancer LLM (required for music mode)',
+    }],
   },
 
   // Music Fast (2B only — for skills that need guaranteed fast music gen)
@@ -686,6 +669,13 @@ export const MODEL_REQUIREMENTS = {
     size: '~4 GB',
     vram: '4 GB',
     description: 'Fast music generation (v1.5 turbo, 2B params)',
+    additionalFiles: [{
+      name: 'qwen3.5-4b-q4_k_m.gguf',
+      url: 'https://huggingface.co/unsloth/Qwen3.5-4B-GGUF/resolve/main/Qwen3.5-4B-Q4_K_M.gguf',
+      size: '~2.8 GB',
+      filesizeBytes: 2.8e9,
+      description: 'Qwen3.5 4B — lyrics enhancer LLM (required for music mode)',
+    }],
   },
 
   // Video Models
@@ -698,6 +688,31 @@ export const MODEL_REQUIREMENTS = {
     size: '~10 GB',
     vram: '10 GB',
     description: 'Fast video generation (distilled, 8-10 steps)',
+  },
+
+  video_quality: {
+    name: 'Wan2.2 I2V 14B',
+    type: 'video',
+    pipeline: 'video_quality',
+    endpoint: '/video/quality',
+    repo: 'Wan-AI/Wan2.2-I2V-A14B-Diffusers',
+    size: '~15 GB',
+    vram: '12 GB',
+    description: 'High-quality image-to-video (14B, GGUF Q2_K)',
+  },
+
+  // Time-Series Forecasting — Google TimesFM 2.0 (500M) via Flask pipeline.
+  // Wired into the standard SkillDownloader flow so the Chart Forecaster
+  // skill's "Download Required" banner lists it alongside the LLM.
+  forecast_quality: {
+    name: 'TimesFM 2.0',
+    type: 'forecast',
+    pipeline: 'forecast',
+    endpoint: '/forecast',
+    repo: 'google/timesfm-2.0-500m-pytorch',
+    size: '~2 GB',
+    vram: '2 GB',
+    description: 'Google time-series forecasting model (500M params)',
   },
 
   // 3D Models (no pipeline yet)
@@ -766,17 +781,51 @@ export const SKILL_MODEL_REQUIREMENTS = {
   'hairstyle-studio-v1.0.0': ['llm_llama_3_1_8b', 'image_turbo'],
   'roleplay-companion-v1.0.0': ['llm_mythomax_13b', 'image_advanced', 'image_turbo'],
   'live-streaming-v1.0.0': ['image_turbo', 'audio_turbo', 'music_fast', 'video_fast'],
+  // Mass Chat needs a default LLM for the "ask my companion" panel + at least
+  // one small model the user can pick to compare. It effectively works with
+  // any downloaded LLM but we list one compact default so the SkillDownloader
+  // can pre-fetch it in offline installs.
+  'mass-chat-v1.0.0': ['llm_qwen3_5_4b', 'image_turbo'],
+  // Chart Forecaster depends on the Flask /forecast endpoint (TimesFM) +
+  // the enhancer LLM for the narrative explainer.
+  'chart-forecaster-v1.0.0': ['llm_qwen3_5_4b', 'forecast_quality'],
 };
 
 /**
- * Get model requirements for a skill
+ * Get model requirements for a skill. Flattens each requirement's
+ * `additionalFiles` (e.g. the lyrics LLM that sits alongside the ACE-Step
+ * music model) into synthetic LLM entries so the download UI surfaces them
+ * as separate rows the user can track and gate against.
  */
 export function getSkillModelRequirements(skillId) {
   const modelKeys = SKILL_MODEL_REQUIREMENTS[skillId] || [];
-  return modelKeys.map(key => ({
-    key,
-    ...MODEL_REQUIREMENTS[key],
-  }));
+  const out = [];
+  for (const key of modelKeys) {
+    const base = MODEL_REQUIREMENTS[key];
+    if (!base) continue;
+    out.push({ key, ...base });
+    if (Array.isArray(base.additionalFiles)) {
+      for (const extra of base.additionalFiles) {
+        if (!extra?.name) continue;
+        // Heuristic: .gguf / q4_k_m files are LLMs; everything else is bundled
+        // with the parent pipeline and doesn't need its own row.
+        const isLLM = extra.name.toLowerCase().endsWith('.gguf');
+        if (!isLLM) continue;
+        out.push({
+          key: `${key}:${extra.name}`,
+          name: extra.description || extra.name,
+          type: 'llm',
+          filename: extra.name,
+          url: extra.url,
+          size: extra.size,
+          filesizeBytes: extra.filesizeBytes,
+          description: extra.description,
+          parentKey: key,
+        });
+      }
+    }
+  }
+  return out;
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -4641,7 +4690,6 @@ export const meditationForge = createSkillDefinition({
   execution: {
     type: 'custom',
     entrypoint: 'MeditationForgeSkill',
-    // Legacy execute function kept for backwards compatibility
     async execute(inputs, context) {
       const { intention, duration, environment } = inputs;
 
@@ -7090,7 +7138,6 @@ export const polymarketTopPerformers = createSkillDefinition({
   category: 'finance',
   tags: ['polymarket', 'copy-trading', 'prediction-markets'],
   price: 9.99,
-  disabled: true, // Temporarily disabled for this release
   requirements: { minLevel: 1, requiredApis: ['polymarket'], requiredPermissions: ['network:read'] },
   inputs: {
     numTraders: { type: 'number', default: 10, min: 1, max: 20, label: 'Top traders to analyze', description: 'Number of top PnL traders to fetch from leaderboard' },
@@ -7279,6 +7326,175 @@ Execute the following:
 });
 
 // ═══════════════════════════════════════════════════════════════════════════
+// EDUCATION SKILLS
+// ═══════════════════════════════════════════════════════════════════════════
+
+export const massChat = createSkillDefinition({
+  id: 'mass-chat-v1.0.0',
+  name: 'Mass Chat',
+  description: 'Ask the same question to multiple downloaded LLMs sequentially and compare their answers side-by-side, with per-model tok/s performance metrics.',
+  version: '1.0.0',
+  author: { address: '0x8Ff3b2e823b33BeE30e699bB1b6BBc8F622fEa89', name: 'BonzAI', verified: true },
+  category: 'education',
+  tags: ['llm', 'comparison', 'benchmarking', 'learning'],
+  price: 9.99,
+  requirements: { minLevel: 0, requiredApis: [], requiredPermissions: [] },
+  inputs: {
+    prompt: { type: 'string', default: '', label: 'Prompt', description: 'The question to send to every selected model.' },
+    models: { type: 'string-array', default: [], label: 'Models', description: 'Filenames of downloaded LLMs to run sequentially.' },
+    temperature: { type: 'number', default: 0.7, min: 0, max: 2, label: 'Temperature' },
+    maxTokens: { type: 'number', default: 512, min: 32, max: 4096, label: 'Max tokens' },
+  },
+  prompt: {
+    system: 'You are a helpful assistant. Answer the question concisely and accurately.',
+    task: '{{prompt}}',
+    outputFormat: { type: 'text' },
+  },
+  execution: {
+    type: 'component',
+    component: 'MassChatSkill',
+    // Headless path for OpenClaw / Hermes webhooks. Runs the prompt against
+    // every requested model sequentially and returns a serializable array of
+    // responses with tok/s metrics.
+    async execute(inputs, context) {
+      const { updateStatus } = context || {};
+      const api = typeof window !== 'undefined' ? window.electronAPI : null;
+      if (!api?.loadModel || !api?.chat) {
+        throw new Error('Mass Chat requires the Electron runtime — not available in this context.');
+      }
+      const { prompt, models = [], temperature = 0.7, maxTokens = 512 } = inputs;
+      if (!prompt || !Array.isArray(models) || models.length === 0) {
+        throw new Error('prompt and models[] are required');
+      }
+      const results = [];
+      for (const filename of models) {
+        updateStatus?.(`Running ${filename}…`);
+        const startedAt = Date.now();
+        try {
+          await api.loadModel({ filename });
+          await api.resetChat?.();
+          const reply = await api.chat(prompt, { temperature, maxTokens });
+          const durationMs = Date.now() - startedAt;
+          const text = typeof reply === 'string' ? reply : (reply?.text || '');
+          const tokenCount = text.split(/\s+/).filter(Boolean).length;
+          results.push({
+            filename,
+            response: text,
+            durationMs,
+            tokensPerSecond: durationMs > 0 ? (tokenCount / (durationMs / 1000)) : 0,
+            success: true,
+          });
+        } catch (e) {
+          results.push({
+            filename,
+            response: '',
+            durationMs: Date.now() - startedAt,
+            tokensPerSecond: 0,
+            success: false,
+            error: e?.message || String(e),
+          });
+        }
+      }
+      return { prompt, results, meta: { completedAt: new Date().toISOString() } };
+    },
+  },
+  metadata: { createdAt: '2026-04-18T00:00:00Z', updatedAt: '2026-04-18T00:00:00Z', license: 'MIT' },
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+// FINANCE SKILLS (v2)
+// ═══════════════════════════════════════════════════════════════════════════
+
+export const chartForecaster = createSkillDefinition({
+  id: 'chart-forecaster-v1.0.0',
+  name: 'Chart Forecaster',
+  description: 'Forecast price action for top cryptocurrencies and tech stocks using Google TimesFM 2.0 (500M). Historical data from CoinGecko (crypto) + Yahoo Finance (stocks).',
+  version: '1.0.0',
+  author: { address: '0x8Ff3b2e823b33BeE30e699bB1b6BBc8F622fEa89', name: 'BonzAI', verified: true },
+  category: 'finance',
+  tags: ['forecasting', 'time-series', 'timesfm', 'crypto', 'stocks'],
+  price: 9.99,
+  requirements: { minLevel: 0, requiredApis: ['coingecko', 'yfinance'], requiredPermissions: ['network:read'] },
+  inputs: {
+    symbol: { type: 'string', default: 'BTC', label: 'Symbol', description: 'Ticker (e.g. BTC, ETH, AAPL, NVDA).' },
+    horizonDays: { type: 'number', default: 30, min: 7, max: 180, label: 'Forecast horizon (days)' },
+    lookbackDays: { type: 'number', default: 365, min: 90, max: 1825, label: 'Lookback window (days)' },
+    assetType: { type: 'string', default: 'crypto', label: 'Asset type', description: 'crypto or stock' },
+  },
+  prompt: {
+    system: 'Time-series forecasting skill; execution is delegated to the Flask server running TimesFM.',
+    task: 'Forecast {{symbol}} over {{horizonDays}} days using {{lookbackDays}} days of history.',
+    outputFormat: { type: 'structured', fields: ['series', 'forecast', 'metadata'] },
+  },
+  execution: {
+    type: 'component',
+    component: 'ChartForecasterSkill',
+    // Headless path for OpenClaw / Hermes webhooks. Fetches history from the
+    // appropriate free data source (CoinGecko for crypto, Yahoo Finance for
+    // stocks), POSTs to /forecast, returns the raw series + forecast arrays.
+    async execute(inputs, context) {
+      const { updateStatus } = context || {};
+      const { symbol, horizonDays = 30, lookbackDays = 365, assetType = 'crypto' } = inputs;
+      if (!symbol) throw new Error('symbol is required');
+
+      updateStatus?.(`Fetching ${symbol} history…`);
+      let series = [];
+      if (assetType === 'crypto') {
+        const map = {
+          BTC: 'bitcoin', ETH: 'ethereum', SOL: 'solana', BNB: 'binancecoin',
+          XRP: 'ripple', DOGE: 'dogecoin', ADA: 'cardano', AVAX: 'avalanche-2',
+          LINK: 'chainlink', DOT: 'polkadot',
+        };
+        const coingeckoId = map[symbol.toUpperCase()] || symbol.toLowerCase();
+        const r = await fetch(`https://api.coingecko.com/api/v3/coins/${coingeckoId}/market_chart?vs_currency=usd&days=${lookbackDays}&interval=daily`);
+        if (!r.ok) throw new Error(`CoinGecko ${r.status}`);
+        const body = await r.json();
+        series = (body.prices || []).map(([t, v]) => ({ t: Math.floor(t / 1000), v }));
+      } else {
+        const range = lookbackDays <= 365 ? '1y' : lookbackDays <= 730 ? '2y' : '5y';
+        const r = await fetch(`https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(symbol)}?range=${range}&interval=1d`);
+        if (!r.ok) throw new Error(`Yahoo Finance ${r.status}`);
+        const body = await r.json();
+        const res0 = body?.chart?.result?.[0];
+        const times = res0?.timestamp || [];
+        const closes = res0?.indicators?.quote?.[0]?.close || [];
+        for (let i = 0; i < times.length; i++) {
+          if (closes[i] != null) series.push({ t: times[i], v: closes[i] });
+        }
+        series = series.slice(-lookbackDays);
+      }
+      if (series.length < 30) throw new Error('Not enough historical data');
+
+      updateStatus?.('Forecasting with TimesFM…');
+      const apiBase = (typeof window !== 'undefined' ? window.electronAPI?.env?.API_BASE : null) || 'http://127.0.0.1:65000';
+      const r = await fetch(`${apiBase}/forecast`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          series: series.map(p => p.v),
+          horizon: horizonDays,
+          freq: 1,
+        }),
+      });
+      if (!r.ok) throw new Error(`forecast ${r.status}`);
+      const body = await r.json();
+      return {
+        symbol,
+        assetType,
+        history: series,
+        forecast: body.forecast,
+        lower80: body.lower80,
+        upper80: body.upper80,
+        lower95: body.lower95,
+        upper95: body.upper95,
+        model: body.model,
+      };
+    },
+  },
+  metadata: { createdAt: '2026-04-18T00:00:00Z', updatedAt: '2026-04-18T00:00:00Z', license: 'MIT' },
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
 // EXPORT ALL FLAGSHIP SKILLS
 // ═══════════════════════════════════════════════════════════════════════════
 
@@ -7290,6 +7506,8 @@ export const flagshipSkills = [
   videoCaptioning,          // Video Captioning
   tcgAnalysis,              // Trading Card Game Analysis
   liveStreamer,             // Live Streaming Playground
+  massChat,                 // Mass Chat (education, $9.99)
+  chartForecaster,          // Chart Forecaster (finance, $9.99)
 ];
 
 // Export memory management functions for use by components

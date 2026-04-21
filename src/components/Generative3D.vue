@@ -551,6 +551,8 @@ import AccessRequirements from "./AccessRequirements.vue";
 import MintModal from "./MintModal.vue";
 import { requestOpenNetworkModal } from "../services/level.service.js";
 import { fetchNFT3DCode } from "../services/contentNFT.service.js";
+import { resolveLLM } from "../skills/flagship.js";
+import { makeLibs } from "./gen3d/engine.js";
 import useClipboard from "vue-clipboard3";
 import axios from "axios";
 import { io } from "socket.io-client";
@@ -562,7 +564,11 @@ import {
   inferenceStore,
 } from "../stores/inferenceStore";
 
-const skillFiles = import.meta.glob('../skills/threejs/*/SKILL.md', { as: 'raw', eager: true });
+// Prompt-injection reference: CHEATSHEET.md (concise) not SKILL.md (full).
+// Full SKILL.md files (500-660 lines each) ballooned the code-gen prompt to
+// ~2300 lines and drove prefill times past 13 minutes on small LLMs; the
+// cheatsheets are 32-46 lines each and cover the same API surface.
+const skillFiles = import.meta.glob('../skills/threejs/*/CHEATSHEET.md', { as: 'raw', eager: true });
 const recipeFiles = import.meta.glob('../skills/threejs/recipes/*.md', { as: 'raw', eager: true });
 
 // Server URL for downloads
@@ -616,17 +622,15 @@ function normalizeLLMCode(code) {
   out = out.trim();
 
   if (out.startsWith("{") && out.includes('"code"')) {
-    try {
-      const codeMatch = out.match(/"code"\s*:\s*"([\s\S]*?)"\s*\}?\s*$/);
-      if (codeMatch) {
-        out = codeMatch[1]
-          .replace(/\\n/g, "\n")
-          .replace(/\\"/g, '"')
-          .replace(/\\t/g, "\t")
-          .replace(/\\\\/g, "\\")
-          .trim();
-      }
-    } catch (e) {}
+    const codeMatch = out.match(/"code"\s*:\s*"([\s\S]*?)"\s*\}?\s*$/);
+    if (codeMatch) {
+      out = codeMatch[1]
+        .replace(/\\n/g, "\n")
+        .replace(/\\"/g, '"')
+        .replace(/\\t/g, "\t")
+        .replace(/\\\\/g, "\\")
+        .trim();
+    }
   }
 
   // STEP 2: Remove LLM preamble
@@ -658,8 +662,10 @@ function normalizeLLMCode(code) {
   // require, destructuring, new, literal, or anything else) causes runtime errors.
   // One comprehensive pass instead of pattern-specific regexes.
 
-  // First: strip any destructuring from params/window (catches all shapes)
-  out = out.replace(/(?:const|let|var)\s*\{[^}]*\}\s*=\s*(?:params|window)\s*;?\s*/g, "");
+  // First: strip any destructuring from params/window (catches all shapes).
+  // The `(?!\.)` lookahead prevents partial matches on `params._engine`,
+  // which would otherwise leave `._engine;` as an orphan expression.
+  out = out.replace(/(?:const|let|var)\s*\{[^}]*\}\s*=\s*(?:params|window)(?!\s*\.)\s*;?\s*/g, "");
 
   // Strip individual declarations of reserved names — regardless of RHS
   const WRAPPER_RESERVED = [
@@ -690,11 +696,12 @@ function normalizeLLMCode(code) {
       out = out.slice(setObjIdx);
     }
   }
-  // Strip all addUpdateCallback calls (animation is disabled — scene is static)
-  // Handles: addUpdateCallback((...) => { ... }); and root.addUpdateCallback(...)
-  // Match balanced braces up to 2 levels deep
-  out = out.replace(/(?:root\.)?addUpdateCallback\s*\(\s*\([\s\S]*?\)\s*=>\s*\{[\s\S]*?\}\s*\)\s*;?\s*/g, "");
-  out = out.replace(/(?:root\.)?addUpdateCallback\s*\(\s*function[\s\S]*?\}\s*\)\s*;?\s*/g, "");
+  // Animations are NOW allowed — the engine's shader ticker and physics loop
+  // depend on addUpdateCallback, and user scenes (orreries, fountains, etc.)
+  // are much livelier with them on. We no longer regex-strip these calls;
+  // the earlier non-greedy strip was the root cause of the fountain scene
+  // failing (nested `.forEach(c => { ... })` inside an addUpdateCallback
+  // tripped the regex and left orphan `});` fragments behind).
 
   const threeClasses = [
     "BoxGeometry",
@@ -766,6 +773,37 @@ function normalizeLLMCode(code) {
   out = out.replace(/params\.H\./g, "H.");
   out = out.replace(/params\.TEX/g, "TEX");
   out = out.replace(/params\.MAT/g, "MAT");
+
+  // STEP 5.1: Strip LLM redeclarations of pre-injected identifiers.
+  // Models frequently open the scene with something like
+  //   `const { THREE, scene, root, MAT, TEX, SHADER, FLUID, H, P, addUpdateCallback } = this;`
+  // or standalone `const THREE = params.THREE;` — both throw
+  // "Identifier 'X' has already been declared" once we inline into the
+  // wrapper, because the wrapper already hoists every one of those names.
+  // Kill any destructure or const whose left-hand side contains a protected
+  // identifier.
+  const PROTECTED = [
+    'THREE', 'scene', 'camera', 'renderer', 'root',
+    'H', 'helpers', 'MAT', 'TEX', 'SHADER', 'FLUID', 'P', 'CELESTIAL', 'FX',
+    'addUpdateCallback', 'removeUpdateCallback', 'setObjectInfo',
+    'setFilmGrain', 'setScreenDroplets',
+    'setChromatic', 'setDoF', 'setColorGrade', 'setLensFlare', 'setUnderwater', 'setEnvironment',
+    'params',
+  ];
+  const protectedRE = new RegExp(`\\b(${PROTECTED.join('|')})\\b`);
+  // Destructuring: const { THREE, scene, ... } = anything;
+  out = out.replace(
+    /(?:const|let|var)\s*\{[^}]*\}\s*=\s*[^;]+;?/g,
+    (match) => (protectedRE.test(match) ? `// (removed redeclaration: ${match.replace(/\s+/g, ' ').slice(0, 80)}…)` : match)
+  );
+  // Single-binding: const THREE = something;
+  for (const name of PROTECTED) {
+    const re = new RegExp(`(?:const|let|var)\\s+${name}\\s*=\\s*[^;]+;?`, 'g');
+    out = out.replace(re, `// (removed redeclaration of ${name})`);
+  }
+  // `this.X` references on a module-scope wrapper point at nothing useful —
+  // swap them for the local identifier since it's already in scope.
+  out = out.replace(/\bthis\.(THREE|scene|camera|renderer|root|H|helpers|MAT|TEX|SHADER|FLUID|P|addUpdateCallback|setObjectInfo)\b/g, '$1');
 
   // STEP 5.5: Remove stray export statements (e.g. "export { root }")
   out = out.replace(/export\s*\{[^}]*\}\s*;?\s*/g, "");
@@ -843,89 +881,26 @@ export default async function generate(params) {
   root.name = "GeneratedObject";
   const addUpdateCallback = params.addUpdateCallback;
   const setObjectInfo = params.setObjectInfo;
+  // Post-FX toggles — defensive no-ops if the host doesn't provide them
+  // so generated code never throws for optional effects.
+  const setFilmGrain      = params.setFilmGrain      || (() => {});
+  const setScreenDroplets = params.setScreenDroplets || (() => {});
+  const setChromatic      = params.setChromatic      || (() => {});
+  const setDoF            = params.setDoF            || (() => {});
+  const setColorGrade     = params.setColorGrade     || (() => {});
+  const setLensFlare      = params.setLensFlare      || (() => {});
+  const setUnderwater     = params.setUnderwater     || (() => {});
+  const setEnvironment    = params.setEnvironment    || (async () => {});
   const helpers = params.helpers;
   const H = helpers;
 
-  // ── Pre-built Material Library (MAT.*) ──
-  var MAT = {
-    gold: new THREE.MeshPhysicalMaterial({ color: 0xffd700, metalness: 0.9, roughness: 0.3, clearcoat: 0.5 }),
-    silver: new THREE.MeshPhysicalMaterial({ color: 0xc0c0c0, metalness: 0.9, roughness: 0.2, clearcoat: 0.5 }),
-    bronze: new THREE.MeshPhysicalMaterial({ color: 0xcd7f32, metalness: 0.85, roughness: 0.35, clearcoat: 0.3 }),
-    copper: new THREE.MeshPhysicalMaterial({ color: 0xb87333, metalness: 0.8, roughness: 0.4 }),
-    iron: new THREE.MeshPhysicalMaterial({ color: 0x555555, metalness: 0.85, roughness: 0.5 }),
-    steel: new THREE.MeshPhysicalMaterial({ color: 0x888899, metalness: 0.9, roughness: 0.15, clearcoat: 0.7 }),
-    ruby: new THREE.MeshPhysicalMaterial({ color: 0xcc0033, transmission: 0.6, ior: 2.4, emissive: 0xcc0033, emissiveIntensity: 0.3 }),
-    emerald: new THREE.MeshPhysicalMaterial({ color: 0x00cc66, transmission: 0.6, ior: 2.4, emissive: 0x00cc66, emissiveIntensity: 0.3 }),
-    sapphire: new THREE.MeshPhysicalMaterial({ color: 0x0066cc, transmission: 0.6, ior: 2.4, emissive: 0x0066cc, emissiveIntensity: 0.3 }),
-    amethyst: new THREE.MeshPhysicalMaterial({ color: 0x9966cc, transmission: 0.6, ior: 2.4, emissive: 0x9966cc, emissiveIntensity: 0.3 }),
-    diamond: new THREE.MeshPhysicalMaterial({ color: 0xeeffff, transmission: 0.9, ior: 2.4, roughness: 0.0, clearcoat: 1.0 }),
-    glass: new THREE.MeshPhysicalMaterial({ color: 0xffffff, transmission: 0.9, roughness: 0.05, ior: 1.5 }),
-    obsidian: new THREE.MeshPhysicalMaterial({ color: 0x1a1a2e, metalness: 0.3, roughness: 0.1, clearcoat: 0.8 }),
-    bone: new THREE.MeshPhysicalMaterial({ color: 0xf5f0dc, roughness: 0.7, metalness: 0 }),
-    flesh: new THREE.MeshPhysicalMaterial({ color: 0xd4956a, roughness: 0.8, metalness: 0 }),
-    leaf: new THREE.MeshPhysicalMaterial({ color: 0x2d7d3a, roughness: 0.7, metalness: 0 }),
-    bark: new THREE.MeshPhysicalMaterial({ color: 0x5a3520, roughness: 0.9, metalness: 0 }),
-    clay: new THREE.MeshPhysicalMaterial({ color: 0xc4764e, roughness: 0.95, metalness: 0 }),
-    marble: new THREE.MeshPhysicalMaterial({ color: 0xf0ece2, roughness: 0.3, metalness: 0, clearcoat: 0.4 }),
-    lava: new THREE.MeshPhysicalMaterial({ color: 0xff3300, emissive: 0xff3300, emissiveIntensity: 0.8, roughness: 0.6 }),
-    ice: new THREE.MeshPhysicalMaterial({ color: 0xaaddff, transmission: 0.7, ior: 1.31, roughness: 0.1 }),
-    sand: new THREE.MeshPhysicalMaterial({ color: 0xd2b48c, roughness: 0.95, metalness: 0 }),
-    snow: new THREE.MeshPhysicalMaterial({ color: 0xfafafa, roughness: 0.8, metalness: 0 }),
-  };
-
-  // ── Pre-built Texture Generators (TEX.*) — returns CanvasTexture ──
-  var TEX = {
-    wood: (baseColor, grainColor) => {
-      const c = document.createElement('canvas'); c.width = 256; c.height = 256;
-      const x = c.getContext('2d'); x.fillStyle = baseColor || '#7a5230'; x.fillRect(0,0,256,256);
-      x.strokeStyle = grainColor || '#5a3520'; x.globalAlpha = 0.3;
-      for (let i=0;i<50;i++) { x.beginPath(); const y=Math.random()*256; x.moveTo(0,y);
-        x.bezierCurveTo(85,y+(Math.random()-0.5)*20,170,y+(Math.random()-0.5)*20,256,y+(Math.random()-0.5)*10);
-        x.lineWidth=0.5+Math.random()*2; x.stroke(); }
-      const t = new THREE.CanvasTexture(c); t.wrapS=t.wrapT=THREE.RepeatWrapping; return t;
-    },
-    stone: (baseColor) => {
-      const c = document.createElement('canvas'); c.width = 256; c.height = 256;
-      const x = c.getContext('2d'); x.fillStyle = baseColor || '#888888'; x.fillRect(0,0,256,256);
-      x.globalAlpha = 0.15;
-      for (let i=0;i<300;i++) { x.fillStyle = Math.random()>0.5 ? '#aaaaaa' : '#666666';
-        x.fillRect(Math.random()*256, Math.random()*256, 2+Math.random()*6, 2+Math.random()*6); }
-      x.globalAlpha = 0.1; x.strokeStyle = '#333';
-      for (let i=0;i<8;i++) { x.beginPath(); x.moveTo(Math.random()*256,Math.random()*256);
-        x.lineTo(Math.random()*256,Math.random()*256); x.lineWidth=0.5; x.stroke(); }
-      const t = new THREE.CanvasTexture(c); t.wrapS=t.wrapT=THREE.RepeatWrapping; return t;
-    },
-    metal: (baseColor) => {
-      const c = document.createElement('canvas'); c.width = 256; c.height = 256;
-      const x = c.getContext('2d'); x.fillStyle = baseColor || '#999999'; x.fillRect(0,0,256,256);
-      x.globalAlpha = 0.08;
-      for (let i=0;i<120;i++) { x.strokeStyle = Math.random()>0.5 ? '#cccccc' : '#777777';
-        x.beginPath(); const y=Math.random()*256; x.moveTo(0,y); x.lineTo(256,y+(Math.random()-0.5)*4);
-        x.lineWidth=0.3+Math.random(); x.stroke(); }
-      const t = new THREE.CanvasTexture(c); t.wrapS=t.wrapT=THREE.RepeatWrapping; return t;
-    },
-    fabric: (baseColor) => {
-      const c = document.createElement('canvas'); c.width = 128; c.height = 128;
-      const x = c.getContext('2d'); x.fillStyle = baseColor || '#8b4444'; x.fillRect(0,0,128,128);
-      x.globalAlpha = 0.1; x.strokeStyle = '#000';
-      for (let i=0;i<128;i+=3) { x.beginPath(); x.moveTo(i,0); x.lineTo(i,128); x.moveTo(0,i); x.lineTo(128,i); x.lineWidth=0.5; x.stroke(); }
-      const t = new THREE.CanvasTexture(c); t.wrapS=t.wrapT=THREE.RepeatWrapping; return t;
-    },
-    leather: (baseColor) => {
-      const c = document.createElement('canvas'); c.width = 128; c.height = 128;
-      const x = c.getContext('2d'); x.fillStyle = baseColor || '#6b3a2a'; x.fillRect(0,0,128,128);
-      x.globalAlpha = 0.15;
-      for (let i=0;i<200;i++) { x.fillStyle = Math.random()>0.5 ? '#7a4a3a' : '#5a2a1a';
-        x.beginPath(); x.arc(Math.random()*128,Math.random()*128,1+Math.random()*3,0,Math.PI*2); x.fill(); }
-      const t = new THREE.CanvasTexture(c); t.wrapS=t.wrapT=THREE.RepeatWrapping; return t;
-    },
-  };
-
-  // Bind to params to prevent scoping errors if LLM uses params.TEX, etc.
-  params.MAT = MAT;
-  params.TEX = TEX;
-  params.H = H;
-  params.helpers = H;
+  // Engine libraries (MAT, TEX, SHADER, FLUID, P, CELESTIAL, FX) — injected
+  // by ThreeViewer via ctx._engine so they share the same update loop the
+  // helpers use.
+  const { MAT, TEX, SHADER, FLUID, P, CELESTIAL, FX } = params._engine;
+  params.MAT = MAT; params.TEX = TEX; params.SHADER = SHADER;
+  params.FLUID = FLUID; params.P = P; params.CELESTIAL = CELESTIAL; params.FX = FX;
+  params.H = H; params.helpers = H;
 
   // ── USER CODE START ──
 ${indent(out, 2)}
@@ -1491,17 +1466,22 @@ export default {
       { id: "foggy", label: "Fog", icon: "🌫️", class: "foggy" },
     ]);
 
+    // 3D default: Qwen3.6 35B A3B Q2_K_XL — MoE with 3B active params fits
+    // comfortably in ~16GB VRAM while delivering frontier-tier code generation
+    // for Three.js scene synthesis.
+    const _3dModel = resolveLLM("qwen_3_6_35b_a3b", "q2");
     const model = {
-        modelname: "Qwen3.5 27B Q2",
-        modeldesc:
-          "27B-parameter hybrid attention model from Alibaba with Gated DeltaNet + Gated Attention and 262K context. Q2_K_XL quantization fits 32GB unified memory. Best for: code generation, creative writing, reasoning, and general-purpose AI on consumer hardware.",
-        url: "https://huggingface.co/unsloth/Qwen3.5-27B-GGUF/resolve/main/Qwen3.5-27B-UD-Q2_K_XL.gguf",
-        filename: "qwen3.5-27b-ud-q2_k_xl.gguf",
-        filesize: "11.2 GB",
-        filesizeBytes: 11.2e9,
-        parameters: 27000000000,
-        isMoE: false,
-        context: 262000,
+        modelname: _3dModel.name,
+        modeldesc: _3dModel.description,
+        url: _3dModel.url,
+        filename: _3dModel.filename,
+        filesize: _3dModel.size,
+        filesizeBytes: _3dModel.filesizeBytes,
+        parameters: _3dModel.parameters,
+        activeParameters: _3dModel.activeParameters,
+        isMoE: _3dModel.isMoE,
+        context: _3dModel.context,
+        thinking: _3dModel.thinking,
     };
 
     const reasoningEnabled = ref(false);
@@ -1510,88 +1490,76 @@ export default {
 
     const examplePrompts = ref([
       {
-        icon: "🏴‍☠️",
-        title: "Treasure Chest",
-        description: "Ornate chest with riches",
-        prompt:
-          "Open pirate treasure chest. Body and curved lid built with ExtrudeGeometry from a Shape profile, wood texture via TEX.wood Canvas map. MAT.gold trim bands as TorusGeometry rings. Inside: scattered gold coins (CylinderGeometry + MAT.gold) and gem clusters (IcosahedronGeometry + MeshPhysicalMaterial transmission 0.85, ior 2.0 in ruby/emerald/sapphire colors). Lid hinged open at 110 degrees. H.sparks golden particles rising from the coins. Lid has iron lock plate (MAT.iron).",
+        icon: "\u2699\ufe0f",
+        title: "Clockwork Heart",
+        description: "Beating mechanism with blood-glass chambers",
+        prompt: "An anatomical clockwork heart resting on a brass plinth — the outer shell is a semi-transparent glass dome with subtle iridescent sheen, through which four pulsing chambers of deep red translucent liquid can be seen slowly beating to an unseen rhythm. Around the equator of the heart runs a crown of ornate brass gear teeth, rotating just perceptibly. Delicate gold arterial tubes arc out of the top and loop back down into the heart's sides. The plinth is a polished marble slab with rune-like gold filigree. The whole piece is haloed in a faint crimson glow, crimson mist trailing from the base, fine gold flecks drifting around it.",
       },
       {
-        icon: "⚔️",
-        title: "Enchanted Sword",
-        description: "Rune-etched floating blade",
-        prompt:
-          "Floating enchanted longsword. Blade via ExtrudeGeometry from a tapered Shape profile, MAT.steel with clearcoat 1.0 and anisotropy. Rune engravings on blade via Canvas procedural texture map. Gold crossguard (ExtrudeGeometry swept curves + MAT.gold). Leather-wrapped grip (CylinderGeometry + TEX.leather). Pommel gemstone (IcosahedronGeometry + MeshPhysicalMaterial transmission 0.8, emissive blue). Blue energy ShaderMaterial aura around the blade. H.sparks blue spiral particles orbiting.",
+        icon: "\ud83c\udfdb\ufe0f",
+        title: "Gem Pedestal",
+        description: "Faceted gems resting on a marble pedestal",
+        prompt: "A circular marble pedestal with a polished gold rim, atop which rest a small collection of faceted gemstones — ruby, sapphire, emerald, topaz, amethyst — each cut into a distinct shape, catching light differently as they tumble and settle on the stone. Gentle gold dust motes drift in the air around the pedestal, and a low mist curls at the base. The whole scene feels like a museum jewel display under a soft spotlight.",
       },
       {
-        icon: "🧪",
-        title: "Elixir Vial",
-        description: "Potion with red liquid",
-        prompt:
-          "Round glass potion vial. Bottle body via LatheGeometry smooth profile with narrow neck and flared lip. H.glass(0xffffff) for glass. Liquid inside: H.fillLiquid(vialMesh, 0xCC0000, {fillLevel: 0.7}) — deep red opaque liquid, added to root. No PointLights or emissive glow on the liquid. Gold cork stopper (CylinderGeometry + MAT.gold) positioned at the vial opening. H.bubbles rising inside the liquid. H.dust faint mist around the base.",
+        icon: "\u26f2",
+        title: "Cascading Fountain",
+        description: "Tiered basins with reflective falling water",
+        prompt: "An ornate three-tier stone fountain with water cascading from the smallest top basin down through the middle and into the wide bottom pool. Each basin is a shallow stone bowl with a gold inlay rim and reflective water pooling inside — the water surface rippling naturally, reflecting the sky above and catching real caustic light patterns on the pool floor below. Slender water columns pour between tiers, complete with droplet accents and a mist of fine spray around the base where the streams impact. A central stone pillar connects the tiers, with small gold spouts at each rim.",
       },
       {
-        icon: "💎",
-        title: "Crystal Cluster",
-        description: "Amethyst formation on rock",
-        prompt:
-          "Cluster of amethyst crystals growing from a rough stone base. Base via LatheGeometry irregular profile with TEX.stone Canvas texture. 8-12 crystal spires at varying angles and heights, each a ConeGeometry (hexagonal, 6 sides) with MeshPhysicalMaterial transmission 0.8, ior 1.8, emissive purple, emissiveIntensity 0.25. Crystals range from small to large. H.dust floating particles catching light.",
-      },
-      {
-        icon: "🛡️",
-        title: "Battle Shield",
-        description: "Heraldic shield with emblem",
-        prompt:
-          "Medieval heater shield. Shield body via ExtrudeGeometry from a pointed-bottom Shape profile with slight convex curve via bevelEnabled. Face painted with Canvas procedural texture: red field, black border, golden lion emblem, rivets around the edge. MAT.iron for the body with the canvas texture as map. Gold boss center piece (LatheGeometry + MAT.gold). Rim trim (TorusGeometry shaped to follow shield edge + MAT.steel). Leather arm straps on the back (ExtrudeGeometry + TEX.leather).",
-      },
-      {
-        icon: "👑",
-        title: "Royal Crown",
-        description: "Jeweled golden crown on velvet",
-        prompt:
-          "Ornate royal crown on a velvet cushion. Crown band via LatheGeometry with ornate profile, MAT.gold. Six points rising from the band via ExtrudeGeometry from pointed Shape. Each point topped with a different gemstone (OctahedronGeometry + MeshPhysicalMaterial transmission 0.85, ior 2.4): ruby, emerald, sapphire, amethyst, diamond, topaz. Filigree cross-arches connecting points (TubeGeometry along CatmullRomCurve3 + MAT.gold). Cushion below (BoxGeometry with rounded edges + H.velvet deep purple). H.dust golden particles.",
-      },
-      {
-        icon: "🔑",
-        title: "Arcane Key",
-        description: "Ornate key with magic aura",
-        prompt:
-          "Ornate golden skeleton key floating upright. Handle: circular ring (TorusGeometry + MAT.gold) with decorative inner filigree (TubeGeometry spirals along CatmullRomCurve3). Shaft: long hexagonal rod (CylinderGeometry 6 sides + MAT.gold). Teeth at bottom: ExtrudeGeometry from a complex Shape with notches and wards. A gemstone set in the handle ring (IcosahedronGeometry + MeshPhysicalMaterial transmission, emissive cyan). ShaderMaterial glow aura surrounding the key. H.sparks cyan particles orbiting.",
-      },
-      {
-        icon: "📖",
-        title: "Spell Book",
-        description: "Open tome with living pages",
-        prompt:
-          "Open leather-bound spell book floating at an angle. Covers via ExtrudeGeometry rectangular Shapes with TEX.leather texture, slightly curved. Spine connecting covers (ExtrudeGeometry arc + TEX.leather). Pages fanning open: multiple thin PlaneGeometry sheets with Canvas procedural text/rune textures, staggered at angles. Page edges slightly curled. Gold corner clasps (ExtrudeGeometry + MAT.gold). Glowing runes on the open pages via emissive Canvas texture. H.sparks purple arcane particles rising from the text.",
-      },
-      {
-        icon: "⚙️",
-        title: "Clockwork Core",
-        description: "Steampunk gear mechanism",
-        prompt:
-          "Steampunk clockwork mechanism. Central glass sphere housing (MeshPhysicalMaterial transmission 0.9, ior 1.5) containing a glowing energy core (ShaderMaterial plasma effect). Three concentric gear rings around it (ExtrudeGeometry gear-tooth Shapes + MAT.bronze) at different angles. Brass support frame (TubeGeometry along curves + MAT.copper). Small pistons (CylinderGeometry). H.sparks orange sparks from gear contacts. Steam wisps (H.smoke). Canvas engraved gauge texture on the base plate.",
-      },
-      {
-        icon: "🔮",
+        icon: "\ud83d\udd2e",
         title: "Seer's Orb",
-        description: "Crystal ball with swirling cosmos",
-        prompt:
-          "Crystal ball on an ornate bronze stand. Orb: IcosahedronGeometry detail 4, MeshPhysicalMaterial transmission 0.92, ior 1.8, clearcoat 1.0. Inside: ShaderMaterial inner sphere with nebula/cosmos fragment shader (swirling colors, noise-based). Stand: LatheGeometry ornate profile with three claw feet (ExtrudeGeometry + MAT.bronze). H.dust ethereal particles floating around. Faint fresnel glow rim on the orb surface.",
+        description: "Crystal ball with cosmic nebula interior",
+        prompt: "A large crystal-ball seer's orb cradled on an ornate bronze stand with three curved claw feet. Inside the clear glass sphere, a deep purple cosmic nebula swirls hypnotically — stars, gas clouds, and violet light drifting in real time. A soft violet halo glows around the outer surface of the orb. Three amethyst gemstones are inset into the stand's base, each with its own faint glowing ring. Purple mist curls at the foot of the stand and cyan sparks slowly orbit the orb.",
       },
       {
-        icon: "⚗️",
-        title: "Alchemist's Lab",
-        description: "Flask with bubbling brew",
-        prompt:
-          "Triangular Erlenmeyer flask on a bronze ring stand. Flask via LatheGeometry with conical-to-narrow-neck profile, H.glass(0xffffff) for glass. Liquid inside: H.fillLiquid(flaskMesh, 0x00CC44, {fillLevel: 0.65}) — green opaque liquid, added to root. No PointLights or emissive glow on the liquid. H.bubbles inside the liquid. Cork stopper (CylinderGeometry + Canvas wood texture) positioned at the flask opening. Bronze tripod stand with ring holder (TubeGeometry + MAT.bronze). H.smoke steam rising from the top.",
+        icon: "\ud83d\udee1\ufe0f",
+        title: "Holographic Shield",
+        description: "Kite shield with live hologram interface",
+        prompt: "A floating kite-shaped shield with a live holographic emerald-green interface projected across its front face — animated scanlines, flickering tactical data, a traveling signal wave. The shield body is brushed steel engraved with circuit-like patterns, trimmed with gold studs at each corner, leather straps on the back. A translucent green force-field dome surrounds the entire shield, pulsing gently. A slow-rotating chrome ring orbits around it. Tiny green sparks orbit at varying radii.",
       },
       {
-        icon: "🐉",
-        title: "Dragon Egg",
-        description: "Cracking egg in ember nest",
-        prompt:
-          "Large dragon egg in a nest of embers. Egg shape via LatheGeometry ovoid profile. Outer shell: ShaderMaterial with procedural iridescent scale pattern (voronoi-based, color shifting). Cracks across the surface revealing inner lava glow (emissive orange, emissiveIntensity 1.2). Nest: ring of intertwined branches (multiple TubeGeometry along random CatmullRomCurve3 paths, TEX.wood). Glowing embers scattered in nest (tiny SphereGeometry + H.glow orange). H.sparks rising ember particles.",
+        icon: "\ud83e\uddea",
+        title: "Alchemist's Flask",
+        description: "Bubbling flask on gimbal with pouring potion",
+        prompt: "An Erlenmeyer flask mounted on a three-axis brass gimbal, tilted at an angle and pouring a glowing emerald-green potion into a waiting glass goblet below. The potion surface inside the flask ripples gently, fine bubbles rising through the liquid. The pouring stream is a continuous column of flowing liquid with droplet accents, and where it strikes the goblet the surface splashes outward. Each gimbal ring rotates on its own axis at slightly different speeds. The whole assembly sits on a dark wooden plinth with faint green mist hanging in the air.",
+      },
+      {
+        icon: "\ud83d\udd2e",
+        title: "Levitating Crystal",
+        description: "Sharp amethyst spire orbiting a base platform",
+        prompt: "A large faceted amethyst crystal levitating upright above a low obsidian platform inscribed with gold rune glyphs. The crystal slowly rotates and bobs gently on an unseen current. Eight smaller floating gems — sapphires, emeralds, rubies — orbit the platform on a horizontal ring, each catching the central crystal's violet glow. A purple fresnel halo surrounds the main crystal, and a faint translucent hemisphere dome of energy covers the platform. Violet mist drifts at the platform base; tiny violet sparks rise steadily.",
+      },
+      {
+        icon: "\ud83d\udd25",
+        title: "Lava Obelisk",
+        description: "Tall obsidian pillar with flowing lava veins",
+        prompt: "An imposing black obsidian obelisk standing on a rough rocky platform, with glowing orange-red lava veins cracking down its four faces in jagged lightning-bolt patterns — the lava flows visibly, pulsing with heat. A gold band wraps the top third. Ember particles rise continuously from the base, warm red mist pools at its feet, and orange caustic light dances on the ground around it. Dust motes catch the lava's glow.",
+      },
+      {
+        icon: "\ud83c\udf0c",
+        title: "Starforge Anvil",
+        description: "Glowing anvil with stellar metal being hammered",
+        prompt: "A blacksmith's anvil forged from dark meteorite iron, mounted on a worn stone pillar. A stellar ingot of molten star-metal lies glowing on the anvil's top — bright amber-orange, its surface churning with heat. A heavy leather-gripped steel hammer hovers above the anvil, rising and falling in a slow rhythm, striking the ingot on each beat. On every impact a burst of golden splash particles erupts. A warm halo surrounds the ingot; hundreds of golden sparks drift continuously in the surrounding air.",
+      },
+      {
+        icon: "\ud83d\udc09",
+        title: "Iridescent Dragon Egg",
+        description: "Cracking egg on a nest of embers",
+        prompt: "A large dragon egg — ovoid, taller than wide — with an iridescent scaled shell that shifts colors from bronze to violet to teal as the viewing angle changes. Three jagged cracks run across its surface, lava-orange glow bleeding through from within. The egg rests in a woven nest of twisted branches interspersed with glowing embers. Caustic orange light patterns the ground beneath the nest, warm mist rises, and hundreds of ember sparks continuously drift upward. A subtle orange halo surrounds the egg.",
+      },
+      {
+        icon: "\u2696\ufe0f",
+        title: "Balance of Fates",
+        description: "Golden scales tipping with gemstone weights",
+        prompt: "An ornate golden balance scale standing on a marble plinth, central column intricately carved with an iridescent sheen. Two shallow gold dishes hang from gold chain links at either end of a horizontal crossbeam — the left dish holds three ruby octahedron gemstones, the right dish is empty. The crossbeam tilts slowly back and forth as if weighing invisible fates. The gems glow softly with a fresnel halo, amber mist pools below the plinth, and fine gold dust drifts around the whole piece with sparks orbiting the gems.",
+      },
+      {
+        icon: "\u2694\ufe0f",
+        title: "Rune Sword Altar",
+        description: "Sword embedded in stone with magical aura",
+        prompt: "A broadsword driven vertically halfway into a rough stone altar. The blade is brushed steel inscribed with glowing cyan runic script running down its length, the crossguard and fittings are gold, the grip wrapped in dark leather, a sapphire pommel. A cyan dissolve-pulse ripples across the blade every few seconds. A translucent cyan energy hemisphere covers the altar. A circular rune inscription glows on the ground around the altar base. Cyan mist curls upward, cyan sparks rise continuously, and faint caustic light patterns the surrounding ground.",
       },
     ]);
 
@@ -1671,79 +1639,365 @@ CRITICAL: Output ONLY raw JavaScript code. No thinking, no reasoning, no <think>
 
 TASK: "${userText}"
 
-═══ AVAILABLE API (pre-declared, do NOT redeclare) ═══
-THREE, root (Group — add meshes here), setObjectInfo({title, description})
-MAT.gold/silver/bronze/copper/iron/steel/ruby/emerald/sapphire/amethyst/diamond/glass/obsidian/bone/flesh/leaf/bark/clay/marble/lava/ice/sand/snow — pre-built materials, use directly (e.g. MAT.gold, NOT H.gold)
-TEX.wood(color?)/stone(color?)/metal(color?)/fabric(color?)/leather(color?) → CanvasTexture
-H.glass(c,{transmission,thickness,ior,roughness})/gem(c,o)/metal(c,o)/matte(c,o)/glow(c,o)/liquid(c,o)/fire(o)/ice(c,o)/lava(o)/leather(c,o)/velvet(c,o)
-H.fillLiquid(containerMesh, color, {fillLevel, inset, opacity}) → Group (opaque colored liquid body + surface disc, NO glow)
-H.light(c,i,d)/spot(c,i,o)/sparks(n,o)/dust(n,o)/bubbles(n,o)/smoke(n,o)
-NOTE: H.glass uses 'transmission' NOT 'transparency'. For gold/silver/iron use MAT.gold etc., NOT H.gold (does not exist)
+═══ MANDATORY AAA CHECKLIST — apply to EVERY scene, not just templates ═══
+Every generation must pass these requirements. The default orrery scene
+demonstrates all of them — treat it as the quality bar.
 
-═══ LIQUID IN CONTAINER — MANDATORY PATTERN ═══
-// Build glass container first:
-const vialGeo = new THREE.LatheGeometry(points, 64);
-const vial = new THREE.Mesh(vialGeo, H.glass(0xffffff));
-root.add(vial);
-// Then fill with liquid using H.fillLiquid — it creates an opaque colored liquid body + surface disc:
-const liquid = H.fillLiquid(vial, 0xCC0000, { fillLevel: 0.7 });
-root.add(liquid);
-// H.fillLiquid handles ALL liquid material properties internally. The liquid is opaque and colored.
-// NEVER build liquid geometry manually. NEVER use MeshPhysicalMaterial for liquid.
-// NEVER add PointLight, emissive glow, or any light source near/inside the liquid.
-// NEVER create separate spheres, cylinders, or geometry to represent the liquid body.
-// The ONLY way to create liquid is H.fillLiquid(). The returned Group is the complete liquid.
+  [1] LIQUIDS: any water/potion/blood/acid/lava surface MUST use FLUID.*
+      - Flat pool / lake / moat / basin top     → FLUID.oceanWater(geom, opts)
+      - Fountain tier (bowl + rim + water)      → FLUID.fountainBasin({radius, y})
+      - Pouring / falling column                → FLUID.stream({from, to, radius})
+      - Liquid inside a glass container          → H.fillLiquid(c, color) THEN FLUID.upgradeFill(liquid)
+      - Lava                                     → SHADER.lava({hot, cold})
+      - NEVER build liquids from raw MeshPhysicalMaterial{transmission:...}
+
+  [2] GEMS / CRYSTALS: always faceted + colored lights
+      - Use MAT.gem({color}) or MAT.gemRuby / gemEmerald / gemSapphire / gemAmethyst / gemTopaz / gemDiamond
+        These set flatShading:true so every facet catches light differently.
+      - For low-poly faceted geometry use OctahedronGeometry / DodecahedronGeometry /
+        IcosahedronGeometry / TetrahedronGeometry at detail 0.
+      - Drop root.add(MAT.gemLights(radius)) near any gem cluster to add the
+        violet/pink/cyan point-light halo that makes gems truly pop.
+
+  [3] MAGICAL GLOW / AURA: wrap the hero in moving particles
+      - SHADER.flowParticles({bounds, color, color2, size, speed}) around
+        any magical core, spellbook, energy object, artifact.
+      - SHADER.nebula(inner, outer) inside an orb for a cosmos core.
+      - SHADER.portal(color) for rifts, warp gates, magic mirrors.
+
+  [4] ATMOSPHERIC DEPTH: the scene must breathe
+      - CELESTIAL.nebulaCloud({dome:true, bounds, innerRadius}) if the scene
+        calls for cosmic / mystical backdrop.
+      - FLUID.mist + H.dust for close-range atmospheric motes.
+      - H.sparks for impact / ember particles.
+
+  [5] CINEMATIC FINISH — the Mancini post stack.
+      A cinematic BASELINE is already applied for every generation:
+        setFilmGrain(0.035, 0.35)
+        setChromatic(0.22, 2.2)
+        setColorGrade({ saturation: 1.12, contrast: 1.04 })
+        setDoF({ aperture: 0.006, maxblur: 0.006 })   // auto-focus on orbit target
+        setUnderwater(false, { auto: true, ... })     // auto-triggers below water
+      You only need to call a setter when you want a scene-specific OVERRIDE
+      or to enable one of these extra effects:
+      - setLensFlare({ position: sunVec3, strength: 0.6, occlusionTest: true })
+                                          if the scene has a visible sun or
+                                          dominant emissive light source.
+      - setScreenDroplets(0.3)            rain / aquatic / underwater mood.
+      - setColorGrade({ ... })            re-tint for a specific mood
+                                          (e.g. warm sunset, cold night).
+      - setDoF({ aperture: 0.015 })       stronger blur for product-shot vibe.
+
+  [5b] POST-PROCESS-FREE BLOOM (cheaper than selective bloom):
+      For any glowing hero (orb, crystal, magical core):
+        root.add(FX.withGlow(coreMesh, 0x8b5cf6, { scale: 1.08, intensity: 1.3 }));
+      Or use MAT.fakeGlow on a scaled-up shell mesh directly.
+
+  [5c] MESH-BASED VOLUMETRIC LIGHT:
+      For sunbeams through windows, magical shafts, spell channels:
+        root.add(FX.godRayCone({ from: sunPos, to: floorPoint, color: 0xffe8a0 }));
+
+  [6] PHYSICS for anything that can roll / fall / stack
+      - await P.init({gravity: -4 to -9.81});
+      - P.body(mesh, {type:'static'|'dynamic', shape, restitution, friction, density, angularDamping, radius?})
+      - Dynamic gems/dice/rocks should use shape:'ball' with opts.radius for
+        controlled rolling. Add rb.setAngvel({x,y,z}, true) for tumble on spawn.
+
+  [7] BONZAI PALETTE (use when the prompt doesn't dictate a scheme)
+      Purple #8b5cf6 / #a855f7, Green #10b981 / #48c78e,
+      Pink #fe2d6e / #fe7eb0, Dark #0a0a0f
+
+RULE: If the prompt is for "a gem", "a sword", "a potion", a single sculpture,
+you STILL wrap it with items 3-5 (aura, atmosphere, grain). A lone mesh on a
+black background is NEVER acceptable.
+
+═══ RUNTIME SURFACE (pre-declared — never redeclare these names) ═══
+  THREE, scene, camera, root (THREE.Group — add everything here)
+  setObjectInfo({title, description})
+  addUpdateCallback((ctx) => {...})   // ctx = { time, deltaTime } — YES, animate freely
+  MAT, TEX, SHADER, FLUID, P, H
+
+═══ MATERIAL LIBRARY (MAT.*) — reuse these before hand-rolling PBR ═══
+Metals  : MAT.gold / silver / bronze / copper / iron / steel / chrome / brass / titanium / gunmetal / rust
+Gems    : MAT.ruby / sapphire / emerald / amethyst / diamond / topaz / jade / obsidian / glass / crystal / ice
+Organic : MAT.bone / flesh / leaf / bark / clay / marble / porcelain / ceramic / pearl / coral / moss
+Energy  : MAT.lava / neon_cyan / neon_pink / neon_violet
+Earth   : MAT.sand / snow / rubber / plastic / leather / velvet_black / silk_white
+All entries are shared MeshPhysicalMaterial instances — clone() if you need per-mesh tweaks.
+
+═══ PROCEDURAL TEXTURES (TEX.*) — all return CanvasTexture with RepeatWrapping ═══
+  TEX.wood(base?, grain?), TEX.stone(base?), TEX.metal(base?), TEX.marble(base?, vein?)
+  TEX.concrete(base?), TEX.rust(base?), TEX.grass(), TEX.scales(base?, ridge?)
+  TEX.carbon(base?), TEX.brick(base?, mortar?), TEX.hexgrid(base?, line?)
+  TEX.circuit(base?, trace?), TEX.fabric(base?), TEX.leather(base?), TEX.runes(base?, rune?)
+Call .repeat.set(x, y) on the texture if you need tiling.
+
+═══ SHADER LIBRARY (SHADER.*) — animated ShaderMaterial factories ═══
+  SHADER.fresnel(color, power = 3, opacity = 0.9)              — rim halo for glowing halos / auras
+  SHADER.hologram(color = 0x00e5ff, lineFreq = 80)             — scanlines + flicker for UI / energy
+  SHADER.nebula(inner, outer)                                   — cosmic swirl inside spheres
+  SHADER.lava(hot, cold, speed)  OR  SHADER.lava({hot, cold, speed, chroma?, displacement?, emissiveBoost?})
+      Domain-warped molten flow with gradient-perturbed normals (bubbling
+      surface, not a flat plane), RGB heat-shimmer at the crack edges,
+      and pulsing worley-driven bright cores between cooled plates.
+  SHADER.water(shallow, deep, speed)  OR  SHADER.water({shallow, deep, speed, chroma?, caustics?, waveAmp?})
+      Lightweight (non-PBR) wavy surface with chromatic fresnel edge fringe
+      and RGB-split worley caustics — use for distant lakes / stylized
+      water. Real transmissive water → FLUID.surface / waterMaterial.
+  SHADER.dissolve(base, edge, progress)                         — edge-glowing dissolve (animate progress)
+  SHADER.forcefield(color, freq)                                — pulsing shield bands
+  SHADER.iridescence(base)                                      — PBR with physical iridescence
+  SHADER.starfield(density)                                     — back-sided skydome stars
+  SHADER.caustics(color, {scale?, speed?, chroma?, intensity?, additive?}) — RGB-split worley caustics. Three wavelength-offset cell samples produce true chromatic fringing on the highlights. Default additive; set additive:false for an opaque caustic film.
+  SHADER.portal(color, {color2?, speed?, swirl?, intensity?})            — swirling energy-rift shader for planes/discs. Twisted radial noise + bright event-horizon rim. Use for magic mirrors, warp gates, spell portals.
+  SHADER.flowParticles({count?, bounds?, color?, color2?, size?, speed?, swirl?}) — organic swirling point-cloud driven by a 3D noise flow field. Returns a THREE.Points ready to add to root. No update-callback wiring needed.
+  SHADER.hologram(color, lineFreq, { signalSpeed?, blink?, blinkRate?, additive?, opacity?, fresnelPower?, fresnelOnly? }) — Mancini/ektogamat recipe. Fresnel rim × scanline × traveling signal wave × blink. Additive by default for projection feel.
+Every SHADER is hooked into the engine tick: uTime advances automatically.
+
+═══ FX — MESH-BASED SCENE EFFECTS ═══
+  FX.godRayCone({ from, to, color?, spread?, intensity? })
+      Volumetric light shaft via a cone mesh with additive radial shader.
+      Zero post-process cost. Use instead of screen-space god rays when
+      you need scene-aware lighting through windows/portals.
+
+  FX.withGlow(mesh, color, { scale?, intensity?, power? })
+      Wraps a mesh with a fresnel-additive shell for post-process-FREE
+      bloom. Cheaper than selective bloom, works everywhere:
+        root.add(FX.withGlow(orb, 0x8b5cf6, { scale: 1.08, intensity: 1.3 }));
+
+  FX.scatter(targetMesh, protoMesh, count, { scaleRange?, alignToNormal?, rotateY? })
+      Scatter instanced copies of prototype across target surface via
+      MeshSurfaceSampler. For foliage, crowds, debris fields. async —
+      returns a Promise<InstancedMesh>.
+
+  MAT.fakeGlow({ color, intensity?, power? })
+      Raw material for the fake-glow technique. Pair with a cloned
+      geometry scaled up 1.05–1.10× as a shell around any mesh.
+
+═══ MATCAP MATERIALS (MAT.matcap*) ═══
+MeshMatcapMaterial-backed presets that shade purely from a baked sphere
+gradient — zero lights, gorgeous polish on small props. Use for hero gems,
+cursed orbs, trophy pieces where you want a consistent jewel look that
+doesn't respond to scene lighting.
+  MAT.matcapGold, MAT.matcapChrome, MAT.matcapPearl
+  MAT.matcapEmerald, MAT.matcapRuby, MAT.matcapOnyx
+  MAT.matcap({base?, mid?, highlight?, rim?, color?, flatShading?}) — custom matcap
+
+Water surface materials (waterMaterial, FLUID.stream, FLUID.surface) now
+ship chromatic fresnel edge fringing + animated RGB worley caustics on the
+surface itself — no post-processing needed to get the "dispersed light"
+look. Tune via {caustics: 0..1, chroma: 0..0.05}.
+
+═══ WATER + FLUID — UNIFIED LIQUID RULES ═══
+Every liquid in a scene MUST share the same rendering — ripples, caustics,
+fresnel, transmission. Mixing raw MeshPhysicalMaterial with FLUID.* produces
+visually inconsistent fluids. STRICT RULES:
+
+  [X] NEVER construct a new THREE.MeshPhysicalMaterial with transmission
+     for anything that represents liquid (potion, blood, acid, water, oil).
+  [X] NEVER build streams as raw TubeGeometry + material — use FLUID.stream.
+  [X] NEVER use SHADER.water as a standalone shader — it exists only for
+     back-compat and routes through the unified waterMaterial.
+
+  [OK] Flat open water (pool, lake, moat, scrying basin, fountain top):
+        FLUID.oceanWater(geometry, { color, distortionScale, speed, rippleDensity })
+  [OK] FOUNTAIN BASIN (bowl + rim + water, all ready to use):
+        root.add(FLUID.fountainBasin({ radius: 0.6, y: 0.0 }));
+        // Returns a complete Group: stone bowl, gold inlay, obsidian lip,
+        // reflective oceanWater surface. Use this for EVERY fountain tier.
+        // Do NOT hand-build LatheGeometry bowls if a basin is the goal.
+  [OK] Liquid on arbitrary geometry (basin interior, dish top, pond bed):
+        FLUID.surface(geometry, { color, deep, waveAmp, caustics, chroma })
+  [OK] Liquid INSIDE a container (flask, vial, goblet, cauldron):
+        const liquid = H.fillLiquid(container, color, { fillLevel });
+        FLUID.upgradeFill(liquid, { waveAmp: 0.003, caustics: 0.9 });
+        // The upgradeFill call swaps the surface disc to waterMaterial so
+        // the potion ripples like every other liquid in the scene.
+  [OK] Pouring / cascading / falling water:
+        FLUID.stream({ from: Vector3, to: Vector3, radius, color })
+  [OK] Impact / splash bursts:
+        FLUID.splash({ at: Vector3, count, color })
+  [OK] Custom mesh that should be water-material:
+        new THREE.Mesh(geometry, MAT.liquid({ color, waveAmp, caustics }))
+
+  FLUID.stream({from, to, radius, color, deep?, droplets?})
+      Curved, tapered TubeGeometry from A to B with the refractive water
+      shader applied — wave displacement, foam on crests, depth tinting,
+      accent droplets orbiting the column. THE default primitive for any
+      pouring / cascading / falling water.
+
+  FLUID.surface(geometry, {color, deep?, waveAmp?, waveFreq?, flow?})
+      Applies the REFRACTIVE water shader (MeshPhysicalMaterial + fbm
+      vertex displacement + PBR normal perturbation + RGB caustics) to
+      any geometry. Use for liquid INSIDE a container: potion surface in
+      a vial, acid pool, colored fluid in a glass jar — anywhere
+      transmission through the fluid body is the point.
+
+  FLUID.oceanWater(geometry, {color, distortionScale?, speed?, sunDirection?, sunColor?, textureWidth?, textureHeight?, normalMap?})
+      AAA reflector-based water using THREE.Water. The scene is rendered
+      to a render target each frame, then sampled with UVs perturbed by
+      an animated normalmap. Fresnel mixes the reflection with the clear
+      water color. THIS IS THE TECHNIQUE USED BY water-simulation.vercel.app.
+      Use for mirror pools, lake surfaces, scrying basins, open water —
+      anywhere the reflection of the environment sells the liquid.
+      Default color 0x0a86c8 (clear blue); pass a darker color for deep
+      water. distortionScale controls ripple strength (1 = calm, 5 = storm).
+
+  FLUID.splash({at, count, color, size})
+      Burst of individual refractive droplet SPHERES (each a real mesh
+      with the water shader), tumbling outward from the impact point.
+      Not flat sprites — volumetric drops.
+
+Lighter particle-only helpers (use for foam/spray ONLY, not for the body
+of the water):
+
+  FLUID.pour({from, to, rate, color})   — sparse droplet stream, gravity-biased
+  FLUID.mist({bounds, count, color})    — rising volumetric fog
+  FLUID.pool({bounds, yBase, color})    — jittery particle surface (rarely needed — use FLUID.surface instead)
+
+Legacy helpers still available:
+  H.sparks/dust/bubbles/smoke/fire
+  H.fillLiquid(containerMesh, color, {fillLevel, inset, opacity})
+      For COLORED liquid inside glass containers (vials, potion bottles).
+
+═══ CELESTIAL ═══
+Shader-driven point clouds for skyboxes, galaxies, and nebulae. Every
+star has a soft disc + cross-glare + twinkle — NOT flat dots.
+
+  CELESTIAL.starfield({count, radius, colorA?, colorB?, colorC?, size?, twinkle?})
+      Sphere-shell of twinkling stars. Parent to the scene when you want
+      a spacey backdrop around the object (drop it centered on the hero).
+
+  CELESTIAL.galaxy({count, arms, radius, inner?, outer?, size?, spin?})
+      Spiral galaxy point cloud with arm swirl + per-radius color.
+      Auto-rotates on its Y axis.
+
+  CELESTIAL.nebulaCloud({count, bounds, colorA?, colorB?})
+      Volumetric-looking nebula — large soft stars scattered in a bounding
+      box, colored with a two-color gradient.
+
+═══ PHYSICS (P.*) — Rapier, real dynamics ═══
+  await P.init({ gravity: -9.81 });                 — once per scene, before any P.body(...)
+  P.body(mesh, { type, shape, restitution, friction, density, linearDamping, angularDamping })
+    type:  'dynamic' (default) | 'static' | 'kinematic'
+    shape: 'box' (default) | 'ball' | 'capsule' | 'cylinder'
+  P.impulse(rec, {x,y,z})      — kick a body
+  P.setLinvel(rec, {x,y,z})    — set velocity
+
+═══ POST-FX ═══
+  setScreenDroplets(density, {speed?, size?})
+      Rain-on-lens post effect. Screen-space refractive droplets distort
+      the scene behind them with RGB chromatic dispersion per drop.
+      density: 0 = off (default), 0.3 = drizzle, 1.0 = heavy rain.
+      Useful for aquatic / underwater / rainy atmospheres — calling it
+      once is enough; it's a post pass, not a particle system.
+
+  setFilmGrain(strength, vignette)
+      Cinematic grain overlay + soft vignette on the final frame.
+      strength: 0 = clean, 0.04 = default cinematic, 0.08 = heavy grain.
+      vignette: 0 = off, 0.25 = default, 0.6 = moody dark edges.
+
+  setChromatic(strength, falloff?)
+      Radial RGB-offset post pass. 0 = clean, 0.3 = subtle cyberpunk,
+      1.0 = heavy distortion. Corner-weighted — centre stays clean.
+      Call once at scene start: setChromatic(0.3).
+
+  setDoF({ aperture, maxblur?, focus?, autoFocus? })
+      Bokeh depth-of-field. By default the focus distance auto-tracks
+      the orbit target, so the hero stays sharp as the user zooms. You
+      almost always want just:   setDoF({ aperture: 0.015 });
+      aperture: 0 = off, 0.012 = subtle, 0.025 = strong, 0.05 = heavy.
+      Only pass a fixed 'focus' + 'autoFocus: false' for dolly-zoom
+      cinematic effects where you want the focal plane locked.
+
+  setColorGrade({ hue?, saturation?, contrast?, lift?, gain? })
+      Hue rotation + saturation + contrast + lift/gain tint.
+      Examples: cyberpunk: setColorGrade({saturation:1.3, contrast:1.15, gain:0xe0c8ff}).
+                Sepia:     setColorGrade({saturation:0.3, gain:0xd4b480}).
+                Cold:      setColorGrade({saturation:1.1, gain:0xc8d8ff}).
+
+  setLensFlare({ position: Vector3, strength, tint?, anamorphic?, occlusionTest? })
+      Anderson-Mancini-style screen-space lens flare with ghost chain +
+      anamorphic streak + star-burst. Pass a world-space sun position;
+      the flare is auto-projected to screen each frame. occlusionTest:
+      true does a per-frame raycast so solid objects block the flare.
+      setLensFlare({ position: new THREE.Vector3(8,6,-5), strength: 0.7, tint: 0xffd8a8, occlusionTest: true }).
+
+  setUnderwater(active, { color?, distort?, rays?, waterY?, auto? })
+      Submerged screen pass — blue tint + wave UV distortion + god-ray
+      bars. Pass active=true for always-on, or auto=true + waterY=<y>
+      to auto-activate when the camera crosses below that Y.
+Ground plane: make a flat BoxGeometry at y=0 with opacity 0 and give it a static box body — catches falling debris.
+
+═══ ANIMATION — YES, please ═══
+  addUpdateCallback(({ time, deltaTime }) => {
+    mesh.rotation.y = time * 0.5;
+    mesh.position.y = 0.5 + Math.sin(time * 2) * 0.05;
+  });
+Drive orbits, pulses, gear spin, breathing, mechanism cycles. Keep logic idempotent: never mutate arrays or spawn geometry inside the callback.
 
 ═══ THREE.JS REFERENCE ═══
 ${skillsContext}
 ${recipeHint ? `\n═══ PATTERN HINT ═══\n${recipeHint}\n` : ''}
+═══ AAA COMPOSITION CHECKLIST ═══
+Aim for every generated piece to hit at least 4 of these:
+  ✓ A hero silhouette — one dominant shape the eye locks onto
+  ✓ Layered materials — pair a transmissive/iridescent element with a metallic one and an absorbing matte one
+  ✓ One animated mechanism — rotating, orbiting, pulsing, or physics-driven
+  ✓ One shader-driven surface — nebula/lava/hologram/water/fresnel
+  ✓ Atmosphere — FLUID.mist OR H.dust OR SHADER.caustics on the ground
+  ✓ Accent light — emissive highlights or SHADER.fresnel halo around a focal element
+  ✓ Small physics details — optional, but 3-8 P.body dynamic props (gems, debris) make it feel alive
+  ✓ Spatial cohesion — every sub-part positioned from a parent's bounding box, never hardcoded
+
 ═══ RULES ═══
-- RAW JS only, COMPLETE code, no external assets, no post-processing
-- Objects above y=0, fit ~1x1 footprint, height 0.3-1.5
-- Use complex geometry (LatheGeometry, ExtrudeGeometry, TubeGeometry, Shape+extrude, BufferGeometry)
-- Use MeshPhysicalMaterial for realism, ShaderMaterial for procedural effects
-- NO ANIMATION — do NOT call addUpdateCallback(). The scene is STATIC. Use H.sparks/dust/bubbles for particle effects (they self-animate)
-- Do NOT redeclare THREE, root, H, MAT, TEX, addUpdateCallback, setObjectInfo
-- LatheGeometry: points are Vector2(x=radius, y=height), must go bottom-to-top
-- LatheGeometry for CLOSED vessels (vials, bowls, cups): the profile MUST start AND end at x ≈ 0 (center axis) to create a solid bottom and top. Example: [V2(0.001,0), V2(0.3,0), V2(0.3,0.6), V2(0.15,0.8), V2(0.001,0.8)] — this closes both bottom and top
-- new THREE.Mesh() first arg = BufferGeometry, NEVER a Group
-- LIQUID INSIDE GLASS: Call H.fillLiquid(glassMesh, color, {fillLevel: 0.7}) AFTER adding the glass mesh to root. It builds an OPAQUE colored liquid body matching the container interior. Add the returned group to root. NEVER build liquid geometry manually — no CylinderGeometry, no SphereGeometry, no custom materials for liquid. NEVER add PointLight or emissive glow near or inside the liquid — the liquid is already correctly colored and visible. NEVER create a separate "large bubble" mesh with PointLight — use H.bubbles() only
-- GLASS MATERIAL: Use H.glass(0xffffff) for thin clear glass (thickness 0.15). If making glass manually, use thickness ≤ 0.2 for vials/bottles (thin walls) — high thickness values (>1) make glass look like thick opaque slab. Do NOT set attenuationColor on glass containing colored liquid — it tints the liquid. Do NOT add inner glow PointLights
-- TubeGeometry REQUIRES a Curve3 object (e.g. CatmullRomCurve3, QuadraticBezierCurve3), NEVER an array of points
-- MeshStandardMaterial and MeshPhysicalMaterial have NO specular property — use metalness/roughness instead
-- Position gems/ornaments using Math.cos(angle)*radius and Math.sin(angle)*radius for circular placement
+- RAW JS only, COMPLETE code, no external assets, no post-processing, no markdown
+- Object scale: fit ~1x1 footprint, height 0.3 - 1.5 world units, centered at origin
+- Use complex geometry (LatheGeometry, ExtrudeGeometry, TubeGeometry along Curve3, BufferGeometry) — avoid plain boxes/spheres unless layered under a shader
+- Shader materials go on their own meshes, not on detailed PBR geometry
+- Always call \`await\` before P.init if you use physics
+- Do NOT redeclare THREE/root/H/MAT/TEX/SHADER/FLUID/P/addUpdateCallback/setObjectInfo
+- LatheGeometry points are Vector2(x=radius, y=height), bottom-to-top; closed vessels start and end at x ≈ 0
+- TubeGeometry requires a Curve3 (CatmullRomCurve3, QuadraticBezierCurve3), NEVER an array of points
+- MeshPhysicalMaterial has NO 'transparency' property — use 'transmission' / 'opacity'
+- For liquid INSIDE glass, use H.fillLiquid(container, color, {fillLevel}); don't hand-roll a liquid mesh
+- Compute dependent positions from parent geometry bounding boxes — no hardcoded y values for lids/bases/rings
 
-═══ SPATIAL COHESION — CRITICAL ═══
-- EVERY sub-part position MUST be derived from the geometry it attaches to. NEVER hardcode Y positions — compute them:
-  • Cork/lid: position.y = container.position.y + containerGeoBBox.max.y (sits at the opening)
-  • Base/stand: position.y = mainBody.position.y - offset (below the body)
-  • Attachments: compute from the parent mesh bounding box
-- After creating the main body geometry, call geo.computeBoundingBox() and use geo.boundingBox.min/max to position dependent parts
-- Container LatheGeometry profile height (max Y of profile points) determines where lids/corks go. Example:
-  const vialGeo = new THREE.LatheGeometry(points, 64); // profile top at y=0.5
-  const vial = new THREE.Mesh(vialGeo, glassMat);
-  vial.position.y = 0.25; // base of vial in world space
-  // Cork MUST go at: vial.position.y + profileTopY = 0.25 + 0.5 = 0.75
-  cork.position.y = 0.25 + 0.5; // NOT hardcoded to some arbitrary value
-- Parts that wrap around a body (rings, bands, chains) use the body's radius at that height
-- ALL sub-parts must be spatially justified — no floating disconnected pieces
+═══ FORBIDDEN — these will crash ═══
+- Nested MAT paths (MAT.gems, MAT.metals) — MAT is flat
+- 'transparency' / 'specular' on MeshPhysicalMaterial
+- requestAnimationFrame / setInterval / setTimeout (use addUpdateCallback)
+- AxesHelper / GridHelper / debug gizmos
 
-═══ FORBIDDEN — these DO NOT EXIST, using them CRASHES ═══
-- MAT is FLAT: use MAT.ruby, MAT.gold, MAT.emerald directly. NO MAT.gems, NO MAT.metals, NO nested objects
-- MAT has ONLY: gold/silver/bronze/copper/iron/steel/ruby/emerald/sapphire/amethyst/diamond/glass/obsidian/bone/flesh/leaf/bark/clay/marble/lava/ice/sand/snow — NO topaz, NO velvet, NO crystal, NO fabric
-- For velvet/leather/fabric: use H.velvet(color), H.leather(color), TEX.fabric(color) — NOT MAT.velvet
-- NO H.gold, NO H.silver, NO H.bronze, NO H.iron, NO H.steel — metals are MAT.gold, MAT.silver etc. H.metal(color,opts) is for custom metal colors only
-- MeshPhysicalMaterial has NO 'transparency' property — use 'transmission' for see-through glass/gem materials. 'transparency' CRASHES
-- NO H.updateParticleSystem — dust/sparks/bubbles animate automatically
-- NO addUpdateCallback — the scene is STATIC, no animation loops. Particles (H.sparks/dust/bubbles) self-animate, everything else is static
-- NO requestAnimationFrame, NO setInterval, NO setTimeout
-- NO physics, NO CANNON — physics engine is NOT available
-- NO manual lights (SpotLight, DirectionalLight) — the scene has lighting. Use H.light() or H.spot() only if extra accent lighting is needed
-- NO PointLight inside liquids or containers — the liquid color shows through glass naturally without fake glow
-- NO AxesHelper, GridHelper, or debug geometry
+═══ QUALITY EXAMPLE — compact reference ═══
+// Cinematic post baseline is already applied; only add scene overrides.
+await P.init({ gravity: -4.5 });                                   // physics (optional)
+const floor = new THREE.Mesh(new THREE.BoxGeometry(6,0.02,6),
+  new THREE.MeshBasicMaterial({ visible:false }));
+floor.castShadow = false; floor.userData.excludeFromBBox = true;
+root.add(floor); P.body(floor, { type:'static', shape:'box' });
 
-═══ QUALITY EXAMPLE (match this level) ═══
-${defaultCode}
+// Liquid in a glass vessel: build container from LatheGeometry, then
+// use H.fillLiquid + FLUID.upgradeFill for proper water rendering.
+const vessel = new THREE.Mesh(new THREE.LatheGeometry(profile, 48),
+  new THREE.MeshPhysicalMaterial({ color:0xeef7ff, transmission:0.95,
+    ior:1.5, roughness:0.04, thickness:0.2, clearcoat:1 }));
+root.add(vessel);
+const liquid = H.fillLiquid(vessel, 0x40ff80, { fillLevel:0.6 });
+FLUID.upgradeFill(liquid, { waveAmp:0.003, caustics:0.9 });
+root.add(liquid);
+
+// Glow hero without paying post-bloom cost:
+root.add(FX.withGlow(vessel, 0x8b5cf6, { scale:1.08, intensity:1.2 }));
+
+// Atmosphere + motion:
+const aura = SHADER.flowParticles({ count:600, bounds:{x:0.5,y:0.7,z:0.5},
+  color:0x8b5cf6, color2:0x10b981, speed:0.35, swirl:0.5 });
+aura.userData.excludeFromBBox = true; root.add(aura);
+addUpdateCallback(({ time }) => { vessel.rotation.y = time*0.1; });
+
+// Lens flare override only when there's a dominant emissive source:
+// setLensFlare({ position: sunPos, strength:0.55, occlusionTest:true });
 
 OUTPUT CODE FOR: "${userText}"`;
     };
@@ -1817,7 +2071,7 @@ OUTPUT:`;
       const response = await Promise.race([
         window.electronAPI.chat(prompt, extraOpts),
         new Promise((_, reject) =>
-          setTimeout(() => reject(new Error("Timeout")), 1800000),
+          setTimeout(() => reject(new Error("Timeout")), 3600000),
         ),
       ]);
       if (!response) throw new Error("Empty response from LLM");
@@ -2062,228 +2316,364 @@ OUTPUT:`;
     };
 
           const defaultCode = `export default async function generate(params) {
-  const { THREE, scene, helpers: H, setObjectInfo } = params;
+  const { THREE, scene, helpers: H, setObjectInfo, addUpdateCallback,
+          setFilmGrain, setChromatic, setDoF, setColorGrade, setLensFlare, setUnderwater } = params;
+  const { MAT, TEX, SHADER, FLUID, P, CELESTIAL, FX } = params._engine;
   const root = new THREE.Group();
   root.name = "ArcaneOrrery";
 
-  setObjectInfo({ title: "Arcane Orrery", description: "A magical mechanical solar system with crystal orb, orbiting celestial bodies on golden armillary rings, gear mechanisms, and floating rune particles." });
+  setObjectInfo({ title: "Arcane Orrery", description: "A breathing mechanical cosmos — armillary rings carry blue-marble planets veined with gold around a nebula core, over a mirrored moat and rune-carved dais, volumetric light cones radiating outward beneath a hovering hologram ring." });
 
-  // ── Pre-built materials ──
-  const MAT = {
-    gold: new THREE.MeshPhysicalMaterial({ color: 0xffd700, metalness: 0.9, roughness: 0.3, clearcoat: 0.5 }),
-    bronze: new THREE.MeshPhysicalMaterial({ color: 0xcd7f32, metalness: 0.85, roughness: 0.35, clearcoat: 0.3 }),
-  };
+  // ── Cinematic post stack inherited from the generator baseline
+  // (film grain, chromatic, colour grade, auto-focus DoF, underwater-auto).
+  // Only set scene-specific overrides below.
 
-  // ── Procedural engraved texture for the base ──
-  const baseTexCanvas = document.createElement('canvas');
-  baseTexCanvas.width = 512; baseTexCanvas.height = 512;
-  const btx = baseTexCanvas.getContext('2d');
-  btx.fillStyle = '#2a1a0a'; btx.fillRect(0, 0, 512, 512);
-  btx.strokeStyle = '#c8a050'; btx.lineWidth = 1.5; btx.globalAlpha = 0.4;
-  for (let i = 0; i < 24; i++) {
-    const a = (i / 24) * Math.PI * 2;
-    btx.beginPath(); btx.moveTo(256, 256);
-    btx.lineTo(256 + Math.cos(a) * 250, 256 + Math.sin(a) * 250); btx.stroke();
-  }
-  for (let r = 40; r < 260; r += 50) {
-    btx.beginPath(); btx.arc(256, 256, r, 0, Math.PI * 2); btx.stroke();
-  }
-  const runes = '\\u16A0\\u16A2\\u16A6\\u16B1\\u16B7\\u16C1\\u16C7\\u16D2';
-  btx.globalAlpha = 0.6; btx.font = '28px serif'; btx.fillStyle = '#c8a050';
-  for (let i = 0; i < 8; i++) {
-    const a = (i / 8) * Math.PI * 2;
-    btx.fillText(runes[i], 256 + Math.cos(a) * 180 - 10, 256 + Math.sin(a) * 180 + 10);
-  }
-  const baseTex = new THREE.CanvasTexture(baseTexCanvas);
+  // ── Physics world (Rapier). ──────────────────────────────────────────
+  // The collider floor is INVISIBLE but explicitly marked no-shadow so it
+  // doesn't project a square onto the dais.
+  await P.init({ gravity: -4.5 });
+  const floorMesh = new THREE.Mesh(
+    new THREE.BoxGeometry(6, 0.02, 6),
+    new THREE.MeshBasicMaterial({ visible: false })
+  );
+  floorMesh.position.y = -0.001;
+  floorMesh.castShadow = false;
+  floorMesh.receiveShadow = false;
+  floorMesh.userData.excludeFromBBox = true;
+  root.add(floorMesh);
+  P.body(floorMesh, { type: 'static', shape: 'box', friction: 0.8 });
 
-  // ── Base pedestal ──
-  const basePoints = [
-    new THREE.Vector2(0.001, 0), new THREE.Vector2(0.4, 0),
-    new THREE.Vector2(0.42, 0.02), new THREE.Vector2(0.42, 0.04),
-    new THREE.Vector2(0.38, 0.06), new THREE.Vector2(0.35, 0.08),
-    new THREE.Vector2(0.35, 0.14), new THREE.Vector2(0.38, 0.16),
-    new THREE.Vector2(0.38, 0.18), new THREE.Vector2(0.15, 0.20),
-    new THREE.Vector2(0.12, 0.22), new THREE.Vector2(0.12, 0.25),
-    new THREE.Vector2(0.001, 0.25)
+  // ── Visible stone dais (receives orrery shadow) ─────────────────────
+  // Compact scene: total hero bbox kept under 1.5m so no auto-scale
+  // squashes anything; the orrery renders at the exact dimensions below.
+  const stoneTex = TEX.stone('#3a3640');
+  stoneTex.repeat.set(3, 3);
+  const daisGeo = new THREE.CylinderGeometry(0.44, 0.48, 0.06, 96);
+  const daisMat = new THREE.MeshPhysicalMaterial({
+    color: 0x7a7680, map: stoneTex, roughness: 0.82, metalness: 0.05, clearcoat: 0.15,
+  });
+  const dais = new THREE.Mesh(daisGeo, daisMat);
+  dais.position.y = -0.03;
+  dais.receiveShadow = true;
+  dais.castShadow = false;
+  root.add(dais);
+
+  // Gold rim inlay around the dais edge.
+  const daisRim = new THREE.Mesh(
+    new THREE.TorusGeometry(0.44, 0.006, 24, 128),
+    MAT.gold
+  );
+  daisRim.rotation.x = Math.PI / 2;
+  daisRim.position.y = 0.003;
+  daisRim.receiveShadow = true;
+  root.add(daisRim);
+
+  // ── Water moat — AAA reflector-based water (THREE.Water under the
+  // hood). The pool renders a real reflection of the scene into an RT
+  // each frame, then samples a ripple normalmap to distort it. This is
+  // the exact technique used at water-simulation.vercel.app.
+  //
+  // Ring geometry works as the water plane — reflector handles its own
+  // RT internally, perturbs UVs via the animated normalmap, and Fresnel-
+  // mixes the reflection with the clear blue water color.
+  const moatGeo = new THREE.RingGeometry(0.50, 1.10, 128, 4);
+  const moat = FLUID.oceanWater(moatGeo, {
+    color: 0x0a86c8,              // clear blue
+    distortionScale: 2.2,
+    speed: 1.2,
+    rippleDensity: 10.0,          // tight ripples on a ~2m pool
+    textureWidth: 1024,
+    textureHeight: 1024,
+    normalMapSize: 512,
+    sunDirection: new THREE.Vector3(0.3, 0.9, 0.4).normalize(),
+    sunColor: 0xffffff,
+  });
+  moat.rotation.x = -Math.PI / 2;
+  moat.position.y = 0.02;
+  root.add(moat);
+
+  // Stone floor BENEATH the water — becomes visible through the clear
+  // water where the reflection fresnel fades. This is what gives the
+  // pool depth.
+  const poolFloorTex = TEX.stone('#1a1230');
+  poolFloorTex.repeat.set(3, 3);
+  const poolFloor = new THREE.Mesh(
+    new THREE.RingGeometry(0.50, 1.10, 128, 1),
+    new THREE.MeshPhysicalMaterial({
+      color: 0x4a2878, map: poolFloorTex,
+      roughness: 0.85, metalness: 0.1,
+      emissive: 0x1a0a2a, emissiveIntensity: 0.4,
+    })
+  );
+  poolFloor.rotation.x = -Math.PI / 2;
+  poolFloor.position.y = -0.02;
+  poolFloor.receiveShadow = true;
+  root.add(poolFloor);
+
+  // Obsidian rims (outer + inner lip).
+  const moatRim = new THREE.Mesh(
+    new THREE.TorusGeometry(1.10, 0.025, 24, 192),
+    MAT.obsidian
+  );
+  moatRim.rotation.x = Math.PI / 2;
+  moatRim.position.y = 0.022;
+  moatRim.castShadow = true;
+  root.add(moatRim);
+
+  const moatLipInner = new THREE.Mesh(
+    new THREE.TorusGeometry(0.50, 0.018, 24, 128),
+    MAT.obsidian
+  );
+  moatLipInner.rotation.x = Math.PI / 2;
+  moatLipInner.position.y = 0.022;
+  moatLipInner.castShadow = true;
+  root.add(moatLipInner);
+
+  // ── Rune-engraved marble base with gold filigree ────────────────────
+  const baseTex = TEX.runes('#1a1308', '#f5c776');
+  baseTex.repeat.set(2, 1);
+  const baseProfile = [
+    new THREE.Vector2(0.001, 0),
+    new THREE.Vector2(0.42, 0),
+    new THREE.Vector2(0.42, 0.03),
+    new THREE.Vector2(0.38, 0.05),
+    new THREE.Vector2(0.36, 0.08),
+    new THREE.Vector2(0.36, 0.14),
+    new THREE.Vector2(0.34, 0.16),
+    new THREE.Vector2(0.12, 0.18),
+    new THREE.Vector2(0.10, 0.20),
+    new THREE.Vector2(0.001, 0.20),
   ];
-  const baseGeo = new THREE.LatheGeometry(basePoints, 64);
+  const baseGeo = new THREE.LatheGeometry(baseProfile, 64);
   const baseMat = new THREE.MeshPhysicalMaterial({
-    color: 0x2a1a0a, metalness: 0.3, roughness: 0.5,
-    clearcoat: 0.4, map: baseTex
+    color: 0x252028, roughness: 0.25, metalness: 0.15, clearcoat: 0.85, map: baseTex,
   });
   const baseMesh = new THREE.Mesh(baseGeo, baseMat);
   baseMesh.castShadow = true; baseMesh.receiveShadow = true;
   root.add(baseMesh);
 
-  // ── Gear mechanism at base ──
-  const makeGear = (innerR, outerR, teeth, thickness) => {
-    const shape = new THREE.Shape();
-    const step = (Math.PI * 2) / teeth;
-    for (let i = 0; i < teeth; i++) {
-      const a0 = i * step, a1 = a0 + step * 0.25;
-      const a2 = a0 + step * 0.35, a3 = a0 + step * 0.65;
-      const a4 = a0 + step * 0.75;
-      if (i === 0) shape.moveTo(Math.cos(a0) * innerR, Math.sin(a0) * innerR);
-      shape.lineTo(Math.cos(a1) * innerR, Math.sin(a1) * innerR);
-      shape.lineTo(Math.cos(a2) * outerR, Math.sin(a2) * outerR);
-      shape.lineTo(Math.cos(a3) * outerR, Math.sin(a3) * outerR);
-      shape.lineTo(Math.cos(a4) * innerR, Math.sin(a4) * innerR);
-    }
-    shape.closePath();
-    const hole = new THREE.Path();
-    hole.absarc(0, 0, innerR * 0.4, 0, Math.PI * 2, false);
-    shape.holes.push(hole);
-    return new THREE.ExtrudeGeometry(shape, { depth: thickness, bevelEnabled: false });
-  };
-  const gearMat = MAT.bronze.clone();
-  const gear1Geo = makeGear(0.08, 0.12, 16, 0.015);
-  const gear1 = new THREE.Mesh(gear1Geo, gearMat);
-  gear1.rotation.x = -Math.PI / 2; gear1.position.set(0.22, 0.19, 0);
-  gear1.castShadow = true; root.add(gear1);
-  const gear2Geo = makeGear(0.05, 0.08, 12, 0.015);
-  const gear2 = new THREE.Mesh(gear2Geo, gearMat);
-  gear2.rotation.x = -Math.PI / 2; gear2.position.set(0.35, 0.19, 0.08);
-  gear2.castShadow = true; root.add(gear2);
+  // Gold rim band around the top plate of the base.
+  const rimGeo = new THREE.TorusGeometry(0.34, 0.012, 24, 128);
+  const rim = new THREE.Mesh(rimGeo, MAT.gold);
+  rim.rotation.x = Math.PI / 2;
+  rim.position.y = 0.175;
+  rim.castShadow = true;
+  root.add(rim);
 
-  // ── Central pillar ──
-  const pillarGeo = new THREE.CylinderGeometry(0.03, 0.04, 0.5, 16);
-  const pillarMat = MAT.gold.clone();
-  const pillar = new THREE.Mesh(pillarGeo, pillarMat);
-  pillar.position.y = 0.50; pillar.castShadow = true;
-  root.add(pillar);
+  // ── Central column holding up the orrery head ──────────────────────
+  const columnProfile = [
+    new THREE.Vector2(0.04, 0), new THREE.Vector2(0.05, 0.05),
+    new THREE.Vector2(0.035, 0.15), new THREE.Vector2(0.03, 0.28),
+    new THREE.Vector2(0.05, 0.3), new THREE.Vector2(0.035, 0.32),
+  ];
+  const column = new THREE.Mesh(new THREE.LatheGeometry(columnProfile, 48), MAT.brass);
+  column.position.y = 0.18;
+  column.castShadow = true;
+  root.add(column);
 
-  // ── Central crystal orb with inner glow shader ──
-  const orbGeo = new THREE.IcosahedronGeometry(0.15, 4);
-  const orbMat = new THREE.MeshPhysicalMaterial({
-    color: 0xaaddff, transmission: 0.92, ior: 1.8, thickness: 2.0,
-    roughness: 0.02, metalness: 0.0, clearcoat: 1.0,
-    emissive: 0x4488ff, emissiveIntensity: 0.4,
-    transparent: true, depthWrite: false
-  });
-  const orb = new THREE.Mesh(orbGeo, orbMat);
-  orb.position.y = 0.85; orb.castShadow = true;
+  // ── Nebula core: BonzAI-palette inner sphere + glass orb + halo ────
+  const coreY = 0.62;
+  const innerCore = new THREE.Mesh(
+    new THREE.SphereGeometry(0.105, 64, 64),
+    SHADER.nebula(0x8b5cf6, 0x0a0a0f)        // BonzAI purple on near-black
+  );
+  innerCore.position.y = coreY;
+  root.add(innerCore);
+
+  const orb = new THREE.Mesh(
+    new THREE.SphereGeometry(0.14, 96, 96),
+    new THREE.MeshPhysicalMaterial({
+      color: 0xf0f0ff, transmission: 0.96, ior: 1.5, roughness: 0.03,
+      thickness: 0.25, clearcoat: 1.0, transparent: true,
+    })
+  );
+  orb.position.y = coreY;
   root.add(orb);
 
-  // Inner glow core
-  const coreGeo = new THREE.IcosahedronGeometry(0.06, 2);
-  const coreMat = new THREE.ShaderMaterial({
-    uniforms: { uTime: { value: 0 }, uColor: { value: new THREE.Color(0x66ccff) } },
-    vertexShader: \`
-      varying vec3 vNormal; varying vec3 vPosition;
-      uniform float uTime;
-      void main() {
-        vNormal = normalize(normalMatrix * normal);
-        vec3 pos = position;
-        pos += normal * sin(uTime * 3.0 + position.y * 10.0) * 0.008;
-        vPosition = pos;
-        gl_Position = projectionMatrix * modelViewMatrix * vec4(pos, 1.0);
-      }\`,
-    fragmentShader: \`
-      uniform vec3 uColor; uniform float uTime;
-      varying vec3 vNormal; varying vec3 vPosition;
-      void main() {
-        float pulse = 0.6 + 0.4 * sin(uTime * 2.0);
-        float rim = pow(1.0 - abs(dot(vNormal, vec3(0.0, 0.0, 1.0))), 2.0);
-        vec3 col = uColor * (pulse + rim * 0.5);
-        gl_FragColor = vec4(col, 0.9);
-      }\`,
-    transparent: true, side: THREE.DoubleSide, depthWrite: false
+  const coreHalo = new THREE.Mesh(
+    new THREE.SphereGeometry(0.17, 48, 48),
+    SHADER.fresnel(0xa855f7, 2.5, 0.75)       // BonzAI violet glow
+  );
+  coreHalo.position.y = coreY;
+  root.add(coreHalo);
+
+  // Post-process-free bloom shell — FX.fakeGlow at 1.8× the core so the
+  // orb reads as genuinely radiant from any angle, without paying for
+  // selective bloom. Marked excludeFromBBox so it doesn't affect framing.
+  const coreGlow = new THREE.Mesh(
+    new THREE.SphereGeometry(0.32, 32, 32),
+    MAT.fakeGlow({ color: 0x8b5cf6, intensity: 0.9, power: 2.8 })
+  );
+  coreGlow.position.y = coreY;
+  coreGlow.userData.excludeFromBBox = true;
+  root.add(coreGlow);
+
+  // ── Lens flare: the core IS the sun ────────────────────────────────
+  // Mancini's signature flare with ghost chain + anamorphic streak,
+  // projected from the core's world position each frame. Raycast
+  // occlusion is on, so the orrery's rings and pedestal partially
+  // occlude the flare as the camera orbits.
+  setLensFlare({
+    position: new THREE.Vector3(0, coreY, 0),
+    strength: 0.55,
+    tint: 0xa855f7,
+    anamorphic: 1.3,
+    occlusionTest: true,
   });
-  const core = new THREE.Mesh(coreGeo, coreMat);
-  core.position.y = 0.85;
-  root.add(core);
 
-  const orbLight = new THREE.PointLight(0x4488ff, 2.5, 3);
-  orbLight.position.y = 0.85; root.add(orbLight);
-
-  // ── Armillary rings (3 orbiting rings with planets) ──
-  const ringGroup = new THREE.Group();
-  ringGroup.position.y = 0.85;
-  root.add(ringGroup);
-
-  const makeRing = (radius, tubeR) => {
-    const geo = new THREE.TorusGeometry(radius, tubeR, 8, 64);
-    return new THREE.Mesh(geo, MAT.gold.clone());
-  };
-
-  const ring1 = makeRing(0.30, 0.008); ring1.castShadow = true;
-  const ring2 = makeRing(0.40, 0.006); ring2.rotation.x = Math.PI / 3; ring2.castShadow = true;
-  const ring3 = makeRing(0.50, 0.006); ring3.rotation.x = -Math.PI / 4; ring3.rotation.z = Math.PI / 6; ring3.castShadow = true;
-  ringGroup.add(ring1, ring2, ring3);
-
-  // ── Planet 1: Gas giant (procedural shader) ──
-  const planet1Geo = new THREE.IcosahedronGeometry(0.06, 3);
-  const planet1Mat = new THREE.ShaderMaterial({
-    uniforms: { uTime: { value: 0 } },
-    vertexShader: \`varying vec2 vUv; varying vec3 vPos;
-      void main() { vUv = uv; vPos = position; gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0); }\`,
-    fragmentShader: \`uniform float uTime; varying vec2 vUv; varying vec3 vPos;
-      void main() {
-        float bands = sin(vPos.y * 40.0 + uTime * 0.5) * 0.5 + 0.5;
-        vec3 c1 = vec3(0.8, 0.5, 0.2); vec3 c2 = vec3(0.9, 0.7, 0.4);
-        vec3 col = mix(c1, c2, bands);
-        float storm = smoothstep(0.3, 0.35, length(vPos.xz - vec2(0.02, 0.0)));
-        col = mix(vec3(0.9, 0.3, 0.1), col, storm);
-        gl_FragColor = vec4(col, 1.0);
-      }\`
-  });
-  const planet1 = new THREE.Mesh(planet1Geo, planet1Mat);
-  planet1.castShadow = true;
-
-  // ── Planet 2: Rocky world ──
-  const planet2Geo = new THREE.IcosahedronGeometry(0.04, 2);
-  const planet2Mat = new THREE.MeshPhysicalMaterial({
-    color: 0x886644, roughness: 0.8, metalness: 0.2,
-    clearcoat: 0.1
-  });
-  const planet2 = new THREE.Mesh(planet2Geo, planet2Mat);
-  planet2.castShadow = true;
-
-  // ── Planet 3: Ice world ──
-  const planet3Geo = new THREE.IcosahedronGeometry(0.05, 3);
-  const planet3Mat = new THREE.MeshPhysicalMaterial({
-    color: 0xaaeeff, transmission: 0.3, ior: 1.31,
-    roughness: 0.15, metalness: 0.0, clearcoat: 0.8,
-    emissive: 0x88ccff, emissiveIntensity: 0.15
-  });
-  const planet3 = new THREE.Mesh(planet3Geo, planet3Mat);
-  planet3.castShadow = true;
-
-  root.add(planet1, planet2, planet3);
-
-  // ── Floating rune particles ──
-  const runeCount = 60;
-  const runeGeo = new THREE.BufferGeometry();
-  const runePos = new Float32Array(runeCount * 3);
-  const runeVels = [];
-  for (let i = 0; i < runeCount; i++) {
-    const theta = Math.random() * Math.PI * 2;
-    const phi = Math.random() * Math.PI;
-    const r = 0.55 + Math.random() * 0.25;
-    runePos[i * 3] = r * Math.sin(phi) * Math.cos(theta);
-    runePos[i * 3 + 1] = 0.85 + r * Math.cos(phi);
-    runePos[i * 3 + 2] = r * Math.sin(phi) * Math.sin(theta);
-    runeVels.push({ theta, phi, r, speed: 0.2 + Math.random() * 0.3 });
+  // ── God-ray cones radiating down from the core ─────────────────────
+  // Four cones tilted outward — volumetric light shafts that read as
+  // magical energy lancing into the moat. Mesh-based so no post cost.
+  for (let i = 0; i < 4; i++) {
+    const a = (i / 4) * Math.PI * 2 + Math.PI / 4;
+    const ray = FX.godRayCone({
+      from: new THREE.Vector3(Math.cos(a) * 0.06, coreY - 0.02, Math.sin(a) * 0.06),
+      to:   new THREE.Vector3(Math.cos(a) * 0.62, 0.08,          Math.sin(a) * 0.62),
+      color: 0xa855f7,
+      spread: 0.12,
+      intensity: 0.45,
+    });
+    root.add(ray);
   }
-  runeGeo.setAttribute('position', new THREE.BufferAttribute(runePos, 3));
-  const runeMat = new THREE.PointsMaterial({
-    color: 0xffcc44, size: 0.025, transparent: true, opacity: 0.7,
-    blending: THREE.AdditiveBlending, depthWrite: false
+
+  // ── Holographic projection ring — ektogamat recipe ────────────────
+  // A thin torus hovering above the rings with hologram v2 material
+  // (fresnel × scanlines × traveling signal × blink). fresnelOnly mode
+  // so the body is transparent and only the rim glows, selling the
+  // projection look.
+  const projRing = new THREE.Mesh(
+    new THREE.TorusGeometry(0.5, 0.012, 16, 128),
+    SHADER.hologram(0x10b981, 60.0, {
+      signalSpeed: 2.5,
+      blink: 0.35,
+      blinkRate: 2.0,
+      fresnelOnly: true,
+      additive: true,
+      opacity: 0.85,
+      fresnelPower: 1.8,
+    })
+  );
+  projRing.rotation.x = Math.PI / 2;
+  projRing.position.y = coreY + 0.32;
+  root.add(projRing);
+  addUpdateCallback(({ time }) => {
+    projRing.rotation.z = time * 0.15;   // slow spin
   });
-  const runeParticles = new THREE.Points(runeGeo, runeMat);
-  root.add(runeParticles);
 
-  // ── Dust ambiance ──
-  const dust = H.dust(40, { spread: 0.8, color: 0xffeebb, size: 0.02 });
-  dust.position.y = 0.3;
-  root.add(dust);
+  // ── Three armillary rings — blue-marble-with-gold-veins planets ────
+  // Each planet shares the same marble recipe but at different base/vein
+  // tones (deep ocean to ice-blue) so they read as distinct worlds while
+  // staying visually unified.
+  const ringDefs = [
+    { r: 0.28, mat: MAT.gold,   tiltX: 0,              tiltZ: 0,              speed: 0.45, marble: { base: '#08306a', vein: '#f5c776' }, halo: 0x4a9eff },  // deep ocean
+    { r: 0.36, mat: MAT.brass,  tiltX: Math.PI / 3,    tiltZ: 0,              speed: 0.30, marble: { base: '#0a4a96', vein: '#ffd87a' }, halo: 0x5fb4ff },  // cobalt
+    { r: 0.44, mat: MAT.silver, tiltX: Math.PI / 6,    tiltZ: Math.PI / 2.5,  speed: 0.20, marble: { base: '#1a6ec8', vein: '#fce37a' }, halo: 0x7ac8ff },  // sky
+  ];
+  const rings = [];
+  for (let i = 0; i < ringDefs.length; i++) {
+    const def = ringDefs[i];
+    const tiltGroup = new THREE.Group();
+    tiltGroup.position.y = coreY;
+    tiltGroup.rotation.x = def.tiltX;
+    tiltGroup.rotation.z = def.tiltZ;
+    root.add(tiltGroup);
 
-  // ── Static planet positions ──
-  planet1.position.set(0.30, 0.85, 0);
-  planet2.position.set(0.20, 1.20, 0.35);
-  planet3.position.set(-0.35, 1.10, 0.35);
+    const spinGroup = new THREE.Group();
+    tiltGroup.add(spinGroup);
 
-  scene.add(root);
+    const ringMesh = new THREE.Mesh(
+      new THREE.TorusGeometry(def.r, 0.008, 16, 192),
+      def.mat
+    );
+    ringMesh.rotation.x = Math.PI / 2;
+    ringMesh.castShadow = true;
+    spinGroup.add(ringMesh);
+
+    // Procedural blue-marble texture with gold veins. Wraps the sphere
+    // twice so the vein pattern reads at any zoom. Clearcoat + low
+    // roughness gives the polished-marble highlight.
+    const marbleTex = TEX.marble(def.marble.base, def.marble.vein);
+    marbleTex.repeat.set(2, 1);
+    const planetMat = new THREE.MeshPhysicalMaterial({
+      map: marbleTex,
+      color: 0xffffff,
+      metalness: 0.35,
+      roughness: 0.28,
+      clearcoat: 1.0,
+      clearcoatRoughness: 0.08,
+    });
+    const planet = new THREE.Mesh(new THREE.SphereGeometry(0.032, 48, 48), planetMat);
+    planet.castShadow = true;
+    const planetHalo = new THREE.Mesh(
+      new THREE.SphereGeometry(0.046, 24, 24),
+      SHADER.fresnel(def.halo, 2.2, 0.55)
+    );
+    planet.add(planetHalo);
+    planet.position.set(def.r, 0, 0);
+    spinGroup.add(planet);
+
+    rings.push({ tiltGroup, spinGroup, planet, speed: def.speed, phase: i * (Math.PI * 2 / 3) });
+  }
+
+  // ── Orbital animation ──────────────────────────────────────────────
+  addUpdateCallback(({ time }) => {
+    for (const r of rings) {
+      r.spinGroup.rotation.y = time * r.speed + r.phase;
+    }
+    innerCore.rotation.y = time * 0.15;
+    innerCore.rotation.x = time * 0.08;
+    coreHalo.rotation.y = time * 0.1;
+  });
+
+  // ── Atmosphere: starfield + half-dome nebula + magic aura ─────────
+  // Starfield shell far out, past the orrery and the camera. Auto-scale
+  // is ~0.85× on a ~1.76m scene, so native distances should be ~6-10m
+  // to read as a distant sky.
+  const stars = CELESTIAL.starfield({ count: 1400, radius: 9, size: 36, twinkle: 0.75 });
+  stars.position.y = coreY;
+  root.add(stars);
+
+  // DOME NEBULA — BonzAI purple/pink inner, green/violet outer.
+  const nebulaInner = CELESTIAL.nebulaCloud({
+    dome: true,
+    count: 420,
+    bounds: { x: 6.0, y: 4.5, z: 6.0 },
+    innerRadius: 4.2,
+    colorA: 0x8b5cf6,              // BonzAI purple
+    colorB: 0xfe2d6e,              // BonzAI pink
+    brightness: 1.0,
+    size: 58,
+  });
+  nebulaInner.position.y = 0.2;
+  root.add(nebulaInner);
+
+  const nebulaOuter = CELESTIAL.nebulaCloud({
+    dome: true,
+    count: 260,
+    bounds: { x: 9.0, y: 7.0, z: 9.0 },
+    innerRadius: 6.5,
+    colorA: 0x10b981,              // BonzAI green
+    colorB: 0xa855f7,              // BonzAI violet
+    brightness: 0.6,
+    size: 80,
+  });
+  nebulaOuter.position.y = 0.4;
+  root.add(nebulaOuter);
+
+  // Flow-field magic aura — BonzAI purple × green swirl.
+  const aura = SHADER.flowParticles({
+    count: 900,
+    bounds: { x: 0.55, y: 0.75, z: 0.55 },
+    color:  0x8b5cf6,              // purple
+    color2: 0x10b981,              // green
+    size: 32,
+    speed: 0.35,
+    swirl: 0.5,
+  });
+  aura.position.y = coreY;
+  aura.userData.excludeFromBBox = true;
+  root.add(aura);
+
   return root;
 }`;
 
@@ -2350,7 +2740,7 @@ OUTPUT:`;
         lastStatus.value = "Vibe Coding...";
         const codePrompt = buildObjectPrompt(blueprint);
         const codeResult = await callLLM(codePrompt, {
-          maxTokens: reasoningEnabled.value ? 6144 : 4096,
+          maxTokens: reasoningEnabled.value ? 12288 : 10240,
           temperature: 0.7,
           thoughtTokens: reasoningEnabled.value ? undefined : 0,
         });
@@ -2360,13 +2750,46 @@ OUTPUT:`;
         console.log("Raw LLM output:", codeResult.text);
         console.log(`Code gen: ${codeResult.tokenCount} tokens in ${(codeResult.elapsedMs / 1000).toFixed(1)}s (${codeTokS || '?'} tok/s), prefill: ${((codeResult.prefillMs || 0) / 1000).toFixed(1)}s`);
 
-        const code = normalizeLLMCode(codeResult.text);
-        const userCodeMatch = code.match(
+        let code = normalizeLLMCode(codeResult.text);
+        let userCodeMatch = code.match(
           /\/\/ ── USER CODE START ──\n([\s\S]*?)\/\/ ── USER CODE END ──/,
         );
-        const userCode = userCodeMatch ? userCodeMatch[1].trim() : "";
-        console.log("User code:", userCode || "(empty — LLM produced no code)");
+        let userCode = userCodeMatch ? userCodeMatch[1].trim() : "";
 
+        // Retry path — if phase-2 produced no extractable code (small LLM
+        // got eaten by prefill, thinking tokens, etc.) fall back to a
+        // terse code-only prompt that reuses the blueprint and drops all
+        // the verbose rules/reference. Gives the model one last chance
+        // before we surface a failure to the user.
+        if (!userCode) {
+          console.warn("[3D] Phase-2 produced empty code — retrying with terse prompt.");
+          lastStatus.value = "Retrying...";
+          await window.electronAPI.resetChat();
+          const tersePrompt = `You are a Three.js developer. Output ONLY raw JavaScript. No markdown, no prose, no <think>. Start with setObjectInfo(...).
+
+TASK: ${blueprint}
+
+Pre-declared: THREE, scene, root, MAT, TEX, SHADER, FLUID, P, H, FX, CELESTIAL, addUpdateCallback, setObjectInfo. Cinematic post-FX baseline is already applied.
+For water/potion/blood: use FLUID.oceanWater / FLUID.fountainBasin / FLUID.stream / H.fillLiquid+FLUID.upgradeFill.
+For glow: FX.withGlow(mesh, color, {scale, intensity}).
+For physics: await P.init(); P.body(mesh, {...}).
+Every mesh goes on root. Keep object height 0.3-1.5. No imports. No markdown fences.
+
+OUTPUT CODE:`;
+          const retry = await callLLM(tersePrompt, {
+            maxTokens: 8192,
+            temperature: 0.6,
+            thoughtTokens: 0,
+          });
+          console.log("Retry raw output:", retry.text);
+          code = normalizeLLMCode(retry.text);
+          userCodeMatch = code.match(
+            /\/\/ ── USER CODE START ──\n([\s\S]*?)\/\/ ── USER CODE END ──/,
+          );
+          userCode = userCodeMatch ? userCodeMatch[1].trim() : "";
+        }
+
+        console.log("User code:", userCode || "(empty — LLM produced no code)");
         if (!userCode) {
           throw new Error(
             "LLM produced no usable code (thinking may have consumed all tokens). Try again.",
@@ -2418,7 +2841,7 @@ OUTPUT:`;
         await window.electronAPI.resetChat();
 
         const prompt = buildRefinePrompt(lastGeneratedCode.value, refinePrompt.value);
-        const result = await callLLM(prompt, { maxTokens: reasoningEnabled.value ? 4096 : 3072, temperature: 0.7, thoughtTokens: reasoningEnabled.value ? undefined : 0 });
+        const result = await callLLM(prompt, { maxTokens: reasoningEnabled.value ? 10240 : 8192, temperature: 0.7, thoughtTokens: reasoningEnabled.value ? undefined : 0 });
         const tokensPerSecond = result.elapsedMs > 0 ? ((result.tokenCount / result.elapsedMs) * 1000).toFixed(1) : null;
         console.log(`Refine: ${result.tokenCount} tokens in ${(result.elapsedMs / 1000).toFixed(1)}s (${tokensPerSecond || '?'} tok/s)`);
 
@@ -2527,6 +2950,7 @@ OUTPUT:`;
       downloads,
       downloadTaskList,
       form,
+      enablePhysics,
       examplePrompts,
       setTimeOfDay,
       setWeather,

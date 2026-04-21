@@ -168,9 +168,7 @@ const unlockAllLevels = async () => {
     });
 
     if (result.success) {
-      console.log("[AccessRequirements] All levels unlocked!", result.txHash);
       unlockStatus.value = 'Success! All levels unlocked.';
-      // Refresh level status
       await checkAllLevels();
     } else {
       console.error("[AccessRequirements] Unlock failed:", result.error);

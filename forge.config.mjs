@@ -42,7 +42,13 @@ export default {
     ],
 
     // ship your scripts (optional if you only need the PyInstaller binary)
-    extraResource: [path.resolve(__dirname, "src", "server")],
+    // plus the OpenClaw / Hermes SKILL.md manifests so the agent-harness
+    // toggles can install them from a packaged build (not just dev).
+    extraResource: [
+      path.resolve(__dirname, "src", "server"),
+      path.resolve(__dirname, "openclaw"),
+      path.resolve(__dirname, "hermes"),
+    ],
 
     // ───────── macOS signing & notarization (only on CI where certs are available)
     ...(process.env.CI ? {

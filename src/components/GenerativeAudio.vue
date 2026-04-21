@@ -1620,13 +1620,13 @@ export default {
         (!synthesisBase64.value || !referenceTranscript.value.trim())
       )
         return false;
-      // Music mode requires either caption or prompt
-      if (
-        mode.value === "music" &&
-        !musicCaption.value.trim() &&
-        !form.prompt.trim()
-      )
-        return false;
+      // Music mode requires either caption or prompt AND the enhancer LLM.
+      // The enhancer is used by both the lyrics writer and the final music
+      // prompt assembly — without it the pipeline can't produce usable output.
+      if (mode.value === "music") {
+        if (!musicCaption.value.trim() && !form.prompt.trim()) return false;
+        if (!lyricsModelReady.value) return false;
+      }
       return true;
     });
 
@@ -1835,7 +1835,9 @@ export default {
       context: 8192,
     };
 
-    // Check if lyrics LLM is downloaded
+    // Check if lyrics LLM is downloaded. Also subscribe to download progress
+    // events so the readiness flag flips automatically once the user pulls
+    // the file via the skill downloader.
     const lyricsModelReady = ref(false);
     const checkLyricsModel = async () => {
       try {
@@ -1844,6 +1846,14 @@ export default {
       } catch { lyricsModelReady.value = false; }
     };
     checkLyricsModel();
+    window.electronAPI?.onDownloadProgress?.((_e, data) => {
+      if (
+        data?.filename === LYRICS_LLM.filename &&
+        (data.percent >= 1 || data.done === true)
+      ) {
+        checkLyricsModel();
+      }
+    });
 
     const ensureLLMLoaded = async () => {
       if (!window.electronAPI?.loadModel) {
@@ -2354,14 +2364,10 @@ Remember: 6-10 syllables per line, use all appropriate structure tags. Write in 
         missing: Number.isFinite(r.missing) ? r.missing : null,
         root: r.root || null,
       }));
-      // Check for missing GGUFs from gguf_status (legacy) or required_files (new)
-      const ggufs = Array.isArray(data?.gguf_status) ? data.gguf_status : [];
       const requiredFiles = Array.isArray(data?.required_files)
         ? data.required_files
         : [];
-      const missG = ggufs.filter((g) => g && g.configured && !g.exists);
-      const missReq = requiredFiles.filter((f) => f && !f.ok && !f.exists);
-      const allMissing = [...missG, ...missReq];
+      const allMissing = requiredFiles.filter((f) => f && !f.ok && !f.exists);
       readiness.missingGguf = allMissing.length > 0;
       readiness.ggufNames = allMissing.map((g) =>
         (g.path || g.name || "").split("/").pop(),

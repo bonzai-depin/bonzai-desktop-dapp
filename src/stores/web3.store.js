@@ -77,9 +77,6 @@ export const useWeb3Store = defineStore('web3', () => {
   // ACTIONS
   // ═══════════════════════════════════════════════════════════════════════════
 
-  /**
-   * Initialize Web3 and all services
-   */
   const initialize = async () => {
     if (isInitialized.value) return;
 
@@ -102,9 +99,6 @@ export const useWeb3Store = defineStore('web3', () => {
     }
   };
 
-  /**
-   * Connect wallet
-   */
   const connect = async () => {
     isConnecting.value = true;
     error.value = null;
@@ -127,10 +121,6 @@ export const useWeb3Store = defineStore('web3', () => {
     }
   };
 
-  /**
-   * Connect via Privy (email/social login)
-   * @param {Object} options - { method: 'email'|'google'|'apple', email?, otpCode? }
-   */
   const connectWithPrivy = async (options = {}) => {
     isConnecting.value = true;
     error.value = null;
@@ -147,25 +137,15 @@ export const useWeb3Store = defineStore('web3', () => {
     }
   };
 
-  /**
-   * Cancel ongoing connection (reset connecting state)
-   * Useful when stuck in "Connecting..." state
-   */
   const cancelConnection = async () => {
-    console.log("[Web3Store] Cancelling connection...");
     isConnecting.value = false;
     error.value = null;
-    // Also disconnect to clean up any partial state
     await disconnect();
   };
 
-  /**
-   * Disconnect wallet
-   */
   const disconnect = async () => {
     await web3Service.disconnectWallet();
 
-    // Reset level state
     Object.keys(levelService.state.levels).forEach((key) => {
       levelService.state.levels[key] = {
         holdingMet: false,
@@ -175,15 +155,10 @@ export const useWeb3Store = defineStore('web3', () => {
     });
   };
 
-  /**
-   * Refresh balances and ensure authentication is valid
-   * If token is expired, attempts to refresh it or prompt for re-authentication
-   */
   const refreshBalances = async () => {
-    // First refresh the token balances
     await web3Service.fetchAllBalances();
 
-    // Ensure Flask JWT authentication is valid (not needed for Privy users)
+    // Ensure Flask JWT is valid (not needed for Privy users)
     if (isConnected.value && web3Service.state.authProvider !== 'privy' && !authService.isAuthenticated()) {
       try {
         await authService.refreshToken();
@@ -195,24 +170,15 @@ export const useWeb3Store = defineStore('web3', () => {
     }
   };
 
-  /**
-   * Refresh level status
-   */
   const refreshLevels = async () => {
     await levelService.checkAllLevels();
   };
 
-  /**
-   * Refresh everything
-   */
   const refreshAll = async () => {
     await refreshBalances();
     await refreshLevels();
   };
 
-  /**
-   * Switch to Arbitrum network
-   */
   const switchToArbitrum = async () => {
     return web3Service.switchToArbitrum();
   };
@@ -221,10 +187,6 @@ export const useWeb3Store = defineStore('web3', () => {
   // LEVEL ACCESS ACTIONS
   // ═══════════════════════════════════════════════════════════════════════════
 
-  /**
-   * Unlock ALL levels by paying 1 ETH
-   * Single payment permanently unlocks all 6 levels
-   */
   const unlockAllLevels = async () => {
     const result = await levelService.unlockAllWithEth();
     if (result.success) {
@@ -234,46 +196,26 @@ export const useWeb3Store = defineStore('web3', () => {
   };
 
 
-  /**
-   * Get NFT price for a level
-   * @param {number} levelId - Level (1-6)
-   */
   const getNFTPrice = (levelId) => {
     return levelService.getNFTPrice(levelId);
   };
 
-  /**
-   * Get remaining NFT supply for a level
-   * @param {number} levelId - Level (1-6)
-   */
   const getNFTRemainingSupply = (levelId) => {
     return levelService.getNFTRemainingSupply(levelId);
   };
 
-  /**
-   * Check if user can access a feature
-   */
   const canAccess = (feature) => {
     return levelService.canAccessFeature(feature);
   };
 
-  /**
-   * Check if a specific level is active
-   */
   const isLevelActive = (levelKey) => {
     return levelService.isLevelActive(levelKey);
   };
 
-  /**
-   * Get reason why level is blocked
-   */
   const getLevelBlockReason = (levelKey) => {
     return levelService.getLevelBlockReason(levelKey);
   };
 
-  /**
-   * Get unlock options for a level
-   */
   const getLevelUnlockOptions = (levelKey) => {
     return levelService.getLevelUnlockOptions(levelKey);
   };
@@ -282,33 +224,20 @@ export const useWeb3Store = defineStore('web3', () => {
   // AGENT ACTIONS
   // ═══════════════════════════════════════════════════════════════════════════
 
-  /**
-   * Check if user has purchased an agent
-   */
   const hasAgentPurchased = (agentId) => {
     return agentService.hasPurchasedAgent(agentId);
   };
 
-  /**
-   * Purchase an agent
-   */
   const purchaseAgent = async (agentId) => {
     return agentService.purchaseAgent(agentId);
   };
 
-  /**
-   * Check if user has enough BONZAI for running fee
-   */
   const hasEnoughForAgentFee = () => {
     return agentService.hasEnoughForRunningFee();
   };
 
-  /**
-   * Execute agent with automatic fee payment
-   */
   const executeAgent = async (agent, inputs, context) => {
     const result = await agentService.executeAgentWithFee(agent, inputs, context);
-    // Refresh balances after fee payment
     if (result.success || result.feePaid) {
       await refreshBalances();
     }

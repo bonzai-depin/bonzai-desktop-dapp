@@ -204,7 +204,7 @@ export default {
         if (!modelAvailabilityChecked.value) return false;
         return modelAvailability[model.filename] === true;
       }
-      if (['diffusion', 'audio', 'video', '3d', 'vision'].includes(model.type)) {
+      if (['diffusion', 'audio', 'video', '3d', 'vision', 'forecast'].includes(model.type)) {
         if (!modelAvailabilityChecked.value) return false;
         return modelAvailability[model.key] === true;
       }
@@ -222,6 +222,7 @@ export default {
       audio_quality: 'audio_quality_persona',
       video_fast: 'video_fast',
       vision: 'qwen3_vision',
+      forecast_quality: 'forecast',
     };
 
     // Check model availability

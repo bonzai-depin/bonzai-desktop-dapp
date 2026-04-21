@@ -1,13 +1,6 @@
 /**
- * BonzAI Token Issuance Service
- *
- * Handles skill token deployment and Uniswap liquidity pool creation.
- *
- * Features:
- * - ERC20 token deployment for skills
- * - Uniswap V3 pool creation (SKILL/ETH)
- * - For DSLA prediction markets: SKILL/DSLA pool creation
- * - Initial liquidity provision
+ * Token Issuance Service — skill token deployment and Uniswap LP creation.
+ * NOTE: All deployment/pool/liquidity functions are currently mocked pending contract deployment.
  */
 
 import { ethers } from 'ethers';
@@ -34,7 +27,6 @@ const ERC20_ABI = [
   'function transfer(address to, uint256 amount) returns (bool)',
 ];
 
-// Uniswap V3 Factory and Router ABIs (simplified)
 const UNISWAP_FACTORY_ABI = [
   'function createPool(address tokenA, address tokenB, uint24 fee) returns (address pool)',
   'function getPool(address tokenA, address tokenB, uint24 fee) view returns (address pool)',
@@ -53,17 +45,13 @@ const UNISWAP_POSITION_MANAGER_ABI = [
 // ═══════════════════════════════════════════════════════════════════════════
 
 const CONTRACTS = {
-  // Uniswap V3 on Arbitrum
   uniswapFactory: '0x1F98431c8aD98523631AE4a59f267346ea31F984',
   uniswapRouter: '0xE592427A0AEce92De3Edee1F18E0157C05861564',
   uniswapPositionManager: '0xC36442b4a4522E871399CD717aBDD847Ab11FE88',
-  // WETH on Arbitrum
   weth: '0x82aF49447D8a07e3bd95BD0d56f35241523fBab1',
-  // DSLA token on Arbitrum (placeholder - update with real address)
   dsla: '0x0000000000000000000000000000000000000000', // TODO: Add real DSLA address
 };
 
-// Fee tiers for Uniswap V3
 const FEE_TIERS = {
   LOW: 500,      // 0.05%
   MEDIUM: 3000,  // 0.3%
@@ -75,26 +63,16 @@ const FEE_TIERS = {
 // ═══════════════════════════════════════════════════════════════════════════
 
 const state = reactive({
-  // Issued tokens by skill ID
   issuedTokens: {},
-
-  // Current DSLA/ETH price
   dslaEthPrice: null,
   dslaEthPriceUpdatedAt: null,
-
-  // ETH/USD price
   ethUsdPrice: null,
   ethUsdPriceUpdatedAt: null,
-
-  // Loading states
   isDeploying: false,
   isCreatingPool: false,
   isAddingLiquidity: false,
   isFetchingPrice: false,
-
-  // Transaction history
   transactions: [],
-
   error: null,
 });
 
@@ -128,9 +106,6 @@ const saveIssuedToken = (skillId, tokenData) => {
 // PRICE FETCHING
 // ═══════════════════════════════════════════════════════════════════════════
 
-/**
- * Fetch current DSLA/ETH price from CoinGecko or DEX
- */
 const fetchDslaEthPrice = async () => {
   state.isFetchingPrice = true;
 
@@ -148,14 +123,12 @@ const fetchDslaEthPrice = async () => {
       }
     }
 
-    // Fallback: Use a mock price for development
     console.warn('[Token] Using mock DSLA/ETH price');
-    state.dslaEthPrice = 0.0000015; // Mock: ~$0.003 at $2000 ETH
+    state.dslaEthPrice = 0.0000015;
     state.dslaEthPriceUpdatedAt = Date.now();
     return state.dslaEthPrice;
   } catch (e) {
     console.error('[Token] Failed to fetch DSLA/ETH price:', e);
-    // Use mock price on error
     state.dslaEthPrice = 0.0000015;
     state.dslaEthPriceUpdatedAt = Date.now();
     return state.dslaEthPrice;
@@ -164,9 +137,6 @@ const fetchDslaEthPrice = async () => {
   }
 };
 
-/**
- * Fetch current ETH/USD price from CoinGecko
- */
 const fetchEthUsdPrice = async () => {
   try {
     if (window.externalProxy?.get) {
@@ -180,21 +150,17 @@ const fetchEthUsdPrice = async () => {
         return state.ethUsdPrice;
       }
     }
-    // Fallback
     console.warn('[Token] Using mock ETH/USD price');
-    state.ethUsdPrice = 3000; // Mock price
+    state.ethUsdPrice = 3000;
     state.ethUsdPriceUpdatedAt = Date.now();
     return state.ethUsdPrice;
   } catch (e) {
     console.error('[Token] Failed to fetch ETH/USD price:', e);
-    state.ethUsdPrice = 3000; // Mock price on error
+    state.ethUsdPrice = 3000;
     return state.ethUsdPrice;
   }
 };
 
-/**
- * Calculate DSLA amount from ETH amount
- */
 const ethToDsla = (ethAmount) => {
   if (!state.dslaEthPrice || state.dslaEthPrice === 0) {
     return 0;
@@ -202,9 +168,6 @@ const ethToDsla = (ethAmount) => {
   return ethAmount / state.dslaEthPrice;
 };
 
-/**
- * Calculate ETH amount from DSLA amount
- */
 const dslaToEth = (dslaAmount) => {
   if (!state.dslaEthPrice) {
     return 0;
@@ -216,16 +179,6 @@ const dslaToEth = (dslaAmount) => {
 // TOKEN DEPLOYMENT
 // ═══════════════════════════════════════════════════════════════════════════
 
-/**
- * Deploy a new ERC20 token for a skill
- *
- * @param {Object} params - Token parameters
- * @param {string} params.skillId - Skill ID
- * @param {string} params.name - Token name
- * @param {string} params.symbol - Token symbol
- * @param {string} params.totalSupply - Total supply (as string, will be parsed with 18 decimals)
- * @returns {Promise<{success: boolean, tokenAddress?: string, txHash?: string, error?: string}>}
- */
 const deployToken = async ({ skillId, name, symbol, totalSupply }) => {
   state.isDeploying = true;
   state.error = null;
@@ -236,8 +189,6 @@ const deployToken = async ({ skillId, name, symbol, totalSupply }) => {
 
     if (!ENABLE_REAL_DEPLOYMENT) {
       // Mock deployment
-      console.log('[Token] Mock deployment for:', { skillId, name, symbol, totalSupply });
-
       const mockTokenAddress = `0x${Date.now().toString(16).padStart(40, '0')}`;
       const mockTxHash = `0x${Math.random().toString(16).slice(2)}${Date.now().toString(16)}`;
 
@@ -267,10 +218,6 @@ const deployToken = async ({ skillId, name, symbol, totalSupply }) => {
       return { success: true, tokenAddress: mockTokenAddress, txHash: mockTxHash, mock: true };
     }
 
-    // Real deployment (disabled until factory contract deployed)
-    const signer = await web3Service.getSigner();
-    // ... real deployment logic would go here
-
     throw new Error('Real token deployment not yet implemented');
   } catch (e) {
     const error = e.message || String(e);
@@ -286,16 +233,6 @@ const deployToken = async ({ skillId, name, symbol, totalSupply }) => {
 // UNISWAP POOL CREATION
 // ═══════════════════════════════════════════════════════════════════════════
 
-/**
- * Create a Uniswap V3 pool for the token
- *
- * @param {Object} params - Pool parameters
- * @param {string} params.skillId - Skill ID
- * @param {string} params.tokenAddress - Token contract address
- * @param {string} params.pairedToken - 'ETH' or 'DSLA'
- * @param {number} params.fee - Fee tier (500, 3000, or 10000)
- * @returns {Promise<{success: boolean, poolAddress?: string, txHash?: string, error?: string}>}
- */
 const createPool = async ({ skillId, tokenAddress, pairedToken = 'ETH', fee = FEE_TIERS.MEDIUM }) => {
   state.isCreatingPool = true;
   state.error = null;
@@ -305,12 +242,9 @@ const createPool = async ({ skillId, tokenAddress, pairedToken = 'ETH', fee = FE
 
     if (!ENABLE_REAL_POOLS) {
       // Mock pool creation
-      console.log('[Token] Mock pool creation:', { skillId, tokenAddress, pairedToken, fee });
-
       const mockPoolAddress = `0x${(Date.now() + 1).toString(16).padStart(40, '0')}`;
       const mockTxHash = `0x${Math.random().toString(16).slice(2)}${(Date.now() + 1).toString(16)}`;
 
-      // Update token data with pool info
       const tokenData = state.issuedTokens[skillId];
       if (tokenData) {
         tokenData.pools[pairedToken] = {
@@ -337,7 +271,6 @@ const createPool = async ({ skillId, tokenAddress, pairedToken = 'ETH', fee = FE
       return { success: true, poolAddress: mockPoolAddress, txHash: mockTxHash, mock: true };
     }
 
-    // Real pool creation
     throw new Error('Real pool creation not yet implemented');
   } catch (e) {
     const error = e.message || String(e);
@@ -353,17 +286,6 @@ const createPool = async ({ skillId, tokenAddress, pairedToken = 'ETH', fee = FE
 // LIQUIDITY PROVISION
 // ═══════════════════════════════════════════════════════════════════════════
 
-/**
- * Add liquidity to a Uniswap pool
- *
- * @param {Object} params - Liquidity parameters
- * @param {string} params.skillId - Skill ID
- * @param {string} params.pairedToken - 'ETH' or 'DSLA'
- * @param {string} params.tokenAmount - Amount of skill token to add
- * @param {string} params.pairedAmount - Amount of paired token (ETH or DSLA)
- * @param {number} params.startingPrice - Starting price in paired token
- * @returns {Promise<{success: boolean, txHash?: string, liquidityTokenId?: string, error?: string}>}
- */
 const addLiquidity = async ({ skillId, pairedToken = 'ETH', tokenAmount, pairedAmount, startingPrice }) => {
   state.isAddingLiquidity = true;
   state.error = null;
@@ -373,12 +295,9 @@ const addLiquidity = async ({ skillId, pairedToken = 'ETH', tokenAmount, pairedA
 
     if (!ENABLE_REAL_LIQUIDITY) {
       // Mock liquidity addition
-      console.log('[Token] Mock liquidity addition:', { skillId, pairedToken, tokenAmount, pairedAmount, startingPrice });
-
       const mockTxHash = `0x${Math.random().toString(16).slice(2)}${(Date.now() + 2).toString(16)}`;
       const mockLiquidityTokenId = `${Date.now()}`;
 
-      // Update token data with liquidity info
       const tokenData = state.issuedTokens[skillId];
       if (tokenData && tokenData.pools[pairedToken]) {
         tokenData.pools[pairedToken].liquidity = {
@@ -407,7 +326,6 @@ const addLiquidity = async ({ skillId, pairedToken = 'ETH', tokenAmount, pairedA
       return { success: true, txHash: mockTxHash, liquidityTokenId: mockLiquidityTokenId, mock: true };
     }
 
-    // Real liquidity addition
     throw new Error('Real liquidity addition not yet implemented');
   } catch (e) {
     const error = e.message || String(e);
@@ -423,26 +341,7 @@ const addLiquidity = async ({ skillId, pairedToken = 'ETH', tokenAmount, pairedA
 // COMPLETE ISSUANCE FLOW
 // ═══════════════════════════════════════════════════════════════════════════
 
-/**
- * Complete token issuance flow:
- * 1. Deploy token
- * 2. Create SKILL/ETH pool
- * 3. Add ETH liquidity
- * 4. For DSLA skills: Create SKILL/DSLA pool and add liquidity
- *
- * @param {Object} params - Issuance parameters
- * @param {string} params.skillId - Skill ID
- * @param {string} params.name - Token name
- * @param {string} params.symbol - Token symbol
- * @param {string} params.totalSupply - Total token supply
- * @param {string} params.initialLiquidityTokens - Tokens to add as initial liquidity
- * @param {string} params.initialLiquidityEth - ETH to add as initial liquidity
- * @param {number} params.startingPriceEth - Starting price in ETH
- * @param {boolean} params.isDslaSkill - Whether this is a DSLA prediction market skill
- * @param {string} params.initialLiquidityDsla - DSLA to add as liquidity (for DSLA skills)
- * @param {Function} params.onProgress - Progress callback
- * @returns {Promise<{success: boolean, tokenData?: Object, error?: string}>}
- */
+/** Deploy token + create pool(s) + add liquidity in one flow. */
 const issueSkillToken = async ({
   skillId,
   name,
@@ -456,7 +355,6 @@ const issueSkillToken = async ({
   onProgress = () => {},
 }) => {
   try {
-    // Step 1: Deploy token
     onProgress({ step: 1, total: isDslaSkill ? 4 : 2, message: 'Deploying token...' });
 
     const deployResult = await deployToken({ skillId, name, symbol, totalSupply });
@@ -466,7 +364,6 @@ const issueSkillToken = async ({
 
     const tokenAddress = deployResult.tokenAddress;
 
-    // Step 2: Create SKILL/ETH pool and add liquidity
     onProgress({ step: 2, total: isDslaSkill ? 4 : 2, message: 'Creating SKILL/ETH pool...' });
 
     const ethPoolResult = await createPool({
@@ -492,7 +389,6 @@ const issueSkillToken = async ({
       return { success: false, error: `ETH liquidity failed: ${ethLiquidityResult.error}` };
     }
 
-    // Steps 3-4: For DSLA skills, also create SKILL/DSLA pool
     if (isDslaSkill && initialLiquidityDsla) {
       onProgress({ step: 3, total: 4, message: 'Creating SKILL/DSLA pool...' });
 
@@ -505,11 +401,9 @@ const issueSkillToken = async ({
 
       if (!dslaPoolResult.success) {
         console.warn('[Token] DSLA pool creation failed:', dslaPoolResult.error);
-        // Continue anyway - ETH pool is the primary pool
       } else {
         onProgress({ step: 4, total: 4, message: 'Adding DSLA liquidity...' });
 
-        // Calculate starting price in DSLA based on ETH price
         const startingPriceDsla = state.dslaEthPrice ? startingPriceEth / state.dslaEthPrice : 0;
 
         const dslaLiquidityResult = await addLiquidity({
@@ -526,7 +420,6 @@ const issueSkillToken = async ({
       }
     }
 
-    // Return complete token data
     const tokenData = state.issuedTokens[skillId];
     return { success: true, tokenData };
   } catch (e) {
@@ -541,32 +434,20 @@ const issueSkillToken = async ({
 // UTILITIES
 // ═══════════════════════════════════════════════════════════════════════════
 
-/**
- * Check if a skill has an issued token
- */
 const hasIssuedToken = (skillId) => {
   loadIssuedTokens();
   return !!state.issuedTokens[skillId];
 };
 
-/**
- * Get token data for a skill
- */
 const getTokenData = (skillId) => {
   loadIssuedTokens();
   return state.issuedTokens[skillId] || null;
 };
 
-/**
- * Get transaction history
- */
 const getTransactionHistory = () => {
   return [...state.transactions].reverse();
 };
 
-/**
- * Initialize service
- */
 const initialize = () => {
   loadIssuedTokens();
   fetchDslaEthPrice();

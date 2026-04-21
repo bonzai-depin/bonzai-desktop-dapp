@@ -379,8 +379,10 @@
 <script>
 import { ref, computed, watch, onMounted, onUnmounted, nextTick } from "vue";
 import { getAuthHeaders } from "../../services/auth.service.js";
+import { hasPurchasedSkill, isDevMode } from "../../services/agent.service.js";
 
 const STORAGE_KEY = "video-captioning-sessions";
+const SKILL_ID = "video-captioning-v1.0.0";
 const MAX_FRAME_WIDTH = 960;
 const JPEG_QUALITY = 0.88;
 const SIMILARITY_THRESHOLD = 0.7;
@@ -637,6 +639,10 @@ export default {
     // ─── Vision Analysis ─────────────────────────────────────────────
     const analyzeFrame = async (imageDataUrl, frameTime) => {
       if (isAnalyzing.value || !captioningActive.value) return null;
+      if (!isDevMode() && !(await hasPurchasedSkill(SKILL_ID))) {
+        console.warn("[VideoCaptioning] Skill not purchased — execution blocked.");
+        return null;
+      }
       isAnalyzing.value = true;
 
       try {

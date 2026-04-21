@@ -90,9 +90,7 @@ if (window.electronAPI?.onServerLog) {
   window.electronAPI.onServerLog((data) => {
     const prefix = "%c[Server]";
     const style = "color: #10b981; font-weight: bold;";
-    // Support both batched format { batch: [...] } and legacy { type, text }
-    const entries = data.batch || [data];
-    for (const { type, text } of entries) {
+    for (const { type, text } of data.batch) {
       if (type === "error") {
         console.error(prefix, style, text);
       } else {

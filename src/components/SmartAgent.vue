@@ -489,6 +489,22 @@
                 />
               </div>
 
+              <!-- MASS CHAT (education skill) -->
+              <div v-else-if="selectedSkillId === 'mass-chat-v1.0.0'">
+                <MassChatSkill
+                  :skill="selectedSkill"
+                  @status-update="loadingMessage = $event"
+                />
+              </div>
+
+              <!-- CHART FORECASTER (finance skill) -->
+              <div v-else-if="selectedSkillId === 'chart-forecaster-v1.0.0'">
+                <ChartForecasterSkill
+                  :skill="selectedSkill"
+                  @status-update="loadingMessage = $event"
+                />
+              </div>
+
               <!-- Roleplay Companion - Special Chat Interface -->
               <div
                 v-else-if="selectedSkillId === 'roleplay-companion-v1.0.0' && selectedSkill"
@@ -976,13 +992,15 @@ import { useWeb3Store } from "../stores/web3.store.js";
 import { SKILL_CATEGORY_META } from "../skills/types.js";
 import polymarketAgent from "./polymarketAgent.js";
 import { tokenService } from "../services/token.service.js";
-import { hasPurchasedAgent, purchaseAgent, purchaseSkillUSDC } from "../services/agent.service.js";
+import { purchaseSkillUSDC, loadPurchasedSkillsOnChain, isDevMode } from "../services/agent.service.js";
 import { requestOpenLevelModal } from "../services/level.service.js";
 import SkillRunner from "./skills/SkillRunner.vue";
 import RoleplayChat from "./skills/RoleplayChat.vue";
 import SkillDownloader from "./skills/SkillDownloader.vue";
 import PolymarketSkill from "./skills/PolymarketSkill.vue";
 import DSLASkill from "./skills/DSLASkill.vue";
+import MassChatSkill from "./skills/MassChatSkill.vue";
+import ChartForecasterSkill from "./skills/ChartForecasterSkill.vue";
 import MeditationForgeSkill from "./skills/MeditationForgeSkill.vue";
 import VideoCaptioningSkill from "./skills/VideoCaptioningSkill.vue";
 import TCGScannerSkill from "./skills/TCGScannerSkill.vue";
@@ -1056,6 +1074,8 @@ export default {
     SkillDownloader,
     PolymarketSkill,
     DSLASkill,
+    MassChatSkill,
+    ChartForecasterSkill,
     MeditationForgeSkill,
     VideoCaptioningSkill,
     TCGScannerSkill,
@@ -1155,13 +1175,14 @@ export default {
         if (!modelAvailabilityChecked.value) return false;
         return modelAvailability[model.filename] === true;
       }
-      // For Flask models (diffusion/audio/video/3d/vision), check if Flask reported them as ready
+      // For Flask models (diffusion/audio/video/3d/vision/forecast), check if Flask reported them as ready
       if (
         model.type === "diffusion" ||
         model.type === "audio" ||
         model.type === "video" ||
         model.type === "3d" ||
-        model.type === "vision"
+        model.type === "vision" ||
+        model.type === "forecast"
       ) {
         if (!modelAvailabilityChecked.value) return false;
         // If we checked and it's marked available, it's ready
@@ -1232,10 +1253,13 @@ export default {
         audio: "audio",
         audio_turbo: "audio_turbo",
         audio_quality: "audio_quality_persona",
+        music: "music",
+        music_fast: "music",
         video_fast: "video_fast",
+        video_quality: "video_quality",
         vision: "qwen3_vision",
         vision_mlx: "vision_mlx",
-        // 'trellis_3d': '3d', // Not defined in Flask yet
+        forecast_quality: "forecast",
       };
 
       // Check each pipeline in parallel
@@ -2111,16 +2135,34 @@ Return ONLY the JSON, no explanation.`;
       showNotification("Skills refreshed!", "success");
     };
 
-    // Skill purchase state
+    // Skill purchase state. `purchasedSkillIds` is populated from the
+    // on-chain BonzaiSkillRegistry at mount + on wallet change — no
+    // localStorage fallback (previous fallback was a trust boundary the user
+    // could bypass by injecting the cache).
     const purchasingSkillId = ref(null);
     const purchasedSkillIds = ref(new Set());
 
     const isSkillPurchased = (skillId) => {
-      // Check reactive set first (immediate UI update), then persistent store
-      return purchasedSkillIds.value.has(skillId) || hasPurchasedAgent(skillId);
+      // Dev mode: all skills considered purchased locally.
+      if (isDevMode()) return true;
+      return purchasedSkillIds.value.has(skillId);
     };
 
     const isFreeSkill = (skill) => !skill.price || skill.price === 0;
+
+    // Rehydrate purchase set from on-chain. Call on mount and whenever the
+    // wallet address changes.
+    const syncPurchasedSkills = async () => {
+      const paidIds = (skillStore.skills || [])
+        .filter((s) => !isFreeSkill(s))
+        .map((s) => s.id);
+      if (!paidIds.length) return;
+      try {
+        purchasedSkillIds.value = await loadPurchasedSkillsOnChain(paidIds);
+      } catch (e) {
+        console.warn("[SmartAgent] Failed to sync purchased skills:", e.message);
+      }
+    };
 
     const purchaseSkill = (skill) => handlePurchaseSkill(skill);
 
@@ -2682,6 +2724,7 @@ Provide a concise analysis covering:
         checkModelAvailability(),
         checkPolymarketModelAvailability(),
         resumeActiveDownloadIfAny(),
+        syncPurchasedSkills(),
       ]);
 
       // Set default skill to Roleplay on load
@@ -2696,6 +2739,12 @@ Provide a concise analysis covering:
         selectSkillById(roleplaySkillId);
       }
     });
+
+    // Re-sync purchase state when the wallet address changes.
+    watch(
+      () => web3Store.walletAddress,
+      () => { syncPurchasedSkills(); }
+    );
 
     onBeforeUnmount(() => {
       // Clean up download socket when leaving view

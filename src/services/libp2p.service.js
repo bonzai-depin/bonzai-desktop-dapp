@@ -155,7 +155,7 @@ class BonzaiP2PNode {
     console.log('[libp2p] Listening on:', addrs);
 
     // Register default protocol handlers
-    this._registerDefaultHandlers();
+    await this._registerDefaultHandlers();
 
     return peerId;
   }
@@ -280,7 +280,10 @@ class BonzaiP2PNode {
    *
    * @param {string} peerId Target peer ID
    * @param {Object} request Inference request
-   * @returns {Promise<Object>} Inference response
+   * @param {string} request.pipeline - Pipeline name (e.g. 'image_turbo', 'llm')
+   * @param {Record<string, unknown>} request.params - Pipeline-specific parameters
+   * @param {string} [request.paymentTxHash] - x402 payment transaction hash
+   * @returns {Promise<{ok: boolean, result?: Record<string, unknown>, error?: string}>} Inference response
    */
   async sendInferenceRequest(peerId, request) {
     if (!this.isStarted) {
@@ -323,26 +326,26 @@ class BonzaiP2PNode {
   /**
    * Register a handler for inference requests
    *
-   * @param {Function} handler Async function(request, peerId) => response
+   * @param {(request: {pipeline: string, params: Record<string, unknown>}, peerId: string) => Promise<{ok: boolean, result?: Record<string, unknown>, error?: string}>} handler
    */
-  onInferenceRequest(handler) {
+  async onInferenceRequest(handler) {
     this.handlers.set(PROTOCOLS.INFERENCE, handler);
 
     if (this.isStarted) {
-      this._registerProtocolHandler(PROTOCOLS.INFERENCE, handler);
+      await this._registerProtocolHandler(PROTOCOLS.INFERENCE, handler);
     }
   }
 
   /**
    * Register a handler for health checks
    *
-   * @param {Function} handler Async function(peerId) => healthInfo
+   * @param {(peerId: string) => Promise<{pipelines: string[], version: string}>} handler
    */
-  onHealthRequest(handler) {
+  async onHealthRequest(handler) {
     this.handlers.set(PROTOCOLS.HEALTH, handler);
 
     if (this.isStarted) {
-      this._registerProtocolHandler(PROTOCOLS.HEALTH, handler);
+      await this._registerProtocolHandler(PROTOCOLS.HEALTH, handler);
     }
   }
 
@@ -443,13 +446,14 @@ class BonzaiP2PNode {
     });
   }
 
-  _registerDefaultHandlers() {
+  async _registerDefaultHandlers() {
     // Register any handlers that were set before start
     for (const [protocol, handler] of this.handlers) {
       if (handler?.raw) {
+        try { await this.node.unhandle(protocol); } catch {}
         this.node.handle(protocol, handler.handler);
       } else {
-        this._registerProtocolHandler(protocol, handler);
+        await this._registerProtocolHandler(protocol, handler);
       }
     }
   }
@@ -478,16 +482,18 @@ class BonzaiP2PNode {
    * @param {string} protocol Protocol string
    * @param {Function} handler Async function({ stream, connection }) — caller owns the stream lifecycle
    */
-  registerRawProtocolHandler(protocol, handler) {
+  async registerRawProtocolHandler(protocol, handler) {
     if (!this.isStarted) {
       // Defer until start
       this.handlers.set(protocol, { raw: true, handler });
       return;
     }
+    try { await this.node.unhandle(protocol); } catch {}
     this.node.handle(protocol, handler);
   }
 
-  _registerProtocolHandler(protocol, handler) {
+  async _registerProtocolHandler(protocol, handler) {
+    try { await this.node.unhandle(protocol); } catch {}
     this.node.handle(protocol, async ({ stream, connection }) => {
       const remotePeer = connection.remotePeer.toString();
       console.log(`[libp2p] ${protocol} request from ${remotePeer}`);

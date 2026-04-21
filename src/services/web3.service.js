@@ -15,8 +15,8 @@ import { reactive, readonly, computed } from "vue";
 import { CONFIG } from "../config/web3.config.js";
 import { authService } from "./auth.service.js";
 import { authVault } from "./authVault.service.js";
-import { luksoService } from "./lukso.service.js";
 import { registerWeb3Service } from "./walletProvider.service.js";
+import { registerWeb3ServiceForLukso } from "./lukso.service.js";
 
 // Reown AppKit - official WalletConnect integration
 import { createAppKit } from "@reown/appkit/vue";
@@ -681,6 +681,8 @@ const checkIsUniversalProfile = async (address) => {
 
     if (isUP) {
       console.log("[Web3] Address is a Universal Profile on LUKSO");
+      // Dynamic import to avoid circular dependency (lukso.service.js imports from web3.service.js)
+      const { luksoService } = await import("./lukso.service.js");
       state.universalProfileData = await luksoService.fetchProfileData(address);
       console.log("[Web3] UP profile data:", state.universalProfileData);
       // Sync luksoService with AppKit connection
@@ -953,5 +955,8 @@ export const web3Service = {
   // Config reference
   CONFIG,
 };
+
+// Register with lukso.service.js (breaks circular import)
+registerWeb3ServiceForLukso({ getEip1193Provider, switchNetwork });
 
 export default web3Service;

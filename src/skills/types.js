@@ -110,7 +110,9 @@ export const DEFAULT_REQUIREMENTS = {
   requiredPermissions: ['network:read'],
 };
 
-// Categories (alphabetically sorted)
+// Categories (alphabetically sorted for UI display).
+// NOTE: This is UI display order. For on-chain packing order, use
+// SPENDING_CATEGORIES_ORDER from src/constants/index.js.
 export const SKILL_CATEGORIES = [
   'beauty',
   'education',

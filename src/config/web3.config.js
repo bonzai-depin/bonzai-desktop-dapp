@@ -200,6 +200,8 @@ export const CONFIG = {
     },
 
     // Skill categories (12 spending profile categories, matching BonzaiCompanions.sol packing order)
+    // IMPORTANT: Order must match uint96 nibble layout in BonzaiCompanions.sol.
+    // See src/constants/index.js SPENDING_CATEGORIES_ORDER for canonical source.
     categories: [
       "education",
       "entertainment",
@@ -211,8 +213,8 @@ export const CONFIG = {
       "beauty",
       "reading",
       "social",
-      "sports",
-      "travel",
+      "travel",      // index 10 (was incorrectly 'sports')
+      "sports",      // index 11 (was incorrectly 'travel')
     ],
 
     // Trusted attestation signer for cross-chain companion verification (set after deployment)
@@ -264,7 +266,8 @@ export const CONFIG = {
     training: 'LVL6',
   },
 
-  // Content type indices (matching BonzaiContent.sol Provenance.contentType)
+  // Content type indices (matching BonzaiCollectibles.sol Provenance.contentType)
+  // Canonical source: src/constants/index.js (CONTENT_TYPE_MAP)
   contentTypeIndex: {
     text: 0,
     audio: 1,
@@ -467,7 +470,7 @@ export const CONFIG = {
         "llm_phi_4_mini",
         "llm_yi_coder_9b",
         "llm_glm_4_7_q2",
-        "llm_glm_4_7_q4",
+        "llm_glm_4_7",
         "llm_glm_4_7_q8",
         "llm_qwen3_coder_next",
       ],

@@ -310,7 +310,6 @@ export const useSkillStore = defineStore('skill', () => {
       await loadExecutionHistory();
 
       isInitialized.value = true;
-      console.log(`[SkillStore] Initialized with ${skills.value.length} skills`);
     } catch (e) {
       console.error('[SkillStore] Initialization error:', e);
       error.value = e.message;
@@ -332,7 +331,6 @@ export const useSkillStore = defineStore('skill', () => {
       await loadUserSkills();
       await loadExecutionHistory();
       isInitialized.value = true;
-      console.log(`[SkillStore] Refreshed with ${skills.value.length} skills`);
     } catch (e) {
       console.error('[SkillStore] Refresh error:', e);
       error.value = e.message;
@@ -564,7 +562,6 @@ export const useSkillStore = defineStore('skill', () => {
       // Save user-created skills to storage
       await saveUserSkills();
 
-      console.log('[SkillStore] Published skill:', skillDefinition.name, skillId);
 
       return {
         success: true,
@@ -608,7 +605,6 @@ export const useSkillStore = defineStore('skill', () => {
               skills.value.push(skill);
             }
           });
-          console.log(`[SkillStore] Loaded ${userSkills.length} user-created skills`);
         }
       }
     } catch (e) {
@@ -730,14 +726,7 @@ export const useSkillStore = defineStore('skill', () => {
     const wasIdle = isIdle.value;
     const hasFocus = document.hasFocus();
 
-    // Consider idle if: window not focused, or no activity for IDLE_TIMEOUT
     isIdle.value = !hasFocus || timeSinceActive > IDLE_TIMEOUT.value;
-
-    if (isIdle.value && !wasIdle) {
-      console.log(`[SkillStore] User became idle (focus: ${hasFocus}, inactive: ${Math.round(timeSinceActive/1000)}s)`);
-    } else if (!isIdle.value && wasIdle) {
-      console.log('[SkillStore] User became active');
-    }
   };
 
   /**
@@ -770,7 +759,6 @@ export const useSkillStore = defineStore('skill', () => {
 
         allSessions[session.sessionKey] = plainSession;
         await window.electronAPI.store.set(STORAGE_KEY, allSessions);
-        console.log(`[SkillStore] Autonomous session saved: ${session.history.length} messages`);
       }
     } catch (e) {
       console.error('[SkillStore] Failed to save autonomous session:', e);
@@ -785,53 +773,28 @@ export const useSkillStore = defineStore('skill', () => {
     if (!autonomousMode.value) {
       return;
     }
-    if (!isIdle.value) {
-      console.log('[SkillStore] Skipping autonomous generation - user is not idle');
-      return;
-    }
-    if (isGeneratingAutonomous.value) {
-      console.log('[SkillStore] Skipping autonomous generation - already generating');
-      return;
-    }
+    if (!isIdle.value) return;
+    if (isGeneratingAutonomous.value) return;
 
-    // Check if we've reached the max autonomous messages
     if (autonomousMessageCount.value >= MAX_AUTONOMOUS_MESSAGES.value) {
-      console.log('[SkillStore] Reached max autonomous messages, stopping');
       stopAutonomousMode();
       return;
     }
 
-    // Check if user came back
     if (document.hasFocus() && Date.now() - lastActiveTime.value < IDLE_TIMEOUT.value) {
-      console.log('[SkillStore] Skipping autonomous generation - user came back');
       return;
     }
 
     const session = autonomousSession.value;
-    if (!session.companion || !session.scenario) {
-      console.log('[SkillStore] No active autonomous session - companion:', !!session.companion, 'scenario:', !!session.scenario);
-      return;
-    }
+    if (!session.companion || !session.scenario) return;
 
-    // Ensure authentication is valid before generating (tokens may have expired during idle)
-    // This is critical because setTimeout can be unreliable when system is idle/sleeping
-    // IMPORTANT: We NEVER request wallet signatures automatically - this breaks autonomous mode
+    // Auth tokens may expire while system is idle/sleeping. Never request wallet
+    // signatures automatically -- that would break autonomous mode.
     if (!isAuthenticated()) {
-      console.log('[SkillStore] Token expired during idle, attempting refresh...');
       try {
         await refreshToken();
-        console.log('[SkillStore] Token refreshed successfully');
       } catch (refreshError) {
-        // Token refresh failed - PAUSE autonomous mode until user re-authenticates
-        // Autonomous mode requires full auth
-        console.log('[SkillStore] Token refresh failed - pausing autonomous mode');
-        console.log('[SkillStore] User must manually re-authenticate to resume');
-
-        // Notify user that re-auth is needed
         window.dispatchEvent(new CustomEvent('auth:needs-reauth'));
-
-        // Pause autonomous mode (keep the session, just stop generating)
-        // The timer will continue checking, but we'll skip generation until auth is restored
         isGeneratingAutonomous.value = false;
         return;
       }
@@ -839,7 +802,6 @@ export const useSkillStore = defineStore('skill', () => {
 
     isGeneratingAutonomous.value = true;
     const msgNum = autonomousMessageCount.value + 1;
-    console.log(`[SkillStore] Generating autonomous message #${msgNum} for ${session.companion.name}...`);
 
     try {
       // Pick a varied activity based on message count to ensure variety
@@ -903,7 +865,6 @@ REQUIREMENTS:
         context
       );
 
-      console.log('[SkillStore] Autonomous generation result:', result);
 
       // The result structure is: { success, character, response: {...}, sceneState, meta }
       const responseData = result.response || {};
@@ -920,7 +881,6 @@ REQUIREMENTS:
 
       // Clean the response to remove metadata labels and companion name prefixes
       const responseText = cleanRoleplayResponse(rawResponseText, session.companion?.name);
-      console.log('[SkillStore] Cleaned response text:', responseText.substring(0, 100) + '...');
 
       // Update scene state
       const newSceneState = result.sceneState || {};
@@ -959,7 +919,6 @@ REQUIREMENTS:
           image: responseData.backgroundImage,
           location: responseData.newLocation || session.sceneState.currentLocation,
         });
-        console.log(`[SkillStore] Background updated for location: ${responseData.newLocation || 'unknown'}`);
       }
 
       // Create assistant message (only the response, no fake user message)
@@ -1001,7 +960,6 @@ REQUIREMENTS:
       // Save session to storage
       await saveAutonomousSession();
 
-      console.log(`[SkillStore] Autonomous message #${msgNum} generated: "${responseText?.substring(0, 50)}..." (activity: ${activity.type})`);
     } catch (e) {
       console.error('[SkillStore] Autonomous message generation failed:', e);
     } finally {
@@ -1034,10 +992,8 @@ REQUIREMENTS:
         messageInterval: autoSettings.messageInterval || 15,
         maxMessages: autoSettings.maxMessages || 12,
       };
-      console.log(`[SkillStore] Autonomous config updated: idle=${autonomousConfig.value.idleTimeout}min, interval=${autonomousConfig.value.messageInterval}min, max=${autonomousConfig.value.maxMessages}`);
     }
 
-    console.log(`[SkillStore] Autonomous session started: ${sessionData.companion?.name} in ${sessionData.scenario?.name}`);
   };
 
   /**
@@ -1118,7 +1074,6 @@ REQUIREMENTS:
       document.addEventListener('click', updateActivity);
       window.addEventListener('focus', updateActivity);
 
-      console.log(`[SkillStore] Autonomous mode enabled (interval: ${AUTONOMOUS_MESSAGE_INTERVAL.value / 60000} min, max: ${MAX_AUTONOMOUS_MESSAGES.value} msgs)`);
     } else {
       // Clean up intervals
       if (idleCheckInterval.value) {
@@ -1137,7 +1092,6 @@ REQUIREMENTS:
       window.removeEventListener('focus', updateActivity);
 
       isIdle.value = false;
-      console.log('[SkillStore] Autonomous mode disabled');
     }
   };
 
@@ -1178,7 +1132,6 @@ REQUIREMENTS:
       moltbookState.value.activityLog = moltbookState.value.activityLog.slice(-50);
     }
 
-    console.log(`[SkillStore] Moltbook activity: ${activity.action} - ${activity.title}`);
   };
 
   /**

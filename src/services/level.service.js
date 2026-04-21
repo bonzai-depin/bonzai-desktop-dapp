@@ -118,8 +118,6 @@ const getUnlockContract = async (withSigner = false) => {
     }
 
     const signer = await browserProvider.getSigner();
-    console.log('[Level] Got signer for unlock contract:', await signer.getAddress());
-
     return new ethers.Contract(registryAddress, BONZAI_UNLOCK_ABI, signer);
   }
 
@@ -131,9 +129,6 @@ const getUnlockContract = async (withSigner = false) => {
 // LEVEL CHECKING
 // ═══════════════════════════════════════════════════════════════════════════
 
-/**
- * Check if user meets HOLDING requirement for a level
- */
 const checkHoldingRequirement = (levelKey) => {
   const levelConfig = CONFIG.levels[levelKey];
   if (!levelConfig) return false;
@@ -142,15 +137,9 @@ const checkHoldingRequirement = (levelKey) => {
   return totalBalance >= levelConfig.holdingRequired;
 };
 
-/**
- * Check if user has PAID 1 ETH to unlock ALL levels
- * Single payment unlocks everything - no per-level unlock
- */
 const checkEthUnlock = async (userAddress) => {
   try {
     const contract = await getUnlockContract();
-
-    // If contract not deployed, ETH unlock not available
     if (!contract) {
       return false;
     }
@@ -163,17 +152,11 @@ const checkEthUnlock = async (userAddress) => {
   }
 };
 
-/**
- * Check all requirements for a single level
- * Level is ACTIVE if holdingMet OR ethUnlocked (all levels unlocked via 1 ETH)
- */
 const checkLevel = (levelKey, ethUnlocked) => {
   const levelConfig = CONFIG.levels[levelKey];
   if (!levelConfig) return { holdingMet: false, ethUnlocked: false, active: false };
 
   const holdingMet = checkHoldingRequirement(levelKey);
-
-  // Active if EITHER holding requirement is met OR paid 1 ETH unlock
   const active = holdingMet || ethUnlocked;
 
   state.levels[levelKey] = { holdingMet, ethUnlocked, active };
@@ -181,9 +164,6 @@ const checkLevel = (levelKey, ethUnlocked) => {
   return { holdingMet, ethUnlocked, active };
 };
 
-/**
- * Check all levels for the connected user
- */
 export const checkAllLevels = async () => {
   const userAddress = web3Service.state.walletAddress;
   if (!userAddress) {
@@ -195,14 +175,11 @@ export const checkAllLevels = async () => {
   state.error = null;
 
   try {
-    // Fetch contract info (price, stats, pause status)
     await fetchContractInfo();
 
-    // Check if user has paid 1 ETH to unlock ALL levels (single check)
     const ethUnlocked = await checkEthUnlock(userAddress);
     state.allLevelsUnlocked = ethUnlocked;
 
-    // Check each level - ethUnlocked applies to ALL levels
     checkLevel('LVL1', ethUnlocked);
     checkLevel('LVL2', ethUnlocked);
     checkLevel('LVL3', ethUnlocked);
@@ -291,12 +268,8 @@ export const unlockAllWithEth = async (onStatusChange) => {
     const currentChainId = web3Service.state.currentChainId;
 
     if (currentChainId !== targetChainId) {
-      console.log('[Level] Switching to Base for unlock transaction...');
-      if (onStatusChange) {
-        onStatusChange('switching_network');
-      }
+      onStatusChange?.('switching_network');
 
-      // Switch to Base with timeout
       const switchPromise = web3Service.switchNetwork('base');
       const timeoutPromise = new Promise((_, reject) =>
         setTimeout(() => reject(new Error('Network switch timed out. Please switch to Base manually in your wallet.')), 30000)
@@ -308,54 +281,32 @@ export const unlockAllWithEth = async (onStatusChange) => {
         throw new Error(`Please switch to Base network in your wallet. ${switchError.message}`);
       }
 
-      // Wait a moment for chain change event to be processed
       await new Promise(resolve => setTimeout(resolve, 500));
 
-      // Verify we're now on Base
       if (web3Service.state.currentChainId !== targetChainId) {
         throw new Error('Failed to switch to Base. Please switch manually in your wallet and try again.');
       }
-
-      console.log('[Level] Successfully switched to Base');
     }
 
-    console.log('[Level] Getting unlock contract with signer...');
     const contract = await getUnlockContract(true);
     if (!contract) {
       throw new Error('BonzaiUnlock contract not configured');
     }
 
-    // Get price from contract (should be 1 ETH)
-    console.log('[Level] Fetching unlock price from contract...');
     const price = await contract.unlockPrice();
-    console.log(`[Level] Unlock price: ${ethers.formatEther(price)} ETH`);
 
-    // Notify that we're about to request payment
-    if (onStatusChange) {
-      onStatusChange('awaiting_payment');
-    }
+    onStatusChange?.('awaiting_payment');
 
-    console.log(`[Level] Sending unlock transaction for ${ethers.formatEther(price)} ETH...`);
-    console.log('[Level] Please check your wallet for the transaction approval popup');
-
-    // Call unlock function with exact payment - add timeout for user approval
     const txPromise = contract.unlock({ value: price });
     const txTimeoutPromise = new Promise((_, reject) =>
       setTimeout(() => reject(new Error('Transaction request timed out (60s). Please check your wallet for a pending approval.')), 60000)
     );
 
     const tx = await Promise.race([txPromise, txTimeoutPromise]);
-    console.log('[Level] Transaction sent:', tx.hash);
 
-    // Notify that payment was submitted, waiting for confirmation
-    if (onStatusChange) {
-      onStatusChange('confirming');
-    }
+    onStatusChange?.('confirming');
 
-    console.log('[Level] Transaction submitted, waiting for confirmation...');
     const receipt = await tx.wait();
-
-    console.log('[Level] All levels unlocked via ETH payment:', receipt.hash);
 
     // Refresh all levels
     await checkAllLevels();
@@ -375,9 +326,6 @@ export const unlockAllWithEth = async (onStatusChange) => {
 // ACCESS VERIFICATION
 // ═══════════════════════════════════════════════════════════════════════════
 
-/**
- * Check if user can access a specific feature
- */
 export const canAccessFeature = (feature) => {
   for (const [levelKey, levelConfig] of Object.entries(CONFIG.levels)) {
     if (levelConfig.features.includes(feature) && state.levels[levelKey].active) {
@@ -387,16 +335,10 @@ export const canAccessFeature = (feature) => {
   return false;
 };
 
-/**
- * Check if a specific level is active (holding met OR ETH unlocked)
- */
 export const isLevelActive = (levelKey) => {
   return state.levels[levelKey]?.active || false;
 };
 
-/**
- * Get the reason why a level is not active
- */
 export const getLevelBlockReason = (levelKey) => {
   const level = state.levels[levelKey];
   const config = CONFIG.levels[levelKey];
@@ -410,9 +352,6 @@ export const getLevelBlockReason = (levelKey) => {
   return `Hold ${config.holdingRequired.toLocaleString()} BONZAI (need ${needed.toLocaleString()} more) or pay ${state.unlockPrice} ETH to unlock all levels`;
 };
 
-/**
- * Get unlock options for a level
- */
 export const getLevelUnlockOptions = (levelKey) => {
   const config = CONFIG.levels[levelKey];
   if (!config) return null;
@@ -437,9 +376,6 @@ export const getLevelUnlockOptions = (levelKey) => {
 // COMPUTED VALUES
 // ═══════════════════════════════════════════════════════════════════════════
 
-/**
- * Get the highest active level
- */
 export const highestActiveLevel = computed(() => {
   const levelOrder = ['LVL6', 'LVL5', 'LVL4', 'LVL3', 'LVL2', 'LVL1'];
   for (const levelKey of levelOrder) {
@@ -450,35 +386,23 @@ export const highestActiveLevel = computed(() => {
   return null;
 });
 
-/**
- * Get all active levels
- */
 export const activeLevels = computed(() => {
   return Object.entries(state.levels)
     .filter(([_, status]) => status.active)
     .map(([key, _]) => key);
 });
 
-/**
- * Get overall progress (for progress bar)
- */
 export const levelProgress = computed(() => {
   const activeCount = activeLevels.value.length;
   return (activeCount / 6) * 100;
 });
 
-/**
- * Get levels that could be unlocked (not yet active)
- */
 export const inactiveLevels = computed(() => {
   return Object.entries(state.levels)
     .filter(([_, status]) => !status.active)
     .map(([key, _]) => key);
 });
 
-/**
- * Check if all levels are unlocked via ETH payment
- */
 export const allUnlockedViaEth = computed(() => {
   return state.allLevelsUnlocked;
 });
@@ -487,16 +411,10 @@ export const allUnlockedViaEth = computed(() => {
 // LEVEL INFO HELPERS
 // ═══════════════════════════════════════════════════════════════════════════
 
-/**
- * Get level configuration
- */
 export const getLevelConfig = (levelKey) => {
   return CONFIG.levels[levelKey] || null;
 };
 
-/**
- * Get all levels with their status
- */
 export const getAllLevelsWithStatus = computed(() => {
   return Object.entries(CONFIG.levels).map(([key, config]) => ({
     key,
@@ -541,35 +459,21 @@ export const canMintContentType = (inferenceType) => {
 // CROSS-COMPONENT COMMUNICATION
 // ═══════════════════════════════════════════════════════════════════════════
 
-/**
- * Request opening the level modal for a specific level
- * BonzaiBottomBar watches this and opens the modal when it changes
- * @param {number} levelNum - Level number 1-6
- */
+// BonzaiBottomBar watches this and opens the modal when it changes
 export const requestOpenLevelModal = (levelNum) => {
   if (levelNum >= 1 && levelNum <= 6) {
     state.openLevelModalFor = levelNum;
   }
 };
 
-/**
- * Clear the open modal request (called after modal opens)
- */
 export const clearOpenLevelModalRequest = () => {
   state.openLevelModalFor = null;
 };
 
-/**
- * Request opening the network settings modal
- * BonzaiBottomBar watches this and opens the modal when it changes
- */
 export const requestOpenNetworkModal = () => {
   state.openNetworkModal = true;
 };
 
-/**
- * Clear the network modal request (called after modal opens)
- */
 export const clearOpenNetworkModalRequest = () => {
   state.openNetworkModal = false;
 };

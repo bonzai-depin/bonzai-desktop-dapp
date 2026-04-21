@@ -12,6 +12,7 @@ import { markAsMinted } from '../stores/inferenceStore.js';
 import { mintStore } from '../stores/mintStore.js';
 import { CONFIG } from '../config/web3.config.js';
 import { canMintContentType, checkAllLevels } from './level.service.js';
+import { CONTENT_TYPE_MAP, COLLECTIBLES_CLONE_ABI } from '../constants/index.js';
 
 // Branded fallback images per content type (Vite asset imports → bundled URLs)
 import brandTextUrl from '../assets/bonzai_chat.webp';
@@ -34,12 +35,7 @@ const BRAND_IMAGE_URLS = {
 // BASE ERC-721 ABI (BonzaiCollectibles clone)
 // ═══════════════════════════════════════════════════════════════════════════
 
-const BASE_CONTENT_ABI = [
-  'function mint(string transactionId, string model, string tokenURI_, uint8 contentType) payable returns (uint256)',
-  'function mintFee() view returns (uint256)',
-  'function mintFees(uint8 contentType) view returns (uint256)',
-  'event ContentMinted(uint256 indexed tokenId, address indexed creator, string transactionId, string model, uint256 timestamp)',
-];
+const BASE_CONTENT_ABI = COLLECTIBLES_CLONE_ABI;
 
 // Factory ABI (BonzaiCollectiblesFactory)
 const FACTORY_ABI = [
@@ -48,8 +44,7 @@ const FACTORY_ABI = [
   'function collections(address user) view returns (address)',
 ];
 
-// Content type mapping (matches BonzaiCollectibles.sol Provenance.contentType)
-const CONTENT_TYPE_MAP = { text: 0, audio: 1, image: 2, video: 3, object: 4, training: 5 };
+// Content type mapping imported from constants/index.js (CONTENT_TYPE_MAP)
 
 // Cache the user's collection address to avoid redundant on-chain lookups
 let _cachedCollectionAddress = null;

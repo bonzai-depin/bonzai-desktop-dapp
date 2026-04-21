@@ -218,7 +218,10 @@ contextBridge.exposeInMainWorld("electronAPI", {
    * Send inference request to a remote provider
    * @param {string} peerId Target peer ID
    * @param {Object} request Inference request with pipeline and params
-   * @returns {Promise<{ok: boolean, result?: any, error?: string}>}
+   * @param {string} request.pipeline - Pipeline name (e.g. 'image_turbo', 'llm')
+   * @param {Record<string, unknown>} request.params - Pipeline-specific parameters
+   * @param {string} [request.paymentTxHash] - x402 payment transaction hash
+   * @returns {Promise<{ok: boolean, result?: Record<string, unknown>, error?: string}>}
    */
   p2pInference: (peerId, request) =>
     ipcRenderer.invoke("p2p-inference", { peerId, request }),
@@ -238,7 +241,7 @@ contextBridge.exposeInMainWorld("electronAPI", {
 
   /**
    * Get LAN-discovered peers (via mDNS) — free providers on local network
-   * @returns {Promise<{ok: boolean, peers: Object[]}>}
+   * @returns {Promise<{ok: boolean, peers: Array<{peerId: string, multiaddrs: string[], discoveredAt: number, free: boolean}>}>}
    */
   p2pLANPeers: () => ipcRenderer.invoke("p2p-lan-peers"),
 
@@ -246,8 +249,8 @@ contextBridge.exposeInMainWorld("electronAPI", {
    * Route an inference request — automatically sends to selected provider (LAN/remote)
    * or falls back to local Flask/OpenClaw.
    * @param {string} pipeline - Pipeline name (e.g. 'image_turbo', 'audio_turbo', 'llm')
-   * @param {Object} params - Request parameters
-   * @returns {Promise<{ok: boolean, result?: Object, remote?: boolean, error?: string}>}
+   * @param {Record<string, unknown>} params - Pipeline-specific request parameters
+   * @returns {Promise<{ok: boolean, result?: Record<string, unknown>, remote?: boolean, error?: string}>}
    */
   inferenceRequest: (pipeline, params) => ipcRenderer.invoke("inference-request", { pipeline, params }),
 
@@ -273,40 +276,49 @@ contextBridge.exposeInMainWorld("electronAPI", {
 
   /**
    * Run private pipeline inference across multiple peers
-   * @param {Object} opts { modelPath, request: { prompt, maxTokens }, privacyConfig }
-   * @returns {Promise<{ok, text, tokensGenerated, elapsed, peersUsed, sessionId}>}
+   * @param {Object} opts
+   * @param {string} opts.modelPath - Path to GGUF model file
+   * @param {Object} opts.request - Inference request
+   * @param {string} opts.request.prompt - User prompt
+   * @param {number} [opts.request.maxTokens] - Maximum tokens to generate
+   * @param {Object} [opts.privacyConfig] - Privacy configuration
+   * @param {number} [opts.privacyConfig.localProportion] - Fraction processed locally (0-1)
+   * @param {boolean} [opts.privacyConfig.dpEnabled] - Enable differential privacy
+   * @param {number} [opts.privacyConfig.epsilon] - DP epsilon parameter
+   * @returns {Promise<{ok: boolean, text?: string, tokensGenerated?: number, elapsed?: number, peersUsed?: number, sessionId?: string}>}
    */
   p2pPipelineInfer: (opts) => ipcRenderer.invoke("p2p-pipeline-infer", opts),
 
   /**
    * Get active pipeline session status
-   * @returns {Promise<{ok, active, sessionId?, status?, peersUsed?, elapsed?}>}
+   * @returns {Promise<{ok: boolean, active: boolean, sessionId?: string, status?: string, peersUsed?: number, elapsed?: number}>}
    */
   p2pPipelineStatus: () => ipcRenderer.invoke("p2p-pipeline-status"),
 
   /**
    * Cancel the active pipeline session
-   * @returns {Promise<{ok}>}
+   * @returns {Promise<{ok: boolean}>}
    */
   p2pPipelineCancel: () => ipcRenderer.invoke("p2p-pipeline-cancel"),
 
   /**
    * Start local rpc-server for shard provider mode
-   * @param {Object} opts { port }
-   * @returns {Promise<{ok, rpcPort?}>}
+   * @param {Object} opts
+   * @param {number} [opts.port] - Port for the RPC server
+   * @returns {Promise<{ok: boolean, rpcPort?: number}>}
    */
   p2pShardStart: (opts) => ipcRenderer.invoke("p2p-shard-start", opts),
 
   /**
    * Stop local rpc-server
-   * @returns {Promise<{ok}>}
+   * @returns {Promise<{ok: boolean}>}
    */
   p2pShardStop: () => ipcRenderer.invoke("p2p-shard-stop"),
 
   /**
    * Read GGUF model metadata (layer count, dims, architecture)
-   * @param {string} modelPath
-   * @returns {Promise<{ok, n_layer?, n_embd?, architecture?}>}
+   * @param {string} modelPath - Path to GGUF model file
+   * @returns {Promise<{ok: boolean, n_layer?: number, n_embd?: number, architecture?: string}>}
    */
   p2pShardMetadata: (modelPath) => ipcRenderer.invoke("p2p-shard-metadata", { modelPath }),
 
@@ -383,16 +395,16 @@ contextBridge.exposeInMainWorld("polymarketProxy", {
   /**
    * Fetch from Polymarket API
    * @param {string} endpoint - 'markets', 'holders', 'events', 'prices', or full URL
-   * @param {Object} params - Query parameters
-   * @returns {Promise<{success: boolean, data?: any, error?: string}>}
+   * @param {Record<string, string|number|boolean>} [params] - Query parameters
+   * @returns {Promise<{success: boolean, data?: Record<string, unknown>|Array, error?: string}>}
    */
   fetch: (endpoint, params) =>
     ipcRenderer.invoke("polymarket:fetch", { endpoint, params }),
 
   /**
    * Batch fetch multiple endpoints in parallel
-   * @param {Array<{endpoint: string, params?: Object}>} requests
-   * @returns {Promise<Array<{success: boolean, data?: any, error?: string}>>}
+   * @param {Array<{endpoint: string, params?: Record<string, string|number|boolean>}>} requests
+   * @returns {Promise<Array<{success: boolean, data?: Record<string, unknown>|Array, error?: string}>>}
    */
   batch: (requests) => ipcRenderer.invoke("polymarket:batch", requests),
 
@@ -420,8 +432,11 @@ contextBridge.exposeInMainWorld("externalProxy", {
   /**
    * Fetch any external URL through main process
    * @param {string} url - Full URL to fetch
-   * @param {Object} options - { method, headers, body }
-   * @returns {Promise<{success: boolean, data?: any, error?: string}>}
+   * @param {Object} [options] - Fetch options
+   * @param {string} [options.method] - HTTP method (GET, POST, etc.)
+   * @param {Record<string, string>} [options.headers] - Request headers
+   * @param {string|Record<string, unknown>} [options.body] - Request body
+   * @returns {Promise<{success: boolean, data?: Record<string, unknown>|Array|string, error?: string}>}
    */
   fetch: (url, options = {}) =>
     ipcRenderer.invoke("proxy:fetch", { url, options }),

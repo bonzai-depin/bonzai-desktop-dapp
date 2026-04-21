@@ -381,12 +381,9 @@ const mintAccess = computed(() => canMintContentType(props.inferenceType));
 const hasValidFields = computed(() => mintTitle.value.trim().length > 0);
 
 // Show wallet signature overlay when wallet confirmation is needed
-// 'sign' stage = IPFS signing (legacy), mint stage with wallet confirm message = on-chain tx
 const awaitingSignature = computed(() =>
-  isMinting.value && (
-    currentStage.value === 'sign' ||
-    (currentStage.value === 'mint' && progressMessage.value.includes('Confirm'))
-  ),
+  isMinting.value &&
+    currentStage.value === 'mint' && progressMessage.value.includes('Confirm'),
 );
 
 const previewSrc = computed(() => {

@@ -42,17 +42,47 @@ const QUOTER_ABI = [
 const MAX_RETRIES = 2;
 
 // ═══════════════════════════════════════════════════════════════════════════
+// TYPE DEFINITIONS
+// ═══════════════════════════════════════════════════════════════════════════
+
+/**
+ * @typedef {Object} PurchaseIntent
+ * @property {string} item - Item to purchase (e.g. "BONZAI token", "content NFT")
+ * @property {string} reason - Reason for purchase
+ * @property {string} estimatedCost - Estimated cost in ETH
+ * @property {string} category - Spending category (e.g. "finance", "entertainment")
+ */
+
+/**
+ * @typedef {Object} Seller
+ * @property {string} id - Unique seller ID
+ * @property {string} name - Seller display name
+ * @property {string} category - Spending category this seller belongs to
+ * @property {string} type - Seller type (e.g. "uniswap", "x402", "mint")
+ * @property {boolean} enabled - Whether the seller is enabled
+ * @property {string} [address] - On-chain address if applicable
+ */
+
+/**
+ * @typedef {Object} CompanionData
+ * @property {string} id - Companion identifier
+ * @property {string} name - Companion name
+ * @property {Record<string, number>} [spendingHabits] - Spending profile scores by category (1-10)
+ * @property {string} [walletAddress] - Companion's agent wallet address
+ */
+
+// ═══════════════════════════════════════════════════════════════════════════
 // SELLER SELECTION
 // ═══════════════════════════════════════════════════════════════════════════
 
 /**
  * Select a seller based on purchase mode
- * @param {Object} intent - Purchase intent { item, reason, estimatedCost, category }
- * @param {Object} settings - Autonomous settings (includes purchaseMode)
- * @param {Object} companion - Companion data (includes spendingHabits)
- * @param {Array} sellers - Enabled sellers list
- * @param {Set} [excludeIds] - Seller IDs to exclude (for retries)
- * @returns {Object|null} Selected seller
+ * @param {PurchaseIntent} intent - Purchase intent
+ * @param {import('./x402Executor.service.js').AutonomousSettings} settings - Autonomous settings
+ * @param {CompanionData} companion - Companion data
+ * @param {Seller[]} sellers - Enabled sellers list
+ * @param {Set<string>} [excludeIds] - Seller IDs to exclude (for retries)
+ * @returns {Seller|null} Selected seller
  */
 function selectSeller(intent, settings, companion, sellers, excludeIds = new Set()) {
   const available = sellers.filter(s => !excludeIds.has(s.id));

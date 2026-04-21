@@ -8,9 +8,33 @@ import { ethers } from "ethers";
 import { reactive, readonly } from "vue";
 import { ERC725 } from "@erc725/erc725.js";
 import { CONFIG } from "../config/web3.config.js";
-import { getEip1193Provider, switchNetwork } from "./web3.service.js";
 import { agentWalletService } from "./agentWallet.service.js";
 import { walletProviderService } from "./walletProvider.service.js";
+
+// ═══════════════════════════════════════════════════════════════════════════
+// LAZY WEB3 SERVICE REFERENCE (breaks circular import with web3.service.js)
+// ═══════════════════════════════════════════════════════════════════════════
+
+let _web3ServiceRef = null;
+
+/**
+ * Register the web3Service reference (called by web3.service.js on init).
+ * Breaks the web3.service.js ↔ lukso.service.js circular dependency.
+ */
+export function registerWeb3ServiceForLukso(service) {
+  _web3ServiceRef = service;
+}
+
+function _getEip1193Provider() {
+  return _web3ServiceRef?.getEip1193Provider?.() ?? null;
+}
+
+async function _switchNetwork(networkKey) {
+  if (!_web3ServiceRef?.switchNetwork) {
+    throw new Error("[LUKSO] web3Service not registered — cannot switch network");
+  }
+  return _web3ServiceRef.switchNetwork(networkKey);
+}
 
 // ═══════════════════════════════════════════════════════════════════════════
 // CONFIGURATION
@@ -133,7 +157,7 @@ async function getProvider() {
   }
 
   // Priority 2: AppKit provider (WalletConnect to LUKSO)
-  const appKitProvider = getEip1193Provider();
+  const appKitProvider = _getEip1193Provider();
   if (appKitProvider) {
     return appKitProvider;
   }
@@ -175,7 +199,7 @@ export async function connect() {
     if (state.chainId !== expectedChainId) {
       // Try AppKit switchNetwork first (handles add-chain automatically)
       if (!window.lukso) {
-        await switchNetwork('lukso');
+        await _switchNetwork('lukso');
       } else {
         await switchToLukso();
       }
@@ -807,7 +831,72 @@ export async function executeViaUP(companionId, target, value, calldata, chainId
  * @param {number} targetChainId - Target chain ID (e.g., 8453 for Base, 1 for Ethereum)
  * @returns {Promise<Object>} Transaction receipt
  */
-export async function deployCompanionUPCrossChain(companionId, targetChainId) {
+/**
+ * Resolve the network key (base/ethereum/lukso) from a chain ID.
+ * @param {number} chainId
+ * @returns {string|null}
+ */
+function _networkKeyForChain(chainId) {
+  const map = { 42: "lukso", 8453: "base", 1: "ethereum", 42161: "arbitrum" };
+  return map[chainId] || null;
+}
+
+/**
+ * Verify that the LSP23 factory + required implementations are deployed on
+ * the target chain. Returns an object of `{ factory: bool, upImpl: bool,
+ * keyManagerImpl: bool, postDeployModule: bool }`. All must be `true` for
+ * cross-chain replay to succeed.
+ *
+ * @param {number} chainId
+ * @returns {Promise<{factory:boolean,upImpl:boolean,keyManagerImpl:boolean,postDeployModule:boolean,chainId:number}>}
+ */
+export async function verifyLSP23FactoryOnChain(chainId) {
+  const { getProvider } = await import("./web3.service.js");
+  const networkKey = _networkKeyForChain(chainId);
+  if (!networkKey) {
+    throw new Error(`Unknown chain ID ${chainId}; no LSP23 verification possible`);
+  }
+  const provider = await getProvider(networkKey);
+  const cfg = CONFIG.luksoUPFactory;
+
+  const [factory, upImpl, kmImpl, postModule] = await Promise.all([
+    provider.getCode(cfg.lsp23FactoryAddress),
+    provider.getCode(cfg.upImplementation),
+    provider.getCode(cfg.keyManagerImplementation),
+    provider.getCode(cfg.postDeploymentModule),
+  ]);
+
+  return {
+    chainId,
+    factory: factory && factory !== "0x",
+    upImpl: upImpl && upImpl !== "0x",
+    keyManagerImpl: kmImpl && kmImpl !== "0x",
+    postDeployModule: postModule && postModule !== "0x",
+  };
+}
+
+/**
+ * Replay a companion's UP deployment on a non-LUKSO chain using the user's
+ * connected wallet (WalletConnect or Privy). Before sending the transaction
+ * we verify all LSP23 dependencies exist on the target chain; if any are
+ * missing, we bail out with an explicit error rather than burning gas on a
+ * doomed transaction.
+ *
+ * Signer selection:
+ * - Defaults to the user's connected wallet (they pay gas).
+ * - Pass `{ useAgentWallet: true }` to use the companion's agent wallet
+ *   instead (agent wallet must hold gas on the target chain).
+ *
+ * @param {string} companionId
+ * @param {number} targetChainId
+ * @param {{useAgentWallet?: boolean}} [opts]
+ * @returns {Promise<ethers.TransactionReceipt>}
+ */
+export async function deployCompanionUPCrossChain(
+  companionId,
+  targetChainId,
+  opts = {},
+) {
   const upData = await agentWalletService.getCompanionUP(companionId);
   if (!upData?.deploymentCalldata) throw new Error("No deployment calldata stored");
 
@@ -815,71 +904,116 @@ export async function deployCompanionUPCrossChain(companionId, targetChainId) {
     throw new Error(`Companion UP already deployed on chain ${targetChainId}`);
   }
 
-  const agentSigner = await walletProviderService.getAgentWalletSigner(companionId, targetChainId);
+  // Preflight: bytecode check on target chain.
+  const check = await verifyLSP23FactoryOnChain(targetChainId);
+  const missing = Object.entries(check)
+    .filter(([k, v]) => k !== "chainId" && !v)
+    .map(([k]) => k);
+  if (missing.length) {
+    throw new Error(
+      `LSP23 dependencies missing on chain ${targetChainId}: ${missing.join(", ")}. ` +
+      `Cross-chain UP replay requires the same factory + implementations to be deployed. ` +
+      `See docs/COMPANION_UP_CROSS_CHAIN.md for options.`
+    );
+  }
 
-  // Replay same calldata to same factory address
-  const tx = await agentSigner.sendTransaction({
+  // Signer selection.
+  let signer;
+  if (opts.useAgentWallet) {
+    signer = await walletProviderService.getAgentWalletSigner(companionId, targetChainId);
+  } else {
+    // Ask the connected wallet to switch to the target chain before sending.
+    const { switchNetwork, getSigner } = await import("./web3.service.js");
+    const networkKey = _networkKeyForChain(targetChainId);
+    if (!networkKey) throw new Error(`Unknown target chain ${targetChainId}`);
+    await switchNetwork(networkKey);
+    signer = await getSigner();
+  }
+
+  // Replay same calldata to same factory address. Deterministic CREATE2 salt
+  // means the UP address should match what was predicted on LUKSO, but we
+  // still store per-chain addresses in case the post-deployment module
+  // produces different init code hashes (see COMPANION_UP_CROSS_CHAIN.md).
+  const tx = await signer.sendTransaction({
     to: CONFIG.luksoUPFactory.lsp23FactoryAddress,
     data: upData.deploymentCalldata,
     value: 0n,
   });
-
+  console.log(`[LUKSO] Cross-chain UP tx sent on chain ${targetChainId}:`, tx.hash);
   const receipt = await tx.wait();
   console.log(`[LUKSO] Cross-chain UP deployed on chain ${targetChainId}:`, receipt.hash);
 
-  // Update stored data with new chain
-  upData.deployedChains = [...(upData.deployedChains || [42]), targetChainId];
+  // Persist per-chain state.
+  upData.deployedChains = [...new Set([...(upData.deployedChains || [42]), targetChainId])];
+  upData.perChainTxHashes = {
+    ...(upData.perChainTxHashes || {}),
+    [targetChainId]: receipt.hash,
+  };
   await agentWalletService.storeCompanionUP(companionId, upData);
 
-  // NOTE: Permissions are per-chain — agent wallet needs to be authorized on new chain separately
   return receipt;
 }
 
 /**
- * Mint companion as LSP8 AND optionally deploy a UP for it
- * This is the full LUKSO companion identity flow
+ * Deploy a companion's UP on every supported chain (LUKSO → Base → Ethereum)
+ * using the user's connected wallet. Sequential — each transaction waits for
+ * the previous confirmation. Reports per-chain status so the UI can show
+ * a progress list.
  *
- * @param {Object} params - Minting parameters
- * @param {boolean} params.deployUP - Whether to deploy a UP for the companion
+ * Chains that already have the UP deployed are skipped. Chains whose LSP23
+ * dependencies are missing are reported as `skipped` with a reason.
+ *
+ * @param {string} companionId
+ * @param {(event: {chainId:number, status:string, txHash?:string, error?:string}) => void} [onProgress]
+ * @returns {Promise<Array<{chainId:number, status:'deployed'|'skipped'|'failed', txHash?:string, reason?:string}>>}
  */
-export async function mintCompanionWithUP(params) {
-  // First, mint the LSP8 token
-  const mintResult = await mintCompanion(params);
-
-  if (!mintResult.success) {
-    return mintResult;
+export async function deployCompanionUPAllChains(companionId, onProgress) {
+  const upData = await agentWalletService.getCompanionUP(companionId);
+  if (!upData?.deploymentCalldata) {
+    throw new Error("No LUKSO deployment calldata stored — deploy on LUKSO first");
   }
 
-  // Optionally deploy a UP for the companion
-  if (params.deployUP) {
-    try {
-      const upResult = await deployCompanionUniversalProfile({
-        name: params.name,
-        description: params.description,
-        imageUri: params.imageUri,
-        attributes: {
-          personality: params.personality,
-          style: params.style,
-          gender: params.gender,
-        },
-      });
+  const targets = [42, 8453, 1];
+  const results = [];
+  const emit = (e) => { try { onProgress?.(e); } catch {} };
 
-      return {
-        ...mintResult,
-        universalProfile: upResult.upAddress,
-        upController: upResult.controller,
-        upTxHash: upResult.txHash,
-      };
-    } catch (upError) {
-      console.warn("[LUKSO] UP deployment failed, but LSP8 mint succeeded:", upError.message);
-      return {
-        ...mintResult,
-        upDeploymentError: upError.message,
-      };
+  for (const chainId of targets) {
+    // Skip if already deployed on this chain.
+    if (upData.deployedChains?.includes(chainId)) {
+      results.push({ chainId, status: "skipped", reason: "already deployed" });
+      emit({ chainId, status: "skipped" });
+      continue;
+    }
+    try {
+      emit({ chainId, status: "verifying" });
+      const check = await verifyLSP23FactoryOnChain(chainId);
+      const missing = Object.entries(check)
+        .filter(([k, v]) => k !== "chainId" && !v)
+        .map(([k]) => k);
+      if (missing.length) {
+        results.push({
+          chainId,
+          status: "skipped",
+          reason: `LSP23 not deployed (missing: ${missing.join(", ")})`,
+        });
+        emit({ chainId, status: "skipped", error: `missing ${missing.join(",")}` });
+        continue;
+      }
+      emit({ chainId, status: "deploying" });
+      const receipt = await deployCompanionUPCrossChain(companionId, chainId);
+      results.push({ chainId, status: "deployed", txHash: receipt.hash });
+      emit({ chainId, status: "deployed", txHash: receipt.hash });
+    } catch (e) {
+      console.error(`[LUKSO] Cross-chain deploy failed on chain ${chainId}:`, e);
+      results.push({
+        chainId,
+        status: "failed",
+        reason: e?.shortMessage || e?.message || String(e),
+      });
+      emit({ chainId, status: "failed", error: e?.message || String(e) });
     }
   }
-
-  return mintResult;
+  return results;
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -1272,9 +1406,10 @@ export const luksoService = {
   // Universal Profile Deployment for Companions (LSP23)
   deployCompanionUniversalProfile,
   setCompanionProfileMetadata,
-  mintCompanionWithUP,
   executeViaUP,
   deployCompanionUPCrossChain,
+  deployCompanionUPAllChains,
+  verifyLSP23FactoryOnChain,
 
   // LSP8 Content Minting
   generateTokenId,

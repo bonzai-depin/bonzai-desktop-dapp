@@ -405,6 +405,9 @@
 
 <script>
 import { ref, reactive, computed } from 'vue';
+import { hasPurchasedSkill, isDevMode } from '../../services/agent.service.js';
+
+const SKILL_ID = 'prediction-market-maker-v1.0.0';
 
 export default {
   name: 'DSLASkill',
@@ -664,6 +667,10 @@ export default {
 
     const createPredictionMarket = async () => {
       if (!canCreate.value) return;
+      if (!isDevMode() && !(await hasPurchasedSkill(SKILL_ID))) {
+        console.warn('[DSLA] Skill not purchased — execution blocked.');
+        return;
+      }
 
       isCreating.value = true;
 

@@ -16,6 +16,14 @@ import { ethers } from 'ethers';
 import { reactive, readonly, computed } from 'vue';
 import { CONFIG } from '../config/web3.config.js';
 import { web3Service } from './web3.service.js';
+import {
+  getPoolInfo as _getPoolInfo,
+  getUnclaimedFees as _getUnclaimedFees,
+  claimFees as _claimFees,
+  getUniswapTradeUrl,
+  getBaseScanUrl,
+  getDexScreenerUrl,
+} from './uniswapV4.utils.js';
 
 // Factory ABI - V4 interface (FineTuneTokenFactory)
 const FACTORY_ABI = [
@@ -48,20 +56,6 @@ const TOKEN_ABI = [
   'function getTokenInfo() view returns (string name_, string symbol_, uint8 decimals_, uint256 contentTokenId_, string modelIrysHash_, address creator_)',
 ];
 
-// BonzaiUniswapHook ABI (for fee queries and claiming)
-const HOOK_ABI = [
-  'function unclaimedBeneficiary(address) view returns (uint256)',
-  'function getUnclaimedFees(address beneficiary) view returns (uint256)',
-  'function claimBeneficiaryFees()',
-  'function getPoolConfig(bytes32 poolId) view returns (address beneficiary, address companionOwner, uint8 poolType, uint8 mintPoolIndex, bool active)',
-];
-
-// Uniswap V4 StateView ABI (for pool queries)
-const STATE_VIEW_ABI = [
-  'function getSlot0(bytes32 poolId) view returns (uint160 sqrtPriceX96, int24 tick, uint16 protocolFee, uint24 lpFee)',
-  'function getLiquidity(bytes32 poolId) view returns (uint128)',
-];
-
 // Service state
 const state = reactive({
   isLoading: false,
@@ -86,23 +80,6 @@ async function getFactoryContract(withSigner = false) {
 
   const provider = await web3Service.getProvider('base');
   return new ethers.Contract(factoryAddress, FACTORY_ABI, provider);
-}
-
-/**
- * Get hook contract instance
- */
-async function getHookContract(withSigner = false) {
-  const hookAddress = CONFIG.uniswap?.base?.feeHook;
-  if (!hookAddress) return null;
-
-  if (withSigner) {
-    const browserProvider = await web3Service.getBrowserProvider();
-    const signer = await browserProvider.getSigner();
-    return new ethers.Contract(hookAddress, HOOK_ABI, signer);
-  }
-
-  const provider = await web3Service.getProvider('base');
-  return new ethers.Contract(hookAddress, HOOK_ABI, provider);
 }
 
 /**
@@ -269,74 +246,11 @@ async function getTokenInfo(tokenAddress) {
   }
 }
 
-/**
- * Get pool info via StateView contract
- * @param {string} poolId - V4 pool ID hash (bytes32)
- * @returns {Promise<Object>} Pool info with sqrtPrice and liquidity
- */
-async function getPoolInfo(poolId) {
-  try {
-    const stateViewAddress = CONFIG.uniswap?.base?.stateView;
-    if (!stateViewAddress) return null;
-
-    const provider = await web3Service.getProvider('base');
-    const stateView = new ethers.Contract(stateViewAddress, STATE_VIEW_ABI, provider);
-
-    const [slot0, liquidity] = await Promise.all([
-      stateView.getSlot0(poolId),
-      stateView.getLiquidity(poolId),
-    ]);
-
-    return {
-      poolId,
-      sqrtPriceX96: slot0.sqrtPriceX96.toString(),
-      tick: slot0.tick,
-      lpFee: slot0.lpFee,
-      liquidity: liquidity.toString(),
-    };
-  } catch (e) {
-    console.error('[FineTuneToken] getPoolInfo failed:', e);
-    return null;
-  }
-}
-
-/**
- * Get unclaimed hook fees for a creator
- * @param {string} creatorAddress - Creator address
- * @returns {Promise<string>} Unclaimed fees in ETH (formatted)
- */
-async function getUnclaimedFees(creatorAddress) {
-  try {
-    const hook = await getHookContract(false);
-    if (!hook) return '0';
-
-    const unclaimed = await hook.getUnclaimedFees(creatorAddress);
-    return ethers.formatEther(unclaimed);
-  } catch (e) {
-    console.error('[FineTuneToken] getUnclaimedFees failed:', e);
-    return '0';
-  }
-}
-
-/**
- * Claim accumulated beneficiary fees from the hook
- * @returns {Promise<Object>} Claim result
- */
-async function claimFees() {
-  try {
-    const hook = await getHookContract(true);
-    if (!hook) throw new Error('Fee hook not configured');
-
-    const tx = await hook.claimBeneficiaryFees();
-    const receipt = await tx.wait();
-
-    console.log(`[FineTuneToken] Fees claimed, tx: ${receipt.hash}`);
-    return { success: true, txHash: receipt.hash };
-  } catch (e) {
-    console.error('[FineTuneToken] claimFees failed:', e);
-    return { success: false, error: e.message };
-  }
-}
+// Delegate to shared uniswapV4 utils with service-specific log prefix
+const LOG_PREFIX = 'FineTuneToken';
+const getPoolInfo = (poolId) => _getPoolInfo(poolId, LOG_PREFIX);
+const getUnclaimedFees = (addr) => _getUnclaimedFees(addr, LOG_PREFIX);
+const claimFees = () => _claimFees(LOG_PREFIX);
 
 /**
  * Get minimum ETH required for liquidity
@@ -366,18 +280,7 @@ async function getTotalTokensLaunched() {
   }
 }
 
-// URL builders
-function getUniswapTradeUrl(tokenAddress) {
-  return `https://app.uniswap.org/swap?chain=base&outputCurrency=${tokenAddress}`;
-}
-
-function getBaseScanUrl(tokenAddress) {
-  return `https://basescan.org/token/${tokenAddress}`;
-}
-
-function getDexScreenerUrl(tokenAddress) {
-  return `https://dexscreener.com/base/${tokenAddress}`;
-}
+// URL builders delegated to shared uniswapV4 utils (imported above)
 
 // Computed values
 const isLaunching = computed(() => state.isLoading);

@@ -280,8 +280,10 @@
 <script>
 import { ref, computed, watch, onMounted, onUnmounted } from 'vue';
 import { getAuthHeaders } from '../../services/auth.service.js';
+import { hasPurchasedSkill, isDevMode } from '../../services/agent.service.js';
 
 const STORAGE_KEY = 'meditation-forge-sessions';
+const SKILL_ID = 'meditation-forge-v1.0.0';
 
 // Default LLM config - matches GenerativeText.vue structure
 const DEFAULT_LLM = {
@@ -725,6 +727,10 @@ Go create something beautiful. Namaste.`,
 
     const generateMeditation = async () => {
       if (!selectedScenario.value) return;
+      if (!isDevMode() && !(await hasPurchasedSkill(SKILL_ID))) {
+        console.warn('[MeditationForge] Skill not purchased — execution blocked.');
+        return;
+      }
 
       isGenerating.value = true;
       generationProgress.value = 0;

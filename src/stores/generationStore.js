@@ -122,12 +122,10 @@ export const ensureGenerationSocket = () => {
 
   genSocket.on('connect', () => {
     state.connected = true;
-    console.log('[generationStore] Connected to generation socket');
   });
 
   genSocket.on('disconnect', () => {
     state.connected = false;
-    console.log('[generationStore] Disconnected from generation socket');
   });
 
   genSocket.on('gen_started', ({ generation_id, kind, meta }) => {

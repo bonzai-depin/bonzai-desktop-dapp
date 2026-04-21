@@ -160,8 +160,8 @@ export async function createRPCTunnel(p2pNode, remotePeerId) {
  * @param {BonzaiP2PNode} p2pNode - The libp2p node instance
  * @param {number} rpcServerPort - Local rpc-server TCP port (default: 50052)
  */
-export function registerRPCTunnelHandler(p2pNode, rpcServerPort = 50052) {
-  p2pNode.registerRawProtocolHandler(PROTOCOLS.RPC_TUNNEL, ({ stream, connection }) => {
+export async function registerRPCTunnelHandler(p2pNode, rpcServerPort = 50052) {
+  await p2pNode.registerRawProtocolHandler(PROTOCOLS.RPC_TUNNEL, ({ stream, connection }) => {
     const remotePeer = connection.remotePeer.toString();
     console.log(`[Pipeline Tunnel] Incoming tunnel from ${remotePeer.slice(0, 12)}...`);
 

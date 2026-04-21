@@ -142,6 +142,7 @@ stack-data==0.6.3
 sympy==1.13.3
 thinc==8.3.6
 tiktoken==0.11.0
+timesfm==1.3.0
 tokenizers==0.22.2
 torchao>=0.4.0
 tqdm==4.67.1

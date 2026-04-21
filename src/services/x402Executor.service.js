@@ -15,6 +15,29 @@ import { ethers } from 'ethers';
 import { walletProviderService } from './walletProvider.service.js';
 import { x402Service } from './x402.service.js';
 
+/**
+ * @typedef {Object} TransactionRecord
+ * @property {string} id - Unique transaction ID (e.g. "tx_1234567890_abc123")
+ * @property {number} timestamp - Unix timestamp in milliseconds
+ * @property {string} companionId - Companion ID
+ * @property {string} service - Service name (e.g. "inference", "mint")
+ * @property {string} amountEth - Amount in ETH (formatted string)
+ * @property {string} amount - Amount in wei (string)
+ * @property {'success'|'failed'|'pending'} status - Transaction status
+ * @property {string} [txHash] - On-chain transaction hash
+ * @property {string} [provider] - Provider address
+ * @property {number} [chainId] - Chain ID
+ * @property {string} [error] - Error message if failed
+ */
+
+/**
+ * @typedef {Object} AutonomousSettings
+ * @property {boolean} enablePurchases - Whether autonomous purchases are enabled
+ * @property {string} [maxPurchaseAmount] - Max per-transaction amount in ETH (default: "0.001")
+ * @property {string} [dailySpendingLimit] - Daily spending limit in ETH (default: "0.005")
+ * @property {string} [purchaseMode] - "default" (uniform random) or "specialized" (weighted by profile)
+ */
+
 // Storage keys
 const TX_HISTORY_PREFIX = 'x402-transactions-';
 const DAILY_SPENDING_PREFIX = 'x402-daily-spending-';
@@ -27,7 +50,7 @@ const DEFAULT_CHAIN_ID = 8453;            // Base
 /**
  * Get transaction history for a companion
  * @param {string} companionId - Companion ID
- * @returns {Promise<Array>}
+ * @returns {Promise<TransactionRecord[]>}
  */
 export async function getTransactionHistory(companionId) {
   try {
@@ -43,8 +66,8 @@ export async function getTransactionHistory(companionId) {
 /**
  * Log a transaction
  * @param {string} companionId - Companion ID
- * @param {Object} transaction - Transaction details
- * @returns {Promise<Object>}
+ * @param {Omit<TransactionRecord, 'id'|'timestamp'|'companionId'>} transaction - Transaction details
+ * @returns {Promise<TransactionRecord|undefined>}
  */
 export async function logTransaction(companionId, transaction) {
   try {
@@ -94,7 +117,7 @@ export async function getDailySpending(companionId) {
  * Check if a purchase is allowed based on settings
  * @param {string} companionId - Companion ID
  * @param {string} amountWei - Amount in wei
- * @param {Object} settings - Autonomous mode settings
+ * @param {AutonomousSettings} [settings] - Autonomous mode settings
  * @returns {Promise<{allowed: boolean, reason?: string}>}
  */
 export async function canMakePurchase(companionId, amountWei, settings = {}) {
@@ -159,8 +182,14 @@ export async function canMakePurchase(companionId, amountWei, settings = {}) {
  * Execute an x402 ETH payment
  * @param {string} companionId - Companion ID
  * @param {Object} paymentRequest - Payment request details
- * @param {Object} settings - Autonomous mode settings
- * @returns {Promise<{success: boolean, result?: any, error?: string, transaction?: Object}>}
+ * @param {string} paymentRequest.provider - Provider wallet address
+ * @param {string} paymentRequest.service - Service name (for logging)
+ * @param {string} paymentRequest.amount - Amount in wei (string)
+ * @param {string} [paymentRequest.endpoint] - API endpoint to call after payment
+ * @param {Record<string, unknown>} [paymentRequest.params] - Request parameters for endpoint
+ * @param {number} [paymentRequest.chainId] - Chain ID (default: 8453 Base)
+ * @param {AutonomousSettings} [settings] - Autonomous mode settings
+ * @returns {Promise<{success: boolean, result?: Record<string, unknown>, error?: string, transaction?: TransactionRecord}>}
  */
 export async function executePayment(companionId, paymentRequest, settings = {}) {
   const {
