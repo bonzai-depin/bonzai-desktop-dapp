@@ -667,16 +667,51 @@ function normalizeLLMCode(code) {
   // which would otherwise leave `._engine;` as an orphan expression.
   out = out.replace(/(?:const|let|var)\s*\{[^}]*\}\s*=\s*(?:params|window)(?!\s*\.)\s*;?\s*/g, "");
 
-  // Strip individual declarations of reserved names — regardless of RHS
+  // Strip individual declarations of reserved names — regardless of RHS.
+  // The RHS may be a multi-line arrow / function expression, so we need
+  // a brace-balancing walker instead of a one-line regex. Previous regex
+  // `[^;\\n]*;?` matched only the first line of `const setObjectInfo =
+  // (info) => {` and left the body `{ window.__sceneInfo = info; };`
+  // dangling — that orphan block was the source of "Illegal return
+  // statement" on module import.
   const WRAPPER_RESERVED = [
     "THREE", "scene", "camera", "root", "H", "helpers", "MAT", "TEX",
     "addUpdateCallback", "setObjectInfo", "physics", "CANNON",
   ];
+  const stripReservedDecl = (src, name) => {
+    const re = new RegExp(`(?:const|let|var)\\s+${name}\\s*=\\s*`, "g");
+    let result = "";
+    let cursor = 0;
+    let m;
+    while ((m = re.exec(src)) !== null) {
+      const startIdx = m.index;
+      const afterEq = m.index + m[0].length;
+      // Find end of declaration: scan forward, balancing braces.
+      // End condition: top-level ';' or newline AFTER all braces close.
+      let i = afterEq;
+      let depth = 0;
+      let inStr = null; // quote char if inside a string
+      while (i < src.length) {
+        const ch = src[i];
+        if (inStr) {
+          if (ch === "\\") { i += 2; continue; }
+          if (ch === inStr) inStr = null;
+          i++; continue;
+        }
+        if (ch === '"' || ch === "'" || ch === "`") { inStr = ch; i++; continue; }
+        if (ch === "{" || ch === "(" || ch === "[") { depth++; i++; continue; }
+        if (ch === "}" || ch === ")" || ch === "]") { depth--; i++; continue; }
+        if (depth === 0 && (ch === ";" || ch === "\n")) { i++; break; }
+        i++;
+      }
+      result += src.slice(cursor, startIdx);
+      cursor = i;
+    }
+    result += src.slice(cursor);
+    return result;
+  };
   for (const name of WRAPPER_RESERVED) {
-    out = out.replace(
-      new RegExp(`(?:const|let|var)\\s+${name}\\s*=[^;\\n]*;?[ \\t]*`, "g"),
-      "",
-    );
+    out = stripReservedDecl(out, name);
   }
   // Also strip root.name assignment (wrapper sets it)
   out = out.replace(/root\.name\s*=\s*['"][^'"]*['"]\s*;?\s*/g, "");
@@ -788,6 +823,7 @@ function normalizeLLMCode(code) {
     'addUpdateCallback', 'removeUpdateCallback', 'setObjectInfo',
     'setFilmGrain', 'setScreenDroplets',
     'setChromatic', 'setDoF', 'setColorGrade', 'setLensFlare', 'setUnderwater', 'setEnvironment',
+    'setAO', 'setBloom',
     'params',
   ];
   const protectedRE = new RegExp(`\\b(${PROTECTED.join('|')})\\b`);
@@ -891,6 +927,8 @@ export default async function generate(params) {
   const setLensFlare      = params.setLensFlare      || (() => {});
   const setUnderwater     = params.setUnderwater     || (() => {});
   const setEnvironment    = params.setEnvironment    || (async () => {});
+  const setAO             = params.setAO             || (() => {});
+  const setBloom          = params.setBloom          || (() => {});
   const helpers = params.helpers;
   const H = helpers;
 
@@ -1499,67 +1537,67 @@ export default {
         icon: "\ud83c\udfdb\ufe0f",
         title: "Gem Pedestal",
         description: "Faceted gems resting on a marble pedestal",
-        prompt: "A circular marble pedestal with a polished gold rim, atop which rest a small collection of faceted gemstones — ruby, sapphire, emerald, topaz, amethyst — each cut into a distinct shape, catching light differently as they tumble and settle on the stone. Gentle gold dust motes drift in the air around the pedestal, and a low mist curls at the base. The whole scene feels like a museum jewel display under a soft spotlight.",
+        prompt: "A circular white-marble pedestal with a mirror-polished gold rim, atop which rest a small pile of faceted gemstones — ruby, sapphire, emerald, topaz, amethyst — each cut into distinct sharp facets that catch highlights and cast deep shadows where they meet the stone. The marble surface shows subtle grey veining running through it, polished to catch a faint reflection of the gems sitting on it. Gold dust motes drift in the air; a low mist curls at the base; each gem glows faintly from within, bright enough that the highlights bloom softly. Museum jewel-display lighting — single warm key light plus cool ambient fill from above.",
       },
       {
         icon: "\u26f2",
         title: "Cascading Fountain",
         description: "Tiered basins with reflective falling water",
-        prompt: "An ornate three-tier stone fountain with water cascading from the smallest top basin down through the middle and into the wide bottom pool. Each basin is a shallow stone bowl with a gold inlay rim and reflective water pooling inside — the water surface rippling naturally, reflecting the sky above and catching real caustic light patterns on the pool floor below. Slender water columns pour between tiers, complete with droplet accents and a mist of fine spray around the base where the streams impact. A central stone pillar connects the tiers, with small gold spouts at each rim.",
+        prompt: "An ornate three-tier stone fountain with water cascading from the smallest top basin down through the middle and into the wide bottom pool. Each basin is a shallow carved bowl with a gold inlay rim — the stone is deeply pitted and weathered, with moss darkening every crevice. Water inside each tier is a true reflective surface mirroring the scene above and showing real caustic patterns rippling across the pool floor below. Slender water columns pour between tiers, breaking into droplets and a fine mist where they impact. A central stone pillar connects the tiers with small gold spouts at each rim — the gold polished smooth so it catches and reflects the environment sharply, in contrast to the matte weathered stone.",
       },
       {
         icon: "\ud83d\udd2e",
         title: "Seer's Orb",
         description: "Crystal ball with cosmic nebula interior",
-        prompt: "A large crystal-ball seer's orb cradled on an ornate bronze stand with three curved claw feet. Inside the clear glass sphere, a deep purple cosmic nebula swirls hypnotically — stars, gas clouds, and violet light drifting in real time. A soft violet halo glows around the outer surface of the orb. Three amethyst gemstones are inset into the stand's base, each with its own faint glowing ring. Purple mist curls at the foot of the stand and cyan sparks slowly orbit the orb.",
+        prompt: "A large crystal-ball seer's orb cradled on an ornate bronze stand with three curved claw feet, each foot detailed with relief carvings that catch deep shadow between the toes. Inside the clear glass sphere, a deep purple cosmic nebula swirls hypnotically — stars, gas clouds and violet light drifting in real time, bright enough that the interior glow bleeds through the glass and blooms softly around the surface. A violet halo surrounds the outer sphere. Three amethyst gemstones are inset into the stand's base with faceted cuts that glint sharply. The bronze is polished along the claws and weathered-dark in the recesses, so the environment reflection plays across the smooth parts while the crevices sit in cool shadow. Purple mist curls at the foot; cyan sparks slowly orbit the orb.",
       },
       {
         icon: "\ud83d\udee1\ufe0f",
         title: "Holographic Shield",
         description: "Kite shield with live hologram interface",
-        prompt: "A floating kite-shaped shield with a live holographic emerald-green interface projected across its front face — animated scanlines, flickering tactical data, a traveling signal wave. The shield body is brushed steel engraved with circuit-like patterns, trimmed with gold studs at each corner, leather straps on the back. A translucent green force-field dome surrounds the entire shield, pulsing gently. A slow-rotating chrome ring orbits around it. Tiny green sparks orbit at varying radii.",
+        prompt: "A floating kite-shaped shield with a live holographic emerald-green interface projected across its front face — animated scanlines, flickering tactical data, a traveling signal wave bright enough to bloom off the plate. The shield body is deeply-etched brushed steel with relief circuit channels running vertically, the recesses dark with AO, the raised lands catching sharp highlights. Gold stud rivets at each corner and dark leather straps on the back. A translucent green force-field dome surrounds the entire shield, pulsing gently. A slow-rotating chrome ring orbits around it and shows a real reflection of the hologram on its inner face. Tiny green sparks orbit at varying radii.",
       },
       {
         icon: "\ud83e\uddea",
         title: "Alchemist's Flask",
         description: "Bubbling flask on gimbal with pouring potion",
-        prompt: "An Erlenmeyer flask mounted on a three-axis brass gimbal, tilted at an angle and pouring a glowing emerald-green potion into a waiting glass goblet below. The potion surface inside the flask ripples gently, fine bubbles rising through the liquid. The pouring stream is a continuous column of flowing liquid with droplet accents, and where it strikes the goblet the surface splashes outward. Each gimbal ring rotates on its own axis at slightly different speeds. The whole assembly sits on a dark wooden plinth with faint green mist hanging in the air.",
+        prompt: "An Erlenmeyer flask of clear glass mounted on a three-axis polished-brass gimbal, tilted at an angle and pouring a glowing emerald-green potion into a waiting glass goblet below. The glass has true refractive transmission so the potion colour bends through the walls; the potion itself glows bright enough that the pour-stream halo blooms softly. The potion surface ripples gently and fine bubbles rise through the liquid. Each brass ring carries etched rune-bands in its recessed channel, dark with shadow against the polished outer edge, and the rings rotate on their own axes at slightly different speeds. The pouring stream is a continuous column of flowing liquid with droplet accents, splashing outward where it strikes the goblet. The whole assembly sits on a dark oak plinth with subtle green mist hanging in the air.",
       },
       {
         icon: "\ud83d\udd2e",
         title: "Levitating Crystal",
         description: "Sharp amethyst spire orbiting a base platform",
-        prompt: "A large faceted amethyst crystal levitating upright above a low obsidian platform inscribed with gold rune glyphs. The crystal slowly rotates and bobs gently on an unseen current. Eight smaller floating gems — sapphires, emeralds, rubies — orbit the platform on a horizontal ring, each catching the central crystal's violet glow. A purple fresnel halo surrounds the main crystal, and a faint translucent hemisphere dome of energy covers the platform. Violet mist drifts at the platform base; tiny violet sparks rise steadily.",
+        prompt: "A large sharply-faceted amethyst crystal levitating upright above a low obsidian platform deeply inscribed with gold rune glyphs — the glyphs recessed enough that the channels carry cool AO shadow while the gold catches highlights. The crystal slowly rotates and bobs gently on an unseen current; each facet catches the environment reflection differently, with a violet inner glow bright enough to bloom around the sharp edges. Eight smaller floating gems — sapphires, emeralds, rubies — orbit the platform on a horizontal ring, each catching the central crystal's violet glow. A purple fresnel halo surrounds the main crystal and a faint translucent hemisphere dome of energy covers the platform. Violet mist drifts at the base; tiny violet sparks rise steadily.",
       },
       {
         icon: "\ud83d\udd25",
         title: "Lava Obelisk",
         description: "Tall obsidian pillar with flowing lava veins",
-        prompt: "An imposing black obsidian obelisk standing on a rough rocky platform, with glowing orange-red lava veins cracking down its four faces in jagged lightning-bolt patterns — the lava flows visibly, pulsing with heat. A gold band wraps the top third. Ember particles rise continuously from the base, warm red mist pools at its feet, and orange caustic light dances on the ground around it. Dust motes catch the lava's glow.",
+        prompt: "An imposing black obsidian obelisk standing on a rough rocky platform — the obelisk's four faces deeply pitted and weathered, every crack and crater catching contact shadow. Glowing orange-red lava veins run down each face in jagged lightning-bolt patterns, visibly flowing and pulsing with heat, hot enough that the bright cores bloom into the air around them. A gold band wraps the top third and catches sharp environment reflections across its polished surface. The rocky platform below is shattered in layered slabs that cast soft shadows into each other. Ember particles rise continuously from the base, warm red mist pools at its feet and orange caustic light dances on the ground around it. Dust motes catch the lava's glow.",
       },
       {
         icon: "\ud83c\udf0c",
         title: "Starforge Anvil",
         description: "Glowing anvil with stellar metal being hammered",
-        prompt: "A blacksmith's anvil forged from dark meteorite iron, mounted on a worn stone pillar. A stellar ingot of molten star-metal lies glowing on the anvil's top — bright amber-orange, its surface churning with heat. A heavy leather-gripped steel hammer hovers above the anvil, rising and falling in a slow rhythm, striking the ingot on each beat. On every impact a burst of golden splash particles erupts. A warm halo surrounds the ingot; hundreds of golden sparks drift continuously in the surrounding air.",
+        prompt: "A blacksmith's anvil forged from dark meteorite iron with a pitted, star-textured surface, mounted on a worn stone pillar whose erosion has left deep channels and crevices down its sides. A stellar ingot of molten star-metal lies glowing on the anvil's top — intense amber-orange, surface churning with heat, bright enough that the whole ingot blooms and casts warm rim-light onto the anvil. A heavy leather-gripped steel hammer hovers above, rising and falling in a slow rhythm and striking the ingot on each beat. On every impact a burst of golden splash particles erupts. The anvil and stone pillar sit in a pool of deep contact shadow where they meet the ground. Hundreds of golden sparks drift continuously in the surrounding air.",
       },
       {
         icon: "\ud83d\udc09",
         title: "Iridescent Dragon Egg",
         description: "Cracking egg on a nest of embers",
-        prompt: "A large dragon egg — ovoid, taller than wide — with an iridescent scaled shell that shifts colors from bronze to violet to teal as the viewing angle changes. Three jagged cracks run across its surface, lava-orange glow bleeding through from within. The egg rests in a woven nest of twisted branches interspersed with glowing embers. Caustic orange light patterns the ground beneath the nest, warm mist rises, and hundreds of ember sparks continuously drift upward. A subtle orange halo surrounds the egg.",
+        prompt: "A large dragon egg — ovoid, taller than wide — with a tightly-overlapping iridescent scaled shell that shifts colors from bronze to violet to teal as the viewing angle changes. Each scale is raised enough to cast soft shadow on the one beneath, so the full surface reads as real relief rather than a flat texture. Three jagged thermal cracks run across the shell, lava-orange glow bleeding through from within — bright enough that the molten glow blooms around the cracks. The egg rests in a woven nest of twisted branches interspersed with glowing embers; the weave tangles deeply, with each branch-crossover dark in shadow. Caustic orange light patterns the ground beneath the nest, warm mist rises and hundreds of ember sparks drift upward continuously. A subtle orange halo surrounds the egg.",
       },
       {
         icon: "\u2696\ufe0f",
         title: "Balance of Fates",
         description: "Golden scales tipping with gemstone weights",
-        prompt: "An ornate golden balance scale standing on a marble plinth, central column intricately carved with an iridescent sheen. Two shallow gold dishes hang from gold chain links at either end of a horizontal crossbeam — the left dish holds three ruby octahedron gemstones, the right dish is empty. The crossbeam tilts slowly back and forth as if weighing invisible fates. The gems glow softly with a fresnel halo, amber mist pools below the plinth, and fine gold dust drifts around the whole piece with sparks orbiting the gems.",
+        prompt: "An ornate golden balance scale standing on a white-marble plinth with grey veining that the polish catches as faint reflection. The central column is intricately carved with fluted relief and leaf motifs — the recesses dark with contact shadow, the raised surfaces catching sharp highlights. Two shallow gold dishes hang from gold chain links at either end of a horizontal crossbeam; each chain link sits in soft shadow against the next. The left dish holds three ruby octahedron gemstones that glow bright enough to bloom around their sharp edges, the right dish is empty. The crossbeam tilts slowly back and forth as if weighing invisible fates. Amber mist pools below the plinth; fine gold dust drifts around the piece with sparks orbiting the gems.",
       },
       {
         icon: "\u2694\ufe0f",
         title: "Rune Sword Altar",
         description: "Sword embedded in stone with magical aura",
-        prompt: "A broadsword driven vertically halfway into a rough stone altar. The blade is brushed steel inscribed with glowing cyan runic script running down its length, the crossguard and fittings are gold, the grip wrapped in dark leather, a sapphire pommel. A cyan dissolve-pulse ripples across the blade every few seconds. A translucent cyan energy hemisphere covers the altar. A circular rune inscription glows on the ground around the altar base. Cyan mist curls upward, cyan sparks rise continuously, and faint caustic light patterns the surrounding ground.",
+        prompt: "A broadsword driven vertically halfway into a rough-hewn stone altar. The altar's surface is scarred with chisel marks and shallow weathering, each groove catching deep shadow. The blade is polished brushed steel engraved with cyan runic script running down its length — the runes cut deeply into the steel so they hold shadow, and the glyphs themselves glow bright cyan, hot enough to bloom softly across the blade. The crossguard and fittings are mirror-polished gold catching sharp environment reflections; the grip is dark wrapped leather with thread-line detail; a faceted sapphire pommel glints at the end. A cyan dissolve-pulse ripples across the blade every few seconds. A translucent cyan energy hemisphere covers the altar. A circular rune inscription glows on the ground around the altar base. Cyan mist curls upward, cyan sparks rise continuously, and faint caustic light patterns the surrounding ground.",
       },
     ]);
 
@@ -1603,8 +1641,10 @@ RULES:
       // Score ALL skill files by keyword relevance to the prompt
       const scored = [];
       for (const [path, content] of Object.entries(skillFiles)) {
-        // Skip loaders and postprocessing (not useful for object generation)
-        if (path.includes('threejs-loaders') || path.includes('threejs-postprocessing')) continue;
+        // Skip loaders (not useful for procedural scenes). postprocessing
+        // cheatsheet IS useful now — it tells the LLM the setters exist
+        // and warns against hand-rolling a composer.
+        if (path.includes('threejs-loaders')) continue;
         let score = 0;
         const lc = content.toLowerCase();
         for (const w of keywords) { if (lc.includes(w)) score++; }
@@ -1650,6 +1690,16 @@ demonstrates all of them — treat it as the quality bar.
       - Liquid inside a glass container          → H.fillLiquid(c, color) THEN FLUID.upgradeFill(liquid)
       - Lava                                     → SHADER.lava({hot, cold})
       - NEVER build liquids from raw MeshPhysicalMaterial{transmission:...}
+      - NEVER build a flat CircleGeometry / PlaneGeometry at a
+        hand-picked Y to represent liquid inside a vessel. It will
+        float above or below the rim. H.fillLiquid reads the vessel's
+        LatheGeometry interior and produces a correctly-positioned
+        liquid body + surface disc automatically. Pass the CONTAINER
+        MESH (not its geometry) as first arg.
+      - NEVER wrap engine calls in "typeof FLUID !== 'undefined'" or
+        "if (FLUID && FLUID.surface)" defensive guards. MAT/TEX/SHADER
+        /FLUID/P/FX/CELESTIAL are ALWAYS pre-declared. These guards
+        silently skip the call and produce broken scenes.
 
   [2] GEMS / CRYSTALS: always faceted + colored lights
       - Use MAT.gem({color}) or MAT.gemRuby / gemEmerald / gemSapphire / gemAmethyst / gemTopaz / gemDiamond
@@ -1671,22 +1721,32 @@ demonstrates all of them — treat it as the quality bar.
       - FLUID.mist + H.dust for close-range atmospheric motes.
       - H.sparks for impact / ember particles.
 
-  [5] CINEMATIC FINISH — the Mancini post stack.
+  [5] CINEMATIC FINISH — the AAA post stack (pmndrs/postprocessing).
       A cinematic BASELINE is already applied for every generation:
         setFilmGrain(0.035, 0.35)
         setChromatic(0.22, 2.2)
         setColorGrade({ saturation: 1.12, contrast: 1.04 })
         setDoF({ aperture: 0.006, maxblur: 0.006 })   // auto-focus on orbit target
         setUnderwater(false, { auto: true, ... })     // auto-triggers below water
+        setAO({ radius: 0.6, intensity: 3.0 })        // N8AO screen-space AO
+        setBloom({ intensity: 0.8, threshold: 0.85 }) // selective mipmap bloom
       You only need to call a setter when you want a scene-specific OVERRIDE
       or to enable one of these extra effects:
       - setLensFlare({ position: sunVec3, strength: 0.6, occlusionTest: true })
                                           if the scene has a visible sun or
                                           dominant emissive light source.
       - setScreenDroplets(0.3)            rain / aquatic / underwater mood.
-      - setColorGrade({ ... })            re-tint for a specific mood
-                                          (e.g. warm sunset, cold night).
+      - setColorGrade({ ... })            re-tint for a specific mood.
       - setDoF({ aperture: 0.015 })       stronger blur for product-shot vibe.
+      - setAO({ radius: 1.2, intensity: 5.0, quality: "Ultra" })
+                                          deeper crevice shadows for stone/
+                                          archviz/product renders.
+      - setBloom({ intensity: 1.4, threshold: 0.6 })
+                                          stronger glow for magical / neon
+                                          scenes where highlights should glare.
+      - await setEnvironment("studio" | "day" | "sunset" | "night")
+                                          swap IBL preset for a scene-appropriate
+                                          reflection/lighting base.
 
   [5b] POST-PROCESS-FREE BLOOM (cheaper than selective bloom):
       For any glowing hero (orb, crystal, magical core):
@@ -1769,6 +1829,12 @@ Every SHADER is hooked into the engine tick: uTime advances automatically.
       Scatter instanced copies of prototype across target surface via
       MeshSurfaceSampler. For foliage, crowds, debris fields. async —
       returns a Promise<InstancedMesh>.
+
+  FX.batch([meshes], { material? })
+      Collapse many varied-geometry meshes into a single BatchedMesh
+      (one draw call, one material). Use for gem piles, debris, crowds
+      of small unique props where InstancedMesh isn't enough. Pass the
+      meshes you'd otherwise add to root — the batch replaces them.
 
   MAT.fakeGlow({ color, intensity?, power? })
       Raw material for the fake-glow technique. Pair with a cloned
@@ -1977,8 +2043,14 @@ const floor = new THREE.Mesh(new THREE.BoxGeometry(6,0.02,6),
 floor.castShadow = false; floor.userData.excludeFromBBox = true;
 root.add(floor); P.body(floor, { type:'static', shape:'box' });
 
-// Liquid in a glass vessel: build container from LatheGeometry, then
-// use H.fillLiquid + FLUID.upgradeFill for proper water rendering.
+// Liquid in a glass vessel — CORRECT PATTERN:
+//   1. Build container as a LatheGeometry MESH.
+//   2. Pass the MESH (not its geometry) to H.fillLiquid.
+//   3. Upgrade the returned group with FLUID.upgradeFill.
+// H.fillLiquid reads the lathe profile and builds a liquid body +
+// surface disc that sit INSIDE the container at the requested fill
+// level. NEVER hand-roll a flat PlaneGeometry/CircleGeometry at a
+// hard-coded Y — it will float above the rim.
 const vessel = new THREE.Mesh(new THREE.LatheGeometry(profile, 48),
   new THREE.MeshPhysicalMaterial({ color:0xeef7ff, transmission:0.95,
     ior:1.5, roughness:0.04, thickness:0.2, clearcoat:1 }));
@@ -1986,6 +2058,13 @@ root.add(vessel);
 const liquid = H.fillLiquid(vessel, 0x40ff80, { fillLevel:0.6 });
 FLUID.upgradeFill(liquid, { waveAmp:0.003, caustics:0.9 });
 root.add(liquid);
+
+// WRONG — do NOT do this:
+//   const liquidPlane = new THREE.Mesh(new THREE.CircleGeometry(r),
+//     new THREE.MeshPhysicalMaterial({ color, transmission:1.0 }));
+//   liquidPlane.position.y = 0.18; root.add(liquidPlane);
+// This hand-picks a Y that never matches the vessel's actual rim and
+// produces a potion floating in mid-air above the flask.
 
 // Glow hero without paying post-bloom cost:
 root.add(FX.withGlow(vessel, 0x8b5cf6, { scale:1.08, intensity:1.2 }));
@@ -2317,16 +2396,26 @@ OUTPUT:`;
 
           const defaultCode = `export default async function generate(params) {
   const { THREE, scene, helpers: H, setObjectInfo, addUpdateCallback,
-          setFilmGrain, setChromatic, setDoF, setColorGrade, setLensFlare, setUnderwater } = params;
+          setFilmGrain, setChromatic, setDoF, setColorGrade, setLensFlare,
+          setUnderwater, setAO, setBloom, setEnvironment } = params;
   const { MAT, TEX, SHADER, FLUID, P, CELESTIAL, FX } = params._engine;
   const root = new THREE.Group();
   root.name = "ArcaneOrrery";
 
-  setObjectInfo({ title: "Arcane Orrery", description: "A breathing mechanical cosmos — armillary rings carry blue-marble planets veined with gold around a nebula core, over a mirrored moat and rune-carved dais, volumetric light cones radiating outward beneath a hovering hologram ring." });
+  setObjectInfo({
+    title: "Arcane Orrery",
+    description: "A breathing mechanical cosmos — armillary rings carry blue-marble planets veined with gold around a nebula core, over a mirrored moat and rune-carved dais, lit against a cold deep-space IBL."
+  });
 
-  // ── Cinematic post stack inherited from the generator baseline
-  // (film grain, chromatic, colour grade, auto-focus DoF, underwater-auto).
-  // Only set scene-specific overrides below.
+  // ── Scene-specific post overrides (baseline already covers grain,
+  // subtle chromatic, color grade, AO and bloom). We bump AO because
+  // this scene is all contact surfaces, push bloom selectively for
+  // the emissive nebula hero, and swap IBL to the night preset so
+  // brass/gold/silver catch cool reflections.
+  setAO({ radius: 0.9, intensity: 4.0, falloff: 0.3, quality: "Ultra" });
+  setBloom({ intensity: 1.0, threshold: 0.75, smoothing: 0.2, radius: 0.7 });
+  setColorGrade({ saturation: 1.12, contrast: 1.05 });
+  await setEnvironment("night", { intensity: 0.55 });
 
   // ── Physics world (Rapier). ──────────────────────────────────────────
   // The collider floor is INVISIBLE but explicitly marked no-shadow so it
@@ -2460,6 +2549,27 @@ OUTPUT:`;
   rim.castShadow = true;
   root.add(rim);
 
+  // ── Rune-shard debris around the base (FX.batch = 1 draw call) ─────
+  // Eighteen little obsidian tetrahedra scattered around the plinth.
+  // Each catches AO where it meets the rune base, and the shared
+  // purple emissive drives a subtle bloom halo across the pile.
+  // FX.batch collapses all eighteen into a single BatchedMesh.
+  const shardMat = new THREE.MeshPhysicalMaterial({
+    color: 0x2a2028, metalness: 0.4, roughness: 0.55,
+    emissive: 0xa855f7, emissiveIntensity: 0.35,
+  });
+  const shards = [];
+  for (let i = 0; i < 18; i++) {
+    const ang = (i / 18) * Math.PI * 2 + (Math.random() - 0.5) * 0.2;
+    const rad = 0.36 + Math.random() * 0.06;
+    const m = new THREE.Mesh(new THREE.TetrahedronGeometry(0.009, 0), shardMat);
+    m.position.set(Math.cos(ang) * rad, 0.19 + Math.random() * 0.008, Math.sin(ang) * rad);
+    m.rotation.set(Math.random() * Math.PI, Math.random() * Math.PI, Math.random() * Math.PI);
+    shards.push(m);
+  }
+  const shardBatch = FX.batch(shards, { material: shardMat });
+  root.add(shardBatch);
+
   // ── Central column holding up the orrery head ──────────────────────
   const columnProfile = [
     new THREE.Vector2(0.04, 0), new THREE.Vector2(0.05, 0.05),
@@ -2497,16 +2607,10 @@ OUTPUT:`;
   coreHalo.position.y = coreY;
   root.add(coreHalo);
 
-  // Post-process-free bloom shell — FX.fakeGlow at 1.8× the core so the
-  // orb reads as genuinely radiant from any angle, without paying for
-  // selective bloom. Marked excludeFromBBox so it doesn't affect framing.
-  const coreGlow = new THREE.Mesh(
-    new THREE.SphereGeometry(0.32, 32, 32),
-    MAT.fakeGlow({ color: 0x8b5cf6, intensity: 0.9, power: 2.8 })
-  );
-  coreGlow.position.y = coreY;
-  coreGlow.userData.excludeFromBBox = true;
-  root.add(coreGlow);
+  // NOTE: Previous builds layered a fakeGlow shell at 1.8× the core to
+  // simulate bloom. The new pmndrs BloomEffect + selective threshold
+  // produce real post-bloom on the nebula shader's emissive output —
+  // the extra shell is redundant and was doubling the halo intensity.
 
   // ── Lens flare: the core IS the sun ────────────────────────────────
   // Mancini's signature flare with ghost chain + anamorphic streak,
@@ -2515,9 +2619,9 @@ OUTPUT:`;
   // occlude the flare as the camera orbits.
   setLensFlare({
     position: new THREE.Vector3(0, coreY, 0),
-    strength: 0.55,
-    tint: 0xa855f7,
-    anamorphic: 1.3,
+    strength: 0.3,
+    tint: 0xc28dff,
+    anamorphic: 1.0,
     occlusionTest: true,
   });
 

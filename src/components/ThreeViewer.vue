@@ -30,13 +30,318 @@ import * as CANNON from "cannon-es";
 import { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js";
 import { PMREMGenerator } from "three";
 import { RGBELoader } from "three/examples/jsm/loaders/RGBELoader.js";
-import { EffectComposer } from "three/examples/jsm/postprocessing/EffectComposer.js";
-import { RenderPass } from "three/examples/jsm/postprocessing/RenderPass.js";
-import { UnrealBloomPass } from "three/examples/jsm/postprocessing/UnrealBloomPass.js";
-import { SMAAPass } from "three/examples/jsm/postprocessing/SMAAPass.js";
-import { ShaderPass } from "three/examples/jsm/postprocessing/ShaderPass.js";
-import { BokehPass } from "three/examples/jsm/postprocessing/BokehPass.js";
+// Vite resolves `?url` imports to the emitted asset URL so the HDR
+// ships correctly with both dev server and packaged Electron renderer.
+import skyHdrUrl from "../assets/sky.hdr?url";
+// AAA post stack: pmndrs/postprocessing (merged composer) + N8AO (SSAO).
+// Replaces the three/examples EffectComposer + UnrealBloomPass +
+// SMAAPass + BokehPass + hand-rolled ShaderPasses path. Custom FX
+// (FilmGrain, Chromatic, ColorGrade, LensFlare, Underwater, Droplets)
+// are now Effect subclasses packed into a single EffectPass so the
+// whole chain runs as one merged fullscreen triangle per frame.
+import {
+  EffectComposer,
+  RenderPass,
+  EffectPass,
+  Effect,
+  BloomEffect,
+  DepthOfFieldEffect,
+  SMAAEffect,
+  BlendFunction,
+  KernelSize,
+} from "postprocessing";
+import { N8AOPostPass } from "n8ao";
+import { Uniform, Vector2 as PPVector2 } from "three";
+// three-mesh-bvh: accelerated raycasts + BVH-based bounds, huge win
+// for the lens-flare occlusion sweep and any future collision work.
+import {
+  computeBoundsTree,
+  disposeBoundsTree,
+  acceleratedRaycast,
+} from "three-mesh-bvh";
+// CSM disabled — the three/examples/jsm CSM implementation patches
+// every material via onBeforeCompile to inject cascade-sampling GLSL,
+// and the shader chunks it reaches for no longer exist in r182, so
+// every patched program fails to link (`useProgram: program not valid`
+// spammed every frame) and the scene renders black. When a maintained
+// CSM port lands we can reinstate it; until then the single high-res
+// directional in setupLighting handles shadow-casting.
 import { markRaw, shallowRef } from "vue";
+
+// Install three-mesh-bvh on the three prototypes once at module load.
+// acceleratedRaycast is opt-in per-geometry (via computeBoundsTree) —
+// meshes without a boundsTree fall back to the default raycast path,
+// so patching is zero-cost for code that doesn't build a BVH.
+if (!THREE.BufferGeometry.prototype.computeBoundsTree) {
+  THREE.BufferGeometry.prototype.computeBoundsTree = computeBoundsTree;
+  THREE.BufferGeometry.prototype.disposeBoundsTree = disposeBoundsTree;
+  THREE.Mesh.prototype.raycast = acceleratedRaycast;
+}
+
+// ═══════════════════════════════════════════════════════════════════════
+// CUSTOM EFFECTS (pmndrs/postprocessing Effect subclasses)
+// Each subclass carries only the fragment shader + uniform declarations —
+// postprocessing supplies the fullscreen vertex shader and pipeline glue.
+// The shader entry is `mainImage(const in vec4 inputColor, const in vec2
+// uv, out vec4 outputColor)` where inputColor is the previous effect's
+// output in the merged pipeline (no tDiffuse sampling needed).
+// ═══════════════════════════════════════════════════════════════════════
+
+const filmGrainShader = `
+uniform float uTime;
+uniform float uStrength;
+uniform float uVignette;
+float _hash(vec2 p){ return fract(sin(dot(p, vec2(12.9898, 78.233))) * 43758.5453); }
+void mainImage(const in vec4 inputColor, const in vec2 uv, out vec4 outputColor) {
+  vec3 col = inputColor.rgb;
+  float g = _hash(uv * vec2(1920.0, 1080.0) + uTime * 60.0);
+  col += (g - 0.5) * uStrength;
+  vec2 v = uv - 0.5;
+  float vig = 1.0 - dot(v, v) * uVignette * 2.2;
+  col *= clamp(vig, 0.0, 1.0);
+  outputColor = vec4(col, inputColor.a);
+}
+`;
+class FilmGrainEffect extends Effect {
+  constructor() {
+    super("FilmGrainEffect", filmGrainShader, {
+      blendFunction: BlendFunction.NORMAL,
+      uniforms: new Map([
+        ["uTime", new Uniform(0)],
+        ["uStrength", new Uniform(0.04)],
+        ["uVignette", new Uniform(0.25)],
+      ]),
+    });
+  }
+  update(_renderer, _inputBuffer, deltaTime) {
+    this.uniforms.get("uTime").value += deltaTime;
+  }
+}
+
+const chromaticShader = `
+uniform float uStrength;
+uniform float uFalloff;
+void mainImage(const in vec4 inputColor, const in vec2 uv, out vec4 outputColor) {
+  if (uStrength < 0.001) { outputColor = inputColor; return; }
+  vec2 d = uv - 0.5;
+  float r = pow(length(d) * 2.0, uFalloff) * uStrength * 0.04;
+  vec2 dir = normalize(d + 1e-6);
+  vec4 rC = texture2D(inputBuffer, uv - dir * r);
+  vec4 gC = texture2D(inputBuffer, uv);
+  vec4 bC = texture2D(inputBuffer, uv + dir * r);
+  outputColor = vec4(rC.r, gC.g, bC.b, gC.a);
+}
+`;
+class ChromaticEffect extends Effect {
+  constructor() {
+    super("ChromaticEffect", chromaticShader, {
+      blendFunction: BlendFunction.NORMAL,
+      uniforms: new Map([
+        ["uStrength", new Uniform(0.0)],
+        ["uFalloff", new Uniform(2.2)],
+      ]),
+    });
+  }
+}
+
+const colorGradeShader = `
+uniform float uHueShift;
+uniform float uSaturation;
+uniform float uContrast;
+uniform vec3 uLift;
+uniform vec3 uGain;
+vec3 _rgb2hsv(vec3 c) {
+  vec4 K = vec4(0.0, -1.0 / 3.0, 2.0 / 3.0, -1.0);
+  vec4 p = mix(vec4(c.bg, K.wz), vec4(c.gb, K.xy), step(c.b, c.g));
+  vec4 q = mix(vec4(p.xyw, c.r), vec4(c.r, p.yzx), step(p.x, c.r));
+  float d = q.x - min(q.w, q.y);
+  float e = 1.0e-10;
+  return vec3(abs(q.z + (q.w - q.y) / (6.0 * d + e)), d / (q.x + e), q.x);
+}
+vec3 _hsv2rgb(vec3 c) {
+  vec4 K = vec4(1.0, 2.0 / 3.0, 1.0 / 3.0, 3.0);
+  vec3 p = abs(fract(c.xxx + K.xyz) * 6.0 - K.www);
+  return c.z * mix(K.xxx, clamp(p - K.xxx, 0.0, 1.0), c.y);
+}
+void mainImage(const in vec4 inputColor, const in vec2 uv, out vec4 outputColor) {
+  vec3 hsv = _rgb2hsv(inputColor.rgb);
+  hsv.x = fract(hsv.x + uHueShift / 6.2831);
+  hsv.y *= uSaturation;
+  vec3 rgb = _hsv2rgb(hsv);
+  rgb = (rgb - 0.5) * uContrast + 0.5;
+  rgb = rgb * uGain + uLift;
+  outputColor = vec4(rgb, inputColor.a);
+}
+`;
+class ColorGradeEffect extends Effect {
+  constructor() {
+    super("ColorGradeEffect", colorGradeShader, {
+      blendFunction: BlendFunction.NORMAL,
+      uniforms: new Map([
+        ["uHueShift", new Uniform(0)],
+        ["uSaturation", new Uniform(1)],
+        ["uContrast", new Uniform(1)],
+        ["uLift", new Uniform(new THREE.Color(0x000000))],
+        ["uGain", new Uniform(new THREE.Color(0xffffff))],
+      ]),
+    });
+  }
+}
+
+const lensFlareShader = `
+uniform float uTime;
+uniform vec2 uResolution;
+uniform vec2 uSunScreen;
+uniform float uStrength;
+uniform float uOcclusion;
+uniform vec3 uTint;
+uniform float uAnamorphic;
+vec3 _ghost(vec2 uv, vec2 sun, float scale, float falloff, vec3 tint) {
+  vec2 dir = sun - vec2(0.5);
+  vec2 gUv = vec2(0.5) + dir * scale;
+  float d = length(uv - gUv);
+  float a = pow(max(0.0, 1.0 - d * falloff), 3.5);
+  return tint * a;
+}
+void mainImage(const in vec4 inputColor, const in vec2 uv, out vec4 outputColor) {
+  if (uStrength < 0.001 || uOcclusion < 0.01) { outputColor = inputColor; return; }
+  float aspect = uResolution.x / uResolution.y;
+  vec3 flare = vec3(0.0);
+  flare += _ghost(uv, uSunScreen,  0.5,  22.0, vec3(1.00, 0.86, 0.55));
+  flare += _ghost(uv, uSunScreen,  0.2,  35.0, vec3(0.55, 0.80, 1.00));
+  flare += _ghost(uv, uSunScreen, -0.1,  28.0, vec3(1.00, 0.55, 0.30));
+  flare += _ghost(uv, uSunScreen, -0.3,  32.0, vec3(0.50, 1.00, 0.70));
+  flare += _ghost(uv, uSunScreen, -0.5,  25.0, vec3(0.90, 0.50, 0.90));
+  flare += _ghost(uv, uSunScreen, -0.8,  40.0, vec3(0.70, 0.70, 1.00));
+  float haloD = length(uv - uSunScreen);
+  flare += uTint * pow(max(0.0, 1.0 - haloD * 3.2), 5.0) * 1.4;
+  vec2 streakD = vec2((uv.x - uSunScreen.x) * 0.12, (uv.y - uSunScreen.y));
+  float streak = exp(-dot(streakD * vec2(1.0, 18.0), streakD * vec2(1.0, 18.0)));
+  flare += uTint * streak * uAnamorphic * 1.2;
+  vec2 rDir = (uv - uSunScreen) * vec2(aspect, 1.0);
+  float ang = atan(rDir.y, rDir.x);
+  float bursts = pow(0.5 + 0.5 * cos(ang * 8.0 + uTime * 0.3), 20.0);
+  flare += uTint * bursts * exp(-length(rDir) * 4.0) * 0.8;
+  outputColor = vec4(inputColor.rgb + flare * uStrength * uOcclusion, inputColor.a);
+}
+`;
+class LensFlareEffect extends Effect {
+  constructor(rw, rh) {
+    super("LensFlareEffect", lensFlareShader, {
+      blendFunction: BlendFunction.NORMAL,
+      uniforms: new Map([
+        ["uTime", new Uniform(0)],
+        ["uResolution", new Uniform(new PPVector2(rw, rh))],
+        ["uSunScreen", new Uniform(new PPVector2(-10, -10))],
+        ["uStrength", new Uniform(0)],
+        ["uOcclusion", new Uniform(1)],
+        ["uTint", new Uniform(new THREE.Color(0xffd8a8))],
+        ["uAnamorphic", new Uniform(1)],
+      ]),
+    });
+  }
+  update(_renderer, _inputBuffer, deltaTime) {
+    this.uniforms.get("uTime").value += deltaTime;
+  }
+}
+
+const underwaterShader = `
+uniform float uTime;
+uniform float uActive;
+uniform vec3 uColor;
+uniform float uDistort;
+uniform float uRays;
+void mainImage(const in vec4 inputColor, const in vec2 uv, out vec4 outputColor) {
+  if (uActive < 0.001) { outputColor = inputColor; return; }
+  vec2 duv = uv + vec2(
+    sin(uv.y * 40.0 + uTime * 1.6) * uDistort,
+    sin(uv.x * 30.0 + uTime * 1.2) * uDistort
+  );
+  vec4 col = texture2D(inputBuffer, duv);
+  float tintAmt = uActive * 0.6;
+  col.rgb = mix(col.rgb, uColor, tintAmt);
+  col.rgb *= mix(1.0, 0.65, uActive);
+  float rays = sin(uv.x * 40.0 + sin(uv.y * 3.0 + uTime * 0.4) * 2.0) * 0.5 + 0.5;
+  rays *= smoothstep(0.0, 1.0, 1.0 - uv.y);
+  col.rgb += vec3(0.7, 0.9, 1.0) * rays * uRays * uActive;
+  outputColor = col;
+}
+`;
+class UnderwaterEffect extends Effect {
+  constructor() {
+    super("UnderwaterEffect", underwaterShader, {
+      blendFunction: BlendFunction.NORMAL,
+      uniforms: new Map([
+        ["uTime", new Uniform(0)],
+        ["uActive", new Uniform(0)],
+        ["uColor", new Uniform(new THREE.Color(0x0a3c5a))],
+        ["uDistort", new Uniform(0.004)],
+        ["uRays", new Uniform(0.35)],
+      ]),
+    });
+  }
+  update(_renderer, _inputBuffer, deltaTime) {
+    this.uniforms.get("uTime").value += deltaTime;
+  }
+}
+
+const dropletShader = `
+uniform float uTime;
+uniform vec2 uResolution;
+uniform float uDensity;
+uniform float uSpeed;
+uniform float uSize;
+vec2 _hash2(vec2 p){
+  return fract(sin(vec2(dot(p, vec2(127.1, 311.7)), dot(p, vec2(269.5, 183.3)))) * 43758.5453);
+}
+vec3 _cellDroplet(vec2 uv, float t){
+  vec2 gridSize = vec2(8.0, 5.0);
+  vec2 cellUV = uv * gridSize;
+  vec2 cellId = floor(cellUV);
+  vec2 cellLocal = fract(cellUV) - 0.5;
+  vec2 rnd = _hash2(cellId);
+  float fallT = fract(t * uSpeed * (0.6 + rnd.x * 0.8) + rnd.y);
+  vec2 center = vec2((rnd.x - 0.5) * 0.6, 0.5 - fallT * 1.0);
+  float r = uSize * (0.6 + rnd.x * 0.8);
+  float tear = length((cellLocal - center) * vec2(1.0, 0.6));
+  float mask = smoothstep(r, r * 0.6, tear);
+  float life = smoothstep(0.0, 0.1, fallT) * smoothstep(1.0, 0.8, fallT);
+  mask *= life;
+  vec2 offs = (cellLocal - center) * mask * 0.35;
+  return vec3(mask, offs);
+}
+void mainImage(const in vec4 inputColor, const in vec2 uv, out vec4 outputColor) {
+  if (uDensity <= 0.001) { outputColor = inputColor; return; }
+  vec3 d = _cellDroplet(uv, uTime);
+  vec2 refractUv = uv + d.yz * 0.08 * uDensity;
+  vec3 col;
+  col.r = texture2D(inputBuffer, refractUv + d.yz * 0.006).r;
+  col.g = texture2D(inputBuffer, refractUv).g;
+  col.b = texture2D(inputBuffer, refractUv - d.yz * 0.006).b;
+  vec3 baseCol = texture2D(inputBuffer, uv).rgb;
+  float hl = smoothstep(0.5, 1.0, d.x) * pow(1.0 - length(d.yz) * 4.0, 4.0);
+  col += hl * 0.4;
+  vec3 outCol = mix(baseCol, col, clamp(d.x * uDensity * 2.0, 0.0, 1.0));
+  outputColor = vec4(outCol, 1.0);
+}
+`;
+class DropletEffect extends Effect {
+  constructor(rw, rh) {
+    super("DropletEffect", dropletShader, {
+      blendFunction: BlendFunction.NORMAL,
+      uniforms: new Map([
+        ["uTime", new Uniform(0)],
+        ["uResolution", new Uniform(new PPVector2(rw, rh))],
+        ["uDensity", new Uniform(0)],
+        ["uSpeed", new Uniform(0.6)],
+        ["uSize", new Uniform(0.07)],
+      ]),
+    });
+  }
+  update(_renderer, _inputBuffer, deltaTime) {
+    this.uniforms.get("uTime").value += deltaTime;
+  }
+}
 
 export default {
   name: "ThreeViewer",
@@ -360,7 +665,11 @@ export default {
         premultipliedAlpha: false,
       });
       renderer.setSize(width, height, true);
-      renderer.setPixelRatio(Math.min(window.devicePixelRatio, 1.5));
+      // Full Retina — was previously capped at 1.5, which renders a
+      // 2.0-DPR display at 75% native resolution and reads as soft /
+      // low-res throughout. Cap at 2 to avoid worst-case 3x cost on
+      // ultra-high-density displays.
+      renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
       renderer.shadowMap.enabled = true;
       renderer.shadowMap.type = THREE.PCFSoftShadowMap;
       renderer.toneMapping = THREE.ACESFilmicToneMapping;
@@ -2807,13 +3116,32 @@ export default {
       const bounce = new THREE.PointLight(0xccbbff, 0.32, 30);
       bounce.position.set(0, 0.5, 0);
       this.scene.add(bounce);
-      const dummyMain = new THREE.DirectionalLight(0xffffff, 0);
-      dummyMain.visible = false;
-      this.scene.add(dummyMain);
+
+      // ── Primary shadow-casting directional ──────────────────────────
+      // Single high-resolution directional map (4096²) tuned for our
+      // hero-object framing. Soft PCF filtering smooths the penumbra
+      // so we don't need CSM to avoid jagged edges on the scale we
+      // render.
+      const main = new THREE.DirectionalLight(0xffffff, 0.9);
+      main.position.set(-3, 7, 4);
+      main.target.position.set(0, 0, 0);
+      main.castShadow = true;
+      main.shadow.mapSize.width = 4096;
+      main.shadow.mapSize.height = 4096;
+      main.shadow.bias = -0.0003;
+      main.shadow.normalBias = 0.04;
+      main.shadow.radius = 4;
+      const s = main.shadow.camera;
+      s.near = 0.1; s.far = 30;
+      s.left = -4; s.right = 4; s.top = 4; s.bottom = -4;
+      this.scene.add(main);
+      this.scene.add(main.target);
+      this._csm = null;
+
       this._lights = {
         ambient,
         hemi,
-        main: dummyMain,
+        main,
         fill,
         fill2,
         rim,
@@ -2821,422 +3149,178 @@ export default {
       };
     },
     setupPostProcessing() {
-      const composer = new EffectComposer(this.renderer);
-      const rw = Math.min(this.renderer.domElement.width, 3000),
-        rh = Math.min(this.renderer.domElement.height, 3000);
+      // pmndrs/postprocessing EffectComposer — merged-pass architecture.
+      // multisampling: 0  — MSAA + N8AO triggers a GL depth/stencil
+      //   blit-format mismatch on WebGL 2 (Depth/stencil buffer format
+      //   combination not allowed for blit). SMAAEffect at the end of
+      //   the chain handles AA instead. Keeping MSAA off is the
+      //   recommended setup when any effect reads depth.
+      // HalfFloat frame buffer for HDR bloom/tonemap headroom.
+      const composer = new EffectComposer(this.renderer, {
+        multisampling: 0,
+        frameBufferType: THREE.HalfFloatType,
+      });
+      // postprocessing.setSize takes CSS dimensions; it internally uses
+      // renderer.getDrawingBufferSize() (pixelRatio-aware) for the
+      // render-target allocations. Previously we passed the domElement's
+      // physical width/height (CSS × pixelRatio), which caused
+      // setSize() to shrink the renderer to CSS-as-physical dimensions
+      // → canvas became half its intended size on Retina.
+      const cssSize = this.renderer.getSize(new THREE.Vector2());
+      const rw = Math.min(cssSize.x, 3000);
+      const rh = Math.min(cssSize.y, 3000);
       composer.setSize(rw, rh);
       composer.addPass(new RenderPass(this.scene, this.camera));
-      // Tamer bloom — prior (0.2 / threshold 0.7) bloomed the sun on every
-      // polished metal and produced giant white halos. Threshold 0.92 means
-      // only very bright highlights bloom; strength 0.12 keeps the glow
-      // subtle so it accents sparkle instead of washing out the frame.
-      const bloom = new UnrealBloomPass(
-        new THREE.Vector2(rw, rh),
-        0.12,   // strength
-        0.6,    // radius
-        0.92    // threshold
-      );
+
+      // ── N8AO: screen-space ambient occlusion ────────────────────────
+      // The single biggest quality win in this migration. Grounds every
+      // contact surface (gems on a pedestal, water meeting stone, rim
+      // meets base) with the dark seam the brain expects from real
+      // geometry. Tuned for hero-object framing: ~0.6-unit scenes, so
+      // aoRadius sits around 0.6 world units.
+      const n8ao = new N8AOPostPass(this.scene, this.camera, rw, rh);
+      n8ao.configuration.aoRadius = 0.6;
+      n8ao.configuration.distanceFalloff = 0.25;
+      n8ao.configuration.intensity = 3.0;
+      n8ao.configuration.color = new THREE.Color(0x000000);
+      n8ao.setQualityMode("High");
+      this._n8aoPass = n8ao;
+      composer.addPass(n8ao);
+
+      // ── Custom effects packed into a single EffectPass ─────────────
+      // postprocessing merges multiple Effects into ONE fragment shader
+      // when they share a pipeline slot, so chromatic + color-grade +
+      // lens-flare + droplets + underwater + film-grain all run in one
+      // fullscreen triangle. Defining each as an Effect subclass means
+      // we keep our shader logic verbatim but pay post costs once.
+      const filmGrain = new FilmGrainEffect();
+      const chromatic = new ChromaticEffect();
+      const colorGrade = new ColorGradeEffect();
+      const lensFlare = new LensFlareEffect(rw, rh);
+      const underwater = new UnderwaterEffect();
+      const droplet = new DropletEffect(rw, rh);
+      this._grainPass = filmGrain;
+      this._chromaPass = chromatic;
+      this._gradePass = colorGrade;
+      this._lensFlarePass = lensFlare;
+      this._underwaterPass = underwater;
+      this._dropletPass = droplet;
+
+      // Bloom — native, selective-threshold. KernelSize.LARGE is the
+      // archviz default and gives the soft halo rather than the fuzzy
+      // veil that smaller kernels produce.
+      const bloom = new BloomEffect({
+        intensity: 0.8,
+        luminanceThreshold: 0.85,
+        luminanceSmoothing: 0.2,
+        mipmapBlur: true,
+        kernelSize: KernelSize.LARGE,
+        radius: 0.7,
+      });
       this._bloomPass = bloom;
-      composer.addPass(bloom);
-      // Screen droplets — procedural raindrops on the "lens" that refract
-      // the scene behind them. Animated worley cells drive the droplet
-      // placement, with an independent normal-map offset per droplet so
-      // each one distorts locally. Starts OFF; toggle via setScreenDroplets.
-      const dropletPass = new ShaderPass({
-        uniforms: {
-          tDiffuse:    { value: null },
-          uTime:       { value: 0 },
-          uResolution: { value: new THREE.Vector2(rw, rh) },
-          uDensity:    { value: 0.0 }, // 0 = off, 1 = heavy
-          uSpeed:      { value: 0.6 },
-          uSize:       { value: 0.07 },
-        },
-        vertexShader: `
-          varying vec2 vUv;
-          void main(){ vUv = uv; gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0); }
-        `,
-        fragmentShader: `
-          uniform sampler2D tDiffuse;
-          uniform float uTime;
-          uniform vec2 uResolution;
-          uniform float uDensity;
-          uniform float uSpeed;
-          uniform float uSize;
-          varying vec2 vUv;
 
-          vec2 hash2(vec2 p){
-            return fract(sin(vec2(dot(p, vec2(127.1, 311.7)), dot(p, vec2(269.5, 183.3)))) * 43758.5453);
-          }
-
-          // Per-cell droplet: each grid cell hosts one drifting droplet.
-          // Returns (mask, dx, dy) where mask is droplet coverage and dx/dy
-          // is the local refractive offset.
-          vec3 cellDroplet(vec2 uv, float t){
-            vec2 gridSize = vec2(8.0, 5.0);
-            vec2 cellUV = uv * gridSize;
-            vec2 cellId = floor(cellUV);
-            vec2 cellLocal = fract(cellUV) - 0.5;
-            vec2 rnd = hash2(cellId);
-            // Slow fall + lateral drift.
-            float fallT = fract(t * uSpeed * (0.6 + rnd.x * 0.8) + rnd.y);
-            vec2 center = vec2(
-              (rnd.x - 0.5) * 0.6,
-              0.5 - fallT * 1.0
-            );
-            float r = uSize * (0.6 + rnd.x * 0.8);
-            float d = length(cellLocal - center);
-            // Squash vertically for tear-drop shape.
-            float tear = length((cellLocal - center) * vec2(1.0, 0.6));
-            float mask = smoothstep(r, r * 0.6, tear);
-            // Fade new drops in, old drops out.
-            float life = smoothstep(0.0, 0.1, fallT) * smoothstep(1.0, 0.8, fallT);
-            mask *= life;
-            vec2 offs = (cellLocal - center) * mask * 0.35;
-            return vec3(mask, offs);
-          }
-
-          void main(){
-            if (uDensity <= 0.001) {
-              gl_FragColor = texture2D(tDiffuse, vUv);
-              return;
-            }
-            // Aspect-correct UVs so droplets stay circular.
-            float aspect = uResolution.x / uResolution.y;
-            vec2 uv = vUv;
-            vec3 d = cellDroplet(uv, uTime);
-            vec2 refractUv = uv + d.yz * 0.08 * uDensity;
-            // Chromatic split through each droplet — R/G/B at slightly
-            // different IORs, matching real wet-lens dispersion.
-            vec3 col;
-            col.r = texture2D(tDiffuse, refractUv + d.yz * 0.006).r;
-            col.g = texture2D(tDiffuse, refractUv).g;
-            col.b = texture2D(tDiffuse, refractUv - d.yz * 0.006).b;
-            vec3 baseCol = texture2D(tDiffuse, uv).rgb;
-            // Specular highlight on the leading edge of the droplet — a
-            // little pop of brightness so the droplet reads as 3D, not
-            // just a blob of distortion.
-            float hl = smoothstep(0.5, 1.0, d.x) * pow(1.0 - length(d.yz) * 4.0, 4.0);
-            col += hl * 0.4;
-            // Dim slightly outside droplet — subtle wetness on the lens.
-            vec3 outCol = mix(baseCol, col, clamp(d.x * uDensity * 2.0, 0.0, 1.0));
-            gl_FragColor = vec4(outCol, 1.0);
-          }
-        `,
+      // DoF — native depth of field. Focus auto-tracks the orbit
+      // target via the effect's `target` property (set in _updateDoF
+      // each frame); focalLength/bokehScale control blur shape/size.
+      const dof = new DepthOfFieldEffect(this.camera, {
+        focusDistance: 0.0,
+        focalLength: 0.05,
+        bokehScale: 0.0,         // 0 = off; setDoF bumps it
       });
-      this._dropletPass = dropletPass;
-      composer.addPass(dropletPass);
+      this._dofEffect = dof;
+      // Reusable THREE.Object3D the effect reads for world-space focus.
+      this._dofTargetProxy = new THREE.Object3D();
 
-      // ── Depth of Field (Bokeh) — Windland/archviz signature ─────────
-      // Off by default (pass.enabled = false). setDoF({aperture > 0})
-      // enables a full-scene re-render with depth-aware blur, so we skip
-      // it entirely when DoF isn't needed.
-      const bokehPass = new BokehPass(this.scene, this.camera, {
-        focus: 1.8,
-        aperture: 0.0,
-        maxblur: 0.012,
-      });
-      bokehPass.enabled = false;
-      this._bokehPass = bokehPass;
-      composer.addPass(bokehPass);
+      // SMAA — native implementation, faster than the examples one.
+      const smaa = new SMAAEffect();
 
-      // ── Lens Flare — ghost chain + anamorphic streak + dirt ─────────
-      // Mancini's signature post. Fake-sun raycast occlusion is evaluated
-      // per-frame (cheap ray cast against a small list of occluders, or
-      // directly against the scene if setLensFlare({ raycast: true })).
-      // Screen-space position of the 3D sun vector drives the flare.
-      const lensFlarePass = new ShaderPass({
-        uniforms: {
-          tDiffuse:    { value: null },
-          uTime:       { value: 0 },
-          uResolution: { value: new THREE.Vector2(rw, rh) },
-          uSunScreen:  { value: new THREE.Vector2(-10, -10) }, // off-screen = no flare
-          uStrength:   { value: 0.0 },       // 0 = off
-          uOcclusion:  { value: 1.0 },       // 0 = fully occluded
-          uTint:       { value: new THREE.Color(0xffd8a8) },
-          uAnamorphic: { value: 1.0 },       // horizontal streak
-        },
-        vertexShader: `
-          varying vec2 vUv;
-          void main(){ vUv = uv; gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0); }
-        `,
-        fragmentShader: `
-          uniform sampler2D tDiffuse;
-          uniform vec2 uResolution;
-          uniform vec2 uSunScreen;
-          uniform float uStrength;
-          uniform float uOcclusion;
-          uniform vec3 uTint;
-          uniform float uAnamorphic;
-          uniform float uTime;
-          varying vec2 vUv;
+      // Pack non-depth-dependent effects into a shared EffectPass so
+      // they merge into one pipeline; bloom + dof get their own passes
+      // since they sample the depth buffer.
+      composer.addPass(new EffectPass(this.camera, bloom));
+      composer.addPass(new EffectPass(this.camera, dof));
+      composer.addPass(
+        new EffectPass(
+          this.camera,
+          droplet,
+          underwater,
+          chromatic,
+          lensFlare,
+          colorGrade,
+          filmGrain,
+        ),
+      );
+      composer.addPass(new EffectPass(this.camera, smaa));
 
-          // Single ghost at offset toward center with tint + falloff.
-          vec3 ghost(vec2 uv, vec2 sun, float scale, float falloff, vec3 tint) {
-            vec2 dir = sun - vec2(0.5);
-            vec2 ghostUv = vec2(0.5) + dir * scale;
-            float d = length(uv - ghostUv);
-            float a = pow(max(0.0, 1.0 - d * falloff), 3.5);
-            return tint * a;
-          }
-
-          void main(){
-            vec4 base = texture2D(tDiffuse, vUv);
-            if (uStrength < 0.001 || uOcclusion < 0.01) { gl_FragColor = base; return; }
-
-            float aspect = uResolution.x / uResolution.y;
-            vec2 uv = vUv;
-
-            // Ghost chain — 6 offset copies of the sun rendered at shrinking scale.
-            vec3 flare = vec3(0.0);
-            flare += ghost(uv, uSunScreen,  0.5,  22.0, vec3(1.00, 0.86, 0.55));
-            flare += ghost(uv, uSunScreen,  0.2,  35.0, vec3(0.55, 0.80, 1.00));
-            flare += ghost(uv, uSunScreen, -0.1,  28.0, vec3(1.00, 0.55, 0.30));
-            flare += ghost(uv, uSunScreen, -0.3,  32.0, vec3(0.50, 1.00, 0.70));
-            flare += ghost(uv, uSunScreen, -0.5,  25.0, vec3(0.90, 0.50, 0.90));
-            flare += ghost(uv, uSunScreen, -0.8,  40.0, vec3(0.70, 0.70, 1.00));
-
-            // Halo ring around the sun itself.
-            float haloD = length(uv - uSunScreen);
-            flare += uTint * pow(max(0.0, 1.0 - haloD * 3.2), 5.0) * 1.4;
-
-            // Anamorphic horizontal streak (lens-distorted bright line).
-            vec2 streakD = vec2((uv.x - uSunScreen.x) * 0.12, (uv.y - uSunScreen.y));
-            float streak = exp(-dot(streakD * vec2(1.0, 18.0), streakD * vec2(1.0, 18.0)));
-            flare += uTint * streak * uAnamorphic * 1.2;
-
-            // Star-burst (rotating rays).
-            vec2 rDir = (uv - uSunScreen) * vec2(aspect, 1.0);
-            float ang = atan(rDir.y, rDir.x);
-            float bursts = pow(0.5 + 0.5 * cos(ang * 8.0 + uTime * 0.3), 20.0);
-            flare += uTint * bursts * exp(-length(rDir) * 4.0) * 0.8;
-
-            gl_FragColor = vec4(base.rgb + flare * uStrength * uOcclusion, base.a);
-          }
-        `,
-      });
-      this._lensFlarePass = lensFlarePass;
-      composer.addPass(lensFlarePass);
-
-      // ── Chromatic aberration — radial RGB offset ────────────────────
-      // Off by default. setChromatic(0.3) gives a subtle cyberpunk fringe;
-      // 1.0 is a heavy warp. Falloff controls how corner-weighted it is.
-      const chromaPass = new ShaderPass({
-        uniforms: {
-          tDiffuse:  { value: null },
-          uStrength: { value: 0.0 },
-          uFalloff:  { value: 2.2 },
-        },
-        vertexShader: `
-          varying vec2 vUv;
-          void main(){ vUv = uv; gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0); }
-        `,
-        fragmentShader: `
-          uniform sampler2D tDiffuse;
-          uniform float uStrength;
-          uniform float uFalloff;
-          varying vec2 vUv;
-          void main(){
-            if (uStrength < 0.001) { gl_FragColor = texture2D(tDiffuse, vUv); return; }
-            vec2 d = vUv - 0.5;
-            float r = pow(length(d) * 2.0, uFalloff) * uStrength * 0.04;
-            vec2 dir = normalize(d + 1e-6);
-            vec4 rC = texture2D(tDiffuse, vUv - dir * r);
-            vec4 gC = texture2D(tDiffuse, vUv);
-            vec4 bC = texture2D(tDiffuse, vUv + dir * r);
-            gl_FragColor = vec4(rC.r, gC.g, bC.b, gC.a);
-          }
-        `,
-      });
-      this._chromaPass = chromaPass;
-      composer.addPass(chromaPass);
-
-      // ── Underwater / submerged screen pass ──────────────────────────
-      // When the camera crosses a water plane, the scene gets a
-      // blue-green tint + sin-wave UV distortion + downward god-ray
-      // bands. Activation: setUnderwater(active, opts).
-      const underwaterPass = new ShaderPass({
-        uniforms: {
-          tDiffuse:   { value: null },
-          uTime:      { value: 0 },
-          uActive:    { value: 0.0 },
-          uColor:     { value: new THREE.Color(0x0a3c5a) },
-          uDistort:   { value: 0.004 },
-          uRays:      { value: 0.35 },
-        },
-        vertexShader: `
-          varying vec2 vUv;
-          void main(){ vUv = uv; gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0); }
-        `,
-        fragmentShader: `
-          uniform sampler2D tDiffuse;
-          uniform float uTime;
-          uniform float uActive;
-          uniform vec3 uColor;
-          uniform float uDistort;
-          uniform float uRays;
-          varying vec2 vUv;
-          void main(){
-            if (uActive < 0.001) { gl_FragColor = texture2D(tDiffuse, vUv); return; }
-            vec2 duv = vUv + vec2(
-              sin(vUv.y * 40.0 + uTime * 1.6) * uDistort,
-              sin(vUv.x * 30.0 + uTime * 1.2) * uDistort
-            );
-            vec4 col = texture2D(tDiffuse, duv);
-            // Blue-green absorption tint (Beer–Lambert-ish).
-            float tintAmt = uActive * 0.6;
-            col.rgb = mix(col.rgb, uColor, tintAmt);
-            col.rgb *= mix(1.0, 0.65, uActive);
-            // God-ray bars (soft vertical bands modulated by noise).
-            float rays = sin(vUv.x * 40.0 + sin(vUv.y * 3.0 + uTime * 0.4) * 2.0) * 0.5 + 0.5;
-            rays *= smoothstep(0.0, 1.0, 1.0 - vUv.y);
-            col.rgb += vec3(0.7, 0.9, 1.0) * rays * uRays * uActive;
-            gl_FragColor = col;
-          }
-        `,
-      });
-      this._underwaterPass = underwaterPass;
-      composer.addPass(underwaterPass);
-
-      // ── Color grade — hue/saturation/lift/gain + optional LUT ───────
-      const gradePass = new ShaderPass({
-        uniforms: {
-          tDiffuse:    { value: null },
-          uHueShift:   { value: 0.0 },        // radians
-          uSaturation: { value: 1.0 },        // 1 = neutral
-          uContrast:   { value: 1.0 },
-          uLift:       { value: new THREE.Color(0x000000) },
-          uGain:       { value: new THREE.Color(0xffffff) },
-        },
-        vertexShader: `
-          varying vec2 vUv;
-          void main(){ vUv = uv; gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0); }
-        `,
-        fragmentShader: `
-          uniform sampler2D tDiffuse;
-          uniform float uHueShift;
-          uniform float uSaturation;
-          uniform float uContrast;
-          uniform vec3 uLift;
-          uniform vec3 uGain;
-          varying vec2 vUv;
-          vec3 rgb2hsv(vec3 c) {
-            vec4 K = vec4(0.0, -1.0 / 3.0, 2.0 / 3.0, -1.0);
-            vec4 p = mix(vec4(c.bg, K.wz), vec4(c.gb, K.xy), step(c.b, c.g));
-            vec4 q = mix(vec4(p.xyw, c.r), vec4(c.r, p.yzx), step(p.x, c.r));
-            float d = q.x - min(q.w, q.y);
-            float e = 1.0e-10;
-            return vec3(abs(q.z + (q.w - q.y) / (6.0 * d + e)), d / (q.x + e), q.x);
-          }
-          vec3 hsv2rgb(vec3 c) {
-            vec4 K = vec4(1.0, 2.0 / 3.0, 1.0 / 3.0, 3.0);
-            vec3 p = abs(fract(c.xxx + K.xyz) * 6.0 - K.www);
-            return c.z * mix(K.xxx, clamp(p - K.xxx, 0.0, 1.0), c.y);
-          }
-          void main(){
-            vec4 col = texture2D(tDiffuse, vUv);
-            vec3 hsv = rgb2hsv(col.rgb);
-            hsv.x = fract(hsv.x + uHueShift / 6.2831);
-            hsv.y *= uSaturation;
-            vec3 rgb = hsv2rgb(hsv);
-            // Contrast around 0.5.
-            rgb = (rgb - 0.5) * uContrast + 0.5;
-            // Lift / gain.
-            rgb = rgb * uGain + uLift;
-            gl_FragColor = vec4(rgb, col.a);
-          }
-        `,
-      });
-      this._gradePass = gradePass;
-      composer.addPass(gradePass);
-
-      // ── Film grain — cinematic graininess + very slight vignette. Default
-      // strength is subtle; tune via setFilmGrain(strength, vignette).
-      const grainPass = new ShaderPass({
-        uniforms: {
-          tDiffuse:   { value: null },
-          uTime:      { value: 0 },
-          uStrength:  { value: 0.04 },   // 0 = off, ~0.06 heavy grain
-          uVignette:  { value: 0.25 },   // 0 = off, 1 = heavy edge darkening
-        },
-        vertexShader: `
-          varying vec2 vUv;
-          void main(){ vUv = uv; gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0); }
-        `,
-        fragmentShader: `
-          uniform sampler2D tDiffuse;
-          uniform float uTime;
-          uniform float uStrength;
-          uniform float uVignette;
-          varying vec2 vUv;
-          float hash(vec2 p){ return fract(sin(dot(p, vec2(12.9898, 78.233))) * 43758.5453); }
-          void main(){
-            vec4 col = texture2D(tDiffuse, vUv);
-            // Animated per-pixel grain.
-            float g = hash(vUv * vec2(1920.0, 1080.0) + uTime * 60.0);
-            col.rgb += (g - 0.5) * uStrength;
-            // Soft vignette.
-            vec2 v = vUv - 0.5;
-            float vig = 1.0 - dot(v, v) * uVignette * 2.2;
-            col.rgb *= clamp(vig, 0.0, 1.0);
-            gl_FragColor = col;
-          }
-        `,
-      });
-      this._grainPass = grainPass;
-      composer.addPass(grainPass);
-      composer.addPass(new SMAAPass(rw, rh));
       this.composer = markRaw(composer);
     },
     setFilmGrain(strength = 0.04, vignette = 0.25) {
       if (!this._grainPass) return;
-      this._grainPass.uniforms.uStrength.value = strength;
-      this._grainPass.uniforms.uVignette.value = vignette;
+      this._grainPass.uniforms.get("uStrength").value = strength;
+      this._grainPass.uniforms.get("uVignette").value = vignette;
     },
     setChromatic(strength = 0.3, falloff = 2.2) {
       if (!this._chromaPass) return;
-      this._chromaPass.uniforms.uStrength.value = strength;
-      this._chromaPass.uniforms.uFalloff.value = falloff;
+      this._chromaPass.uniforms.get("uStrength").value = strength;
+      this._chromaPass.uniforms.get("uFalloff").value = falloff;
     },
     setColorGrade(opts = {}) {
       if (!this._gradePass) return;
       const u = this._gradePass.uniforms;
-      if (opts.hue !== undefined)        u.uHueShift.value   = opts.hue;
-      if (opts.saturation !== undefined) u.uSaturation.value = opts.saturation;
-      if (opts.contrast !== undefined)   u.uContrast.value   = opts.contrast;
-      if (opts.lift)  u.uLift.value.set(opts.lift);
-      if (opts.gain)  u.uGain.value.set(opts.gain);
+      if (opts.hue !== undefined)        u.get("uHueShift").value   = opts.hue;
+      if (opts.saturation !== undefined) u.get("uSaturation").value = opts.saturation;
+      if (opts.contrast !== undefined)   u.get("uContrast").value   = opts.contrast;
+      if (opts.lift)  u.get("uLift").value.set(opts.lift);
+      if (opts.gain)  u.get("uGain").value.set(opts.gain);
     },
     setDoF(opts = {}) {
-      if (!this._bokehPass) return;
-      const u = this._bokehPass.uniforms;
-      if (opts.focus    !== undefined) u.focus.value    = opts.focus;
-      if (opts.aperture !== undefined) u.aperture.value = opts.aperture;
-      if (opts.maxblur  !== undefined) u.maxblur.value  = opts.maxblur;
-      // Auto-focus: track the orbit target every frame so the subject
-      // stays sharp regardless of zoom. Opt out with {autoFocus: false}
-      // and a fixed `focus` world distance.
+      if (!this._dofEffect) return;
+      // Legacy {aperture, maxblur, focus} → postprocessing {bokehScale}.
+      // Mapping recalibrated: the previous *260 factor turned a 0.006
+      // "subtle" aperture into bokehScale 1.56, blurring the whole
+      // frame. *40 keeps subtle subtle (0.24) and still allows *2-4*
+      // strong blur at aperture 0.05-0.1 for dolly-zoom looks.
+      if (opts.aperture !== undefined) {
+        this._dofEffect.bokehScale = Math.max(0, opts.aperture * 40.0);
+      }
+      if (opts.maxblur !== undefined) {
+        this._dofEffect.bokehScale = Math.max(
+          this._dofEffect.bokehScale,
+          opts.maxblur * 40.0,
+        );
+      }
+      if (opts.focus !== undefined) this._dofFixedFocus = opts.focus;
       this._dofAutoFocus = opts.autoFocus !== false;
-      // Skip the pass entirely when DoF is off — it otherwise re-renders
-      // the whole scene every frame for a blur of 0.
-      this._bokehPass.enabled = (u.aperture.value > 0.0001);
     },
     _updateDoF() {
-      if (!this._bokehPass || !this._bokehPass.enabled) return;
-      if (!this._dofAutoFocus) return;
+      if (!this._dofEffect) return;
+      if (this._dofEffect.bokehScale <= 0.01) return;
+      // Use the effect's built-in `target` property — postprocessing
+      // computes focusDistance from the target's world position and
+      // camera projection internally. Hand-rolling focusDistance via
+      // (d - near) / (far - near) produced ~0.003 values on typical
+      // scenes (near=0.1, far=1000) which is effectively "focus at
+      // the near plane," blurring everything else.
+      if (!this._dofAutoFocus && this._dofFixedFocus !== undefined) {
+        this._dofTargetProxy.position.set(0, 0, 0);
+        const forward = new THREE.Vector3();
+        this.camera.getWorldDirection(forward);
+        this._dofTargetProxy.position
+          .copy(this.camera.position)
+          .addScaledVector(forward, this._dofFixedFocus);
+        this._dofEffect.target = this._dofTargetProxy;
+        return;
+      }
       if (!this.controls || !this.controls.target) return;
-      // Focus distance = camera → orbit target. As the user zooms in
-      // with the scroll wheel, focus tracks the hero.
-      const d = this.camera.position.distanceTo(this.controls.target);
-      this._bokehPass.uniforms.focus.value = d;
+      this._dofTargetProxy.position.copy(this.controls.target);
+      this._dofEffect.target = this._dofTargetProxy;
     },
     setLensFlare(opts = {}) {
       if (!this._lensFlarePass) return;
       const u = this._lensFlarePass.uniforms;
-      if (opts.strength !== undefined) u.uStrength.value = opts.strength;
-      if (opts.tint)   u.uTint.value.set(opts.tint);
-      if (opts.anamorphic !== undefined) u.uAnamorphic.value = opts.anamorphic;
-      // Store the sun WORLD position on the pass so the tick can re-project
-      // it each frame (camera may orbit).
+      if (opts.strength !== undefined) u.get("uStrength").value = opts.strength;
+      if (opts.tint)   u.get("uTint").value.set(opts.tint);
+      if (opts.anamorphic !== undefined) u.get("uAnamorphic").value = opts.anamorphic;
       if (opts.position) {
         this._lensFlareSun = opts.position.isVector3
           ? opts.position.clone()
@@ -3244,58 +3328,126 @@ export default {
       }
       if (opts.occlusionTest !== undefined) this._lensFlareOcclusion = opts.occlusionTest;
     },
-    async setEnvironment(url, opts = {}) {
-      // Load an HDR/EXR environment at runtime and apply it as scene
-      // envmap + optional background. Replaces the default sky.hdr.
-      try {
-        const loader = new RGBELoader();
-        const hdrTex = await loader.loadAsync(url);
-        hdrTex.encoding = THREE.LinearEncoding;
-        hdrTex.wrapS = hdrTex.wrapT = THREE.ClampToEdgeWrapping;
-        const pmrem = new PMREMGenerator(this.renderer);
-        pmrem.compileEquirectangularShader();
-        const envMap = pmrem.fromEquirectangular(hdrTex).texture;
-        if (this._envMap && this._envMap.dispose) this._envMap.dispose();
-        this._envMap = envMap;
-        this.scene.environment = envMap;
-        if (opts.background) this.scene.background = envMap;
-        if (opts.intensity !== undefined) this.scene.environmentIntensity = opts.intensity;
-        hdrTex.dispose();
-        pmrem.dispose();
-        return envMap;
-      } catch (e) {
-        console.warn("setEnvironment failed:", e);
-        return null;
+    setAO(opts = {}) {
+      if (!this._n8aoPass) return;
+      const c = this._n8aoPass.configuration;
+      if (opts.radius !== undefined) c.aoRadius = opts.radius;
+      if (opts.intensity !== undefined) c.intensity = opts.intensity;
+      if (opts.falloff !== undefined) c.distanceFalloff = opts.falloff;
+      if (opts.color !== undefined) c.color = new THREE.Color(opts.color);
+      if (opts.quality) this._n8aoPass.setQualityMode(opts.quality); // 'Performance'|'Low'|'Medium'|'High'|'Ultra'
+    },
+    setBloom(opts = {}) {
+      if (!this._bloomPass) return;
+      if (opts.intensity !== undefined) this._bloomPass.intensity = opts.intensity;
+      if (opts.threshold !== undefined) this._bloomPass.luminanceMaterial.threshold = opts.threshold;
+      if (opts.smoothing !== undefined) this._bloomPass.luminanceMaterial.smoothing = opts.smoothing;
+      if (opts.radius !== undefined) this._bloomPass.mipmapBlurPass.radius = opts.radius;
+    },
+    async setEnvironment(urlOrPreset, opts = {}) {
+      // Accepts either a direct HDR/EXR URL or a preset name:
+      //   'studio' → neutral softbox IBL (procedural)
+      //   'day'    → bundled sky.hdr
+      //   'sunset' → warm tinted sky.hdr variant
+      //   'night'  → deep-blue procedural
+      // Any other string is treated as a URL. Falls back to procedural
+      // if the HDR load fails, so generator code never blocks on a
+      // missing asset.
+      // Preset name → either an asset URL or a procedural fallback.
+      // The bundled sky.hdr reaches us through Vite's ?url asset import
+      // so it works in both `npm run start` (dev server) and the
+      // packaged Electron renderer. Any load failure falls back to the
+      // procedural env so a generate() call never hard-fails on IBL.
+      const PRESETS = {
+        studio: { procedural: "softbox" },
+        day:    { url: skyHdrUrl },
+        sunset: { url: skyHdrUrl, tint: 0xffc890 },
+        night:  { procedural: "night" },
+      };
+      const preset = typeof urlOrPreset === "string" ? PRESETS[urlOrPreset] : null;
+      const resolvedUrl = preset?.url ?? (preset ? null : urlOrPreset);
+      const proceduralFallback = preset?.procedural || "softbox";
+      let envMap = null;
+      if (resolvedUrl) {
+        try {
+          const loader = new RGBELoader();
+          const hdrTex = await loader.loadAsync(resolvedUrl);
+          hdrTex.wrapS = hdrTex.wrapT = THREE.ClampToEdgeWrapping;
+          const pmrem = new PMREMGenerator(this.renderer);
+          pmrem.compileEquirectangularShader();
+          envMap = pmrem.fromEquirectangular(hdrTex).texture;
+          hdrTex.dispose();
+          pmrem.dispose();
+        } catch (e) {
+          console.warn(`setEnvironment("${urlOrPreset}") HDR load failed — falling back to procedural:`, e?.message || e);
+          envMap = this._proceduralEnvMap(proceduralFallback);
+        }
+      } else if (preset?.procedural) {
+        envMap = this._proceduralEnvMap(preset.procedural);
+      } else {
+        console.warn(`setEnvironment: unknown preset "${urlOrPreset}" — using procedural softbox.`);
+        envMap = this._proceduralEnvMap("softbox");
       }
+      if (!envMap) return null;
+      if (this._envMap && this._envMap.dispose) this._envMap.dispose();
+      this._envMap = envMap;
+      this.scene.environment = envMap;
+      if (opts.background) this.scene.background = envMap;
+      if (opts.intensity !== undefined) this.scene.environmentIntensity = opts.intensity;
+      return envMap;
+    },
+    _proceduralEnvMap(preset) {
+      // Render a minimal scene (colored gradient sphere or dome) into
+      // a PMREM cubemap for cheap procedural IBL. Returns an envMap
+      // texture suitable for scene.environment.
+      const pmrem = new PMREMGenerator(this.renderer);
+      pmrem.compileCubemapShader();
+      const envScene = new THREE.Scene();
+      const geom = new THREE.SphereGeometry(5, 32, 16);
+      let top, bottom;
+      if (preset === "softbox") {
+        top = new THREE.Color(0xffffff); bottom = new THREE.Color(0x666a78);
+      } else if (preset === "night") {
+        top = new THREE.Color(0x0a1428); bottom = new THREE.Color(0x020308);
+      } else {
+        top = new THREE.Color(0xaaccff); bottom = new THREE.Color(0x221a1a);
+      }
+      const mat = new THREE.ShaderMaterial({
+        side: THREE.BackSide,
+        uniforms: { topCol: { value: top }, botCol: { value: bottom } },
+        vertexShader: `varying vec3 v; void main(){ v = normalize(position); gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0); }`,
+        fragmentShader: `varying vec3 v; uniform vec3 topCol; uniform vec3 botCol; void main(){ float t = v.y * 0.5 + 0.5; gl_FragColor = vec4(mix(botCol, topCol, t), 1.0); }`,
+      });
+      envScene.add(new THREE.Mesh(geom, mat));
+      const envMap = pmrem.fromScene(envScene, 0.04).texture;
+      pmrem.dispose();
+      geom.dispose();
+      mat.dispose();
+      return envMap;
     },
     setUnderwater(active = true, opts = {}) {
       if (!this._underwaterPass) return;
       const u = this._underwaterPass.uniforms;
-      // active can be boolean or a 0..1 float.
-      u.uActive.value = typeof active === 'number' ? active : (active ? 1.0 : 0.0);
-      if (opts.color)   u.uColor.value.set(opts.color);
-      if (opts.distort !== undefined) u.uDistort.value = opts.distort;
-      if (opts.rays    !== undefined) u.uRays.value    = opts.rays;
-      // Store a water-plane Y marker for auto-submerge detection.
+      u.get("uActive").value = typeof active === 'number' ? active : (active ? 1.0 : 0.0);
+      if (opts.color)   u.get("uColor").value.set(opts.color);
+      if (opts.distort !== undefined) u.get("uDistort").value = opts.distort;
+      if (opts.rays    !== undefined) u.get("uRays").value    = opts.rays;
       if (opts.waterY !== undefined) this._waterPlaneY = opts.waterY;
       this._underwaterAuto = opts.auto !== false;
     },
     _updateLensFlareSun() {
       if (!this._lensFlarePass || !this._lensFlareSun) return;
       const projected = this._lensFlareSun.clone().project(this.camera);
-      // THREE.Vector3.project gives NDC coords in [-1, 1]; convert to [0, 1].
       const onScreen = projected.z < 1.0;
       const sx = projected.x * 0.5 + 0.5;
       const sy = projected.y * 0.5 + 0.5;
-      this._lensFlarePass.uniforms.uSunScreen.value.set(sx, sy);
-      // Simple raycast occlusion: fire a ray from camera toward sun; if
-      // anything lies between the camera and the sun, reduce occlusion.
+      this._lensFlarePass.uniforms.get("uSunScreen").value.set(sx, sy);
       let occ = onScreen ? 1.0 : 0.0;
       if (onScreen && this._lensFlareOcclusion && this._rayOcclusion) {
         const hits = this._rayOcclusion(this._lensFlareSun);
-        if (hits) occ *= 0.15;   // glimpse through edges
+        if (hits) occ *= 0.15;
       }
-      this._lensFlarePass.uniforms.uOcclusion.value = occ;
+      this._lensFlarePass.uniforms.get("uOcclusion").value = occ;
     },
     _rayOcclusion(sunWorldPos) {
       // Cheap occlusion test — cast from camera to sun, return true if any
@@ -3332,9 +3484,6 @@ export default {
     },
     _updateUnderwater() {
       if (!this._underwaterPass || !this._underwaterAuto) return;
-      // Prefer explicit waterY; otherwise auto-detect the highest tagged
-      // water plane in the scene so `setUnderwater({auto:true})` works
-      // without manual Y bookkeeping.
       let planeY = this._waterPlaneY;
       if (planeY === undefined) {
         let highest = -Infinity;
@@ -3347,18 +3496,15 @@ export default {
         if (highest !== -Infinity) planeY = highest;
       }
       if (planeY === undefined) return;
-      // Smooth transition band: fade underwater effect over a 20cm window
-      // as the camera crosses the plane.
       const dy = this.camera.position.y - planeY;
       const t = 1.0 - Math.min(1.0, Math.max(0.0, (dy + 0.1) / 0.2));
-      this._underwaterPass.uniforms.uActive.value = t;
+      this._underwaterPass.uniforms.get("uActive").value = t;
     },
     setScreenDroplets(density = 1.0, opts = {}) {
-      // density: 0 off, 1 heavy rain. opts: { speed, size }
       if (!this._dropletPass) return;
-      this._dropletPass.uniforms.uDensity.value = density;
-      if (opts.speed !== undefined) this._dropletPass.uniforms.uSpeed.value = opts.speed;
-      if (opts.size !== undefined)  this._dropletPass.uniforms.uSize.value = opts.size;
+      this._dropletPass.uniforms.get("uDensity").value = density;
+      if (opts.speed !== undefined) this._dropletPass.uniforms.get("uSpeed").value = opts.speed;
+      if (opts.size !== undefined)  this._dropletPass.uniforms.get("uSize").value = opts.size;
     },
     applyEnvironmentPreset(presetName) {
       const p = this._presets[presetName];
@@ -3413,8 +3559,9 @@ export default {
       }
       this.scene.fog.color.set(p.fog.color);
       this._targetFogDensity = p.fog.density;
-      if (this._bloomPass) {
-        this._bloomPass.strength = p.bloomStrength;
+      if (this._bloomPass && p.bloomStrength !== undefined) {
+        // postprocessing BloomEffect uses .intensity, not .strength.
+        this._bloomPass.intensity = p.bloomStrength;
       }
       this._sunRays.visible = false;
       this.renderer.toneMappingExposure = p.exposure * this.lightIntensity;
@@ -3583,10 +3730,12 @@ export default {
           (this._targetFogDensity - this.scene.fog.density) * dt * 0.5;
         for (const cb of this._updateCallbacks) cb({ deltaTime: dt, time: t });
         if (this.controls) this.controls.update();
-        if (this._dropletPass) this._dropletPass.uniforms.uTime.value = t;
-        if (this._grainPass) this._grainPass.uniforms.uTime.value = t;
-        if (this._underwaterPass) this._underwaterPass.uniforms.uTime.value = t;
-        if (this._lensFlarePass) this._lensFlarePass.uniforms.uTime.value = t;
+        // CSM must update its cascade frustums each frame so the shadow
+        // maps stay aligned with the moving camera.
+        if (this._csm) this._csm.update();
+        // uTime on each Effect is advanced in its update() hook
+        // (postprocessing calls Effect.update every frame with deltaTime).
+        // Nothing to do here for the merged effect chain.
         // Project lens-flare sun to screen space each frame, auto-
         // submerge the underwater pass when the camera crosses a marked
         // water plane, and track DoF focus to the orbit target so the
@@ -3651,28 +3800,31 @@ export default {
       if (!this.scene) return;
       this._updateCallbacks = [];
       // Reset post-FX that a previous scene might have enabled.
-      if (this._dropletPass) this._dropletPass.uniforms.uDensity.value = 0;
+      if (this._dropletPass) this._dropletPass.uniforms.get("uDensity").value = 0;
       if (this._grainPass) {
-        this._grainPass.uniforms.uStrength.value = 0.04;
-        this._grainPass.uniforms.uVignette.value = 0.25;
+        this._grainPass.uniforms.get("uStrength").value = 0.04;
+        this._grainPass.uniforms.get("uVignette").value = 0.25;
       }
-      if (this._chromaPass) this._chromaPass.uniforms.uStrength.value = 0;
-      if (this._bokehPass) {
-        this._bokehPass.uniforms.aperture.value = 0;
-        this._bokehPass.enabled = false;
+      if (this._chromaPass) this._chromaPass.uniforms.get("uStrength").value = 0;
+      if (this._dofEffect) {
+        this._dofEffect.bokehScale = 0;
+        this._dofFixedFocus = undefined;
       }
       if (this._gradePass) {
         const u = this._gradePass.uniforms;
-        u.uHueShift.value = 0; u.uSaturation.value = 1; u.uContrast.value = 1;
-        u.uLift.value.set(0x000000); u.uGain.value.set(0xffffff);
+        u.get("uHueShift").value = 0;
+        u.get("uSaturation").value = 1;
+        u.get("uContrast").value = 1;
+        u.get("uLift").value.set(0x000000);
+        u.get("uGain").value.set(0xffffff);
       }
       if (this._lensFlarePass) {
-        this._lensFlarePass.uniforms.uStrength.value = 0;
+        this._lensFlarePass.uniforms.get("uStrength").value = 0;
         this._lensFlareSun = null;
         this._lensFlareOcclusion = false;
       }
       if (this._underwaterPass) {
-        this._underwaterPass.uniforms.uActive.value = 0;
+        this._underwaterPass.uniforms.get("uActive").value = 0;
         this._waterPlaneY = undefined;
         this._underwaterAuto = false;
       }
@@ -3686,13 +3838,18 @@ export default {
         }
       });
       for (const obj of toRemove) {
+        // Deep-dispose including any BVH boundsTrees we built.
+        obj.traverse?.((n) => {
+          if (n.geometry) {
+            n.geometry.disposeBoundsTree?.();
+            n.geometry.dispose?.();
+          }
+          if (n.material) {
+            if (Array.isArray(n.material)) n.material.forEach((m) => m.dispose?.());
+            else n.material.dispose?.();
+          }
+        });
         this.scene.remove(obj);
-        if (obj.geometry) obj.geometry.dispose?.();
-        if (obj.material) {
-          if (Array.isArray(obj.material))
-            obj.material.forEach((m) => m.dispose?.());
-          else obj.material.dispose?.();
-        }
       }
       this.resetCamera();
     },
@@ -3736,6 +3893,9 @@ export default {
       }
 
       // ── Material enhancement pass ──
+      // `this` is rebound inside the non-arrow traverse callback, so
+      // capture the component reference for _csm / _bloomPass access.
+      const self = this;
       let renderOrderCounter = 10;
       obj.traverse(function (n) {
         if (n.isMesh && n.material) {
@@ -3798,6 +3958,29 @@ export default {
           }
           n.castShadow = true;
           n.receiveShadow = true;
+          // three-mesh-bvh: build an accelerated BVH for any geometry
+          // with >500 triangles. Below that the overhead of building
+          // the BVH outweighs the raycast speedup. The BVH is used by
+          // the patched Mesh.prototype.raycast (installed at module
+          // load) and speeds up the lens-flare occlusion sweep plus
+          // any physics/pick work the generator wires up.
+          if (n.geometry && !n.geometry.boundsTree) {
+            const tris = (n.geometry.index ? n.geometry.index.count : n.geometry.attributes.position?.count || 0) / 3;
+            if (tris > 500) {
+              try { n.geometry.computeBoundsTree({ maxLeafSize: 10 }); } catch (_) {}
+            }
+          }
+          // CSM: patch every receiving material so it samples from the
+          // cascaded shadow maps instead of the legacy directional map.
+          // Idempotent — setupMaterial tags the material and skips if
+          // already patched.
+          if (self._csm && n.material && !n.material.userData?.csmPatched) {
+            try {
+              self._csm.setupMaterial(n.material);
+              n.material.userData = n.material.userData || {};
+              n.material.userData.csmPatched = true;
+            } catch (_) {}
+          }
         }
       });
       // Gentle bloom boost for generated objects
@@ -3864,16 +4047,18 @@ export default {
         // Now clear runs first so the new module's callbacks survive.
         if (mode === "replace") this.clear();
 
-        // Baseline cinematic post-FX stack — same values the default orrery
-        // uses. Applied BEFORE generate() so the LLM doesn't need to call
-        // every setter; if it does call one, its value wins (setters
-        // overwrite). This guarantees every generation inherits film grain,
-        // chromatic aberration, colour grade, and auto-focus DoF.
-        this.setFilmGrain(0.035, 0.35);
-        this.setChromatic(0.22, 2.2);
-        this.setColorGrade({ saturation: 1.12, contrast: 1.04 });
-        this.setDoF({ aperture: 0.006, maxblur: 0.006 });
+        // Baseline AAA post stack — barely-perceptible on each axis
+        // so the composite reads as "cinematic" rather than "blurry
+        // frame with RGB fringing." Generator code can override any
+        // of these per scene. DoF defaults to OFF so scenes only get
+        // bokeh when they explicitly opt in.
+        this.setFilmGrain(0.025, 0.22);
+        this.setChromatic(0.08, 2.2);
+        this.setColorGrade({ saturation: 1.08, contrast: 1.02 });
+        this.setDoF({ aperture: 0.0, maxblur: 0.0 });
         this.setUnderwater(false, { auto: true, color: 0x1a3860, distort: 0.005, rays: 0.45 });
+        this.setAO({ radius: 0.6, intensity: 2.5, falloff: 0.25, quality: "High" });
+        this.setBloom({ intensity: 0.7, threshold: 0.9, smoothing: 0.15, radius: 0.6 });
 
         const addUpdateCallback = (cb) => {
           if (typeof cb === "function") this._updateCallbacks.push(cb);
@@ -3919,6 +4104,9 @@ export default {
           setLensFlare:    (opts) => this.setLensFlare(opts),
           setUnderwater:   (active, opts) => this.setUnderwater(active, opts),
           setEnvironment:  (url, opts) => this.setEnvironment(url, opts),
+          // New AAA setters: AO + bloom are live-tunable per generation.
+          setAO:           (opts) => this.setAO(opts),
+          setBloom:        (opts) => this.setBloom(opts),
           _engine,
         };
         const result = await Promise.race([

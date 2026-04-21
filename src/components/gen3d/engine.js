@@ -2202,6 +2202,59 @@ export function makeLibs({ THREE, addUpdateCallback }) {
   // scene's feel. These are Mancini-style "fake-it-cheaply" primitives.
   // ═══════════════════════════════════════════════════════════════════════
   const FX = {
+    // FX.batch([meshes], { material? }) — collapse N meshes of varying
+    // geometry into a single THREE.BatchedMesh (r168+) draw call. The
+    // input meshes are absorbed: their geometries are copied into the
+    // batch, their transforms preserved, and the originals are detached
+    // from their parents. Use for scatter/debris/foliage where you want
+    // the silhouette of varied props with the perf of a single draw.
+    // Falls back to a normal Group if BatchedMesh isn't available.
+    batch(meshes, opts = {}) {
+      if (!Array.isArray(meshes) || meshes.length === 0) return new THREE.Group();
+      if (typeof THREE.BatchedMesh !== 'function') {
+        // Older three build — fall back to grouping everything.
+        const g = new THREE.Group();
+        for (const m of meshes) g.add(m);
+        return g;
+      }
+      // Pre-scan: totals for BatchedMesh capacity.
+      let vertCount = 0, indexCount = 0;
+      for (const m of meshes) {
+        if (!m || !m.geometry) continue;
+        vertCount += m.geometry.attributes.position.count;
+        indexCount += m.geometry.index ? m.geometry.index.count : m.geometry.attributes.position.count;
+      }
+      // Shared material — the batch renders every geometry with ONE
+      // material. Pull from the first mesh by default; caller can
+      // override via opts.material.
+      const mat = opts.material || meshes[0].material || new THREE.MeshStandardMaterial({ color: 0xcccccc });
+      const batched = new THREE.BatchedMesh(meshes.length, vertCount, indexCount, mat);
+      batched.castShadow = true;
+      batched.receiveShadow = true;
+      const m4 = new THREE.Matrix4();
+      for (const src of meshes) {
+        if (!src || !src.geometry) continue;
+        const geomClone = src.geometry.clone();
+        if (!geomClone.index) geomClone.setIndex(
+          [...Array(geomClone.attributes.position.count).keys()]
+        );
+        // BatchedMesh API (r168+): addGeometry registers the geometry
+        // and returns a geometryId; addInstance(geometryId) registers
+        // an instance slot and returns the instanceId that setMatrixAt
+        // expects. Skipping addInstance makes setMatrixAt throw with
+        // "Invalid instanceId" because the instance array is still
+        // empty.
+        const geomId = batched.addGeometry(geomClone);
+        const instanceId = batched.addInstance(geomId);
+        src.updateMatrix();
+        m4.copy(src.matrix);
+        batched.setMatrixAt(instanceId, m4);
+        // Detach from any parent so the caller doesn't accidentally
+        // keep the old un-batched copy around.
+        if (src.parent) src.parent.remove(src);
+      }
+      return batched;
+    },
     // Volumetric god rays via a cone mesh with radial-falloff additive
     // shader. Zero post-process cost, works through windows/portals, no
     // render target needed. Mancini's preferred technique — he noted
