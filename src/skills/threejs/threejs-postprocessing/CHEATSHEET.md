@@ -14,12 +14,17 @@ setBloom({ intensity: 0.8, threshold: 0.85 })
 
 ## Overrides worth calling
 setLensFlare({ position: Vector3, strength: 0.6, occlusionTest: true, tint?, anamorphic? })
-setScreenDroplets(density, { speed?, size? })      // 0..1
+setScreenDroplets(density, { speed?, size? })      // 0..1 — lens rain
 setColorGrade({ hue?, saturation?, contrast?, lift?, gain? })
 setDoF({ aperture: 0.015 })                        // stronger product-shot blur
 setAO({ radius: 1.2, intensity: 5.0, quality: "Ultra" })
 setBloom({ intensity: 1.4, threshold: 0.6 })
 await setEnvironment("studio" | "day" | "sunset" | "night" | url, { background?, intensity? })
+setHeightFog({ color: 0x0a0a14, density: 0.025, distortion: 1.0, scale: 0.04,
+               direction: { x: 0.02, y: 0, z: 0.03 },
+               boundsMin?: Vector3, boundsMax?: Vector3 })
+    // Faraz-style domain-warped fBm fog; inherits into every material.
+    // Pair with setScreenDroplets() for matched weather atmospherics.
 
 ## DO NOT
 Do NOT import EffectComposer, UnrealBloomPass, BokehPass, SMAAPass,
@@ -32,3 +37,33 @@ FX.withGlow(mesh, color, { scale: 1.08, intensity: 1.3 })   // fresnel shell blo
 FX.godRayCone({ from: Vector3, to: Vector3, color, spread?, intensity? })
 FX.scatter(targetMesh, protoMesh, count, { scaleRange?, alignToNormal?, rotateY? })
 FX.batch([meshes], { material? })                   // BatchedMesh single-draw-call pile
+
+## Liquids — use these, never hand-roll
+FLUID.tieredFountain({ tiers: 3, baseRadius: 0.5, spacing: 0.32, pillar: true,
+                       waterColor: 0x5fb4ff, rim: MAT.gold })
+    // Complete cascading fountain in ONE call: bowls + central pillar +
+    // pouring streams between tiers. Do NOT hand-roll fountain bowls.
+FLUID.fountainBasin({ radius: 0.5, y: 0 })  // single bowl + water pool
+FLUID.oceanWater(geometry, { color: 0x0a86c8, ... })  // flat pool / moat
+FLUID.stream({ from: Vector3, to: Vector3, radius: 0.02, color: 0x88d8ff })
+H.fillLiquid(vesselMesh, color, { fillLevel: 0.6 })   // liquid inside a container
+FLUID.upgradeFill(result)                             // add animated ripples
+
+## Advanced materials (Faraz Shaikh port — TCSM + glNoise)
+SHADER.csm({ base?: THREE.MeshPhysicalMaterial, vert?: string, frag?: string,
+             uniforms?: {}, patchMap?: {}, baseOpts?: {} })
+    // CustomShaderMaterial wrapper. Your GLSL can write csm_DiffuseColor,
+    // csm_Roughness, csm_Metalness, csm_Emissive, csm_Normal, csm_Bump,
+    // csm_Position, csm_Clearcoat, csm_Transmission, csm_Iridescence,
+    // csm_Sheen — TCSM injects them into the correct chunks. glNoise's
+    // gln_sfbm / gln_simplex / gln_worley / gln_voronoi / gln_GerstnerWave
+    // are auto-prepended when referenced.
+
+SHADER.wetSurface({ color?, rainFactor?, puddleScale?, puddleBias?,
+                    rippleScale?, rippleSpeed?, rippleStrength? })
+    // Port of Faraz's rain puddle material. Returns a CSM-wrapped
+    // MeshPhysicalMaterial that procedurally carves fBm puddle zones,
+    // generates radial ripple normals inside them, and drops roughness
+    // so wet spots become sharp reflectors. Use on floors/roads/plazas
+    // when the scene is rainy; pair with setScreenDroplets for
+    // matched lens rain.

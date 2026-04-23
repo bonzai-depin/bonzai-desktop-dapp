@@ -8,6 +8,13 @@
  * small: `const { MAT, TEX, SHADER, FLUID, P } = makeLibs({ THREE, addUpdateCallback, root });`
  */
 import { Water } from 'three/examples/jsm/objects/Water.js';
+// Faraz Shaikh's toolkit — TCSM patches built-in PBR materials with
+// custom shader snippets (csm_DiffuseColor, csm_Roughness, csm_Bump, etc.),
+// glNoise provides the shared GLSL noise functions, shader-baker bakes a
+// material's output into a CanvasTexture for static procedurals.
+import CustomShaderMaterial from 'three-custom-shader-material/vanilla';
+import { patchShaders } from 'gl-noise/build/glNoise.m.js';
+import { ShaderBaker } from 'three-shader-baker';
 
 // Shared soft-disc sprite — same canvas-built gradient the ThreeViewer
 // helpers use. Each Points material we build references this so particles
@@ -1203,6 +1210,143 @@ export function makeLibs({ THREE, addUpdateCallback }) {
       registerShader(mat);
       return pts;
     },
+
+    // ─── Faraz Shaikh's TCSM foundation ───────────────────────────────
+    // SHADER.csm({ base, vert, frag, uniforms, patchMap }) wraps any
+    // built-in PBR material in a CustomShaderMaterial. Your GLSL snippets
+    // reference outputs like csm_DiffuseColor / csm_Roughness / csm_Bump
+    // / csm_Emissive / csm_Position / csm_Normal and TCSM injects them
+    // into the correct shader chunks. glNoise's patchShaders() prepends
+    // gln_fbm / gln_simplex / gln_worley / gln_voronoi / gln_GerstnerWave
+    // whenever your shader references them.
+    //
+    //   const mat = SHADER.csm({
+    //     base: THREE.MeshPhysicalMaterial,
+    //     uniforms: { uTime: { value: 0 } },
+    //     frag: `
+    //       uniform float uTime;
+    //       void main() {
+    //         float n = gln_sfbm(vPosition.xy * 4.0, gln_SFBMOpts(1.0, 2.0, 0.5, 5, 2.0, false));
+    //         csm_DiffuseColor = vec4(vec3(n), 1.0);
+    //       }
+    //     `,
+    //   });
+    //
+    csm(opts = {}) {
+      const baseMaterial = opts.base || THREE.MeshPhysicalMaterial;
+      const baseOpts = opts.baseOpts || {};
+      // TCSM forwards its full opts object's setValues() call into the
+      // base material when constructing — so `silent` (a TCSM option
+      // that mutes patchMap warnings) leaks into THREE.Material and
+      // triggers a warning. Keep TCSM ctor options separate from
+      // baseOpts so only the real material properties reach the base.
+      const mat = new CustomShaderMaterial({
+        baseMaterial,
+        vertexShader: opts.vert ? patchShaders(opts.vert) : undefined,
+        fragmentShader: opts.frag ? patchShaders(opts.frag) : undefined,
+        uniforms: opts.uniforms || {},
+        patchMap: opts.patchMap,
+        ...baseOpts,
+      });
+      if (opts.uniforms?.uTime) registerShader(mat);
+      return mat;
+    },
+
+    // ─── Wet-surface (rain puddles) — port of demo-2023-rain-puddle ───
+    // SHADER.wetSurface({ color, rainFactor, puddleScale, rippleScale, ... })
+    // returns a CustomShaderMaterial on top of MeshPhysicalMaterial that
+    // carves procedural puddle zones from fBm, generates radial ripple
+    // normals, drops roughness to ~0.1 inside puddles, and blends
+    // everything by uRainFactor so the surface can transition dry→wet.
+    // Pair with setScreenDroplets() to drive both lens-rain and ground
+    // wetness from a single state for full weather sync.
+    wetSurface(opts = {}) {
+      const color = new THREE.Color(opts.color ?? 0x4a4a50);
+      const uniforms = {
+        uTime:         { value: 0 },
+        uRainFactor:   { value: opts.rainFactor ?? 1.0 },
+        uPuddleScale:  { value: opts.puddleScale ?? 15.0 },
+        uPuddleBias:   { value: opts.puddleBias  ?? 0.35 },
+        uRippleScale:  { value: opts.rippleScale ?? 8.0 },
+        uRippleSpeed:  { value: opts.rippleSpeed ?? 1.0 },
+        uRippleStr:    { value: opts.rippleStrength ?? 0.35 },
+      };
+      const vert = `
+        varying vec3 vWorldPos;
+        void main() {
+          vec4 wp = modelMatrix * vec4(position, 1.0);
+          vWorldPos = wp.xyz;
+        }`;
+      const frag = `
+        uniform float uTime, uRainFactor;
+        uniform float uPuddleScale, uPuddleBias;
+        uniform float uRippleScale, uRippleSpeed, uRippleStr;
+        varying vec3 vWorldPos;
+
+        // Cheap hash for per-cell ripple seeds.
+        float h2(vec2 p){ return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453); }
+
+        // Single radial ripple height at offset d from origin, phased.
+        float ripple(float d, float phase) {
+          float r = exp(-d * 2.8) * sin(31.0 * d - phase) * 0.5 + 0.5;
+          return r * smoothstep(0.0, 0.15, d) * smoothstep(1.0, 0.6, d);
+        }
+
+        // Integrate ripples over 1-ring neighborhood of cell ID.
+        float ripplesAt(vec2 uv, float t) {
+          vec2 cell = floor(uv);
+          vec2 local = fract(uv);
+          float h = 0.0;
+          for (int dy = -1; dy <= 1; dy++) {
+            for (int dx = -1; dx <= 1; dx++) {
+              vec2 cId = cell + vec2(float(dx), float(dy));
+              vec2 center = vec2(float(dx), float(dy)) + vec2(h2(cId), h2(cId + 3.7));
+              vec2 d = local - center;
+              float phase = uTime * uRippleSpeed + h2(cId + 7.1) * 6.283;
+              h += ripple(length(d), phase);
+            }
+          }
+          return h / 9.0;
+        }
+
+        void main() {
+          // 1) Puddle mask from fBm — organic wet zones.
+          // gln_tFBMOpts(seed, persistance, lacunarity, redistribution,
+          //              scale, octaves, terbulance, ridge)
+          gln_tFBMOpts opts = gln_tFBMOpts(1.0, 0.5, 2.0, 1.0, 1.0, 4, false, false);
+          float nz = gln_sfbm(vWorldPos.xz * uPuddleScale * 0.1, opts);
+          float puddle = smoothstep(uPuddleBias, uPuddleBias + 0.25, nz) * uRainFactor;
+
+          // 2) Ripple height field inside puddle regions.
+          vec2 rippleUv = vWorldPos.xz * uRippleScale;
+          float h = ripplesAt(rippleUv, uTime) * uRippleStr * puddle;
+          // Numerical derivative → normal bump.
+          float e = 0.02;
+          float hx = ripplesAt(rippleUv + vec2(e, 0.0), uTime) * uRippleStr * puddle;
+          float hz = ripplesAt(rippleUv + vec2(0.0, e), uTime) * uRippleStr * puddle;
+          vec3 bumpN = normalize(vec3(h - hx, e, h - hz) / e);
+
+          // 3) Write CSM outputs. Roughness drops in puddle zones so
+          //    wet areas become sharp reflectors; normal blends toward
+          //    the ripple normal (world-space via csm_FragNormal —
+          //    TCSM v6 does not support csm_Bump); base color darkens.
+          csm_FragNormal = normalize(mix(vec3(0.0, 1.0, 0.0), bumpN, puddle));
+          csm_Roughness = mix(1.0, 0.08, puddle);
+          csm_DiffuseColor.rgb *= mix(1.0, 0.72, puddle);
+        }`;
+      const mat = new CustomShaderMaterial({
+        baseMaterial: opts.base || THREE.MeshPhysicalMaterial,
+        vertexShader: patchShaders(vert),
+        fragmentShader: patchShaders(frag),
+        uniforms,
+        color,
+        roughness: 1.0,
+        metalness: 0.0,
+        ...(opts.baseOpts || {}),
+      });
+      registerShader(mat);
+      return mat;
+    },
   };
 
   // ═══════════════════════════════════════════════════════════════════════
@@ -1759,116 +1903,382 @@ export function makeLibs({ THREE, addUpdateCallback }) {
       });
       return fillGroup;
     },
+    // ─── Complete tiered fountain in ONE call ─────────────────────────
+    // Builds N stacked basins + central pillar + pouring streams between
+    // each tier, all positioned correctly. The bowls come from
+    // FLUID.fountainBasin (stone + rim + rippling water + pool floor),
+    // the streams from FLUID.stream (curved TubeGeometry with water
+    // material). Use this instead of hand-rolling bowl geometries.
+    //
+    //   root.add(FLUID.tieredFountain({ tiers: 3, baseRadius: 0.55 }));
+    //
+    // opts:
+    //   tiers:       number of basins (default 3)
+    //   baseRadius:  bottom basin radius (default 0.5)
+    //   taper:       per-tier shrink factor (default 0.55)
+    //   spacing:     vertical spacing between tier rims (default 0.32)
+    //   pillar:      true/false — add central brass column (default true)
+    //   waterColor:  pool water color (default 0x5fb4ff)
+    //   rim:         MAT preset for rims (default MAT.gold)
+    tieredFountain(opts = {}) {
+      const tiers = Math.max(1, Math.min(opts.tiers ?? 3, 5));
+      const baseR = opts.baseRadius ?? 0.5;
+      const taper = opts.taper ?? 0.55;
+      const spacing = opts.spacing ?? 0.32;
+      const waterColor = opts.waterColor ?? 0x5fb4ff;
+      const rimMat = opts.rim || MAT.gold;
+      const group = new THREE.Group();
+      group.name = "TieredFountain";
+
+      // Build each basin and remember its rim world position for streams.
+      const rims = [];
+      for (let i = 0; i < tiers; i++) {
+        const r = baseR * Math.pow(taper, i);
+        const y = i * spacing;
+        const basin = FLUID.fountainBasin({
+          radius: r,
+          y,
+          depth: 0.12 * Math.max(0.6, 1 - i * 0.15),
+          rim: rimMat,
+          waterColor,
+        });
+        group.add(basin);
+        // fountainBasin's rim sits at y + depth; record for streaming.
+        rims.push({ r, y: y + 0.12 * Math.max(0.6, 1 - i * 0.15) });
+      }
+
+      // Central pillar connecting all tiers vertically.
+      if (opts.pillar !== false) {
+        const pillarH = (tiers - 1) * spacing + 0.04;
+        const pillar = new THREE.Mesh(
+          new THREE.CylinderGeometry(0.035, 0.05, pillarH, 24),
+          opts.pillarMat || MAT.brass
+        );
+        pillar.position.y = pillarH / 2;
+        pillar.castShadow = true;
+        group.add(pillar);
+      }
+
+      // Streams — top rim pours down to the next tier's inside edge,
+      // and so on down the cascade. Four streams per pair, spaced
+      // radially, so the water looks like a real cascade rather than
+      // a single column.
+      const streamsPerTier = 4;
+      for (let i = tiers - 1; i > 0; i--) {
+        const top = rims[i];
+        const bot = rims[i - 1];
+        for (let s = 0; s < streamsPerTier; s++) {
+          const a = (s / streamsPerTier) * Math.PI * 2 + 0.2;
+          const fx = Math.cos(a), fz = Math.sin(a);
+          const from = new THREE.Vector3(
+            fx * top.r * 0.95, top.y + 0.005, fz * top.r * 0.95
+          );
+          const to = new THREE.Vector3(
+            fx * bot.r * 0.6, bot.y + 0.02, fz * bot.r * 0.6
+          );
+          const stream = FLUID.stream({
+            from, to, radius: 0.012,
+            color: waterColor,
+          });
+          group.add(stream);
+        }
+      }
+      return group;
+    },
     // ─── MESH-BASED WATER (the one you should use for fountains) ───────
     // stream: curved TubeGeometry from A to B, water shader applied.
     // Looks like a real flowing column — not point spray.
     stream(opts = {}) {
       const radius = opts.radius ?? 0.035;
-      const segments = opts.segments ?? 48;
-      const radialSegs = opts.radialSegs ?? 16;
-      // Accept multiple input shapes: explicit `curve`, a Curve passed as
-      // `from` (common LLM pattern), an array of points, or the canonical
-      // `{from: Vector3, to: Vector3}` pair.
-      let curve, from, to;
-      const maybeCurve = opts.curve || (opts.from && typeof opts.from.getPoint === 'function' ? opts.from : null);
-      const maybePoints = Array.isArray(opts.points) ? opts.points
-        : (Array.isArray(opts.from) ? opts.from : null);
-      if (maybeCurve) {
-        curve = maybeCurve;
-        from = curve.getPoint(0);
-        to = curve.getPoint(1);
-      } else if (maybePoints && maybePoints.length >= 2) {
-        curve = new THREE.CatmullRomCurve3(maybePoints.map(p => p.clone ? p.clone() : new THREE.Vector3(p.x, p.y, p.z)));
-        from = maybePoints[0];
-        to = maybePoints[maybePoints.length - 1];
-      } else {
-        from = opts.from || new THREE.Vector3(0, 1, 0);
-        to = opts.to || new THREE.Vector3(0, 0, 0);
-        // Slight lateral arc so the stream reads as falling, not dropping.
-        const mid = from.clone().lerp(to, 0.5);
-        mid.add(new THREE.Vector3((to.x - from.x) * 0.15, 0, (to.z - from.z) * 0.15));
-        curve = new THREE.CatmullRomCurve3([from.clone(), mid, to.clone()]);
-      }
-      const geom = new THREE.TubeGeometry(curve, segments, radius, radialSegs, false);
-      // Per-vertex taper: narrow the bottom 30% so the stream tapers naturally.
-      const pos = geom.attributes.position;
-      for (let s = 0; s <= segments; s++) {
-        const t = s / segments;
-        const taper = 1.0 - t * 0.35;
-        // The center of each ring of 'radialSegs+1' verts is at the curve point.
-        const ringCenter = curve.getPoint(t);
-        for (let j = 0; j <= radialSegs; j++) {
-          const idx = s * (radialSegs + 1) + j;
-          const x = pos.getX(idx), y = pos.getY(idx), z = pos.getZ(idx);
-          const dx = x - ringCenter.x, dy = y - ringCenter.y, dz = z - ringCenter.z;
-          pos.setXYZ(idx, ringCenter.x + dx * taper, ringCenter.y + dy * taper, ringCenter.z + dz * taper);
-        }
-      }
-      geom.computeVertexNormals();
-      // Stream-tuned water material. The shader's vertex displacement on
-      // a tube surface produces a sausage-link effect at normal
-      // amplitudes — streams need near-zero displacement so the tube
-      // stays smooth, plus a higher transmission so the column looks
-      // clear (not a thick blue noodle).
-      const mat = waterMaterial({
-        color: opts.color || 0x88d8ff,
-        deep: opts.deep || 0x1a5a8a,
-        waveAmp: opts.waveAmp ?? 0.001,       // was 0.012 — way too crinkled
-        waveFreq: opts.waveFreq ?? 24.0,
-        flow: [0, -1, 0],
-        foamThreshold: 0.9,                    // only flash foam at crests
-        thickness: 0.15,
-        transmission: 0.85,                    // clearer glass column
-        roughness: 0.06,
-      });
-      const mesh = new THREE.Mesh(geom, mat);
-      mesh.castShadow = false; mesh.receiveShadow = false;
-      // Optional accent droplets — faint particles around the stream axis.
-      const dropCount = opts.droplets ?? 60;
-      if (dropCount > 0) {
-        const dropGeom = new THREE.BufferGeometry();
-        const dpos = new Float32Array(dropCount * 3);
-        const dvel = new Float32Array(dropCount);
-        for (let i = 0; i < dropCount; i++) {
-          const t = Math.random();
-          const p = curve.getPoint(t);
-          dpos[i * 3] = p.x + (Math.random() - 0.5) * radius * 2.5;
-          dpos[i * 3 + 1] = p.y;
-          dpos[i * 3 + 2] = p.z + (Math.random() - 0.5) * radius * 2.5;
-          dvel[i] = 0.8 + Math.random() * 0.4;
-        }
-        dropGeom.setAttribute('position', new THREE.BufferAttribute(dpos, 3));
-        const dropMat = new THREE.PointsMaterial({
-          color: opts.color || 0xbfe8ff,
-          size: radius * 0.8,
-          transparent: true,
-          opacity: 0.75,
-          map: SOFT, alphaTest: 0.01,
-          sizeAttenuation: true,
-          depthWrite: false,
-          blending: THREE.AdditiveBlending,
-        });
-        const drops = new THREE.Points(dropGeom, dropMat);
-        const yTop = from.y, yBottom = to.y;
-        addUpdateCallback?.(({ deltaTime }) => {
-          const arr = dropGeom.attributes.position.array;
-          for (let i = 0; i < dropCount; i++) {
-            arr[i * 3 + 1] -= dvel[i] * deltaTime * (yTop - yBottom);
-            if (arr[i * 3 + 1] < yBottom) {
-              const t = Math.random();
-              const p = curve.getPoint(t);
-              arr[i * 3] = p.x + (Math.random() - 0.5) * radius * 2.5;
-              arr[i * 3 + 1] = yTop - Math.random() * 0.05;
-              arr[i * 3 + 2] = p.z + (Math.random() - 0.5) * radius * 2.5;
-            }
+      // STYLIZED WATERFALL SHEET — replaces the old thick-tube stream.
+      // References: turtlefalls.vercel.app (vertical streak pattern),
+      // Anderson Mancini's stylized water portfolio (fresnel + streaks),
+      // Faraz Shaikh's water-simulation (UV-scroll noise layering).
+      // See /src/skills/threejs/recipes/water.md for technique notes.
+      //
+      // Components:
+      //   1. A double-sided vertical sheet (PlaneGeometry rotated to face
+      //      the camera orbit) authored flat-on vertical; carries a
+      //      waterfall shader with gravity-accelerated streak scrolling,
+      //      foam caps at top+bottom, edge fade.
+      //   2. A perpendicular cross-sheet so the waterfall reads as 3D
+      //      from any orbit angle.
+      //   3. Hundreds of small droplets scattered across the fall,
+      //      each accelerating downward under gravity, respawning at
+      //      the top when they pass the impact.
+      //   4. Foam disc + mist puff at the impact point.
+      let from, to;
+      if (opts.from && opts.from.isVector3) from = opts.from.clone();
+      else if (opts.from) from = new THREE.Vector3(opts.from.x ?? 0, opts.from.y ?? 1, opts.from.z ?? 0);
+      else from = new THREE.Vector3(0, 1, 0);
+      if (opts.to && opts.to.isVector3) to = opts.to.clone();
+      else if (opts.to) to = new THREE.Vector3(opts.to.x ?? 0, opts.to.y ?? 0, opts.to.z ?? 0);
+      else to = new THREE.Vector3(0, 0, 0);
+
+      const fallVec = to.clone().sub(from);
+      const fallLen = fallVec.length();
+      const width = (opts.width ?? opts.radius ?? 0.04) * 6.0;  // sheet is wider than old tube radius
+      const center = from.clone().lerp(to, 0.5);
+
+      // Waterfall shader — vertical streaks with gravity-accelerated scroll.
+      const waterfallMat = new THREE.ShaderMaterial({
+        uniforms: {
+          uTime:  { value: 0 },
+          uColor: { value: new THREE.Color(opts.color ?? 0xb8e8ff) },
+          uFoam:  { value: new THREE.Color(opts.foam  ?? 0xffffff) },
+          uAccel: { value: opts.accel ?? 1.0 },
+        },
+        transparent: true,
+        depthWrite: false,
+        side: THREE.DoubleSide,
+        blending: THREE.NormalBlending,
+        vertexShader: `
+          varying vec2 vUv;
+          void main() {
+            vUv = uv;
+            gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
           }
-          dropGeom.attributes.position.needsUpdate = true;
-        });
-        const group = new THREE.Group();
-        group.add(mesh); group.add(drops);
-        return group;
+        `,
+        fragmentShader: `
+          uniform float uTime;
+          uniform vec3  uColor;
+          uniform vec3  uFoam;
+          uniform float uAccel;
+          varying vec2  vUv;
+
+          float h(vec2 p){ return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453); }
+          float n2(vec2 p){
+            vec2 i = floor(p), f = fract(p);
+            f = f*f*(3.0 - 2.0*f);
+            return mix(mix(h(i), h(i + vec2(1,0)), f.x),
+                       mix(h(i + vec2(0,1)), h(i + vec2(1,1)), f.x), f.y);
+          }
+          float fbm(vec2 p){
+            float s = 0.0, a = 0.5;
+            for (int i = 0; i < 5; i++) { s += a * n2(p); p *= 2.0; a *= 0.5; }
+            return s;
+          }
+
+          void main() {
+            // vUv.y = 0 at BOTTOM of plane (three PlaneGeometry default),
+            // = 1 at TOP. fallT = 0 at top, 1 at bottom.
+            float fallT = 1.0 - vUv.y;
+
+            // Gravity accel: scroll speed ramps quadratically down the sheet.
+            float speed = mix(0.4, 2.4, fallT * fallT * uAccel);
+            float scrollY = uTime * speed;
+
+            // Vertical streaks — two noise layers at different scales,
+            // scrolled downward at the gravity-accelerated speed.
+            vec2 uvA = vec2(vUv.x * 6.0, vUv.y * 4.0 - scrollY);
+            vec2 uvB = vec2(vUv.x * 12.0 + 3.7, vUv.y * 8.0 - scrollY * 1.6);
+            float streaks = fbm(uvA) * 0.55 + fbm(uvB) * 0.45;
+
+            // Vertical stripe pattern — emulates the strand-of-water look
+            // from turtlefalls. Sharpened with pow, softened by noise.
+            float stripeBase = 0.5 + 0.5 * sin(vUv.x * 42.0 + fbm(uvA) * 4.0);
+            float stripes = pow(stripeBase, 4.0);
+
+            // Combined water intensity — higher values = brighter foam.
+            float water = smoothstep(0.35, 0.85, streaks);
+            water = max(water, stripes * 0.55);
+
+            // Foam caps — bright rim at TOP of fall (where water launches
+            // off the ledge) and at BOTTOM (impact splash).
+            float topFoam = smoothstep(0.0, 0.08, fallT)
+                          * (1.0 - smoothstep(0.08, 0.20, fallT)) * 1.5;
+            float botFoam = smoothstep(0.82, 1.0, fallT);
+            float foamMask = clamp(max(topFoam, botFoam), 0.0, 1.0);
+
+            vec3 col = mix(uColor, uFoam, water * 0.65 + foamMask * 0.9);
+
+            // Horizontal edge softness — sheet fades at the left/right
+            // borders so it doesn't cut off as a hard rectangle.
+            float edgeX = smoothstep(0.0, 0.08, vUv.x) * (1.0 - smoothstep(0.92, 1.0, vUv.x));
+            float alpha = edgeX * (0.45 + water * 0.55 + foamMask * 0.45);
+            // Top/bottom fade: start at ~0 near the very top so water
+            // emerges from the ledge, boost to ~1 approaching impact,
+            // then back off just past impact so the mist takes over.
+            alpha *= smoothstep(0.0, 0.05, fallT) * (1.0 - smoothstep(0.97, 1.0, fallT));
+
+            gl_FragColor = vec4(col, alpha);
+          }
+        `,
+      });
+      registerShader(waterfallMat);
+
+      // Two crossed vertical sheets so the waterfall reads as 3D from
+      // any orbit angle (no "paper-thin" side view).
+      const sheetGeom = new THREE.PlaneGeometry(width, fallLen, 1, 12);
+      const sheetA = new THREE.Mesh(sheetGeom, waterfallMat);
+      const sheetB = new THREE.Mesh(sheetGeom.clone(), waterfallMat);
+      sheetB.rotation.y = Math.PI / 2;
+
+      // Group carries both sheets; orient so plane up = fall direction.
+      const fallGroup = new THREE.Group();
+      fallGroup.add(sheetA);
+      fallGroup.add(sheetB);
+      fallGroup.position.copy(center);
+      // Align the group's local Y axis with fall direction (from → to).
+      const upVec = new THREE.Vector3(0, 1, 0);
+      const dir = fallVec.clone().normalize().negate();  // plane up = against fall
+      const q = new THREE.Quaternion().setFromUnitVectors(upVec, dir);
+      fallGroup.quaternion.copy(q);
+
+      // ─── Droplet particle system ───────────────────────────────────
+      // Hundreds of small droplets scattered along the fall axis, each
+      // accelerating downward. Respawn at the top when they pass the
+      // impact. Small point size + additive blending so droplets read
+      // as a fine mist, not chunky balls.
+      const dropCount = opts.droplets ?? 260;
+      const dropGeom = new THREE.BufferGeometry();
+      const dpos  = new Float32Array(dropCount * 3);
+      const dvel  = new Float32Array(dropCount); // downward speed
+      const dside = new Float32Array(dropCount * 2);  // lateral offset x/z
+      for (let i = 0; i < dropCount; i++) {
+        const t = Math.random();
+        dpos[i * 3]     = (Math.random() - 0.5) * width * 0.9;
+        dpos[i * 3 + 1] = -fallLen * 0.5 + t * fallLen;
+        dpos[i * 3 + 2] = (Math.random() - 0.5) * width * 0.3;
+        dvel[i]  = 0.6 + Math.random() * 1.2;
+        dside[i * 2]     = (Math.random() - 0.5) * 0.3;
+        dside[i * 2 + 1] = (Math.random() - 0.5) * 0.3;
       }
-      return mesh;
+      dropGeom.setAttribute('position', new THREE.BufferAttribute(dpos, 3));
+      const dropMat = new THREE.PointsMaterial({
+        color: opts.color ?? 0xd8f0ff,
+        size: width * 0.08,
+        transparent: true,
+        opacity: 0.8,
+        map: SOFT, alphaTest: 0.01,
+        sizeAttenuation: true,
+        depthWrite: false,
+        blending: THREE.AdditiveBlending,
+      });
+      const drops = new THREE.Points(dropGeom, dropMat);
+      fallGroup.add(drops);
+      // Update: gravity-accelerated fall in local fall-group coordinates.
+      addUpdateCallback?.(({ deltaTime, time }) => {
+        waterfallMat.uniforms.uTime.value = time;
+        const arr = dropGeom.attributes.position.array;
+        const accel = 4.5;   // m/s^2 in local units
+        for (let i = 0; i < dropCount; i++) {
+          dvel[i] += accel * deltaTime;
+          arr[i * 3 + 1] -= dvel[i] * deltaTime;
+          // Slight lateral drift for organic feel.
+          arr[i * 3]     += dside[i * 2]     * deltaTime * 0.04;
+          arr[i * 3 + 2] += dside[i * 2 + 1] * deltaTime * 0.04;
+          // Respawn at top when a drop passes the impact point.
+          if (arr[i * 3 + 1] < -fallLen * 0.55) {
+            arr[i * 3]     = (Math.random() - 0.5) * width * 0.9;
+            arr[i * 3 + 1] =  fallLen * 0.5 - Math.random() * fallLen * 0.12;
+            arr[i * 3 + 2] = (Math.random() - 0.5) * width * 0.3;
+            dvel[i] = 0.4 + Math.random() * 0.4;
+          }
+        }
+        dropGeom.attributes.position.needsUpdate = true;
+      });
+
+      // ─── Foam disc at impact ──────────────────────────────────────
+      // Circular disc at the bottom of the fall, shader-animated radial
+      // foam. Additive so it brightens the pool underneath.
+      const foamRadius = width * 1.6;
+      const foamMat = new THREE.ShaderMaterial({
+        uniforms: {
+          uTime:  { value: 0 },
+          uColor: { value: new THREE.Color(opts.foam ?? 0xffffff) },
+        },
+        transparent: true,
+        depthWrite: false,
+        side: THREE.DoubleSide,
+        blending: THREE.AdditiveBlending,
+        vertexShader: `
+          varying vec2 vUv;
+          void main(){ vUv = uv; gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0); }
+        `,
+        fragmentShader: `
+          uniform float uTime;
+          uniform vec3  uColor;
+          varying vec2  vUv;
+          float h(vec2 p){ return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453); }
+          float n2(vec2 p){
+            vec2 i = floor(p), f = fract(p);
+            f = f*f*(3.0 - 2.0*f);
+            return mix(mix(h(i), h(i + vec2(1,0)), f.x),
+                       mix(h(i + vec2(0,1)), h(i + vec2(1,1)), f.x), f.y);
+          }
+          void main() {
+            vec2 uv = vUv - 0.5;
+            float d = length(uv) * 2.0;
+            if (d > 1.0) discard;
+            // Ripples expanding out from center, driven by time + noise.
+            float rings = sin((1.0 - d) * 18.0 - uTime * 3.0) * 0.5 + 0.5;
+            float foam  = n2(uv * 8.0 + uTime * 0.8) * 0.6 + 0.4;
+            float a = smoothstep(1.0, 0.0, d) * (rings * 0.5 + foam * 0.5);
+            gl_FragColor = vec4(uColor, a * 0.9);
+          }
+        `,
+      });
+      registerShader(foamMat);
+      const foamGeom = new THREE.CircleGeometry(foamRadius, 48);
+      const foamDisc = new THREE.Mesh(foamGeom, foamMat);
+      // Position the foam at the impact (world-space `to`), rotated flat.
+      foamDisc.rotation.x = -Math.PI / 2;
+      foamDisc.position.copy(to).add(new THREE.Vector3(0, 0.005, 0));
+      foamDisc.userData.excludeFromBBox = true;
+
+      // ─── Mist particles at impact ─────────────────────────────────
+      const mistCount = opts.mist ?? 80;
+      const mistGeom = new THREE.BufferGeometry();
+      const mpos = new Float32Array(mistCount * 3);
+      const mlife = new Float32Array(mistCount);
+      for (let i = 0; i < mistCount; i++) {
+        const a = Math.random() * Math.PI * 2;
+        const r = Math.random() * foamRadius * 1.3;
+        mpos[i * 3]     = Math.cos(a) * r;
+        mpos[i * 3 + 1] = Math.random() * 0.15;
+        mpos[i * 3 + 2] = Math.sin(a) * r;
+        mlife[i] = Math.random();
+      }
+      mistGeom.setAttribute('position', new THREE.BufferAttribute(mpos, 3));
+      const mistMat = new THREE.PointsMaterial({
+        color: 0xffffff,
+        size: width * 0.35,
+        transparent: true,
+        opacity: 0.5,
+        map: SOFT, alphaTest: 0.01,
+        sizeAttenuation: true,
+        depthWrite: false,
+        blending: THREE.AdditiveBlending,
+      });
+      const mist = new THREE.Points(mistGeom, mistMat);
+      mist.position.copy(to);
+      mist.userData.excludeFromBBox = true;
+      addUpdateCallback?.(({ deltaTime, time }) => {
+        foamMat.uniforms.uTime.value = time;
+        const arr = mistGeom.attributes.position.array;
+        for (let i = 0; i < mistCount; i++) {
+          mlife[i] += deltaTime * 0.4;
+          if (mlife[i] > 1.0) {
+            const a = Math.random() * Math.PI * 2;
+            const r = Math.random() * foamRadius * 1.3;
+            arr[i * 3]     = Math.cos(a) * r;
+            arr[i * 3 + 1] = 0;
+            arr[i * 3 + 2] = Math.sin(a) * r;
+            mlife[i] = 0;
+          } else {
+            arr[i * 3 + 1] += deltaTime * 0.08;
+          }
+        }
+        mistGeom.attributes.position.needsUpdate = true;
+      });
+
+      const group = new THREE.Group();
+      group.add(fallGroup);
+      group.add(foamDisc);
+      group.add(mist);
+      group.userData.kind = "stream";
+      return group;
     },
 
     // surface: apply the water shader to any geometry you already built
@@ -2125,8 +2535,6 @@ export function makeLibs({ THREE, addUpdateCallback }) {
     async init(opts = {}) {
       if (!_rapier) {
         const mod = await import('@dimforge/rapier3d-compat');
-        // Rapier 0.19 prefers an options object; passing none was the
-        // pre-0.19 form and logs a deprecation warning.
         await mod.init({});
         _rapier = mod;
       }
@@ -2134,6 +2542,23 @@ export function makeLibs({ THREE, addUpdateCallback }) {
         ? (typeof opts.gravity === 'number' ? { x: 0, y: opts.gravity, z: 0 } : opts.gravity)
         : { x: 0, y: -9.81, z: 0 };
       P.world = new _rapier.World(g);
+      // Auto-ground — every P.init() comes with an infinite static
+      // collider at y=0. Removes the need for LLM-generated scenes to
+      // add an invisible BoxGeometry floor, which used to show up as
+      // a refraction artifact when transparent heroes sampled the
+      // transmission buffer ("glitched square on the ground").
+      // Skip with opts.autoGround: false if the scene needs floorless
+      // physics (e.g. space / underwater).
+      if (opts.autoGround !== false) {
+        const groundDesc = _rapier.RigidBodyDesc.fixed();
+        const ground = P.world.createRigidBody(groundDesc);
+        const groundCol = _rapier.ColliderDesc
+          .cuboid(50, 0.01, 50)      // wide, flat, thin
+          .setTranslation(0, -0.01, 0)
+          .setFriction(0.9)
+          .setRestitution(0.0);
+        P.world.createCollider(groundCol, ground);
+      }
       addUpdateCallback?.(({ deltaTime }) => {
         if (!P.world) return;
         P.world.timestep = Math.min(Math.max(deltaTime, 1 / 120), 1 / 30);
@@ -2187,12 +2612,20 @@ export function makeLibs({ THREE, addUpdateCallback }) {
       return rec;
     },
     impulse(rec, v) {
+      // Defensive: LLMs sometimes pass a mesh (from P.body return) OR
+      // a mesh that was never bodied. Both used to crash with "Cannot
+      // read properties of undefined (reading 'applyImpulse')". Accept
+      // either shape and no-op on missing bodies.
+      const rb = rec?.rb || rec?.userData?.rb || (rec?.isMesh && rec.userData?.physicsBody?.rb);
+      if (!rb) return;
       const vec = Array.isArray(v) ? { x: v[0], y: v[1], z: v[2] } : v;
-      rec.rb.applyImpulse(vec, true);
+      rb.applyImpulse(vec, true);
     },
     setLinvel(rec, v) {
+      const rb = rec?.rb || rec?.userData?.rb || (rec?.isMesh && rec.userData?.physicsBody?.rb);
+      if (!rb) return;
       const vec = Array.isArray(v) ? { x: v[0], y: v[1], z: v[2] } : v;
-      rec.rb.setLinvel(vec, true);
+      rb.setLinvel(vec, true);
     },
   };
 

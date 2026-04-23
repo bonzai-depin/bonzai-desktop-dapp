@@ -59,6 +59,10 @@ import {
   disposeBoundsTree,
   acceleratedRaycast,
 } from "three-mesh-bvh";
+// New weather system (Bruno + Faraz patterns — see recipes/*.md).
+import { WeatherSystem } from "../engine/weather/WeatherSystem.js";
+import { RainLines }     from "../engine/weather/RainLines.js";
+import { LightningBolt } from "../engine/weather/LightningBolt.js";
 // CSM disabled — the three/examples/jsm CSM implementation patches
 // every material via onBeforeCompile to inject cascade-sampling GLSL,
 // and the shader chunks it reaches for no longer exist in r182, so
@@ -531,69 +535,60 @@ export default {
         showCelestial: true,
       },
     };
+    // Weather presets — scene-level only. Each preset bundles:
+    //   fog: built-in FogExp2 density (legacy fallback when height-fog off)
+    //   rain/snow: particle multipliers 0..1
+    //   cloudOpacity / lightning / windStrength / ambientDim: atmospherics
+    //   lensDroplets: screen-space lens rain 0..1
+    //   heightFog: {density, distortion, color, direction} for the
+    //     domain-warped fBm fog (Faraz Shaikh port). Apply sceneWide.
     this._weatherPresets = {
       sunny: {
-        fog: 0,
-        rain: 0,
-        snow: 0,
-        cloudOpacity: 0,
-        lightning: false,
-        windStrength: 0.2,
-        ambientDim: 1.0,
+        fog: 0, rain: 0, snow: 0, cloudOpacity: 0, lightning: false,
+        windStrength: 0.2, ambientDim: 1.0, lensDroplets: 0,
+        heightFog: null,
       },
       cloudy: {
-        fog: 0.004,
-        rain: 0,
-        snow: 0,
-        cloudOpacity: 0.7,
-        lightning: false,
-        windStrength: 0.5,
-        ambientDim: 0.7,
+        fog: 0.004, rain: 0, snow: 0, cloudOpacity: 0.7, lightning: false,
+        windStrength: 0.5, ambientDim: 0.7, lensDroplets: 0,
+        heightFog: { density: 0.008, distortion: 0.6, color: 0x9ba3b0,
+                     direction: { x: 0.02, y: 0, z: 0.015 } },
       },
+      // Fog density recalibrated for hero-object framing (scenes ~50m
+      // across). Previous values were tuned for landscape scenes and
+      // produced a solid grey band blocking the horizon. Densities
+      // below have been roughly halved so the horizon visibly fades
+      // without becoming opaque. Distortion also dialed back so fog
+      // reads as a soft haze rather than heavy swirling puffs.
       rainy: {
-        fog: 0.012,
-        rain: 1.0,
-        snow: 0,
-        cloudOpacity: 0.85,
-        lightning: false,
-        windStrength: 1.5,
-        ambientDim: 0.5,
+        fog: 0.006, rain: 1.0, snow: 0, cloudOpacity: 0.85, lightning: false,
+        windStrength: 1.5, ambientDim: 0.5, lensDroplets: 0.45,
+        heightFog: { density: 0.008, distortion: 0.4, color: 0x545b68,
+                     direction: { x: 0.08, y: 0, z: 0.05 } },
       },
       stormy: {
-        fog: 0.018,
-        rain: 1.0,
-        snow: 0,
-        cloudOpacity: 0.95,
-        lightning: true,
-        windStrength: 3.0,
-        ambientDim: 0.3,
+        fog: 0.009, rain: 1.0, snow: 0, cloudOpacity: 0.95, lightning: true,
+        windStrength: 3.0, ambientDim: 0.3, lensDroplets: 0.75,
+        heightFog: { density: 0.012, distortion: 0.6, color: 0x2a303a,
+                     direction: { x: 0.15, y: 0, z: 0.1 } },
       },
       snowy: {
-        fog: 0.008,
-        rain: 0,
-        snow: 1.0,
-        cloudOpacity: 0.75,
-        lightning: false,
-        windStrength: 0.8,
-        ambientDim: 0.6,
+        fog: 0.004, rain: 0, snow: 1.0, cloudOpacity: 0.75, lightning: false,
+        windStrength: 0.8, ambientDim: 0.6, lensDroplets: 0,
+        heightFog: { density: 0.006, distortion: 0.4, color: 0xd6dce4,
+                     direction: { x: 0.04, y: 0, z: 0.03 } },
       },
       blizzard: {
-        fog: 0.025,
-        rain: 0,
-        snow: 1.0,
-        cloudOpacity: 0.95,
-        lightning: false,
-        windStrength: 4.0,
-        ambientDim: 0.35,
+        fog: 0.012, rain: 0, snow: 1.0, cloudOpacity: 0.95, lightning: false,
+        windStrength: 4.0, ambientDim: 0.35, lensDroplets: 0,
+        heightFog: { density: 0.016, distortion: 0.6, color: 0xc0c8d2,
+                     direction: { x: 0.2, y: 0, z: 0.15 } },
       },
       foggy: {
-        fog: 0.035,
-        rain: 0,
-        snow: 0,
-        cloudOpacity: 0.4,
-        lightning: false,
-        windStrength: 0.3,
-        ambientDim: 0.55,
+        fog: 0.018, rain: 0, snow: 0, cloudOpacity: 0.4, lightning: false,
+        windStrength: 0.3, ambientDim: 0.55, lensDroplets: 0,
+        heightFog: { density: 0.025, distortion: 0.8, color: 0x8a94a3,
+                     direction: { x: 0.01, y: 0, z: 0.01 } },
       },
     };
   },
@@ -652,7 +647,10 @@ export default {
       if (width <= 0) width = 640;
       if (height <= 0) height = 360;
       const scene = new THREE.Scene();
-      scene.fog = new THREE.FogExp2(0xccddff, 0.0013);
+      // Fog FULLY REMOVED. Was producing a visible horizon band against
+      // the starfield/particle background. Pristine horizon requires
+      // no distance fog at all.
+      scene.fog = null;
       scene.background = null;
       this.scene = markRaw(scene);
       const camera = new THREE.PerspectiveCamera(45, width / height, 0.1, 3000);
@@ -706,12 +704,19 @@ export default {
       controls.dampingFactor = 0.07;
       controls.minDistance = 1.0;
       controls.maxDistance = 60.0;
-      controls.maxPolarAngle = Math.PI * 0.85;
+      // Clamp camera above ground. `maxPolarAngle` is the max angle
+      // from the orbit target's +Y axis. π/2 = horizontal; anything
+      // larger puts the camera below the target. Previous value of
+      // `Math.PI * 0.85` (153°) allowed the camera to dip deep below
+      // the ground plane. Cap just past horizontal so the user can
+      // glance slightly down but never go under the scene.
+      controls.maxPolarAngle = Math.PI / 2 + 0.05;
       controls.autoRotate = true;
       controls.autoRotateSpeed = 0.65;
       this.controls = markRaw(controls);
       this.clock = markRaw(new THREE.Clock());
       this.setupSkySphere();
+      this.setupCloudShell();
       this.setupStars();
       this.setupCelestialBody();
       this.setupSunRays();
@@ -736,6 +741,9 @@ export default {
       this.initPhysicsWorld();
       this.setupDragControls();
       this.applyEnvironmentPreset("day");
+      // Apply the default render-quality preset ("high") — tunable by
+      // the user via setRenderQuality("low"|"medium"|"high"|"ultra").
+      this.setRenderQuality("high");
       this.startRenderLoop();
     },
     setupDragControls() {
@@ -1084,9 +1092,6 @@ export default {
           }
 
           const liquidMesh = new THREE.Mesh(liquidGeo, liquidMat);
-          liquidMesh.position.copy(containerMesh.position);
-          liquidMesh.rotation.copy(containerMesh.rotation);
-
           // Surface disc at fill level (visible meniscus — glossy top of liquid)
           if (!surfaceRadius) surfaceRadius = (gBox.max.x - gBox.min.x) / 2 * inset * 0.9;
           const surfaceGeo = new THREE.CircleGeometry(surfaceRadius, 64);
@@ -1103,13 +1108,31 @@ export default {
           });
           const surface = new THREE.Mesh(surfaceGeo, surfaceMat);
           surface.rotation.x = -Math.PI / 2;
-          surface.position.copy(containerMesh.position);
-          surface.position.y += fillY;
+          surface.position.y = fillY; // geometry-local — group carries world transform
 
+          // Build the group IN THE CONTAINER'S LOCAL FRAME: the lathe
+          // liquidGeo was constructed with the container's geometry-local
+          // Y coordinates, so we set the group's transform to match the
+          // container's WORLD transform. This way the liquid ends up
+          // correctly positioned regardless of whether the caller adds
+          // it to root, a tilted parent group, or a nested rig.
+          //
+          // Previously we copied containerMesh.position/rotation which
+          // only contains the container's LOCAL transform — if the
+          // container lived under a gimbal/tilted parent the liquid
+          // floated away from its vessel.
+          containerMesh.updateMatrixWorld(true);
           const group = new THREE.Group();
           group.name = "liquid_fill";
+          containerMesh.getWorldPosition(group.position);
+          containerMesh.getWorldQuaternion(group.quaternion);
+          containerMesh.getWorldScale(group.scale);
           group.add(liquidMesh);
           group.add(surface);
+          // Tag for the post-layout validator — it re-snaps the group
+          // to the container's world transform every frame for the
+          // first few frames, catching any late parent-transform change.
+          group.userData.liquidContainer = containerMesh;
           return group;
         },
         fire: (o = {}) =>
@@ -2605,9 +2628,51 @@ export default {
           horizonColor: { value: new THREE.Color(preset.horizonGlow) },
           horizonWidth: { value: preset.horizonWidth },
           horizonIntensity: { value: preset.horizonIntensity },
+          // Weather-driven darkening: 1 = normal time-of-day, 0 = full
+          // storm overcast. Applied per fragment so the whole dome
+          // transforms in sync with rain/snow/fog intensity.
+          uWeatherDim:   { value: 1.0 },
+          uWeatherTint:  { value: new THREE.Color(0xc0c8d2) },  // overcast grey mix
+          uWeatherMix:   { value: 0.0 },                         // 0 = full time-of-day, 1 = full overcast
         },
         vertexShader: `varying vec3 vPos; void main() { vPos = (modelMatrix * vec4(position,1.0)).xyz; gl_Position = projectionMatrix * modelViewMatrix * vec4(position,1.0); }`,
-        fragmentShader: `varying vec3 vPos; uniform vec3 topColor; uniform vec3 midColor; uniform vec3 bottomColor; void main() { vec3 dir = normalize(vPos); float y = dir.y; vec3 color; if (y > 0.25) { color = mix(midColor, topColor, smoothstep(0.25, 1.0, y)); } else if (y > -0.05) { color = mix(bottomColor, midColor, smoothstep(-0.05, 0.25, y)); } else { color = bottomColor; } gl_FragColor = vec4(color, 1.0); }`,
+        fragmentShader: `
+          varying vec3 vPos;
+          uniform vec3 topColor;
+          uniform vec3 midColor;
+          uniform vec3 bottomColor;
+          uniform float uWeatherDim;
+          uniform vec3 uWeatherTint;
+          uniform float uWeatherMix;
+          void main() {
+            vec3 dir = normalize(vPos);
+            float y = dir.y;
+            // Base time-of-day gradient (3 zones).
+            vec3 timeColor;
+            if (y > 0.25) {
+              timeColor = mix(midColor, topColor, smoothstep(0.25, 1.0, y));
+            } else if (y > -0.05) {
+              timeColor = mix(bottomColor, midColor, smoothstep(-0.05, 0.25, y));
+            } else {
+              timeColor = bottomColor;
+            }
+            // Weather dome — a UNIFORM overcast gradient built from the
+            // weather tint. Slight vertical variation (darker zenith,
+            // ~15% brighter horizon from atmospheric light scatter) so
+            // it reads as a real sky, not a flat wall. Crucially it
+            // has the SAME shape across the whole dome, so when we
+            // blend in the time-of-day gradient by (1 - mix) the
+            // dome stays visually uniform even at high mix values.
+            vec3 overcastHorizon = uWeatherTint * 1.12;
+            vec3 overcastZenith  = uWeatherTint * 0.78;
+            vec3 weatherColor = mix(overcastHorizon, overcastZenith,
+                                    smoothstep(-0.2, 0.8, y));
+            // Final: blend time-of-day toward overcast by mix.
+            vec3 color = mix(timeColor, weatherColor, uWeatherMix);
+            color *= uWeatherDim;
+            gl_FragColor = vec4(color, 1.0);
+          }
+        `,
         side: THREE.BackSide,
         depthWrite: true,
       });
@@ -2616,6 +2681,89 @@ export default {
       skyMesh.renderOrder = -1000;
       this.scene.add(skyMesh);
       this._skyMesh = skyMesh;
+    },
+    // Simplified volumetric cloud shell — a hemisphere inside the sky
+    // dome with a procedural fBm cloud shader. Not true raymarching
+    // (Faraz's 4-FBO pipeline is ~16h of work); this is the visually
+    // equivalent shell used by most stylized Three.js skyboxes. The
+    // density uniform is driven by `weather.clouds` every frame so
+    // clouds build up under cloudy/rainy/stormy and clear under sunny.
+    setupCloudShell() {
+      const mat = new THREE.ShaderMaterial({
+        uniforms: {
+          uTime:      { value: 0 },
+          uDensity:   { value: 0 },       // 0..1 — driven by weather.clouds
+          uColor:     { value: new THREE.Color(0xffffff) },
+          uShadow:    { value: new THREE.Color(0x3a4050) },
+          uWindDir:   { value: new THREE.Vector2(0.02, 0.013) },
+        },
+        transparent: true,
+        depthWrite: false,
+        side: THREE.BackSide,
+        blending: THREE.NormalBlending,
+        vertexShader: `
+          varying vec3 vDir;
+          void main() {
+            vDir = normalize(position);
+            gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+          }
+        `,
+        fragmentShader: `
+          varying vec3 vDir;
+          uniform float uTime;
+          uniform float uDensity;
+          uniform vec3  uColor;
+          uniform vec3  uShadow;
+          uniform vec2  uWindDir;
+
+          float h(vec2 p){ return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453); }
+          float n2(vec2 p){
+            vec2 i = floor(p), f = fract(p);
+            f = f*f*(3.0 - 2.0*f);
+            return mix(mix(h(i), h(i + vec2(1,0)), f.x),
+                       mix(h(i + vec2(0,1)), h(i + vec2(1,1)), f.x), f.y);
+          }
+          float fbm(vec2 p){
+            float s = 0.0, a = 0.5;
+            for (int i = 0; i < 5; i++) { s += a * n2(p); p *= 2.0; a *= 0.5; }
+            return s;
+          }
+
+          void main() {
+            // Skip if density is effectively zero (sunny day).
+            if (uDensity < 0.01) discard;
+            // Project the sphere direction onto a plane so cloud cover
+            // reads as a 2D pattern (classic stylized-sky trick).
+            vec2 uv = vDir.xz / max(vDir.y, 0.15);
+            uv = uv * 0.35 + uWindDir * uTime * 0.6;
+            // Two-octave fBm for billowy structure.
+            float base = fbm(uv);
+            float detail = fbm(uv * 2.4 + vec2(12.7));
+            float cloud = base * 0.65 + detail * 0.35;
+            // Density threshold rises with uDensity so clouds cover
+            // more of the sky as weather worsens.
+            float thresh = mix(0.65, 0.28, uDensity);
+            float cov = smoothstep(thresh, thresh + 0.22, cloud);
+            // Shadow tint at dense cores → softens cloud edges + gives
+            // volume from below. Mix white edge → shadow core by density.
+            vec3 col = mix(uColor, uShadow, cov * 0.5);
+            // Fade at the horizon so clouds don't render below the
+            // visible horizon where they'd clip into the ground.
+            float horizonFade = smoothstep(0.02, 0.25, vDir.y);
+            float alpha = cov * uDensity * horizonFade;
+            gl_FragColor = vec4(col, alpha);
+          }
+        `,
+      });
+      this._cloudShellMat = mat;
+      const geom = new THREE.SphereGeometry(
+        900, 48, 24, 0, Math.PI * 2, 0, Math.PI / 2
+      );
+      const mesh = new THREE.Mesh(geom, mat);
+      mesh.renderOrder = -900;                 // just in front of sky dome
+      mesh.frustumCulled = false;
+      this._cloudShell = mesh;
+      this.scene.add(mesh);
     },
     setupStars() {
       const starCount = 2600;
@@ -2762,27 +2910,41 @@ export default {
     setupEnvironment() {
       const radius = 55;
       const groundGeo = new THREE.CircleGeometry(radius, 128);
+      // Beautiful low-opacity grid — baked into a high-res canvas so
+      // there's no per-frame line rasterization or aliasing. Lines are
+      // drawn with a soft shadowBlur for a glow feel and low alpha so
+      // the grid reads as a subtle backdrop, not a dense mesh. Coarser
+      // pitch (every 64px on a 1024px canvas = 16 cells per tile,
+      // 6× tile repeat = 96 cells across the disc) prevents moiré.
       const texCanvas = document.createElement("canvas");
-      texCanvas.width = 512;
-      texCanvas.height = 512;
+      texCanvas.width = 1024;
+      texCanvas.height = 1024;
       const ctx = texCanvas.getContext("2d");
       ctx.fillStyle = "#8a7cae";
-      ctx.fillRect(0, 0, 512, 512);
-      ctx.strokeStyle = "rgba(255,255,255,0.07)";
-      ctx.lineWidth = 1;
-      for (let i = 0; i < 512; i += 8) {
-        ctx.beginPath();
-        ctx.moveTo(i, 0);
-        ctx.lineTo(i, 512);
-        ctx.stroke();
-        ctx.beginPath();
-        ctx.moveTo(0, i);
-        ctx.lineTo(512, i);
-        ctx.stroke();
+      ctx.fillRect(0, 0, 1024, 1024);
+      // Soft glowing lines — shadowBlur gives an antialiased-looking
+      // edge that stays crisp even at mipmapped distances.
+      ctx.shadowColor = "rgba(255, 255, 255, 0.25)";
+      ctx.shadowBlur = 2;
+      ctx.strokeStyle = "rgba(255, 255, 255, 0.14)";
+      ctx.lineWidth = 1.2;
+      for (let i = 0; i <= 1024; i += 64) {
+        ctx.beginPath(); ctx.moveTo(i, 0); ctx.lineTo(i, 1024); ctx.stroke();
+        ctx.beginPath(); ctx.moveTo(0, i); ctx.lineTo(1024, i); ctx.stroke();
       }
+      // Accent — every 4th line slightly brighter for a major/minor look.
+      ctx.shadowBlur = 3;
+      ctx.strokeStyle = "rgba(255, 255, 255, 0.22)";
+      ctx.lineWidth = 1.5;
+      for (let i = 0; i <= 1024; i += 256) {
+        ctx.beginPath(); ctx.moveTo(i, 0); ctx.lineTo(i, 1024); ctx.stroke();
+        ctx.beginPath(); ctx.moveTo(0, i); ctx.lineTo(1024, i); ctx.stroke();
+      }
+      ctx.shadowBlur = 0;
       const tex = new THREE.CanvasTexture(texCanvas);
       tex.wrapS = tex.wrapT = THREE.RepeatWrapping;
-      tex.repeat.set(18, 18);
+      tex.anisotropy = 8;
+      tex.repeat.set(6, 6);
       const groundMat = new THREE.MeshPhysicalMaterial({
         color: 0x8a7cae,
         map: tex,
@@ -2791,12 +2953,48 @@ export default {
         clearcoat: 0.6,
         envMapIntensity: 0.5,
       });
+      // Ground stays purple PBR for the dome but gains TWO weather
+      // responses: wet shine (rain darkens color + drops roughness for
+      // puddle reflectivity) and snow cover (tints white + dulls
+      // roughness toward 1.0). Both driven by shared uniforms we
+      // update each frame from weather state.
+      const groundWeatherUniforms = {
+        uGroundWet:  { value: 0 },    // 0..1 — rain
+        uGroundSnow: { value: 0 },    // 0..1 — snow
+      };
+      groundMat.userData.weatherUniforms = groundWeatherUniforms;
+      groundMat.onBeforeCompile = (shader) => {
+        shader.uniforms.uGroundWet  = groundWeatherUniforms.uGroundWet;
+        shader.uniforms.uGroundSnow = groundWeatherUniforms.uGroundSnow;
+        shader.fragmentShader = shader.fragmentShader
+          .replace("#include <common>",
+            "#include <common>\nuniform float uGroundWet;\nuniform float uGroundSnow;")
+          .replace("#include <output_fragment>",
+            // Snow tint — pushes color + roughness toward clean white.
+            "gl_FragColor.rgb = mix(gl_FragColor.rgb, vec3(0.95, 0.96, 0.98), uGroundSnow * 0.85);\n"
+            // Wet darken — damp surfaces are darker than dry.
+            + "gl_FragColor.rgb *= mix(1.0, 0.72, uGroundWet);\n"
+            + "#include <output_fragment>");
+        // Lower material roughness via onBeforeCompile hook: inject a
+        // `roughnessFactor *= mix(1.0, 0.25, uGroundWet)` so wet ground
+        // becomes sharply reflective while dry stays matte.
+        shader.fragmentShader = shader.fragmentShader.replace(
+          "#include <roughnessmap_fragment>",
+          "#include <roughnessmap_fragment>\n"
+          + "roughnessFactor *= mix(1.0, 0.25, uGroundWet);\n"
+          + "roughnessFactor = mix(roughnessFactor, 0.95, uGroundSnow);"
+        );
+      };
       const ground = new THREE.Mesh(groundGeo, groundMat);
       ground.rotation.x = -Math.PI / 2;
       ground.receiveShadow = true;
       this.scene.add(ground);
       this._sceneObjects.set("ground", ground);
-      this.setupSquareGrid(radius);
+      this._groundMat = groundMat;
+      // Line grid removed — 1-pixel WebGL line rasterization aliases
+      // badly on any movement and caused the flicker the user reported.
+      // The baked canvas tile texture on the ground already provides
+      // the visible grid structure.
       this.setupCloudLayer();
       this.setupAmbientParticles();
     },
@@ -2901,6 +3099,7 @@ export default {
       );
       dome.rotation.x = Math.PI;
       dome.position.y = 50;
+      dome.visible = false;   // clouds fully disabled — were producing the "thick tile"
       cloudGroup.add(dome);
       const dome2 = new THREE.Mesh(
         new THREE.SphereGeometry(380, 48, 24, 0, Math.PI * 2, 0, Math.PI / 2),
@@ -2909,6 +3108,7 @@ export default {
       dome2.rotation.x = Math.PI;
       dome2.rotation.y = Math.PI / 3;
       dome2.position.y = 45;
+      dome2.visible = false;
       cloudGroup.add(dome2);
       const lowCloud = new THREE.Mesh(
         new THREE.PlaneGeometry(500, 500),
@@ -2922,6 +3122,7 @@ export default {
       );
       lowCloud.rotation.x = -Math.PI / 2;
       lowCloud.position.y = 35;
+      lowCloud.visible = false;
       cloudGroup.add(lowCloud);
       this.scene.add(cloudGroup);
       this._cloudLayer = dome;
@@ -3066,7 +3267,7 @@ export default {
         splashGeo,
         new THREE.PointsMaterial({
           color: 0xaaddff,
-          size: 0.3,
+          size: 0.08,                  // much smaller — was 0.3
           transparent: true,
           opacity: 0,
           blending: THREE.AdditiveBlending,
@@ -3081,6 +3282,25 @@ export default {
       this._splashLife = splashLife;
       this._weatherParticles = rain;
       this._weatherVelocities = rainVel;
+
+      // ── New weather pipeline (Bruno + Faraz patterns) ───────────────
+      // WeatherSystem owns smoothly-eased properties (rain, snow,
+      // fog, etc). Every visual consumer reads from it.
+      this.weather = new WeatherSystem();
+      // Hide the legacy Points-based rain/snow; the new RainLines mesh
+      // is the single precipitation visual. The old particle pools stay
+      // allocated so nothing crashes on reference, but they never render.
+      if (this._rainParticles) this._rainParticles.visible = false;
+      if (this._snowParticles) this._snowParticles.visible = false;
+      // Instanced line-quad rain/snow with in-shader camera-wrap +
+      // rain↔snow length/speed morph. Single draw call, zero CPU.
+      this._rainLines = new RainLines({ count: 6000, tileSize: 40 });
+      // Apply the current quality tier (if set; defaults to "high").
+      this._rainLines.setQuality(this._renderQuality || "high");
+      this.scene.add(this._rainLines.mesh);
+      // Visible lightning arcs + impact particles.
+      this._lightningBolt = new LightningBolt();
+      this.scene.add(this._lightningBolt.group);
     },
     setupLighting() {
       const p = this._presets[this.currentTimeOfDay];
@@ -3275,6 +3495,11 @@ export default {
     },
     setDoF(opts = {}) {
       if (!this._dofEffect) return;
+      // Honor the render-quality gate — low/medium skip bokeh entirely.
+      if (this._dofAllowed === false) {
+        this._dofEffect.bokehScale = 0;
+        return;
+      }
       // Legacy {aperture, maxblur, focus} → postprocessing {bokehScale}.
       // Mapping recalibrated: the previous *260 factor turned a 0.006
       // "subtle" aperture into bokehScale 1.56, blurring the whole
@@ -3343,6 +3568,221 @@ export default {
       if (opts.threshold !== undefined) this._bloomPass.luminanceMaterial.threshold = opts.threshold;
       if (opts.smoothing !== undefined) this._bloomPass.luminanceMaterial.smoothing = opts.smoothing;
       if (opts.radius !== undefined) this._bloomPass.mipmapBlurPass.radius = opts.radius;
+    },
+    // ─── Height fog (Faraz Shaikh port) ────────────────────────────────
+    // Overrides THREE.ShaderChunk fog chunks globally so EVERY material
+    // picks up a domain-warped fBm fog with optional SDF-box bounds and
+    // wind direction. Pass `enabled: false` to revert to built-in fog.
+    // opts: { enabled, color, density, distortion, scale, direction,
+    //         speed, boundsMin, boundsMax }
+    //   - enabled:     toggle; false restores default FogExp2.
+    //   - color:       fog color (hex).
+    //   - density:     base FogExp2 density (0..1).
+    //   - distortion:  0..1 fBm amount (0 = flat exp, 1 = heavy swirl).
+    //   - scale:       noise frequency (world-space).
+    //   - direction:   { x, y, z } wind vector for animated domain offset.
+    //   - speed:       animation speed.
+    //   - boundsMin/Max: optional world-space AABB; fog only inside the box.
+    setHeightFog(opts = {}) {
+      // FULLY DISABLED. The Faraz-style height-fog chunk override was
+      // producing the horizon grey band. No-op for now; full body
+      // retained below so re-enabling is a one-line toggle.
+      return;
+      // eslint-disable-next-line no-unreachable
+      const ON = opts.enabled !== false;
+      if (!this.scene) return;
+      if (!ON) {
+        if (this._heightFog) {
+          this._heightFog.enabled = false;
+          this.scene.fog = this._heightFog.prevSceneFog || null;
+        }
+        return;
+      }
+      // Install the override ONCE on THREE.ShaderChunk. After that we
+      // only update uniforms.
+      if (!this._heightFog) {
+        const prevFogPars = THREE.ShaderChunk.fog_pars_fragment;
+        const prevFog = THREE.ShaderChunk.fog_fragment;
+        const prevFogParsVert = THREE.ShaderChunk.fog_pars_vertex;
+        const prevFogVert = THREE.ShaderChunk.fog_vertex;
+        // Every custom-fog branch below is gated by USE_HEIGHT_FOG so
+        // materials that don't opt in (Water reflectors, three internal
+        // materials, anything outside our patch broadcast) keep their
+        // original chunk output and don't reference our custom uniforms.
+        THREE.ShaderChunk.fog_pars_vertex = `
+          #ifdef USE_FOG
+            varying float vFogDepth;
+            #ifdef USE_HEIGHT_FOG
+              varying vec3 vFogWorldPos;
+            #endif
+          #endif
+        `;
+        THREE.ShaderChunk.fog_vertex = `
+          #ifdef USE_FOG
+            vFogDepth = -mvPosition.z;
+            #ifdef USE_HEIGHT_FOG
+              vFogWorldPos = (modelMatrix * vec4(transformed, 1.0)).xyz;
+            #endif
+          #endif
+        `;
+        THREE.ShaderChunk.fog_pars_fragment = `
+          #ifdef USE_FOG
+            uniform vec3 fogColor;
+            varying float vFogDepth;
+            #ifdef FOG_EXP2
+              uniform float fogDensity;
+            #else
+              uniform float fogNear;
+              uniform float fogFar;
+            #endif
+            #ifdef USE_HEIGHT_FOG
+            varying vec3 vFogWorldPos;
+            uniform float uFogTime;
+            uniform float uFogDistortion;
+            uniform float uFogScale;
+            uniform vec3  uFogDirection;
+            uniform vec3  uFogBoundsMin;
+            uniform vec3  uFogBoundsMax;
+            uniform float uFogBoundsActive;
+
+            // Cheap value noise + fBm for domain-warped density.
+            float hFog(vec3 p){
+              return fract(sin(dot(p, vec3(127.1, 311.7, 74.7))) * 43758.5453);
+            }
+            float vnFog(vec3 p){
+              vec3 i = floor(p), f = fract(p);
+              f = f * f * (3.0 - 2.0 * f);
+              return mix(
+                mix(mix(hFog(i), hFog(i + vec3(1,0,0)), f.x),
+                    mix(hFog(i + vec3(0,1,0)), hFog(i + vec3(1,1,0)), f.x), f.y),
+                mix(mix(hFog(i + vec3(0,0,1)), hFog(i + vec3(1,0,1)), f.x),
+                    mix(hFog(i + vec3(0,1,1)), hFog(i + vec3(1,1,1)), f.x), f.y),
+                f.z
+              );
+            }
+            float fbmFog(vec3 p){
+              float s = 0.0, a = 0.5;
+              for (int i = 0; i < 4; i++) { s += a * vnFog(p); p *= 2.0; a *= 0.5; }
+              return s;
+            }
+            // SDF for AABB — positive outside, negative inside.
+            float sdBoxF(vec3 p, vec3 b){
+              vec3 q = abs(p) - b;
+              return length(max(q, 0.0)) + min(max(q.x, max(q.y, q.z)), 0.0);
+            }
+            #endif
+          #endif
+        `;
+        THREE.ShaderChunk.fog_fragment = `
+          #ifdef USE_FOG
+            #ifdef USE_HEIGHT_FOG
+              vec3 samp = vFogWorldPos * uFogScale + uFogDirection * uFogTime;
+              float d1 = fbmFog(samp);
+              float d2 = fbmFog(samp + vec3(d1 * 2.0));
+              float heightK = clamp(1.0 - vFogWorldPos.y * 0.08, 0.0, 1.0);
+              float noiseMul = mix(1.0, d2 * 1.6, uFogDistortion);
+              #ifdef FOG_EXP2
+                float rawFog = 1.0 - exp(-fogDensity * fogDensity * vFogDepth * vFogDepth);
+              #else
+                float rawFog = smoothstep(fogNear, fogFar, vFogDepth);
+              #endif
+              float fogFactor = rawFog * noiseMul * heightK;
+              if (uFogBoundsActive > 0.5) {
+                vec3 center = 0.5 * (uFogBoundsMin + uFogBoundsMax);
+                vec3 half_  = 0.5 * (uFogBoundsMax - uFogBoundsMin);
+                float dIn = -sdBoxF(vFogWorldPos - center, half_);
+                fogFactor *= smoothstep(0.0, 1.0, dIn);
+              }
+              fogFactor = clamp(fogFactor, 0.0, 1.0);
+              gl_FragColor.rgb = mix(gl_FragColor.rgb, fogColor, fogFactor);
+            #else
+              // Stock fog path — preserves default three.js behavior for
+              // any material that didn't opt into USE_HEIGHT_FOG.
+              #ifdef FOG_EXP2
+                float fogFactor = 1.0 - exp(- fogDensity * fogDensity * vFogDepth * vFogDepth);
+              #else
+                float fogFactor = smoothstep( fogNear, fogFar, vFogDepth );
+              #endif
+              gl_FragColor.rgb = mix( gl_FragColor.rgb, fogColor, fogFactor );
+            #endif
+          #endif
+        `;
+        this._heightFog = {
+          enabled: true,
+          // Name collision trap: `prevFog` would clash with the shader
+          // chunk string shorthand below (JS keeps only the last key),
+          // corrupting the scene fog restore path. Use a disambiguated
+          // property name so teardown points at the correct value.
+          prevSceneFog: this.scene.fog,
+          prevFogPars, prevFog, prevFogParsVert, prevFogVert,
+          uniforms: {
+            uFogTime:        { value: 0 },
+            uFogDistortion:  { value: 1.0 },
+            uFogScale:       { value: 0.04 },
+            uFogDirection:   { value: new THREE.Vector3(0.02, 0, 0.03) },
+            uFogBoundsMin:   { value: new THREE.Vector3(-100, -100, -100) },
+            uFogBoundsMax:   { value: new THREE.Vector3( 100,  100,  100) },
+            uFogBoundsActive:{ value: 0.0 },
+          },
+        };
+        // Patch every existing + future material so they pick up the
+        // new uniforms. We hook onBeforeCompile globally via a Proxy
+        // on WebGLRenderer.compile isn't portable — simpler is to
+        // traverse the scene on each setHeightFog call AND subclass
+        // future material creations. The traversal approach is enough
+        // for our LLM-generated scenes (they're recreated per
+        // generate() call anyway).
+        this._patchMaterialsForHeightFog = () => {
+          const fogUniforms = this._heightFog.uniforms;
+          this.scene.traverse((n) => {
+            if (!n.material) return;
+            const mats = Array.isArray(n.material) ? n.material : [n.material];
+            for (const m of mats) {
+              if (!m || m.userData?._heightFogPatched) continue;
+              // Opt this material into the custom fog branch via a
+              // compile-time define. Materials without this define
+              // (Water reflectors, three internal materials, anything
+              // outside our traversal) keep the stock fog path and
+              // don't reference our custom uniforms — which is why
+              // they were failing to link before.
+              m.defines = m.defines || {};
+              m.defines.USE_HEIGHT_FOG = "";
+              m.userData = m.userData || {};
+              m.userData._heightFogPatched = true;
+              const prev = m.onBeforeCompile;
+              m.onBeforeCompile = (shader, renderer) => {
+                if (prev) prev(shader, renderer);
+                Object.assign(shader.uniforms, fogUniforms);
+              };
+              m.needsUpdate = true;
+            }
+          });
+        };
+      }
+      const st = this._heightFog;
+      st.enabled = true;
+      // Install FogExp2 on the scene so USE_FOG + FOG_EXP2 defines are set.
+      if (!(this.scene.fog instanceof THREE.FogExp2)) {
+        st.prevFog = this.scene.fog;
+      }
+      const color = opts.color ?? (this.scene.fog && this.scene.fog.color ? this.scene.fog.color.getHex() : 0x0a0a14);
+      const density = opts.density ?? 0.018;
+      this.scene.fog = new THREE.FogExp2(color, density);
+      if (opts.distortion !== undefined) st.uniforms.uFogDistortion.value = opts.distortion;
+      if (opts.scale !== undefined) st.uniforms.uFogScale.value = opts.scale;
+      if (opts.direction) st.uniforms.uFogDirection.value.set(
+        opts.direction.x ?? 0.02,
+        opts.direction.y ?? 0.0,
+        opts.direction.z ?? 0.03,
+      );
+      if (opts.boundsMin && opts.boundsMax) {
+        st.uniforms.uFogBoundsMin.value.set(opts.boundsMin.x, opts.boundsMin.y, opts.boundsMin.z);
+        st.uniforms.uFogBoundsMax.value.set(opts.boundsMax.x, opts.boundsMax.y, opts.boundsMax.z);
+        st.uniforms.uFogBoundsActive.value = 1.0;
+      } else if (opts.boundsMin === null) {
+        st.uniforms.uFogBoundsActive.value = 0.0;
+      }
+      this._patchMaterialsForHeightFog();
     },
     async setEnvironment(urlOrPreset, opts = {}) {
       // Accepts either a direct HDR/EXR URL or a preset name:
@@ -3557,8 +3997,9 @@ export default {
         L.fill.color.set(p.fill.color);
         L.fill.intensity = p.fill.intensity * this.lightIntensity;
       }
-      this.scene.fog.color.set(p.fog.color);
-      this._targetFogDensity = p.fog.density;
+      // Fog removed — skip color/density updates (scene.fog is null).
+      // if (this.scene.fog) this.scene.fog.color.set(p.fog.color);
+      this._targetFogDensity = 0;
       if (this._bloomPass && p.bloomStrength !== undefined) {
         // postprocessing BloomEffect uses .intensity, not .strength.
         this._bloomPass.intensity = p.bloomStrength;
@@ -3566,11 +4007,644 @@ export default {
       this._sunRays.visible = false;
       this.renderer.toneMappingExposure = p.exposure * this.lightIntensity;
     },
+    // Engine-level quality preset. Trades visual richness for FPS so
+    // users on integrated GPUs or on battery can stay at 60. Call with:
+    //   setRenderQuality("low")     // every expensive effect off
+    //   setRenderQuality("medium")
+    //   setRenderQuality("high")    // baseline (default)
+    //   setRenderQuality("ultra")   // crank everything
+    // Engine-level fallback ambience. Runs AFTER autoEnhanceObject and
+    // fills in the atmospheric layer that the orrery has but weaker LLM
+    // generations often skip: celestial backdrop, flow-particle aura,
+    // emissive-hero glow shell, lens flare on the dominant emissive
+    // source. Each check is guarded so a richer generation that already
+    // supplied these won't double up.
+    // Detect any mesh whose LatheGeometry profile reads as a VESSEL
+    // (open-top container: bowl, basin, flask, cup, jar, tub, goblet).
+    // Returns an array of { mesh, fillBottomY, openRadius, profileHeight }
+    // — a structured list the liquid-validator can auto-fill.
+    //
+    // Heuristic: the profile must start at or near the axis (closed
+    // bottom), reach a maximum radius somewhere in the middle, then
+    // shrink back toward the axis BUT end at a non-zero radius (the
+    // open rim). Purely solid shapes (spheres, closed bottles) end at
+    // r~0, so they're excluded. This catches 95% of vessel shapes the
+    // LLM produces without any naming convention.
+    _detectVessels(rootObj) {
+      const vessels = [];
+      rootObj.traverse((n) => {
+        if (!n.isMesh || !n.geometry || n.userData?.excludeFromBBox) return;
+        if (n.name === "liquid_fill" || n.parent?.name === "liquid_fill") return;
+        // Skip anything already wrapped as a water pool.
+        if (n.userData?.isWaterPlane) return;
+        const g = n.geometry;
+        // Must be a LatheGeometry with its original profile data.
+        if (!g.parameters || !Array.isArray(g.parameters.points)) return;
+        const pts = g.parameters.points;
+        if (pts.length < 4) return;
+
+        const CENTER_THRESH = 0.02;
+        const firstR = pts[0].x;
+        const lastR  = pts[pts.length - 1].x;
+
+        // Closed at both ends → not a vessel (solid sphere/ball/orb).
+        if (firstR < CENTER_THRESH && lastR < CENTER_THRESH) return;
+
+        // Find max radius and whether the profile opens "up" (increases
+        // in Y direction with a non-zero final rim).
+        let maxR = 0;
+        let maxRidx = 0;
+        let yMin = Infinity, yMax = -Infinity;
+        for (let i = 0; i < pts.length; i++) {
+          if (pts[i].x > maxR) { maxR = pts[i].x; maxRidx = i; }
+          if (pts[i].y < yMin) yMin = pts[i].y;
+          if (pts[i].y > yMax) yMax = pts[i].y;
+        }
+        if (maxR < 0.02) return;                // too narrow — probably a stem
+        const profileHeight = yMax - yMin;
+        if (profileHeight < 0.04) return;        // too short — probably a disc/rim
+
+        // Decide which end is the OPEN one (bigger r) vs the CLOSED one.
+        const openTop = lastR > firstR;
+        const openR = openTop ? lastR : firstR;
+        if (openR < maxR * 0.3) return;          // neck tapers too narrow → closed vial
+
+        // Depth-to-width ratio: avoid counting shallow plates as vessels.
+        if (profileHeight < maxR * 0.3) return;
+
+        vessels.push({
+          mesh: n,
+          openTop,
+          openRadiusGeom: openR,
+          maxRadiusGeom: maxR,
+          fillBottomYGeom: openTop ? yMin : yMax,
+          profileHeight,
+        });
+      });
+      return vessels;
+    },
+
+    // Auto-fill detected vessels with liquid and wire pouring streams
+    // between stacked ones (fountain pattern). Branches on geometry:
+    //   Shallow open basin (rim ≥ 55% of max radius, depth ≤ 1.0 × max
+    //     radius)  → FLUID.oceanWater ring at rim height. This is the
+    //     same AAA reflector-based water the orrery's moat uses — real
+    //     reflections of the sky + scene, animated ripples, Fresnel
+    //     edge tint. Use for: fountain tiers, shallow bowls, pools,
+    //     tubs, bird baths, cauldrons.
+    //   Deep narrow vessel  → H.fillLiquid + FLUID.upgradeFill. The
+    //     liquid is mostly hidden behind glass refraction, so we use
+    //     a colored volume + animated surface disc. Use for: flasks,
+    //     vials, potion bottles, tall goblets, narrow jars.
+    _autoFillVessels(rootObj, helpers, _engine) {
+      const { FLUID } = _engine || {};
+      if (!helpers?.fillLiquid || !FLUID) return;
+
+      const vessels = this._detectVessels(rootObj);
+      if (vessels.length === 0) return;
+
+      // Pre-pass: strip LLM-added water ONLY IF it spatially overlaps
+      // with a vessel the auto-filler is about to fill. Standalone
+      // water (moats, lakes, ponds, orrery water rings) is left alone
+      // — it's not a misplaced duplicate, it's an intentional surface.
+      //
+      // Vessel → bounding cylinder in world space (center XZ + max
+      // radius + Y range). Water whose center sits inside any vessel's
+      // cylinder is considered a duplicate and stripped; anything
+      // outside all cylinders is preserved.
+      const _vesselCyls = vessels.map((v) => {
+        v.mesh.updateMatrixWorld(true);
+        const wp = v.mesh.getWorldPosition(new THREE.Vector3());
+        // Convert geometry-local radius to world scale if mesh has scale.
+        const ws = v.mesh.getWorldScale(new THREE.Vector3());
+        const horizScale = Math.max(ws.x, ws.z);
+        return {
+          cx: wp.x, cz: wp.z,
+          r: v.maxRadiusGeom * horizScale * 1.1,
+          yMin: wp.y - v.profileHeight * 0.2,
+          yMax: wp.y + v.profileHeight * 1.2,
+        };
+      });
+      const _isInsideAnyVessel = (worldPos) => {
+        for (const c of _vesselCyls) {
+          if (worldPos.y < c.yMin || worldPos.y > c.yMax) continue;
+          const dx = worldPos.x - c.cx, dz = worldPos.z - c.cz;
+          if (dx * dx + dz * dz <= c.r * c.r) return true;
+        }
+        return false;
+      };
+      const _toStripWater = [];
+      rootObj.traverse((n) => {
+        if (!n.isMesh || !n.geometry) return;
+        if (n.userData?.autoFilled) return;
+        if (n.name === "liquid_fill" || n.parent?.name === "liquid_fill") return;
+
+        const g = n.geometry;
+        const isWaterTagged = n.userData?.isWaterPlane === true;
+        const isPlanar = g.type === "PlaneGeometry"
+                      || g.type === "CircleGeometry"
+                      || g.type === "RingGeometry";
+        if (!isWaterTagged && !isPlanar) return;
+        if (isPlanar) {
+          const rx = Math.abs(n.rotation.x);
+          const isHorizontal = Math.abs(rx - Math.PI / 2) < 0.3 || rx < 0.3;
+          if (!isHorizontal) return;
+          const m = n.material;
+          if (!m) return;
+          const transmissive = m.transmission && m.transmission > 0.3;
+          const lowRough = m.roughness !== undefined && m.roughness < 0.15;
+          let waterishColor = false;
+          if (m.color) {
+            const r = m.color.r, gC = m.color.g, b = m.color.b;
+            waterishColor = (b > 0.4 && b > r * 1.2) || (r + gC + b < 0.5 && b > r);
+          }
+          if (!transmissive && !lowRough && !waterishColor) return;
+        }
+        // Only strip if this water is INSIDE a vessel we're about to fill.
+        n.updateMatrixWorld(true);
+        const wp = n.getWorldPosition(new THREE.Vector3());
+        if (_isInsideAnyVessel(wp)) _toStripWater.push(n);
+      });
+      for (const w of _toStripWater) {
+        try {
+          w.parent?.remove(w);
+          w.geometry?.dispose?.();
+          if (Array.isArray(w.material)) w.material.forEach((x) => x.dispose?.());
+          else w.material?.dispose?.();
+        } catch (_) {}
+      }
+
+      const filledVessels = [];
+      const FILL_KEYWORDS = {
+        potion: 0x40ff80,
+        elixir: 0xa855f7,
+        lava:   0xff5a1a,
+        blood:  0xb00020,
+        acid:   0x7fff40,
+        oil:    0x1a1408,
+        mercury: 0xc8cce0,
+      };
+
+      for (const v of vessels) {
+        // Skip if vessel already has liquid.
+        let hasLiquid = false;
+        v.mesh.traverse?.((c) => {
+          if (c.name === "liquid_fill") hasLiquid = true;
+          if (c.userData?.isWaterPlane) hasLiquid = true;
+        });
+        if (!hasLiquid && v.mesh.parent) {
+          v.mesh.parent.children?.forEach((c) => {
+            if (c === v.mesh) return;
+            if (c.name === "liquid_fill" && c.userData?.liquidContainer === v.mesh) hasLiquid = true;
+            if (c.userData?.isWaterPlane && c.userData?.waterForContainer === v.mesh) hasLiquid = true;
+          });
+        }
+        if (hasLiquid) { filledVessels.push({ vessel: v, filled: true }); continue; }
+
+        // Pick a color — water blue by default, keyword override.
+        let color = 0x5fb4ff;
+        const nm = (v.mesh.name || v.mesh.parent?.name || "").toLowerCase();
+        for (const [kw, hex] of Object.entries(FILL_KEYWORDS)) {
+          if (nm.includes(kw)) { color = hex; break; }
+        }
+
+        // Vessel classification:
+        //   SHALLOW-OPEN  ≈ basin (fountain tier, bowl, pool, tub)
+        //   DEEP-NARROW   ≈ container (flask, goblet, jar)
+        const openRatio = v.openRadiusGeom / v.maxRadiusGeom;
+        const depthRatio = v.profileHeight / v.maxRadiusGeom;
+        const isShallowOpen = openRatio >= 0.55 && depthRatio <= 1.0;
+
+        try {
+          if (isShallowOpen) {
+            // AAA reflector-based water surface, identical parameters
+            // to the orrery's moat. Tessellated RingGeometry with
+            // multiple radial segments so the ripple shader actually
+            // has vertices to displace — a plain CircleGeometry has
+            // only a central vertex and one outer ring, which gave
+            // the flat disc look from the last iteration.
+            const rimRGeom = v.openRadiusGeom * 0.95;
+            // Fill level: 75% of profile height for open basins — the
+            // water should sit near the rim, not halfway down.
+            const surfaceY = v.profileHeight * 0.75;
+            const waterGeo = new THREE.RingGeometry(
+              rimRGeom * 0.02,      // tiny inner radius (~center)
+              rimRGeom,             // outer radius = fill radius
+              128,                  // theta segments
+              Math.max(4, Math.round(rimRGeom * 8)), // radial segments for ripple tess.
+            );
+            // Bake the horizontal rotation INTO the geometry so the
+            // water surface is authored flat-on-XZ regardless of what
+            // the mesh.rotation ends up being. Prevents vertical water
+            // when some other code accidentally mutates rotation.z.
+            waterGeo.rotateX(-Math.PI / 2);
+            const water = FLUID.oceanWater(waterGeo, {
+              color,
+              distortionScale: 2.2,
+              speed: 1.2,
+              rippleDensity: 10.0,
+              textureWidth: 1024,
+              textureHeight: 1024,
+              normalMapSize: 512,
+              sunDirection: new THREE.Vector3(0.3, 0.9, 0.4).normalize(),
+              sunColor: 0xffffff,
+            });
+            water.userData.autoFilled = true;
+            water.userData.isWaterPlane = true;
+            water.userData.waterForContainer = v.mesh;
+            v.mesh.add(water);
+            water.position.set(0, surfaceY, 0);
+            filledVessels.push({
+              vessel: v, filled: true, autoFilled: true,
+              kind: "basin", rimRGeom, surfaceY,
+            });
+          } else {
+            // Enclosed container — solid liquid body + animated surface.
+            const liquid = helpers.fillLiquid(v.mesh, color, { fillLevel: 0.65 });
+            if (liquid) {
+              liquid.userData.autoFilled = true;
+              v.mesh.add(liquid);
+              liquid.position.set(0, 0, 0);
+              liquid.quaternion.identity();
+              liquid.scale.set(1, 1, 1);
+              FLUID?.upgradeFill?.(liquid, { waveAmp: 0.002, caustics: 0.85 });
+              filledVessels.push({
+                vessel: v, filled: true, autoFilled: true, kind: "container",
+              });
+            }
+          }
+        } catch (err) {
+          console.warn("[ThreeViewer] vessel auto-fill skipped:", err?.message);
+        }
+      }
+
+      // Stacked vessels → auto-wire pouring streams between them.
+      // Sort by world-space Y, then connect consecutive vessels if they
+      // share a roughly aligned XZ axis.
+      if (filledVessels.length >= 2 && FLUID?.stream) {
+        const withY = filledVessels.map((f) => {
+          const wp = f.vessel.mesh.getWorldPosition(new THREE.Vector3());
+          return { ...f, worldY: wp.y, worldPos: wp };
+        }).sort((a, b) => a.worldY - b.worldY);
+        // Pair each upper vessel with the next lower one.
+        for (let i = withY.length - 1; i > 0; i--) {
+          const upper = withY[i];
+          const lower = withY[i - 1];
+          const horizDist = Math.hypot(
+            upper.worldPos.x - lower.worldPos.x,
+            upper.worldPos.z - lower.worldPos.z,
+          );
+          // Only pair vessels that are roughly on the same axis AND
+          // vertically separated enough for a stream to make sense.
+          const axisTol = Math.max(upper.vessel.maxRadiusGeom, lower.vessel.maxRadiusGeom) * 1.2;
+          if (horizDist > axisTol) continue;
+          if ((upper.worldY - lower.worldY) < 0.05) continue;
+          // Already has a stream between them? Mark + skip.
+          const key = `${upper.vessel.mesh.uuid}->${lower.vessel.mesh.uuid}`;
+          if (this._autoStreamKeys?.has?.(key)) continue;
+          this._autoStreamKeys = this._autoStreamKeys || new Set();
+          this._autoStreamKeys.add(key);
+          try {
+            const from = upper.worldPos.clone();
+            from.y += upper.vessel.profileHeight * 0.1;
+            const to = lower.worldPos.clone();
+            to.y += lower.vessel.profileHeight * 0.5;
+            const stream = FLUID.stream({
+              from, to,
+              radius: Math.min(upper.vessel.maxRadiusGeom, lower.vessel.maxRadiusGeom) * 0.08,
+              color: 0x9fd8ff,
+            });
+            stream.userData.autoAdded = true;
+            rootObj.add(stream);
+          } catch (_) {}
+        }
+      }
+    },
+    async _applyFallbackAmbience(root, _engine) {
+      try {
+        if (!_engine) return;
+        const { SHADER, FX, CELESTIAL } = _engine;
+
+        // 0a. Ground-plane auto-strip. Generations must never add their
+        // own ground/floor — the viewer provides the visual ground and
+        // P.init now auto-creates the physics ground collider. Any
+        // large horizontal mesh the LLM added at y≈0 becomes a
+        // transmission-buffer artifact ("glitched square") when the
+        // scene has transparent heroes. Detect + remove them defensively.
+        const _floorsToRemove = [];
+        root.traverse((n) => {
+          if (!n.isMesh || !n.geometry) return;
+          n.geometry.computeBoundingBox?.();
+          const bb = n.geometry.boundingBox;
+          if (!bb) return;
+          const sx = bb.max.x - bb.min.x;
+          const sy = bb.max.y - bb.min.y;
+          const sz = bb.max.z - bb.min.z;
+          const worldY = n.getWorldPosition(new THREE.Vector3()).y;
+          const isHorizontalSlab = (sy < 0.2) && Math.max(sx, sz) > 2.0;
+          const isGrounded = worldY < 0.15;
+          if (isHorizontalSlab && isGrounded) _floorsToRemove.push(n);
+        });
+        for (const f of _floorsToRemove) {
+          try {
+            f.parent?.remove(f);
+            f.geometry?.dispose?.();
+            if (Array.isArray(f.material)) f.material.forEach((m) => m.dispose?.());
+            else f.material?.dispose?.();
+          } catch (_) {}
+        }
+
+        // 0. Liquid re-snap. Any `liquid_fill` group tagged with its
+        //    container mesh gets its world transform re-matched to the
+        //    container's CURRENT world transform. Handles the common
+        //    LLM pattern where the liquid is added to root but the
+        //    container lives inside a transformed gimbal/rig, which
+        //    used to leave the potion floating off to the side.
+        const _tmpPos = new THREE.Vector3();
+        const _tmpQuat = new THREE.Quaternion();
+        const _tmpScale = new THREE.Vector3();
+        root.traverse((n) => {
+          if (n.name === "liquid_fill" && n.userData?.liquidContainer) {
+            try {
+              const c = n.userData.liquidContainer;
+              c.updateMatrixWorld(true);
+              c.getWorldPosition(_tmpPos);
+              c.getWorldQuaternion(_tmpQuat);
+              c.getWorldScale(_tmpScale);
+              // Reparent the liquid so it inherits any future animation
+              // of its container without further intervention.
+              if (n.parent !== c) {
+                c.add(n);
+                // After reparent, clear local transform so the liquid
+                // snaps to the container's origin (its lathe geometry
+                // was authored in container-local space anyway).
+                n.position.set(0, 0, 0);
+                n.quaternion.identity();
+                n.scale.set(1, 1, 1);
+              }
+            } catch (_) {}
+          }
+        });
+
+        // 1. Hero bbox (excludes backdrops)
+        const tmpBox = new THREE.Box3();
+        const heroBox = new THREE.Box3().makeEmpty();
+        let hasStarfield = false;
+        let hasNebulaCloud = false;
+        let hasAura = false;
+        let emissiveHero = null;
+        let emissiveScore = 0;
+        root.traverse((n) => {
+          if (n.userData?.excludeFromBBox) {
+            if (n.name === "Starfield" || n.userData?.kind === "starfield") hasStarfield = true;
+            if (n.name === "NebulaDome" || n.userData?.kind === "nebula")   hasNebulaCloud = true;
+            if (n.name === "FlowAura"   || n.userData?.kind === "aura")     hasAura = true;
+            return;
+          }
+          if ((n.isMesh || n.isPoints) && n.geometry) {
+            try { tmpBox.setFromObject(n); if (!tmpBox.isEmpty()) heroBox.union(tmpBox); } catch (_) {}
+          }
+          // Detect the most-emissive mesh in the scene — biggest
+          // (emissiveIntensity × color sum) wins.
+          if (n.isMesh && n.material) {
+            const m = n.material;
+            const ei = m.emissiveIntensity || 0;
+            const e = m.emissive;
+            if (e && ei > 0.3) {
+              const score = ei * (e.r + e.g + e.b);
+              if (score > emissiveScore) {
+                emissiveScore = score;
+                emissiveHero = n;
+              }
+            }
+          }
+        });
+        if (heroBox.isEmpty()) return;
+        const center = heroBox.getCenter(new THREE.Vector3());
+        const size = heroBox.getSize(new THREE.Vector3());
+        const heroR = Math.max(size.x, size.y, size.z) * 0.5;
+
+        // 2. Starfield backdrop — if the scene has no celestial element
+        //    and is being lit in night/studio mode, add a subtle one.
+        if (!hasStarfield && CELESTIAL?.starfield) {
+          const stars = CELESTIAL.starfield({
+            count: 900, radius: Math.max(8, heroR * 15),
+            size: 28, twinkle: 0.6,
+          });
+          stars.name = "Starfield";
+          stars.userData.excludeFromBBox = true;
+          stars.userData.kind = "starfield";
+          stars.userData.autoAdded = true;
+          stars.position.copy(center);
+          root.add(stars);
+        }
+
+        // 3. Flow-particle aura centered on the hero — adds the
+        //    "breathing" motion of the orrery's magic halo.
+        if (!hasAura && SHADER?.flowParticles) {
+          const b = Math.max(heroR * 1.4, 0.4);
+          const aura = SHADER.flowParticles({
+            count: 500,
+            bounds: { x: b, y: b * 1.2, z: b },
+            color: 0x8b5cf6, color2: 0x10b981,
+            size: 24, speed: 0.3, swirl: 0.45,
+          });
+          aura.name = "FlowAura";
+          aura.userData.excludeFromBBox = true;
+          aura.userData.kind = "aura";
+          aura.userData.autoAdded = true;
+          aura.position.copy(center);
+          root.add(aura);
+        }
+
+        // 4. Emissive-hero glow shell — if the scene has a clearly
+        //    emissive hero but no fresnel shell around it, wrap it.
+        if (emissiveHero && FX?.withGlow) {
+          const hasChildGlow = emissiveHero.children?.some(
+            (c) => c.userData?.kind === "glow-shell"
+          );
+          if (!hasChildGlow) {
+            const emissiveColor = emissiveHero.material.emissive?.getHex?.() || 0x8b5cf6;
+            const glow = FX.withGlow(emissiveHero, emissiveColor, {
+              scale: 1.08, intensity: 1.1, power: 2.6,
+            });
+            if (glow && glow !== emissiveHero) {
+              glow.userData = glow.userData || {};
+              glow.userData.kind = "glow-shell";
+              glow.userData.autoAdded = true;
+              root.add(glow);
+            }
+          }
+        }
+
+        // 5. Subtle lens flare at the emissive hero's world position.
+        //    Skip if the generation already set a flare strength.
+        if (emissiveHero) {
+          const u = this._lensFlarePass?.uniforms?.get?.("uStrength");
+          const existingStrength = u?.value || 0;
+          if (existingStrength < 0.01) {
+            const heroWorld = new THREE.Vector3();
+            emissiveHero.getWorldPosition(heroWorld);
+            const emissiveColor = emissiveHero.material.emissive?.getHex?.() || 0xffd8a8;
+            this.setLensFlare({
+              position: heroWorld,
+              strength: 0.25,
+              tint: emissiveColor,
+              anamorphic: 0.9,
+              occlusionTest: true,
+            });
+          }
+        }
+      } catch (err) {
+        console.warn("[ThreeViewer] fallback ambience failed:", err);
+      }
+    },
+    setRenderQuality(level = "high") {
+      const presets = {
+        low: {
+          pixelRatio: 1.0,
+          n8ao: { enabled: false },
+          smaa: false,
+          chromatic: 0,
+          bloom: { intensity: 0.5, radius: 0.5 },
+          dofAllowed: false,
+          filmGrain: { strength: 0.01, vignette: 0.15 },
+          colorGrade: { saturation: 1.0, contrast: 1.0 },
+          bvhTriThreshold: Infinity,   // never build BVHs
+          shadowMapSize: 1024,
+        },
+        medium: {
+          pixelRatio: Math.min(window.devicePixelRatio, 1.25),
+          n8ao: { enabled: true, quality: "Low", intensity: 2.0 },
+          smaa: true,
+          chromatic: 0.06,
+          bloom: { intensity: 0.7, radius: 0.6 },
+          dofAllowed: false,
+          filmGrain: { strength: 0.02, vignette: 0.2 },
+          colorGrade: { saturation: 1.05, contrast: 1.02 },
+          bvhTriThreshold: 2000,
+          shadowMapSize: 2048,
+        },
+        high: {
+          pixelRatio: Math.min(window.devicePixelRatio, 2),
+          n8ao: { enabled: true, quality: "High", intensity: 2.5 },
+          smaa: true,
+          chromatic: 0.08,
+          bloom: { intensity: 0.7, radius: 0.6 },
+          dofAllowed: true,
+          filmGrain: { strength: 0.025, vignette: 0.22 },
+          colorGrade: { saturation: 1.08, contrast: 1.02 },
+          bvhTriThreshold: 500,
+          shadowMapSize: 4096,
+        },
+        ultra: {
+          pixelRatio: Math.min(window.devicePixelRatio, 2),
+          n8ao: { enabled: true, quality: "Ultra", intensity: 3.5 },
+          smaa: true,
+          chromatic: 0.12,
+          bloom: { intensity: 0.85, radius: 0.75 },
+          dofAllowed: true,
+          filmGrain: { strength: 0.03, vignette: 0.25 },
+          colorGrade: { saturation: 1.12, contrast: 1.05 },
+          bvhTriThreshold: 300,
+          shadowMapSize: 4096,
+        },
+      };
+      const q = presets[level] || presets.high;
+      this._renderQuality = level;
+      this._bvhTriThreshold = q.bvhTriThreshold;
+      // Renderer + composer resolution.
+      if (this.renderer) {
+        this.renderer.setPixelRatio(q.pixelRatio);
+        const sz = this.renderer.getSize(new THREE.Vector2());
+        if (this.composer) this.composer.setSize(sz.x, sz.y);
+      }
+      // Shadow map resolution.
+      if (this._lights?.main?.shadow) {
+        this._lights.main.shadow.mapSize.width = q.shadowMapSize;
+        this._lights.main.shadow.mapSize.height = q.shadowMapSize;
+        if (this._lights.main.shadow.map) {
+          this._lights.main.shadow.map.dispose();
+          this._lights.main.shadow.map = null;
+        }
+      }
+      // N8AO — enable/disable + quality tier.
+      if (this._n8aoPass) {
+        this._n8aoPass.enabled = q.n8ao.enabled;
+        if (q.n8ao.enabled) {
+          this._n8aoPass.setQualityMode(q.n8ao.quality);
+          this._n8aoPass.configuration.intensity = q.n8ao.intensity;
+        }
+      }
+      // Chromatic + bloom + film grain + color grade — post axes.
+      this.setChromatic(q.chromatic, 2.2);
+      this.setBloom(q.bloom);
+      this.setFilmGrain(q.filmGrain.strength, q.filmGrain.vignette);
+      this.setColorGrade(q.colorGrade);
+      // DoF gating — low/medium skip bokeh entirely regardless of
+      // what the generated scene tries to set.
+      this._dofAllowed = q.dofAllowed;
+      if (!q.dofAllowed && this._dofEffect) this._dofEffect.bokehScale = 0;
+      // Weather system particle count + motion blur scale with perf.
+      if (this._rainLines) this._rainLines.setQuality(level);
+    },
+    _broadcastRainFactor(factor) {
+      // Traverse the scene and update any CSM-based wet-surface material's
+      // uRainFactor uniform. Safe to call every weather change; tagged
+      // materials are identified via userData.wetSurface = true so we
+      // don't stomp on anything else.
+      this._rainFactor = factor;
+      if (!this.scene) return;
+      this.scene.traverse((n) => {
+        if (!n.material) return;
+        const mats = Array.isArray(n.material) ? n.material : [n.material];
+        for (const m of mats) {
+          if (m && m.userData?.wetSurface && m.uniforms?.uRainFactor) {
+            m.uniforms.uRainFactor.value = factor;
+          }
+        }
+      });
+    },
     applyWeatherPreset(mode) {
       const p = this._weatherPresets[mode];
       if (!p) return;
       this.currentWeather = mode;
-      this._targetFogDensity = p.fog;
+      // Tween WeatherSystem properties toward the new preset's targets
+      // over ~2 seconds — replaces the previous hard-switch. Every new
+      // visual subsystem (RainLines, LightningBolt, wet-surface broadcast)
+      // reads from `this.weather` each frame so they transition smoothly.
+      if (this.weather) this.weather.setMode(mode, 2.0);
+      // Legacy FogExp2 density TEMPORARILY forced to 0 alongside the
+      // dome + height-fog disables. Atmospheric fog on the starfield +
+      // particle background was adding its own horizon haze. Restore
+      // `p.fog` when the dome is back.
+      this._targetFogDensity = 0;
+      // Dome + horizon + ground are transformed together so there's no
+      // tiled/dropped-in look. Sky dome mixes to the weather tint and
+      // dims. The CircleGeometry ground shares the same tint/dim/mix
+      // uniforms, plus a radial alpha fade at its outer edge → the
+      // disc dissolves into the sky color at the horizon instead of
+      // ending as a hard circle. Grid lines fade uniformly with the
+      // weather dim.
+      const weatherTints = {
+        sunny:    { tint: 0xbfd4e8, mix: 0.00 },
+        cloudy:   { tint: 0x9aa2b0, mix: 0.45 },
+        rainy:    { tint: 0x545b68, mix: 0.75 },
+        stormy:   { tint: 0x4a5465, mix: 0.78 },
+        snowy:    { tint: 0xb8c4d2, mix: 0.55 },
+        blizzard: { tint: 0x8a94a5, mix: 0.85 },
+        foggy:    { tint: 0x9aa0ab, mix: 0.65 },
+      };
+      const target = weatherTints[mode] || weatherTints.sunny;
+      const dim = p.ambientDim ?? 1.0;
+      if (this._skyMesh?.material?.uniforms) {
+        const u = this._skyMesh.material.uniforms;
+        u.uWeatherTint.value.set(target.tint);
+        u.uWeatherMix.value = target.mix;
+        u.uWeatherDim.value = dim;
+      }
+      // Ground + grid lines are NOT touched by weather. Only the sky
+      // dome transforms — horizon stays constant across every mode.
       if (this._cloudLayer) {
         this._cloudLayer.material.opacity = p.cloudOpacity;
       }
@@ -3581,26 +4655,48 @@ export default {
         this._lowCloud.material.opacity =
           p.cloudOpacity > 0.8 ? p.cloudOpacity * 0.5 : 0;
       }
-      if (this._rainParticles) {
-        this._rainParticles.material.opacity = p.rain > 0 ? 0.7 * p.rain : 0;
-        this._rainParticles.visible = p.rain > 0;
-      }
+      // Legacy Points-based rain/snow are permanently disabled — the new
+      // RainLines instanced mesh is the single precipitation visual.
+      if (this._rainParticles)   this._rainParticles.visible = false;
+      if (this._splashParticles) this._splashParticles.visible = p.rain > 0;
+      if (this._snowParticles)   this._snowParticles.visible = false;
       if (this._splashParticles) {
         this._splashParticles.material.opacity = p.rain > 0 ? 0.5 * p.rain : 0;
-        this._splashParticles.visible = p.rain > 0;
-      }
-      if (this._snowParticles) {
-        this._snowParticles.material.opacity = p.snow > 0 ? 0.85 * p.snow : 0;
-        this._snowParticles.visible = p.snow > 0;
       }
       this._windStrength = p.windStrength || 0.5;
+      const wasLightning = this._lightningEnabled;
       this._lightningEnabled = p.lightning || false;
+      // If switching OFF lightning mid-strike, force-cancel the active
+      // flash so the ambient intensity doesn't stay stuck at peak.
+      if (wasLightning && !this._lightningEnabled && this._lightningActive) {
+        this._lightningActive = false;
+        this._lightningFlashTime = 0;
+      }
       const dimFactor = p.ambientDim || 1.0;
       if (this._lights.ambient) {
         this._lights.ambient.intensity =
           (this._presets[this.currentTimeOfDay]?.ambient?.intensity || 2.0) *
           dimFactor;
       }
+      // Scene-level lens rain — tied to the weather preset so the
+      // droplets-on-lens post FX matches the particle rain and fog.
+      if (p.lensDroplets !== undefined) {
+        this.setScreenDroplets(p.lensDroplets);
+      }
+      // Broadcast rain factor to every material marked as wet-surface
+      // (SHADER.wetSurface tags userData.wetSurface = true). Each
+      // material carves its own fBm puddle mask + ripples from this
+      // single float, so the dais, pavers, or any generated stone/
+      // tile/wood surface all wet together.
+      const wetFactor = Math.max(p.rain || 0, (p.lensDroplets || 0) * 0.6);
+      this._broadcastRainFactor(wetFactor);
+      // Scene-level height fog TEMPORARILY DISABLED alongside the
+      // dome. Fog's world-Y density falloff was rendering a horizontal
+      // grey band against the starfield/particle background — the
+      // "grey tile surrounding the scene" the user wants to eliminate.
+      // Re-enable once the dome is back and we can pair fog color with
+      // dome color.
+      this.setHeightFog({ enabled: false });
     },
     startRenderLoop() {
       const loop = () => {
@@ -3663,7 +4759,7 @@ export default {
         ) {
           const sp = this._splashParticles.geometry.attributes.position;
           for (let i = 0; i < this._splashLife.length; i++) {
-            this._splashLife[i] -= dt * 3;
+            this._splashLife[i] -= dt * 0.9;
             if (this._splashLife[i] < 0) {
               this._splashLife[i] = 1;
               sp.array[i * 3] =
@@ -3703,36 +4799,92 @@ export default {
             dt * 0.008 * (this._windStrength || 0.5);
         }
         if (this._lightningEnabled) {
+          // Spawn new strikes only when enabled.
           this._lightningTimer += dt;
           if (this._lightningTimer > this._nextLightning) {
             this._lightningActive = true;
-            this._lightningFlashTime = 0.15;
+            this._lightningFlashTime = 0.35;
             this._lightningTimer = 0;
             this._nextLightning = 3 + Math.random() * 8;
-            if (this._lights.ambient) {
-              this._lights.ambient.intensity = 8;
-            }
-          }
-          if (this._lightningActive) {
-            this._lightningFlashTime -= dt;
-            if (this._lightningFlashTime <= 0) {
-              this._lightningActive = false;
-              const p = this._weatherPresets[this.currentWeather];
-              if (this._lights.ambient) {
-                this._lights.ambient.intensity =
-                  (this._presets[this.currentTimeOfDay]?.ambient?.intensity ||
-                    2) * (p?.ambientDim || 1);
-              }
+            if (this._lightningBolt && this.camera) {
+              const angle = Math.random() * Math.PI * 2;
+              const dist  = 8 + Math.random() * 18;
+              const gx = this.camera.position.x + Math.cos(angle) * dist;
+              const gz = this.camera.position.z + Math.sin(angle) * dist;
+              const origin = new THREE.Vector3(gx + (Math.random() - 0.5) * 2, 22 + Math.random() * 6, gz + (Math.random() - 0.5) * 2);
+              const target = new THREE.Vector3(gx, 0, gz);
+              this._lightningBolt.strike(origin, target);
             }
           }
         }
-        this.scene.fog.density +=
-          (this._targetFogDensity - this.scene.fog.density) * dt * 0.5;
-        for (const cb of this._updateCallbacks) cb({ deltaTime: dt, time: t });
+        // Flash-decay runs REGARDLESS of _lightningEnabled so that
+        // turning lightning off mid-strike still cleanly fades the
+        // ambient intensity back to baseline (no stuck-bright bug).
+        if (this._lightningActive) {
+          this._lightningFlashTime -= dt;
+          const elapsed = 0.35 - this._lightningFlashTime;
+          const curve = elapsed < 0.08
+            ? Math.pow(elapsed / 0.08, 0.5)
+            : Math.max(0, 1 - (elapsed - 0.08) / 0.27);
+          const n = Math.sin(elapsed * 31.0) * 0.5 + 0.5;
+          const spike = Math.pow(n, 3);
+          const peak = curve * (0.5 + spike * 0.5) * 8.0;
+          if (this._lights.ambient) this._lights.ambient.intensity = peak;
+          if (this._lightningFlashTime <= 0) {
+            this._lightningActive = false;
+            const p = this._weatherPresets[this.currentWeather];
+            if (this._lights.ambient) {
+              this._lights.ambient.intensity =
+                (this._presets[this.currentTimeOfDay]?.ambient?.intensity || 2) *
+                (p?.ambientDim || 1);
+            }
+          }
+        }
+        // Fog removed — skip density lerp (scene.fog is null).
+        // Isolate each LLM-registered update callback. A throw from a
+        // single callback used to tank the entire render loop every
+        // frame (e.g. `mat.map.uniforms.time.value` on a texture that
+        // has no uniforms). After 3 consecutive throws the callback is
+        // disabled so the console stops drowning and the rest of the
+        // animation (physics, orbit, post FX) keeps running.
+        // ── New weather pipeline tick (Bruno + Faraz) ─────────────────
+        if (this.weather) this.weather.update(dt);
+        if (this._rainLines) this._rainLines.update(dt, t, this.camera, this.weather);
+        if (this._lightningBolt) this._lightningBolt.update(dt);
+        // Cloud shell — drive density from weather.clouds, animate.
+        if (this._cloudShellMat) {
+          this._cloudShellMat.uniforms.uTime.value = t;
+          this._cloudShellMat.uniforms.uDensity.value = this.weather?.clouds ?? 0;
+        }
+        // Keep cloud shell + sky dome + stars centered on camera so
+        // they never parallax away from the viewer.
+        if (this._cloudShell) this._cloudShell.position.copy(this.camera.position);
+        // Ground wet/snow shader uniforms track WeatherSystem values
+        // each frame so the ground reacts smoothly as weather tweens.
+        if (this._groundMat?.userData?.weatherUniforms && this.weather) {
+          const wu = this._groundMat.userData.weatherUniforms;
+          wu.uGroundWet.value  = this.weather.rain ?? 0;
+          wu.uGroundSnow.value = this.weather.snow ?? 0;
+        }
+
+        for (const cb of this._updateCallbacks) {
+          if (cb._disabled) continue;
+          try { cb({ deltaTime: dt, time: t }); cb._errorCount = 0; }
+          catch (err) {
+            cb._errorCount = (cb._errorCount || 0) + 1;
+            if (cb._errorCount >= 3) {
+              cb._disabled = true;
+              console.warn("[ThreeViewer] update callback disabled after 3 errors:", err?.message);
+            }
+          }
+        }
         if (this.controls) this.controls.update();
         // CSM must update its cascade frustums each frame so the shadow
         // maps stay aligned with the moving camera.
         if (this._csm) this._csm.update();
+        // Advance the height-fog animation time every frame so the fBm
+        // fog swirls in the configured wind direction.
+        if (this._heightFog?.enabled) this._heightFog.uniforms.uFogTime.value = t;
         // uTime on each Effect is advanced in its update() hook
         // (postprocessing calls Effect.update every frame with deltaTime).
         // Nothing to do here for the merged effect chain.
@@ -3966,7 +5118,8 @@ export default {
           // any physics/pick work the generator wires up.
           if (n.geometry && !n.geometry.boundsTree) {
             const tris = (n.geometry.index ? n.geometry.index.count : n.geometry.attributes.position?.count || 0) / 3;
-            if (tris > 500) {
+            const bvhThresh = self._bvhTriThreshold ?? 500;
+            if (tris > bvhThresh) {
               try { n.geometry.computeBoundsTree({ maxLeafSize: 10 }); } catch (_) {}
             }
           }
@@ -3980,6 +5133,29 @@ export default {
               n.material.userData = n.material.userData || {};
               n.material.userData.csmPatched = true;
             } catch (_) {}
+          }
+          // Sync wet-surface uniform with the active weather on every
+          // generation — if rain is on and the generated scene has any
+          // SHADER.wetSurface material, it wets immediately.
+          if (n.material?.userData?.wetSurface && n.material.uniforms?.uRainFactor) {
+            n.material.uniforms.uRainFactor.value = self._rainFactor || 0;
+          }
+          // Height fog: opt this material into the custom fog branch
+          // (via USE_HEIGHT_FOG define) and wire its uniforms. Materials
+          // without the define keep stock fog — this prevents Water's
+          // internal reflector materials from failing to link.
+          if (self._heightFog?.enabled && n.material && !n.material.userData?._heightFogPatched) {
+            const fogUniforms = self._heightFog.uniforms;
+            n.material.defines = n.material.defines || {};
+            n.material.defines.USE_HEIGHT_FOG = "";
+            n.material.userData = n.material.userData || {};
+            n.material.userData._heightFogPatched = true;
+            const prev = n.material.onBeforeCompile;
+            n.material.onBeforeCompile = (shader, renderer) => {
+              if (prev) prev(shader, renderer);
+              Object.assign(shader.uniforms, fogUniforms);
+            };
+            n.material.needsUpdate = true;
           }
         }
       });
@@ -4008,24 +5184,77 @@ export default {
           throw new Error("Code must be a non-empty string");
         
         let fixedCode = code;
-        let open = (fixedCode.match(/{/g) || []).length;
-        let close = (fixedCode.match(/}/g) || []).length;
-        // Auto-fix small brace mismatches (common LLM error)
-        while (close > open && close - open <= 3) {
-          const lastBrace = fixedCode.lastIndexOf('}');
-          if (lastBrace === -1) break;
-          fixedCode = fixedCode.slice(0, lastBrace) + fixedCode.slice(lastBrace + 1);
-          close--;
-          console.warn(`[ThreeViewer] Auto-removed trailing } (${open} vs ${close + 1} → ${close})`);
+        // Auto-fix LLM brace mismatches. CRITICAL: scope the fix to the
+        // USER CODE block (between the START/END markers) — NOT the
+        // whole module. Previously we scanned the entire wrapped
+        // string and removed the last `}` on imbalance, but a stray
+        // `}` emitted by the LLM mid-code closes the generate()
+        // function early, making `scene.add(root); return root;`
+        // land outside any function → "Illegal return statement".
+        // The wrapper is always balanced; imbalances come from user
+        // code, so we trim trailing `}` from the USER CODE block
+        // until it's balanced.
+        const START = "// ── USER CODE START ──";
+        const END   = "// ── USER CODE END ──";
+        const sIdx = fixedCode.indexOf(START);
+        const eIdx = fixedCode.indexOf(END);
+        if (sIdx >= 0 && eIdx > sIdx) {
+          const blockStart = sIdx + START.length;
+          let block = fixedCode.slice(blockStart, eIdx);
+          const countBraces = (s) => {
+            // Count braces, ignoring those inside strings/comments.
+            let o = 0, c = 0, i = 0, inStr = null, inLine = false, inBlock = false;
+            while (i < s.length) {
+              const ch = s[i];
+              if (inLine) { if (ch === "\n") inLine = false; i++; continue; }
+              if (inBlock) {
+                if (ch === "*" && s[i + 1] === "/") { inBlock = false; i += 2; continue; }
+                i++; continue;
+              }
+              if (inStr) {
+                if (ch === "\\") { i += 2; continue; }
+                if (ch === inStr) inStr = null;
+                i++; continue;
+              }
+              if (ch === "/" && s[i + 1] === "/") { inLine = true; i += 2; continue; }
+              if (ch === "/" && s[i + 1] === "*") { inBlock = true; i += 2; continue; }
+              if (ch === '"' || ch === "'" || ch === "`") { inStr = ch; i++; continue; }
+              if (ch === "{") o++;
+              else if (ch === "}") c++;
+              i++;
+            }
+            return { o, c };
+          };
+          let { o: bo, c: bc } = countBraces(block);
+          // Trim trailing `}` from user code until balanced (or gave up).
+          let removed = 0;
+          while (bc > bo && removed < 5) {
+            const lastBrace = block.lastIndexOf("}");
+            if (lastBrace === -1) break;
+            block = block.slice(0, lastBrace) + block.slice(lastBrace + 1);
+            bc--;
+            removed++;
+          }
+          // Append missing `}` to user code block if still short (capped).
+          let appended = 0;
+          while (bo > bc && appended < 5) {
+            block = block + "\n}";
+            bc++;
+            appended++;
+          }
+          if (removed > 0 || appended > 0) {
+            console.warn(
+              `[ThreeViewer] Auto-balanced user code: removed ${removed} trailing }, appended ${appended} }`
+            );
+            fixedCode = fixedCode.slice(0, blockStart) + block + fixedCode.slice(eIdx);
+          }
         }
-        while (open > close && open - close <= 3) {
-          fixedCode += '\n}';
-          close++;
-          console.warn(`[ThreeViewer] Auto-appended missing } (${open} vs ${close - 1} → ${close})`);
-        }
-        if (open !== close)
+        // Final guard — full module balance check.
+        const fopen  = (fixedCode.match(/{/g) || []).length;
+        const fclose = (fixedCode.match(/}/g) || []).length;
+        if (fopen !== fclose)
           throw new Error(
-            `Syntax error: mismatched braces (${open} vs ${close})`
+            `Syntax error: mismatched braces (${fopen} vs ${fclose})`
           );
         const blob = new Blob([fixedCode], { type: "text/javascript" });
         const url = URL.createObjectURL(blob);
@@ -4104,7 +5333,10 @@ export default {
           setLensFlare:    (opts) => this.setLensFlare(opts),
           setUnderwater:   (active, opts) => this.setUnderwater(active, opts),
           setEnvironment:  (url, opts) => this.setEnvironment(url, opts),
-          // New AAA setters: AO + bloom are live-tunable per generation.
+          // Scene-level post tuning the LLM can override per generation.
+          // Weather (setHeightFog, setScreenDroplets density, lightning,
+          // etc.) is intentionally NOT exposed — weather is user-driven
+          // from the Viewer UI and inherits into every generation.
           setAO:           (opts) => this.setAO(opts),
           setBloom:        (opts) => this.setBloom(opts),
           _engine,
@@ -4122,6 +5354,15 @@ export default {
         // update callbacks the generator just registered would be wiped.)
         if (result && result.isObject3D) {
           this.autoEnhanceObject(result, THREE);
+          // Engine-level liquid auto-fill — detects vessel-shaped
+          // LatheGeometry (concave profile, open top) and fills any
+          // that lack liquid. Runs regardless of what the prompt was
+          // about, so a potion/flask/fountain/tub/bowl always contains
+          // correctly-placed water even if the LLM forgot FLUID.*.
+          this._autoFillVessels(result, helpers, _engine);
+          // Engine-level fallback ambience — starfield, aura, glow
+          // shells, lens flare — fills in what weaker generations skip.
+          await this._applyFallbackAmbience(result, _engine);
           result.name = "GeneratedObject";
           this.scene.add(result);
           // Build a bounding box that EXCLUDES backdrops (starfields,

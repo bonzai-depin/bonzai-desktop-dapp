@@ -359,6 +359,17 @@ export const LLM_BASE_MODELS = {
       q8: { repo: 'unsloth/Qwen3.5-27B-GGUF', file: 'Qwen3.5-27B-UD-Q8_K_XL.gguf', size: 32.4, vram: 36 },
     },
   },
+  qwen_3_6_27b: {
+    name: 'Qwen3.6 27B',
+    description: 'Qwen3.6 27B dense model with 262K context — 3D-gen default (better code-length budget than MoE at this size)',
+    parameters: 27e9, context: 262144, thinking: true,
+    tiers: {
+      q2: { repo: 'unsloth/Qwen3.6-27B-GGUF', file: 'Qwen3.6-27B-UD-Q2_K_XL.gguf', size: 11.0, vram: 14 },
+      q3: { repo: 'unsloth/Qwen3.6-27B-GGUF', file: 'Qwen3.6-27B-UD-Q3_K_XL.gguf', size: 13.5, vram: 18 },
+      q4: { repo: 'unsloth/Qwen3.6-27B-GGUF', file: 'Qwen3.6-27B-UD-Q4_K_XL.gguf', size: 16.5, vram: 20 },
+      q8: { repo: 'unsloth/Qwen3.6-27B-GGUF', file: 'Qwen3.6-27B-UD-Q8_K_XL.gguf', size: 31.8, vram: 36 },
+    },
+  },
   deepseek_r1_32b: {
     name: 'DeepSeek R1 Distill 32B',
     description: 'Large reasoning model with advanced chain-of-thought',
@@ -426,6 +437,7 @@ export const LLM_BASE_MODELS = {
     parameters: 35e9, activeParameters: 3e9, isMoE: true, context: 262144, thinking: true,
     tiers: {
       q2: { repo: 'unsloth/Qwen3.6-35B-A3B-GGUF', file: 'Qwen3.6-35B-A3B-UD-Q2_K_XL.gguf', size: 12.3, vram: 16 },
+      q3: { repo: 'unsloth/Qwen3.6-35B-A3B-GGUF', file: 'Qwen3.6-35B-A3B-UD-Q3_K_XL.gguf', size: 16.8, vram: 20 },
       q4: { repo: 'unsloth/Qwen3.6-35B-A3B-GGUF', file: 'Qwen3.6-35B-A3B-UD-Q4_K_M.gguf', size: 22.1, vram: 24 },
       q8: { repo: 'unsloth/Qwen3.6-35B-A3B-GGUF', file: 'Qwen3.6-35B-A3B-Q8_0.gguf', size: 36.9, vram: 42 },
     },
@@ -482,6 +494,7 @@ export const LLM_TIER_ORDER = ['q2', 'q4', 'q8'];
 // Human-readable tier labels
 export const LLM_TIER_LABELS = {
   q2: 'Q2_K_XL',
+  q3: 'Q3_K_XL',
   q4: 'Q4_K_M',
   q8: 'Q8_0',
 };

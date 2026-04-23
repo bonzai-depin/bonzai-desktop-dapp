@@ -278,6 +278,28 @@
                   </button>
                 </div>
               </div>
+              <div class="column is-12">
+                <label class="control-label fira-sans-condensed-black-italic">
+                  Performance
+                </label>
+                <div class="time-buttons">
+                  <button
+                    v-for="preset in performancePresets"
+                    :key="preset.id"
+                    class="time-btn"
+                    :class="{ active: currentPerformance === preset.id }"
+                    @click="setPerformance(preset.id)"
+                    :title="preset.label"
+                  >
+                    <span class="time-icon">
+                      <span class="material-symbols-outlined is-size-3">
+                        {{ preset.class }}
+                      </span>
+                    </span>
+                    <span class="time-label">{{ preset.label }}</span>
+                  </button>
+                </div>
+              </div>
             </div>
           </div>
 
@@ -657,6 +679,35 @@ function normalizeLLMCode(code) {
   out = out.replace(/export\s+default\s+/g, "");
   out = out.replace(/return\s+root\s*;?\s*$/gm, "");
 
+  // STEP 3.4: Correct common LLM typos of pre-declared API functions.
+  // The model occasionally scrambles function name word order or drops
+  // a prefix. Each entry maps a typo variant → canonical name. Match
+  // uses word boundaries + lookahead for `(` so we only hit call sites,
+  // not substrings inside identifiers like `prevSetObjectInfo`.
+  const API_TYPO_FIXES = [
+    // setObjectInfo
+    [/\bobjectSetInfo\s*\(/g, "setObjectInfo("],
+    [/\bsetObjectinfo\s*\(/g, "setObjectInfo("],
+    [/\bsetobjectInfo\s*\(/g, "setObjectInfo("],
+    [/\bSetObjectInfo\s*\(/g, "setObjectInfo("],
+    [/\bsetObject\s*\(/g,     "setObjectInfo("],
+    [/\bsetSceneInfo\s*\(/g,  "setObjectInfo("],
+    // addUpdateCallback
+    [/\baddUpdateCall\s*\(/g,      "addUpdateCallback("],
+    [/\bregisterUpdate\s*\(/g,     "addUpdateCallback("],
+    [/\bonUpdate\s*\(/g,           "addUpdateCallback("],
+    [/\bonFrameUpdate\s*\(/g,      "addUpdateCallback("],
+    // Post FX setters — mostly forget the "set" prefix.
+    [/\bsetFilmgrain\s*\(/g, "setFilmGrain("],
+    [/\bsetDof\s*\(/g,       "setDoF("],
+    [/\bsetLensflare\s*\(/g, "setLensFlare("],
+    [/\bsetChroma\s*\(/g,    "setChromatic("],
+    [/\bsetAo\s*\(/g,        "setAO("],
+  ];
+  for (const [re, replacement] of API_TYPO_FIXES) {
+    out = out.replace(re, replacement);
+  }
+
   // STEP 3.5: Strip ALL declarations of wrapper-reserved variables.
   // The wrapper already declares these — any LLM redeclaration (via params, window,
   // require, destructuring, new, literal, or anything else) causes runtime errors.
@@ -715,6 +766,85 @@ function normalizeLLMCode(code) {
   }
   // Also strip root.name assignment (wrapper sets it)
   out = out.replace(/root\.name\s*=\s*['"][^'"]*['"]\s*;?\s*/g, "");
+
+  // STEP 3.6: Collapse duplicate top-level `const/let/var NAME = ...`
+  // declarations. The LLM "thinks out loud" mid-code — re-declaring the
+  // same variable (e.g. lathe profile) multiple times while working
+  // through variants at the module's top level.
+  //
+  // CRITICAL: only strip duplicates that share MODULE TOP-LEVEL scope
+  // (brace depth 0). Block-scoped bindings inside `for` loop headers
+  // (`for (let i = 0; ...)`) or different loop bodies that happen to
+  // share a name like `const angle` / `const spout` are legal JS —
+  // they live in separate block scopes and must NOT be stripped.
+  //
+  // Uses the same brace-balancing walker as stripReservedDecl so
+  // multi-line RHS values (arrow functions, object literals,
+  // Vector2(...) arrays) are caught as single ranges.
+  {
+    // Pre-compute the nesting depth at every index so we can cheaply
+    // test whether a match is at top-level.
+    const depths = new Int32Array(out.length + 1);
+    {
+      let d = 0, inStr = null;
+      for (let i = 0; i < out.length; i++) {
+        depths[i] = d;
+        const ch = out[i];
+        if (inStr) {
+          if (ch === "\\") { i++; continue; }
+          if (ch === inStr) inStr = null;
+          continue;
+        }
+        if (ch === '"' || ch === "'" || ch === "`") { inStr = ch; continue; }
+        if (ch === "{" || ch === "(" || ch === "[") d++;
+        else if (ch === "}" || ch === ")" || ch === "]") d--;
+      }
+      depths[out.length] = d;
+    }
+
+    const declRe = /(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s*=\s*/g;
+    const occurrences = new Map();
+    let m;
+    while ((m = declRe.exec(out)) !== null) {
+      // Only consider top-level declarations (depth 0 at the keyword).
+      if (depths[m.index] !== 0) continue;
+      const name = m[1];
+      const startIdx = m.index;
+      const afterEq = m.index + m[0].length;
+      // Walk forward balancing braces until we hit top-level ; or \n.
+      let i = afterEq;
+      let depth = 0;
+      let inStr = null;
+      while (i < out.length) {
+        const ch = out[i];
+        if (inStr) {
+          if (ch === "\\") { i += 2; continue; }
+          if (ch === inStr) inStr = null;
+          i++; continue;
+        }
+        if (ch === '"' || ch === "'" || ch === "`") { inStr = ch; i++; continue; }
+        if (ch === "{" || ch === "(" || ch === "[") { depth++; i++; continue; }
+        if (ch === "}" || ch === ")" || ch === "]") { depth--; i++; continue; }
+        if (depth === 0 && (ch === ";" || ch === "\n")) { i++; break; }
+        i++;
+      }
+      if (!occurrences.has(name)) occurrences.set(name, []);
+      occurrences.get(name).push({ start: startIdx, end: i });
+    }
+    const toComment = [];
+    for (const [name, ranges] of occurrences) {
+      if (ranges.length < 2) continue;
+      for (let k = 0; k < ranges.length - 1; k++) toComment.push(ranges[k]);
+    }
+    toComment.sort((a, b) => b.start - a.start);
+    for (const r of toComment) {
+      const block = out.slice(r.start, r.end);
+      const firstLine = block.split("\n", 1)[0].slice(0, 90);
+      out = out.slice(0, r.start) +
+            `// (removed duplicate declaration: ${firstLine.replace(/\s+/g, ' ')}…)` +
+            out.slice(r.end);
+    }
+  }
 
   // STEP 4: Fix MAT/TEX/H redeclarations
   // Strip full MAT/TEX/H object redefinitions (LLM sometimes redefines the entire library)
@@ -929,6 +1059,10 @@ export default async function generate(params) {
   const setEnvironment    = params.setEnvironment    || (async () => {});
   const setAO             = params.setAO             || (() => {});
   const setBloom          = params.setBloom          || (() => {});
+  // setHeightFog is intentionally NOT exposed here. Weather (fog, rain,
+  // lightning, lens droplets) is scene-level state owned by the viewer;
+  // generated scenes inherit whatever the user selected in the weather
+  // panel rather than forcing their own atmosphere.
   const helpers = params.helpers;
   const H = helpers;
 
@@ -1504,10 +1638,24 @@ export default {
       { id: "foggy", label: "Fog", icon: "🌫️", class: "foggy" },
     ]);
 
-    // 3D default: Qwen3.6 35B A3B Q2_K_XL — MoE with 3B active params fits
-    // comfortably in ~16GB VRAM while delivering frontier-tier code generation
-    // for Three.js scene synthesis.
-    const _3dModel = resolveLLM("qwen_3_6_35b_a3b", "q2");
+    // Performance tiers — engine-level quality preset. Dials pixel ratio,
+    // N8AO, SMAA, bloom kernel, DoF gating, shadow map size, and BVH
+    // auto-build threshold.
+    const performancePresets = ref([
+      { id: "low",    label: "Low",    class: "battery_android_full" },
+      { id: "medium", label: "Medium", class: "speed" },
+      { id: "high",   label: "High",   class: "bolt" },
+      { id: "ultra",  label: "Ultra",  class: "diamond" },
+    ]);
+    const currentPerformance = ref("high");
+
+    // 3D default: Qwen3.6 35B A3B at Q3_K_XL (~16.8 GB). MoE with 3B
+    // active params + 256K native context. Q3 tier keeps the MoE's
+    // expert diversity (better than Q2) while staying under 20 GB
+    // VRAM. Larger total-parameter pool than a 27B dense at the same
+    // quant tier, and the per-token inference cost is still only the
+    // 3B active path.
+    const _3dModel = resolveLLM("qwen_3_6_35b_a3b", "q3");
     const model = {
         modelname: _3dModel.name,
         modeldesc: _3dModel.description,
@@ -1674,10 +1822,79 @@ RULES:
       const selectedSkills = scored.slice(0, 3).map(s => s.content);
       const skillsContext = selectedSkills.join("\n\n---\n\n");
 
-      return `You are an expert Three.js developer. Generate AAA-quality 3D objects.
-CRITICAL: Output ONLY raw JavaScript code. No thinking, no reasoning, no <think> tags, no explanation, no markdown fences. Start with setObjectInfo() immediately.
+      return `You are an expert Three.js developer building scenes that
+must match the Arcane Orrery reference (shown at the bottom of this
+prompt) for visual richness and engine-feature coverage.
+
+CRITICAL: Output ONLY raw JavaScript code. No thinking, no reasoning,
+no <think> tags, no explanation, no markdown fences. Start with
+setObjectInfo() immediately.
 
 TASK: "${userText}"
+
+═══ QUALITY CONTRACT — NON-NEGOTIABLE ═══
+The orrery reference uses EVERY subsystem of the engine. Your output
+must reach the same coverage. Before returning code, verify it contains
+AT MINIMUM each of the following. Count your actual calls — do not
+substitute one for another.
+
+  [A] Hero silhouette: 1 dominant shape + 2-3 supporting forms.
+  [B] FROM MAT LIBRARY: at least 4 named material presets
+      (MAT.gold, MAT.brass, MAT.obsidian, MAT.ruby, MAT.glass, etc.)
+      — NOT four hand-rolled MeshPhysicalMaterials.
+  [C] FROM TEX LIBRARY: at least 2 procedural textures
+      (TEX.stone, TEX.marble, TEX.wood, TEX.runes, TEX.circuit, etc.)
+  [D] FROM SHADER LIBRARY: at least 2 animated shaders
+      (SHADER.nebula, fresnel, hologram, lava, caustics, portal,
+       flowParticles, dissolve, iridescence).
+  [E] FROM FX LIBRARY: at least 2 scene-level FX
+      (FX.withGlow on the emissive hero AND FX.godRayCone radiating
+       from a bright light source. Add FX.batch for any scatter > 10
+       meshes.)
+  [F] FROM CELESTIAL LIBRARY: 1 starfield + 1 nebulaCloud dome
+      (unless the scene is explicitly indoors — interiors use
+       H.dust + SHADER.flowParticles as the atmosphere layer instead.)
+  [G] PHYSICS: await P.init(); at least 1 static collider +
+      1 dynamic body (gems, debris, leaves, coins, etc.).
+  [H] POST OVERRIDE: setLensFlare({ position, strength: 0.3-0.6,
+      occlusionTest: true }) on any scene with a dominant emissive
+      source (core, ingot, lava, crystal, orb, lantern).
+  [I] ANIMATION: addUpdateCallback({ time, deltaTime }) driving at
+      least one orbit / rotation / pulse / breathing cycle.
+  [J] CONNECTED COMPOSITION — most-failed rule, read carefully:
+      - NO sub-part may float away from its parent. A column MUST
+        reach from its pedestal top to its capital base with no gap.
+      - A ring/gimbal/cage around a central hero MUST have inner
+        radius > hero's outer radius + clearance (use the hero's
+        boundingSphere or geometry.boundingBox). Never let rings
+        clip through the flask/orb/core they surround.
+      - A liquid inside a vessel MUST be created via
+        H.fillLiquid(vesselMesh, color, { fillLevel }) AFTER the
+        vessel has been positioned AND its parent transforms applied.
+        Pass the MESH, not the geometry. The engine re-snaps the
+        liquid group's world transform to the vessel's world
+        transform automatically, so it works inside tilted gimbals.
+      - Every vertical element's top = the next element's bottom.
+        Pedestal top at y=0.05 → base bottom at y=0.05.
+        Base top at y=0.2 → column bottom at y=0.2.
+        Column top at y=0.5 → head bottom at y=0.5.
+        NO gaps, NO overlaps.
+      - Ground plane always at y=0. No sub-part has y < 0 unless
+        you're carving into the ground (moat floor, etc.).
+
+Scenes that meet fewer than 8 of the 10 requirements FAIL quality
+review. Treat this list as a self-check before emitting return root;
+
+═══ APPLIED-AUTOMATICALLY BASELINE (already active — do not set) ═══
+These are ALWAYS on before your code runs. You do not need to invoke
+them unless you want scene-specific overrides:
+  - ACES Filmic tone mapping, HDR pipeline, SMAA anti-aliasing
+  - N8AO (screen-space AO) at quality tier "High"
+  - Selective HDR bloom (threshold 0.9)
+  - Chromatic aberration (0.08) + film grain (0.025) + color grade
+  - HDR IBL (user-selected preset: studio / day / sunset / night)
+  - Scene-level weather (fog, rain, lens droplets, lightning) —
+    DO NOT call setHeightFog or setScreenDroplets.
 
 ═══ MANDATORY AAA CHECKLIST — apply to EVERY scene, not just templates ═══
 Every generation must pass these requirements. The default orrery scene
@@ -1685,7 +1902,10 @@ demonstrates all of them — treat it as the quality bar.
 
   [1] LIQUIDS: any water/potion/blood/acid/lava surface MUST use FLUID.*
       - Flat pool / lake / moat / basin top     → FLUID.oceanWater(geom, opts)
-      - Fountain tier (bowl + rim + water)      → FLUID.fountainBasin({radius, y})
+      - Multi-tier cascading fountain (3+ tiers)→ root.add(FLUID.tieredFountain({ tiers: 3, baseRadius: 0.55 }));
+          This is THE fountain primitive. One call. Do NOT hand-roll
+          bowls + streams separately when the scene is a tiered fountain.
+      - Single fountain tier (bowl + rim + water)→ FLUID.fountainBasin({radius, y})
       - Pouring / falling column                → FLUID.stream({from, to, radius})
       - Liquid inside a glass container          → H.fillLiquid(c, color) THEN FLUID.upgradeFill(liquid)
       - Lava                                     → SHADER.lava({hot, cold})
@@ -2035,48 +2255,130 @@ Aim for every generated piece to hit at least 4 of these:
 - requestAnimationFrame / setInterval / setTimeout (use addUpdateCallback)
 - AxesHelper / GridHelper / debug gizmos
 
-═══ QUALITY EXAMPLE — compact reference ═══
-// Cinematic post baseline is already applied; only add scene overrides.
-await P.init({ gravity: -4.5 });                                   // physics (optional)
-const floor = new THREE.Mesh(new THREE.BoxGeometry(6,0.02,6),
-  new THREE.MeshBasicMaterial({ visible:false }));
-floor.castShadow = false; floor.userData.excludeFromBBox = true;
-root.add(floor); P.body(floor, { type:'static', shape:'box' });
+═══ QUALITY REFERENCE — full Arcane Orrery source ═══
+This is the default scene that sets the quality bar. Your output must
+match its coverage: MAT presets + TEX procedurals + SHADER calls +
+FX.withGlow + FX.godRayCone + FX.batch + CELESTIAL backdrop + Rapier
+physics + setLensFlare + multiple animation callbacks.
 
-// Liquid in a glass vessel — CORRECT PATTERN:
-//   1. Build container as a LatheGeometry MESH.
-//   2. Pass the MESH (not its geometry) to H.fillLiquid.
-//   3. Upgrade the returned group with FLUID.upgradeFill.
-// H.fillLiquid reads the lathe profile and builds a liquid body +
-// surface disc that sit INSIDE the container at the requested fill
-// level. NEVER hand-roll a flat PlaneGeometry/CircleGeometry at a
-// hard-coded Y — it will float above the rim.
-const vessel = new THREE.Mesh(new THREE.LatheGeometry(profile, 48),
-  new THREE.MeshPhysicalMaterial({ color:0xeef7ff, transmission:0.95,
-    ior:1.5, roughness:0.04, thickness:0.2, clearcoat:1 }));
-root.add(vessel);
-const liquid = H.fillLiquid(vessel, 0x40ff80, { fillLevel:0.6 });
-FLUID.upgradeFill(liquid, { waveAmp:0.003, caustics:0.9 });
-root.add(liquid);
+${defaultCode}
 
-// WRONG — do NOT do this:
-//   const liquidPlane = new THREE.Mesh(new THREE.CircleGeometry(r),
-//     new THREE.MeshPhysicalMaterial({ color, transmission:1.0 }));
-//   liquidPlane.position.y = 0.18; root.add(liquidPlane);
-// This hand-picks a Y that never matches the vessel's actual rim and
-// produces a potion floating in mid-air above the flask.
+═══ SCENE ENVIRONMENT — DO NOT TOUCH ═══
+The viewer provides the visual ground (grid, sky, stars, weather).
+P.init() auto-creates an infinite physics ground collider.
+  * NEVER add a floor / ground / platform mesh at or below y=0.
+  * NEVER add a "visible: false" BoxGeometry as a physics floor —
+    it shows up as a transmission-buffer artifact under any
+    transparent hero.
+  * NEVER add a large horizontal plane at the base of the scene.
+  * The root of your scene starts at y=0. Every sub-part has y > 0.
 
-// Glow hero without paying post-bloom cost:
-root.add(FX.withGlow(vessel, 0x8b5cf6, { scale:1.08, intensity:1.2 }));
+═══ TRANSPARENT GLASS CONTAINERS — exact recipe ═══
+Glass vessels (flasks, orbs, goblets, jars) MUST use this material
+shape or they render as opaque white:
+  new THREE.MeshPhysicalMaterial({
+    color: 0xffffff,       // neutral — do not tint with emissive
+    transmission: 0.95,    // required
+    ior: 1.5,
+    roughness: 0.04,
+    thickness: 0.2,
+    clearcoat: 1.0,
+    transparent: true,
+    opacity: 1.0,          // opacity 1 is correct with transmission
+  });
+Do NOT set emissive on glass. Do NOT set opacity < 0.5 — that fights
+with transmission. After adding the container, call
+  const liquid = H.fillLiquid(containerMesh, 0x40ff80, { fillLevel: 0.6 });
+  FLUID.upgradeFill(liquid);
+  root.add(liquid);
+Pass the MESH (not geometry). The engine snaps liquid to the
+container's world transform automatically.
 
-// Atmosphere + motion:
-const aura = SHADER.flowParticles({ count:600, bounds:{x:0.5,y:0.7,z:0.5},
-  color:0x8b5cf6, color2:0x10b981, speed:0.35, swirl:0.5 });
-aura.userData.excludeFromBBox = true; root.add(aura);
-addUpdateCallback(({ time }) => { vessel.rotation.y = time*0.1; });
+// Pedestal with procedural texture + MAT preset rim
+const stoneTex = TEX.stone('#3a3640'); stoneTex.repeat.set(3, 3);
+const dais = new THREE.Mesh(new THREE.CylinderGeometry(0.44, 0.48, 0.06, 96),
+  new THREE.MeshPhysicalMaterial({ color: 0x7a7680, map: stoneTex,
+    roughness: 0.82, metalness: 0.05, clearcoat: 0.15 }));
+dais.position.y = -0.03; dais.receiveShadow = true; root.add(dais);
+const daisRim = new THREE.Mesh(new THREE.TorusGeometry(0.44, 0.006, 24, 128), MAT.gold);
+daisRim.rotation.x = Math.PI / 2; daisRim.position.y = 0.003; root.add(daisRim);
 
-// Lens flare override only when there's a dominant emissive source:
-// setLensFlare({ position: sunPos, strength:0.55, occlusionTest:true });
+// Hero glass with internal shader-driven nebula
+const coreY = 0.62;
+const nebulaCore = new THREE.Mesh(new THREE.SphereGeometry(0.105, 64, 64),
+  SHADER.nebula(0x8b5cf6, 0x0a0a0f));
+nebulaCore.position.y = coreY; root.add(nebulaCore);
+const orb = new THREE.Mesh(new THREE.SphereGeometry(0.14, 96, 96),
+  new THREE.MeshPhysicalMaterial({ color: 0xf0f0ff, transmission: 0.96, ior: 1.5,
+    roughness: 0.03, thickness: 0.25, clearcoat: 1.0, transparent: true }));
+orb.position.y = coreY; root.add(orb);
+const halo = new THREE.Mesh(new THREE.SphereGeometry(0.17, 48, 48),
+  SHADER.fresnel(0xa855f7, 2.5, 0.75));
+halo.position.y = coreY; root.add(halo);
+
+// Lens flare on the dominant emissive hero
+setLensFlare({ position: new THREE.Vector3(0, coreY, 0), strength: 0.3,
+  tint: 0xc28dff, anamorphic: 1.0, occlusionTest: true });
+
+// Volumetric god rays
+for (let i = 0; i < 4; i++) {
+  const a = (i / 4) * Math.PI * 2 + Math.PI / 4;
+  root.add(FX.godRayCone({
+    from: new THREE.Vector3(Math.cos(a) * 0.06, coreY - 0.02, Math.sin(a) * 0.06),
+    to:   new THREE.Vector3(Math.cos(a) * 0.62, 0.08, Math.sin(a) * 0.62),
+    color: 0xa855f7, spread: 0.12, intensity: 0.45 }));
+}
+
+// Orbiting rings + planets
+const rings = [];
+[{ r: 0.28, mat: MAT.gold, speed: 0.45 },
+ { r: 0.36, mat: MAT.brass, tilt: Math.PI / 3, speed: 0.3 },
+ { r: 0.44, mat: MAT.silver, tilt: Math.PI / 6, speed: 0.2 }
+].forEach((def, i) => {
+  const tilt = new THREE.Group(); tilt.position.y = coreY;
+  if (def.tilt) tilt.rotation.x = def.tilt;
+  root.add(tilt);
+  const spin = new THREE.Group(); tilt.add(spin);
+  const ring = new THREE.Mesh(new THREE.TorusGeometry(def.r, 0.008, 16, 192), def.mat);
+  ring.rotation.x = Math.PI / 2; spin.add(ring);
+  const marbleTex = TEX.marble('#08306a', '#f5c776');
+  const planet = new THREE.Mesh(new THREE.SphereGeometry(0.032, 48, 48),
+    new THREE.MeshPhysicalMaterial({ map: marbleTex, metalness: 0.35, roughness: 0.28,
+      clearcoat: 1.0, clearcoatRoughness: 0.08 }));
+  planet.position.set(def.r, 0, 0); spin.add(planet);
+  rings.push({ spin, speed: def.speed, phase: i * (Math.PI * 2 / 3) });
+});
+
+// Backdrop
+const stars = CELESTIAL.starfield({ count: 1400, radius: 9, size: 36, twinkle: 0.75 });
+stars.position.y = coreY; root.add(stars);
+root.add(CELESTIAL.nebulaCloud({ dome: true, count: 420,
+  bounds: { x: 6, y: 4.5, z: 6 }, innerRadius: 4.2,
+  colorA: 0x8b5cf6, colorB: 0xfe2d6e, brightness: 1.0, size: 58 }));
+
+// Atmosphere aura + per-frame animation
+const aura = SHADER.flowParticles({ count: 900, bounds: { x: 0.55, y: 0.75, z: 0.55 },
+  color: 0x8b5cf6, color2: 0x10b981, size: 32, speed: 0.35, swirl: 0.5 });
+aura.position.y = coreY; aura.userData.excludeFromBBox = true; root.add(aura);
+addUpdateCallback(({ time }) => {
+  for (const r of rings) r.spin.rotation.y = time * r.speed + r.phase;
+  nebulaCore.rotation.y = time * 0.15;
+});
+
+═══ HARD-LEARNED ANTI-PATTERNS ═══
+- Liquid inside a glass container: H.fillLiquid(containerMesh, color,
+  { fillLevel }) THEN FLUID.upgradeFill(result). NEVER hand-roll a flat
+  CircleGeometry/PlaneGeometry at a hard-coded Y — it floats above the rim.
+- NEVER wrap engine calls in "typeof FLUID !== 'undefined'" guards. They
+  silently skip the call and produce broken scenes.
+- NEVER hand-roll four MeshPhysicalMaterial instances when MAT.gold /
+  MAT.brass / MAT.obsidian / MAT.ruby etc. already exist. Use the presets.
+- NEVER leave the hero floating above its pedestal — every vertical
+  element must reach from base to head without a visible gap.
+- The cinematic post baseline is ALREADY ACTIVE. Do not call setFilmGrain,
+  setChromatic, setColorGrade, setAO, or setBloom unless you're
+  overriding the baseline. DO call setLensFlare({ position, strength,
+  occlusionTest: true }) when the scene has a dominant emissive hero.
 
 OUTPUT CODE FOR: "${userText}"`;
     };
@@ -2169,6 +2471,10 @@ OUTPUT:`;
       threeViewer.value?.setTimeOfDay(time);
     };
 
+    const setPerformance = (level) => {
+      currentPerformance.value = level;
+      threeViewer.value?.setRenderQuality(level);
+    };
     const setWeather = (weather) => {
       currentWeather.value = weather;
       threeViewer.value?.setWeather(weather);
@@ -2382,7 +2688,12 @@ OUTPUT:`;
           parameters: currentModel.value.parameters,
           activeParameters: currentModel.value.activeParameters,
           isMoE: currentModel.value.isMoE,
-          context: 32768,
+          // 64K — the Qwen 3.6 35B A3B model supports 128K natively.
+          // 32K was forcing the full-orrery reference to truncate
+          // generated code mid-emission; 64K gives the blueprint + the
+          // orrery skeleton + cheatsheets + rules ~48K of input while
+          // still leaving ~16-20K for output and any thinking tokens.
+          context: 65536,
           filesizeBytes: currentModel.value.filesizeBytes,
           flashAttention: currentModel.value.flashAttention,
           forceReload: true,
@@ -2417,29 +2728,25 @@ OUTPUT:`;
   setColorGrade({ saturation: 1.12, contrast: 1.05 });
   await setEnvironment("night", { intensity: 0.55 });
 
-  // ── Physics world (Rapier). ──────────────────────────────────────────
-  // The collider floor is INVISIBLE but explicitly marked no-shadow so it
-  // doesn't project a square onto the dais.
+  // ── Physics world (Rapier) ─────────────────────────────────────────
+  // P.init() now auto-creates an infinite ground collider at y=0 — no
+  // invisible BoxGeometry floor needed. The old pattern produced a
+  // transmission-buffer artifact under the moat's water reflection.
   await P.init({ gravity: -4.5 });
-  const floorMesh = new THREE.Mesh(
-    new THREE.BoxGeometry(6, 0.02, 6),
-    new THREE.MeshBasicMaterial({ visible: false })
-  );
-  floorMesh.position.y = -0.001;
-  floorMesh.castShadow = false;
-  floorMesh.receiveShadow = false;
-  floorMesh.userData.excludeFromBBox = true;
-  root.add(floorMesh);
-  P.body(floorMesh, { type: 'static', shape: 'box', friction: 0.8 });
 
-  // ── Visible stone dais (receives orrery shadow) ─────────────────────
-  // Compact scene: total hero bbox kept under 1.5m so no auto-scale
-  // squashes anything; the orrery renders at the exact dimensions below.
+  // ── Stone dais ──────────────────────────────────────────────────────
+  // Plain MeshPhysicalMaterial — the TCSM wet-surface variant is
+  // available via SHADER.wetSurface for any LLM-generated scene that
+  // wants rain reactivity, but the default orrery ships with the stock
+  // PBR material because TCSM currently collides with THREE.Water's
+  // internal transmission/reflection passes (the moat uses Water, and
+  // those reflected passes invalidate TCSM-patched programs).
   const stoneTex = TEX.stone('#3a3640');
   stoneTex.repeat.set(3, 3);
   const daisGeo = new THREE.CylinderGeometry(0.44, 0.48, 0.06, 96);
   const daisMat = new THREE.MeshPhysicalMaterial({
-    color: 0x7a7680, map: stoneTex, roughness: 0.82, metalness: 0.05, clearcoat: 0.15,
+    color: 0x7a7680, map: stoneTex,
+    roughness: 0.82, metalness: 0.05, clearcoat: 0.15,
   });
   const dais = new THREE.Mesh(daisGeo, daisMat);
   dais.position.y = -0.03;
@@ -2518,7 +2825,11 @@ OUTPUT:`;
   moatLipInner.castShadow = true;
   root.add(moatLipInner);
 
-  // ── Rune-engraved marble base with gold filigree ────────────────────
+  // ── Rune-engraved marble base ───────────────────────────────────────
+  // Stock MeshPhysicalMaterial with the procedural runes texture. The
+  // SHADER.csm pulsing-rune variant is available for LLM generations
+  // (see shader cheatsheet) but kept out of the default for stability
+  // with the Water-based moat reflection/transmission pipeline.
   const baseTex = TEX.runes('#1a1308', '#f5c776');
   baseTex.repeat.set(2, 1);
   const baseProfile = [
@@ -2535,7 +2846,9 @@ OUTPUT:`;
   ];
   const baseGeo = new THREE.LatheGeometry(baseProfile, 64);
   const baseMat = new THREE.MeshPhysicalMaterial({
-    color: 0x252028, roughness: 0.25, metalness: 0.15, clearcoat: 0.85, map: baseTex,
+    color: 0x252028, roughness: 0.25, metalness: 0.15,
+    clearcoat: 0.85, map: baseTex,
+    emissive: 0xf5c776, emissiveMap: baseTex, emissiveIntensity: 0.35,
   });
   const baseMesh = new THREE.Mesh(baseGeo, baseMat);
   baseMesh.castShadow = true; baseMesh.receiveShadow = true;
@@ -2571,15 +2884,51 @@ OUTPUT:`;
   root.add(shardBatch);
 
   // ── Central column holding up the orrery head ──────────────────────
+  // Substantial lathe profile that reaches almost up to the core — the
+  // previous 0.32-unit column left a visible gap and made the head read
+  // as "floating." Now the column flows from a wide decorative base at
+  // y=0 to a tapered collar at y=0.50, continues as a slender brass
+  // stem up to y=0.62 (where the core orb sits), with an upper capital
+  // ring catching the rim of the armillary sphere.
   const columnProfile = [
-    new THREE.Vector2(0.04, 0), new THREE.Vector2(0.05, 0.05),
-    new THREE.Vector2(0.035, 0.15), new THREE.Vector2(0.03, 0.28),
-    new THREE.Vector2(0.05, 0.3), new THREE.Vector2(0.035, 0.32),
+    new THREE.Vector2(0.04, 0.00),
+    new THREE.Vector2(0.06, 0.03),
+    new THREE.Vector2(0.055, 0.10),
+    new THREE.Vector2(0.045, 0.20),
+    new THREE.Vector2(0.040, 0.30),
+    new THREE.Vector2(0.050, 0.34),
+    new THREE.Vector2(0.038, 0.38),
+    new THREE.Vector2(0.030, 0.50),
+    new THREE.Vector2(0.020, 0.58),
+    new THREE.Vector2(0.025, 0.60),
+    new THREE.Vector2(0.020, 0.62),
   ];
   const column = new THREE.Mesh(new THREE.LatheGeometry(columnProfile, 48), MAT.brass);
   column.position.y = 0.18;
   column.castShadow = true;
   root.add(column);
+
+  // ── Central axis rod through the core ──────────────────────────────
+  // The rod continues from the column's upper stem UP through the glass
+  // orb and past the hologram ring. The glass orb's 0.96 transmission
+  // reveals the rod passing through its interior — architecturally
+  // correct for an armillary sphere and anchors the head visually.
+  const axisRod = new THREE.Mesh(
+    new THREE.CylinderGeometry(0.018, 0.018, 0.44, 20),
+    MAT.brass
+  );
+  axisRod.position.y = 1.02;   // rod spans y = 0.80 → 1.24
+  axisRod.castShadow = true;
+  root.add(axisRod);
+
+  // Gold finial cap on the upper rod tip — a classic orrery crown.
+  const finialTop = new THREE.Mesh(
+    new THREE.SphereGeometry(0.028, 20, 20),
+    MAT.gold
+  );
+  finialTop.position.y = 1.25;
+  finialTop.castShadow = true;
+  root.add(finialTop);
 
   // ── Nebula core: BonzAI-palette inner sphere + glass orb + halo ────
   const coreY = 0.62;
@@ -2843,8 +3192,13 @@ OUTPUT:`;
         await window.electronAPI.resetChat();
         lastStatus.value = "Vibe Coding...";
         const codePrompt = buildObjectPrompt(blueprint);
+        // 16K output budget — the orrery reference is ~270 lines and
+        // our quality bar expects new scenes to match that volume. The
+        // 35B MoE model with 32K context + ~5K prefill leaves room for
+        // a 16K code emission. Thinking tokens stay off for codegen;
+        // reasoning mode adds 4K when enabled.
         const codeResult = await callLLM(codePrompt, {
-          maxTokens: reasoningEnabled.value ? 12288 : 10240,
+          maxTokens: reasoningEnabled.value ? 20480 : 16384,
           temperature: 0.7,
           thoughtTokens: reasoningEnabled.value ? undefined : 0,
         });
@@ -2860,13 +3214,23 @@ OUTPUT:`;
         );
         let userCode = userCodeMatch ? userCodeMatch[1].trim() : "";
 
-        // Retry path — if phase-2 produced no extractable code (small LLM
-        // got eaten by prefill, thinking tokens, etc.) fall back to a
-        // terse code-only prompt that reuses the blueprint and drops all
-        // the verbose rules/reference. Gives the model one last chance
-        // before we surface a failure to the user.
-        if (!userCode) {
-          console.warn("[3D] Phase-2 produced empty code — retrying with terse prompt.");
+        // Retry heuristic — fires when phase-2 produces anything we
+        // can't safely run: empty output, or output truncated mid-code
+        // (token budget ran out, context limit hit). Detected via:
+        //   (a) no userCode extracted
+        //   (b) userCode exists but has badly mismatched braces, which
+        //       normalizeLLMCode couldn't auto-fix. Truncated output
+        //       typically ends mid-expression with many more `{` than `}`.
+        const openBraces  = (userCode.match(/\{/g) || []).length;
+        const closeBraces = (userCode.match(/\}/g) || []).length;
+        const truncated = userCode && (openBraces - closeBraces > 5
+                                       || !/return\s+root\s*;?\s*$/.test(userCode.replace(/\s+$/, "").slice(-400))
+                                          && userCode.length > 2000
+                                          && openBraces > closeBraces);
+        if (!userCode || truncated) {
+          console.warn(
+            `[3D] Phase-2 ${userCode ? 'produced truncated code' : 'produced empty code'} — retrying with terse prompt.`
+          );
           lastStatus.value = "Retrying...";
           await window.electronAPI.resetChat();
           const tersePrompt = `You are a Three.js developer. Output ONLY raw JavaScript. No markdown, no prose, no <think>. Start with setObjectInfo(...).
@@ -3058,6 +3422,9 @@ OUTPUT CODE:`;
       examplePrompts,
       setTimeOfDay,
       setWeather,
+      performancePresets,
+      currentPerformance,
+      setPerformance,
       setLightIntensity,
       copyPrompt,
       clearScene,
