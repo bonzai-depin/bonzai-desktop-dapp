@@ -52,19 +52,17 @@
           <div class="models__activity--payouts">
             <div class="columns">
               <div class="column is-12">
-                <!-- MODEL SELECTOR -->
-                <div class="control mb-3 has-text-left">
+                <!-- MODEL SELECTOR — Quality (Wan2.2) option removed;
+                     Fast (LTX-2) is the only available video model now.
+                     Kept videoModel = "fast" reactive default so all
+                     downstream branching still works unchanged. -->
+                <!-- <div class="control mb-3 has-text-left">
                   <input v-model="videoModel" value="fast" id="vm_fast" type="radio" name="video_model" checked />
                   <label for="vm_fast" class="radio mr-2">
                     <span class="material-symbols-outlined" style="font-size: 32px !important">bolt</span>
                     Fast
                   </label>
-                  <input v-model="videoModel" value="quality" id="vm_quality" type="radio" name="video_model" />
-                  <label for="vm_quality" class="radio mr-2">
-                    <span class="material-symbols-outlined" style="font-size: 32px !important">auto_awesome</span>
-                    Quality
-                  </label>
-                </div>
+                </div> -->
 
                 <!-- MODE / DURATION / FPS / RESOLUTION OPTIONS -->
                 <div class="control mb-5 has-text-left">

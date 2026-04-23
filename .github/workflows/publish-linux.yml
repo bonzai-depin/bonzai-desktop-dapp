@@ -100,11 +100,33 @@ jobs:
           find "$TORCH_DIR" -name "libcublas.so*" -delete 2>/dev/null || true
           # Remove nvptx compiler libs (JIT compilation, not needed at runtime)
           find "$TORCH_DIR" -name "libnvptxcompiler*" -delete 2>/dev/null || true
+          # NEW: additional torch CUDA bloat — safe to strip for inference
+          find "$TORCH_DIR" -name "libtorch_cuda_linalg*" -delete 2>/dev/null || true
+          find "$TORCH_DIR" -name "libnvrtc-builtins*" -delete 2>/dev/null || true
+          find "$TORCH_DIR" -name "libcusparseLt*" -delete 2>/dev/null || true
+          find "$TORCH_DIR" -name "libcudnn_ops_train*" -delete 2>/dev/null || true
+          find "$TORCH_DIR" -name "libtorch_cuda_cpp*" -delete 2>/dev/null || true
           # Remove Triton (JIT kernel compiler, not needed for inference)
           find "$(python -c 'import site; print(site.getsitepackages()[0])')" -type d -name "triton" -exec rm -rf {} + 2>/dev/null || true
           # Remove test/benchmark files from torch
           find "$TORCH_DIR" -type d -name "test" -exec rm -rf {} + 2>/dev/null || true
           find "$TORCH_DIR" -type d -name "benchmarks" -exec rm -rf {} + 2>/dev/null || true
+          # NEW: strip torchvision + diffusers + transformers test/doc assets.
+          # Adds ~200MB of removals on top of the torch-specific strips above.
+          SITE=$(python -c 'import site; print(site.getsitepackages()[0])')
+          for PKG in torchvision diffusers transformers datasets peft; do
+            if [ -d "$SITE/$PKG" ]; then
+              find "$SITE/$PKG" -type d \( -name tests -o -name test -o -name docs -o -name "docs_src" -o -name examples -o -name benchmarks -o -name __pycache__ \) -exec rm -rf {} + 2>/dev/null || true
+              find "$SITE/$PKG" -name "*.md" -delete 2>/dev/null || true
+              find "$SITE/$PKG" -name "*.rst" -delete 2>/dev/null || true
+              find "$SITE/$PKG" -name "*.pyi" -delete 2>/dev/null || true
+            fi
+          done
+          # Bundled torchvision model weights / fixture images
+          find "$SITE/torchvision" -type d -name "datasets" -exec rm -rf {} + 2>/dev/null || true
+          # ONNX runtime CUDA provider (if installed; some deps pull it in)
+          find "$SITE" -name "libonnxruntime_providers_cuda*" -delete 2>/dev/null || true
+          find "$SITE" -name "libonnxruntime_providers_tensorrt*" -delete 2>/dev/null || true
 
           find "$TORCH_DIR" -name "*.so" -exec strip --strip-debug {} + 2>/dev/null || true
           find "$TORCH_DIR" -name "*.so.*" -exec strip --strip-debug {} + 2>/dev/null || true
@@ -254,6 +276,29 @@ jobs:
           # Remove source maps from Chromium
           find "$APP" -name "*.js.map" -delete 2>/dev/null || true
 
+          # NEW: node-llama-cpp prebuilt binaries for OTHER platforms
+          # (darwin/win32 copies on every install). Keep only Linux x64.
+          find "$APP/resources/app/node_modules/node-llama-cpp" -type d \
+            \( -name "llama.cpp-*-darwin*" -o -name "llama.cpp-*-win*" \
+               -o -name "*-macos-*" -o -name "*-windows-*" -o -name "*-mac-*" \) \
+            -exec rm -rf {} + 2>/dev/null || true
+
+          # NEW: @dimforge/rapier3d-compat JS build files duplicated per target
+          find "$APP/resources/app/node_modules/@dimforge/rapier3d-compat" \
+            -name "*.wasm.d.ts" -delete 2>/dev/null || true
+
+          # NEW: three/examples docs & addons unused at runtime
+          find "$APP/resources/app/node_modules/three" -type d \
+            \( -name "docs" -o -name "editor" -o -name "manual" \
+               -o -name "files" -o -name "screenshots" \) \
+            -exec rm -rf {} + 2>/dev/null || true
+
+          # NEW: electron's native modules — strip prebuilt binaries for
+          # platforms other than linux-x64 (leftover from npm ci).
+          find "$APP/resources/app/node_modules" -type d -name "prebuilds" | while read -r d; do
+            find "$d" -mindepth 1 -maxdepth 1 -type d ! -name "linux-x64" ! -name "linux-*" -exec rm -rf {} + 2>/dev/null || true
+          done
+
           echo "App size after stripping: $(du -sh "$APP" | cut -f1)"
 
       - name: Build .deb package (xz compressed)
@@ -292,9 +337,33 @@ jobs:
             echo "DEB exceeds 2GB, repacking with xz compression..."
             REPACK_DIR=$(mktemp -d)
             dpkg-deb -R "$DEB_PATH" "$REPACK_DIR"
-            dpkg-deb -Zxz -b "$REPACK_DIR" "$DEB_PATH"
+            dpkg-deb -Zxz -z9 -Sextreme -b "$REPACK_DIR" "$DEB_PATH"
             rm -rf "$REPACK_DIR"
-            echo "Repacked DEB size: $(stat --format='%s' "$DEB_PATH" | numfmt --to=iec)"
+            DEB_SIZE=$(stat --format='%s' "$DEB_PATH")
+            echo "Repacked DEB size: $(echo $DEB_SIZE | numfmt --to=iec)"
+          fi
+
+          # Split-into-parts fallback — if xz repack still exceeds 2GB,
+          # split the .deb into ~1.9GB zip chunks so GitHub accepts each
+          # asset. Users reassemble with: cat BonzAI-*.deb.part-* > BonzAI.deb
+          if [ "$DEB_SIZE" -gt 2000000000 ]; then
+            echo "DEB still exceeds 2GB after xz repack — splitting into parts"
+            cd out/make
+            split -b 1900M -d -a 2 "$(basename "$DEB_PATH")" "$(basename "$DEB_PATH").part-"
+            echo "Split result:"
+            ls -lh *.part-* 2>/dev/null | awk '{print $9, $5}'
+            # Write a small README so users know how to reassemble.
+            cat > "BonzAI-${TAG}-linux-amd64.README.txt" <<EOF
+GitHub rejected the single .deb (>2GB). To reassemble:
+
+  cat BonzAI-${TAG}-linux-amd64.deb.part-* > BonzAI-${TAG}-linux-amd64.deb
+  sudo dpkg -i BonzAI-${TAG}-linux-amd64.deb
+
+Verify checksum if published alongside this file.
+EOF
+            # Remove the original oversize .deb so we only upload parts.
+            rm -f "$(basename "$DEB_PATH")"
+            cd - >/dev/null
           fi
 
           echo "Final package:"
@@ -311,13 +380,24 @@ jobs:
           TAG="${{ env.TAG }}"
           ASSET="out/make/BonzAI-${TAG}-linux-amd64.deb"
 
-          if [ -f "$ASSET" ]; then
-            echo "Uploading: $ASSET ($(stat --format='%s' "$ASSET" | numfmt --to=iec))"
-            gh release upload "${TAG}" "$ASSET" --clobber \
-              || gh release create "${TAG}" "$ASSET" \
-                --title "BonzAI v${TAG}" \
-                --generate-notes
-          fi
+          # Collect everything in out/make: either the single .deb or
+          # the split .part-* chunks + README (split fallback). `ls -1`
+          # of the dir returns every artifact we want to upload.
+          cd out/make
+          ASSETS=( $(ls -1) )
+          cd - >/dev/null
+
+          # Ensure the release exists (create if first upload, reuse otherwise).
+          gh release view "${TAG}" >/dev/null 2>&1 \
+            || gh release create "${TAG}" \
+              --title "BonzAI v${TAG}" \
+              --generate-notes
+
+          for f in "${ASSETS[@]}"; do
+            FULL="out/make/$f"
+            echo "Uploading: $FULL ($(stat --format='%s' "$FULL" | numfmt --to=iec))"
+            gh release upload "${TAG}" "$FULL" --clobber
+          done
 
           echo "Released Linux build for v${TAG}"
 
@@ -332,10 +412,10 @@ jobs:
           export GH_TOKEN="$MIRROR_TOKEN"
 
           TAG="${{ env.TAG }}"
-          ASSET="out/make/BonzAI-${TAG}-linux-amd64.deb"
-
-          if [ -f "$ASSET" ]; then
-            gh release upload "$TAG" "$ASSET" --clobber \
+          # Upload every artifact in out/make (single .deb OR split parts + README).
+          for FULL in out/make/*; do
+            [ -f "$FULL" ] || continue
+            gh release upload "$TAG" "$FULL" --clobber \
               --repo bonzai-depin/bonzai-releases \
-              || echo "Mirror upload skipped"
-          fi
+              || echo "Mirror upload skipped for $FULL"
+          done
