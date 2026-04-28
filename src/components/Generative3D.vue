@@ -46,24 +46,89 @@
             </div>
           </div>
 
-          <!-- GENERATION PROGRESS -->
-          <div
-            v-if="isLoading"
-            class="generation notification is-info"
-            style="margin-bottom: 1rem"
-          >
-            <p class="mb-2">
-              <span class="fira-sans-condensed-black-italic is-size-4">
-                <button
-                  disabled
-                  class="button is-loading is-info is-small mr-2 p-4"
-                ></button>
-                Crafting...
-              </span>
-            </p>
-            <progress class="progress is-success" max="100">
-              Generating...
-            </progress>
+          <!-- GENERATION PROGRESS — game-style loading screen -->
+          <div v-if="isLoading" class="game-loader" :class="{ 'game-loader--idle': !stream.active }">
+            <!-- Animated scanline/glow background -->
+            <div class="game-loader__bg" aria-hidden="true">
+              <div class="game-loader__bg-scan"></div>
+              <div class="game-loader__bg-glow"></div>
+            </div>
+
+            <div class="game-loader__inner">
+              <!-- Phase title -->
+              <div class="game-loader__phase">
+                <span class="game-loader__phase-tag">PHASE</span>
+                <span class="game-loader__phase-name">{{ stream.phase || 'Initializing' }}</span>
+              </div>
+              <p v-if="stream.subtitle" class="game-loader__subtitle">
+                {{ stream.subtitle }}
+              </p>
+
+              <!-- Progress bar -->
+              <div class="game-loader__bar">
+                <div
+                  class="game-loader__bar-fill"
+                  :style="{ width: streamProgress + '%' }"
+                ></div>
+                <div class="game-loader__bar-shimmer"></div>
+              </div>
+              <div class="game-loader__hud">
+                <span class="game-loader__hud-pct">{{ streamProgress }}%</span>
+                <span class="game-loader__hud-sep">·</span>
+                <span class="game-loader__hud-tokens">
+                  {{ stream.tokenCount }} / {{ stream.maxTokens }} tokens
+                </span>
+                <span class="game-loader__hud-sep">·</span>
+                <span
+                  class="game-loader__hud-tps"
+                  :title="stream.tokenCount === 0
+                    ? 'Computing attention over the system prompt before generation starts'
+                    : 'True generation rate (excludes prefill)'"
+                >
+                  <template v-if="stream.tokenCount === 0">
+                    warming up…
+                  </template>
+                  <template v-else>
+                    {{ stream.tokensPerSec || '–' }} tok/s
+                  </template>
+                </span>
+                <span class="game-loader__hud-sep">·</span>
+                <span class="game-loader__hud-time">
+                  {{ Math.round(stream.elapsedMs / 1000) }}s
+                </span>
+                <span
+                  v-if="stream.prefillMs > 200"
+                  class="game-loader__hud-sep"
+                >·</span>
+                <span
+                  v-if="stream.prefillMs > 200"
+                  class="game-loader__hud-prefill"
+                  title="Time the model spent computing attention over the prompt before the first token streamed back"
+                >
+                  prefill {{ (stream.prefillMs / 1000).toFixed(1) }}s
+                </span>
+              </div>
+
+              <!-- Rotating game-loader tip -->
+              <div class="game-loader__tip" :title="stream.tip">
+                <span class="game-loader__tip-dot"></span>
+                <span class="game-loader__tip-text">
+                  {{ stream.tip || 'Warming up the rendering crew…' }}
+                </span>
+              </div>
+
+              <!-- Live preview window -->
+              <div v-if="stream.preview" class="game-loader__preview">
+                <div class="game-loader__preview-header">
+                  <span class="material-symbols-outlined">terminal</span>
+                  <span>LIVE BLUEPRINT FEED</span>
+                </div>
+                <pre
+                  ref="streamPreviewEl"
+                  class="game-loader__preview-body"
+                >{{ stream.preview }}<span class="game-loader__cursor">▌</span></pre>
+              </div>
+            </div>
           </div>
 
           <!-- Example Prompts -->
@@ -708,6 +773,28 @@ function normalizeLLMCode(code) {
     out = out.replace(re, replacement);
   }
 
+  // STEP 3.4b: Fix the "const NAMESPACE.Member = ..." anti-pattern.
+  // The codegen sometimes treats engine namespaces (MAT, TEX, FLUID, …)
+  // as if they were writable namespaces it could declare into:
+  //
+  //   const MAT.PolishedBrass = new THREE.MeshPhysicalMaterial({...});
+  //   const TEX.Custom = TEX.stone(...);
+  //
+  // That's a JS syntax error — `const` requires a bare identifier, not
+  // a member expression — and produces the misleading "Identifier 'MAT'
+  // has already been declared" message because the parser bails after
+  // reading `const MAT` and seeing the `.`. Strip the `const` so the
+  // assignment becomes a plain property write (the engine namespaces
+  // are object refs and accept new properties).
+  //
+  // This rewrite intentionally runs BEFORE the wrapper-reserved
+  // stripper below so the namespace identifier survives intact.
+  const NAMESPACE_NAMES = "MAT|TEX|SHADER|FLUID|H|helpers|P|CELESTIAL|FX";
+  out = out.replace(
+    new RegExp(`\\b(?:const|let|var)\\s+(${NAMESPACE_NAMES})\\.(\\w+)\\s*=`, "g"),
+    "$1.$2 =",
+  );
+
   // STEP 3.5: Strip ALL declarations of wrapper-reserved variables.
   // The wrapper already declares these — any LLM redeclaration (via params, window,
   // require, destructuring, new, literal, or anything else) causes runtime errors.
@@ -1125,6 +1212,135 @@ export default {
     const threeViewer = ref(null);
     const lastStatus = ref("");
     const showExamples = ref(false);
+
+    // ───── Game-style loading screen state ────────────────────────────────
+    // Driven by the streaming LLM call. Each phase resets these and the
+    // tip rotator picks a new flavor message every few seconds while the
+    // generation runs. Token count + tok/s come straight from the stream;
+    // progress is estimated against the configured maxTokens for the phase.
+    const stream = reactive({
+      active: false,
+      phase: "",          // "Designing Blueprint" | "Vibe Coding" | "Rendering" | "Refining" | "Retrying"
+      subtitle: "",       // optional secondary line
+      tokenCount: 0,
+      maxTokens: 1,
+      tokensPerSec: 0,    // TRUE generation rate (excludes prefill) — what the user wants to read
+      elapsedMs: 0,
+      prefillMs: 0,       // time-to-first-token; large for big prompts
+      preview: "",        // last N chars of the streamed output
+      tip: "",            // rotating loader tip
+    });
+
+    /**
+     * Loader tips. Themed to scene/world generation, in the spirit of
+     * "Calibrating polygons" / "Compiling shaders" loading screens that
+     * games used to ship with. Pulled from this pool every 2.4s while
+     * a generation is running.
+     */
+    const LOADER_TIPS = [
+      "Calibrating polygons…",
+      "Compiling shaders…",
+      "Tessellating surfaces…",
+      "Baking lightmaps…",
+      "Aligning normals…",
+      "Casting global illumination…",
+      "Spawning particle systems…",
+      "Sourcing artisanal pixels…",
+      "Negotiating with the GPU…",
+      "Defragmenting the matrix…",
+      "Whispering to the polygons…",
+      "Rendering the first triangle…",
+      "Tuning the bloom shader…",
+      "Folding the mesh in half…",
+      "Pre-warming the raytracer…",
+      "Inflating ambient occlusion…",
+      "Calibrating the skybox…",
+      "Polishing the bevels…",
+      "Quantum-aligning vertices…",
+      "Reticulating splines…",
+    ];
+    let _tipTimer = null;
+    function _rotateTip() {
+      const next = LOADER_TIPS[Math.floor(Math.random() * LOADER_TIPS.length)];
+      // Avoid the immediate same tip twice in a row.
+      stream.tip = next === stream.tip ? LOADER_TIPS[(LOADER_TIPS.indexOf(next) + 1) % LOADER_TIPS.length] : next;
+    }
+    function _startTipRotator() {
+      _stopTipRotator();
+      _rotateTip();
+      _tipTimer = setInterval(_rotateTip, 2400);
+    }
+    function _stopTipRotator() {
+      if (_tipTimer) {
+        clearInterval(_tipTimer);
+        _tipTimer = null;
+      }
+    }
+
+    /**
+     * Strip `<think>…</think>` blocks from a streaming preview so the
+     * model's internal monologue never leaks into the loading screen
+     * (matches the GenerativeText behavior). Tolerates an unterminated
+     * `<think>` (live stream): we just hide everything from the open tag
+     * onward until `</think>` arrives.
+     */
+    function _stripThinkForPreview(text) {
+      if (!text) return "";
+      let out = "";
+      let cursor = 0;
+      while (cursor < text.length) {
+        const open = text.indexOf("<think>", cursor);
+        if (open === -1) {
+          out += text.slice(cursor);
+          break;
+        }
+        out += text.slice(cursor, open);
+        const close = text.indexOf("</think>", open + 7);
+        if (close === -1) break; // mid-think, hide tail
+        cursor = close + 8;
+      }
+      return out;
+    }
+
+    function _resetStream(phase, maxTokens, subtitle = "") {
+      stream.active = true;
+      stream.phase = phase;
+      stream.subtitle = subtitle;
+      stream.tokenCount = 0;
+      stream.maxTokens = Math.max(1, maxTokens);
+      stream.tokensPerSec = 0;
+      stream.elapsedMs = 0;
+      stream.prefillMs = 0;
+      stream.preview = "";
+      _startTipRotator();
+    }
+
+    function _endStream() {
+      stream.active = false;
+      _stopTipRotator();
+    }
+
+    /**
+     * Estimated progress 0–99% (we never claim 100 until the phase ends —
+     * the actual token budget is rarely hit exactly).
+     */
+    const streamProgress = computed(() => {
+      if (!stream.active) return 0;
+      const pct = Math.floor((stream.tokenCount / stream.maxTokens) * 100);
+      return Math.min(99, Math.max(0, pct));
+    });
+
+    // Auto-scroll the live preview to keep the latest tokens visible.
+    const streamPreviewEl = ref(null);
+    watch(
+      () => stream.preview,
+      () => {
+        nextTick(() => {
+          const el = streamPreviewEl.value;
+          if (el) el.scrollTop = el.scrollHeight;
+        });
+      },
+    );
     // Use shared inference store for 3D objects
     const objectInferences = computed(
       () => inferenceStore.state.objectInferences,
@@ -1649,13 +1865,15 @@ export default {
     ]);
     const currentPerformance = ref("high");
 
-    // 3D default: Qwen3.6 35B A3B at Q3_K_XL (~16.8 GB). MoE with 3B
-    // active params + 256K native context. Q3 tier keeps the MoE's
-    // expert diversity (better than Q2) while staying under 20 GB
-    // VRAM. Larger total-parameter pool than a 27B dense at the same
-    // quant tier, and the per-token inference cost is still only the
-    // 3B active path.
-    const _3dModel = resolveLLM("qwen_3_6_35b_a3b", "q3");
+    // 3D default: Qwen3.6 28B REAP A3B at Q4_K_M (~17.3 GB). REAP is a
+    // structured-pruning method that drops ~20% of the parameters from
+    // the Qwen3.6 35B A3B parent while preserving the 3B active path
+    // and 256K context. Net effect for codegen: faster prefill, lower
+    // VRAM headroom, marginal quality drop. Switching to Q4 (instead
+    // of Q3 on the unpruned 35B) recovers the per-expert precision the
+    // pruning reduced, so end-to-end output quality stays close to the
+    // larger model with shorter total turnaround.
+    const _3dModel = resolveLLM("qwen_3_6_28b_reap_a3b", "q4");
     const model = {
         modelname: _3dModel.name,
         modeldesc: _3dModel.description,
@@ -1773,12 +1991,42 @@ SPATIAL RULES you MUST follow:
 - Lids/caps/corks go at the OPENING of the container (its highest point), not in the middle
 - Total object height should be 0.3–1.5 units
 
-FORMAT: Write a single dense paragraph. List each sub-part inline with its shape, material, color hex, and Y-position. End with one signature detail.
+ARCHETYPE TAGS (optional, recommended) — when the scene is one of the
+recognized archetypes below, OPEN the blueprint with the matching tag on its
+own line. This is a STYLE HINT for the codegen, not a contract — the engine
+guarantees correct water rendering regardless of how the codegen builds the
+geometry, so don't agonize over picking a tag. Use one only if it cleanly
+fits.
+
+  [ARCHETYPE: TIERED_FOUNTAIN, tiers=N, baseRadius=R]
+      Multi-tier / cascading water feature.
+  [ARCHETYPE: SINGLE_BASIN, radius=R]
+      One bowl + rim + water surface.
+  [ARCHETYPE: LIQUID_VESSEL, container=<vesselName>, fill=<color>, level=0.0–1.0]
+      Liquid inside a flask / goblet / cauldron.
+  [ARCHETYPE: OPEN_WATER, footprint=N×N]
+      Pool / lake / moat / scrying basin.
+  [ARCHETYPE: STREAM, from=<part>, to=<part>]
+      Pouring / falling water column.
+
+LIQUID RULE — read carefully. Whenever a sub-part is water, potion, blood,
+acid, oil, lava, mercury, or any other liquid, describe ONLY:
+  - Which container or footprint holds it
+  - The semantic type (water | lava | potion | blood | oil | mercury | acid)
+  - Optional color tint and fill level
+Do NOT write "BaseColor #xxxxxx Roughness 0.1 Metalness 0.1 Transparency 0.8"
+for a liquid. The engine has dedicated shaders per liquid type and will pick
+the correct optics; spec'ing material parameters yourself produces a flat
+dull disc when the codegen translates it literally.
+
+FORMAT: Write a single dense paragraph. Open with the archetype tag(s) on
+their own line, then describe each sub-part inline with its shape, material,
+color hex, and Y-position. End with one signature detail.
 
 RULES:
 - Stay EXACTLY faithful to the user's intent — do not change the subject or add unrelated elements
 - DO add structural sub-parts the object would realistically have (a bottle needs a cork, a sword needs a pommel)
-- Every color must have a hex code. If user didn't specify, pick vivid realistic ones
+- Every color must have a hex code (except liquids — see LIQUID RULE). If user didn't specify, pick vivid realistic ones
 - Output ONLY the enriched description paragraph. No code. No markdown. No bullet points. No explanation.`;
     };
 
@@ -1822,7 +2070,7 @@ RULES:
       const selectedSkills = scored.slice(0, 3).map(s => s.content);
       const skillsContext = selectedSkills.join("\n\n---\n\n");
 
-      return `You are an expert Three.js developer building scenes that
+      return `${detectArchetypeHint(userText)}You are an expert Three.js developer building scenes that
 must match the Arcane Orrery reference (shown at the bottom of this
 prompt) for visual richness and engine-feature coverage.
 
@@ -1881,6 +2129,40 @@ substitute one for another.
         NO gaps, NO overlaps.
       - Ground plane always at y=0. No sub-part has y < 0 unless
         you're carving into the ground (moat floor, etc.).
+      - PARENT/CHILD Y COMPOUNDS — read carefully. When the blueprint
+        gives ABSOLUTE world Y values (e.g. ringInner at y=0.20), and
+        you nest the rings as parent → child via Group.add(), the
+        child's position.y is RELATIVE to its parent. Setting both
+        ringMid.position.y = 0.16 AND ringInner.position.y = 0.20
+        AFTER ringMid.add(ringInner) makes ringInner sit at world
+        y = 0.16 + 0.20 = 0.36 — not the intended 0.20.
+
+        FIX — pick ONE of these patterns per assembly:
+          (A) FLAT: add every part to root with its absolute Y.
+              root.add(ringOuter); ringOuter.position.y = 0.12;
+              root.add(ringMid);   ringMid.position.y   = 0.16;
+              root.add(ringInner); ringInner.position.y = 0.20;
+              root.add(flask);     flask.position.y     = 0.22;
+          (B) NESTED: parent absorbs the parent's Y, children offset
+              from the parent. ringInner.position.y = 0.04 means
+              "0.04 above ringMid", not "world y = 0.04".
+              const ringOuter = new THREE.Group();
+              ringOuter.position.y = 0.12;
+              const ringMid = new THREE.Group();
+              ringMid.position.y = 0.04;          // 0.04 above ringOuter
+              const ringInner = new THREE.Group();
+              ringInner.position.y = 0.04;        // 0.04 above ringMid
+              const flask = ...;
+              flask.position.y = 0.02;            // 0.02 above ringInner
+              ringInner.add(flask);
+              ringMid.add(ringInner);
+              ringOuter.add(ringMid);
+              root.add(ringOuter);
+
+        For multi-axis gimbals, pattern (B) is required because each
+        ring needs to rotate independently and animate its children.
+        For loose stacks (pedestal + base + column + head), pattern
+        (A) is fine.
 
 Scenes that meet fewer than 8 of the 10 requirements FAIL quality
 review. Treat this list as a self-check before emitting return root;
@@ -1895,6 +2177,65 @@ them unless you want scene-specific overrides:
   - HDR IBL (user-selected preset: studio / day / sunset / night)
   - Scene-level weather (fog, rain, lens droplets, lightning) —
     DO NOT call setHeightFog or setScreenDroplets.
+
+═══ LIQUID CONVENTION — applies to EVERY liquid in the scene ═══
+The engine runs a FLUID.normalize() post-pass that walks the scene graph
+and swaps materials on any mesh you tag with the convention below. This
+is the SCALABLE path: it works for any liquid scenario (water, lava,
+potion, blood, oil, mercury, acid…) without you needing to know about
+specific helpers.
+
+  ── For a water/lava/potion SURFACE (open pool, lake, moat, fountain
+     pool top, lava lake, vat surface, pond): build any horizontal
+     planar geometry (CircleGeometry, RingGeometry, PlaneGeometry) with
+     ANY placeholder material, then tag it:
+
+       const surface = new THREE.Mesh(geom, new THREE.MeshBasicMaterial({color:0x000}));
+       surface.userData.fluid = {
+         type: "water",        // water | lava | potion | blood | oil | mercury | acid | elixir | ice
+         color: 0x4a90c4,      // optional — engine has good defaults per type
+         fillLevel: 0.75,      // ignored on standalone surfaces
+       };
+       surface.rotation.x = -Math.PI / 2;
+       parent.add(surface);
+
+     The engine swaps surface.material to a transmissive water shader
+     with the right caustics, fresnel, ripple animation, foam threshold.
+
+  ── For LIQUID INSIDE A CONTAINER (potion in a flask, mead in a goblet,
+     ale in a stein, water in a bowl, lava in a cauldron, blood in a
+     basin, oil in a jar): tag the CONTAINER mesh:
+
+       bottleMesh.userData.fluidContainer = {
+         type: "potion",
+         color: 0x9c27ff,      // optional
+         fillLevel: 0.65,      // 0..1 of vessel interior height
+       };
+
+     The engine fills the vessel via H.fillLiquid → FLUID.upgradeFill,
+     auto-positioning the liquid body inside the vessel's interior with
+     a properly-shaded animated surface. You do NOT call H.fillLiquid
+     yourself — just tag the container and the engine handles it.
+
+  ── For preferred / fastest path on common archetypes, the high-level
+     helpers still exist (and are usually a one-liner):
+       FLUID.tieredFountain({ tiers, baseRadius })   — fountain
+       FLUID.fountainBasin({ radius, y })             — single basin
+       FLUID.stream({ from, to, radius })             — pouring column
+       FLUID.oceanWater(geom, opts)                   — explicit ocean
+     Use them when they match. When they don't, hand-roll the geometry
+     and rely on the convention above — both yield correct water.
+
+  ── ANTI-PATTERN: do NOT spec a liquid as \`MeshStandardMaterial({
+     color: 0x4682B4, transparent: true, opacity: 0.8 })\`. That renders
+     as a flat dull blue disc. The convention exists so you can describe
+     intent ("this is water") without spec'ing material parameters that
+     don't reproduce real water optics.
+
+  ── ANTI-PATTERN: do NOT add a hand-rolled CircleGeometry "water
+     surface" inside a vessel that you also tagged as a fluidContainer.
+     One or the other — never both. The engine fills containers via the
+     userData tag.
 
 ═══ MANDATORY AAA CHECKLIST — apply to EVERY scene, not just templates ═══
 Every generation must pass these requirements. The default orrery scene
@@ -2254,6 +2595,18 @@ Aim for every generated piece to hit at least 4 of these:
 - 'transparency' / 'specular' on MeshPhysicalMaterial
 - requestAnimationFrame / setInterval / setTimeout (use addUpdateCallback)
 - AxesHelper / GridHelper / debug gizmos
+- \`const NAMESPACE.X = ...\` — JavaScript SYNTAX ERROR. \`const\` requires
+  a plain identifier, never a member expression. The error reads
+  "Identifier 'MAT' has already been declared" but the actual cause is
+  the dot. Wrong:
+      const MAT.PolishedBrass = new THREE.MeshPhysicalMaterial({...});
+      const TEX.Wood = TEX.wood('#5a3a1a');
+  Right (use a local const, then USE it):
+      const polishedBrass = new THREE.MeshPhysicalMaterial({...});
+      const woodTex = TEX.wood('#5a3a1a');
+      // …later: new THREE.Mesh(geo, polishedBrass);
+  Reusing engine presets is fine — \`MAT.brass\`, \`MAT.gold\`,
+  \`TEX.stone(...)\` are just READS, they don't declare anything.
 
 ═══ QUALITY REFERENCE — full Arcane Orrery source ═══
 This is the default scene that sets the quality bar. Your output must
@@ -2380,8 +2733,120 @@ addUpdateCallback(({ time }) => {
   overriding the baseline. DO call setLensFlare({ position, strength,
   occlusionTest: true }) when the scene has a dominant emissive hero.
 
-OUTPUT CODE FOR: "${userText}"`;
+${detectArchetypeHint(userText)}OUTPUT CODE FOR: "${userText}"`;
     };
+
+    /**
+     * Soft archetype hint — the engine's FLUID.normalize() pass now
+     * guarantees that any liquid mesh tagged with `userData.fluid` or
+     * `userData.fluidContainer` gets the right water shader, regardless
+     * of how the codegen built it. So this function is no longer the
+     * load-bearing directive it was — it's a STYLE HINT that nudges the
+     * model toward the most appropriate built-in helper when one exists,
+     * but doesn't punish the model for hand-rolling.
+     *
+     * If a high-confidence archetype is detected, we emit a small
+     * "Suggested helper" note. The convention rules in the main prompt
+     * carry the actual safety guarantees.
+     *
+     * Returns "" for non-water scenes.
+     */
+    function detectArchetypeHint(text) {
+      const t = (text || "").toLowerCase();
+
+      // 1. Explicit ARCHETYPE tag from the blueprint phase — highest signal.
+      // Format: [ARCHETYPE: NAME, key=val, key=val]
+      const tagMatch = (text || "").match(/\[ARCHETYPE:\s*([A-Z_]+)([^\]]*)\]/);
+      let tagName = null;
+      const tagParams = {};
+      if (tagMatch) {
+        tagName = tagMatch[1];
+        const paramStr = tagMatch[2] || "";
+        for (const pair of paramStr.split(",")) {
+          const [k, v] = pair.split("=").map((s) => (s || "").trim());
+          if (k && v) tagParams[k.toLowerCase()] = v;
+        }
+      }
+
+      // 2. Natural-language fallbacks (work even without the tag).
+      const numericTier = t.match(/\b(\d+)[\s-]*tier(s|ed)?\b/);
+      const wordTier = t.match(/\b(two|three|four|five|six|seven)[\s-]*tier(s|ed)?\b/);
+      const wordToNum = { two: 2, three: 3, four: 4, five: 5, six: 6, seven: 7 };
+      const inferredTierCount = numericTier
+        ? parseInt(numericTier[1], 10)
+        : wordTier
+          ? wordToNum[wordTier[1]]
+          : null;
+
+      const isFountainWord = /\bfountain\b/.test(t);
+      const isCascading = /\bcascad(ing|e)\b|\bstacked\b/.test(t) && (isFountainWord || /\bbasin|bowl|tier\b/.test(t));
+
+      // 3. Resolve to a single archetype.
+      let archetype = tagName;
+      let params = { ...tagParams };
+      if (!archetype) {
+        if ((isFountainWord && inferredTierCount && inferredTierCount >= 2) || isCascading) {
+          archetype = "TIERED_FOUNTAIN";
+          params.tiers = String(inferredTierCount || 3);
+        } else if (isFountainWord) {
+          archetype = "SINGLE_BASIN";
+        } else if (/\b(pool|lake|moat|pond|reservoir|scrying basin)\b/.test(t)) {
+          archetype = "OPEN_WATER";
+        }
+      }
+      if (!archetype) return "";
+
+      // 4. Emit the soft hint. The engine's FLUID.normalize() guarantees
+      // any tagged liquid mesh gets the right shader, so these are
+      // "suggested helpers" not enforcement walls.
+      if (archetype === "TIERED_FOUNTAIN") {
+        const tiers = parseInt(params.tiers, 10) || inferredTierCount || 3;
+        const baseRadius = parseFloat(params.baseradius) || 0.55;
+        return `// SUGGESTED HELPER for this scene:
+//   root.add(FLUID.tieredFountain({ tiers: ${tiers}, baseRadius: ${baseRadius.toFixed(2)} }));
+// One call, fully assembled (basins + rims + water + cascading streams).
+// If you instead build the fountain by hand, tag every water surface
+// with userData.fluid = { type: "water" } and every bowl with
+// userData.fluidContainer = { type: "water", fillLevel: 0.7 } — the
+// engine's FLUID.normalize pass will swap in the correct water shader
+// regardless. Either approach yields proper transmissive water.
+
+`;
+      }
+      if (archetype === "SINGLE_BASIN") {
+        const radius = parseFloat(params.radius) || 0.6;
+        return `// SUGGESTED HELPER for this scene:
+//   root.add(FLUID.fountainBasin({ radius: ${radius.toFixed(2)}, y: 0.0 }));
+// Or hand-build and tag the bowl with
+//   userData.fluidContainer = { type: "water", fillLevel: 0.75 };
+
+`;
+      }
+      if (archetype === "OPEN_WATER") {
+        return `// SUGGESTED PATH for this scene's water surface:
+//   const water = new THREE.Mesh(geom, ...placeholderMaterial);
+//   water.userData.fluid = { type: "water" };
+// FLUID.normalize will swap the material to the proper transmissive
+// shader. Or call FLUID.oceanWater(geom, opts) directly for explicit
+// control.
+
+`;
+      }
+      if (archetype === "LIQUID_VESSEL") {
+        return `// SUGGESTED PATH for the liquid in the vessel:
+//   vesselMesh.userData.fluidContainer = { type: "potion", fillLevel: 0.7 };
+// FLUID.normalize will fill the vessel via H.fillLiquid + FLUID.upgradeFill.
+
+`;
+      }
+      if (archetype === "STREAM") {
+        return `// SUGGESTED HELPER for the pouring water:
+//   root.add(FLUID.stream({ from: Vector3, to: Vector3, radius: 0.025 }));
+
+`;
+      }
+      return "";
+    }
 
     // ═══════════════════════════════════════════════════════════════════════
     // REFINE PROMPT BUILDER
@@ -2439,28 +2904,92 @@ OUTPUT:`;
     // ═══════════════════════════════════════════════════════════════════════
     // LLM
     // ═══════════════════════════════════════════════════════════════════════
-    const callLLM = async (prompt, options = {}) => {
-      if (!window.electronAPI?.chat) {
-        throw new Error("Chat API not available");
-      }
-      const extraOpts = { returnMetadata: true };
+    /**
+     * Streaming LLM call — tokens arrive over IPC in real time, the
+     * loading screen updates as they land. Falls back to the legacy
+     * non-streaming path if the renderer doesn't expose chatStream.
+     *
+     * Caller-supplied `onProgress({text, tokenCount, elapsedMs})` is
+     * invoked on every chunk; the 3D pipeline uses it to feed the
+     * game-style loading screen with a live preview + tok/s readout.
+     */
+    const callLLM = async (prompt, options = {}, onProgress) => {
+      const canStream =
+        typeof window?.electronAPI?.chatStream === "function" &&
+        typeof window?.electronAPI?.onChatToken === "function";
+
+      const extraOpts = {};
       if (options.maxTokens) extraOpts.maxTokens = options.maxTokens;
-      if (options.temperature !== undefined)
-        extraOpts.temperature = options.temperature;
-      if (options.thoughtTokens !== undefined)
-        extraOpts.thoughtTokens = options.thoughtTokens;
-      const response = await Promise.race([
-        window.electronAPI.chat(prompt, extraOpts),
-        new Promise((_, reject) =>
-          setTimeout(() => reject(new Error("Timeout")), 3600000),
-        ),
-      ]);
-      if (!response) throw new Error("Empty response from LLM");
-      // Return metadata object { text, tokenCount, elapsedMs } when available
-      if (typeof response === 'object' && response.text !== undefined) {
-        return response;
+      if (options.temperature !== undefined) extraOpts.temperature = options.temperature;
+      if (options.thoughtTokens !== undefined) extraOpts.thoughtTokens = options.thoughtTokens;
+      if (typeof options.enableThinking === "boolean") extraOpts.enableThinking = options.enableThinking;
+
+      if (!canStream) {
+        // Legacy non-streaming path (left in place so callers without
+        // streaming support still work).
+        if (!window.electronAPI?.chat) throw new Error("Chat API not available");
+        const response = await Promise.race([
+          window.electronAPI.chat(prompt, { ...extraOpts, returnMetadata: true }),
+          new Promise((_, reject) => setTimeout(() => reject(new Error("Timeout")), 3600000)),
+        ]);
+        if (!response) throw new Error("Empty response from LLM");
+        if (typeof response === "object" && response.text !== undefined) return response;
+        return { text: String(response), tokenCount: 0, elapsedMs: 0 };
       }
-      return { text: String(response), tokenCount: 0, elapsedMs: 0 };
+
+      // Streaming path
+      let fullText = "";
+      let tokenCount = 0;
+      const startedAt = performance.now();
+      // Time-to-first-token marks the prefill boundary. Everything before
+      // it = attention compute over the prompt; after = pure generation.
+      // Splitting them is the only honest way to display tok/s — if a
+      // 30B model takes 60s to chew through 10K tokens of system prompt
+      // and then generates 5K tokens at 10 tok/s, the naïve "total /
+      // elapsed" rate reads as 4.5 tok/s which is misleading.
+      let firstTokenAt = 0;
+
+      const unsubscribe = window.electronAPI.onChatToken((chunk) => {
+        if (typeof chunk !== "string" || chunk.length === 0) return;
+        if (firstTokenAt === 0) firstTokenAt = performance.now();
+        tokenCount++;
+        fullText += chunk;
+        const now = performance.now();
+        const elapsedMs = now - startedAt;
+        const prefillMs = firstTokenAt - startedAt;
+        const genMs = now - firstTokenAt;
+        try {
+          onProgress?.({
+            text: fullText,
+            tokenCount,
+            elapsedMs,
+            prefillMs,
+            genMs,
+          });
+        } catch (e) {
+          console.warn("[3D] stream onProgress threw:", e);
+        }
+      });
+
+      try {
+        const result = await window.electronAPI.chatStream(prompt, extraOpts);
+        // chatStream returns the assistant text — prefer it over our
+        // accumulated buffer in case the IPC ordering ever drops a chunk.
+        if (typeof result === "string" && result.length >= fullText.length) {
+          fullText = result;
+        }
+      } finally {
+        unsubscribe();
+      }
+
+      const finishedAt = performance.now();
+      return {
+        text: fullText,
+        tokenCount,
+        elapsedMs: finishedAt - startedAt,
+        prefillMs: firstTokenAt > 0 ? firstTokenAt - startedAt : 0,
+        genMs: firstTokenAt > 0 ? finishedAt - firstTokenAt : 0,
+      };
     };
 
     // ═══════════════════════════════════════════════════════════════════════
@@ -3174,17 +3703,45 @@ OUTPUT:`;
 
         // Phase 1: Enhance prompt — decompose into explicit geometric blueprint
         lastStatus.value = "Designing blueprint...";
-        const blueprintResult = await callLLM(buildEnhancePrompt(form.prompt), {
-          maxTokens: 512,
-          temperature: 0.9,
-          thoughtTokens: 0,
-        });
+        // Blueprint budget bumped to 2048: a complex multi-part scene
+        // (3-tier fountain, moss accents, gold inlays, central pillar,
+        // streams, signature detail) routinely runs 800-1500 tokens.
+        // The previous 512 cap hard-clipped the blueprint mid-sentence,
+        // so the codegen LLM received an incomplete spec and built
+        // disconnected fragments (visible as the "potion blob" output).
+        const BLUEPRINT_MAX_TOKENS = 2048;
+        _resetStream("Designing Blueprint", BLUEPRINT_MAX_TOKENS, "Drafting the world before we render it.");
+        const blueprintResult = await callLLM(
+          buildEnhancePrompt(form.prompt),
+          { maxTokens: BLUEPRINT_MAX_TOKENS, temperature: 0.9, thoughtTokens: 0 },
+          ({ text, tokenCount, elapsedMs }) => {
+            const visible = _stripThinkForPreview(text);
+            stream.tokenCount = tokenCount;
+            stream.elapsedMs = elapsedMs;
+            stream.tokensPerSec = elapsedMs > 0 ? +(tokenCount / (elapsedMs / 1000)).toFixed(1) : 0;
+            // Keep the last ~600 chars in the preview so it never overflows.
+            stream.preview = visible.length > 600 ? "…" + visible.slice(-600) : visible;
+          },
+        );
         const blueprint = blueprintResult.text.trim() || form.prompt;
         const blueprintTokS = blueprintResult.elapsedMs > 0
           ? ((blueprintResult.tokenCount / blueprintResult.elapsedMs) * 1000).toFixed(1)
           : null;
         console.log("Enhanced blueprint:", blueprint);
         console.log(`Blueprint: ${blueprintResult.tokenCount} tokens in ${(blueprintResult.elapsedMs / 1000).toFixed(1)}s (${blueprintTokS || '?'} tok/s), prefill: ${((blueprintResult.prefillMs || 0) / 1000).toFixed(1)}s`);
+        // Truncation guard — if the blueprint hit the cap (within 8 tokens
+        // of the budget) AND doesn't end on terminal punctuation, the
+        // codegen will get an incomplete spec. Loud warning so we notice
+        // when the budget needs another bump.
+        if (blueprintResult.tokenCount >= BLUEPRINT_MAX_TOKENS - 8) {
+          const tail = blueprint.slice(-2).trim();
+          if (!/[.!?"]/.test(tail)) {
+            console.warn(
+              `[3D] Blueprint hit the ${BLUEPRINT_MAX_TOKENS}-token cap and looks truncated ` +
+              `(ends with "${blueprint.slice(-30)}"). Consider raising BLUEPRINT_MAX_TOKENS.`
+            );
+          }
+        }
 
         // Phase 2: Generate Three.js code from blueprint
         // Reset chat again — the blueprint exchange is in history and the code prompt
@@ -3197,16 +3754,48 @@ OUTPUT:`;
         // 35B MoE model with 32K context + ~5K prefill leaves room for
         // a 16K code emission. Thinking tokens stay off for codegen;
         // reasoning mode adds 4K when enabled.
-        const codeResult = await callLLM(codePrompt, {
-          maxTokens: reasoningEnabled.value ? 20480 : 16384,
-          temperature: 0.7,
-          thoughtTokens: reasoningEnabled.value ? undefined : 0,
-        });
+        const codeMaxTokens = reasoningEnabled.value ? 20480 : 16384;
+        _resetStream("Vibe Coding", codeMaxTokens, "Hand-stitching three.js geometry, frame by frame.");
+        const codeResult = await callLLM(
+          codePrompt,
+          {
+            maxTokens: codeMaxTokens,
+            temperature: 0.7,
+            thoughtTokens: reasoningEnabled.value ? undefined : 0,
+          },
+          ({ text, tokenCount, elapsedMs, prefillMs, genMs }) => {
+            const visible = _stripThinkForPreview(text);
+            stream.tokenCount = tokenCount;
+            stream.elapsedMs = elapsedMs;
+            stream.prefillMs = prefillMs;
+            // Real generation rate excludes prefill so the readout
+            // doesn't get dragged down by the system prompt.
+            stream.tokensPerSec = genMs > 0 ? +(tokenCount / (genMs / 1000)).toFixed(1) : 0;
+            stream.preview = visible.length > 600 ? "…" + visible.slice(-600) : visible;
+          },
+        );
         const codeTokS = codeResult.elapsedMs > 0
           ? ((codeResult.tokenCount / codeResult.elapsedMs) * 1000).toFixed(1)
           : null;
         console.log("Raw LLM output:", codeResult.text);
         console.log(`Code gen: ${codeResult.tokenCount} tokens in ${(codeResult.elapsedMs / 1000).toFixed(1)}s (${codeTokS || '?'} tok/s), prefill: ${((codeResult.prefillMs || 0) / 1000).toFixed(1)}s`);
+        // Codegen truncation telemetry. The wrapper template already
+        // provides `scene.add(root); return root;` — user code never
+        // emits a `return` statement, so the only honest signal of
+        // truncation is the final character. Clean ends finish on
+        // `;`, `}`, or `)`. Mid-token truncation leaves an alphabetic
+        // letter, comma, or open paren as the final char.
+        const codeTail = codeResult.text.trim().slice(-80);
+        const lastChar = codeTail.slice(-1);
+        const looksTruncated = !/[;)}\]]/.test(lastChar);
+        if (looksTruncated) {
+          console.warn(
+            `[3D] Codegen ended mid-statement at ${codeResult.tokenCount}/${codeMaxTokens} tokens ` +
+            `(tail: "${codeTail.slice(-40)}"). Either the model hit its slot context cap (verify ` +
+            `"-np 1" in the llama-server startup args, then restart Electron) or it emitted an ` +
+            `EOG token early.`
+          );
+        }
 
         let code = normalizeLLMCode(codeResult.text);
         let userCodeMatch = code.match(
@@ -3232,6 +3821,7 @@ OUTPUT:`;
             `[3D] Phase-2 ${userCode ? 'produced truncated code' : 'produced empty code'} — retrying with terse prompt.`
           );
           lastStatus.value = "Retrying...";
+          _resetStream("Retrying", 8192, "First pass came back unsteady — re-rolling with a tighter prompt.");
           await window.electronAPI.resetChat();
           const tersePrompt = `You are a Three.js developer. Output ONLY raw JavaScript. No markdown, no prose, no <think>. Start with setObjectInfo(...).
 
@@ -3244,11 +3834,17 @@ For physics: await P.init(); P.body(mesh, {...}).
 Every mesh goes on root. Keep object height 0.3-1.5. No imports. No markdown fences.
 
 OUTPUT CODE:`;
-          const retry = await callLLM(tersePrompt, {
-            maxTokens: 8192,
-            temperature: 0.6,
-            thoughtTokens: 0,
-          });
+          const retry = await callLLM(
+            tersePrompt,
+            { maxTokens: 8192, temperature: 0.6, thoughtTokens: 0 },
+            ({ text, tokenCount, elapsedMs }) => {
+              const visible = _stripThinkForPreview(text);
+              stream.tokenCount = tokenCount;
+              stream.elapsedMs = elapsedMs;
+              stream.tokensPerSec = elapsedMs > 0 ? +(tokenCount / (elapsedMs / 1000)).toFixed(1) : 0;
+              stream.preview = visible.length > 600 ? "…" + visible.slice(-600) : visible;
+            },
+          );
           console.log("Retry raw output:", retry.text);
           code = normalizeLLMCode(retry.text);
           userCodeMatch = code.match(
@@ -3266,6 +3862,12 @@ OUTPUT CODE:`;
 
         // Render
         lastStatus.value = "Rendering...";
+        _resetStream("Rendering", 1, "Compiling shaders and casting first light.");
+        // Rendering doesn't stream tokens — we just want the loading
+        // screen to flip into "Rendering" while the GPU does its job.
+        // Set a fake "almost done" progress so the bar reads right.
+        stream.tokenCount = 1;
+        stream.maxTokens = 1;
         await viewer.applyModuleCode(code, "replace");
 
         // Store for refinement
@@ -3289,6 +3891,7 @@ OUTPUT CODE:`;
           model: currentModel.value.modelname,
         });
       } finally {
+        _endStream();
         isLoading.value = false;
       }
     };
@@ -3309,7 +3912,26 @@ OUTPUT CODE:`;
         await window.electronAPI.resetChat();
 
         const prompt = buildRefinePrompt(lastGeneratedCode.value, refinePrompt.value);
-        const result = await callLLM(prompt, { maxTokens: reasoningEnabled.value ? 10240 : 8192, temperature: 0.7, thoughtTokens: reasoningEnabled.value ? undefined : 0 });
+        const refineMaxTokens = reasoningEnabled.value ? 10240 : 8192;
+        _resetStream("Refining", refineMaxTokens, "Sculpting on top of the existing scene.");
+        const result = await callLLM(
+          prompt,
+          {
+            maxTokens: refineMaxTokens,
+            temperature: 0.7,
+            thoughtTokens: reasoningEnabled.value ? undefined : 0,
+          },
+          ({ text, tokenCount, elapsedMs, prefillMs, genMs }) => {
+            const visible = _stripThinkForPreview(text);
+            stream.tokenCount = tokenCount;
+            stream.elapsedMs = elapsedMs;
+            stream.prefillMs = prefillMs;
+            // Real generation rate excludes prefill so the readout
+            // doesn't get dragged down by the system prompt.
+            stream.tokensPerSec = genMs > 0 ? +(tokenCount / (genMs / 1000)).toFixed(1) : 0;
+            stream.preview = visible.length > 600 ? "…" + visible.slice(-600) : visible;
+          },
+        );
         const tokensPerSecond = result.elapsedMs > 0 ? ((result.tokenCount / result.elapsedMs) * 1000).toFixed(1) : null;
         console.log(`Refine: ${result.tokenCount} tokens in ${(result.elapsedMs / 1000).toFixed(1)}s (${tokensPerSecond || '?'} tok/s)`);
 
@@ -3320,6 +3942,9 @@ OUTPUT CODE:`;
         if (!userCodeMatch?.[1]?.trim()) throw new Error("Refinement produced no code");
 
         lastGeneratedCode.value = userCodeMatch[1].trim();
+        _resetStream("Rendering", 1, "Compiling shaders and casting first light.");
+        stream.tokenCount = 1;
+        stream.maxTokens = 1;
         await viewer.applyModuleCode(code, "replace");
         lastStatus.value = `Refined! (${tokensPerSecond || '?'} tok/s)`;
         await addObjectInference(`[Refine] ${refinePrompt.value}`, code, { success: true, tokensPerSecond, model: currentModel.value.modelname });
@@ -3328,6 +3953,7 @@ OUTPUT CODE:`;
         console.error("Refine error:", e);
         lastStatus.value = "Refine failed: " + e.message;
       } finally {
+        _endStream();
         isLoading.value = false;
       }
     };
@@ -3387,6 +4013,10 @@ OUTPUT CODE:`;
       isLoading,
       threeViewer,
       lastStatus,
+      // Game-style streaming loader
+      stream,
+      streamProgress,
+      streamPreviewEl,
       showExamples,
       objectInferences,
       // lazy loading pagination
@@ -4229,5 +4859,287 @@ ol.chat {
 
 .refine-section .input::placeholder {
   color: rgba(255, 255, 255, 0.4);
+}
+
+/* ───────── Game-style loading screen ──────────────────────────────────────
+ * Themed after console-game loaders: dark base with cyan/blue accent (matches
+ * the reasoning toggle), animated scanline + shimmer over a thick progress
+ * bar, HUD-style readouts in monospace, and a live "blueprint feed" terminal
+ * that prints the streaming model output as it arrives.
+ */
+.game-loader {
+  position: relative;
+  margin-bottom: 1rem;
+  padding: 1.25rem 1.5rem 1.4rem;
+  background: rgba(32, 156, 238, 0.25);
+  border: 2px solid rgba(32, 156, 238, 0.45);
+  border-radius: 6px;
+  box-shadow:
+    0 0 0 1px rgba(32, 156, 238, 0.2),
+    0 0 24px rgba(32, 156, 238, 0.25),
+    inset 0 0 60px rgba(32, 156, 238, 0.08);
+  overflow: hidden;
+  color: #e6efff;
+  font-family: "Fira Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+
+.game-loader__bg {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  opacity: 0.55;
+}
+
+.game-loader__bg-scan {
+  position: absolute;
+  inset: 0;
+  background: repeating-linear-gradient(
+    to bottom,
+    rgba(255, 255, 255, 0) 0,
+    rgba(255, 255, 255, 0) 2px,
+    rgba(32, 156, 238, 0.06) 3px
+  );
+  animation: gl-scan 8s linear infinite;
+}
+
+.game-loader__bg-glow {
+  position: absolute;
+  inset: -40%;
+  background: radial-gradient(circle at 30% 0%, rgba(32, 156, 238, 0.25), transparent 60%),
+              radial-gradient(circle at 80% 100%, rgba(155, 81, 224, 0.18), transparent 55%);
+  animation: gl-glow-pulse 6s ease-in-out infinite;
+}
+
+.game-loader__inner {
+  position: relative;
+  z-index: 1;
+}
+
+.game-loader__phase {
+  display: flex;
+  align-items: baseline;
+  gap: 0.75rem;
+  margin-bottom: 0.25rem;
+}
+
+.game-loader__phase-tag {
+  font-size: 0.7rem;
+  letter-spacing: 0.25em;
+  font-weight: 700;
+  color: rgba(32, 156, 238, 0.8);
+  border: 1px solid rgba(32, 156, 238, 0.6);
+  padding: 0.15rem 0.5rem;
+  border-radius: 2px;
+  text-transform: uppercase;
+}
+
+.game-loader__phase-name {
+  font-family: "Fira Sans Condensed", sans-serif;
+  font-style: italic;
+  font-weight: 900;
+  font-size: 1.85rem;
+  color: #fff;
+  text-shadow: 0 0 12px rgba(32, 156, 238, 0.7);
+  letter-spacing: 0.02em;
+}
+
+.game-loader__subtitle {
+  margin: 0 0 1rem;
+  font-family: "Fira Sans", sans-serif;
+  color: rgba(230, 239, 255, 0.7);
+  font-size: 0.95rem;
+  font-style: italic;
+}
+
+/* Bar */
+.game-loader__bar {
+  position: relative;
+  height: 14px;
+  background: rgba(0, 0, 0, 0.55);
+  border: 1px solid rgba(32, 156, 238, 0.55);
+  border-radius: 2px;
+  overflow: hidden;
+  margin-bottom: 0.55rem;
+}
+
+.game-loader__bar-fill {
+  position: absolute;
+  inset: 0 auto 0 0;
+  background: linear-gradient(90deg, #209cee 0%, #4ec1ff 50%, #209cee 100%);
+  background-size: 200% 100%;
+  animation: gl-bar-flow 2s linear infinite;
+  box-shadow: 0 0 12px rgba(32, 156, 238, 0.9), inset 0 0 8px rgba(255, 255, 255, 0.4);
+  transition: width 0.35s cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+.game-loader__bar-shimmer {
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(
+    90deg,
+    transparent 0%,
+    rgba(255, 255, 255, 0.15) 45%,
+    rgba(255, 255, 255, 0.4) 50%,
+    rgba(255, 255, 255, 0.15) 55%,
+    transparent 100%
+  );
+  background-size: 200% 100%;
+  animation: gl-shimmer 2.4s linear infinite;
+  pointer-events: none;
+  mix-blend-mode: screen;
+}
+
+/* HUD readout */
+.game-loader__hud {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+  align-items: center;
+  font-size: 0.85rem;
+  color: rgba(230, 239, 255, 0.85);
+  margin-bottom: 0.85rem;
+}
+
+.game-loader__hud-pct {
+  color: #4ec1ff;
+  font-weight: 700;
+  font-size: 0.95rem;
+  text-shadow: 0 0 8px rgba(78, 193, 255, 0.6);
+}
+
+.game-loader__hud-sep {
+  color: rgba(32, 156, 238, 0.6);
+}
+
+.game-loader__hud-prefill {
+  color: rgba(230, 239, 255, 0.55);
+  font-style: italic;
+}
+
+/* Rotating tip */
+.game-loader__tip {
+  display: flex;
+  align-items: center;
+  gap: 0.55rem;
+  padding: 0.5rem 0.7rem;
+  background: rgba(0, 0, 0, 0.3);
+  border-left: 3px solid #209cee;
+  border-radius: 2px;
+  font-size: 0.92rem;
+  color: rgba(230, 239, 255, 0.9);
+  margin-bottom: 0.85rem;
+  animation: gl-tip-fade 0.4s ease;
+}
+
+.game-loader__tip-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #4ec1ff;
+  box-shadow: 0 0 6px #4ec1ff;
+  animation: gl-pulse 1.2s ease-in-out infinite;
+  flex-shrink: 0;
+}
+
+.game-loader__tip-text {
+  font-family: "Fira Sans", sans-serif;
+  font-style: italic;
+}
+
+/* Live preview window */
+.game-loader__preview {
+  margin-top: 0.5rem;
+  background: rgba(0, 0, 0, 0.55);
+  border: 1px solid rgba(32, 156, 238, 0.4);
+  border-radius: 3px;
+  overflow: hidden;
+}
+
+.game-loader__preview-header {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  padding: 0.35rem 0.7rem;
+  background: rgba(32, 156, 238, 0.18);
+  border-bottom: 1px solid rgba(32, 156, 238, 0.35);
+  font-size: 0.7rem;
+  letter-spacing: 0.2em;
+  color: rgba(78, 193, 255, 0.95);
+  text-transform: uppercase;
+  font-weight: 700;
+}
+
+.game-loader__preview-header .material-symbols-outlined {
+  font-size: 0.95rem;
+}
+
+.game-loader__preview-body {
+  margin: 0;
+  padding: 0.7rem 0.85rem;
+  height: 120px;
+  max-height: 120px;
+  text-align: left;
+  overflow-y: auto;
+  white-space: pre-wrap;
+  word-break: break-word;
+  font-family: "Fira Mono", ui-monospace, monospace;
+  font-size: 0.78rem;
+  line-height: 1.45;
+  /* color: rgba(230, 239, 255, 0.78); */
+  scrollbar-width: thin;
+  scrollbar-color: rgba(32, 156, 238, 0.5) transparent;
+}
+
+.game-loader__preview-body::-webkit-scrollbar {
+  width: 6px;
+}
+.game-loader__preview-body::-webkit-scrollbar-thumb {
+  background: rgba(32, 156, 238, 0.5);
+  border-radius: 3px;
+}
+
+.game-loader__cursor {
+  display: inline-block;
+  color: #4ec1ff;
+  animation: gl-cursor 1s steps(1) infinite;
+}
+
+/* Idle state — shown briefly between phases or while warming up */
+.game-loader--idle .game-loader__bar-fill {
+  animation: gl-indeterminate 1.6s ease-in-out infinite;
+  width: 30%;
+}
+
+/* ───────── Animations ─────────────────────────────────────────────────── */
+@keyframes gl-scan {
+  from { transform: translateY(0); }
+  to   { transform: translateY(40px); }
+}
+@keyframes gl-glow-pulse {
+  0%, 100% { opacity: 0.55; }
+  50%      { opacity: 0.85; }
+}
+@keyframes gl-bar-flow {
+  from { background-position: 200% 0; }
+  to   { background-position: 0 0; }
+}
+@keyframes gl-shimmer {
+  from { background-position: 200% 0; }
+  to   { background-position: -200% 0; }
+}
+@keyframes gl-pulse {
+  0%, 100% { opacity: 0.4; transform: scale(1); }
+  50%      { opacity: 1;   transform: scale(1.25); }
+}
+@keyframes gl-tip-fade {
+  from { opacity: 0; transform: translateY(4px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+@keyframes gl-cursor {
+  50% { opacity: 0; }
+}
+@keyframes gl-indeterminate {
+  0%   { transform: translateX(-100%); }
+  100% { transform: translateX(360%); }
 }
 </style>

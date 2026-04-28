@@ -16,29 +16,26 @@ interface IBonzaiMintPoolSplitter {
 
 /**
  * @title BonzaiRoyaltySplitter
- * @notice Receives 7.5% royalty from BonzaiContent secondary sales and distributes:
- *           - 2/3 to BonzAI treasury
+ * @notice Receives 7.5% royalty from BonzaiContent secondary sales and distributes
+ *         in three-way split:
+ *           - 1/3 to BonzAI treasury
  *           - 1/3 to LVL pools, weighted by historical deposit activity per content type
+ *           - 1/3 to a creator-pending pool, attributed off-chain by the foundation
  *
- * Content-type weighting:
+ * Why a pending creator pool:
+ *   Marketplaces send royalty ETH as a plain transfer (no calldata, no tokenId).
+ *   The contract therefore can't auto-route the creator share. Instead, 1/3
+ *   accumulates in `creatorPendingPool` and the owner (foundation) calls
+ *   `distributeCreatorBatch(creators[], amounts[])` to credit creators based on
+ *   off-chain marketplace data. Creators then `claimCreatorRevenue()` to pull
+ *   their accrued balance — pull-based, no centralized dispatch.
+ *
+ * Content-type pool weighting:
  *   The 1/3 pool share is distributed proportionally based on each pool's lifetime
- *   deposits in BonzaiMintPool (from primary mint fees). If image mints generated 60%
- *   of all pool deposits, the image pool gets 60% of the secondary royalty pool share.
- *   Falls back to equal distribution if no deposits exist yet.
+ *   deposits in BonzaiMintPool. Falls back to equal distribution if no deposits.
  *
- * Why no per-token routing:
- *   Marketplaces send royalty ETH as a plain transfer (no calldata). The contract
- *   has no on-chain proof of WHICH tokenId was sold. Any function accepting a
- *   tokenId parameter could be called with an arbitrary token, allowing the caller
- *   to misdirect the creator's share. Weighting by historical activity is the closest
- *   correct approximation without per-sale attribution.
- *
- * Minimum distribution threshold:
- *   distribute() requires address(this).balance >= minDistributionAmount to prevent
- *   gas-wasteful tiny distributions from bots or griefing. Owner-configurable.
- *
+ * Anyone can call distribute() when balance >= minDistributionAmount.
  * Operates on address(this).balance, not msg.value.
- * Anyone can call distribute() when the threshold is met.
  */
 contract BonzaiRoyaltySplitter is Ownable, ReentrancyGuard, Pausable {
     /// @notice BonzAI treasury address
@@ -53,14 +50,29 @@ contract BonzaiRoyaltySplitter is Ownable, ReentrancyGuard, Pausable {
     /// @notice Number of LVL pools
     uint256 private constant NUM_POOLS = 6;
 
+    /// @notice Total ETH credited to creators awaiting per-creator attribution
+    ///         from the foundation. Sum of (creatorPendingPool, claimable balances)
+    ///         is what the contract owes creators in aggregate.
+    uint256 public creatorPendingPool;
+
+    /// @notice Per-creator accrued balance (set by distributeCreatorBatch,
+    ///         spent by claimCreatorRevenue).
+    mapping(address => uint256) public creatorClaimable;
+
+    /// @notice Sum of creatorClaimable values; complements creatorPendingPool.
+    uint256 public creatorTotalAttributed;
+
     // ═══════════════════════════════════════════════════════════════════════════
     // EVENTS
     // ═══════════════════════════════════════════════════════════════════════════
 
     event Distributed(
+        uint256 creatorAmount,
         uint256 treasuryAmount,
         uint256 poolAmount
     );
+    event CreatorAttributed(address indexed creator, uint256 amount);
+    event CreatorClaimed(address indexed creator, uint256 amount);
 
     event TreasuryUpdated(address indexed oldTreasury, address indexed newTreasury);
     event MintPoolUpdated(address indexed oldPool, address indexed newPool);
@@ -90,19 +102,31 @@ contract BonzaiRoyaltySplitter is Ownable, ReentrancyGuard, Pausable {
     // ═══════════════════════════════════════════════════════════════════════════
 
     /**
-     * @notice Distribute the contract's entire ETH balance.
-     *         Split: 2/3 to treasury, 1/3 to LVL pools weighted by content-type activity.
-     * @dev Anyone can call this when balance >= minDistributionAmount.
-     *      Uses address(this).balance, not msg.value.
+     * @notice Distribute the contract's UNDISTRIBUTED ETH balance into the
+     *         three-way split. The creator share is held in
+     *         `creatorPendingPool` until the foundation attributes it via
+     *         `distributeCreatorBatch`.
+     * @dev Anyone can call this when (balance - already-attributed creator
+     *      balances) >= minDistributionAmount. Uses address(this).balance.
      */
     function distribute() external nonReentrant whenNotPaused {
-        uint256 amount = address(this).balance;
-        require(amount >= minDistributionAmount, "Below minimum distribution amount");
+        // Only the part of the balance NOT already owed to creators is
+        // splitable. creatorPendingPool + creatorTotalAttributed represent
+        // ETH the contract holds for creators (pending or already credited
+        // and not yet claimed) — neither is up for re-distribution.
+        uint256 reserved = creatorPendingPool + creatorTotalAttributed;
+        uint256 freeBalance = address(this).balance - reserved;
+        require(freeBalance >= minDistributionAmount, "Below minimum distribution amount");
 
-        uint256 treasuryShare = (amount * 2) / 3;
-        uint256 poolShare = amount - treasuryShare;
+        uint256 creatorShare = freeBalance / 3;
+        uint256 treasuryShare = creatorShare;
+        uint256 poolShare = freeBalance - creatorShare - treasuryShare;
 
-        // 2/3 to treasury
+        // Hold creator share in pending pool — actual ETH stays in this
+        // contract, accounted for by creatorPendingPool.
+        creatorPendingPool += creatorShare;
+
+        // 1/3 to treasury
         (bool s1, ) = treasury.call{value: treasuryShare}("");
         require(s1, "Treasury transfer failed");
 
@@ -167,7 +191,57 @@ contract BonzaiRoyaltySplitter is Ownable, ReentrancyGuard, Pausable {
             require(s2, "Fallback pool transfer failed");
         }
 
-        emit Distributed(treasuryShare, poolShare);
+        emit Distributed(creatorShare, treasuryShare, poolShare);
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════════
+    // CREATOR ATTRIBUTION (pull-based)
+    // ═══════════════════════════════════════════════════════════════════════════
+
+    /**
+     * @notice Foundation attributes accumulated creator-pool ETH to specific
+     *         creators based on off-chain marketplace data.
+     * @dev Sum of `amounts` must not exceed the current `creatorPendingPool`.
+     *      Each (creator, amount) pair credits the creator's claimable balance.
+     */
+    function distributeCreatorBatch(
+        address[] calldata creators,
+        uint256[] calldata amounts
+    ) external onlyOwner whenNotPaused {
+        require(creators.length == amounts.length, "Length mismatch");
+        uint256 total = 0;
+        for (uint256 i = 0; i < amounts.length; ) {
+            total += amounts[i];
+            unchecked { ++i; }
+        }
+        require(total <= creatorPendingPool, "Exceeds pending pool");
+
+        creatorPendingPool -= total;
+        creatorTotalAttributed += total;
+
+        for (uint256 i = 0; i < creators.length; ) {
+            address c = creators[i];
+            uint256 a = amounts[i];
+            require(c != address(0), "Zero address creator");
+            if (a > 0) {
+                creatorClaimable[c] += a;
+                emit CreatorAttributed(c, a);
+            }
+            unchecked { ++i; }
+        }
+    }
+
+    /**
+     * @notice Creator pulls their accrued royalty share.
+     */
+    function claimCreatorRevenue() external nonReentrant {
+        uint256 amount = creatorClaimable[msg.sender];
+        require(amount > 0, "Nothing to claim");
+        creatorClaimable[msg.sender] = 0;
+        creatorTotalAttributed -= amount;
+        (bool sent, ) = msg.sender.call{value: amount}("");
+        require(sent, "Claim transfer failed");
+        emit CreatorClaimed(msg.sender, amount);
     }
 
     // ═══════════════════════════════════════════════════════════════════════════
@@ -213,12 +287,16 @@ contract BonzaiRoyaltySplitter is Ownable, ReentrancyGuard, Pausable {
     }
 
     /**
-     * @notice Recover any stuck ETH (e.g. if treasury/pool reverts)
+     * @notice Recover stuck ETH that is NOT owed to creators.
+     * @dev Subtracts creatorPendingPool + creatorTotalAttributed before
+     *      withdrawing — ensures owner can never drain creator royalties.
      */
-    function withdrawETH() external onlyOwner {
+    function withdrawETH() external onlyOwner nonReentrant {
+        uint256 reserved = creatorPendingPool + creatorTotalAttributed;
         uint256 balance = address(this).balance;
-        require(balance > 0, "No ETH to withdraw");
-        (bool sent, ) = owner().call{value: balance}("");
+        require(balance > reserved, "No surplus ETH (creator funds reserved)");
+        uint256 surplus = balance - reserved;
+        (bool sent, ) = owner().call{value: surplus}("");
         require(sent, "ETH transfer failed");
     }
 

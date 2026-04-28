@@ -21,6 +21,10 @@ contextBridge.exposeInMainWorld("electronAPI", {
   loadModel: (modelname) => ipcRenderer.invoke("model-load", modelname),
   unloadModel: () => ipcRenderer.invoke("model-unload"),
   getLoadedModel: () => ipcRenderer.invoke("model-get-loaded"),
+  llamaRuntimeStatus: () => ipcRenderer.invoke("llama-runtime-status"),
+  broadcastModelState: () => ipcRenderer.invoke("broadcast-model-state"),
+  llamaGetRpcPeers: () => ipcRenderer.invoke("llama-get-rpc-peers"),
+  llamaSetRpcPeers: (peers) => ipcRenderer.invoke("llama-set-rpc-peers", peers),
   getAlwaysLoaded: () => ipcRenderer.invoke("model-get-always-loaded"),
   setAlwaysLoaded: (enabled) => ipcRenderer.invoke("model-set-always-loaded", enabled),
   onModelChanged: (cb) => {
@@ -31,6 +35,48 @@ contextBridge.exposeInMainWorld("electronAPI", {
   chat: (userMessage, options = {}) => ipcRenderer.invoke("model-chat", { message: userMessage, ...options }),
   resetChat: () => ipcRenderer.invoke("model-reset-chat"),
   chatStream: (userMessage, options = {}) => ipcRenderer.invoke("model-chat-stream", { message: userMessage, ...options }),
+
+  // ─── Multi-instance llama-server pool (Company "parallel LLM" mode) ───
+  poolConfigure: (opts) => ipcRenderer.invoke("pool-configure", opts),
+  poolRegisterModel: (opts) => ipcRenderer.invoke("pool-register-model", opts),
+  poolEnsure: (opts) => ipcRenderer.invoke("pool-ensure", opts),
+  poolChat: async (opts) => {
+    const res = await ipcRenderer.invoke("pool-chat", opts);
+    if (res?.ok) return res.text;
+    throw new Error(res?.error || "pool chat failed");
+  },
+  poolInventory: () => ipcRenderer.invoke("pool-inventory"),
+  poolShutdown: () => ipcRenderer.invoke("pool-shutdown"),
+  /**
+   * Ensure a specific LLM is loaded and ready. Idempotent — short-circuits
+   * if the requested model is already running. Used by ZHC's dispatcher
+   * to spawn a role's preferred model on demand.
+   *
+   * Pass either a model key string ("llm_qwen_3_6_28b_reap_a3b_q4") or a
+   * partial spec object. Resolves keys via flagship.resolveLLM in main.
+   *
+   * Returns { ok, port?, filename?, cached?, error? }.
+   */
+  ensureModel: (modelOrKey) => ipcRenderer.invoke("model-ensure", modelOrKey),
+  /**
+   * Stateless streaming chat for the ZHC dispatcher. Returns the full
+   * assistant text on completion. Tokens stream via `onZhcChatToken`
+   * tagged with `streamId` so concurrent ticks (or Generative Text) do
+   * not interleave.
+   */
+  zhcChatStream: ({ streamId, prompt, temperature, maxTokens, enableThinking }) =>
+    ipcRenderer.invoke("zhc-chat-stream", {
+      streamId, message: prompt, temperature, maxTokens, enableThinking,
+    }),
+  /**
+   * Subscribe to ZHC stream tokens. The callback receives `{ streamId, chunk }`.
+   * Returns an unsubscribe function.
+   */
+  onZhcChatToken: (cb) => {
+    const handler = (_event, payload) => cb(payload);
+    ipcRenderer.on("zhc-chat-token", handler);
+    return () => ipcRenderer.removeListener("zhc-chat-token", handler);
+  },
   onChatToken: (cb) => {
     const handler = (_event, chunk) => cb(chunk);
     ipcRenderer.on("chat-token", handler);
@@ -342,6 +388,11 @@ contextBridge.exposeInMainWorld("electronAPI", {
     const handler = (_event, msg) => cb(msg);
     ipcRenderer.on("pipeline-status", handler);
     return () => ipcRenderer.removeListener("pipeline-status", handler);
+  },
+  onPipelineError: (cb) => {
+    const handler = (_event, err) => cb(err);
+    ipcRenderer.on("pipeline-error", handler);
+    return () => ipcRenderer.removeListener("pipeline-error", handler);
   },
 
   /**

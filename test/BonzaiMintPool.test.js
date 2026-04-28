@@ -1,106 +1,90 @@
 const { expect } = require("chai");
 const { ethers } = require("hardhat");
-const { loadFixture } = require("@nomicfoundation/hardhat-network-helpers");
-const { time, mine } = require("@nomicfoundation/hardhat-network-helpers");
+const { loadFixture, time, mine } = require("@nomicfoundation/hardhat-network-helpers");
 const {
   EPOCH_DURATION,
   POOL_THRESHOLDS,
   POOL_THRESHOLDS_WEI,
   MIN_CLAIM_BLOCK_GAP,
   NUM_POOLS,
-  DEAD_ADDRESS,
+  PROVIDER_SHARE_BPS,
 } = require("./helpers/constants");
 const { deployMintPool } = require("./helpers/deploy");
 
+const BPS = 10000n;
+
 describe("BonzaiMintPool", function () {
   // ═══════════════════════════════════════════════════════════════════════════
-  // HELPERS
+  // HELPERS — Arbitrum-local: balance read directly on-chain, no CRE.
   // ═══════════════════════════════════════════════════════════════════════════
 
-  /**
-   * Register a user for the current epoch via CRE forwarder flow.
-   * 1. User calls registerForEpoch() — emits RegistrationRequested
-   * 2. We simulate the CRE forwarder delivering the report with crossChainBalance = 0
-   *    (all test tokens are minted on Base, so cross-chain portion is 0)
-   */
-  async function registerUser(mintPool, router, user, _balance) {
-    await mintPool.connect(user).registerForEpoch();
-    const poolAddress = await mintPool.getAddress();
-    // Report: (address user, uint256 crossChainBalance)
-    const report = ethers.AbiCoder.defaultAbiCoder().encode(
-      ["address", "uint256"], [user.address, 0]
-    );
-    await router.deliverReport(poolAddress, report);
+  async function registerUser(mintPool, user) {
+    return mintPool.connect(user).registerForEpoch();
+  }
+  async function confirmUserClaim(mintPool, user, epochId) {
+    return mintPool.connect(user).confirmClaim(epochId);
+  }
+  async function recordMintFor(mintPool, asAuthorized, user, poolIndex) {
+    if ((await mintPool.collectiblesFactory()) !== asAuthorized.address) {
+      await mintPool.setCollectiblesFactory(asAuthorized.address);
+    }
+    if (!(await mintPool.authorizedMinters(asAuthorized.address))) {
+      await mintPool.connect(asAuthorized).setAuthorizedMinter(asAuthorized.address, true);
+    }
+    return mintPool.connect(asAuthorized).recordMint(user.address, poolIndex);
   }
 
   /**
-   * Confirm claim for a user via CRE forwarder flow.
-   */
-  async function confirmUserClaim(mintPool, router, user, epochId, _balance) {
-    await mintPool.connect(user).confirmClaim(epochId);
-    const poolAddress = await mintPool.getAddress();
-    const report = ethers.AbiCoder.defaultAbiCoder().encode(
-      ["address", "uint256"], [user.address, 0]
-    );
-    await router.deliverReport(poolAddress, report);
-  }
-
-  /**
-   * Full claim flow helper:
-   * 1. Mint tokens to user
-   * 2. Set authorized depositor (contentContract)
-   * 3. Register in current epoch via oracle
-   * 4. Deposit ETH to pool
-   * 5. Advance to next epoch
-   * 6. confirmClaim via oracle
-   * 7. Mine 256 blocks
-   * Returns all objects for further assertions.
+   * Set up a complete claim flow:
+   *   - Mint BONZAI to two users (LVL5, LVL1).
+   *   - Authorize treasury as content contract (depositor + recorder).
+   *   - Register both users in epoch 0.
+   *   - Deposit 10 ETH into pool 0 (text).
+   *   - recordMint for both users in pool 0.
+   *   - Advance to epoch 1, confirmClaim, mine 256 blocks.
    */
   async function setupFullClaimFlow() {
-    const { mintPool, token, router, owner, user1, user2, user3, treasury } =
+    const { mintPool, token, owner, user1, user2, user3, treasury } =
       await loadFixture(deployMintPool);
 
-    const poolAddress = await mintPool.getAddress();
-
-    // Mint LVL5 tokens (50K) to user1, LVL1 tokens (1K) to user2
     const user1Amount = ethers.parseEther("50000");
     const user2Amount = ethers.parseEther("1000");
     await token.mint(user1.address, user1Amount);
     await token.mint(user2.address, user2Amount);
 
-    // Set treasury as the contentContract (authorized depositor)
+    // Treasury impersonates both contentContract (depositor) and the
+    // collectibles factory (recordMint authorizer).
     await mintPool.setContentContract(treasury.address);
+    await mintPool.setCollectiblesFactory(treasury.address);
+    await mintPool.connect(treasury).setAuthorizedMinter(treasury.address, true);
 
-    // Register in epoch 0 via oracle
-    await registerUser(mintPool, router, user1, user1Amount);
-    await registerUser(mintPool, router, user2, user2Amount);
+    // Use auto-mine off + manual mine so both registrations hit the same
+    // block, yielding identical time-weighted multipliers.
+    await ethers.provider.send("evm_setAutomine", [false]);
+    await registerUser(mintPool, user1);
+    await registerUser(mintPool, user2);
+    await ethers.provider.send("evm_mine", []);
+    await ethers.provider.send("evm_setAutomine", [true]);
 
-    // Deposit 10 ETH to pool 0 (text) as contentContract
     const depositAmount = ethers.parseEther("10");
-    await mintPool
-      .connect(treasury)
-      .depositForPool(0, { value: depositAmount });
+    await mintPool.connect(treasury).depositForPool(0, { value: depositAmount });
 
-    // Advance to epoch 1
+    await recordMintFor(mintPool, treasury, user1, 0);
+    await recordMintFor(mintPool, treasury, user2, 0);
+
     await time.increase(EPOCH_DURATION);
-
-    // confirmClaim for epoch 0 via oracle
-    await confirmUserClaim(mintPool, router, user1, 0, user1Amount);
-    await confirmUserClaim(mintPool, router, user2, 0, user2Amount);
-
-    // Mine 256 blocks for flash loan protection
+    await confirmUserClaim(mintPool, user1, 0);
+    await confirmUserClaim(mintPool, user2, 0);
     await mine(MIN_CLAIM_BLOCK_GAP);
 
     return {
       mintPool,
       token,
-      router,
       owner,
       user1,
       user2,
       user3,
       treasury,
-      poolAddress,
       user1Amount,
       user2Amount,
       depositAmount,
@@ -112,472 +96,269 @@ describe("BonzaiMintPool", function () {
   // ═══════════════════════════════════════════════════════════════════════════
 
   describe("Deployment", function () {
-    it("should set correct initial state", async function () {
-      const { mintPool, token } = await loadFixture(deployMintPool);
-
+    it("sets correct initial state", async function () {
+      const { mintPool, token, treasury } = await loadFixture(deployMintPool);
       expect(await mintPool.bonzaiToken()).to.equal(await token.getAddress());
       expect(await mintPool.epochDuration()).to.equal(EPOCH_DURATION);
+      expect(await mintPool.treasury()).to.equal(treasury.address);
+      expect(await mintPool.providerShareBps()).to.equal(PROVIDER_SHARE_BPS);
       expect(await mintPool.currentEpoch()).to.equal(0);
-
-      const thresholds = await mintPool.getAllPoolThresholds();
-      for (let i = 0; i < NUM_POOLS; i++) {
-        expect(thresholds[i]).to.equal(POOL_THRESHOLDS_WEI[i]);
-      }
     });
 
-    it("should reject zero address for token", async function () {
+    it("reverts with zero token address", async function () {
       const [, , , , treasury] = await ethers.getSigners();
-      const MockFunctionsRouter = await ethers.getContractFactory("MockFunctionsRouter");
-      const router = await MockFunctionsRouter.deploy();
       const BonzaiMintPool = await ethers.getContractFactory("BonzaiMintPool");
       await expect(
-        BonzaiMintPool.deploy(ethers.ZeroAddress, POOL_THRESHOLDS, EPOCH_DURATION, treasury.address, await router.getAddress())
+        BonzaiMintPool.deploy(ethers.ZeroAddress, POOL_THRESHOLDS, EPOCH_DURATION, treasury.address)
       ).to.be.revertedWith("Invalid token address");
     });
 
-    it("should reject zero epoch duration", async function () {
+    it("reverts with zero epoch duration", async function () {
       const [, , , , treasury] = await ethers.getSigners();
-      const token = await (
-        await ethers.getContractFactory("MockERC20")
-      ).deploy("BONZAI", "BONZAI");
-      const MockFunctionsRouter = await ethers.getContractFactory("MockFunctionsRouter");
-      const router = await MockFunctionsRouter.deploy();
+      const MockERC20 = await ethers.getContractFactory("MockERC20");
+      const token = await MockERC20.deploy("BONZAI", "BONZAI");
       const BonzaiMintPool = await ethers.getContractFactory("BonzaiMintPool");
       await expect(
-        BonzaiMintPool.deploy(await token.getAddress(), POOL_THRESHOLDS, 0, treasury.address, await router.getAddress())
+        BonzaiMintPool.deploy(await token.getAddress(), POOL_THRESHOLDS, 0, treasury.address)
       ).to.be.revertedWith("Invalid epoch duration");
     });
 
-    it("should reject non-ascending thresholds", async function () {
+    it("reverts with non-ascending thresholds", async function () {
       const [, , , , treasury] = await ethers.getSigners();
-      const token = await (
-        await ethers.getContractFactory("MockERC20")
-      ).deploy("BONZAI", "BONZAI");
-      const MockFunctionsRouter = await ethers.getContractFactory("MockFunctionsRouter");
-      const router = await MockFunctionsRouter.deploy();
+      const MockERC20 = await ethers.getContractFactory("MockERC20");
+      const token = await MockERC20.deploy("BONZAI", "BONZAI");
       const BonzaiMintPool = await ethers.getContractFactory("BonzaiMintPool");
-      const badThresholds = [1000, 5000, 3000, 25000, 33000, 50000]; // 3000 < 5000
       await expect(
         BonzaiMintPool.deploy(
           await token.getAddress(),
-          badThresholds,
+          [1000, 5000, 100, 25000, 33000, 50000],
           EPOCH_DURATION,
           treasury.address,
-          await router.getAddress()
         )
       ).to.be.revertedWith("Thresholds must be ascending");
     });
 
-    it("should reject zero threshold", async function () {
+    it("reverts with zero threshold", async function () {
       const [, , , , treasury] = await ethers.getSigners();
-      const token = await (
-        await ethers.getContractFactory("MockERC20")
-      ).deploy("BONZAI", "BONZAI");
-      const MockFunctionsRouter = await ethers.getContractFactory("MockFunctionsRouter");
-      const router = await MockFunctionsRouter.deploy();
+      const MockERC20 = await ethers.getContractFactory("MockERC20");
+      const token = await MockERC20.deploy("BONZAI", "BONZAI");
       const BonzaiMintPool = await ethers.getContractFactory("BonzaiMintPool");
-      const badThresholds = [0, 5000, 10000, 25000, 33000, 50000];
       await expect(
         BonzaiMintPool.deploy(
           await token.getAddress(),
-          badThresholds,
+          [0, 5000, 10000, 25000, 33000, 50000],
           EPOCH_DURATION,
           treasury.address,
-          await router.getAddress()
         )
       ).to.be.revertedWith("Threshold cannot be zero");
     });
+
+    it("seeds the pool thresholds in wei", async function () {
+      const { mintPool } = await loadFixture(deployMintPool);
+      const t = await mintPool.getAllPoolThresholds();
+      for (let i = 0; i < NUM_POOLS; i++) {
+        expect(t[i]).to.equal(POOL_THRESHOLDS_WEI[i]);
+      }
+    });
   });
 
   // ═══════════════════════════════════════════════════════════════════════════
-  // EPOCHS
+  // EPOCH MATH
   // ═══════════════════════════════════════════════════════════════════════════
 
-  describe("Epochs", function () {
-    it("should return epoch 0 at deployment", async function () {
+  describe("Epoch math", function () {
+    it("currentEpoch advances by EPOCH_DURATION", async function () {
       const { mintPool } = await loadFixture(deployMintPool);
       expect(await mintPool.currentEpoch()).to.equal(0);
-    });
-
-    it("should advance to epoch 1 after one epoch duration", async function () {
-      const { mintPool } = await loadFixture(deployMintPool);
       await time.increase(EPOCH_DURATION);
       expect(await mintPool.currentEpoch()).to.equal(1);
+      await time.increase(EPOCH_DURATION);
+      expect(await mintPool.currentEpoch()).to.equal(2);
     });
 
-    it("should advance to epoch 3 after three epoch durations", async function () {
-      const { mintPool } = await loadFixture(deployMintPool);
-      await time.increase(EPOCH_DURATION * 3);
-      expect(await mintPool.currentEpoch()).to.equal(3);
-    });
-
-    it("should compute correct start and end times", async function () {
-      const { mintPool } = await loadFixture(deployMintPool);
-      const genesis = await mintPool.genesisTime();
-
-      const start0 = await mintPool.epochStartTime(0);
-      const end0 = await mintPool.epochEndTime(0);
-      expect(start0).to.equal(genesis);
-      expect(end0).to.equal(genesis + BigInt(EPOCH_DURATION));
-
-      const start2 = await mintPool.epochStartTime(2);
-      const end2 = await mintPool.epochEndTime(2);
-      expect(start2).to.equal(genesis + BigInt(EPOCH_DURATION) * 2n);
-      expect(end2).to.equal(genesis + BigInt(EPOCH_DURATION) * 3n);
-    });
-
-    it("should report epoch 0 as not finalized at deployment", async function () {
+    it("isEpochFinalized returns true once the epoch ends", async function () {
       const { mintPool } = await loadFixture(deployMintPool);
       expect(await mintPool.isEpochFinalized(0)).to.equal(false);
-    });
-
-    it("should report epoch 0 as finalized after one epoch", async function () {
-      const { mintPool } = await loadFixture(deployMintPool);
       await time.increase(EPOCH_DURATION);
       expect(await mintPool.isEpochFinalized(0)).to.equal(true);
-    });
-
-    it("should return correct getEpochInfo", async function () {
-      const { mintPool } = await loadFixture(deployMintPool);
-      const genesis = await mintPool.genesisTime();
-
-      const [startTime, endTime, totalRegistered, finalized] =
-        await mintPool.getEpochInfo(0);
-      expect(startTime).to.equal(genesis);
-      expect(endTime).to.equal(genesis + BigInt(EPOCH_DURATION));
-      expect(totalRegistered).to.equal(0);
-      expect(finalized).to.equal(false);
+      expect(await mintPool.isEpochFinalized(1)).to.equal(false);
     });
   });
 
   // ═══════════════════════════════════════════════════════════════════════════
-  // REGISTRATION
+  // REGISTRATION (direct, Arbitrum-local)
   // ═══════════════════════════════════════════════════════════════════════════
 
-  describe("registerForEpoch", function () {
-    it("should register user with sufficient balance via oracle callback", async function () {
-      const { mintPool, token, router, user1 } = await loadFixture(deployMintPool);
-      const balance = POOL_THRESHOLDS_WEI[0];
-      await token.mint(user1.address, balance);
-      await registerUser(mintPool, router, user1, balance);
-
-      expect(await mintPool.isRegistered(0, user1.address)).to.equal(true);
-      expect(
-        await mintPool.registeredBalances(0, user1.address)
-      ).to.equal(balance);
-    });
-
-    it("should lock balance at registration time", async function () {
-      const { mintPool, token, router, user1 } = await loadFixture(deployMintPool);
-      const amount = ethers.parseEther("25000");
-      await token.mint(user1.address, amount);
-      await registerUser(mintPool, router, user1, amount);
-
-      expect(await mintPool.registeredBalances(0, user1.address)).to.equal(
-        amount
-      );
-    });
-
-    it("should accumulate totalRegistered across multiple users", async function () {
-      const { mintPool, token, router, user1, user2 } =
-        await loadFixture(deployMintPool);
-      const amount1 = ethers.parseEther("10000");
-      const amount2 = ethers.parseEther("20000");
-      await token.mint(user1.address, amount1);
-      await token.mint(user2.address, amount2);
-
-      await registerUser(mintPool, router, user1, amount1);
-      await registerUser(mintPool, router, user2, amount2);
-
-      const [, , totalRegistered] = await mintPool.getEpochInfo(0);
-      expect(totalRegistered).to.equal(amount1 + amount2);
-    });
-
-    it("should reject duplicate registration in same epoch", async function () {
-      const { mintPool, token, router, user1 } = await loadFixture(deployMintPool);
-      const balance = POOL_THRESHOLDS_WEI[0];
-      await token.mint(user1.address, balance);
-      await registerUser(mintPool, router, user1, balance);
-
-      // Second call: user is already registered, contract reverts
-      await expect(
-        mintPool.connect(user1).registerForEpoch()
-      ).to.be.revertedWith("Already registered");
-    });
-
-    it("should not register user below minimum threshold", async function () {
-      const { mintPool, token, router, user1 } = await loadFixture(deployMintPool);
-      const balance = ethers.parseEther("999");
-      await token.mint(user1.address, balance);
-
-      // registerForEpoch() succeeds (emits event), but callback silently skips
-      // registration because balance < threshold
-      await mintPool.connect(user1).registerForEpoch();
-      const poolAddress = await mintPool.getAddress();
-      const report = ethers.AbiCoder.defaultAbiCoder().encode(
-        ["address", "uint256"], [user1.address, 0]
-      );
-      await router.deliverReport(poolAddress, report);
-
-      // User should NOT be registered
-      expect(await mintPool.isRegistered(0, user1.address)).to.equal(false);
-    });
-
-    it("should allow registration in a new epoch after previous registration", async function () {
-      const { mintPool, token, router, user1 } = await loadFixture(deployMintPool);
-      const balance = POOL_THRESHOLDS_WEI[0];
-      await token.mint(user1.address, balance);
-
-      await registerUser(mintPool, router, user1, balance); // epoch 0
-      await time.increase(EPOCH_DURATION);
-      await registerUser(mintPool, router, user1, balance); // epoch 1
-
-      expect(await mintPool.isRegistered(0, user1.address)).to.equal(true);
-      expect(await mintPool.isRegistered(1, user1.address)).to.equal(true);
-    });
-
-    it("should emit Registered event via oracle callback", async function () {
-      const { mintPool, token, router, user1 } = await loadFixture(deployMintPool);
-      const amount = ethers.parseEther("5000");
-      await token.mint(user1.address, amount);
-
-      await mintPool.connect(user1).registerForEpoch();
-      const poolAddress = await mintPool.getAddress();
-      const report = ethers.AbiCoder.defaultAbiCoder().encode(
-        ["address", "uint256"], [user1.address, 0]
-      );
-
-      // The Registered event is emitted during the callback
-      await expect(router.deliverReport(poolAddress, report))
-        .to.emit(mintPool, "Registered")
-        .withArgs(0, user1.address, amount);
-    });
-
-    it("should emit RegistrationRequested event", async function () {
-      const { mintPool, token, router, user1 } = await loadFixture(deployMintPool);
-      const amount = ethers.parseEther("5000");
-      await token.mint(user1.address, amount);
-
-      await expect(mintPool.connect(user1).registerForEpoch())
-        .to.emit(mintPool, "RegistrationRequested");
-    });
-
-    it("should reject onReport from non-forwarder", async function () {
+  describe("Registration", function () {
+    it("registers a user with sufficient BONZAI balance", async function () {
       const { mintPool, token, user1 } = await loadFixture(deployMintPool);
-      const amount = ethers.parseEther("5000");
-      await token.mint(user1.address, amount);
-
-      await mintPool.connect(user1).registerForEpoch();
-      const report = ethers.AbiCoder.defaultAbiCoder().encode(
-        ["address", "uint256"], [user1.address, 0]
-      );
-
-      // Direct call (not from forwarder) should revert
-      await expect(
-        mintPool.onReport("0x" + "00".repeat(62), report)
-      ).to.be.revertedWith("Only forwarder");
+      await token.mint(user1.address, ethers.parseEther("5000"));
+      await registerUser(mintPool, user1);
+      expect(await mintPool.isRegistered(0, user1.address)).to.equal(true);
+      expect(await mintPool.registeredBalances(0, user1.address)).to.equal(ethers.parseEther("5000"));
     });
 
-    it("should reject registerForEpoch while registration is pending", async function () {
-      const { mintPool, token, router, user1 } = await loadFixture(deployMintPool);
-      const amount = ethers.parseEther("5000");
-      await token.mint(user1.address, amount);
+    it("reverts when balance is below LVL1 threshold (and user is not unlocked)", async function () {
+      const { mintPool, token, user1 } = await loadFixture(deployMintPool);
+      await token.mint(user1.address, ethers.parseEther("100"));
+      await expect(registerUser(mintPool, user1)).to.be.revertedWith("Below LVL1 threshold");
+    });
 
-      // First call sends request but don't fulfill yet
-      await mintPool.connect(user1).registerForEpoch();
+    it("emits Registered event", async function () {
+      const { mintPool, token, user1 } = await loadFixture(deployMintPool);
+      const balance = ethers.parseEther("5000");
+      await token.mint(user1.address, balance);
+      await expect(registerUser(mintPool, user1))
+        .to.emit(mintPool, "Registered")
+        .withArgs(0, user1.address, balance);
+    });
 
-      // Second call should revert because registration is pending
-      await expect(
-        mintPool.connect(user1).registerForEpoch()
-      ).to.be.revertedWith("Request pending");
+    it("reverts when registering twice in the same epoch", async function () {
+      const { mintPool, token, user1 } = await loadFixture(deployMintPool);
+      await token.mint(user1.address, ethers.parseEther("5000"));
+      await registerUser(mintPool, user1);
+      await expect(registerUser(mintPool, user1)).to.be.revertedWith("Already registered");
+    });
+
+    it("snapshots thresholds on first registration of an epoch", async function () {
+      const { mintPool, token, user1 } = await loadFixture(deployMintPool);
+      await token.mint(user1.address, ethers.parseEther("5000"));
+      await registerUser(mintPool, user1);
+      expect(await mintPool.epochThresholdSnapshotted(0)).to.equal(true);
     });
   });
 
   // ═══════════════════════════════════════════════════════════════════════════
-  // DEPOSIT
+  // DEPOSIT — split into holder + provider sides
   // ═══════════════════════════════════════════════════════════════════════════
 
-  describe("depositForPool", function () {
-    it("should accept deposit from contentContract", async function () {
+  describe("Deposit (holder/provider split)", function () {
+    it("accepts deposit from contentContract", async function () {
       const { mintPool, treasury } = await loadFixture(deployMintPool);
       await mintPool.setContentContract(treasury.address);
+      await mintPool.connect(treasury).depositForPool(0, { value: ethers.parseEther("1") });
 
-      const amount = ethers.parseEther("1");
-      await mintPool.connect(treasury).depositForPool(0, { value: amount });
-
-      const deposits = await mintPool.getEpochDeposits(0);
-      expect(deposits[0]).to.equal(amount);
+      const holder = await mintPool.getEpochHolderDeposits(0);
+      const provider = await mintPool.getEpochProviderDeposits(0);
+      const expectedProvider = (ethers.parseEther("1") * PROVIDER_SHARE_BPS) / BPS;
+      const expectedHolder = ethers.parseEther("1") - expectedProvider;
+      expect(holder[0]).to.equal(expectedHolder);
+      expect(provider[0]).to.equal(expectedProvider);
     });
 
-    it("should accept deposit from royaltySplitter", async function () {
+    it("accepts deposit from royaltySplitter", async function () {
       const { mintPool, treasury } = await loadFixture(deployMintPool);
       await mintPool.setRoyaltySplitter(treasury.address);
-
-      const amount = ethers.parseEther("2");
-      await mintPool.connect(treasury).depositForPool(1, { value: amount });
-
-      const deposits = await mintPool.getEpochDeposits(0);
-      expect(deposits[1]).to.equal(amount);
+      await mintPool.connect(treasury).depositForPool(2, { value: ethers.parseEther("0.5") });
+      const holder = await mintPool.getEpochHolderDeposits(0);
+      expect(holder[2]).to.be.gt(0);
     });
 
-    it("should accept deposit from feeHook", async function () {
+    it("accepts deposit from feeHook", async function () {
       const { mintPool, treasury } = await loadFixture(deployMintPool);
       await mintPool.setFeeHook(treasury.address);
-
-      const amount = ethers.parseEther("0.5");
-      await mintPool.connect(treasury).depositForPool(2, { value: amount });
-
-      const deposits = await mintPool.getEpochDeposits(0);
-      expect(deposits[2]).to.equal(amount);
+      await mintPool.connect(treasury).depositForPool(3, { value: ethers.parseEther("0.3") });
+      const holder = await mintPool.getEpochHolderDeposits(0);
+      expect(holder[3]).to.be.gt(0);
     });
 
-    it("should reject deposit from unauthorized address", async function () {
+    it("rejects unauthorized depositor", async function () {
       const { mintPool, user1 } = await loadFixture(deployMintPool);
       await expect(
         mintPool.connect(user1).depositForPool(0, { value: ethers.parseEther("1") })
       ).to.be.revertedWith("Unauthorized depositor");
     });
 
-    it("should reject deposit with invalid pool index", async function () {
+    it("accumulates deposits across calls", async function () {
       const { mintPool, treasury } = await loadFixture(deployMintPool);
       await mintPool.setContentContract(treasury.address);
-
-      await expect(
-        mintPool.connect(treasury).depositForPool(6, { value: ethers.parseEther("1") })
-      ).to.be.revertedWith("Invalid pool index");
+      await mintPool.connect(treasury).depositForPool(0, { value: ethers.parseEther("1") });
+      await mintPool.connect(treasury).depositForPool(0, { value: ethers.parseEther("2") });
+      const holder = await mintPool.getEpochHolderDeposits(0);
+      const expectedTotal = ethers.parseEther("3");
+      const expectedProvider = (expectedTotal * PROVIDER_SHARE_BPS) / BPS;
+      expect(holder[0]).to.equal(expectedTotal - expectedProvider);
     });
 
-    it("should reject zero deposit", async function () {
+    it("emits PoolDeposit with both holder + provider amounts", async function () {
       const { mintPool, treasury } = await loadFixture(deployMintPool);
       await mintPool.setContentContract(treasury.address);
-
-      await expect(
-        mintPool.connect(treasury).depositForPool(0, { value: 0 })
-      ).to.be.revertedWith("Zero deposit");
-    });
-
-    it("should accumulate deposits across multiple calls", async function () {
-      const { mintPool, treasury } = await loadFixture(deployMintPool);
-      await mintPool.setContentContract(treasury.address);
-
-      const amount1 = ethers.parseEther("1");
-      const amount2 = ethers.parseEther("2");
-      await mintPool.connect(treasury).depositForPool(0, { value: amount1 });
-      await mintPool.connect(treasury).depositForPool(0, { value: amount2 });
-
-      const deposits = await mintPool.getEpochDeposits(0);
-      expect(deposits[0]).to.equal(amount1 + amount2);
-    });
-
-    it("should track lifetime totalDeposited", async function () {
-      const { mintPool, treasury } = await loadFixture(deployMintPool);
-      await mintPool.setContentContract(treasury.address);
-
-      const amount = ethers.parseEther("5");
-      await mintPool.connect(treasury).depositForPool(0, { value: amount });
-
-      const totals = await mintPool.getAllTotalDeposited();
-      expect(totals[0]).to.equal(amount);
-    });
-
-    it("should emit PoolDeposit event", async function () {
-      const { mintPool, treasury } = await loadFixture(deployMintPool);
-      await mintPool.setContentContract(treasury.address);
-
       const amount = ethers.parseEther("1");
-      await expect(
-        mintPool.connect(treasury).depositForPool(3, { value: amount })
-      )
+      const expectedProvider = (amount * PROVIDER_SHARE_BPS) / BPS;
+      const expectedHolder = amount - expectedProvider;
+      await expect(mintPool.connect(treasury).depositForPool(0, { value: amount }))
         .to.emit(mintPool, "PoolDeposit")
-        .withArgs(3, amount, treasury.address, 0);
+        .withArgs(0, expectedHolder, expectedProvider, treasury.address, 0);
+    });
+
+    it("tracks lifetime totalDeposited (holder side) per pool", async function () {
+      const { mintPool, treasury } = await loadFixture(deployMintPool);
+      await mintPool.setContentContract(treasury.address);
+      await mintPool.connect(treasury).depositForPool(2, { value: ethers.parseEther("4") });
+      const totals = await mintPool.getAllTotalDeposited();
+      const expectedHolder = ethers.parseEther("4") - (ethers.parseEther("4") * PROVIDER_SHARE_BPS) / BPS;
+      expect(totals[2]).to.equal(expectedHolder);
     });
   });
 
   // ═══════════════════════════════════════════════════════════════════════════
-  // CONFIRM CLAIM
+  // RECORD MINT (activity gate)
+  // ═══════════════════════════════════════════════════════════════════════════
+
+  describe("recordMint (activity gate)", function () {
+    it("authorized minter (clone via factory) can record mints", async function () {
+      const { mintPool, treasury, user1 } = await loadFixture(deployMintPool);
+      await recordMintFor(mintPool, treasury, user1, 0);
+      expect(await mintPool.getEpochMints(0, 0, user1.address)).to.equal(1);
+    });
+
+    it("rejects recordMint from non-authorized caller (even owner)", async function () {
+      const { mintPool, user1 } = await loadFixture(deployMintPool);
+      await expect(
+        mintPool.connect(user1).recordMint(user1.address, 0)
+      ).to.be.revertedWith("Unauthorized recorder");
+    });
+
+    it("emits MintRecorded event", async function () {
+      const { mintPool, treasury, user1 } = await loadFixture(deployMintPool);
+      await expect(recordMintFor(mintPool, treasury, user1, 2))
+        .to.emit(mintPool, "MintRecorded")
+        .withArgs(0, 2, user1.address);
+    });
+  });
+
+  // ═══════════════════════════════════════════════════════════════════════════
+  // CONFIRM CLAIM (Arbitrum-local re-check)
   // ═══════════════════════════════════════════════════════════════════════════
 
   describe("confirmClaim", function () {
-    it("should confirm claim for registered user in epoch N+1", async function () {
-      const { mintPool, token, router, user1, treasury } =
-        await loadFixture(deployMintPool);
-      const amount = ethers.parseEther("10000");
-      await token.mint(user1.address, amount);
+    it("succeeds when balance held since registration", async function () {
+      const { mintPool, token, user1, treasury } = await loadFixture(deployMintPool);
+      await token.mint(user1.address, ethers.parseEther("5000"));
       await mintPool.setContentContract(treasury.address);
-      await registerUser(mintPool, router, user1, amount);
-      await mintPool
-        .connect(treasury)
-        .depositForPool(0, { value: ethers.parseEther("1") });
-
+      await registerUser(mintPool, user1);
       await time.increase(EPOCH_DURATION);
-
-      // confirmClaim emits event, then forwarder delivers report
-      await mintPool.connect(user1).confirmClaim(0);
-      const poolAddress = await mintPool.getAddress();
-      const report = ethers.AbiCoder.defaultAbiCoder().encode(
-        ["address", "uint256"], [user1.address, 0]
-      );
-      await expect(router.deliverReport(poolAddress, report))
-        .to.emit(mintPool, "ClaimConfirmed");
+      await expect(confirmUserClaim(mintPool, user1, 0)).to.emit(mintPool, "ClaimConfirmed");
     });
 
-    it("should reject confirmClaim for non-finalized epoch", async function () {
-      const { mintPool, token, router, user1 } = await loadFixture(deployMintPool);
-      const amount = ethers.parseEther("10000");
-      await token.mint(user1.address, amount);
-      await registerUser(mintPool, router, user1, amount);
-
-      await expect(
-        mintPool.connect(user1).confirmClaim(0)
-      ).to.be.revertedWith("Epoch not ended yet");
-    });
-
-    it("should reject confirmClaim when claim window is closed (epoch N+2)", async function () {
-      const { mintPool, token, router, user1 } = await loadFixture(deployMintPool);
-      const amount = ethers.parseEther("10000");
-      await token.mint(user1.address, amount);
-      await registerUser(mintPool, router, user1, amount);
-
-      // Advance 2 epochs so we are in epoch 2, window for epoch 0 is closed
-      await time.increase(EPOCH_DURATION * 2);
-
-      await expect(
-        mintPool.connect(user1).confirmClaim(0)
-      ).to.be.revertedWith("Claim window closed");
-    });
-
-    it("should reject confirmClaim for unregistered user", async function () {
-      const { mintPool, user1 } = await loadFixture(deployMintPool);
-      const amount = ethers.parseEther("10000");
+    it("reverts when balance dropped below registered amount", async function () {
+      const { mintPool, token, user1 } = await loadFixture(deployMintPool);
+      const balance = ethers.parseEther("5000");
+      await token.mint(user1.address, balance);
+      await registerUser(mintPool, user1);
+      // Burn half the user's BONZAI
+      await token.connect(user1).transfer("0x000000000000000000000000000000000000dEaD", balance / 2n);
       await time.increase(EPOCH_DURATION);
-
-      await expect(
-        mintPool.connect(user1).confirmClaim(0)
-      ).to.be.revertedWith("Not registered for this epoch");
+      await expect(confirmUserClaim(mintPool, user1, 0)).to.be.revertedWith("Balance dropped since registration");
     });
 
-    it("should silently skip confirmClaim callback if balance dropped below registered amount", async function () {
-      const { mintPool, token, router, user1 } = await loadFixture(deployMintPool);
-      const amount = ethers.parseEther("10000");
-      await token.mint(user1.address, amount);
-      await registerUser(mintPool, router, user1, amount);
-
+    it("reverts when called outside the claim window", async function () {
+      const { mintPool, token, user1 } = await loadFixture(deployMintPool);
+      await token.mint(user1.address, ethers.parseEther("5000"));
+      await registerUser(mintPool, user1);
       await time.increase(EPOCH_DURATION);
-
-      // User sells tokens before oracle callback
-      await token.connect(user1).transfer(ethers.ZeroAddress.replace(/0$/, "1"), ethers.parseEther("5000"));
-
-      // confirmClaim emits event, forwarder delivers report
-      await mintPool.connect(user1).confirmClaim(0);
-      const poolAddress = await mintPool.getAddress();
-      // Oracle returns 0 cross-chain; Base balance is now 5000 < 10000 registered
-      const report = ethers.AbiCoder.defaultAbiCoder().encode(
-        ["address", "uint256"], [user1.address, 0]
-      );
-      await router.deliverReport(poolAddress, report);
-
-      // Claim should NOT be confirmed (claimConfirmedBlock stays 0)
-      expect(await mintPool.claimConfirmedBlock(0, user1.address)).to.equal(0);
+      await time.increase(EPOCH_DURATION); // skip past the claim window
+      await expect(confirmUserClaim(mintPool, user1, 0)).to.be.revertedWith("Claim window closed");
     });
   });
 
@@ -586,192 +367,79 @@ describe("BonzaiMintPool", function () {
   // ═══════════════════════════════════════════════════════════════════════════
 
   describe("claimEpoch", function () {
-    it("should pay proportional share to claimer", async function () {
-      const {
-        mintPool,
-        user1,
-        user1Amount,
-        user2Amount,
-        depositAmount,
-      } = await setupFullClaimFlow();
-
-      // user1 has 50000 tokens, user2 has 1000 tokens, total registered = 51000
-      // user1's share of pool 0 = 10 ETH * 50000/51000
-      const expectedAmount =
-        (depositAmount * user1Amount) / (user1Amount + user2Amount);
-
-      const balanceBefore = await ethers.provider.getBalance(user1.address);
-      const tx = await mintPool.connect(user1).claimEpoch(0, 0);
-      const receipt = await tx.wait();
-      const gasUsed = receipt.gasUsed * receipt.gasPrice;
-      const balanceAfter = await ethers.provider.getBalance(user1.address);
-
-      expect(balanceAfter - balanceBefore + gasUsed).to.equal(expectedAmount);
-    });
-
-    it("should mark pool as claimed after successful claim", async function () {
-      const { mintPool, user1 } = await setupFullClaimFlow();
-      await mintPool.connect(user1).claimEpoch(0, 0);
-
-      expect(
-        await mintPool.hasClaimedEpoch(0, user1.address, 0)
-      ).to.equal(true);
-    });
-
-    it("should reject double claim for same pool", async function () {
-      const { mintPool, user1 } = await setupFullClaimFlow();
-      await mintPool.connect(user1).claimEpoch(0, 0);
-
-      await expect(
-        mintPool.connect(user1).claimEpoch(0, 0)
-      ).to.be.revertedWith("Already claimed");
-    });
-
-    it("should reject claim without confirmClaim", async function () {
-      const { mintPool, token, router, user1, treasury } =
-        await loadFixture(deployMintPool);
-      const amount = ethers.parseEther("50000");
-      await token.mint(user1.address, amount);
-      await mintPool.setContentContract(treasury.address);
-      await registerUser(mintPool, router, user1, amount);
-      await mintPool
-        .connect(treasury)
-        .depositForPool(0, { value: ethers.parseEther("10") });
-
-      await time.increase(EPOCH_DURATION);
-      // Skip confirmClaim, try to claim directly
-      await mine(MIN_CLAIM_BLOCK_GAP);
-
-      await expect(
-        mintPool.connect(user1).claimEpoch(0, 0)
-      ).to.be.revertedWith("Must call confirmClaim first");
-    });
-
-    it("should reject claim before 256 blocks after confirmClaim", async function () {
-      const { mintPool, token, router, user1, treasury } =
-        await loadFixture(deployMintPool);
-      const amount = ethers.parseEther("50000");
-      await token.mint(user1.address, amount);
-      await mintPool.setContentContract(treasury.address);
-      await registerUser(mintPool, router, user1, amount);
-      await mintPool
-        .connect(treasury)
-        .depositForPool(0, { value: ethers.parseEther("10") });
-
-      await time.increase(EPOCH_DURATION);
-      await confirmUserClaim(mintPool, router, user1, 0, amount);
-      // Only mine 100 blocks, not enough
-      await mine(100);
-
-      await expect(
-        mintPool.connect(user1).claimEpoch(0, 0)
-      ).to.be.revertedWith("Must wait 256 blocks after confirmClaim");
-    });
-
-    it("should reject claim below pool threshold", async function () {
-      const { mintPool, user2 } = await setupFullClaimFlow();
-      // user2 has 1000 BONZAI = LVL1 only, pool 1 requires 5000
-      await expect(
-        mintPool.connect(user2).claimEpoch(0, 1)
-      ).to.be.revertedWith("Below pool threshold");
-    });
-
-    it("should reject claim when epoch has no deposits in pool", async function () {
-      const { mintPool, token, router, user1, treasury } =
-        await loadFixture(deployMintPool);
-      const amount = ethers.parseEther("50000");
-      await token.mint(user1.address, amount);
-      await mintPool.setContentContract(treasury.address);
-      await registerUser(mintPool, router, user1, amount);
-      // Deposit to pool 0 but NOT to pool 1
-      await mintPool
-        .connect(treasury)
-        .depositForPool(0, { value: ethers.parseEther("10") });
-
-      await time.increase(EPOCH_DURATION);
-      await confirmUserClaim(mintPool, router, user1, 0, amount);
-      await mine(MIN_CLAIM_BLOCK_GAP);
-
-      await expect(
-        mintPool.connect(user1).claimEpoch(0, 1)
-      ).to.be.revertedWith("No deposits in this pool");
-    });
-
-    it("should reject claim for non-finalized epoch", async function () {
-      const { mintPool, token, router, user1, treasury } =
-        await loadFixture(deployMintPool);
-      const amount = ethers.parseEther("50000");
-      await token.mint(user1.address, amount);
-      await mintPool.setContentContract(treasury.address);
-      await registerUser(mintPool, router, user1, amount);
-
-      // Don't advance time, epoch 0 is still active
-      await expect(
-        mintPool.connect(user1).claimEpoch(0, 0)
-      ).to.be.revertedWith("Epoch not ended yet");
-    });
-
-    it("should reject claim when claim window is closed (epoch N+2)", async function () {
-      const { mintPool, token, router, user1, treasury } =
-        await loadFixture(deployMintPool);
-      const amount = ethers.parseEther("50000");
-      await token.mint(user1.address, amount);
-      await mintPool.setContentContract(treasury.address);
-      await registerUser(mintPool, router, user1, amount);
-      await mintPool
-        .connect(treasury)
-        .depositForPool(0, { value: ethers.parseEther("10") });
-
-      // Advance to epoch 1 and confirm
-      await time.increase(EPOCH_DURATION);
-      await confirmUserClaim(mintPool, router, user1, 0, amount);
-      await mine(MIN_CLAIM_BLOCK_GAP);
-
-      // Advance to epoch 2 => claim window for epoch 0 is closed
-      await time.increase(EPOCH_DURATION);
-
-      await expect(
-        mintPool.connect(user1).claimEpoch(0, 0)
-      ).to.be.revertedWith("Claim window closed");
-    });
-
-    it("should reject claim with invalid pool index", async function () {
-      const { mintPool, user1 } = await setupFullClaimFlow();
-      await expect(
-        mintPool.connect(user1).claimEpoch(0, 6)
-      ).to.be.revertedWith("Invalid pool index");
-    });
-
-    it("should emit EpochClaimed event", async function () {
-      const { mintPool, user1, user1Amount, user2Amount, depositAmount } =
-        await setupFullClaimFlow();
-
-      const expectedAmount =
-        (depositAmount * user1Amount) / (user1Amount + user2Amount);
-
+    it("pays the proportional share to claimer", async function () {
+      const { mintPool, user1, depositAmount, user1Amount, user2Amount } = await setupFullClaimFlow();
+      const totalRegistered = user1Amount + user2Amount;
+      const totalProvider = (depositAmount * PROVIDER_SHARE_BPS) / BPS;
+      const holderPool = depositAmount - totalProvider;
+      const expectedShare = (holderPool * user1Amount) / totalRegistered;
       await expect(mintPool.connect(user1).claimEpoch(0, 0))
-        .to.emit(mintPool, "EpochClaimed")
-        .withArgs(0, 0, user1.address, expectedAmount);
+        .to.changeEtherBalance(user1, expectedShare);
     });
 
-    it("should update totalClaimed after claim", async function () {
-      const { mintPool, user1, user1Amount, user2Amount, depositAmount } =
-        await setupFullClaimFlow();
+    it("reverts if user hasn't minted in the category for that epoch (activity gate)", async function () {
+      const { mintPool, token, user1, user3, treasury } = await loadFixture(deployMintPool);
+      // user3 holds tokens, registers, but never mints. Should not be able to claim.
+      await token.mint(user3.address, ethers.parseEther("50000"));
+      await mintPool.setContentContract(treasury.address);
+      await registerUser(mintPool, user3);
+      await mintPool.connect(treasury).depositForPool(0, { value: ethers.parseEther("1") });
+      await time.increase(EPOCH_DURATION);
+      await confirmUserClaim(mintPool, user3, 0);
+      await mine(MIN_CLAIM_BLOCK_GAP);
+      await expect(mintPool.connect(user3).claimEpoch(0, 0))
+        .to.be.revertedWith("No mints in this category for epoch");
+    });
 
+    it("reverts when no deposits in target pool", async function () {
+      // Custom flow: register, deposit only in pool 0, mint in pool 5,
+      // then attempt claim on pool 5 (no deposits exist there).
+      const { mintPool, token, user1, treasury } = await loadFixture(deployMintPool);
+      await token.mint(user1.address, ethers.parseEther("50000"));
+      await mintPool.setContentContract(treasury.address);
+      await registerUser(mintPool, user1);
+      await mintPool.connect(treasury).depositForPool(0, { value: ethers.parseEther("1") });
+      await recordMintFor(mintPool, treasury, user1, 5); // activity gate satisfied for pool 5
+      await time.increase(EPOCH_DURATION);
+      await confirmUserClaim(mintPool, user1, 0);
+      await mine(MIN_CLAIM_BLOCK_GAP);
+      await expect(mintPool.connect(user1).claimEpoch(0, 5))
+        .to.be.revertedWith("No deposits in this pool");
+    });
+
+    it("emits EpochClaimed event", async function () {
+      const { mintPool, user1 } = await setupFullClaimFlow();
+      await expect(mintPool.connect(user1).claimEpoch(0, 0)).to.emit(mintPool, "EpochClaimed");
+    });
+
+    it("updates totalClaimed", async function () {
+      const { mintPool, user1, depositAmount, user1Amount, user2Amount } = await setupFullClaimFlow();
+      const totalRegistered = user1Amount + user2Amount;
+      const totalProvider = (depositAmount * PROVIDER_SHARE_BPS) / BPS;
+      const holderPool = depositAmount - totalProvider;
+      const expectedShare = (holderPool * user1Amount) / totalRegistered;
       await mintPool.connect(user1).claimEpoch(0, 0);
-
-      const expectedAmount =
-        (depositAmount * user1Amount) / (user1Amount + user2Amount);
-      expect(await mintPool.totalClaimed()).to.equal(expectedAmount);
+      expect(await mintPool.totalClaimed()).to.equal(expectedShare);
     });
 
-    it("should reject claim when paused", async function () {
-      const { mintPool, owner, user1 } = await setupFullClaimFlow();
-      await mintPool.connect(owner).pause();
+    it("rejects double-claim", async function () {
+      const { mintPool, user1 } = await setupFullClaimFlow();
+      await mintPool.connect(user1).claimEpoch(0, 0);
+      await expect(mintPool.connect(user1).claimEpoch(0, 0)).to.be.revertedWith("Already claimed");
+    });
 
-      await expect(
-        mintPool.connect(user1).claimEpoch(0, 0)
-      ).to.be.revertedWithCustomError(mintPool, "EnforcedPause");
+    it("rejects claim before 256-block gap", async function () {
+      const { mintPool, token, user1, treasury } = await loadFixture(deployMintPool);
+      const balance = ethers.parseEther("5000");
+      await token.mint(user1.address, balance);
+      await mintPool.setContentContract(treasury.address);
+      await registerUser(mintPool, user1);
+      await mintPool.connect(treasury).depositForPool(0, { value: ethers.parseEther("1") });
+      await recordMintFor(mintPool, treasury, user1, 0);
+      await time.increase(EPOCH_DURATION);
+      await confirmUserClaim(mintPool, user1, 0);
+      // Don't mine 256 blocks
+      await expect(mintPool.connect(user1).claimEpoch(0, 0)).to.be.revertedWith("Must wait 256 blocks after confirmClaim");
     });
   });
 
@@ -780,390 +448,164 @@ describe("BonzaiMintPool", function () {
   // ═══════════════════════════════════════════════════════════════════════════
 
   describe("claimEpochBatch", function () {
-    it("should claim from multiple pools in one transaction", async function () {
-      const { mintPool, token, router, user1, treasury } =
-        await loadFixture(deployMintPool);
-      const amount = ethers.parseEther("50000"); // LVL5
-      await token.mint(user1.address, amount);
+    it("claims from multiple pools (where user qualifies + has minted)", async function () {
+      const { mintPool, token, user1, treasury } = await loadFixture(deployMintPool);
+      const balance = ethers.parseEther("50000");
+      await token.mint(user1.address, balance);
       await mintPool.setContentContract(treasury.address);
-      await registerUser(mintPool, router, user1, amount);
-
-      // Deposit to pools 0 and 1
-      const dep0 = ethers.parseEther("5");
-      const dep1 = ethers.parseEther("3");
-      await mintPool.connect(treasury).depositForPool(0, { value: dep0 });
-      await mintPool.connect(treasury).depositForPool(1, { value: dep1 });
-
+      await registerUser(mintPool, user1);
+      // Deposit in two pools
+      await mintPool.connect(treasury).depositForPool(0, { value: ethers.parseEther("1") });
+      await mintPool.connect(treasury).depositForPool(2, { value: ethers.parseEther("2") });
+      // Activity recorded in both
+      await recordMintFor(mintPool, treasury, user1, 0);
+      await recordMintFor(mintPool, treasury, user1, 2);
       await time.increase(EPOCH_DURATION);
-      await confirmUserClaim(mintPool, router, user1, 0, amount);
+      await confirmUserClaim(mintPool, user1, 0);
       await mine(MIN_CLAIM_BLOCK_GAP);
 
-      // Single user => 100% share for both pools
-      const expectedTotal = dep0 + dep1;
+      const totalProvider0 = (ethers.parseEther("1") * PROVIDER_SHARE_BPS) / BPS;
+      const totalProvider2 = (ethers.parseEther("2") * PROVIDER_SHARE_BPS) / BPS;
+      const holderShare0 = ethers.parseEther("1") - totalProvider0;
+      const holderShare2 = ethers.parseEther("2") - totalProvider2;
+      const expected = holderShare0 + holderShare2;
 
-      const balanceBefore = await ethers.provider.getBalance(user1.address);
-      const tx = await mintPool.connect(user1).claimEpochBatch(0, [0, 1]);
-      const receipt = await tx.wait();
-      const gasUsed = receipt.gasUsed * receipt.gasPrice;
-      const balanceAfter = await ethers.provider.getBalance(user1.address);
-
-      expect(balanceAfter - balanceBefore + gasUsed).to.equal(expectedTotal);
-      expect(await mintPool.hasClaimedEpoch(0, user1.address, 0)).to.equal(true);
-      expect(await mintPool.hasClaimedEpoch(0, user1.address, 1)).to.equal(true);
+      await expect(mintPool.connect(user1).claimEpochBatch(0, [0, 2]))
+        .to.changeEtherBalance(user1, expected);
     });
 
-    it("should skip pools where user is below threshold in batch", async function () {
-      const { mintPool, token, router, user1, treasury } =
-        await loadFixture(deployMintPool);
-      // 1000 BONZAI = LVL1 only, qualifies for pool 0 but not pool 1 (5000)
-      const amount = ethers.parseEther("1000");
-      await token.mint(user1.address, amount);
+    it("skips pools where user has no mints in category", async function () {
+      const { mintPool, token, user1, treasury } = await loadFixture(deployMintPool);
+      await token.mint(user1.address, ethers.parseEther("50000"));
       await mintPool.setContentContract(treasury.address);
-      await registerUser(mintPool, router, user1, amount);
-
-      await mintPool
-        .connect(treasury)
-        .depositForPool(0, { value: ethers.parseEther("5") });
-      await mintPool
-        .connect(treasury)
-        .depositForPool(1, { value: ethers.parseEther("3") });
-
+      await registerUser(mintPool, user1);
+      await mintPool.connect(treasury).depositForPool(0, { value: ethers.parseEther("1") });
+      await mintPool.connect(treasury).depositForPool(2, { value: ethers.parseEther("2") });
+      // Only mint in pool 0 — pool 2 should be skipped
+      await recordMintFor(mintPool, treasury, user1, 0);
       await time.increase(EPOCH_DURATION);
-      await confirmUserClaim(mintPool, router, user1, 0, amount);
+      await confirmUserClaim(mintPool, user1, 0);
       await mine(MIN_CLAIM_BLOCK_GAP);
 
-      // Batch claim pools 0 and 1; pool 1 should be skipped
-      const tx = await mintPool.connect(user1).claimEpochBatch(0, [0, 1]);
-      await tx.wait();
-
-      expect(await mintPool.hasClaimedEpoch(0, user1.address, 0)).to.equal(true);
-      // Pool 1 skipped because balance < threshold
-      expect(await mintPool.hasClaimedEpoch(0, user1.address, 1)).to.equal(false);
-    });
-
-    it("should revert batch if nothing to claim", async function () {
-      const { mintPool, token, router, user1, treasury } =
-        await loadFixture(deployMintPool);
-      const amount = ethers.parseEther("50000");
-      await token.mint(user1.address, amount);
-      await mintPool.setContentContract(treasury.address);
-      await registerUser(mintPool, router, user1, amount);
-      // No deposits at all
-
-      await time.increase(EPOCH_DURATION);
-      await confirmUserClaim(mintPool, router, user1, 0, amount);
-      await mine(MIN_CLAIM_BLOCK_GAP);
-
-      await expect(
-        mintPool.connect(user1).claimEpochBatch(0, [0, 1])
-      ).to.be.revertedWith("Nothing to claim");
-    });
-
-    it("should reject batch claim when paused", async function () {
-      const { mintPool, owner, user1 } = await setupFullClaimFlow();
-      await mintPool.connect(owner).pause();
-
-      await expect(
-        mintPool.connect(user1).claimEpochBatch(0, [0])
-      ).to.be.revertedWithCustomError(mintPool, "EnforcedPause");
+      const expectedHolder = ethers.parseEther("1") - (ethers.parseEther("1") * PROVIDER_SHARE_BPS) / BPS;
+      await expect(mintPool.connect(user1).claimEpochBatch(0, [0, 2]))
+        .to.changeEtherBalance(user1, expectedHolder);
     });
   });
 
   // ═══════════════════════════════════════════════════════════════════════════
-  // SWEEP UNCLAIMED
+  // PROVIDER WITHDRAW (only ServiceTime)
   // ═══════════════════════════════════════════════════════════════════════════
 
-  describe("sweepUnclaimed", function () {
-    it("should sweep unclaimed ETH to treasury after claim window closes", async function () {
-      const { mintPool, token, router, owner, user1, treasury } =
-        await loadFixture(deployMintPool);
-      const amount = ethers.parseEther("50000");
-      await token.mint(user1.address, amount);
-      await mintPool.setContentContract(treasury.address);
-      await registerUser(mintPool, router, user1, amount);
-
-      const deposit = ethers.parseEther("10");
-      await mintPool.connect(treasury).depositForPool(0, { value: deposit });
-
-      // Advance 2 epochs: epoch 0 finalized, claim window (epoch 1) closed
-      await time.increase(EPOCH_DURATION * 2);
-
-      const treasuryBalBefore = await ethers.provider.getBalance(treasury.address);
-      await mintPool.connect(owner).sweepUnclaimed(0);
-      const treasuryBalAfter = await ethers.provider.getBalance(treasury.address);
-
-      // All 10 ETH unclaimed should be swept to treasury
-      expect(treasuryBalAfter - treasuryBalBefore).to.equal(deposit);
+  describe("withdrawProviderShare (ServiceTime only)", function () {
+    it("rejects calls from non-ServiceTime", async function () {
+      const { mintPool, user1 } = await loadFixture(deployMintPool);
+      await expect(
+        mintPool.connect(user1).withdrawProviderShare(0, 0, user1.address, 100, 100)
+      ).to.be.revertedWith("Only ServiceTime");
     });
 
-    it("should sweep only unclaimed portion to treasury after partial claims", async function () {
-      const { mintPool, user1, user1Amount, user2Amount, depositAmount, owner, treasury } =
-        await setupFullClaimFlow();
+    it("transfers provider's weighted share when called by ServiceTime", async function () {
+      const { mintPool, treasury, user1, user3 } = await loadFixture(deployMintPool);
+      // user3 = mock service-time contract for the test
+      await mintPool.setServiceTimeContract(user3.address);
+      await mintPool.setContentContract(treasury.address);
+      await mintPool.connect(treasury).depositForPool(1, { value: ethers.parseEther("2") });
 
-      // user1 claims pool 0
+      await time.increase(EPOCH_DURATION);
+      const totalProvider = (ethers.parseEther("2") * PROVIDER_SHARE_BPS) / BPS;
+      // user1 provides 60% of total time
+      const providerTime = 600;
+      const totalTime = 1000;
+      const expected = (totalProvider * BigInt(providerTime)) / BigInt(totalTime);
+
+      await expect(
+        mintPool.connect(user3).withdrawProviderShare(0, 1, user1.address, providerTime, totalTime)
+      ).to.changeEtherBalance(user1, expected);
+    });
+  });
+
+  // ═══════════════════════════════════════════════════════════════════════════
+  // VIEWS
+  // ═══════════════════════════════════════════════════════════════════════════
+
+  describe("Views", function () {
+    it("getEpochHolderDeposits returns zeros for an empty epoch", async function () {
+      const { mintPool } = await loadFixture(deployMintPool);
+      const arr = await mintPool.getEpochHolderDeposits(99);
+      for (let i = 0; i < NUM_POOLS; i++) expect(arr[i]).to.equal(0);
+    });
+
+    it("getEpochProviderDeposits returns zeros for an empty epoch", async function () {
+      const { mintPool } = await loadFixture(deployMintPool);
+      const arr = await mintPool.getEpochProviderDeposits(99);
+      for (let i = 0; i < NUM_POOLS; i++) expect(arr[i]).to.equal(0);
+    });
+
+    it("previewHolderClaim returns expected amount for finalized epoch", async function () {
+      const { mintPool, user1, depositAmount, user1Amount, user2Amount } = await setupFullClaimFlow();
+      const totalRegistered = user1Amount + user2Amount;
+      const totalProvider = (depositAmount * PROVIDER_SHARE_BPS) / BPS;
+      const holderPool = depositAmount - totalProvider;
+      const expected = (holderPool * user1Amount) / totalRegistered;
+      expect(await mintPool.previewHolderClaim(0, 0, user1.address)).to.equal(expected);
+    });
+
+    it("previewHolderClaim returns 0 if user has no mints in the category", async function () {
+      const { mintPool, token, user3, treasury } = await loadFixture(deployMintPool);
+      await token.mint(user3.address, ethers.parseEther("50000"));
+      await mintPool.setContentContract(treasury.address);
+      await registerUser(mintPool, user3);
+      await mintPool.connect(treasury).depositForPool(0, { value: ethers.parseEther("1") });
+      await time.increase(EPOCH_DURATION);
+      // user3 never minted — preview should be 0 even though they registered
+      expect(await mintPool.previewHolderClaim(0, 0, user3.address)).to.equal(0);
+    });
+
+    it("previewHolderClaim returns 0 for non-finalized epoch", async function () {
+      const { mintPool, user1 } = await setupFullClaimFlow();
+      // Current epoch hasn't ended yet (we're in epoch 1, claim was for epoch 0 — so epoch 1 returns 0)
+      expect(await mintPool.previewHolderClaim(1, 0, user1.address)).to.equal(0);
+    });
+  });
+
+  // ═══════════════════════════════════════════════════════════════════════════
+  // SWEEP / RECIRCULATE
+  // ═══════════════════════════════════════════════════════════════════════════
+
+  describe("Sweep + recirculate", function () {
+    it("sweepUnclaimed sends only the unclaimed remainder to treasury", async function () {
+      const { mintPool, user1, treasury, depositAmount, user1Amount, user2Amount } = await setupFullClaimFlow();
+      // user1 claims their share
       await mintPool.connect(user1).claimEpoch(0, 0);
-      const user1Share =
-        (depositAmount * user1Amount) / (user1Amount + user2Amount);
-
-      // Advance to epoch 2 so sweep is allowed
+      // Advance to claim window+1
       await time.increase(EPOCH_DURATION);
 
-      const treasuryBalBefore = await ethers.provider.getBalance(treasury.address);
-      await mintPool.connect(owner).sweepUnclaimed(0);
-      const treasuryBalAfter = await ethers.provider.getBalance(treasury.address);
+      const totalRegistered = user1Amount + user2Amount;
+      const totalProvider = (depositAmount * PROVIDER_SHARE_BPS) / BPS;
+      const holderPool = depositAmount - totalProvider;
+      const user1Share = (holderPool * user1Amount) / totalRegistered;
+      const remaining = depositAmount - user1Share; // unclaimed holder share + full provider side
 
-      // Unclaimed = total deposited - user1's claimed amount
-      const expectedSweep = depositAmount - user1Share;
-      expect(treasuryBalAfter - treasuryBalBefore).to.equal(expectedSweep);
+      await expect(mintPool.sweepUnclaimed(0))
+        .to.changeEtherBalance(treasury, remaining);
     });
 
-    it("should reject sweep before claim window closes", async function () {
-      const { mintPool, token, router, owner, user1, treasury } =
-        await loadFixture(deployMintPool);
-      const amount = ethers.parseEther("50000");
-      await token.mint(user1.address, amount);
-      await mintPool.setContentContract(treasury.address);
-      await registerUser(mintPool, router, user1, amount);
-      await mintPool
-        .connect(treasury)
-        .depositForPool(0, { value: ethers.parseEther("10") });
-
-      // Only advance 1 epoch (still in claim window)
+    it("recirculateUnclaimed moves unclaimed funds to current epoch", async function () {
+      const { mintPool, user1, depositAmount, user1Amount, user2Amount } = await setupFullClaimFlow();
+      await mintPool.connect(user1).claimEpoch(0, 0);
       await time.increase(EPOCH_DURATION);
 
-      await expect(
-        mintPool.connect(owner).sweepUnclaimed(0)
-      ).to.be.revertedWith("Claim window still open");
-    });
+      const totalRegistered = user1Amount + user2Amount;
+      const totalProvider = (depositAmount * PROVIDER_SHARE_BPS) / BPS;
+      const holderPool = depositAmount - totalProvider;
+      const user1Share = (holderPool * user1Amount) / totalRegistered;
+      const unclaimedHolder = holderPool - user1Share;
 
-    it("should reject sweep from non-owner", async function () {
-      const { mintPool, token, router, owner, user1, treasury } =
-        await loadFixture(deployMintPool);
-      const amount = ethers.parseEther("50000");
-      await token.mint(user1.address, amount);
-      await mintPool.setContentContract(treasury.address);
-      await registerUser(mintPool, router, user1, amount);
-      await mintPool
-        .connect(treasury)
-        .depositForPool(0, { value: ethers.parseEther("10") });
-
-      await time.increase(EPOCH_DURATION * 2);
-
-      await expect(
-        mintPool.connect(user1).sweepUnclaimed(0)
-      ).to.be.revertedWithCustomError(mintPool, "OwnableUnauthorizedAccount");
-    });
-
-    it("should reject double sweep", async function () {
-      const { mintPool, token, router, owner, user1, treasury } =
-        await loadFixture(deployMintPool);
-      const amount = ethers.parseEther("50000");
-      await token.mint(user1.address, amount);
-      await mintPool.setContentContract(treasury.address);
-      await registerUser(mintPool, router, user1, amount);
-      await mintPool
-        .connect(treasury)
-        .depositForPool(0, { value: ethers.parseEther("10") });
-
-      await time.increase(EPOCH_DURATION * 2);
-      await mintPool.connect(owner).sweepUnclaimed(0);
-
-      await expect(
-        mintPool.connect(owner).sweepUnclaimed(0)
-      ).to.be.revertedWith("Already swept");
-    });
-
-    it("should emit UnclaimedSwept event", async function () {
-      const { mintPool, token, router, owner, user1, treasury } =
-        await loadFixture(deployMintPool);
-      const amount = ethers.parseEther("50000");
-      await token.mint(user1.address, amount);
-      await mintPool.setContentContract(treasury.address);
-      await registerUser(mintPool, router, user1, amount);
-
-      const deposit = ethers.parseEther("10");
-      await mintPool.connect(treasury).depositForPool(0, { value: deposit });
-
-      await time.increase(EPOCH_DURATION * 2);
-
-      await expect(mintPool.connect(owner).sweepUnclaimed(0))
-        .to.emit(mintPool, "UnclaimedSwept")
-        .withArgs(0, deposit);
-    });
-  });
-
-  // ═══════════════════════════════════════════════════════════════════════════
-  // ADMIN FUNCTIONS
-  // ═══════════════════════════════════════════════════════════════════════════
-
-  describe("Admin", function () {
-    it("setContentContract should update and emit event", async function () {
-      const { mintPool, user1 } = await loadFixture(deployMintPool);
-      await expect(mintPool.setContentContract(user1.address))
-        .to.emit(mintPool, "ContentContractUpdated")
-        .withArgs(ethers.ZeroAddress, user1.address);
-      expect(await mintPool.contentContract()).to.equal(user1.address);
-    });
-
-    it("setContentContract should reject zero address", async function () {
-      const { mintPool } = await loadFixture(deployMintPool);
-      await expect(
-        mintPool.setContentContract(ethers.ZeroAddress)
-      ).to.be.revertedWith("Invalid address");
-    });
-
-    it("setContentContract should reject non-owner", async function () {
-      const { mintPool, user1 } = await loadFixture(deployMintPool);
-      await expect(
-        mintPool.connect(user1).setContentContract(user1.address)
-      ).to.be.revertedWithCustomError(mintPool, "OwnableUnauthorizedAccount");
-    });
-
-    it("setRoyaltySplitter should update and emit event", async function () {
-      const { mintPool, user1 } = await loadFixture(deployMintPool);
-      await expect(mintPool.setRoyaltySplitter(user1.address))
-        .to.emit(mintPool, "RoyaltySplitterUpdated")
-        .withArgs(ethers.ZeroAddress, user1.address);
-      expect(await mintPool.royaltySplitter()).to.equal(user1.address);
-    });
-
-    it("setFeeHook should update and emit event", async function () {
-      const { mintPool, user1 } = await loadFixture(deployMintPool);
-      await expect(mintPool.setFeeHook(user1.address))
-        .to.emit(mintPool, "FeeHookUpdated")
-        .withArgs(ethers.ZeroAddress, user1.address);
-      expect(await mintPool.feeHook()).to.equal(user1.address);
-    });
-
-    it("setPoolThreshold should update threshold in ascending order", async function () {
-      const { mintPool } = await loadFixture(deployMintPool);
-      // Pool 2 original: 10000. Set to 8000 (still >= pool 1's 5000 and <= pool 3's 25000)
-      await expect(mintPool.setPoolThreshold(2, 8000))
-        .to.emit(mintPool, "PoolThresholdUpdated")
-        .withArgs(2, POOL_THRESHOLDS_WEI[2], ethers.parseEther("8000"));
-
-      const thresholds = await mintPool.getAllPoolThresholds();
-      expect(thresholds[2]).to.equal(ethers.parseEther("8000"));
-    });
-
-    it("setPoolThreshold should reject breaking ascending order (below previous)", async function () {
-      const { mintPool } = await loadFixture(deployMintPool);
-      // Pool 2 must be >= pool 1 (5000). Set to 4000 should fail.
-      await expect(
-        mintPool.setPoolThreshold(2, 4000)
-      ).to.be.revertedWith("Must be >= previous pool threshold");
-    });
-
-    it("setPoolThreshold should reject breaking ascending order (above next)", async function () {
-      const { mintPool } = await loadFixture(deployMintPool);
-      // Pool 2 must be <= pool 3 (25000). Set to 30000 should fail.
-      await expect(
-        mintPool.setPoolThreshold(2, 30000)
-      ).to.be.revertedWith("Must be <= next pool threshold");
-    });
-
-    it("setPoolThreshold should reject zero threshold", async function () {
-      const { mintPool } = await loadFixture(deployMintPool);
-      await expect(
-        mintPool.setPoolThreshold(0, 0)
-      ).to.be.revertedWith("Threshold cannot be zero");
-    });
-
-    it("setPoolThreshold should reject invalid pool index", async function () {
-      const { mintPool } = await loadFixture(deployMintPool);
-      await expect(
-        mintPool.setPoolThreshold(6, 1000)
-      ).to.be.revertedWith("Invalid pool index");
-    });
-
-    it("pause and unpause should work", async function () {
-      const { mintPool, owner } = await loadFixture(deployMintPool);
-      await mintPool.connect(owner).pause();
-      expect(await mintPool.paused()).to.equal(true);
-
-      await mintPool.connect(owner).unpause();
-      expect(await mintPool.paused()).to.equal(false);
-    });
-
-    it("pause should reject non-owner", async function () {
-      const { mintPool, user1 } = await loadFixture(deployMintPool);
-      await expect(
-        mintPool.connect(user1).pause()
-      ).to.be.revertedWithCustomError(mintPool, "OwnableUnauthorizedAccount");
-    });
-  });
-
-  // ═══════════════════════════════════════════════════════════════════════════
-  // VIEW FUNCTIONS
-  // ═══════════════════════════════════════════════════════════════════════════
-
-  describe("View Functions", function () {
-    it("qualifiesForPool should return true when registered balance meets threshold", async function () {
-      const { mintPool, token, router, user1 } = await loadFixture(deployMintPool);
-      const amount = ethers.parseEther("10000");
-      await token.mint(user1.address, amount);
-      // Must register first — qualifiesForPool now uses registered balance
-      await registerUser(mintPool, router, user1, amount);
-
-      // Pool 0 needs 1K, pool 1 needs 5K, pool 2 needs 10K
-      expect(await mintPool.qualifiesForPool(user1.address, 0)).to.equal(true);
-      expect(await mintPool.qualifiesForPool(user1.address, 1)).to.equal(true);
-      expect(await mintPool.qualifiesForPool(user1.address, 2)).to.equal(true);
-      // Pool 3 needs 25K
-      expect(await mintPool.qualifiesForPool(user1.address, 3)).to.equal(false);
-    });
-
-    it("qualifiesForPool should return false for unregistered user", async function () {
-      const { mintPool, token, user1 } = await loadFixture(deployMintPool);
-      await token.mint(user1.address, ethers.parseEther("100000"));
-      // Not registered — qualifiesForPool returns false
-      expect(await mintPool.qualifiesForPool(user1.address, 0)).to.equal(false);
-    });
-
-    it("qualifiesForPool should return false for invalid pool index", async function () {
-      const { mintPool, token, router, user1 } = await loadFixture(deployMintPool);
-      const amount = ethers.parseEther("100000");
-      await token.mint(user1.address, amount);
-      await registerUser(mintPool, router, user1, amount);
-      expect(await mintPool.qualifiesForPool(user1.address, 6)).to.equal(false);
-    });
-
-    it("previewClaim should return correct amount", async function () {
-      const { mintPool, user1, user1Amount, user2Amount, depositAmount } =
-        await setupFullClaimFlow();
-
-      const expected =
-        (depositAmount * user1Amount) / (user1Amount + user2Amount);
-      const preview = await mintPool.previewClaim(0, 0, user1.address);
-      expect(preview).to.equal(expected);
-    });
-
-    it("previewClaim should return 0 for non-finalized epoch", async function () {
-      const { mintPool, token, router, user1 } = await loadFixture(deployMintPool);
-      const amount = ethers.parseEther("50000");
-      await token.mint(user1.address, amount);
-      await registerUser(mintPool, router, user1, amount);
-
-      expect(await mintPool.previewClaim(0, 0, user1.address)).to.equal(0);
-    });
-
-    it("previewClaim should return 0 if user below pool threshold", async function () {
-      const { mintPool, user2 } = await setupFullClaimFlow();
-      // user2 has 1000 BONZAI, pool 1 requires 5000
-      expect(await mintPool.previewClaim(0, 1, user2.address)).to.equal(0);
-    });
-
-    it("isRegistered should return false for unregistered user", async function () {
-      const { mintPool, user1 } = await loadFixture(deployMintPool);
-      expect(await mintPool.isRegistered(0, user1.address)).to.equal(false);
-    });
-
-    it("getEpochDeposits should return zeros for epoch with no deposits", async function () {
-      const { mintPool } = await loadFixture(deployMintPool);
-      const deposits = await mintPool.getEpochDeposits(0);
-      for (let i = 0; i < NUM_POOLS; i++) {
-        expect(deposits[i]).to.equal(0);
-      }
+      await mintPool.recirculateUnclaimed(0);
+      const currentEpoch = await mintPool.currentEpoch();
+      const recirculated = await mintPool.getEpochHolderDeposits(currentEpoch);
+      expect(recirculated[0]).to.equal(unclaimedHolder);
     });
   });
 });

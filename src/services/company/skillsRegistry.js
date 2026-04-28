@@ -1,0 +1,239 @@
+/**
+ * BonzAI Company — Skills Registry (runtime executor)
+ *
+ * Wraps the static manifests in `skillManifests.js` with a runtime
+ * `execute()` API that the dispatcher calls when a role's LLM emits a
+ * skill-action call. v0 ships with mock executors that log + return
+ * structured stub results; per-connector real implementations swap in
+ * later without touching the manifest contract or the dispatcher.
+ */
+
+import * as connectors from "./connectors.js";
+import * as treasury from "./treasury.solo.js";
+import { append } from "./auditLog.js";
+import { SKILL_MANIFESTS, getManifest } from "./skillManifests.js";
+
+/**
+ * Find the manifest that owns an action type. Returns the manifest, or
+ * null if the action isn't part of any registered skill.
+ */
+export function findSkillForAction(actionType) {
+  for (const m of Object.values(SKILL_MANIFESTS)) {
+    if (m.actions.some((a) => a.type === actionType)) return m;
+  }
+  return null;
+}
+
+/**
+ * Returns true if the role's grantedSkills permit the given action type.
+ */
+export function actionGranted(grantedSkills, actionType) {
+  if (!Array.isArray(grantedSkills)) return false;
+  for (const sid of grantedSkills) {
+    const m = getManifest(sid);
+    if (m && m.actions.some((a) => a.type === actionType)) return true;
+  }
+  return false;
+}
+
+/**
+ * Execute a skill action. Routes to the right executor based on the
+ * owning skill's required connectors. v0: every executor is a mock that
+ * logs the call and returns a structured stub result.
+ *
+ * @param {string} companyId
+ * @param {string} actionType — e.g. "twilio.sendSMS"
+ * @param {object} params     — action arguments emitted by the LLM
+ * @param {object} ctx        — { role, companion, charter }
+ */
+export async function execute(companyId, actionType, params, ctx = {}) {
+  const manifest = findSkillForAction(actionType);
+  if (!manifest) {
+    throw new Error(`unknown skill action: ${actionType}`);
+  }
+
+  // Connector pre-flight — every required connector must be active.
+  for (const kind of manifest.requiredConnectors) {
+    const conn = await connectors.getByKind(companyId, kind);
+    if (!conn) {
+      const msg = `connector "${kind}" not configured for ${actionType}`;
+      await append(companyId, {
+        kind: "action", role: ctx.role, action: actionType, status: "error", note: msg,
+      });
+      return { ok: false, error: msg };
+    }
+  }
+
+  // v0 mock executor. Simulates a successful call + optional shareLink.
+  // Real Twilio / QBO / Stripe wiring lands here, dispatched by manifest.id.
+  const result = await _mockExecute(manifest, actionType, params);
+
+  // Bridge money-movement skill actions to the local treasury. Without
+  // this, "$180 paid to Carlos" appears in the audit log but the
+  // company's books never move — a silent ledger drift the user
+  // can't reconcile. Cap-bypass is intentional: the role's spend was
+  // already gated upstream by `gateAction` based on the action class.
+  try {
+    await _maybeBridgeTreasury(companyId, actionType, params, ctx);
+  } catch (err) {
+    // Treasury reject (currency mismatch, reserve floor, cap) — promote
+    // to an action error so the issue lifecycle reflects it.
+    await append(companyId, {
+      kind: "action", role: ctx.role, action: actionType, status: "error",
+      note: `treasury rejected: ${err.message?.slice(0, 200) || "unknown"}`,
+    });
+    return { ok: false, error: err.message };
+  }
+
+  await append(companyId, {
+    kind: "action",
+    role: ctx.role,
+    action: actionType,
+    status: "executed",
+    note: result.summary || _summarize(actionType, params),
+    txOrLink: result.shareLink || null,
+  });
+
+  return { ok: true, ...result };
+}
+
+/**
+ * If the skill action represents real money movement, mirror it into
+ * the local treasury so the books match the audit log. The mapping is
+ * conservative — only known billing actions are bridged; everything
+ * else (SMS, calendar, content) doesn't touch the ledger.
+ */
+async function _maybeBridgeTreasury(companyId, actionType, params, ctx) {
+  const role = ctx.role || "CFO";
+  const currency = ctx.charter?.rules?.currency || ctx.charter?.treasury?.currency || "USD";
+
+  // Outflows (company → external)
+  const outflows = {
+    "qbo.payContractor":      { amount: params.amount, recipient: params.contractorId || "contractor", memo: params.memo || "" },
+    "qbo.payBill":            { amount: params.amount, recipient: params.vendorId || "vendor", memo: params.memo || "" },
+    "stripe.refund":          { amount: params.amount, recipient: `refund:${params.chargeId}`, memo: "stripe refund" },
+    "fulfillment.assignToHuman": null, // assignment only — no money moves until shipment recorded
+  };
+  // Inflows (external → company)
+  const inflows = {
+    "qbo.recordPayment":      { amount: params.amount, source: `invoice:${params.invoiceId}`, memo: `paid via ${params.method || "ach"}` },
+    "stripe.chargeOnFile":    { amount: params.amount, source: `customer:${params.customerId}`, memo: params.memo || "stripe charge" },
+  };
+
+  if (outflows[actionType] && Number.isFinite(Number(outflows[actionType].amount))) {
+    await treasury.paySupplier(companyId, {
+      ...outflows[actionType], currency, role,
+      // No reserveFloor / cap enforcement here — the role's spend mask
+      // already gated this action upstream via gateAction.
+    });
+  } else if (inflows[actionType] && Number.isFinite(Number(inflows[actionType].amount))) {
+    await treasury.recordRevenue(companyId, { ...inflows[actionType], currency, role });
+  }
+}
+
+async function _mockExecute(manifest, actionType, params) {
+  // Tiny, deterministic stub responses that look like real return shapes.
+  // Real per-skill wiring would replace this dispatch table.
+  switch (actionType) {
+    case "twilio.sendSMS":
+      return { id: `SM_${Date.now()}`, summary: `SMS to ${params.to}`, shareLink: null };
+    case "twilio.placeCall":
+      return { id: `CA_${Date.now()}`, summary: `Call to ${params.to}` };
+    case "qbo.createInvoice":
+      return { id: `INV_${Date.now()}`, summary: `Invoice for customer ${params.customerId}`, total: _sumLines(params.lines) };
+    case "qbo.sendInvoice":
+      return { summary: `Sent invoice ${params.invoiceId}`, shareLink: `https://qbo.example/inv/${params.invoiceId}` };
+    case "stripe.createCheckout":
+      return { sessionId: `cs_${Date.now()}`, shareLink: `https://checkout.stripe.com/c/cs_${Date.now()}` };
+    case "shopify.createProduct":
+      return { id: `prod_${Date.now()}`, shareLink: `https://shop.example/products/prod_${Date.now()}` };
+    case "shopify.fulfillOrder":
+      return { summary: `Order ${params.orderId} fulfilled (${params.carrier} ${params.trackingNumber})` };
+    case "printful.submitOrder":
+      return { id: `PFO_${Date.now()}`, summary: `Submitted ${params.items?.length || 0} items to Printful` };
+    case "gcal.createEvent":
+      return { id: `evt_${Date.now()}`, summary: `${params.title} @ ${params.start}` };
+    case "gbp.respondReview":
+      return { summary: `Reply posted to review ${params.reviewId}` };
+    case "doc.generateProposal":
+      return { id: `prop_${Date.now()}`, shareLink: `https://files.local/proposals/prop_${Date.now()}.pdf` };
+    case "field.prepareWorkOrder":
+      return { jobId: params.jobId, summary: `Brief sent to human ${params.humanId}` };
+    case "field.completeJob":
+      return { jobId: params.jobId, summary: `Job ${params.jobId} marked complete with ${params.photoUrls?.length || 0} photos` };
+    case "clio.createMatter":
+      return { id: `MAT_${Date.now()}`, summary: `Matter opened for client ${params.clientId} (${params.practiceArea})` };
+    case "clio.runConflictCheck":
+      return { id: `CC_${Date.now()}`, summary: `Conflict check on "${params.partyName}" — no conflicts found`, clear: true };
+    case "clio.draftEngagementLetter":
+      return { id: `ENG_${Date.now()}`, summary: `Engagement letter drafted for matter ${params.matterId}`, shareLink: `https://files.local/engagement/ENG_${Date.now()}.pdf` };
+    case "clio.logTime":
+      return { summary: `Logged ${params.minutes}min on matter ${params.matterId}: ${params.narrative?.slice(0, 60) || ""}` };
+    case "clio.recordTrustDeposit":
+      return { summary: `IOLTA deposit ${params.amount} on ${params.matterId}` };
+    case "clio.scheduleCourtDate":
+      return { id: `CRT_${Date.now()}`, summary: `Court date ${params.date} on ${params.matterId}` };
+    case "meta.createCampaign":
+      return { id: `META_${Date.now()}`, summary: `Meta campaign ${params.objective} @ $${params.dailyBudget}/day` };
+    case "meta.uploadCreative":
+      return { id: `CRV_${Date.now()}`, summary: `Uploaded ${params.mediaUrls?.length || 0} creative(s) to ${params.campaignId}` };
+    case "meta.reportPerformance":
+      return { summary: `Meta perf for ${params.campaignId}: $X spend, Y impressions (mock)` };
+    case "gads.createCampaign":
+      return { id: `GAD_${Date.now()}`, summary: `Google Ads ${params.type} @ $${params.dailyBudget}/day` };
+    case "gads.adjustBids":
+      return { summary: `${params.campaignId} → ${params.strategy} target ${params.target}` };
+    case "gads.reportPerformance":
+      return { summary: `Google Ads perf for ${params.campaignId} (mock)` };
+    case "notion.createPage":
+      return { id: `NTN_${Date.now()}`, summary: `Notion page "${params.title}"`, shareLink: `https://notion.so/p/NTN_${Date.now()}` };
+    case "notion.appendBlock":
+      return { summary: `Appended to ${params.pageId}` };
+    case "notion.queryDB":
+      return { summary: `Queried ${params.databaseId} (mock — 0 rows)` };
+    case "newsletter.publish":
+      return { id: `BCAST_${Date.now()}`, summary: `Published "${params.subject}" to ${params.segmentId || "all"}`, shareLink: `https://newsletter.example/issues/BCAST_${Date.now()}` };
+    case "newsletter.scheduleSequence":
+      return { summary: `Subscriber ${params.subscriberId} added to sequence ${params.sequenceId}` };
+    case "newsletter.reportPerformance":
+      return { summary: `Newsletter ${params.broadcastId}: 42% open, 8% click (mock)` };
+    case "course.createLesson":
+      return { id: `LSN_${Date.now()}`, summary: `Lesson "${params.title}" added to ${params.courseId}` };
+    case "course.enrollStudent":
+      return { summary: `Enrolled ${params.email} in ${params.courseId}` };
+    case "course.scheduleDrip":
+      return { summary: `Drip scheduled: lesson ${params.lessonId} releases ${params.releaseAt}` };
+    case "course.issueCertificate":
+      return { id: `CERT_${Date.now()}`, summary: `Certificate issued to student ${params.studentId}`, shareLink: `https://files.local/certs/CERT_${Date.now()}.pdf` };
+    case "calendly.shareLink":
+      return { summary: `Booking link shared with ${params.to}`, shareLink: `https://calendly.com/demo/${params.eventTypeId}` };
+    case "calendly.cancelEvent":
+      return { summary: `Cancelled ${params.eventId}: ${params.reason || ""}` };
+    case "calendly.reportNoShows":
+      return { summary: `0 no-shows in window (mock)` };
+    case "slack.postMessage":
+      return { summary: `Posted to #${params.channel}: ${params.text?.slice(0, 80) || ""}` };
+    case "slack.dmUser":
+      return { summary: `DM'd ${params.userId}` };
+    case "slack.updateStatus":
+      return { summary: `Workspace status: ${params.emoji || ""} ${params.text || ""}` };
+    case "linear.createIssue":
+      return { id: `LIN-${Date.now() % 10000}`, summary: `Filed: "${params.title}" [${params.priority || "normal"}]`, shareLink: `https://linear.app/demo/LIN-${Date.now() % 10000}` };
+    case "linear.assignIssue":
+      return { summary: `Assigned ${params.issueId} → ${params.assigneeId}` };
+    case "linear.moveToCycle":
+      return { summary: `Moved ${params.issueId} to active cycle` };
+    default:
+      return { summary: `[mock] executed ${actionType}` };
+  }
+}
+
+function _sumLines(lines) {
+  if (!Array.isArray(lines)) return 0;
+  return lines.reduce((acc, l) => acc + (Number(l.amount) || 0), 0);
+}
+
+function _summarize(actionType, params) {
+  const k = Object.keys(params || {})[0];
+  return `${actionType}${k ? ` (${k}=${String(params[k]).slice(0, 60)})` : ""}`;
+}

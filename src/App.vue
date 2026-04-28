@@ -241,6 +241,18 @@
               </h1>
             </a>
           </li>
+          <li
+            class="models__list-item model company"
+            :class="{ 'is-active': modelMode == 'company' }"
+            @click="modelMode = 'company'"
+          >
+            <a>
+              <h1>
+                <span class="material-symbols-outlined is-size-1">storefront</span>
+                Company
+              </h1>
+            </a>
+          </li>
         </ul>
       </div>
     </div>
@@ -256,6 +268,7 @@
     <Generative3D v-if="modelMode == '3D'" key="3D" />
     <GenerativeTraining v-if="modelMode == 'robot'" key="robot" />
     <SmartAgent v-if="modelMode == 'agent'" key="agent" />
+    <Company v-if="modelMode == 'company'" key="company" />
   </div>
   <BonzaiBottomBar />
 
@@ -440,6 +453,7 @@ import GenerativeVideo from "./components/GenerativeVideo.vue";
 import GenerativeAudio from "./components/GenerativeAudio.vue";
 import Generative3D from "./components/Generative3D.vue";
 import GenerativeTraining from "./components/GenerativeTraining.vue";
+import Company from "./components/Company.vue";
 import SmartAgent from "./components/SmartAgent.vue";
 import BonzaiBottomBar from "./components/BonzaiBottomBar.vue";
 import { authService } from "./services/auth.service.js";
@@ -459,6 +473,7 @@ export default {
     Generative3D,
     GenerativeTraining,
     SmartAgent,
+    Company,
     BonzaiBottomBar,
   },
   setup() {
@@ -843,14 +858,21 @@ body {
   background: url("./assets/bonzai_agent.webp") no-repeat;
   background-position: center 66%;
   background-size: cover;
-  height: 11.33vh;
+  height: 9.75vh;
+}
+
+.tabs.menu li.company {
+  background: url("./assets/bonzai_company.webp") no-repeat;
+  background-position: center 50%;
+  background-size: cover;
+  height: 9.75vh;
 }
 
 .tabs.menu li.bonzai {
   background: #61378e;
   border-bottom: 10vh solid #61378e;
   filter: none !important;
-  height: 14vh;
+  height: 14.25vh;
   padding-top: 1em;
   width: 100%;
 }
@@ -858,7 +880,7 @@ body {
 .tabs.menu li.bonzai .logo {
   background: url("./assets/bonzai_logo-full.png") no-repeat;
   background-size: contain;
-  height: 11.33vh;
+  height: 9.75vh;
   margin: 5px;
   width: 100%;
 }
@@ -870,38 +892,38 @@ body {
 .tabs.menu li.chat {
   background: url("./assets/bonzai_chat.webp") no-repeat;
   background-size: cover;
-  height: 11.33vh;
+  height: 9.75vh;
 }
 
 .tabs.menu li.image {
   background: url("./assets/bonzai_image.webp") no-repeat;
   background-size: cover;
-  height: 11.33vh;
+  height: 9.75vh;
 }
 
 .tabs.menu li.music {
   background: url("./assets/bonzai_music.webp") no-repeat;
   background-size: cover;
-  height: 11.33vh;
+  height: 9.75vh;
 }
 
 .tabs.menu li.robot {
   background: url("./assets/bonzai_robots.webp") no-repeat;
   background-position: center 33%;
   background-size: cover;
-  height: 11.33vh;
+  height: 9.75vh;
 }
 
 .tabs.menu li.three {
   background: url("./assets/bonzai_3d.webp") no-repeat;
   background-size: cover;
-  height: 11.33vh;
+  height: 9.75vh;
 }
 
 .tabs.menu li.video {
   background: url("./assets/bonzai_video.webp") no-repeat;
   background-size: cover;
-  height: 11.33vh;
+  height: 9.75vh;
 }
 
 /* ═══════════════════════════════════════════════════════════════════════════

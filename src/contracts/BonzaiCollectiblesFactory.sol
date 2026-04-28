@@ -10,8 +10,6 @@ interface IBonzaiCollectibles {
         address _owner,
         string calldata _name,
         address _treasury,
-        address _mintPool,
-        address _royaltySplitter,
         address _factory
     ) external;
 }
@@ -33,6 +31,9 @@ contract BonzaiCollectiblesFactory is Ownable, ReentrancyGuard {
     address public treasury;
     address public mintPool;
     address public royaltySplitter;
+    address public unlockContract;
+    /// @notice Default royalty bps clones use (informational; clone has its own admin setter).
+    uint256 public originalCreatorRoyaltyBps = 250; // 2.5%
 
     /// @notice user address => their collection contract address
     mapping(address => address) public collections;
@@ -44,7 +45,8 @@ contract BonzaiCollectiblesFactory is Ownable, ReentrancyGuard {
         address _implementation,
         address _treasury,
         address _mintPool,
-        address _royaltySplitter
+        address _royaltySplitter,
+        address _unlockContract
     ) Ownable(msg.sender) {
         require(_implementation != address(0), "Zero implementation");
         require(_treasury != address(0), "Zero treasury");
@@ -52,6 +54,7 @@ contract BonzaiCollectiblesFactory is Ownable, ReentrancyGuard {
         treasury = _treasury;
         mintPool = _mintPool;
         royaltySplitter = _royaltySplitter;
+        unlockContract = _unlockContract;
     }
 
     /**
@@ -67,13 +70,13 @@ contract BonzaiCollectiblesFactory is Ownable, ReentrancyGuard {
         // Deploy minimal proxy
         address clone = implementation.clone();
 
-        // Initialize the clone (passes address(this) so clone validates caller)
+        // Initialize the clone with the factory address — clone reads
+        // mintPool / royaltySplitter / unlockContract live from the factory,
+        // so clone owners can NEVER redirect them.
         IBonzaiCollectibles(clone).initialize(
             msg.sender,
             name_,
             treasury,
-            mintPool,
-            royaltySplitter,
             address(this)
         );
 
@@ -123,5 +126,9 @@ contract BonzaiCollectiblesFactory is Ownable, ReentrancyGuard {
 
     function setRoyaltySplitter(address _splitter) external onlyOwner {
         royaltySplitter = _splitter;
+    }
+
+    function setUnlockContract(address _unlock) external onlyOwner {
+        unlockContract = _unlock;
     }
 }

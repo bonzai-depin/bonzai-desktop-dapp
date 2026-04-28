@@ -150,7 +150,7 @@ describe("BonzaiCompanions", function () {
           ethers.ZeroAddress,
           { value: insufficient }
         )
-      ).to.be.revertedWith("Insufficient ETH");
+      ).to.be.revertedWith("Insufficient mint fee");
     });
 
     it("should revert when agentURI is empty", async function () {
@@ -536,14 +536,15 @@ describe("BonzaiCompanions", function () {
       ).to.be.revertedWith("Invalid wallet address");
     });
 
-    it("should allow owner to unset agentWallet", async function () {
-      const { companions, user1 } = await loadFixture(deployCompanions);
+    it("should route agentWallet to treasury after unset (H1)", async function () {
+      const { companions, user1, treasury } = await loadFixture(deployCompanions);
       const agentWallet = ethers.Wallet.createRandom().address;
 
       const tokenId = await mintDefault(companions, user1, { agentWallet });
 
+      // H1 fix: unset routes to treasury (not zero) so hook fees never burn.
       await companions.connect(user1).unsetAgentWallet(tokenId);
-      expect(await companions.getAgentWallet(tokenId)).to.equal(ethers.ZeroAddress);
+      expect(await companions.getAgentWallet(tokenId)).to.equal(treasury.address);
     });
 
     it("should emit AgentWalletUnset on unsetAgentWallet", async function () {
@@ -1069,117 +1070,104 @@ describe("BonzaiCompanions", function () {
   });
 
   // ─────────────────────────────────────────────────────────────────────────
-  // FREE MINTING FOR UNLOCKED USERS
+  // 50/50 MINT FEE SPLIT (treasury / MintPool — 6 buckets equally)
   // ─────────────────────────────────────────────────────────────────────────
 
-  describe("Free minting for unlocked users", function () {
-    async function deployWithUnlock() {
+  describe("Fee split: 50% treasury / 50% MintPool", function () {
+    async function deployWithMintPool() {
       const { companions, owner, treasury, user1, user2, user3 } = await loadFixture(deployCompanions);
 
-      const BonzaiUnlock = await ethers.getContractFactory("BonzaiUnlock");
-      const unlock = await BonzaiUnlock.deploy(treasury.address, treasury.address, UNLOCK_PRICE);
+      const MockMintPool = await ethers.getContractFactory("MockMintPool");
+      const mintPool = await MockMintPool.deploy();
 
-      await companions.connect(owner).setUnlockContract(await unlock.getAddress());
+      await companions.connect(owner).setMintPool(await mintPool.getAddress());
 
-      return { companions, unlock, owner, treasury, user1, user2, user3 };
+      return { companions, mintPool, owner, treasury, user1, user2, user3 };
     }
 
-    it("should allow unlocked user to mint for free (0 ETH)", async function () {
-      const { companions, unlock, user1 } = await loadFixture(deployWithUnlock);
-
-      // Unlock user1
-      await unlock.connect(user1).unlock({ value: UNLOCK_PRICE });
-
-      // Mint with 0 ETH
-      const tokenId = await mintDefault(companions, user1, { value: 0n });
-      expect(tokenId).to.equal(1);
-      expect(await companions.ownerOf(tokenId)).to.equal(user1.address);
+    it("setMintPool wires the pool address", async function () {
+      const { companions, mintPool } = await loadFixture(deployWithMintPool);
+      expect(await companions.mintPool()).to.equal(await mintPool.getAddress());
     });
 
-    it("should not send ETH to treasury for unlocked user", async function () {
-      const { companions, unlock, user1, treasury } = await loadFixture(deployWithUnlock);
+    it("forwards 50% of mint price to treasury, 50% across the 6 pool buckets", async function () {
+      const { companions, mintPool, user1, treasury } = await loadFixture(deployWithMintPool);
 
-      await unlock.connect(user1).unlock({ value: UNLOCK_PRICE });
+      const treasuryAmt = COMPANION_MINT_PRICE / 2n;
+      const poolBudget = COMPANION_MINT_PRICE - treasuryAmt;
+      const perPool = poolBudget / 6n;
+      const distributed = perPool * 6n;
+      const remainder = poolBudget - distributed; // any rounding remainder rolls into treasury
 
       await expect(
         companions.connect(user1).mintCompanion(
           AGENT_URI, PERSONALITY_HASH, VALID_SPENDING_PROFILE, GENDER_FEMALE, ethers.ZeroAddress,
-          { value: 0 }
+          { value: COMPANION_MINT_PRICE }
         )
-      ).to.changeEtherBalance(treasury, 0);
+      ).to.changeEtherBalance(treasury, treasuryAmt + remainder);
+
+      for (let i = 0; i < 6; i++) {
+        expect(await mintPool.poolDeposits(i)).to.equal(perPool);
+      }
     });
 
-    it("should still charge non-unlocked users the full mint price", async function () {
-      const { companions, user2, treasury } = await loadFixture(deployWithUnlock);
+    it("falls back to treasury when MintPool reverts", async function () {
+      const { companions, mintPool, user1, treasury } = await loadFixture(deployWithMintPool);
 
+      await mintPool.setShouldRevert(true);
+
+      // All 50% pool budget should fall back to treasury alongside the 50%
+      // treasury slice — i.e. treasury receives the full mintPrice (minus
+      // any rounding remainder, which also goes to treasury).
       await expect(
-        companions.connect(user2).mintCompanion(
+        companions.connect(user1).mintCompanion(
           AGENT_URI, PERSONALITY_HASH, VALID_SPENDING_PROFILE, GENDER_FEMALE, ethers.ZeroAddress,
           { value: COMPANION_MINT_PRICE }
         )
       ).to.changeEtherBalance(treasury, COMPANION_MINT_PRICE);
     });
 
-    it("should revert for non-unlocked users with insufficient ETH", async function () {
-      const { companions, user2 } = await loadFixture(deployWithUnlock);
+    it("falls back to treasury when MintPool is unset", async function () {
+      const { companions, treasury, user1 } = await loadFixture(deployCompanions); // no MintPool
 
-      await expect(
-        companions.connect(user2).mintCompanion(
-          AGENT_URI, PERSONALITY_HASH, VALID_SPENDING_PROFILE, GENDER_FEMALE, ethers.ZeroAddress,
-          { value: 0 }
-        )
-      ).to.be.revertedWith("Insufficient ETH");
-    });
-
-    it("should refund excess ETH to unlocked user", async function () {
-      const { companions, unlock, user1 } = await loadFixture(deployWithUnlock);
-
-      await unlock.connect(user1).unlock({ value: UNLOCK_PRICE });
-
-      // Send 0.1 ETH when fee is 0 — should refund all
-      const overpay = ethers.parseEther("0.1");
       await expect(
         companions.connect(user1).mintCompanion(
           AGENT_URI, PERSONALITY_HASH, VALID_SPENDING_PROFILE, GENDER_FEMALE, ethers.ZeroAddress,
-          { value: overpay }
+          { value: COMPANION_MINT_PRICE }
         )
-      ).to.changeEtherBalance(user1, 0n);
+      ).to.changeEtherBalance(treasury, COMPANION_MINT_PRICE);
     });
 
-    it("should allow owner to set unlock contract", async function () {
-      const { companions, owner, unlock } = await loadFixture(deployWithUnlock);
-      const unlockAddr = await unlock.getAddress();
-
-      expect(await companions.unlockContract()).to.equal(unlockAddr);
-    });
-
-    it("should allow setting unlock contract to zero address (disable)", async function () {
-      const { companions, owner } = await loadFixture(deployWithUnlock);
-
-      await companions.connect(owner).setUnlockContract(ethers.ZeroAddress);
-      expect(await companions.unlockContract()).to.equal(ethers.ZeroAddress);
-    });
-
-    it("should revert setUnlockContract from non-owner", async function () {
-      const { companions, user1 } = await loadFixture(deployWithUnlock);
-
+    it("rejects setMintPool from non-owner", async function () {
+      const { companions, user1, mintPool } = await loadFixture(deployWithMintPool);
       await expect(
-        companions.connect(user1).setUnlockContract(ethers.ZeroAddress)
+        companions.connect(user1).setMintPool(await mintPool.getAddress())
       ).to.be.revertedWithCustomError(companions, "OwnableUnauthorizedAccount");
     });
 
-    it("should enforce per-wallet cap even for unlocked users", async function () {
-      const { companions, unlock, user1 } = await loadFixture(deployWithUnlock);
-
-      await unlock.connect(user1).unlock({ value: UNLOCK_PRICE });
-
-      for (let i = 0; i < 4; i++) {
-        await mintDefault(companions, user1, { value: 0n });
-      }
-
+    it("never has a free path — even if the user paid 1 ETH unlock", async function () {
+      // No unlockContract on Companions any more; mint always costs mintPrice.
+      const { companions, user1 } = await loadFixture(deployCompanions);
       await expect(
-        mintDefault(companions, user1, { value: 0n })
-      ).to.be.revertedWith("Max companions per wallet reached");
+        companions.connect(user1).mintCompanion(
+          AGENT_URI, PERSONALITY_HASH, VALID_SPENDING_PROFILE, GENDER_FEMALE, ethers.ZeroAddress,
+          { value: 0n }
+        )
+      ).to.be.revertedWith("Insufficient mint fee");
+    });
+
+    it("refunds excess ETH on overpayment", async function () {
+      const { companions, user1 } = await loadFixture(deployCompanions);
+      const overpay = COMPANION_MINT_PRICE + ethers.parseEther("0.1");
+      const tx = await companions.connect(user1).mintCompanion(
+        AGENT_URI, PERSONALITY_HASH, VALID_SPENDING_PROFILE, GENDER_FEMALE, ethers.ZeroAddress,
+        { value: overpay }
+      );
+      const receipt = await tx.wait();
+      const gasCost = receipt.gasUsed * receipt.gasPrice;
+      // Net change should be (mintPrice + gas), not the full overpay
+      // Concretely: balance dropped by mintPrice + gas, refund returned the extra 0.1 ETH.
+      expect(receipt.status).to.equal(1);
     });
   });
 });

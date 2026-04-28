@@ -39,5 +39,16 @@ contract MockMintPool {
         // No-op in mock — all callers are accepted
     }
 
+    /// @notice Mock recordMint (called by BonzaiCollectibles after a successful mint)
+    mapping(uint256 => mapping(uint8 => mapping(address => uint256))) public epochMints;
+    uint256 public mockEpoch;
+    function setMockEpoch(uint256 epochId) external { mockEpoch = epochId; }
+    function recordMint(address wallet, uint8 poolIndex) external {
+        epochMints[mockEpoch][poolIndex][wallet] += 1;
+    }
+    function getEpochMints(uint256 epochId, uint8 poolIndex, address user) external view returns (uint256) {
+        return epochMints[epochId][poolIndex][user];
+    }
+
     receive() external payable {}
 }

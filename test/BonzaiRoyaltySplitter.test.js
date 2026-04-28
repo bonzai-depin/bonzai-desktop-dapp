@@ -38,8 +38,8 @@ describe("BonzaiRoyaltySplitter", function () {
   // DISTRIBUTE — BASIC SPLIT
   // ═══════════════════════════════════════════════════════════════════════════
 
-  describe("distribute() — basic 2/3 treasury, 1/3 pools", function () {
-    it("should send 2/3 to treasury and 1/3 to pools (equal fallback)", async function () {
+  describe("distribute() — three-way split (1/3 creator / 1/3 treasury / 1/3 pools)", function () {
+    it("should split balance into 1/3 creator pending pool, 1/3 treasury, 1/3 pools (equal fallback)", async function () {
       const { splitter, mockPool, owner, treasury } = await loadFixture(deploySplitter);
 
       const amount = ethers.parseEther("0.03"); // clean 3-divisible amount
@@ -54,25 +54,28 @@ describe("BonzaiRoyaltySplitter", function () {
       const treasuryAfter = await ethers.provider.getBalance(treasury.address);
       const poolAfter = await ethers.provider.getBalance(poolAddr);
 
-      const treasuryShare = (amount * 2n) / 3n;
-      const poolShare = amount - treasuryShare;
+      const creatorShare = amount / 3n;
+      const treasuryShare = creatorShare;
+      const poolShare = amount - creatorShare - treasuryShare;
 
       expect(treasuryAfter - treasuryBefore).to.equal(treasuryShare);
       expect(poolAfter - poolBefore).to.equal(poolShare);
+      expect(await splitter.creatorPendingPool()).to.equal(creatorShare);
     });
 
-    it("should emit Distributed event with correct amounts", async function () {
+    it("should emit Distributed event with creatorAmount, treasuryAmount, poolAmount", async function () {
       const { splitter, owner } = await loadFixture(deploySplitter);
 
       const amount = ethers.parseEther("0.03");
       await fundSplitter(owner, splitter, amount);
 
-      const treasuryShare = (amount * 2n) / 3n;
-      const poolShare = amount - treasuryShare;
+      const creatorShare = amount / 3n;
+      const treasuryShare = creatorShare;
+      const poolShare = amount - creatorShare - treasuryShare;
 
       await expect(splitter.distribute())
         .to.emit(splitter, "Distributed")
-        .withArgs(treasuryShare, poolShare);
+        .withArgs(creatorShare, treasuryShare, poolShare);
     });
 
     it("should allow anyone (not just owner) to call distribute", async function () {
@@ -111,16 +114,15 @@ describe("BonzaiRoyaltySplitter", function () {
 
       const treasuryAfter = await ethers.provider.getBalance(treasury.address);
 
-      const treasuryShare = (amount * 2n) / 3n;
-      const poolShare = amount - treasuryShare;
+      const creatorShare = amount / 3n;
+      const treasuryShare = creatorShare;
+      const poolShare = amount - creatorShare - treasuryShare;
 
-      // Treasury gets exactly 2/3 (no rounding dust since 100% goes to one pool)
       expect(treasuryAfter - treasuryBefore).to.equal(treasuryShare);
-      // Pool 2 gets the entire pool share
       expect(await mockPool.poolDeposits(2)).to.equal(poolShare);
-      // Other pools get nothing
       expect(await mockPool.poolDeposits(0)).to.equal(0);
       expect(await mockPool.poolDeposits(1)).to.equal(0);
+      expect(await splitter.creatorPendingPool()).to.equal(creatorShare);
     });
 
     it("should distribute across all 6 pools equally when deposits are equal", async function () {
@@ -136,7 +138,9 @@ describe("BonzaiRoyaltySplitter", function () {
 
       await splitter.distribute();
 
-      const poolShare = amount - (amount * 2n) / 3n;
+      const creatorShare = amount / 3n;
+      const treasuryShare = creatorShare;
+      const poolShare = amount - creatorShare - treasuryShare;
       const perPool = poolShare / 6n;
 
       for (let i = 0; i < 6; i++) {
@@ -145,25 +149,25 @@ describe("BonzaiRoyaltySplitter", function () {
     });
 
     it("should handle 60/40 weighted split between two pools", async function () {
-      const { splitter, mockPool, owner, treasury } = await loadFixture(deploySplitter);
+      const { splitter, mockPool, owner } = await loadFixture(deploySplitter);
 
-      // Pool 0: 60%, Pool 1: 40%
       await mockPool.setTotalDeposited(0, ethers.parseEther("6"));
       await mockPool.setTotalDeposited(1, ethers.parseEther("4"));
 
-      const amount = ethers.parseEther("3"); // large enough for clean math
+      const amount = ethers.parseEther("3");
       await fundSplitter(owner, splitter, amount);
 
       await splitter.distribute();
 
-      const poolShare = amount - (amount * 2n) / 3n;
+      const creatorShare = amount / 3n;
+      const treasuryShare = creatorShare;
+      const poolShare = amount - creatorShare - treasuryShare;
       const totalDeposited = ethers.parseEther("10");
       const pool0Expected = (poolShare * ethers.parseEther("6")) / totalDeposited;
       const pool1Expected = (poolShare * ethers.parseEther("4")) / totalDeposited;
 
       expect(await mockPool.poolDeposits(0)).to.equal(pool0Expected);
       expect(await mockPool.poolDeposits(1)).to.equal(pool1Expected);
-      // Pools 2-5 should be zero
       for (let i = 2; i < 6; i++) {
         expect(await mockPool.poolDeposits(i)).to.equal(0);
       }
@@ -172,13 +176,10 @@ describe("BonzaiRoyaltySplitter", function () {
     it("should send rounding dust to treasury", async function () {
       const { splitter, mockPool, owner, treasury } = await loadFixture(deploySplitter);
 
-      // Set weights that cause rounding: 1/3 each among 3 pools
-      // but pool share itself may not divide evenly
       await mockPool.setTotalDeposited(0, ethers.parseEther("1"));
       await mockPool.setTotalDeposited(1, ethers.parseEther("1"));
       await mockPool.setTotalDeposited(2, ethers.parseEther("1"));
 
-      // Use an amount that creates rounding dust
       const amount = ethers.parseEther("0.1");
       await fundSplitter(owner, splitter, amount);
 
@@ -188,14 +189,14 @@ describe("BonzaiRoyaltySplitter", function () {
 
       const treasuryAfter = await ethers.provider.getBalance(treasury.address);
 
-      const treasuryShare = (amount * 2n) / 3n;
-      const poolShare = amount - treasuryShare;
+      const creatorShare = amount / 3n;
+      const treasuryShare = creatorShare;
+      const poolShare = amount - creatorShare - treasuryShare;
       const totalDeposited = ethers.parseEther("3");
       const perPool = (poolShare * ethers.parseEther("1")) / totalDeposited;
       const distributed = perPool * 3n;
       const dust = poolShare - distributed;
 
-      // Treasury should receive treasuryShare + dust
       expect(treasuryAfter - treasuryBefore).to.equal(treasuryShare + dust);
     });
   });
@@ -298,10 +299,13 @@ describe("BonzaiRoyaltySplitter", function () {
 
       const treasuryAfter = await ethers.provider.getBalance(treasury.address);
 
-      // Treasury should receive full amount (2/3 treasury share + 1/3 pool share that all failed)
-      const treasuryShare = (amount * 2n) / 3n;
-      const poolShare = amount - treasuryShare;
+      // Treasury receives the treasuryShare + the failed pool slice (creator
+      // share stays in creatorPendingPool — it's not affected by pool reverts).
+      const creatorShare = amount / 3n;
+      const treasuryShare = creatorShare;
+      const poolShare = amount - creatorShare - treasuryShare;
       expect(treasuryAfter - treasuryBefore).to.equal(treasuryShare + poolShare);
+      expect(await splitter.creatorPendingPool()).to.equal(creatorShare);
 
       // Should have emitted PoolDepositFailed for each pool
       const failedEvents = receipt.logs.filter(
@@ -488,11 +492,13 @@ describe("BonzaiRoyaltySplitter", function () {
       expect(ownerAfter - ownerBefore + gasCost).to.equal(amount);
     });
 
-    it("should revert withdrawETH when balance is zero", async function () {
+    it("should revert withdrawETH when balance is zero (no surplus over reserved creator funds)", async function () {
       const { splitter } = await loadFixture(deploySplitter);
 
+      // C1 fix: withdrawETH only releases SURPLUS over creator reserves,
+      // so a zero balance reverts with the surplus message.
       await expect(splitter.withdrawETH())
-        .to.be.revertedWith("No ETH to withdraw");
+        .to.be.revertedWith("No surplus ETH (creator funds reserved)");
     });
   });
 

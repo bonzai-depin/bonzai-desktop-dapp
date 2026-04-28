@@ -895,7 +895,7 @@ describe("BonzaiSkillOwnership", function () {
       ).to.be.revertedWithCustomError(ownership, "EnforcedPause");
     });
 
-    it("should track per-skill unclaimed revenue", async function () {
+    it("should accumulate unclaimed revenue across multiple distributions to same wallet", async function () {
       const { ownership, companionNFT, bonzaiToken, attestationSigner, registrar1, skillRegistryWallet } =
         await loadFixture(deploySkillOwnership);
 
@@ -918,8 +918,8 @@ describe("BonzaiSkillOwnership", function () {
       await ownership.connect(skillRegistryWallet).distributeRevenue(skillId1, amount1, { value: amount1 });
       await ownership.connect(skillRegistryWallet).distributeRevenue(skillId2, amount2, { value: amount2 });
 
-      expect(await ownership.getUnclaimedRevenuePerSkill(wallet1, skillId1)).to.equal(amount1);
-      expect(await ownership.getUnclaimedRevenuePerSkill(wallet1, skillId2)).to.equal(amount2);
+      // Per-skill tracking is no longer kept in storage (ETH-only refactor —
+      // unclaimedRevenue is wallet-scoped only).
       expect(await ownership.unclaimedRevenue(wallet1)).to.equal(amount1 + amount2);
     });
   });
@@ -972,7 +972,6 @@ describe("BonzaiSkillOwnership", function () {
       await ownership.connect(registrar1).claimRevenue();
 
       expect(await ownership.unclaimedRevenue(registrar1.address)).to.equal(0);
-      expect(await ownership.getUnclaimedRevenuePerSkill(registrar1.address, skillId)).to.equal(0);
     });
 
     it("should update totalRevenueClaimed after claiming", async function () {
@@ -1285,7 +1284,7 @@ describe("BonzaiSkillOwnership", function () {
 
         await expect(
           ownership.connect(owner).withdrawSurplus()
-        ).to.be.revertedWithCustomError(ownership, "NoSurplusETH");
+        ).to.be.revertedWithCustomError(ownership, "NoSurplus");
       });
 
       it("should not withdraw unclaimed revenue (only surplus)", async function () {
@@ -1306,7 +1305,7 @@ describe("BonzaiSkillOwnership", function () {
         // No surplus since all ETH is accountable (owed to wallet1)
         await expect(
           ownership.connect(owner).withdrawSurplus()
-        ).to.be.revertedWithCustomError(ownership, "NoSurplusETH");
+        ).to.be.revertedWithCustomError(ownership, "NoSurplus");
       });
 
       it("should only withdraw the surplus portion, not accountable funds", async function () {
@@ -1472,31 +1471,8 @@ describe("BonzaiSkillOwnership", function () {
       });
     });
 
-    describe("getUnclaimedRevenuePerSkill", function () {
-      it("should return 0 when no revenue distributed", async function () {
-        const { ownership, registrar1 } = await loadFixture(deploySkillOwnership);
-        const skillId = ethers.keccak256(ethers.toUtf8Bytes("no-rev-skill"));
-        expect(await ownership.getUnclaimedRevenuePerSkill(registrar1.address, skillId)).to.equal(0);
-      });
-
-      it("should return correct unclaimed amount per skill", async function () {
-        const { ownership, companionNFT, bonzaiToken, attestationSigner, registrar1, skillRegistryWallet } =
-          await loadFixture(deploySkillOwnership);
-
-        const skillId = ethers.keccak256(ethers.toUtf8Bytes("per-skill-rev"));
-        const wallet1 = ethers.Wallet.createRandom().address;
-
-        await registerCompanionHelper(
-          ownership, companionNFT, bonzaiToken, attestationSigner, registrar1,
-          { skillId, companionWallet: wallet1, profileScore: 7, bonzaiAmount: ethers.parseEther("100") }
-        );
-
-        const amount = ethers.parseEther("5");
-        await ownership.connect(skillRegistryWallet).distributeRevenue(skillId, amount, { value: amount });
-
-        expect(await ownership.getUnclaimedRevenuePerSkill(wallet1, skillId)).to.equal(amount);
-      });
-    });
+    // getUnclaimedRevenuePerSkill was removed in the ETH-only refactor —
+    // only wallet-scoped unclaimedRevenue is now tracked.
 
     describe("getStats", function () {
       it("should return zeros initially", async function () {
@@ -1676,179 +1652,6 @@ describe("BonzaiSkillOwnership", function () {
         ownership.connect(owner).setCompanionNFT(registrar1.address)
       ).to.emit(ownership, "CompanionNFTUpdated")
         .withArgs(await companionNFT.getAddress(), registrar1.address);
-    });
-  });
-
-  // ─────────────────────────────────────────────────────────────────────────
-  // USDC REVENUE DISTRIBUTION & CLAIMING
-  // ─────────────────────────────────────────────────────────────────────────
-
-  describe("USDC Revenue Distribution", function () {
-    async function deployWithUSDC() {
-      const base = await deploySkillOwnership();
-      const MockERC20 = await ethers.getContractFactory("MockERC20");
-      const usdcToken = await MockERC20.deploy("USDC", "USDC");
-      await base.ownership.connect(base.owner).setUsdcToken(await usdcToken.getAddress());
-      return { ...base, usdcToken };
-    }
-
-    it("should distribute USDC to registered companions weighted by BONZAI * profileScore", async function () {
-      const { ownership, bonzaiToken, companionNFT, attestationSigner, registrar1, registrar2, skillRegistryWallet, usdcToken } = await loadFixture(deployWithUSDC);
-
-      const skillId = ethers.keccak256(ethers.toUtf8Bytes("usdc-skill"));
-
-      // Register companion 1 (100 BONZAI, score 10)
-      const wallet1 = ethers.Wallet.createRandom().address;
-      const tokenId1 = await mintCompanionNFT(companionNFT, registrar1.address);
-      await bonzaiToken.mint(wallet1, ethers.parseEther("100"));
-      const deadline1 = await futureDeadline();
-      const attest1 = await createAttestation(attestationSigner, skillId, tokenId1, wallet1, registrar1.address, 10, deadline1, await ownership.getAddress());
-      await ownership.connect(registrar1).registerCompanion(skillId, tokenId1, wallet1, 10, deadline1, attest1);
-
-      // Register companion 2 (200 BONZAI, score 5)
-      const wallet2 = ethers.Wallet.createRandom().address;
-      const tokenId2 = await mintCompanionNFT(companionNFT, registrar2.address);
-      await bonzaiToken.mint(wallet2, ethers.parseEther("200"));
-      const deadline2 = await futureDeadline();
-      const attest2 = await createAttestation(attestationSigner, skillId, tokenId2, wallet2, registrar2.address, 5, deadline2, await ownership.getAddress());
-      await ownership.connect(registrar2).registerCompanion(skillId, tokenId2, wallet2, 5, deadline2, attest2);
-
-      // Distribute 100 USDC (100_000_000 in 6 decimals)
-      const amount = 100_000_000n;
-      await usdcToken.mint(skillRegistryWallet.address, amount);
-      await usdcToken.connect(skillRegistryWallet).approve(await ownership.getAddress(), amount);
-      await ownership.connect(skillRegistryWallet).distributeRevenueUSDC(skillId, amount);
-
-      // Weight1 = 100 * 10 = 1000, Weight2 = 200 * 5 = 1000
-      // Equal split: 50M each
-      expect(await ownership.unclaimedRevenueUSDC(wallet1)).to.equal(50_000_000n);
-      expect(await ownership.unclaimedRevenueUSDC(wallet2)).to.equal(50_000_000n);
-    });
-
-    it("should send USDC to treasury when no companions registered", async function () {
-      const { ownership, skillRegistryWallet, treasury, usdcToken } = await loadFixture(deployWithUSDC);
-
-      const skillId = ethers.keccak256(ethers.toUtf8Bytes("empty-skill"));
-      const amount = 50_000_000n;
-      await usdcToken.mint(skillRegistryWallet.address, amount);
-      await usdcToken.connect(skillRegistryWallet).approve(await ownership.getAddress(), amount);
-      await ownership.connect(skillRegistryWallet).distributeRevenueUSDC(skillId, amount);
-
-      expect(await usdcToken.balanceOf(treasury.address)).to.equal(amount);
-    });
-
-    it("should emit RevenueDistributedUSDC event", async function () {
-      const { ownership, bonzaiToken, companionNFT, attestationSigner, registrar1, skillRegistryWallet, usdcToken } = await loadFixture(deployWithUSDC);
-
-      const skillId = ethers.keccak256(ethers.toUtf8Bytes("event-skill"));
-      const wallet1 = ethers.Wallet.createRandom().address;
-      const tokenId1 = await mintCompanionNFT(companionNFT, registrar1.address);
-      await bonzaiToken.mint(wallet1, ethers.parseEther("100"));
-      const deadline = await futureDeadline();
-      const attest = await createAttestation(attestationSigner, skillId, tokenId1, wallet1, registrar1.address, 7, deadline, await ownership.getAddress());
-      await ownership.connect(registrar1).registerCompanion(skillId, tokenId1, wallet1, 7, deadline, attest);
-
-      const amount = 10_000_000n;
-      await usdcToken.mint(skillRegistryWallet.address, amount);
-      await usdcToken.connect(skillRegistryWallet).approve(await ownership.getAddress(), amount);
-
-      await expect(
-        ownership.connect(skillRegistryWallet).distributeRevenueUSDC(skillId, amount)
-      ).to.emit(ownership, "RevenueDistributedUSDC");
-    });
-
-    it("should revert if caller is not skillRegistry", async function () {
-      const { ownership, registrar1, usdcToken } = await loadFixture(deployWithUSDC);
-      const skillId = ethers.keccak256(ethers.toUtf8Bytes("hack-skill"));
-      await expect(
-        ownership.connect(registrar1).distributeRevenueUSDC(skillId, 1000n)
-      ).to.be.revertedWithCustomError(ownership, "OnlySkillRegistry");
-    });
-  });
-
-  describe("USDC Revenue Claiming", function () {
-    async function deployWithUSDCAndDistribute() {
-      const base = await deploySkillOwnership();
-      const MockERC20 = await ethers.getContractFactory("MockERC20");
-      const usdcToken = await MockERC20.deploy("USDC", "USDC");
-      await base.ownership.connect(base.owner).setUsdcToken(await usdcToken.getAddress());
-
-      const skillId = ethers.keccak256(ethers.toUtf8Bytes("claim-skill"));
-      const claimWallet = base.registrar1; // use registrar1 as the companion wallet (so they can claim)
-      const tokenId = await mintCompanionNFT(base.companionNFT, base.registrar1.address);
-      await base.bonzaiToken.mint(claimWallet.address, ethers.parseEther("100"));
-      const deadline = await futureDeadline();
-      const attest = await createAttestation(base.attestationSigner, skillId, tokenId, claimWallet.address, base.registrar1.address, 7, deadline, await base.ownership.getAddress());
-      await base.ownership.connect(base.registrar1).registerCompanion(skillId, tokenId, claimWallet.address, 7, deadline, attest);
-
-      // Distribute 20 USDC
-      const amount = 20_000_000n;
-      await usdcToken.mint(base.skillRegistryWallet.address, amount);
-      await usdcToken.connect(base.skillRegistryWallet).approve(await base.ownership.getAddress(), amount);
-      await base.ownership.connect(base.skillRegistryWallet).distributeRevenueUSDC(skillId, amount);
-
-      return { ...base, usdcToken, skillId, claimWallet, amount };
-    }
-
-    it("should allow companion wallet to claim USDC", async function () {
-      const { ownership, usdcToken, claimWallet, amount } = await loadFixture(deployWithUSDCAndDistribute);
-
-      const balanceBefore = await usdcToken.balanceOf(claimWallet.address);
-      await ownership.connect(claimWallet).claimRevenueUSDC();
-      const balanceAfter = await usdcToken.balanceOf(claimWallet.address);
-
-      expect(balanceAfter - balanceBefore).to.equal(amount);
-      expect(await ownership.unclaimedRevenueUSDC(claimWallet.address)).to.equal(0n);
-    });
-
-    it("should emit RevenueClaimedUSDC event", async function () {
-      const { ownership, claimWallet, amount } = await loadFixture(deployWithUSDCAndDistribute);
-
-      await expect(
-        ownership.connect(claimWallet).claimRevenueUSDC()
-      ).to.emit(ownership, "RevenueClaimedUSDC");
-    });
-
-    it("should revert if nothing to claim", async function () {
-      const { ownership, registrar2 } = await loadFixture(deployWithUSDCAndDistribute);
-      await expect(
-        ownership.connect(registrar2).claimRevenueUSDC()
-      ).to.be.revertedWithCustomError(ownership, "NoRevenueToClaim");
-    });
-
-    it("should revert on double claim", async function () {
-      const { ownership, claimWallet } = await loadFixture(deployWithUSDCAndDistribute);
-      await ownership.connect(claimWallet).claimRevenueUSDC();
-      await expect(
-        ownership.connect(claimWallet).claimRevenueUSDC()
-      ).to.be.revertedWithCustomError(ownership, "NoRevenueToClaim");
-    });
-
-    it("should track totalRevenueDistributedUSDC and totalRevenueClaimedUSDC", async function () {
-      const { ownership, claimWallet, amount } = await loadFixture(deployWithUSDCAndDistribute);
-
-      expect(await ownership.totalRevenueDistributedUSDC()).to.equal(amount);
-      expect(await ownership.totalRevenueClaimedUSDC()).to.equal(0n);
-
-      await ownership.connect(claimWallet).claimRevenueUSDC();
-      expect(await ownership.totalRevenueClaimedUSDC()).to.equal(amount);
-    });
-  });
-
-  // ─────────────────────────────────────────────────────────────────────────
-  // RECEIVE / FALLBACK
-  // ─────────────────────────────────────────────────────────────────────────
-
-  describe("Receive ETH", function () {
-    it("should accept ETH via receive()", async function () {
-      const { ownership, owner } = await loadFixture(deploySkillOwnership);
-
-      const amount = ethers.parseEther("1");
-      await expect(
-        owner.sendTransaction({ to: await ownership.getAddress(), value: amount })
-      ).to.not.be.reverted;
-
-      expect(await ethers.provider.getBalance(await ownership.getAddress())).to.equal(amount);
     });
   });
 });

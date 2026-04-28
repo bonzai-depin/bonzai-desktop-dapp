@@ -228,7 +228,7 @@
               <p class="question">{{ inference.question }}</p>
               <div class="answer markdown-body" @click="handleAnswerClick">
                 <div class="answer__meta">
-                  <span v-if="inference.model" class="answer__model">
+                  <span v-if="inference.model" class="answer__model p-5">
                     <span class="material-symbols-outlined mr-2">
                       neurology
                     </span>
@@ -242,7 +242,30 @@
                     {{ inference.networkMode === 'private' ? 'Private' : 'Remote' }}
                   </span>
                 </div>
-                <vue-markdown :source="inference.answer.text" />
+                <template
+                  v-for="(seg, segIdx) in splitThinkSegments(inference.answer.text)"
+                  :key="`${inference.answer.id}-seg-${segIdx}`"
+                >
+                  <details
+                    v-if="seg.type === 'think' && reasoningEnabled"
+                    class="thought-bubble"
+                    :class="{ 'thought-bubble--partial': seg.partial }"
+                    open
+                  >
+                    <summary :title="seg.partial ? 'Thinking…' : 'Thought process'">
+                      <span class="material-symbols-outlined">
+                        network_intelligence_history
+                      </span>
+                    </summary>
+                    <div class="thought-bubble__body">
+                      <vue-markdown :source="seg.text" />
+                    </div>
+                  </details>
+                  <vue-markdown
+                    v-else-if="seg.type === 'content'"
+                    :source="seg.text"
+                  />
+                </template>
                 <span
                   v-if="
                     isLoading && inference.answer.id === streamingInferenceId
@@ -253,7 +276,7 @@
                 <button
                   class="button is-medium is-success copy p-0 pl-1 pr-1 mr-3"
                   @click="
-                    copy(inference.answer.text);
+                    copy(stripThinkBlocks(inference.answer.text));
                     hasCopy[inference._originalIndex] = true;
                   "
                   v-if="!hasCopy[inference._originalIndex]"
@@ -264,7 +287,7 @@
                 </button>
                 <button
                   class="button is-medium is-outlined copy p-0 pl-1 pr-1 mr-3"
-                  @click="copy(inference.answer.text)"
+                  @click="copy(stripThinkBlocks(inference.answer.text))"
                   v-if="hasCopy[inference._originalIndex]"
                 >
                   <span class="material-symbols-outlined is-size-2">check</span>
@@ -523,6 +546,17 @@
             @access-changed="onAccessChanged"
           />
 
+          <!-- Pipeline error banner -->
+          <div v-if="pipelineError" class="notification is-danger mb-4" style="display: flex; align-items: flex-start; gap: 12px">
+            <span class="material-symbols-outlined" style="font-size: 28px">error</span>
+            <div class="fira-sans-condensed-black-italic" style="flex: 1">
+              <div v-if="pipelineError.code === 'no_providers'" style="margin-top: 6px; font-size: 0.9em; opacity: 0.85">
+                Your remote providers are offline. Please switch network mode, or wait for remote providers to come online.
+              </div>
+            </div>
+            <button class="delete" @click="pipelineError = null" aria-label="dismiss"></button>
+          </div>
+
           <form ref="promptForm" @submit.prevent>
             <!-- Image attachment preview for multimodal models -->
             <div
@@ -619,7 +653,30 @@
                     {{ inference.networkMode === 'private' ? 'Private' : 'Remote' }}
                   </span>
                 </div>
-                <vue-markdown :source="inference.answer.text" />
+                <template
+                  v-for="(seg, segIdx) in splitThinkSegments(inference.answer.text)"
+                  :key="`${inference.answer.id}-seg-${segIdx}`"
+                >
+                  <details
+                    v-if="seg.type === 'think' && reasoningEnabled"
+                    class="thought-bubble"
+                    :class="{ 'thought-bubble--partial': seg.partial }"
+                    open
+                  >
+                    <summary :title="seg.partial ? 'Thinking…' : 'Thought process'">
+                      <span class="material-symbols-outlined">
+                        network_intelligence_history
+                      </span>
+                    </summary>
+                    <div class="thought-bubble__body">
+                      <vue-markdown :source="seg.text" />
+                    </div>
+                  </details>
+                  <vue-markdown
+                    v-else-if="seg.type === 'content'"
+                    :source="seg.text"
+                  />
+                </template>
                 <span
                   v-if="
                     isLoading && inference.answer.id === streamingInferenceId
@@ -630,7 +687,7 @@
                 <button
                   class="button is-medium is-success copy p-0 pl-1 pr-1 mr-3"
                   @click="
-                    copy(inference.answer.text);
+                    copy(stripThinkBlocks(inference.answer.text));
                     hasCopy[inference._originalIndex] = true;
                   "
                   v-if="!hasCopy[inference._originalIndex]"
@@ -641,7 +698,7 @@
                 </button>
                 <button
                   class="button is-medium is-outlined copy p-0 pl-1 pr-1 mr-3"
-                  @click="copy(inference.answer.text)"
+                  @click="copy(stripThinkBlocks(inference.answer.text))"
                   v-if="hasCopy[inference._originalIndex]"
                 >
                   <span class="material-symbols-outlined is-size-2">check</span>
@@ -717,6 +774,70 @@ const debounce = (fn, delay) => {
     timeoutId = setTimeout(() => fn(...args), delay);
   };
 };
+
+/**
+ * Split a model output string into ordered segments of either visible
+ * `content` or model `think` (the latter from `<think>…</think>` blocks
+ * a hybrid-thinking model emits when its template inserts them).
+ *
+ * - Tolerates streaming / unterminated `<think>` (last segment marked partial).
+ * - Tolerates multiple think blocks in one response.
+ * - Never emits the raw `<think>` / `</think>` tags themselves; the segment
+ *   `type` carries that information for the renderer.
+ *
+ * @returns {{type: 'content'|'think', text: string, partial?: boolean}[]}
+ */
+function splitThinkSegments(text) {
+  if (!text) return [];
+  const OPEN = "<think>";
+  const CLOSE = "</think>";
+  const out = [];
+  let cursor = 0;
+  while (cursor < text.length) {
+    const open = text.indexOf(OPEN, cursor);
+    if (open === -1) {
+      const tail = text.slice(cursor);
+      if (tail) out.push({ type: "content", text: tail });
+      break;
+    }
+    if (open > cursor) {
+      out.push({ type: "content", text: text.slice(cursor, open) });
+    }
+    const close = text.indexOf(CLOSE, open + OPEN.length);
+    if (close === -1) {
+      // Stream still inside a think block — emit what we have so far,
+      // but only if there's something to show. An empty/whitespace-only
+      // partial means the model has just opened `<think>` and not yet
+      // generated; hide the bubble until tokens arrive.
+      const partial = text.slice(open + OPEN.length);
+      if (partial.trim().length > 0) {
+        out.push({ type: "think", text: partial, partial: true });
+      }
+      break;
+    }
+    // Skip empty `<think></think>` pairs entirely — some models emit them
+    // out of habit even when reasoning is disabled.
+    const inner = text.slice(open + OPEN.length, close);
+    if (inner.trim().length > 0) {
+      out.push({ type: "think", text: inner });
+    }
+    cursor = close + CLOSE.length;
+  }
+  return out;
+}
+
+/**
+ * Strip every `<think>…</think>` segment from a string (used for clipboard
+ * copy and for any caller that wants only the user-facing answer).
+ */
+function stripThinkBlocks(text) {
+  if (!text) return "";
+  return splitThinkSegments(text)
+    .filter((s) => s.type === "content")
+    .map((s) => s.text)
+    .join("")
+    .trim();
+}
 
 /**
  * Compute RAM and VRAM memory requirements for a model.
@@ -934,6 +1055,8 @@ export default {
     const isModel = ref(false);
     const openModel = ref(false);
     const openChat = ref(false);
+    const pipelineError = ref(null);
+    let pipelineErrorUnsub = null;
     const reasoningEnabled = ref(false);
 
     // Model directory
@@ -1216,6 +1339,8 @@ export default {
         isMoE: model.isMoE,
         isMultimodal: model.isMultimodal || false,
         mmproj: model.mmproj || null,
+        // Reasoning is OFF at startup. Live per-request toggle is sent
+        // via `chat_template_kwargs` in chatStream — no reload needed.
       };
 
       console.log("Sending to electronAPI.loadModel:", payload);
@@ -1561,6 +1686,18 @@ export default {
     const sendMessage = async (prompt) => {
       if (!hasAccess.value) return;
 
+      // Clear any stale pipeline error banner so the user sees a fresh
+      // result (or a fresh error).
+      pipelineError.value = null;
+
+      // Lazy-spawn: nothing auto-loads at boot. The send button is only
+      // rendered when the picked model is on disk, so we can trust it here.
+      // loadModel is idempotent — main.js short-circuits if this model is
+      // already the running subprocess.
+      if (currentModel.value?.filename) {
+        await loadModel(currentModel.value);
+      }
+
       isLoading.value = true;
       streamingText.value = "";
 
@@ -1638,9 +1775,17 @@ export default {
 
             // useLocal or no result: fall through to local streaming
             if (!assistantResult) {
-              // Fallback: direct local streaming via node-llama-cpp
+              // Fallback: direct local streaming via llama-server
               const chatOpts = {};
               if (!reasoningEnabled.value) chatOpts.thoughtTokens = 0;
+              // Live toggle of hybrid reasoning. Forwarded to llama-server
+              // as request-level `chat_template_kwargs.enable_thinking`,
+              // which overrides the server-startup default per request —
+              // no model reload required. Only sent for thinking-capable
+              // models so non-thinking templates aren't surprised.
+              if (isThinkingModel.value) {
+                chatOpts.enableThinking = reasoningEnabled.value === true;
+              }
 
               const canStream =
                 typeof window.electronAPI.chatStream === "function" &&
@@ -1819,9 +1964,13 @@ export default {
     };
     onMounted(() => {
       window.addEventListener("bonzai:show-browse-models", handleShowBrowseModels);
+      pipelineErrorUnsub = window.electronAPI?.onPipelineError?.((err) => {
+        pipelineError.value = err;
+      });
     });
     onUnmounted(() => {
       window.removeEventListener("bonzai:show-browse-models", handleShowBrowseModels);
+      if (pipelineErrorUnsub) { pipelineErrorUnsub(); pipelineErrorUnsub = null; }
     });
 
     return {
@@ -1848,6 +1997,7 @@ export default {
       changeModelDir,
       migrationProgress,
       openChat,
+      pipelineError,
       form,
       sendMessage,
       inferences,
@@ -1882,6 +2032,9 @@ export default {
       // reasoning toggle
       isThinkingModel,
       reasoningEnabled,
+      // think-block rendering
+      splitThinkSegments,
+      stripThinkBlocks,
       attachedImage,
       attachImage,
       removeAttachedImage,
@@ -1905,27 +2058,17 @@ export default {
       this.modelDir = await window.electronAPI.getModelDir();
     }
 
+    // Check availability so the UI reflects downloaded-vs-not state, but DO
+    // NOT auto-load. llama-server is lazy-spawned — it only starts when the
+    // user actually runs inference (on their first message). This keeps boot
+    // clean even when no model exists on disk.
     const readyToPrompt = await this.isModelAvailable(
       this.currentModel.filename,
     );
-    console.log("Ready to prompt, sir.", readyToPrompt);
-
-    // Load default model immediately if available
-    if (readyToPrompt) {
-      // Check mmproj availability for multimodal models
-      if (this.currentModel.isMultimodal && this.currentModel.mmproj) {
-        this.isMmprojAvailable = await window.electronAPI.checkMmproj(
-          this.currentModel.mmproj,
-        );
-      }
-      const canLoad = !this.currentModel.isMultimodal || this.isMmprojAvailable;
-      if (canLoad) {
-        try {
-          await this.loadModel(this.currentModel);
-        } catch (e) {
-          console.error("Failed to load default model:", e);
-        }
-      }
+    if (readyToPrompt && this.currentModel.isMultimodal && this.currentModel.mmproj) {
+      this.isMmprojAvailable = await window.electronAPI.checkMmproj(
+        this.currentModel.mmproj,
+      );
     }
 
     // Load persisted chat history
@@ -2739,6 +2882,110 @@ ol.chat li {
 @keyframes blink {
   50% {
     opacity: 0;
+  }
+}
+
+/* ───────── Reasoning / <think> rendering ─────────────────────────────────
+ * Hybrid-thinking models (Qwen3, DeepSeek-R1) emit a <think>…</think> block
+ * before the user-facing answer. The renderer splits the stream into segments
+ * and only shows the think block when the user has reasoning enabled, never
+ * with the raw tags. The block collapses to a one-line summary by default
+ * (HTML <details>) so long thoughts don't dominate the chat.
+ *
+ * Visual language matches `.reasoning-toggle-btn`: white-on-dark base, blue
+ * `#209cee` accent. Pairing the bubble with the toggle makes it obvious
+ * that one drives the other.
+ */
+.thought-bubble {
+  display: inline-block;
+  margin: 0.5rem 0 0.85rem;
+  background: rgba(255, 255, 255, 0.1);
+  border: 2px solid rgba(255, 255, 255, 0.2);
+  border-radius: 4px;
+  color: rgba(255, 255, 255, 0.5);
+  font-size: 0.92em;
+  transition: all 0.2s ease;
+  overflow: hidden;
+}
+
+.thought-bubble[open] {
+  display: block;
+  background: rgba(32, 156, 238, 0.12);
+  border-color: #209cee;
+  color: #fff;
+  box-shadow: 0 0 12px rgba(32, 156, 238, 0.4);
+}
+
+.thought-bubble > summary {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 36px;
+  height: 36px;
+  cursor: pointer;
+  list-style: none;
+  user-select: none;
+  transition: all 0.2s ease;
+}
+
+.thought-bubble[open] > summary {
+  width: auto;
+  min-width: 36px;
+  padding: 0 0.5rem;
+  border-bottom: 1px solid rgba(32, 156, 238, 0.35);
+}
+
+.thought-bubble:hover {
+  background: rgba(255, 255, 255, 0.2);
+  border-color: rgba(255, 255, 255, 0.4);
+  color: #fff;
+}
+
+.thought-bubble[open]:hover {
+  background: rgba(32, 156, 238, 0.2);
+}
+
+.thought-bubble > summary::-webkit-details-marker {
+  display: none;
+}
+
+.thought-bubble > summary .material-symbols-outlined {
+  font-size: 1.25em;
+  opacity: 0.95;
+}
+
+.thought-bubble__body {
+  padding: 0.5rem 0.85rem 0.6rem;
+  background: rgba(0, 0, 0, 0.15);
+}
+
+.thought-bubble :deep(p),
+.thought-bubble :deep(li) {
+  color: rgba(255, 255, 255, 0.85);
+  margin: 0.25rem 0;
+}
+
+.thought-bubble :deep(code) {
+  background: rgba(0, 0, 0, 0.3);
+}
+
+.thought-bubble--partial > summary::after {
+  content: "";
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: #209cee;
+  margin-left: 0.4rem;
+  animation: thought-pulse 1s ease-in-out infinite;
+  box-shadow: 0 0 6px rgba(32, 156, 238, 0.8);
+}
+
+@keyframes thought-pulse {
+  0%, 100% {
+    opacity: 0.3;
+  }
+  50% {
+    opacity: 1;
   }
 }
 </style>

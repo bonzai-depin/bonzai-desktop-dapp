@@ -62,6 +62,11 @@ contract BonzaiUnlock is Ownable, ReentrancyGuard, Pausable {
     /// @notice Total ETH collected from paid unlocks
     uint256 public totalCollected;
 
+    /// @notice Treasury wallet — can gift unlocks for free without using the
+    ///         owner key (lets a multisig-controlled treasury hand out
+    ///         unlocks for partnerships and team rewards).
+    address public treasury;
+
     // ═══════════════════════════════════════════════════════════════════════════
     // EVENTS
     // ═══════════════════════════════════════════════════════════════════════════
@@ -129,6 +134,14 @@ contract BonzaiUnlock is Ownable, ReentrancyGuard, Pausable {
         address indexed newWallet
     );
 
+    /// @notice Emitted when treasury is updated
+    event TreasuryUpdated(address indexed oldTreasury, address indexed newTreasury);
+
+    /// @notice Emitted at the end of a batchGiftUnlock call so off-chain
+    ///         indexers know how many of the requested addresses were
+    ///         actually gifted (vs. skipped).
+    event BatchGiftCompleted(uint256 requested, uint256 gifted);
+
     // ═══════════════════════════════════════════════════════════════════════════
     // ERRORS
     // ═══════════════════════════════════════════════════════════════════════════
@@ -173,6 +186,13 @@ contract BonzaiUnlock is Ownable, ReentrancyGuard, Pausable {
      */
     modifier notZeroAddress(address addr) {
         if (addr == address(0)) revert ZeroAddress();
+        _;
+    }
+
+    /// @notice Owner OR treasury can gift unlocks. Treasury path lets a
+    ///         multisig hand out free unlocks without exposing the owner key.
+    modifier onlyOwnerOrTreasury() {
+        require(msg.sender == owner() || (treasury != address(0) && msg.sender == treasury), "Not owner/treasury");
         _;
     }
 
@@ -268,11 +288,11 @@ contract BonzaiUnlock is Ownable, ReentrancyGuard, Pausable {
      * @param recipient Address to receive the free unlock
      * @dev For promotions, partnerships, or compensation
      */
-    function giftUnlock(address recipient) 
-        external 
-        onlyOwner 
+    function giftUnlock(address recipient)
+        external
+        onlyOwnerOrTreasury
         nonReentrant
-        notZeroAddress(recipient) 
+        notZeroAddress(recipient)
     {
         if (hasUnlocked[recipient]) revert AlreadyUnlocked(recipient);
 
@@ -293,7 +313,7 @@ contract BonzaiUnlock is Ownable, ReentrancyGuard, Pausable {
      */
     function batchGiftUnlock(address[] calldata recipients)
         external
-        onlyOwner
+        onlyOwnerOrTreasury
         nonReentrant
         returns (uint256 gifted)
     {
@@ -329,6 +349,19 @@ contract BonzaiUnlock is Ownable, ReentrancyGuard, Pausable {
         unchecked {
             totalGiftedUnlocks += gifted;
         }
+
+        emit BatchGiftCompleted(length, gifted);
+    }
+
+    /**
+     * @notice Update the treasury address (owner only). Treasury holders
+     *         can call giftUnlock / batchGiftUnlock without exposing the
+     *         owner key.
+     */
+    function setTreasury(address _treasury) external onlyOwner notZeroAddress(_treasury) {
+        address old = treasury;
+        treasury = _treasury;
+        emit TreasuryUpdated(old, _treasury);
     }
 
     /**

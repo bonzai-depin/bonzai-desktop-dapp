@@ -248,6 +248,42 @@ export const LLM_BASE_MODELS = {
     },
   },
 
+  // --- Draft models (for speculative decoding via llama-server -md) ------
+  // These are not user-selectable as primary models. They are auto-paired
+  // with larger models that share the same tokenizer family.
+  qwen3_1_7b_draft: {
+    name: 'Qwen3 1.7B (Draft)',
+    description: 'Qwen3 1.7B — used as speculative-decoding draft for Qwen3.x/3.5/3.6 family. ~2× throughput on 27B/35B with >60% acceptance.',
+    parameters: 1.7e9, context: 32768,
+    draft: true,
+    tiers: {
+      q4: { repo: 'unsloth/Qwen3-1.7B-GGUF', file: 'Qwen3-1.7B-UD-Q4_K_XL.gguf', size: 1.1, vram: 2 },
+    },
+  },
+
+  // --- Vision-capable models (llama-server --mmproj, cross-platform) -----
+  // llama.cpp multimodal works on macOS/Linux/Windows via --mmproj, so these
+  // models provide VLM inference without depending on the Python/Flask stack.
+  qwen2_5_vl_7b: {
+    name: 'Qwen2.5-VL 7B',
+    description: 'Qwen2.5-VL 7B vision-language model. Runs via llama-server --mmproj on all OSes.',
+    parameters: 7e9, context: 32768, isMultimodal: true,
+    mmprojSpec: { repo: 'unsloth/Qwen2.5-VL-7B-Instruct-GGUF', file: 'mmproj-F16.gguf', size: 1.3 },
+    tiers: {
+      q4: { repo: 'unsloth/Qwen2.5-VL-7B-Instruct-GGUF', file: 'Qwen2.5-VL-7B-Instruct-Q4_K_M.gguf', size: 4.7, vram: 8 },
+      q8: { repo: 'unsloth/Qwen2.5-VL-7B-Instruct-GGUF', file: 'Qwen2.5-VL-7B-Instruct-Q8_0.gguf', size: 8.1, vram: 12 },
+    },
+  },
+  qwen2_5_vl_32b: {
+    name: 'Qwen2.5-VL 32B',
+    description: 'Qwen2.5-VL 32B — larger vision-language model. Runs via llama-server --mmproj on all OSes.',
+    parameters: 32e9, context: 32768, isMultimodal: true,
+    mmprojSpec: { repo: 'unsloth/Qwen2.5-VL-32B-Instruct-GGUF', file: 'mmproj-F16.gguf', size: 2.8 },
+    tiers: {
+      q4: { repo: 'unsloth/Qwen2.5-VL-32B-Instruct-GGUF', file: 'Qwen2.5-VL-32B-Instruct-Q4_K_M.gguf', size: 19.9, vram: 24 },
+    },
+  },
+
   // --- Medium models (7-14B) ---------------------------------------------
   deepseek_r1_7b: {
     name: 'DeepSeek R1 Distill 7B',
@@ -363,6 +399,7 @@ export const LLM_BASE_MODELS = {
     name: 'Qwen3.6 27B',
     description: 'Qwen3.6 27B dense model with 262K context — 3D-gen default (better code-length budget than MoE at this size)',
     parameters: 27e9, context: 262144, thinking: true,
+    draftKey: 'qwen3_1_7b_draft', // Speculative decoding via llama-server -md
     tiers: {
       q2: { repo: 'unsloth/Qwen3.6-27B-GGUF', file: 'Qwen3.6-27B-UD-Q2_K_XL.gguf', size: 11.0, vram: 14 },
       q3: { repo: 'unsloth/Qwen3.6-27B-GGUF', file: 'Qwen3.6-27B-UD-Q3_K_XL.gguf', size: 13.5, vram: 18 },
@@ -435,11 +472,24 @@ export const LLM_BASE_MODELS = {
     name: 'Qwen3.6 35B A3B',
     description: 'Qwen3.6 35B MoE with 3B active params, 256 experts (8 routed + 1 shared), 256K native context (up to 1M with YaRN)',
     parameters: 35e9, activeParameters: 3e9, isMoE: true, context: 262144, thinking: true,
+    draftKey: 'qwen3_1_7b_draft',
     tiers: {
       q2: { repo: 'unsloth/Qwen3.6-35B-A3B-GGUF', file: 'Qwen3.6-35B-A3B-UD-Q2_K_XL.gguf', size: 12.3, vram: 16 },
       q3: { repo: 'unsloth/Qwen3.6-35B-A3B-GGUF', file: 'Qwen3.6-35B-A3B-UD-Q3_K_XL.gguf', size: 16.8, vram: 20 },
       q4: { repo: 'unsloth/Qwen3.6-35B-A3B-GGUF', file: 'Qwen3.6-35B-A3B-UD-Q4_K_M.gguf', size: 22.1, vram: 24 },
       q8: { repo: 'unsloth/Qwen3.6-35B-A3B-GGUF', file: 'Qwen3.6-35B-A3B-Q8_0.gguf', size: 36.9, vram: 42 },
+    },
+  },
+  qwen_3_6_28b_reap_a3b: {
+    name: 'Qwen3.6 28B REAP A3B',
+    description: 'Qwen3.6 35B A3B pruned via REAP (20% reduction → 28B total, 3B active). Same 256K context and hybrid thinking, faster prefill, smaller VRAM footprint than the unpruned 35B parent.',
+    parameters: 28e9, activeParameters: 3e9, isMoE: true, context: 262144, thinking: true,
+    draftKey: 'qwen3_1_7b_draft',
+    tiers: {
+      q4: { repo: '0xSero/Qwen3.6-28B-REAP20-A3B-GGUF', file: 'model.q4_k_m.gguf', size: 17.3, vram: 22 },
+      q5: { repo: '0xSero/Qwen3.6-28B-REAP20-A3B-GGUF', file: 'model.q5_k_m.gguf', size: 20.2, vram: 26 },
+      q6: { repo: '0xSero/Qwen3.6-28B-REAP20-A3B-GGUF', file: 'model.q6_k.gguf',   size: 23.2, vram: 30 },
+      q8: { repo: '0xSero/Qwen3.6-28B-REAP20-A3B-GGUF', file: 'model.q8_0.gguf',   size: 30.1, vram: 36 },
     },
   },
   qwen3_coder_next: {
@@ -489,13 +539,15 @@ export const LLM_BASE_MODELS = {
 };
 
 // Tier order for UI rendering (smallest → largest)
-export const LLM_TIER_ORDER = ['q2', 'q4', 'q8'];
+export const LLM_TIER_ORDER = ['q2', 'q3', 'q4', 'q5', 'q6', 'q8'];
 
 // Human-readable tier labels
 export const LLM_TIER_LABELS = {
   q2: 'Q2_K_XL',
   q3: 'Q3_K_XL',
   q4: 'Q4_K_M',
+  q5: 'Q5_K_M',
+  q6: 'Q6_K',
   q8: 'Q8_0',
 };
 
@@ -519,6 +571,24 @@ export function resolveLLM(baseKey, tier = 'q4') {
   const availableTiers = Object.keys(model.tiers);
   const hasMultipleTiers = availableTiers.length > 1;
 
+  // Optional multimodal projector (for VLM GGUFs loaded with --mmproj)
+  let mmproj = null;
+  let mmprojUrl = null;
+  if (model.mmprojSpec) {
+    mmproj = model.mmprojSpec.file.toLowerCase();
+    mmprojUrl = `https://huggingface.co/${model.mmprojSpec.repo}/resolve/main/${model.mmprojSpec.file}`;
+  }
+
+  // Optional speculative-decoding draft model. We expose the draft's main
+  // filename (q4 tier of the draft base) so loadModel can pass -md directly.
+  let draftModel = null;
+  let draftUrl = null;
+  if (model.draftKey && LLM_BASE_MODELS[model.draftKey]?.tiers?.q4) {
+    const draftSpec = LLM_BASE_MODELS[model.draftKey].tiers.q4;
+    draftModel = draftSpec.file.toLowerCase();
+    draftUrl = `https://huggingface.co/${draftSpec.repo}/resolve/main/${draftSpec.file}`;
+  }
+
   return {
     key: `llm_${baseKey}${tier === 'q4' ? '' : `_${tier}`}`,
     baseKey,
@@ -537,6 +607,11 @@ export function resolveLLM(baseKey, tier = 'q4') {
     isMoE: model.isMoE || false,
     context: model.context,
     thinking: model.thinking || false,
+    isMultimodal: !!mmproj,
+    mmproj,
+    mmprojUrl,
+    draftModel,
+    draftUrl,
     layers: model.layers,
     kvHeads: model.kvHeads,
     headDim: model.headDim,

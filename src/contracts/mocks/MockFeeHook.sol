@@ -3,12 +3,14 @@ pragma solidity ^0.8.20;
 
 /**
  * @title MockFeeHook
- * @notice Mock BonzaiUniswapHook for testing token factories
+ * @notice Mock BonzaiUniswapHook for testing token factories.
+ *         Mirrors the real hook's 6-arg registerPool signature.
  */
 contract MockFeeHook {
     struct Registration {
         address beneficiary;
-        address companionOwner;
+        address companionNFT;
+        uint256 companionTokenId;
         uint8 poolType;
         uint8 mintPoolIndex;
     }
@@ -19,13 +21,15 @@ contract MockFeeHook {
     function registerPool(
         bytes32 poolId,
         address beneficiary,
-        address companionOwner,
+        address companionNFT,
+        uint256 companionTokenId,
         uint8 poolType,
         uint8 mintPoolIndex
     ) external {
         registrations[poolId] = Registration({
             beneficiary: beneficiary,
-            companionOwner: companionOwner,
+            companionNFT: companionNFT,
+            companionTokenId: companionTokenId,
             poolType: poolType,
             mintPoolIndex: mintPoolIndex
         });

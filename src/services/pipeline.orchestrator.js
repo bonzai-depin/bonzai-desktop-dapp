@@ -12,17 +12,14 @@
  * fast subsequent requests (no model reload, no Metal shader recompilation).
  */
 
-import { execSync, spawn } from 'child_process';
 import path from 'path';
 import fs from 'fs';
+import crypto from 'crypto';
 import { getP2PNode } from './libp2p.service.js';
 import { createRPCTunnel } from './pipeline.tunnel.js';
 import { negotiatePipeline, teardownPipeline } from './pipeline.protocol.js';
-import {
-  signPipelinePayment,
-  calculatePipelinePaymentSplit,
-} from './x402.service.js';
 import { getShardProviders } from './p2p.contract.service.js';
+import * as llamaServer from './llamaServer.manager.js';
 
 // ═══════════════════════════════════════════════════════════════════════════
 // CONSTANTS
@@ -36,8 +33,7 @@ const DEFAULT_PRIVACY_CONFIG = {
   localTest: false,
 };
 
-const LLAMA_SERVER_STARTUP_TIMEOUT = 60000; // 60s (includes Metal shader compilation)
-const LLAMA_SERVER_HEALTH_INTERVAL = 2000;
+// Subprocess startup timeout + health polling now live in llamaServer.manager.
 
 // ═══════════════════════════════════════════════════════════════════════════
 // PERSISTENT SESSION STATE
@@ -53,23 +49,91 @@ export function getActiveSession() {
 // GGUF METADATA
 // ═══════════════════════════════════════════════════════════════════════════
 
+/**
+ * Read only the 4 GGUF keys we need to decide how to shard a model.
+ * Uses a minimal self-contained parser of the GGUF v2/v3 header, scoped to
+ * string + uint32/uint64 value types (enough for architecture + block_count +
+ * embedding_length + context_length). No dependency on node-llama-cpp.
+ */
 export function readGGUFMetadata(modelPath) {
   try {
-    // Use --key to read specific fields instead of dumping entire metadata
-    // (avoids ENOBUFS for models with large vocab like Qwen 248K tokens)
-    const readKey = (key) => {
-      try {
-        return execSync(
-          `npx node-llama-cpp inspect gguf -m "${modelPath}" --key "${key}"`,
-          { encoding: 'utf8', timeout: 10000, stdio: ['pipe', 'pipe', 'pipe'] },
-        ).trim();
-      } catch { return null; }
+    if (!fs.existsSync(modelPath)) throw new Error(`Not found: ${modelPath}`);
+
+    // GGUF headers are small (< 1MB for any real model).
+    const fd = fs.openSync(modelPath, 'r');
+    const buf = Buffer.alloc(2 * 1024 * 1024);
+    const bytesRead = fs.readSync(fd, buf, 0, buf.length, 0);
+    fs.closeSync(fd);
+
+    let off = 0;
+    const view = buf.subarray(0, bytesRead);
+    const u32 = () => { const v = view.readUInt32LE(off); off += 4; return v; };
+    const u64 = () => { const v = Number(view.readBigUInt64LE(off)); off += 8; return v; };
+    const i32 = () => { const v = view.readInt32LE(off); off += 4; return v; };
+    const i64 = () => { const v = Number(view.readBigInt64LE(off)); off += 8; return v; };
+    const f32 = () => { const v = view.readFloatLE(off); off += 4; return v; };
+    const f64 = () => { const v = view.readDoubleLE(off); off += 8; return v; };
+    const bool = () => { const v = view.readUInt8(off) !== 0; off += 1; return v; };
+    const str = () => {
+      const len = u64();
+      const s = view.toString('utf8', off, off + len);
+      off += len;
+      return s;
     };
 
-    const arch = readKey('general.architecture') || 'llama';
-    const n_layer = parseInt(readKey(`${arch}.block_count`), 10) || 32;
-    const n_embd = parseInt(readKey(`${arch}.embedding_length`), 10) || 4096;
-    const contextLength = parseInt(readKey(`${arch}.context_length`), 10) || 4096;
+    // GGUF magic "GGUF" (4 bytes) + version (u32)
+    const magic = view.toString('ascii', 0, 4);
+    if (magic !== 'GGUF') throw new Error(`Not a GGUF file (magic=${magic})`);
+    off = 4;
+    const version = u32();
+    if (version < 2) throw new Error(`Unsupported GGUF version: ${version}`);
+    const _tensorCount = u64();
+    const kvCount = u64();
+
+    const readValue = () => {
+      const type = u32();
+      switch (type) {
+        case 0: return view.readUInt8(off++); // UINT8
+        case 1: { const v = view.readInt8(off); off += 1; return v; } // INT8
+        case 2: { const v = view.readUInt16LE(off); off += 2; return v; } // UINT16
+        case 3: { const v = view.readInt16LE(off); off += 2; return v; } // INT16
+        case 4: return u32();  // UINT32
+        case 5: return i32();  // INT32
+        case 6: return f32();  // FLOAT32
+        case 7: return bool(); // BOOL
+        case 8: return str();  // STRING
+        case 9: { // ARRAY — skip, we don't need any array-valued keys here
+          const elemType = u32();
+          const n = u64();
+          // Fast-skip: only called on keys we don't care about
+          return _skipArray(elemType, n);
+        }
+        case 10: return u64(); // UINT64
+        case 11: return i64(); // INT64
+        case 12: return f64(); // FLOAT64
+        default: throw new Error(`Unknown GGUF value type: ${type}`);
+      }
+    };
+
+    const _skipArray = (elemType, n) => {
+      const fixedSize = { 0: 1, 1: 1, 2: 2, 3: 2, 4: 4, 5: 4, 6: 4, 7: 1, 10: 8, 11: 8, 12: 8 }[elemType];
+      if (fixedSize != null) { off += n * fixedSize; return []; }
+      if (elemType === 8) { for (let i = 0; i < n; i++) str(); return []; }
+      if (elemType === 9) throw new Error("Nested arrays not supported");
+      throw new Error(`Unknown array elem type: ${elemType}`);
+    };
+
+    const meta = {};
+    for (let i = 0; i < kvCount; i++) {
+      const key = str();
+      const value = readValue();
+      meta[key] = value;
+    }
+
+    const arch = meta['general.architecture'] || 'llama';
+    const n_layer = Number(meta[`${arch}.block_count`]) || 32;
+    const n_embd = Number(meta[`${arch}.embedding_length`]) || 4096;
+    const contextLength = Number(meta[`${arch}.context_length`]) || 4096;
 
     return { n_layer, n_embd, architecture: arch, contextLength };
   } catch (e) {
@@ -82,26 +146,10 @@ export function readGGUFMetadata(modelPath) {
 // BINARY RESOLUTION
 // ═══════════════════════════════════════════════════════════════════════════
 
-function findLlamaServerBinary() {
-  const platform = { darwin: 'macos', win32: 'windows', linux: 'linux' }[process.platform] || process.platform;
-  const arch = process.arch;
-  const ext = process.platform === 'win32' ? '.exe' : '';
-  const name = `llama-server${ext}`;
-  const resourcesPath = process.resourcesPath || '';
-
-  const searchPaths = [
-    path.join(process.cwd(), 'bin', `${platform}-${arch}`, name),
-    // electron-packager bundles app source under Resources/app/
-    resourcesPath ? path.join(resourcesPath, 'app', 'bin', `${platform}-${arch}`, name) : null,
-    // electron-forge copies to Resources/server/llama-runtime/
-    resourcesPath ? path.join(resourcesPath, 'server', 'llama-runtime', `${platform}-${arch}`, name) : null,
-  ].filter(Boolean);
-
-  const found = searchPaths.find(p => fs.existsSync(p));
-  if (found) return found;
-
-  throw new Error(`llama-server binary not found at: ${searchPaths.join(', ')}`);
-}
+// Binary resolution and subprocess lifecycle now live entirely in
+// services/llamaServer.manager.js. The orchestrator keeps only the
+// session-level concerns: shard discovery, tunnel lifecycle, negotiation,
+// privacy audit metadata.
 
 // ═══════════════════════════════════════════════════════════════════════════
 // SESSION MANAGEMENT
@@ -115,20 +163,20 @@ function findLlamaServerBinary() {
 async function ensureSession(modelPath, privacyConfig, onStatus) {
   const config = { ...DEFAULT_PRIVACY_CONFIG, ...privacyConfig };
 
-  // Reuse existing session if same model and llama-server is still alive
+  // Reuse existing session if same model and llama-server is still alive.
+  // The subprocess is owned by llamaServer.manager; we check its state
+  // through the manager, not a private reference.
   if (activeSession &&
       activeSession.modelPath === modelPath &&
-      activeSession.llamaServerProcess &&
-      !activeSession.llamaServerProcess.killed) {
-    // Verify llama-server is still healthy
+      llamaServer.isRunning()) {
     try {
-      const res = await fetch(`http://127.0.0.1:${activeSession.llamaServerPort}/health`);
+      const port = llamaServer.getActivePort();
+      const res = await fetch(`http://127.0.0.1:${port}/health`);
       if (res.ok) {
         onStatus?.('Using existing pipeline session');
         return activeSession;
       }
     } catch {}
-    // Server died — clean up and recreate
     console.log('[Pipeline] Existing llama-server is unresponsive, restarting...');
     await cleanupSession(activeSession);
     activeSession = null;
@@ -151,8 +199,6 @@ async function ensureSession(modelPath, privacyConfig, onStatus) {
     modelPath,
     status: 'starting',
     tunnels: [],
-    llamaServerProcess: null,
-    llamaServerPort: null,
     peerIds: [],
     startTime: Date.now(),
     requestCount: 0,
@@ -270,23 +316,8 @@ async function ensureSession(modelPath, privacyConfig, onStatus) {
   status('Starting llama-server (persists across messages)...');
   session.status = 'starting';
 
-  const llamaBin = findLlamaServerBinary();
-  const dynamicPort = 8080 + Math.floor(Math.random() * 1000);
-
-  const args = [
-    '--model', modelPath,
-    '--rpc', rpcAddresses,
-    '--tensor-split', tensorSplit,
-    '--split-mode', 'layer',
-    '--port', String(dynamicPort),
-    '--host', '127.0.0.1',
-    '-ngl', '999',
-    '--ctx-size', String(Math.min(meta.contextLength, 8192)),
-    '--parallel', '1',   // Single slot — prevents duplicate completions
-    '--no-warmup',       // Skip warmup run — faster startup
-  ];
-
-  // Build privacy audit info
+  // Build privacy audit info (consumed by UI — no subprocess info needed).
+  const rpcPeers = rpcAddresses.split(',').map((s) => s.trim()).filter(Boolean);
   session.privacyAudit = {
     totalLayers: meta.n_layer,
     localLayers: Math.round(meta.n_layer * config.localProportion),
@@ -316,30 +347,38 @@ async function ensureSession(modelPath, privacyConfig, onStatus) {
     ],
   };
 
-  session.llamaServerPort = dynamicPort;
-  session.llamaServerProcess = spawn(llamaBin, args, {
-    stdio: ['ignore', 'pipe', 'pipe'],
-    env: { ...process.env },
-  });
+  // Delegate subprocess lifecycle to llamaServer.manager. Same process is
+  // shared with private/consumer chat — the only difference is this spawn
+  // carries -rpc + --tensor-split + --split-mode + --no-warmup + -np 1.
+  const resourcesPath = process.resourcesPath || null;
+  const { port } = await llamaServer.startModel(
+    {
+      modelPath,
+      ctxSize: Math.min(meta.contextLength, 8192),
+      ngl: 999,
+      rpcPeers,
+      tensorSplit,
+      splitMode: 'layer',
+      parallelSlots: 1,
+      noWarmup: true,
+      // Privacy sessions never use speculative decoding or mmproj — the
+      // overhead of an extra model load would blow the startup window.
+    },
+    { resourcesPath },
+  );
 
-  session.llamaServerProcess.stdout.on('data', (d) => {
-    const line = d.toString().trim();
-    if (line) console.log(`[llama-server] ${line}`);
-  });
-  session.llamaServerProcess.stderr.on('data', (d) => {
-    const line = d.toString().trim();
-    if (line) console.log(`[llama-server:err] ${line}`);
-  });
-  session.llamaServerProcess.on('exit', (code) => {
-    console.log(`[Pipeline] llama-server exited with code ${code}`);
-    if (activeSession?.sessionId === sessionId) {
-      activeSession.status = 'stopped';
-    }
-  });
+  // React to subprocess death so UI can notice and the session cleans up.
+  if (!session._exitUnsub) {
+    session._exitUnsub = llamaServer.onExit(() => {
+      if (activeSession?.sessionId === sessionId) {
+        activeSession.status = 'stopped';
+      }
+    });
+  }
 
-  await waitForLlamaServer(dynamicPort);
+  session.llamaServerPort = port;
   session.status = 'ready';
-  status(`llama-server ready on :${dynamicPort} — session will persist across messages`);
+  status(`llama-server ready on :${port} — session will persist across messages`);
 
   activeSession = session;
   return session;
@@ -395,86 +434,29 @@ export async function cancelPipelineSession() {
 // LLAMA-SERVER INTERACTION
 // ═══════════════════════════════════════════════════════════════════════════
 
-async function waitForLlamaServer(port) {
-  const start = Date.now();
-  while (Date.now() - start < LLAMA_SERVER_STARTUP_TIMEOUT) {
-    try {
-      const res = await fetch(`http://127.0.0.1:${port}/health`);
-      if (res.ok) return;
-    } catch {}
-    await new Promise((r) => setTimeout(r, LLAMA_SERVER_HEALTH_INTERVAL));
-  }
-  throw new Error(`llama-server failed to start within ${LLAMA_SERVER_STARTUP_TIMEOUT / 1000}s`);
-}
-
-async function runLlamaServerInference(port, request, onToken) {
+async function runLlamaServerInference(_port, request, onToken) {
+  // _port is ignored — the manager owns the subprocess and its port.
   const { prompt, maxTokens = 512, temperature = 0.7, systemPrompt } = request;
 
   const messages = [];
   if (systemPrompt) messages.push({ role: 'system', content: systemPrompt });
   messages.push({ role: 'user', content: prompt });
 
-  const body = {
-    model: 'pipeline',
-    messages,
-    max_tokens: maxTokens,
-    temperature,
-    stream: !!onToken,
-  };
-
-  const response = await fetch(`http://127.0.0.1:${port}/v1/chat/completions`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(body),
-  });
-
-  if (!response.ok) {
-    const errText = await response.text();
-    throw new Error(`llama-server inference failed (${response.status}): ${errText}`);
-  }
-
-  if (onToken && body.stream) {
-    let fullText = '';
+  if (onToken) {
     let tokensGenerated = 0;
-
-    const reader = response.body.getReader();
-    const decoder = new TextDecoder();
-    let buffer = '';
-
-    while (true) {
-      const { done, value } = await reader.read();
-      if (done) break;
-
-      buffer += decoder.decode(value, { stream: true });
-      const lines = buffer.split('\n');
-      buffer = lines.pop();
-
-      for (const line of lines) {
-        if (!line.startsWith('data: ')) continue;
-        const data = line.slice(6).trim();
-        if (data === '[DONE]') continue;
-
-        try {
-          const chunk = JSON.parse(data);
-          const token = chunk.choices?.[0]?.delta?.content;
-          if (token) {
-            fullText += token;
-            tokensGenerated++;
-            onToken(token);
-          }
-        } catch {}
-      }
-    }
-
+    const fullText = await llamaServer.chatStream(
+      { messages, maxTokens, temperature },
+      (chunk) => { tokensGenerated++; onToken(chunk); },
+    );
     return { text: fullText, tokensGenerated };
-  } else {
-    const data = await response.json();
-    const text = data.choices?.[0]?.message?.content || '';
-    return {
-      text,
-      tokensGenerated: data.usage?.completion_tokens || text.split(/\s+/).length,
-    };
   }
+
+  const result = await llamaServer.chat({ messages, maxTokens, temperature });
+  const text = result.choices?.[0]?.message?.content ?? '';
+  return {
+    text,
+    tokensGenerated: result.usage?.completion_tokens || text.split(/\s+/).length,
+  };
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -482,13 +464,16 @@ async function runLlamaServerInference(port, request, onToken) {
 // ═══════════════════════════════════════════════════════════════════════════
 
 async function cleanupSession(session) {
-  if (session.llamaServerProcess && !session.llamaServerProcess.killed) {
-    session.llamaServerProcess.kill('SIGTERM');
-    await new Promise((r) => setTimeout(r, 2000));
-    if (!session.llamaServerProcess.killed) {
-      session.llamaServerProcess.kill('SIGKILL');
+  // Subprocess is owned by llamaServer.manager — stop it through the manager.
+  if (llamaServer.isRunning()) {
+    try { await llamaServer.stopModel(); } catch (e) {
+      console.warn('[Pipeline] llama-server stop warning:', e.message);
     }
-    console.log(`[Pipeline] llama-server stopped`);
+  }
+
+  if (session._exitUnsub) {
+    try { session._exitUnsub(); } catch {}
+    session._exitUnsub = null;
   }
 
   for (const tunnel of session.tunnels) {

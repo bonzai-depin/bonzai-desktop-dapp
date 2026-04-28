@@ -1,18 +1,26 @@
 #!/usr/bin/env node
 
 /**
- * BonzAI — Build llama.cpp RPC binaries from bundled source
+ * BonzAI — Build llama.cpp RPC binaries from upstream source
  *
- * Extracts the llama.cpp git bundle shipped with node-llama-cpp,
- * compiles rpc-server and llama-server with GGML_RPC=ON + platform GPU backend.
+ * Clones llama.cpp directly from the official GitHub repo and compiles
+ * rpc-server and llama-server with GGML_RPC=ON + platform GPU backend.
+ *
+ * Why upstream instead of node-llama-cpp's bundled snapshot:
+ * the bundle pins to whichever commit node-llama-cpp shipped (currently
+ * b8179) which lags weeks behind. New model architectures (e.g. gemma4)
+ * land on master before they reach a node-llama-cpp release.
  *
  * Usage:
- *   npm run build:rpc          # Build for current platform
- *   node scripts/build-llama-rpc.js --clean   # Clean and rebuild
+ *   npm run build:rpc                              # latest master
+ *   npm run build:rpc -- --clean                   # force rebuild
+ *   npm run build:rpc -- --ref=master              # explicit ref
+ *   LLAMA_CPP_REF=b8550 npm run build:rpc -- --clean
  *
  * Output:
  *   bin/{platform}-{arch}/rpc-server
  *   bin/{platform}-{arch}/llama-server
+ *   bin/{platform}-{arch}/.llama-source.json   (records ref + commit for staleness detection)
  */
 
 import { execSync } from "child_process";
@@ -39,10 +47,23 @@ const PLATFORM_KEY = {
 }[PLATFORM] || PLATFORM;
 
 const BIN_DIR = path.join(ROOT, "bin", `${PLATFORM_KEY}-${ARCH}`);
-const BUNDLE_PATH = path.join(ROOT, "node_modules", "node-llama-cpp", "llama", "gitRelease.bundle");
+const SOURCE_MARKER = path.join(BIN_DIR, ".llama-source.json");
 const BUILD_DIR = path.join(os.tmpdir(), "bonzai-llama-rpc-build");
 const SRC_DIR = path.join(BUILD_DIR, "llama-src");
 const CMAKE_BUILD_DIR = path.join(BUILD_DIR, "build");
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Source resolution — clone upstream llama.cpp at the requested ref.
+// Default: master (latest). Override with --ref=<branch|tag|sha> or env var.
+// ─────────────────────────────────────────────────────────────────────────────
+
+const LLAMA_CPP_REPO = process.env.LLAMA_CPP_REPO || "https://github.com/ggml-org/llama.cpp.git";
+
+function resolveRef(cliArgs) {
+  const cliRef = cliArgs.find((a) => a.startsWith("--ref="));
+  if (cliRef) return cliRef.slice("--ref=".length);
+  return process.env.LLAMA_CPP_REF || "master";
+}
 
 // ─────────────────────────────────────────────────────────────────────────────
 // cmake flags per platform
@@ -102,23 +123,32 @@ function clean() {
   }
 }
 
-function extractBundle() {
-  if (!fs.existsSync(BUNDLE_PATH)) {
-    console.error(`ERROR: llama.cpp git bundle not found at ${BUNDLE_PATH}`);
-    console.error("Run 'npm install' first to ensure node-llama-cpp is installed.");
-    process.exit(1);
+function cloneSource(ref) {
+  console.log(`Cloning llama.cpp from ${LLAMA_CPP_REPO} at ref '${ref}'...`);
+  fs.mkdirSync(BUILD_DIR, { recursive: true });
+
+  // Shallow clone is much faster but git can't shallow-clone an arbitrary
+  // commit SHA without the remote enabling uploadpack.allowReachableSHA1InWant.
+  // For named refs (master, b8550, v1.2.3) --depth 1 works; for raw SHAs we
+  // fall back to a full clone + checkout.
+  const looksLikeSha = /^[0-9a-f]{7,40}$/i.test(ref);
+
+  if (looksLikeSha) {
+    run(`git clone "${LLAMA_CPP_REPO}" "${SRC_DIR}"`);
+    run(`git -C "${SRC_DIR}" checkout ${ref}`);
+  } else {
+    run(`git clone --depth 1 --branch ${ref} "${LLAMA_CPP_REPO}" "${SRC_DIR}"`);
   }
 
-  console.log("Extracting llama.cpp source from git bundle...");
-  fs.mkdirSync(BUILD_DIR, { recursive: true });
-  run(`git clone "${BUNDLE_PATH}" "${SRC_DIR}"`, { stdio: "pipe" });
+  const headSha = execSync(`git -C "${SRC_DIR}" rev-parse HEAD`, { encoding: "utf8" }).trim();
+  console.log(`  Checked out ${ref} → ${headSha.slice(0, 12)}`);
 
-  // Verify rpc-server source exists
+  // Verify the build targets exist in the checked-out tree.
   const rpcSrc = path.join(SRC_DIR, "tools", "rpc", "rpc-server.cpp");
   const serverSrc = path.join(SRC_DIR, "tools", "server", "server.cpp");
   if (!fs.existsSync(rpcSrc)) {
     console.error(`ERROR: rpc-server.cpp not found at ${rpcSrc}`);
-    console.error("The bundled llama.cpp version may not include RPC support.");
+    console.error("This llama.cpp ref may not include RPC support.");
     process.exit(1);
   }
   if (!fs.existsSync(serverSrc)) {
@@ -126,12 +156,24 @@ function extractBundle() {
     process.exit(1);
   }
 
-  // Read and display llama.cpp version
-  const infoPath = path.join(ROOT, "node_modules", "node-llama-cpp", "llama", "llama.cpp.info.json");
-  if (fs.existsSync(infoPath)) {
-    const info = JSON.parse(fs.readFileSync(infoPath, "utf8"));
-    console.log(`  llama.cpp version: ${info.tag} (from ${info.llamaCppGithubRepo})`);
+  return { ref, sha: headSha };
+}
+
+function readSourceMarker() {
+  if (!fs.existsSync(SOURCE_MARKER)) return null;
+  try {
+    return JSON.parse(fs.readFileSync(SOURCE_MARKER, "utf8"));
+  } catch {
+    return null;
   }
+}
+
+function writeSourceMarker(info) {
+  fs.mkdirSync(BIN_DIR, { recursive: true });
+  fs.writeFileSync(
+    SOURCE_MARKER,
+    JSON.stringify({ ...info, builtAt: new Date().toISOString() }, null, 2)
+  );
 }
 
 function configure() {
@@ -219,38 +261,55 @@ function verify() {
 
 const args = process.argv.slice(2);
 const shouldClean = args.includes("--clean");
+const requestedRef = resolveRef(args);
 
 console.log("╔══════════════════════════════════════════════════════════════╗");
 console.log("║  BonzAI — Build llama.cpp RPC binaries                     ║");
 console.log("╚══════════════════════════════════════════════════════════════╝");
 console.log(`Platform: ${PLATFORM_KEY}-${ARCH}`);
+console.log(`Source:   ${LLAMA_CPP_REPO} @ ${requestedRef}`);
 console.log(`Output:   ${BIN_DIR}`);
 console.log();
 
 if (shouldClean) clean();
 
-// Skip if binaries already exist and --clean not passed
+// Skip if binaries already exist AND were built from the same ref. A ref
+// change forces a rebuild even without --clean, so users get gemma4 (or
+// whatever they bumped to) without manually remembering --clean.
 const ext = PLATFORM === "win32" ? ".exe" : "";
 const rpcBin = path.join(BIN_DIR, `rpc-server${ext}`);
 const serverBin = path.join(BIN_DIR, `llama-server${ext}`);
-if (fs.existsSync(rpcBin) && fs.existsSync(serverBin) && !shouldClean) {
-  console.log("Binaries already exist. Use --clean to force rebuild.");
+const prevMarker = readSourceMarker();
+const refMatches = prevMarker && prevMarker.ref === requestedRef;
+
+if (fs.existsSync(rpcBin) && fs.existsSync(serverBin) && !shouldClean && refMatches) {
+  console.log(`Binaries already built from ref '${requestedRef}' (${prevMarker.sha?.slice(0, 12)}).`);
+  console.log("Use --clean to force a rebuild, or change --ref to bump the source.");
   console.log(`  ${rpcBin}`);
   console.log(`  ${serverBin}`);
   process.exit(0);
 }
 
+if (fs.existsSync(rpcBin) && fs.existsSync(serverBin) && !refMatches) {
+  console.log(
+    `Existing binaries were built from ref '${prevMarker?.ref ?? "unknown"}'; ` +
+    `requested '${requestedRef}'. Rebuilding.`
+  );
+}
+
 try {
-  extractBundle();
+  const sourceInfo = cloneSource(requestedRef);
   configure();
   compile();
   copyBinaries();
+  writeSourceMarker(sourceInfo);
   verify();
 
   console.log();
   console.log("Build complete.");
   console.log(`  rpc-server:   ${path.join(BIN_DIR, `rpc-server${ext}`)}`);
   console.log(`  llama-server: ${path.join(BIN_DIR, `llama-server${ext}`)}`);
+  console.log(`  source ref:   ${sourceInfo.ref} (${sourceInfo.sha.slice(0, 12)})`);
 } finally {
   // Clean up temp build dir
   if (fs.existsSync(BUILD_DIR)) {

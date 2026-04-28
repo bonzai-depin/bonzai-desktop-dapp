@@ -15,7 +15,7 @@ import os from "os";
 import fs from "fs";
 import si from "systeminformation";
 import psTree from "ps-tree";
-import { getLlama, LlamaChatSession, TemplateChatWrapper } from "node-llama-cpp";
+import * as llamaServer from "./services/llamaServer.manager.js";
 import path from "path";
 import { fileURLToPath, pathToFileURL } from "url";
 import { download } from "electron-dl";
@@ -46,32 +46,24 @@ import {
 // ─────────────────────────────────────────────────────────────────────────────
 // Globals / paths
 // ─────────────────────────────────────────────────────────────────────────────
-let llama = null;
-let llamaUnifiedMemoryBroken = false; // node-llama-cpp 3.16.x reports unifiedSize=0 on Apple Silicon
-try {
-  llama = await getLlama({ logLevel: "warn" });
-  console.log(`[LLM] Engine initialized — gpu: ${llama.gpu}, gpuOffload: ${llama.supportsGpuOffloading}`);
-  try {
-    const vramState = await llama._vramOrchestrator?.getMemoryState?.();
-    if (vramState) {
-      console.log(
-        `[LLM] VRAM state — total: ${(vramState.total / 1e9).toFixed(1)}GB, ` +
-        `free: ${(vramState.free / 1e9).toFixed(1)}GB, ` +
-        `unifiedSize: ${((vramState.unifiedSize || 0) / 1e9).toFixed(1)}GB`
-      );
-      // Detect broken unified memory reporting: Metal GPU detected but unifiedSize=0
-      if (llama.gpu === "metal" && (vramState.unifiedSize || 0) === 0 && vramState.total > 0) {
-        llamaUnifiedMemoryBroken = true;
-        console.warn("[LLM] Detected broken unifiedSize=0 on Metal — will use gpuLayers override");
-      }
-    }
-  } catch (e) {
-    console.warn("[LLM] Could not read VRAM state:", e.message);
+// LLM runtime is llama-server subprocess (see services/llamaServer.manager.js).
+// Per-conversation chat history is held here since the subprocess is stateless
+// from call to call. Callers send single-turn inputs; we maintain history.
+let chatHistory = []; // { role: "system" | "user" | "assistant", content: string }[]
+
+// React to subprocess exits. We only clear renderer state on UNEXPECTED
+// exits (crashes, OOM). Intentional stops — e.g. `unloadModel()` before a
+// model switch, or the privacy-pipeline's stop+start restart cycle — keep
+// currentLoadedModel intact so `ensureLocalLLMReady()` can restore the
+// previous model if a follow-up load fails.
+llamaServer.onExit(({ intentional }) => {
+  if (intentional) return;
+  currentLoadedModel = null;
+  chatHistory = [];
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    mainWindow.webContents.send("model-changed", null);
   }
-} catch (error) {
-  console.warn("node-llama-cpp initialization failed:", error.message);
-  // Continue without LLM support - app will still work for other features
-}
+});
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -1586,11 +1578,11 @@ ipcMain.handle("p2p-pipeline-infer", async (event, options) => {
       return { ok: false, error: "No model loaded. Load a model first." };
     }
 
-    // Unload node-llama-cpp only when starting a new session
+    // Stop llama-server only when starting a new session
     const { getActiveSession } = await getPipelineOrchestrator();
-    if (!getActiveSession() && (loadedModel || modelContext || modelSession)) {
+    if (!getActiveSession() && llamaServer.isRunning()) {
       const modelInfo = currentLoadedModel ? { ...currentLoadedModel } : null;
-      console.log("[Pipeline] Unloading node-llama-cpp for new pipeline session...");
+      console.log("[Pipeline] Stopping llama-server for new pipeline session...");
       try { await unloadModel(); } catch (e) {
         console.warn("[Pipeline] Model unload warning:", e.message);
       }
@@ -1736,6 +1728,65 @@ app.on("before-quit", () => {
   if (rpcServerProcess && !rpcServerProcess.killed) {
     rpcServerProcess.kill("SIGTERM");
   }
+  try { llamaServer.stopModel({ force: true }); } catch {}
+});
+
+// Consumer-mode: update the local llama-server's -rpc peer list. Safe to
+// call before a model is loaded (becomes the default for the next
+// startModel). Callers pass LOCAL TCP endpoints that they have already
+// forwarded to remote libp2p shard providers.
+ipcMain.handle("llama-set-rpc-peers", async (_event, peers) => {
+  try {
+    return await llamaServer.updateRpcPeers(peers || []);
+  } catch (e) {
+    console.warn("[Consumer] Failed to update RPC peers:", e.message);
+    return { restarted: false, peers: [], error: e.message };
+  }
+});
+ipcMain.handle("llama-get-rpc-peers", () => llamaServer.getRpcPeers());
+
+// Consolidated runtime status for the Network Settings self-test and any
+// other UI that needs to distinguish "OpenClaw gateway running" (the HTTP
+// server on :3002, always up) from "LLM runtime running" (the llama-server
+// subprocess, only up when a model is loaded).
+// Rebroadcast the current model-changed payload. Used by the P2P network
+// modal when the user toggles network mode or pipeline mode so the bottom
+// bar's "pipeline" tag updates immediately instead of waiting for the next
+// load/swap.
+ipcMain.handle("broadcast-model-state", () => {
+  if (!mainWindow || mainWindow.isDestroyed()) return false;
+  if (!currentLoadedModel) {
+    mainWindow.webContents.send("model-changed", null);
+    return true;
+  }
+  const networkMode = store.get("p2p.networkMode", "local");
+  const pipelineEnabled = store.get("p2p.pipeline.enabled", false);
+  const pipelineMode = networkMode === "consumer" && pipelineEnabled;
+  mainWindow.webContents.send("model-changed", {
+    filename: currentLoadedModel.filename,
+    modelname: currentLoadedModel.modelname || resolveModelName(currentLoadedModel.filename),
+    parameters: currentLoadedModel.parameters,
+    context: currentLoadedModel.context,
+    isMultimodal: !!currentLoadedModel.isMultimodal,
+    pipelineMode,
+  });
+  return true;
+});
+
+ipcMain.handle("llama-runtime-status", async () => {
+  const running = llamaServer.isRunning();
+  const port = llamaServer.getActivePort();
+  const rpcPeers = llamaServer.getRpcPeers();
+  const spec = llamaServer.getActiveSpec();
+  return {
+    running,
+    port,
+    rpcPeers,
+    modelName: currentLoadedModel?.filename || null,
+    isMultimodal: !!currentLoadedModel?.isMultimodal,
+    ctxSize: spec?.ctxSize || null,
+    hasSpecDecode: !!spec?.draftPath,
+  };
 });
 
 /**
@@ -1870,11 +1921,11 @@ async function routeInferenceRequest(request) {
  * model info is available to reload from.
  */
 async function ensureLocalLLMReady() {
-  if (modelSession) return true;
+  if (llamaServer.isRunning()) return true;
   if (!currentLoadedModel?.filename) return false;
   try {
     await loadModel(null, { ...currentLoadedModel });
-    return !!modelSession;
+    return llamaServer.isRunning();
   } catch (e) {
     console.warn("[Inference] Failed to restore local model session:", e.message);
     return false;
@@ -1913,21 +1964,30 @@ ipcMain.handle("inference-request", async (event, { pipeline, params }) => {
     // Pipeline parallelism (LLM only)
     if (pipelineEnabled && isLLM) {
       try {
-        const { runPipelineInference, getActiveSession } = await getPipelineOrchestrator();
+        const { runPipelineInference, getActiveSession, cancelPipelineSession } = await getPipelineOrchestrator();
 
-        // Reuse model path from active session, or resolve from loaded model
+        // Resolve the model path from currentLoadedModel (the canonical
+        // source of "what the user picked"). If an active pipeline session
+        // exists but references a DIFFERENT model, invalidate it — the user
+        // swapped models since the pipeline was started, and reusing the
+        // old session would send the new model prompts crafted for the old
+        // one. The next inference will kick off a fresh pipeline session
+        // for the current model.
         const activeSession = getActiveSession();
-        let modelPath = activeSession?.modelPath || null;
-        if (!modelPath && currentLoadedModel?.filename) {
-          modelPath = path.join(MODEL_DIR, currentLoadedModel.filename);
+        let modelPath = currentLoadedModel?.filename
+          ? path.join(MODEL_DIR, currentLoadedModel.filename)
+          : activeSession?.modelPath || null;
+        if (activeSession && activeSession.modelPath !== modelPath) {
+          console.log(`[Inference] Pipeline session model mismatch (${path.basename(activeSession.modelPath)} → ${path.basename(modelPath)}); invalidating session.`);
+          await cancelPipelineSession();
         }
 
-        // Unload node-llama-cpp only when starting a new session (frees GPU for llama-server).
-        // Subsequent requests reuse the active session — no unload needed.
-        if (!activeSession && (loadedModel || modelContext || modelSession)) {
-          // Preserve model info before unloading so the bottom bar can show it
+        // Stop llama-server only when starting a new session.
+        // Subsequent requests reuse the active session — no restart needed.
+        if (!activeSession && llamaServer.isRunning()) {
+          // Preserve model info before stopping so the bottom bar can show it
           const modelInfo = currentLoadedModel ? { ...currentLoadedModel } : null;
-          console.log("[Inference] Unloading node-llama-cpp for new pipeline session...");
+          console.log("[Inference] Stopping llama-server for new pipeline session...");
           try { await unloadModel(); } catch (e) {
             console.warn("[Inference] Model unload warning:", e.message);
           }
@@ -1969,10 +2029,23 @@ ipcMain.handle("inference-request", async (event, { pipeline, params }) => {
         return { ok: true, result, remote: true, pipeline: true };
       } catch (err) {
         console.warn(`[Inference] Pipeline failed: ${err.message}, falling back`);
-        // Reload model if the pipeline unloaded it. `modelPath` was scoped
-        // to the try-block, so we rely on `currentLoadedModel` instead.
+        // Surface actionable errors to the renderer so the user sees a
+        // danger notification instead of a silent local fallback.
+        const msg = String(err.message || "");
+        const isNoProviders = /no shard providers/i.test(msg);
+        event.sender.send("pipeline-error", {
+          code: isNoProviders ? "no_providers" : "pipeline_failed",
+          message: msg,
+          fatal: isNoProviders, // fatal = don't even try local fallback
+        });
+        if (isNoProviders) {
+          // Bail early — no viable local model since the pipeline had
+          // intentionally stopped the subprocess, and the user needs to
+          // resolve the providers issue before retrying.
+          return { ok: false, useLocal: false, error: msg, code: "no_providers" };
+        }
+        // Otherwise: reload model and fall through to provider selection.
         await ensureLocalLLMReady();
-        // Fall through to provider selection or local
       }
     }
 
@@ -3491,11 +3564,12 @@ ipcMain.handle("proxy:fetch", async (_event, { url, options = {} }) => {
 // ─────────────────────────────────────────────────────────────────────────────
 // Llama model wiring
 // ─────────────────────────────────────────────────────────────────────────────
-let modelContext = undefined;
-let modelSession = undefined;
-let loadedModel = undefined; // The actual llama model object (holds GPU memory)
-let currentLoadedModel = null; // Track currently loaded model for multimodal support
-let alwaysLoadedEnabled = false; // When true, LLM stays in memory (still allows hot-swap)
+// LLM backend is llama-server (see services/llamaServer.manager.js).
+// currentLoadedModel holds the metadata of whichever model the subprocess is
+// currently serving; it is null when nothing is loaded.
+let currentLoadedModel = null;
+let alwaysLoadedEnabled = false; // When true, model stays in memory (still allows hot-swap)
+let currentSystemPrompt = null;  // Optional system prompt prepended to chat history
 
 // Query current loaded model and always-loaded setting
 ipcMain.handle("model-get-loaded", () => {
@@ -3519,20 +3593,112 @@ ipcMain.handle("model-check", checkModel);
 ipcMain.handle("model-download", downloadModel);
 ipcMain.handle("model-delete", deleteModel);
 ipcMain.handle("model-load", loadModel);
+ipcMain.handle("model-ensure", ensureModel);
 ipcMain.handle("model-unload", unloadModel);
 ipcMain.handle("model-chat", chat);
 ipcMain.handle("model-chat-stream", chatStream);
+ipcMain.handle("zhc-chat-stream", chatStreamStateless);
 ipcMain.handle("model-chat-vision", chatWithVision);
 ipcMain.handle("model-reset-chat", () => {
-  if (modelSession) {
-    modelSession.resetChatHistory();
-    console.log("[LLM] Chat history reset");
-    return true;
-  }
-  return false;
+  chatHistory = [];
+  console.log("[LLM] Chat history reset");
+  return true;
+});
+ipcMain.handle("model-set-system-prompt", (_event, prompt) => {
+  currentSystemPrompt = (prompt && typeof prompt === "string") ? prompt : null;
+  chatHistory = [];
+  return true;
 });
 ipcMain.handle("model-check-mmproj", checkMmproj);
 ipcMain.handle("model-download-mmproj", downloadMmproj);
+
+/**
+ * Multi-instance llama-server pool — used by the Company feature when
+ * `execution.llm.mode === "parallel"`. Each company role can be bound
+ * to a specific model; the pool keeps several `llama-server` processes
+ * alive simultaneously (one per modelKey) up to a memory budget,
+ * evicting LRU when it overflows.
+ *
+ * Pool runs alongside the legacy single-instance `llamaServer.manager`
+ * — they don't share processes. The "main" model the user loaded via
+ * Chat tab keeps using the legacy manager; the pool only fires when
+ * a company explicitly asks for it.
+ */
+let _pool = null;
+async function _getPool() {
+  if (_pool) return _pool;
+  _pool = await import(path.join(__dirname, "..", "src", "services", "llamaServer.pool.js"))
+    .catch(() => import("file:///" + path.resolve("src/services/llamaServer.pool.js")));
+  if (_pool?.configure) _pool.configure({ resourcesPath: app.isPackaged ? process.resourcesPath : null });
+  return _pool;
+}
+
+ipcMain.handle("pool-configure", async (_event, opts) => {
+  const pool = await _getPool();
+  pool.configure(opts || {});
+  return { ok: true };
+});
+
+ipcMain.handle("pool-register-model", async (_event, opts) => {
+  const { modelKey, filename, sizeBytes, parameters, activeParameters, isMoE, context, parallelSlots, chatTemplate } = opts || {};
+  const pool = await _getPool();
+  const modelPath = path.join(MODEL_DIR, filename);
+  if (!fs.existsSync(modelPath)) {
+    return { ok: false, error: `model file not found: ${modelPath}` };
+  }
+  // Run the same memory-aware context heuristic the singleton uses so
+  // each pool instance respects per-model + per-system memory limits.
+  const sysInfo = await systemInformation();
+  const heuristicCtx = computeMaxContextForModel(
+    { filename, parameters, activeParameters, isMoE, context, mmproj: opts?.mmproj || null },
+    sysInfo,
+  );
+  const ctxSize = Math.min(heuristicCtx || 8192, context || heuristicCtx || 8192);
+  pool.registerModelPath(modelKey, modelPath, sizeBytes, {
+    ctxSize, parameters, activeParameters, isMoE, context, parallelSlots, chatTemplate,
+  });
+  return { ok: true, ctxSize };
+});
+
+ipcMain.handle("pool-chat", async (_event, opts) => {
+  const pool = await _getPool();
+  try {
+    const text = await pool.chat(opts);
+    return { ok: true, text };
+  } catch (err) {
+    return { ok: false, error: err.message };
+  }
+});
+
+ipcMain.handle("pool-ensure", async (_event, opts) => {
+  const { modelKey, filename, sizeBytes, parameters, activeParameters, isMoE, context, parallelSlots, chatTemplate } = opts || {};
+  const pool = await _getPool();
+  const modelPath = path.join(MODEL_DIR, filename);
+  if (!fs.existsSync(modelPath)) {
+    return { ok: false, error: `model file not found: ${modelPath}` };
+  }
+  const sysInfo = await systemInformation();
+  const heuristicCtx = computeMaxContextForModel(
+    { filename, parameters, activeParameters, isMoE, context },
+    sysInfo,
+  );
+  const ctxSize = Math.min(heuristicCtx || 8192, context || heuristicCtx || 8192);
+  pool.registerModelPath(modelKey, modelPath, sizeBytes, {
+    ctxSize, parameters, activeParameters, isMoE, context, parallelSlots, chatTemplate,
+  });
+  await pool.acquire({ modelKey, modelPath, sizeBytes, ctxSize, parallelSlots, chatTemplate });
+  return { ok: true, ctxSize };
+});
+
+ipcMain.handle("pool-inventory", async () => {
+  const pool = await _getPool();
+  return { ok: true, instances: pool.inventory(), totalBytes: pool.totalBytes(), budgetBytes: pool.budgetBytes() };
+});
+
+ipcMain.handle("pool-shutdown", async () => {
+  if (_pool) await _pool.shutdown();
+  return { ok: true };
+});
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Window creation
@@ -3875,7 +4041,7 @@ ipcMain.handle("synth-describe", async (_event, { mode, tier, html, css, js, tex
       console.log("[synth-describe] Clearing memory before model load...");
 
       // 1. Unload any existing LLM model
-      if (loadedModel || modelContext || modelSession) {
+      if (llamaServer.isRunning()) {
         await unloadModel();
       }
 
@@ -3905,22 +4071,16 @@ ipcMain.handle("synth-describe", async (_event, { mode, tier, html, css, js, tex
       console.log("[synth-describe] Qwen 2.5 Coder 7B loaded successfully");
     }
 
-    // Reset chat history so the full context window is available for the code.
-    // Without this, accumulated history from prior conversations fills the
-    // context and the model never sees the code content.
-    modelSession.resetChatHistory();
+    // Fresh context for the describe run — no accumulated history.
+    chatHistory = [];
     console.log("[synth-describe] Prompting with", promptText.length, "chars");
 
-    const result = await modelSession.prompt(promptText, {
+    const describeResult = await llamaServer.chat({
+      messages: [{ role: "user", content: promptText }],
       maxTokens: 1024,
       temperature: 0.2,
-      repeatPenalty: {
-        lastTokens: 256,
-        penalty: 1.3,
-        frequencyPenalty: 0.1,
-      },
     });
-    const rawOutput = result.trim();
+    const rawOutput = (describeResult.choices?.[0]?.message?.content ?? "").trim();
 
     // Strip any markdown formatting the LLM may have added
     let description = rawOutput
@@ -4723,26 +4883,133 @@ function resolveModelName(filename) {
   return filename.replace(/\.gguf$/i, "").replace(/-q\d.*$/i, "");
 }
 
-async function loadModel(_event, currentModel) {
-  if (!llama) {
-    throw new Error("LLM engine not initialized. Please restart the application.");
-  }
+/**
+ * Ensure a specific LLM is loaded and ready before a caller dispatches
+ * a chat request. Idempotent — short-circuits if the requested model is
+ * already loaded. Used by ZHC's dispatcher so company heartbeats can
+ * spawn their preferred model on demand without forcing the user to
+ * load a model in Generative Text first.
+ *
+ * Accepts either:
+ *   - a model key string like "llm_qwen_3_6_28b_reap_a3b_q4"
+ *   - a partial spec object { filename, parameters?, context?, mmproj? }
+ *
+ * Resolves keys via flagship.js's resolveLLM() to get a real filename +
+ * spec, runs the existing context-size heuristic, then routes through
+ * the same loadModel() the user-facing Generative Text flow uses.
+ *
+ * @returns {{ ok: boolean, port?: number, filename?: string, error?: string }}
+ */
+async function ensureModel(_event, modelOrKey) {
+  try {
+    let spec = null;
 
+    // Already loaded match → short-circuit. We compare on filename, the
+    // only field both code paths agree on.
+    if (typeof modelOrKey === "string") {
+      // Resolve the llm_* key → filename via flagship's resolver. Format:
+      // "llm_<baseKey>" or "llm_<baseKey>_q<tier>" (default tier = q4).
+      const m = modelOrKey.match(/^llm_(.+?)(?:_q(\d+))?$/);
+      if (!m) return { ok: false, error: `unrecognized model key: ${modelOrKey}` };
+      const baseKey = m[1];
+      const tier = m[2] ? `q${m[2]}` : "q4";
+
+      // Lazy import — flagship.js is large, don't drag it into hot paths.
+      let resolved = null;
+      try {
+        const flagship = await import(path.join(__dirname, "..", "src", "skills", "flagship.js"))
+          .catch(() => import("file:///" + path.resolve("src/skills/flagship.js")));
+        if (typeof flagship.resolveLLM === "function") {
+          resolved = flagship.resolveLLM(baseKey, tier);
+        }
+      } catch (err) {
+        return { ok: false, error: `flagship import failed: ${err.message}` };
+      }
+      if (!resolved?.filename) {
+        return { ok: false, error: `no resolveLLM match for "${baseKey}" tier=${tier}` };
+      }
+      spec = {
+        filename: resolved.filename,
+        parameters: resolved.parameters || resolved.activeParameters || null,
+        activeParameters: resolved.activeParameters || null,
+        isMoE: resolved.isMoE || false,
+        context: resolved.context || null,
+        mmproj: resolved.mmproj || null,
+        draftModel: resolved.draftModel || null,
+        flashAttention: resolved.flashAttention !== false,
+        parallelSlots: resolved.parallelSlots || 1,
+        enableThinking: resolved.enableThinking === true,
+      };
+    } else if (modelOrKey && typeof modelOrKey === "object") {
+      spec = modelOrKey;
+    } else {
+      return { ok: false, error: "ensureModel: pass a model key string or spec object" };
+    }
+
+    const requestedFilename = (spec.filename || "").toLowerCase();
+    if (!requestedFilename) return { ok: false, error: "no filename in spec" };
+
+    // Already loaded the right model? Done.
+    if (
+      llamaServer.isRunning() &&
+      currentLoadedModel?.filename?.toLowerCase() === requestedFilename
+    ) {
+      return {
+        ok: true,
+        filename: requestedFilename,
+        port: llamaServer.getActivePort(),
+        cached: true,
+      };
+    }
+
+    // Verify the file exists on disk before we try to spawn — surfaces a
+    // friendlier error than a llama-server start failure.
+    const onDisk = path.join(MODEL_DIR, normalizeModelFilename(spec.filename));
+    if (!fs.existsSync(onDisk)) {
+      return { ok: false, error: `model file not found on disk: ${onDisk}` };
+    }
+
+    // Delegate to the existing loadModel — it stops any active subprocess,
+    // computes context via the heuristic, and spawns llama-server.
+    await loadModel(null, spec);
+
+    return {
+      ok: true,
+      filename: requestedFilename,
+      port: llamaServer.getActivePort(),
+      cached: false,
+    };
+  } catch (err) {
+    console.error("[ensureModel] failed:", err);
+    return { ok: false, error: err.message || String(err) };
+  }
+}
+
+async function loadModel(_event, currentModel) {
   // Normalize string model keys to object form (e.g. from openclaw passing "llm_llama_3_1_8b")
   if (typeof currentModel === "string") {
     currentModel = { filename: currentModel };
   }
 
-  // Skip if the same model is already loaded (prevents HMR reload loops)
-  // Pass forceReload: true to bypass this guard (e.g. to recalculate context with current RAM)
+  // Skip if the same model is already loaded (prevents HMR reload loops).
+  // Pass forceReload: true to bypass this guard.
+  // Guard against the "both filenames empty = match" trap: if the incoming
+  // spec doesn't carry a filename we treat that as a different model and
+  // will refuse to short-circuit.
   const requestedFilename = (currentModel.filename || "").toLowerCase();
-  if (currentLoadedModel && modelSession && requestedFilename === (currentLoadedModel.filename || "").toLowerCase() && !currentModel.forceReload) {
+  const currentFilename = (currentLoadedModel?.filename || "").toLowerCase();
+  if (
+    requestedFilename &&
+    requestedFilename === currentFilename &&
+    currentLoadedModel &&
+    llamaServer.isRunning() &&
+    !currentModel.forceReload
+  ) {
     console.log(`[LLM] Model already loaded: ${requestedFilename}, skipping reload`);
     return true;
   }
 
   // Enrich model metadata from MODEL_SPECS if parameters/context are missing or invalid.
-  // This catches call sites that pass incomplete metadata (e.g. parameters: {}, or no parameters at all).
   if (!currentModel.parameters || typeof currentModel.parameters !== "number") {
     const filename = (currentModel.filename || "").toLowerCase();
     for (const [key, specs] of Object.entries(MODEL_SPECS)) {
@@ -4761,11 +5028,31 @@ async function loadModel(_event, currentModel) {
     }
   }
 
-  // Cleanup any existing model before loading a new one
-  // This is critical to free GPU memory, especially for large models like GLM
-  if (loadedModel || modelContext || modelSession) {
-    console.log("[LLM] Cleaning up existing model before loading new one...");
-    await unloadModel(null, { force: true });
+  // Stop any existing subprocess before loading a new one (frees GPU memory).
+  // Clear chatHistory, system prompt, and currentLoadedModel at this point —
+  // BEFORE the new spawn attempt — so a failed start can't leave stale turns
+  // or persona prompts in place that the next model would see as "prior
+  // context".
+  //
+  // Also invalidate the privacy-pipeline orchestrator's activeSession if
+  // the model is changing: without this, a subsequent inference-request in
+  // consumer+pipeline mode would "reuse" a session whose modelPath no
+  // longer matches the running subprocess, sending the new model prompts
+  // that still look like they belong to the old session.
+  if (llamaServer.isRunning()) {
+    console.log("[LLM] Stopping existing llama-server before loading new model...");
+    await llamaServer.stopModel();
+  }
+  if (currentLoadedModel && currentFilename !== requestedFilename) {
+    chatHistory = [];
+    currentSystemPrompt = null;
+    currentLoadedModel = null;
+    try {
+      const { cancelPipelineSession } = await getPipelineOrchestrator();
+      await cancelPipelineSession();
+    } catch (e) {
+      console.warn("[LLM] Failed to cancel pipeline session on swap:", e.message);
+    }
   }
 
   // Normalize filename to lowercase
@@ -4798,126 +5085,63 @@ async function loadModel(_event, currentModel) {
     }
   }
 
-  // Load model with or without mmproj
-  const loadOptions = { modelPath };
-  if (mmprojPath) {
-    loadOptions.mmproj = mmprojPath;
-  }
-  // Workaround: node-llama-cpp 3.16.x reports unifiedSize=0 on Apple Silicon Metal,
-  // causing its VRAM budget to reject models that actually fit in unified memory.
-  // Our own computeMaxContextForModel heuristic handles unified memory correctly.
-  if (llamaUnifiedMemoryBroken) {
-    loadOptions.ignoreMemorySafetyChecks = true;
+  // Optional speculative draft model (Qwen3 family only by default)
+  let draftPath = null;
+  if (currentModel.draftModel) {
+    const normalizedDraft = normalizeModelFilename(currentModel.draftModel);
+    const candidate = path.join(MODEL_DIR, normalizedDraft);
+    if (fs.existsSync(candidate)) {
+      draftPath = candidate;
+      console.log(`[LLM] Speculative decoding enabled with draft: ${normalizedDraft}`);
+    } else {
+      console.log(`[LLM] Speculative draft not found on disk, skipping: ${candidate}`);
+    }
   }
 
-  const model = await llama.loadModel(loadOptions);
-  loadedModel = model; // Store reference for proper disposal
-
+  // Decide on a memory-safe context size via the existing heuristic.
   const sysInfo = await systemInformation();
   const heuristicCtx = computeMaxContextForModel(currentModel, sysInfo);
   const modelMaxCtx = currentModel.context || 4096;
-  console.log("Model context: heuristic=%d, modelMax=%d", heuristicCtx, modelMaxCtx);
+  const ctxSize = Math.min(heuristicCtx || modelMaxCtx, modelMaxCtx);
+  console.log(`[LLM] Context: heuristic=${heuristicCtx}, modelMax=${modelMaxCtx}, using=${ctxSize}`);
 
-  // Standard context sizes to try, from largest to smallest.
-  // Start from the heuristic (memory-safe estimate), NOT the model's native max.
-  // createContext() can succeed at sizes that crash during inference because it
-  // only validates KV-cache allocation, not the compute buffers Metal needs.
-  const STANDARD_CONTEXT_SIZES = [
-    262144, 200000, 131072, 100000, 65536, 32768, 16384, 8192, 4096, 2048, 1024, 512,
-  ];
-  const contextSizesToTry = [heuristicCtx];
-  for (const size of STANDARD_CONTEXT_SIZES) {
-    if (size < heuristicCtx && !contextSizesToTry.includes(size)) {
-      contextSizesToTry.push(size);
-    }
-  }
+  // Launch llama-server.
+  const resourcesPath = app.isPackaged ? process.resourcesPath : null;
+  const { port } = await llamaServer.startModel({
+    modelPath,
+    mmprojPath,
+    draftPath,
+    ctxSize,
+    ngl: 99,
+    flashAttention: currentModel.flashAttention !== false,
+    parallelSlots: currentModel.parallelSlots || 1,
+    enableThinking: currentModel.enableThinking === true,
+  }, { resourcesPath });
 
-  // When unified memory reporting is broken, our own heuristic is more reliable
-  // than node-llama-cpp's internal check, so bypass its safety checks.
-  const contextOpts = llamaUnifiedMemoryBroken ? { ignoreMemorySafetyChecks: true } : {};
-  // Flash attention improves throughput on standard transformer attention.
-  // Some hybrid architectures (e.g. Qwen 3.5 DeltaNet) may not benefit or may
-  // perform worse — caller can pass flashAttention: false to opt out.
-  if (currentModel.flashAttention !== false) {
-    contextOpts.flashAttention = true;
-  }
-  contextOpts.batchSize = 2048;
-  console.log(`[LLM] Context options: flashAttention=${!!contextOpts.flashAttention}, batchSize=2048`);
-
-  let lastError = null;
-  for (const contextSize of contextSizesToTry) {
-    try {
-      console.log(`Trying context size: ${contextSize} (flashAttention: true, batchSize: 2048)`);
-      modelContext = await model.createContext({ contextSize, ...contextOpts });
-      console.log(`Successfully created context with size: ${contextSize} (flashAttention: ${!!contextOpts.flashAttention}, batchSize: ${contextOpts.batchSize || 'default'})`);
-      break;
-    } catch (err) {
-      console.log(`Context size ${contextSize} failed: ${err.message}`);
-      lastError = err;
-      // Continue to try smaller size
-    }
-  }
-
-  // Fallback: retry without flash attention if all attempts failed
-  if (!modelContext && contextOpts.flashAttention) {
-    console.log("[LLM] Retrying without flash attention...");
-    delete contextOpts.flashAttention;
-    for (const contextSize of contextSizesToTry) {
-      try {
-        console.log(`Trying context size: ${contextSize} (no flash attention)`);
-        modelContext = await model.createContext({ contextSize, ...contextOpts });
-        console.log(`Successfully created context with size: ${contextSize} (no flash attention)`);
-        break;
-      } catch (err) {
-        console.log(`Context size ${contextSize} failed: ${err.message}`);
-        lastError = err;
-      }
-    }
-  }
-
-  if (!modelContext) {
-    throw lastError || new Error("Failed to create model context");
-  }
-
-  // Detect model type and use appropriate chat wrapper
-  const lowerFilename = normalizedFilename.toLowerCase();
-  const isMythoMax = lowerFilename.includes('mythomax');
-  const isAlpacaModel = isMythoMax || lowerFilename.includes('alpaca');
-  let sessionOptions = {
-    contextSequence: modelContext.getSequence(),
-  };
-
-  if (isAlpacaModel) {
-    console.log("[LLM] Using Alpaca chat template for model:", normalizedFilename);
-    sessionOptions.chatWrapper = new TemplateChatWrapper({
-      template: "{{systemPrompt}}\n\n{{history}}### Instruction:\n{{completion}}\n\n### Response:\n",
-      historyTemplate: {
-        system: "{{message}}\n\n",
-        user: "### Instruction:\n{{message}}\n\n### Response:\n",
-        model: "{{message}}\n\n"
-      },
-      joinAdjacentMessagesOfTheSameType: false,
-    });
-  }
-
-  modelSession = new LlamaChatSession(sessionOptions);
-
-  // Store current model info for multimodal checks
   currentLoadedModel = {
     ...currentModel,
     isMultimodal: !!mmprojPath,
+    port,
   };
+  chatHistory = [];
 
-  console.log(`Model loaded: ${currentModel.filename}, multimodal: ${!!mmprojPath}`);
+  console.log(`Model loaded: ${currentModel.filename} on :${port}, multimodal: ${!!mmprojPath}`);
 
-  // Notify renderer of model change
   if (mainWindow && !mainWindow.isDestroyed()) {
+    // pipelineMode reflects the current routing mode so the bottom bar
+    // keeps showing the "pipeline" tag across model swaps. Without this,
+    // swapping models in consumer+pipeline mode would temporarily drop the
+    // tag until the next inference re-asserts it.
+    const networkMode = store.get("p2p.networkMode", "local");
+    const pipelineEnabled = store.get("p2p.pipeline.enabled", false);
+    const pipelineMode = networkMode === "consumer" && pipelineEnabled;
     mainWindow.webContents.send("model-changed", {
       filename: currentModel.filename,
       modelname: currentModel.modelname || resolveModelName(currentModel.filename),
       parameters: currentModel.parameters,
       context: currentModel.context,
       isMultimodal: !!mmprojPath,
+      pipelineMode,
     });
   }
 
@@ -4965,135 +5189,178 @@ function checkModel(_event, modelname) {
   return true;
 }
 
+function _buildMessages(userMessage) {
+  const msgs = [];
+  if (currentSystemPrompt) msgs.push({ role: "system", content: currentSystemPrompt });
+  msgs.push(...chatHistory);
+  msgs.push({ role: "user", content: userMessage });
+  return msgs;
+}
+
 async function chat(_event, input) {
-  if (!modelSession) {
-    throw new Error("Model not loaded");
+  if (!llamaServer.isRunning()) {
+    const ready = await ensureLocalLLMReady();
+    if (!ready) throw new Error("Model not loaded");
   }
 
-  const userMessage = input.message;
-  const maxTokens = input.maxTokens || 2048;
-  const temperature = input.temperature;
-  const thoughtTokens = input.thoughtTokens;
-  const returnMetadata = input.returnMetadata;
-
-  let tokenCount = 0;
-  let firstTokenTime = null;
-  const promptOpts = { maxTokens, seed: Math.floor(Math.random() * 2147483647) };
-  if (temperature !== undefined) promptOpts.temperature = temperature;
-  // Budget-level thinking control: cap thinking tokens (0 = no thinking)
-  if (thoughtTokens !== undefined) {
-    promptOpts.budgets = { thoughtTokens };
-  }
-  // Count output tokens and measure from first token (excludes prefill)
-  if (returnMetadata) {
-    promptOpts.onToken = (tokens) => {
-      if (!firstTokenTime) firstTokenTime = Date.now();
-      tokenCount += Array.isArray(tokens) ? tokens.length : 1;
-    };
-  }
+  const userMessage = typeof input === "string" ? input : input.message;
+  const maxTokens = (typeof input === "object" && input.maxTokens) || 2048;
+  const temperature = typeof input === "object" ? input.temperature : undefined;
+  const returnMetadata = typeof input === "object" && input.returnMetadata;
 
   const startTime = Date.now();
-  const assistantMessage = await modelSession.prompt(userMessage, promptOpts);
-  // Generation time = first token → last token (excludes prompt prefill)
-  const generationMs = firstTokenTime ? Date.now() - firstTokenTime : Date.now() - startTime;
-  const prefillMs = firstTokenTime ? firstTokenTime - startTime : 0;
+  const result = await llamaServer.chat({
+    messages: _buildMessages(userMessage),
+    temperature,
+    maxTokens,
+    seed: Math.floor(Math.random() * 2147483647),
+  });
+
+  const assistantMessage = result.choices?.[0]?.message?.content ?? "";
+  chatHistory.push({ role: "user", content: userMessage });
+  chatHistory.push({ role: "assistant", content: assistantMessage });
 
   if (returnMetadata) {
-    return { text: assistantMessage, tokenCount, elapsedMs: generationMs, prefillMs };
+    const usage = result.usage || {};
+    const elapsedMs = Date.now() - startTime;
+    return {
+      text: assistantMessage,
+      tokenCount: usage.completion_tokens || 0,
+      elapsedMs,
+      prefillMs: 0, // llama-server doesn't expose prefill separately by default
+    };
   }
   return assistantMessage;
 }
 
-async function chatStream(event, input) {
-  if (!modelSession) {
-    throw new Error("Model not loaded");
+/**
+ * Stateless streaming chat for ZHC dispatcher use. Same wire shape as
+ * chatStream but:
+ *   - DOES NOT mutate the global chatHistory (ZHC ticks are stateless
+ *     one-shot completions; polluting chatHistory would corrupt the
+ *     user's Generative Text session).
+ *   - Emits tokens on a separate IPC channel "zhc-chat-token" tagged
+ *     with the caller's streamId so concurrent ZHC streams don't
+ *     interleave each other or with Generative Text.
+ *   - Returns the full assistant message string on completion.
+ */
+async function chatStreamStateless(event, input) {
+  if (!llamaServer.isRunning()) {
+    const ready = await ensureLocalLLMReady();
+    if (!ready) throw new Error("Model not loaded");
   }
 
-  let userMessage, maxTokens, temperature, thoughtTokens;
-  if (typeof input === 'string') {
+  const userMessage = input?.message;
+  const streamId = input?.streamId;
+  const maxTokens = input?.maxTokens || 2048;
+  const temperature = input?.temperature;
+  const enableThinking = typeof input?.enableThinking === "boolean" ? input.enableThinking : undefined;
+
+  if (!streamId) throw new Error("chatStreamStateless: streamId required");
+
+  const win = BrowserWindow.fromWebContents(event.sender);
+  const messages = [];
+  if (currentSystemPrompt) messages.push({ role: "system", content: currentSystemPrompt });
+  messages.push({ role: "user", content: userMessage });
+
+  return await llamaServer.chatStream(
+    {
+      messages,
+      temperature,
+      maxTokens,
+      seed: Math.floor(Math.random() * 2147483647),
+      enableThinking,
+    },
+    (chunk) => {
+      if (win && !win.isDestroyed()) {
+        event.sender.send("zhc-chat-token", { streamId, chunk });
+      }
+    },
+  );
+}
+
+async function chatStream(event, input) {
+  if (!llamaServer.isRunning()) {
+    const ready = await ensureLocalLLMReady();
+    if (!ready) throw new Error("Model not loaded");
+  }
+
+  let userMessage, maxTokens, temperature, enableThinking;
+  if (typeof input === "string") {
     userMessage = input;
     maxTokens = 2048;
-    temperature = undefined;
-    thoughtTokens = undefined;
   } else {
     userMessage = input.message;
     maxTokens = input.maxTokens || 2048;
     temperature = input.temperature;
-    thoughtTokens = input.thoughtTokens;
+    // Per-request override of the chat template's `enable_thinking` var.
+    // Live toggling — no model reload needed.
+    if (typeof input.enableThinking === "boolean") {
+      enableThinking = input.enableThinking;
+    }
   }
 
-  const promptOpts = {
-    maxTokens,
-    seed: Math.floor(Math.random() * 2147483647),
-    onTextChunk(chunk) {
-      // Send each token/chunk to the renderer
-      const win = BrowserWindow.fromWebContents(event.sender);
+  const win = BrowserWindow.fromWebContents(event.sender);
+  const assistantMessage = await llamaServer.chatStream(
+    {
+      messages: _buildMessages(userMessage),
+      temperature,
+      maxTokens,
+      seed: Math.floor(Math.random() * 2147483647),
+      enableThinking,
+    },
+    (chunk) => {
       if (win && !win.isDestroyed()) {
         event.sender.send("chat-token", chunk);
       }
     },
-  };
-  if (temperature !== undefined) promptOpts.temperature = temperature;
-  if (thoughtTokens !== undefined) {
-    promptOpts.budgets = { thoughtTokens };
-  }
+  );
 
-  const assistantMessage = await modelSession.prompt(userMessage, promptOpts);
+  chatHistory.push({ role: "user", content: userMessage });
+  chatHistory.push({ role: "assistant", content: assistantMessage });
   return assistantMessage;
 }
 
 async function unloadModel(_event, { force } = {}) {
   // "Always loaded" guard: skip unload unless forced (hot-swap) or user-initiated
-  if (!force && alwaysLoadedEnabled && loadedModel) {
+  if (!force && alwaysLoadedEnabled && llamaServer.isRunning()) {
     console.log("[LLM] Skipping unload — always-loaded is enabled. Use force=true to hot-swap.");
     return false;
   }
-  if (modelSession) {
-    console.log("[LLM] Unloading model session...");
-    modelSession = undefined;
-  }
-  if (modelContext) {
-    console.log("[LLM] Disposing model context...");
-    await modelContext.dispose();
-    modelContext = undefined;
-  }
-  // CRITICAL: Dispose the actual model object to release GPU memory
-  // This is especially important for large models like GLM before running vision
-  if (loadedModel) {
-    console.log("[LLM] Disposing model to free GPU memory...");
-    try {
-      await loadedModel.dispose();
-    } catch (e) {
-      console.warn("[LLM] Model dispose warning:", e.message);
-    }
-    loadedModel = undefined;
+
+  if (llamaServer.isRunning()) {
+    console.log("[LLM] Stopping llama-server to free GPU memory...");
+    await llamaServer.stopModel();
   }
   currentLoadedModel = null;
+  chatHistory = [];
 
-  // Force garbage collection if available
-  if (global.gc) {
-    global.gc();
-  }
+  if (global.gc) global.gc();
 
-  // Give GPU time to release memory before vision model loads
-  await new Promise(resolve => setTimeout(resolve, 500));
-
+  // Give GPU time to release memory before a follow-up load
+  await new Promise((resolve) => setTimeout(resolve, 300));
   console.log("[LLM] Model unloaded successfully");
 
-  // Notify renderer of model unload
   if (mainWindow && !mainWindow.isDestroyed()) {
     mainWindow.webContents.send("model-changed", null);
   }
-
   return true;
 }
 
-// Vision chat is handled server-side via /vision/analyze — this stub remains for IPC compat
+// Vision chat routes through llama-server when the currently loaded model was
+// started with --mmproj. The Flask /vision/analyze endpoint remains available
+// as a fallback path for models that have no GGUF mmproj (e.g. Qwen3-VL on
+// Python stack).
 async function chatWithVision(_event, { message, imageBase64 }) {
-  throw new Error(
-    "Vision has been moved to server-side. " +
-    "Use the /vision/analyze endpoint on the diffuser server instead."
-  );
+  if (!llamaServer.isRunning()) {
+    throw new Error("Model not loaded. Load a multimodal GGUF (with mmproj) first.");
+  }
+  if (!currentLoadedModel?.isMultimodal) {
+    throw new Error(
+      "Current model is not multimodal. Load a GGUF with an mmproj asset, or hit the Flask /vision/analyze endpoint for Python-side vision.",
+    );
+  }
+  return llamaServer.chatVision({ message, imageBase64 });
 }
 
 // Check if mmproj file exists for multimodal GGUF models
@@ -5193,7 +5460,7 @@ function startOpenClawAPIServer() {
       res.writeHead(200, { "Content-Type": "application/json" });
       res.end(JSON.stringify({
         status: "ok",
-        llmLoaded: !!loadedModel,
+        llmLoaded: llamaServer.isRunning(),
         modelName: currentLoadedModel?.filename || null,
         flaskPort: PY_SERVER_PORT,
         companions: companions.length,
@@ -5438,9 +5705,8 @@ function startOpenClawAPIServer() {
             return;
           }
 
-          console.log(`[OpenAI API] modelSession exists: ${!!modelSession}`);
-          if (!modelSession) {
-            console.log(`[OpenAI API] No model session, returning 503`);
+          if (!llamaServer.isRunning()) {
+            console.log(`[OpenAI API] No model loaded, returning 503`);
             res.writeHead(503, { "Content-Type": "application/json" });
             res.end(JSON.stringify({
               error: { message: "No model loaded. Please load a model in BonzAI first.", type: "server_error" }
@@ -5448,129 +5714,40 @@ function startOpenClawAPIServer() {
             return;
           }
 
-          // Map any model name (bonzai-sovereign, local, etc.) to the currently loaded model
+          // Transparent proxy to the llama-server subprocess. This preserves
+          // every OpenAI feature (tool_calls, json_mode, logprobs, vision
+          // via image_url, etc.) without us re-implementing them. We rewrite
+          // the `model` field to match whichever GGUF is actually loaded.
           const actualModel = currentLoadedModel?.filename || "unknown";
-          console.log(`[OpenAI API] Request for model "${model}" -> using loaded model "${actualModel}"`);
+          const upstreamBody = { ...parsed, model: actualModel };
 
-          // Convert OpenAI messages format to a single prompt
-          // Format: system message as context, then conversation history
-          let prompt = "";
-          for (const msg of messages) {
-            if (msg.role === "system") {
-              prompt += `${msg.content}\n\n`;
-            } else if (msg.role === "user") {
-              prompt += `User: ${msg.content}\n`;
-            } else if (msg.role === "assistant") {
-              prompt += `Assistant: ${msg.content}\n`;
+          const upstream = await llamaServer.proxyRequest("/v1/chat/completions", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(upstreamBody),
+          });
+
+          res.writeHead(upstream.status, Object.fromEntries(upstream.headers.entries()));
+
+          if (!upstream.body) {
+            res.end();
+            return;
+          }
+
+          const reader = upstream.body.getReader();
+          while (true) {
+            const { value, done } = await reader.read();
+            if (done) break;
+            if (!res.write(Buffer.from(value))) {
+              await new Promise((resolve) => res.once("drain", resolve));
             }
           }
-          prompt += "Assistant:";
-
-          const responseId = `chatcmpl-${Date.now()}`;
-          console.log(`[OpenAI API] Processing ${messages.length} messages, stream=${!!stream}`);
-
-          if (stream) {
-            // Streaming response using Server-Sent Events
-            res.writeHead(200, {
-              "Content-Type": "text/event-stream",
-              "Cache-Control": "no-cache",
-              "Connection": "keep-alive",
-            });
-
-            // Send immediate initial chunk to establish the stream
-            const initialChunk = {
-              id: responseId,
-              object: "chat.completion.chunk",
-              created: Math.floor(Date.now() / 1000),
-              model: actualModel,
-              choices: [{
-                index: 0,
-                delta: { role: "assistant", content: "" },
-                finish_reason: null,
-              }],
-            };
-            res.write(`data: ${JSON.stringify(initialChunk)}\n\n`);
-
-            // Use true token-by-token streaming from node-llama-cpp
-            console.log(`[OpenAI API] Starting streaming response for ${prompt.length} char prompt...`);
-
-            let tokenCount = 0;
-            try {
-              // Use the prompt method with onTextChunk for true streaming
-              await modelSession.prompt(prompt, {
-                onTextChunk: (chunk) => {
-                  tokenCount++;
-                  if (tokenCount === 1) {
-                    console.log(`[OpenAI API] First token received, streaming started`);
-                  }
-                  const chunkData = {
-                    id: responseId,
-                    object: "chat.completion.chunk",
-                    created: Math.floor(Date.now() / 1000),
-                    model: actualModel,
-                    choices: [{
-                      index: 0,
-                      delta: { content: chunk },
-                      finish_reason: null,
-                    }],
-                  };
-                  res.write(`data: ${JSON.stringify(chunkData)}\n\n`);
-                }
-              });
-
-              console.log(`[OpenAI API] Streaming complete, ${tokenCount} chunks sent`);
-
-              // Send final chunk
-              const finalChunk = {
-                id: responseId,
-                object: "chat.completion.chunk",
-                created: Math.floor(Date.now() / 1000),
-                model: actualModel,
-                choices: [{
-                  index: 0,
-                  delta: {},
-                  finish_reason: "stop",
-                }],
-              };
-              res.write(`data: ${JSON.stringify(finalChunk)}\n\n`);
-              res.write("data: [DONE]\n\n");
-              res.end();
-            } catch (streamError) {
-              console.error(`[OpenAI API] Streaming error:`, streamError);
-              if (!res.writableEnded) {
-                res.end();
-              }
-            }
-          } else {
-            // Non-streaming response
-            const response = await modelSession.prompt(prompt);
-
-            res.writeHead(200, { "Content-Type": "application/json" });
-            res.end(JSON.stringify({
-              id: responseId,
-              object: "chat.completion",
-              created: Math.floor(Date.now() / 1000),
-              model: actualModel,
-              choices: [
-                {
-                  index: 0,
-                  message: {
-                    role: "assistant",
-                    content: response,
-                  },
-                  finish_reason: "stop",
-                },
-              ],
-              usage: {
-                prompt_tokens: prompt.length,
-                completion_tokens: response.length,
-                total_tokens: prompt.length + response.length,
-              },
-            }));
-          }
+          res.end();
         } catch (error) {
           console.error("[OpenAI API] Chat completions error:", error);
-          res.writeHead(500, { "Content-Type": "application/json" });
+          if (!res.headersSent) {
+            res.writeHead(500, { "Content-Type": "application/json" });
+          }
           res.end(JSON.stringify({
             error: { message: error.message, type: "server_error" }
           }));
@@ -5600,13 +5777,16 @@ function startOpenClawAPIServer() {
             return;
           }
 
-          if (!modelSession) {
+          if (!llamaServer.isRunning()) {
             res.writeHead(503, { "Content-Type": "application/json" });
             res.end(JSON.stringify({ error: "LLM not loaded. Load a model first." }));
             return;
           }
 
-          const response = await modelSession.prompt(prompt);
+          const completion = await llamaServer.chat({
+            messages: [{ role: "user", content: prompt }],
+          });
+          const response = completion.choices?.[0]?.message?.content ?? "";
 
           res.writeHead(200, { "Content-Type": "application/json" });
           res.end(JSON.stringify({ success: true, response }));
@@ -5656,9 +5836,9 @@ function startOpenClawAPIServer() {
     if (req.method === "GET" && url.pathname === "/api/llm/info") {
       res.writeHead(200, { "Content-Type": "application/json" });
       res.end(JSON.stringify({
-        loaded: !!loadedModel,
+        loaded: llamaServer.isRunning(),
         modelName: currentLoadedModel?.filename || null,
-        hasSession: !!modelSession,
+        hasSession: llamaServer.isRunning(),
       }));
       return;
     }

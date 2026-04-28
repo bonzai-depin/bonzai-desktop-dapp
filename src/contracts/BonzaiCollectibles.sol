@@ -34,6 +34,7 @@ interface ICreatorToken {
  */
 interface IBonzaiMintPool {
     function depositForPool(uint8 poolIndex) external payable;
+    function recordMint(address wallet, uint8 poolIndex) external;
 }
 
 /**
@@ -42,6 +43,19 @@ interface IBonzaiMintPool {
  */
 interface IBonzaiUnlock {
     function hasUnlocked(address user) external view returns (bool);
+}
+
+/**
+ * @title IBonzaiCollectiblesFactory
+ * @notice Interface clones use to read protocol-level addresses (mintPool,
+ *         royaltySplitter, unlockContract) at runtime. Centralising these on
+ *         the factory means clone owners (regular users) can't redirect them.
+ */
+interface IBonzaiCollectiblesFactory {
+    function mintPool() external view returns (address);
+    function royaltySplitter() external view returns (address);
+    function unlockContract() external view returns (address);
+    function originalCreatorRoyaltyBps() external view returns (uint256);
 }
 
 /**
@@ -63,17 +77,18 @@ interface IBonzaiUnlock {
  */
 contract BonzaiCollectibles is ERC721URIStorage, Ownable, ReentrancyGuard, IERC2981, ICreatorToken {
     uint256 private _tokenIdCounter;
-    uint256 public mintFee = 0.0025 ether; // legacy default, used if mintFees[type] == 0
     address public treasury;
 
-    /// @notice Per-content-type mint fees (natural LVL progression)
-    /// 0=text 0.0005, 1=audio 0.001, 2=image 0.0015, 3=video 0.0025, 4=3D 0.0035, 5=training 0.005
+    /// @notice Per-content-type mint fees (natural LVL progression).
+    ///         0=text 0.0005  1=audio 0.001  2=image 0.0015
+    ///         3=video 0.0025 4=3D    0.0035 5=training 0.005
     mapping(uint8 => uint256) public mintFees;
-    address public mintPool;
-    address public royaltySplitter;
 
-    /// @notice BonzaiUnlock contract — unlocked users mint for free
-    IBonzaiUnlock public unlockContract;
+    /// @notice The factory that deployed this clone. Source of truth for
+    ///         mintPool / royaltySplitter / unlockContract — clone reads
+    ///         these via the factory at runtime so clone owners (users) can
+    ///         never redirect protocol-level destinations.
+    address public factory;
 
     /// @notice The user who owns this collection — only they can mint
     address public collectionOwner;
@@ -82,8 +97,8 @@ contract BonzaiCollectibles is ERC721URIStorage, Ownable, ReentrancyGuard, IERC2
     uint256 public treasuryBps = 8000;  // 80%
     uint256 public poolBps = 2000;      // 20%
 
-    /// @notice Royalty percentage in basis points (7.5%)
-    uint256 public royaltyBps = 750;
+    /// @notice Royalty percentage in basis points (default 2.5%, set by factory).
+    uint256 public royaltyBps = 250;
 
     /// @notice ERC721-C Transfer Validator address
     address private _transferValidator;
@@ -112,15 +127,11 @@ contract BonzaiCollectibles is ERC721URIStorage, Ownable, ReentrancyGuard, IERC2
         uint256 timestamp
     );
 
-    event MintPoolUpdated(address indexed oldPool, address indexed newPool);
-    event RoyaltySplitterUpdated(address indexed oldSplitter, address indexed newSplitter);
     event SplitBpsUpdated(uint256 treasuryBps, uint256 poolBps);
     event PoolDepositFailed(address indexed mintPool, uint8 contentType, uint256 amount);
     event MintFeeUpdated(uint8 indexed contentType, uint256 oldFee, uint256 newFee);
-    event UnlockContractUpdated(address indexed oldUnlock, address indexed newUnlock);
     event TreasuryUpdated(address indexed oldTreasury, address indexed newTreasury);
     event RoyaltyBpsUpdated(uint256 oldBps, uint256 newBps);
-    event LegacyMintFeeUpdated(uint256 oldFee, uint256 newFee);
 
     /**
      * @dev Constructor sets defaults for the implementation contract.
@@ -137,22 +148,18 @@ contract BonzaiCollectibles is ERC721URIStorage, Ownable, ReentrancyGuard, IERC2
      * @param _owner The collection owner (user who will mint into this collection)
      * @param _name Custom collection name
      * @param _treasury Treasury address for fee splits
-     * @param _mintPool MintPool contract address
-     * @param _royaltySplitter RoyaltySplitter contract address
-     * @param _factory Factory contract address (caller validation)
+     * @param _factory Factory contract address (caller validation + source of
+     *                 mintPool / royaltySplitter / unlockContract addresses)
      */
     function initialize(
         address _owner,
         string calldata _name,
         address _treasury,
-        address _mintPool,
-        address _royaltySplitter,
         address _factory
     ) external {
         require(!_initialized, "Already initialized");
-        // Only the factory (or the first caller before any factory is known) can initialize.
-        // This prevents front-running of clone initialization.
-        require(_factory == address(0) || msg.sender == _factory, "Only factory can initialize");
+        // Only the factory can initialize.
+        require(_factory != address(0) && msg.sender == _factory, "Only factory can initialize");
         _initialized = true;
 
         require(_owner != address(0), "Invalid owner");
@@ -161,14 +168,12 @@ contract BonzaiCollectibles is ERC721URIStorage, Ownable, ReentrancyGuard, IERC2
         _collectionName = _name;
         collectionOwner = _owner;
         treasury = _treasury;
-        mintPool = _mintPool;
-        royaltySplitter = _royaltySplitter;
+        factory = _factory;
 
-        // Set default values (clones don't run constructor, so storage starts zeroed)
-        mintFee = 0.0025 ether;
+        // Default split + royalty config (clones skip constructor)
         treasuryBps = 8000;
         poolBps = 2000;
-        royaltyBps = 750;
+        royaltyBps = 250; // 2.5% — full royalty routes to original creator
 
         // Per-type mint fees (natural LVL1→LVL6 progression)
         mintFees[0] = 0.0005 ether;   // text   (LVL1)
@@ -180,6 +185,22 @@ contract BonzaiCollectibles is ERC721URIStorage, Ownable, ReentrancyGuard, IERC2
 
         // Transfer ownership from address(0) to _owner
         _transferOwnership(_owner);
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // FACTORY-BACKED ADDRESS READERS (clone owners cannot redirect these)
+    // ─────────────────────────────────────────────────────────────────────────
+
+    function mintPool() public view returns (address) {
+        return factory == address(0) ? address(0) : IBonzaiCollectiblesFactory(factory).mintPool();
+    }
+
+    function royaltySplitter() public view returns (address) {
+        return factory == address(0) ? address(0) : IBonzaiCollectiblesFactory(factory).royaltySplitter();
+    }
+
+    function _unlockAddr() internal view returns (address) {
+        return factory == address(0) ? address(0) : IBonzaiCollectiblesFactory(factory).unlockContract();
     }
 
     /**
@@ -216,58 +237,31 @@ contract BonzaiCollectibles is ERC721URIStorage, Ownable, ReentrancyGuard, IERC2
         require(msg.sender == collectionOwner, "Only collection owner can mint");
         require(contentType_ <= 5, "Invalid content type");
 
+        // Resolve protocol-level addresses from factory (clone owner cannot
+        // forge these). All three may be address(0) early in deploy.
+        address poolAddr = mintPool();
+        address unlockAddr = _unlockAddr();
+
         // Unlocked users (paid 1 ETH via BonzaiUnlock) mint for free
         bool isUnlocked = false;
-        if (address(unlockContract) != address(0)) {
-            try unlockContract.hasUnlocked(msg.sender) returns (bool result) {
+        if (unlockAddr != address(0)) {
+            try IBonzaiUnlock(unlockAddr).hasUnlocked(msg.sender) returns (bool result) {
                 isUnlocked = result;
             } catch {
                 // Unlock contract unavailable — charge normal fee
             }
         }
 
-        // Use per-type fee if set, otherwise fall back to legacy flat fee
-        uint256 fee = isUnlocked ? 0 : (mintFees[contentType_] > 0 ? mintFees[contentType_] : mintFee);
+        // Per-type fee always seeded in initialize. Unlocked users mint free.
+        uint256 fee = isUnlocked ? 0 : mintFees[contentType_];
         require(msg.value >= fee, "Insufficient mint fee");
 
-        // Split fee: treasuryBps% to treasury, poolBps% to content-type pool
-        // All ETH transfers happen BEFORE _safeMint to prevent reentrancy
-        // via onERC721Received callback.
-        uint256 treasuryAmt = (fee * treasuryBps) / 10000;
-        uint256 poolAmt = fee - treasuryAmt;
-
-        // treasury is guaranteed != address(0) by initialize and setTreasury
-        (bool s1, ) = treasury.call{value: treasuryAmt}("");
-        require(s1, "Treasury transfer failed");
-
-        if (mintPool != address(0) && poolAmt > 0) {
-            try IBonzaiMintPool(mintPool).depositForPool{value: poolAmt}(contentType_) {
-                // Pool deposit succeeded
-            } catch {
-                // Pool reverted — fallback to treasury so minting is never blocked
-                emit PoolDepositFailed(mintPool, contentType_, poolAmt);
-                (bool s2, ) = treasury.call{value: poolAmt}("");
-                require(s2, "Fallback treasury transfer failed");
-            }
-        } else if (poolAmt > 0) {
-            // Pool not configured — send pool share to treasury
-            (bool s2, ) = treasury.call{value: poolAmt}("");
-            require(s2, "Fallback treasury transfer failed");
-        }
-
-        // Refund excess ETH to minter
-        uint256 excess = msg.value - fee;
-        if (excess > 0) {
-            (bool refunded, ) = msg.sender.call{value: excess}("");
-            require(refunded, "ETH refund failed");
-        }
-
-        // Mint token AFTER all ETH transfers are complete
+        // ─── STATE CHANGES FIRST ─────────────────────────────────────────
+        // Mint the NFT and write provenance BEFORE any ETH leaves the
+        // contract. ReentrancyGuard already blocks re-entry via
+        // onERC721Received, so this ordering is safe.
         _tokenIdCounter++;
         uint256 tokenId = _tokenIdCounter;
-
-        _safeMint(msg.sender, tokenId);
-        _setTokenURI(tokenId, tokenURI_);
 
         provenance[tokenId] = Provenance({
             transactionId: transactionId,
@@ -277,25 +271,70 @@ contract BonzaiCollectibles is ERC721URIStorage, Ownable, ReentrancyGuard, IERC2
             contentType: contentType_
         });
 
+        _safeMint(msg.sender, tokenId);
+        _setTokenURI(tokenId, tokenURI_);
+
         emit ContentMinted(tokenId, msg.sender, transactionId, model, block.timestamp);
+
+        // ─── ETH TRANSFERS AFTER STATE WRITES ────────────────────────────
+        if (fee > 0) {
+            uint256 treasuryAmt = (fee * treasuryBps) / 10000;
+            uint256 poolAmt = fee - treasuryAmt;
+
+            (bool s1, ) = treasury.call{value: treasuryAmt}("");
+            require(s1, "Treasury transfer failed");
+
+            if (poolAddr != address(0) && poolAmt > 0) {
+                try IBonzaiMintPool(poolAddr).depositForPool{value: poolAmt}(contentType_) {
+                    // Pool deposit succeeded
+                } catch {
+                    emit PoolDepositFailed(poolAddr, contentType_, poolAmt);
+                    (bool s2, ) = treasury.call{value: poolAmt}("");
+                    require(s2, "Fallback treasury transfer failed");
+                }
+            } else if (poolAmt > 0) {
+                (bool s2, ) = treasury.call{value: poolAmt}("");
+                require(s2, "Fallback treasury transfer failed");
+            }
+        }
+
+        // ─── ACTIVITY HOOK (M4: must succeed for mint to be valid) ───────
+        // The activity gate is load-bearing for holder rewards. If the mint
+        // pool can't record the activity, the user wouldn't be able to
+        // claim — better to revert here so the user knows the mint is
+        // unhealthy and protocol state stays consistent.
+        if (poolAddr != address(0)) {
+            IBonzaiMintPool(poolAddr).recordMint(msg.sender, contentType_);
+        }
+
+        // Refund excess ETH to minter
+        uint256 excess = msg.value - fee;
+        if (excess > 0) {
+            (bool refunded, ) = msg.sender.call{value: excess}("");
+            require(refunded, "ETH refund failed");
+        }
 
         return tokenId;
     }
 
     // ═══════════════════════════════════════════════════════════════════════════
-    // ERC-2981 ROYALTIES (7.5% total for secondary sales)
+    // ERC-2981 ROYALTIES (2.5% — 100% to original creator on secondary sales)
     // ═══════════════════════════════════════════════════════════════════════════
 
     /**
-     * @notice ERC-2981 royalty info — 7.5% to royalty splitter (or treasury fallback)
+     * @notice ERC-2981 royalty info — 2.5% to the original creator of the token.
+     * @dev Per-token attribution: each NFT's royalty goes to whoever minted it,
+     *      forever, regardless of subsequent owners. Treasury is the fallback
+     *      only if provenance is missing (shouldn't happen for valid tokens).
      */
-    function royaltyInfo(uint256, uint256 salePrice)
+    function royaltyInfo(uint256 tokenId, uint256 salePrice)
         external
         view
         override
         returns (address receiver, uint256 royaltyAmount)
     {
-        receiver = royaltySplitter != address(0) ? royaltySplitter : treasury;
+        address creator = provenance[tokenId].originalCreator;
+        receiver = creator != address(0) ? creator : treasury;
         royaltyAmount = (salePrice * royaltyBps) / 10000;
     }
 
@@ -383,12 +422,11 @@ contract BonzaiCollectibles is ERC721URIStorage, Ownable, ReentrancyGuard, IERC2
     // ADMIN FUNCTIONS
     // ═══════════════════════════════════════════════════════════════════════════
 
-    function setMintFee(uint256 _fee) external onlyOwner {
-        require(_fee > 0, "Fee cannot be zero");
-        uint256 old = mintFee;
-        mintFee = _fee;
-        emit LegacyMintFeeUpdated(old, _fee);
-    }
+    // ─────────────────────────────────────────────────────────────────────
+    // Per-clone admin: limited to fields that DON'T affect protocol-level
+    // economics. mintPool, royaltySplitter, unlockContract are read live
+    // from the factory — clone owners cannot redirect them.
+    // ─────────────────────────────────────────────────────────────────────
 
     function setMintFeeForType(uint8 contentType, uint256 _fee) external onlyOwner {
         require(contentType <= 5, "Invalid content type");
@@ -405,20 +443,9 @@ contract BonzaiCollectibles is ERC721URIStorage, Ownable, ReentrancyGuard, IERC2
         emit TreasuryUpdated(old, _treasury);
     }
 
-    function setMintPool(address _pool) external onlyOwner {
-        address old = mintPool;
-        mintPool = _pool;
-        emit MintPoolUpdated(old, _pool);
-    }
-
-    function setRoyaltySplitter(address _splitter) external onlyOwner {
-        address old = royaltySplitter;
-        royaltySplitter = _splitter;
-        emit RoyaltySplitterUpdated(old, _splitter);
-    }
-
     function setSplitBps(uint256 _treasuryBps, uint256 _poolBps) external onlyOwner {
         require(_treasuryBps + _poolBps == 10000, "Must sum to 100%");
+        require(_treasuryBps >= 1000 && _poolBps >= 1000, "Each share must be >= 10%");
         treasuryBps = _treasuryBps;
         poolBps = _poolBps;
         emit SplitBpsUpdated(_treasuryBps, _poolBps);
@@ -429,13 +456,6 @@ contract BonzaiCollectibles is ERC721URIStorage, Ownable, ReentrancyGuard, IERC2
         uint256 old = royaltyBps;
         royaltyBps = _royaltyBps;
         emit RoyaltyBpsUpdated(old, _royaltyBps);
-    }
-
-    /// @notice Set or remove the unlock contract. Pass address(0) to disable free minting.
-    function setUnlockContract(address _unlock) external onlyOwner {
-        address old = address(unlockContract);
-        unlockContract = IBonzaiUnlock(_unlock);
-        emit UnlockContractUpdated(old, _unlock);
     }
 
     /**

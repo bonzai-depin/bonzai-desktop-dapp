@@ -7,11 +7,11 @@ import "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
 import "@openzeppelin/contracts/utils/Pausable.sol";
 
 /**
- * @title IBonzaiUnlock
- * @notice Interface for checking if a user has unlocked all levels
+ * @title IBonzaiMintPool (subset)
+ * @notice Companion mint splits half its fee across the 6 MintPool buckets.
  */
-interface IBonzaiUnlock {
-    function hasUnlocked(address user) external view returns (bool);
+interface IBonzaiMintPool {
+    function depositForPool(uint8 poolIndex) external payable;
 }
 
 /**
@@ -81,14 +81,19 @@ contract BonzaiCompanions is ERC721URIStorage, Ownable, ReentrancyGuard, Pausabl
     mapping(address => uint256[]) private _ownerCompanions;
     mapping(uint256 => uint256) private _ownerCompanionIndex;
 
-    // Maximum supply of companions
-    uint256 public constant MAX_SUPPLY = 10000;
+    // Maximum supply of companions (scarcity bound)
+    uint256 public constant MAX_SUPPLY = 1000;
 
     // Maximum companions per wallet
     uint256 public constant MAX_PER_WALLET = 4;
 
-    /// @notice BonzaiUnlock contract — unlocked users mint for free
-    IBonzaiUnlock public unlockContract;
+    /// @notice MintPool contract — receives 50% of every mint, split equally
+    ///         across the 6 content-type buckets so companion-related
+    ///         participation rewards every category equally.
+    IBonzaiMintPool public mintPool;
+
+    /// @notice Number of MintPool buckets (text, audio, image, video, 3D, training)
+    uint8 public constant NUM_POOLS = 6;
 
     // ═══════════════════════════════════════════════════════════════════════════
     // ERC-8004 IDENTITY REGISTRY STATE
@@ -118,9 +123,10 @@ contract BonzaiCompanions is ERC721URIStorage, Ownable, ReentrancyGuard, Pausabl
         string metadataURI
     );
     event CompanionVerified(uint256 indexed tokenId, address indexed verifier);
-    event UnlockContractUpdated(address indexed oldUnlock, address indexed newUnlock);
+    event MintPoolUpdated(address indexed oldPool, address indexed newPool);
     event MintPriceUpdated(uint256 oldPrice, uint256 newPrice);
     event TreasuryUpdated(address indexed oldTreasury, address indexed newTreasury);
+    event PoolDepositFailed(address indexed pool, uint8 indexed poolIndex, uint256 amount);
     event PersonalityHashUpdated(uint256 indexed tokenId, bytes32 oldHash, bytes32 newHash);
     event SpendingProfileUpdated(uint256 indexed tokenId, uint96 oldProfile, uint96 newProfile);
 
@@ -172,15 +178,13 @@ contract BonzaiCompanions is ERC721URIStorage, Ownable, ReentrancyGuard, Pausabl
         require(bytes(agentURI).length > 0, "Empty agent URI");
         _validateSpendingProfile(spendingProfile);
 
-        // Unlocked users (paid 1 ETH via BonzaiUnlock) mint for free
-        bool isUnlocked = false;
-        if (address(unlockContract) != address(0)) {
-            try unlockContract.hasUnlocked(msg.sender) returns (bool result) {
-                isUnlocked = result;
-            } catch {}
-        }
-        uint256 fee = isUnlocked ? 0 : mintPrice;
-        require(msg.value >= fee, "Insufficient ETH");
+        // Companion mint costs `mintPrice` regardless of unlock status.
+        // Unlock applies only to LVL-thresholded MintPool registration and
+        // collectible mint fees — companion supply is constrained (10K cap)
+        // and benefits both the LP-side hook and the MintPool, so it always
+        // collects a fee.
+        uint256 fee = mintPrice;
+        require(msg.value >= fee, "Insufficient mint fee");
 
         // State changes BEFORE ETH transfers
         _tokenIdCounter++;
@@ -197,10 +201,32 @@ contract BonzaiCompanions is ERC721URIStorage, Ownable, ReentrancyGuard, Pausabl
 
         _creatorCompanions[msg.sender].push(tokenId);
 
-        // Forward fee to treasury (skip if free)
-        if (fee > 0) {
-            (bool sent, ) = treasury.call{value: fee}("");
-            require(sent, "ETH transfer failed");
+        // Fee split: 50% treasury, 50% spread equally across the 6 MintPool
+        // buckets (~8.33% each). If the MintPool is unset OR a deposit
+        // reverts, the affected slice falls back to the treasury so minting
+        // is never blocked. The pool slice rounds down per bucket; any
+        // remainder rolls into the treasury slice.
+        uint256 treasuryAmt = fee / 2;
+        uint256 poolBudget = fee - treasuryAmt;
+        uint256 perPool = poolBudget / NUM_POOLS;
+        uint256 distributed = 0;
+
+        if (address(mintPool) != address(0) && perPool > 0) {
+            for (uint8 i = 0; i < NUM_POOLS; ) {
+                try mintPool.depositForPool{value: perPool}(i) {
+                    distributed += perPool;
+                } catch {
+                    emit PoolDepositFailed(address(mintPool), i, perPool);
+                    // Failed slice falls back to treasury (added below).
+                }
+                unchecked { ++i; }
+            }
+        }
+
+        uint256 treasurySend = treasuryAmt + (poolBudget - distributed);
+        if (treasurySend > 0) {
+            (bool sent, ) = treasury.call{value: treasurySend}("");
+            require(sent, "Treasury transfer failed");
         }
 
         // Refund excess ETH to minter
@@ -359,7 +385,9 @@ contract BonzaiCompanions is ERC721URIStorage, Ownable, ReentrancyGuard, Pausabl
     }
 
     /**
-     * @notice Remove the agent wallet (owner only)
+     * @notice Remove the agent wallet (owner only). Routes future hook fees
+     *         to the treasury so they're never paid to address(0). The owner
+     *         can re-assign at any time via setAgentWallet.
      * @param agentId The token ID
      */
     function unsetAgentWallet(uint256 agentId) external {
@@ -368,9 +396,12 @@ contract BonzaiCompanions is ERC721URIStorage, Ownable, ReentrancyGuard, Pausabl
         address previousWallet = _agentWallets[agentId];
         require(previousWallet != address(0), "No wallet set");
 
-        delete _agentWallets[agentId];
+        // Re-route fee destination to treasury rather than zero. Hook will
+        // pay treasury until the owner sets a new agent wallet.
+        _agentWallets[agentId] = treasury;
 
         emit AgentWalletUnset(agentId, previousWallet);
+        emit AgentWalletSet(agentId, treasury, msg.sender);
     }
 
     /**
@@ -530,10 +561,10 @@ contract BonzaiCompanions is ERC721URIStorage, Ownable, ReentrancyGuard, Pausabl
         emit TreasuryUpdated(old, _treasury);
     }
 
-    function setUnlockContract(address _unlock) external onlyOwner {
-        address old = address(unlockContract);
-        unlockContract = IBonzaiUnlock(_unlock);
-        emit UnlockContractUpdated(old, _unlock);
+    function setMintPool(address _pool) external onlyOwner {
+        address old = address(mintPool);
+        mintPool = IBonzaiMintPool(_pool);
+        emit MintPoolUpdated(old, _pool);
     }
 
     function pause() external onlyOwner {

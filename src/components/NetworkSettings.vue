@@ -683,15 +683,37 @@
           </button>
 
           <div v-if="selfTestResults" class="self-test-results mt-4">
-            <!-- Text Endpoint (Port 3002) -->
+            <!-- Orchestration Gateway (Port 3002) — HTTP entry point for
+                 OpenClaw/Hermes. Always up when the app runs; "active" only
+                 when the user has enabled at least one orchestrator. This
+                 tests the gateway itself, not the LLM behind it. -->
             <div class="test-result-row" :class="{ success: selfTestResults.openclaw?.ok, error: !selfTestResults.openclaw?.ok && selfTestResults.openclaw?.error !== 'No orchestrator enabled', warning: selfTestResults.openclaw?.error === 'No orchestrator enabled' }">
               <span class="material-symbols-outlined mr-2 test-icon" :class="selfTestResults.openclaw?.ok ? 'icon-success' : selfTestResults.openclaw?.error === 'No orchestrator enabled' ? 'icon-warning' : 'icon-error'">
                 {{ selfTestResults.openclaw?.ok ? "check_circle" : selfTestResults.openclaw?.error === "No orchestrator enabled" ? "info" : "error" }}
               </span>
               <div class="test-result-content">
-                <strong>Text Endpoint (Port 3002)</strong>
+                <strong>Orchestration Gateway (Port 3002)</strong>
                 <span class="test-result-detail">
-                  {{ selfTestResults.openclaw?.ok ? 'LLM text generation' : selfTestResults.openclaw?.error || 'Not responding' }}
+                  {{ selfTestResults.openclaw?.ok ? (selfTestResults.openclaw?.detail || 'OpenClaw / Hermes HTTP') : selfTestResults.openclaw?.error || 'Not responding' }}
+                </span>
+              </div>
+            </div>
+
+            <!-- LLM Runtime (llama-server subprocess) — separate from the
+                 gateway. Loads on demand when the user picks a model. -->
+            <div class="test-result-row" :class="{ success: selfTestResults.llama?.ok, warning: !selfTestResults.llama?.ok && selfTestResults.llama?.error === 'No model loaded', error: !selfTestResults.llama?.ok && selfTestResults.llama?.error !== 'No model loaded' }">
+              <span class="material-symbols-outlined mr-2 test-icon" :class="selfTestResults.llama?.ok ? 'icon-success' : selfTestResults.llama?.error === 'No model loaded' ? 'icon-warning' : 'icon-error'">
+                {{ selfTestResults.llama?.ok ? 'check_circle' : selfTestResults.llama?.error === 'No model loaded' ? 'info' : 'error' }}
+              </span>
+              <div class="test-result-content">
+                <strong>LLM Runtime (llama-server)</strong>
+                <span class="test-result-detail">
+                  <template v-if="selfTestResults.llama?.ok">
+                    {{ selfTestResults.llama.modelName }} on :{{ selfTestResults.llama.port }}{{ selfTestResults.llama.rpcPeers?.length ? ` · ${selfTestResults.llama.rpcPeers.length} RPC peer(s)` : '' }}
+                  </template>
+                  <template v-else>
+                    {{ selfTestResults.llama?.error || 'Not running' }}
+                  </template>
                 </span>
               </div>
             </div>
@@ -879,6 +901,8 @@ watch(pipelineLocalTest, async (enabled) => {
 // Persist pipeline settings
 watch(pipelineEnabled, async (v) => {
   await window.electronAPI.store.set("p2p.pipeline.enabled", v);
+  // Refresh the bottom bar's pipeline tag without waiting for next swap.
+  await window.electronAPI.broadcastModelState?.();
   if (!v) {
     // End pipeline session when disabled
     if (window.electronAPI.p2pPipelineCancel) {
@@ -1165,13 +1189,14 @@ const runSelfTest = async () => {
 
   const results = {
     flask: { ok: false, error: null, pipelines: [] },
-    openclaw: { ok: false, error: null },
+    openclaw: { ok: false, error: null, detail: null },
+    llama: { ok: false, error: null, modelName: null, port: null, rpcPeers: [] },
     p2p: { ok: false, error: null },
     ready: false,
     readyMessage: "",
   };
 
-  // Test 1: Flask Server (port 65000)
+  // Test 1: Flask Server (port 65000) — image/audio/video/vision
   try {
     const flaskResponse = await fetch("http://127.0.0.1:65000/audio/info", {
       method: "GET",
@@ -1190,7 +1215,10 @@ const runSelfTest = async () => {
       : err.message;
   }
 
-  // Test 2: Orchestration Server (port 3002) - check if any orchestrator is enabled
+  // Test 2: Orchestration Gateway (port 3002) — OpenClaw/Hermes HTTP entry.
+  // This is always up when the app is running; it is the Node HTTP server
+  // baked into the main process, independent of llama-server. We only
+  // surface it as "active" if the user has enabled at least one orchestrator.
   try {
     const ocEnabled = await window.electronAPI.openclawGetEnabled();
     const hermEnabled = await window.electronAPI.hermesGetEnabled();
@@ -1200,6 +1228,7 @@ const runSelfTest = async () => {
       });
       if (orchResponse.ok) {
         results.openclaw.ok = true;
+        results.openclaw.detail = [ocEnabled && "OpenClaw", hermEnabled && "Hermes"].filter(Boolean).join(" + ");
       } else {
         results.openclaw.error = `HTTP ${orchResponse.status}`;
       }
@@ -1212,7 +1241,24 @@ const runSelfTest = async () => {
       : err.message;
   }
 
-  // Test 3: P2P Node
+  // Test 3: LLM runtime — the llama-server subprocess. Separate from the
+  // gateway above: the gateway proxies to this subprocess, so a "gateway up
+  // but LLM down" state is real and needs to be reported honestly.
+  try {
+    const status = await window.electronAPI.llamaRuntimeStatus();
+    if (status.running) {
+      results.llama.ok = true;
+      results.llama.modelName = status.modelName;
+      results.llama.port = status.port;
+      results.llama.rpcPeers = status.rpcPeers || [];
+    } else {
+      results.llama.error = "No model loaded";
+    }
+  } catch (err) {
+    results.llama.error = err.message;
+  }
+
+  // Test 4: P2P Node
   try {
     const status = await window.electronAPI.p2pStatus();
     if (status.ok && status.started) {
@@ -1224,11 +1270,12 @@ const runSelfTest = async () => {
     results.p2p.error = err.message;
   }
 
-  // Determine overall readiness
+  // Determine overall readiness. LLM runtime is NOT required for boot — the
+  // app is usable without a model loaded (models load on demand). Only hard
+  // requirements: Flask server + P2P node.
   const issues = [];
   if (!results.flask.ok) issues.push("Flask server");
   if (!results.p2p.ok) issues.push("P2P node");
-  // Orchestration (OpenClaw/Hermes) is optional for provider mode
 
   if (issues.length === 0) {
     results.ready = true;
@@ -1303,6 +1350,8 @@ const loadSettings = async () => {
 // Save network mode when changed
 watch(networkMode, async (newMode) => {
   await window.electronAPI.store.set("p2p.networkMode", newMode);
+  // Refresh the bottom bar's pipeline tag without waiting for next swap.
+  await window.electronAPI.broadcastModelState?.();
 
   // End pipeline session when leaving consumer mode
   if (newMode !== 'consumer' && window.electronAPI.p2pPipelineCancel) {

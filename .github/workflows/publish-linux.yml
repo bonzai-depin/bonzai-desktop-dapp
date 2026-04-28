@@ -276,12 +276,11 @@ jobs:
           # Remove source maps from Chromium
           find "$APP" -name "*.js.map" -delete 2>/dev/null || true
 
-          # NEW: node-llama-cpp prebuilt binaries for OTHER platforms
-          # (darwin/win32 copies on every install). Keep only Linux x64.
-          find "$APP/resources/app/node_modules/node-llama-cpp" -type d \
-            \( -name "llama.cpp-*-darwin*" -o -name "llama.cpp-*-win*" \
-               -o -name "*-macos-*" -o -name "*-windows-*" -o -name "*-mac-*" \) \
-            -exec rm -rf {} + 2>/dev/null || true
+          # node-llama-cpp lives in devDependencies only (build-time source
+          # bundle for llama-server compilation). It should not be in runtime
+          # node_modules, but we prune defensively in case a lockfile quirk
+          # leaves stale entries behind.
+          rm -rf "$APP/resources/app/node_modules/node-llama-cpp" 2>/dev/null || true
 
           # NEW: @dimforge/rapier3d-compat JS build files duplicated per target
           find "$APP/resources/app/node_modules/@dimforge/rapier3d-compat" \

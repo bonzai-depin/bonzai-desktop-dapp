@@ -1110,29 +1110,29 @@ export default {
           surface.rotation.x = -Math.PI / 2;
           surface.position.y = fillY; // geometry-local — group carries world transform
 
-          // Build the group IN THE CONTAINER'S LOCAL FRAME: the lathe
-          // liquidGeo was constructed with the container's geometry-local
-          // Y coordinates, so we set the group's transform to match the
-          // container's WORLD transform. This way the liquid ends up
-          // correctly positioned regardless of whether the caller adds
-          // it to root, a tilted parent group, or a nested rig.
+          // The lathe liquid geometry was authored in the container's
+          // GEOMETRY-LOCAL frame (Y values come from the container's
+          // bbox). The cleanest way to place it correctly is to make
+          // the liquid a CHILD of the container — three.js then handles
+          // every transform (tilt, gimbal nesting, animation) for free.
           //
-          // Previously we copied containerMesh.position/rotation which
-          // only contains the container's LOCAL transform — if the
-          // container lived under a gimbal/tilted parent the liquid
-          // floated away from its vessel.
-          containerMesh.updateMatrixWorld(true);
+          // We auto-parent here. If the user-level code does
+          // `someGroup.add(liquidGroup)` afterwards, three.js will
+          // move the liquid out of the container and the engine's
+          // _snapLiquidsToContainers post-pass moves it back. So
+          // either ignoring the return value or doing the obvious
+          // root.add(...) both produce a correctly-placed liquid.
           const group = new THREE.Group();
           group.name = "liquid_fill";
-          containerMesh.getWorldPosition(group.position);
-          containerMesh.getWorldQuaternion(group.quaternion);
-          containerMesh.getWorldScale(group.scale);
           group.add(liquidMesh);
           group.add(surface);
-          // Tag for the post-layout validator — it re-snaps the group
-          // to the container's world transform every frame for the
-          // first few frames, catching any late parent-transform change.
+          // Tag for the post-layout validator. The validator finds the
+          // group by name + this userData ref and snaps it back into
+          // the container if user code moved it out.
           group.userData.liquidContainer = containerMesh;
+          // Auto-parent. Identity local transform — geometry already
+          // matches the container's local frame.
+          containerMesh.add(group);
           return group;
         },
         fire: (o = {}) =>
@@ -4100,7 +4100,30 @@ export default {
       const { FLUID } = _engine || {};
       if (!helpers?.fillLiquid || !FLUID) return;
 
+      // Walk up the tree from `n` and return true if any ancestor was
+      // built by an engine helper (FLUID.fountainBasin, etc.). Lets a
+      // single ancestor mark protect every mesh in the subtree without
+      // tagging each one individually.
+      const _isInsideEngineBuiltGroup = (n) => {
+        let cur = n.parent;
+        while (cur) {
+          if (cur.userData?.engineBuilt) return true;
+          cur = cur.parent;
+        }
+        return false;
+      };
+
       const vessels = this._detectVessels(rootObj);
+      if (vessels.length === 0) return;
+      // Drop any detected vessel that lives inside an engine-built group
+      // — the helper has already filled it; the heuristic auto-fill must
+      // not add a duplicate water surface on top.
+      for (let i = vessels.length - 1; i >= 0; i--) {
+        const v = vessels[i];
+        if (v.mesh.userData?.engineBuilt || _isInsideEngineBuiltGroup(v.mesh)) {
+          vessels.splice(i, 1);
+        }
+      }
       if (vessels.length === 0) return;
 
       // Pre-pass: strip LLM-added water ONLY IF it spatially overlaps
@@ -4137,6 +4160,13 @@ export default {
       rootObj.traverse((n) => {
         if (!n.isMesh || !n.geometry) return;
         if (n.userData?.autoFilled) return;
+        // Engine-built helpers (FLUID.fountainBasin, FLUID.tieredFountain,
+        // FLUID.stream) tag every mesh they produce. Without this, the
+        // stripper kills the helper's own water surface as a "duplicate
+        // CircleGeometry inside a vessel," then auto-fill adds its own
+        // RingGeometry at a different Y — broken bowls + missing water.
+        if (n.userData?.engineBuilt) return;
+        if (_isInsideEngineBuiltGroup(n)) return;
         if (n.name === "liquid_fill" || n.parent?.name === "liquid_fill") return;
 
         const g = n.geometry;
@@ -4320,9 +4350,71 @@ export default {
         }
       }
     },
+    /**
+     * Move every `liquid_fill` group back into its container mesh.
+     *
+     * Why this exists: H.fillLiquid auto-parents the liquid into the
+     * container at build time, but LLM codegen often follows up with
+     * `someParent.add(liquidGroup)` out of habit (because the helper
+     * returns the group). three.js's add() removes from previous
+     * parent and re-adds to the new one, breaking the auto-parent.
+     *
+     * The reparent is idempotent — if the liquid is already a child of
+     * its container, nothing happens. After reparent we zero the local
+     * transform because the lathe geometry was authored in the
+     * container's local frame; identity local + container's parent
+     * transform = correct world position.
+     *
+     * Wrapped in try/catch per-node so one bogus group can't kill the
+     * whole pass. Runs in its own dedicated pre-pass — never bundled
+     * with anything that might crash.
+     */
+    _snapLiquidsToContainers(root) {
+      if (!root || !root.traverse) return;
+      const targets = [];
+      try {
+        root.traverse((n) => {
+          if (n && n.name === "liquid_fill" && n.userData?.liquidContainer) {
+            targets.push(n);
+          }
+        });
+      } catch (err) {
+        console.warn("[ThreeViewer] liquid re-snap traversal failed:", err?.message);
+        return;
+      }
+      // Reparent in a separate loop — modifying the tree mid-traverse
+      // changes children arrays under three.js's recursive walk and
+      // can skip nodes silently.
+      for (const n of targets) {
+        try {
+          const c = n.userData.liquidContainer;
+          if (!c || !c.isObject3D) continue;
+          if (n.parent !== c) {
+            c.add(n);
+            n.position.set(0, 0, 0);
+            n.quaternion.identity();
+            n.scale.set(1, 1, 1);
+          }
+        } catch (err) {
+          console.warn("[ThreeViewer] liquid re-snap on one node failed:", err?.message);
+        }
+      }
+    },
+
     async _applyFallbackAmbience(root, _engine) {
       try {
         if (!_engine) return;
+        // Defensive: if user code threw (and the wrapper somehow returned
+        // a non-Object3D) OR if a downstream pass set result to undefined,
+        // bail with a clear log instead of crashing inside three.js's
+        // recursive traverse.
+        if (!root || !root.traverse || !root.isObject3D) {
+          console.warn(
+            "[ThreeViewer] fallback ambience skipped — root is not a valid Object3D " +
+            "(likely the user code threw before returning, or returned a non-Object3D value)."
+          );
+          return;
+        }
         const { SHADER, FX, CELESTIAL } = _engine;
 
         // 0a. Ground-plane auto-strip. Generations must never add their
@@ -4354,37 +4446,9 @@ export default {
           } catch (_) {}
         }
 
-        // 0. Liquid re-snap. Any `liquid_fill` group tagged with its
-        //    container mesh gets its world transform re-matched to the
-        //    container's CURRENT world transform. Handles the common
-        //    LLM pattern where the liquid is added to root but the
-        //    container lives inside a transformed gimbal/rig, which
-        //    used to leave the potion floating off to the side.
-        const _tmpPos = new THREE.Vector3();
-        const _tmpQuat = new THREE.Quaternion();
-        const _tmpScale = new THREE.Vector3();
-        root.traverse((n) => {
-          if (n.name === "liquid_fill" && n.userData?.liquidContainer) {
-            try {
-              const c = n.userData.liquidContainer;
-              c.updateMatrixWorld(true);
-              c.getWorldPosition(_tmpPos);
-              c.getWorldQuaternion(_tmpQuat);
-              c.getWorldScale(_tmpScale);
-              // Reparent the liquid so it inherits any future animation
-              // of its container without further intervention.
-              if (n.parent !== c) {
-                c.add(n);
-                // After reparent, clear local transform so the liquid
-                // snaps to the container's origin (its lathe geometry
-                // was authored in container-local space anyway).
-                n.position.set(0, 0, 0);
-                n.quaternion.identity();
-                n.scale.set(1, 1, 1);
-              }
-            } catch (_) {}
-          }
-        });
+        // Liquid re-snap moved out — runs unconditionally before this
+        // pass via _snapLiquidsToContainers(root), so a crash in the
+        // ambience code below can't strand a liquid in the wrong frame.
 
         // 1. Hero bbox (excludes backdrops)
         const tmpBox = new THREE.Box3();
@@ -5360,6 +5424,28 @@ export default {
           // about, so a potion/flask/fountain/tub/bowl always contains
           // correctly-placed water even if the LLM forgot FLUID.*.
           this._autoFillVessels(result, helpers, _engine);
+
+          // Convention-driven liquid normalization. Walks the scene once
+          // and upgrades any mesh tagged with userData.fluid /
+          // userData.fluidContainer to the proper transmissive water
+          // shader. This is the SCALABLE path that lets the codegen
+          // invent any liquid scenario without us pattern-matching
+          // archetypes in the prompt — the engine guarantees the
+          // material layer regardless of how the geometry was built.
+          // Runs AFTER _autoFillVessels so explicit tags can override
+          // the heuristic auto-fill if the codegen was specific.
+          if (_engine?.FLUID?.normalize) {
+            try {
+              _engine.FLUID.normalize(result, { helpers });
+            } catch (err) {
+              console.warn("[ThreeViewer] FLUID.normalize failed:", err?.message);
+            }
+          }
+          // Liquid re-snap — must run BEFORE fallback ambience because a
+          // crash in ambience would otherwise leave any user-misplaced
+          // liquid floating in world space (the "vertical green baton
+          // inside a tilted flask" bug). Bullet-proof try/catch inside.
+          this._snapLiquidsToContainers(result);
           // Engine-level fallback ambience — starfield, aura, glow
           // shells, lens flare — fills in what weaker generations skip.
           await this._applyFallbackAmbience(result, _engine);

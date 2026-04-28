@@ -4,7 +4,7 @@ const { loadFixture } = require("@nomicfoundation/hardhat-toolbox/network-helper
 const { deployFineTuneTokenFactory } = require("./helpers/deploy");
 const {
   TOTAL_SUPPLY,
-  DEAD_ADDRESS,
+  BURN_ADDRESS,
   MIN_ETH_LIQUIDITY,
   POOL_TYPE_FINETUNE,
 } = require("./helpers/constants");
@@ -141,10 +141,12 @@ describe("FineTuneTokenFactory", function () {
       const parsed = factory.interface.parseLog(event);
       const poolId = parsed.args.poolId;
 
-      // Verify feeHook registration
+      // Verify feeHook registration — FineTune pools don't use live NFT lookup,
+      // so companionNFT/companionTokenId are zero.
       const reg = await feeHook.getRegistration(poolId);
       expect(reg.beneficiary).to.equal(creator.address);
-      expect(reg.companionOwner).to.equal(ethers.ZeroAddress);
+      expect(reg.companionNFT).to.equal(ethers.ZeroAddress);
+      expect(reg.companionTokenId).to.equal(0);
       expect(reg.poolType).to.equal(POOL_TYPE_FINETUNE); // 1
       expect(reg.mintPoolIndex).to.equal(5); // MINT_POOL_INDEX
     });
@@ -164,7 +166,7 @@ describe("FineTuneTokenFactory", function () {
       ).to.emit(factory, "ModelTokenLaunched");
     });
 
-    it("should lock LP position NFT to DEAD_ADDRESS", async function () {
+    it("should lock LP position NFT to BURN_ADDRESS", async function () {
       const { factory, positionManager, contentTokenId, creator } =
         await loadFixture(launchFixture);
 
@@ -178,9 +180,9 @@ describe("FineTuneTokenFactory", function () {
       );
       const receipt = await tx.wait();
 
-      // The position NFT (tokenId=1) should be owned by DEAD_ADDRESS
+      // The position NFT (tokenId=1) should be owned by BURN_ADDRESS
       const positionOwner = await positionManager.ownerOf(1);
-      expect(positionOwner).to.equal(DEAD_ADDRESS);
+      expect(positionOwner).to.equal(BURN_ADDRESS);
     });
 
     it("should increment totalTokensLaunched after each launch", async function () {

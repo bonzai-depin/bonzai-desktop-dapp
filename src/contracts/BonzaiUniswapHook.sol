@@ -35,6 +35,22 @@ interface IBonzaiMintPool {
 }
 
 /**
+ * @title IERC721Light
+ * @notice Minimal IERC721 interface used to look up the live NFT owner.
+ */
+interface IERC721Light {
+    function ownerOf(uint256 tokenId) external view returns (address);
+}
+
+/**
+ * @title IBonzaiCompanionsAgent
+ * @notice Reads live agent wallet for a companion NFT.
+ */
+interface IBonzaiCompanionsAgent {
+    function getAgentWallet(uint256 agentId) external view returns (address);
+}
+
+/**
  * @title BonzaiUniswapHook
  * @notice Uniswap V4 afterSwap hook that captures 1% of swap output and splits
  *         it based on pool type: COMPANION (33/33/34 treasury/owner/wallet) or
@@ -59,8 +75,14 @@ contract BonzaiUniswapHook is Ownable, ReentrancyGuard {
     // ═══════════════════════════════════════════════════════════════════════════
 
     struct PoolConfig {
-        address beneficiary;        // agent wallet (companion) or creator (finetune)
-        address companionOwner;     // NFT owner address (for COMPANION pool type)
+        // For COMPANION pool type: beneficiary and companionOwner are read
+        // LIVE from companionNFT via companionTokenId, so this struct only
+        // stores the NFT contract + tokenId. The legacy `beneficiary` /
+        // `companionOwner` fields are kept for FineTune compatibility.
+        address beneficiary;        // FineTune: creator. Companion: cached agent wallet (live read takes priority)
+        address companionOwner;     // FineTune: zero. Companion: cached owner (live read takes priority)
+        address companionNFT;       // BonzaiCompanions address (used for live ownerOf lookup)
+        uint256 companionTokenId;   // 0 for FineTune, the NFT id for COMPANION
         uint8 poolType;             // 0 = COMPANION, 1 = FINETUNE
         uint8 mintPoolIndex;        // MintPool index (5 for training/LVL6; unused for COMPANION)
         bool active;
@@ -73,15 +95,22 @@ contract BonzaiUniswapHook is Ownable, ReentrancyGuard {
     uint256 public constant FEE_BPS = 100;            // 1% total hook fee
     uint256 public constant BPS_DENOMINATOR = 10000;
 
-    // Companion pool type split: wallet + owner + LVL6 pool
-    uint256 public constant COMPANION_WALLET_BPS = 3400;     // 34% companion wallet
-    uint256 public constant COMPANION_OWNER_BPS = 3300;      // 33% companion owner
-    uint256 public constant COMPANION_POOL_BPS = 3300;       // 33% LVL6 (training) pool
+    // Companion pool split: 40 wallet / 40 owner / 10 treasury / 10 MintPool
+    // The MintPool slice is spread equally across all 6 content-type buckets.
+    uint256 public constant COMPANION_WALLET_BPS = 4000;
+    uint256 public constant COMPANION_OWNER_BPS = 4000;
+    uint256 public constant COMPANION_TREASURY_BPS = 1000;
+    uint256 public constant COMPANION_POOL_BPS = 1000;
 
-    // FineTune pool type split: 80/10/10 (with MintPool)
-    uint256 public constant FINETUNE_BENEFICIARY_BPS = 8000; // 80%
-    uint256 public constant FINETUNE_TREASURY_BPS = 1000;    // 10%
-    uint256 public constant FINETUNE_POOL_BPS = 1000;        // 10%
+    // FineTune pool split: 80 beneficiary / 10 treasury / 10 MintPool
+    // MintPool slice spread equally across all 6 content-type buckets.
+    uint256 public constant FINETUNE_BENEFICIARY_BPS = 8000;
+    uint256 public constant FINETUNE_TREASURY_BPS = 1000;
+    uint256 public constant FINETUNE_POOL_BPS = 1000;
+
+    /// @notice Number of MintPool content-type buckets — pool slices are
+    ///         distributed equally across all of these.
+    uint8 public constant NUM_POOLS = 6;
 
     uint8 public constant POOL_TYPE_COMPANION = 0;
     uint8 public constant POOL_TYPE_FINETUNE = 1;
@@ -129,7 +158,24 @@ contract BonzaiUniswapHook is Ownable, ReentrancyGuard {
 
     event PoolRegistered(bytes32 indexed poolId, address indexed beneficiary, uint8 poolType, uint8 mintPoolIndex);
     event PoolDeregistered(bytes32 indexed poolId);
-    event FeeCaptured(bytes32 indexed poolId, uint8 poolType, uint256 totalFee, uint256 beneficiaryShare, uint256 treasuryShare, uint256 thirdShare);
+    /// @notice Generic fee-captured event covering both pool types.
+    ///         For COMPANION: walletShare = companion agent wallet,
+    ///                       ownerShare  = NFT owner,
+    ///                       treasuryShare,
+    ///                       poolShare    = MintPool slice (spread across 6 buckets).
+    ///         For FINETUNE:  walletShare = creator (beneficiary),
+    ///                       ownerShare  = 0,
+    ///                       treasuryShare,
+    ///                       poolShare    = MintPool slice.
+    event FeeCaptured(
+        bytes32 indexed poolId,
+        uint8 poolType,
+        uint256 totalFee,
+        uint256 walletShare,
+        uint256 ownerShare,
+        uint256 treasuryShare,
+        uint256 poolShare
+    );
     event BeneficiaryFeesClaimed(address indexed beneficiary, uint256 amount);
     event TreasuryFeesClaimed(address indexed treasury, uint256 amount);
     event PoolFeesClaimed(uint8 indexed mintPoolIndex, uint256 amount);
@@ -246,20 +292,40 @@ contract BonzaiUniswapHook is Ownable, ReentrancyGuard {
 
         // Split based on pool type
         if (config.poolType == POOL_TYPE_COMPANION) {
-            // COMPANION: 34% wallet, 33% owner, 33% LVL6 (training) pool
+            // COMPANION: 40 wallet / 40 owner / 10 treasury / 10 MintPool
+            //  (MintPool slice spread equally across the 6 buckets)
+            //
+            // Beneficiary + owner are read LIVE from the NFT contract:
+            //   - owner    = companionNFT.ownerOf(tokenId)
+            //   - wallet   = BonzaiCompanions.getAgentWallet(tokenId)
+            // Selling the NFT on a marketplace transparently redirects future
+            // hook fees to the new owner — no manual update needed.
             uint256 walletShare = (feeAmount * COMPANION_WALLET_BPS) / BPS_DENOMINATOR;
             uint256 ownerShare = (feeAmount * COMPANION_OWNER_BPS) / BPS_DENOMINATOR;
-            uint256 poolShare = feeAmount - walletShare - ownerShare;
+            uint256 treasuryShare = (feeAmount * COMPANION_TREASURY_BPS) / BPS_DENOMINATOR;
+            uint256 poolShare = feeAmount - walletShare - ownerShare - treasuryShare;
 
-            unclaimedBeneficiary[config.beneficiary] += walletShare;
+            address liveOwner = treasury;
+            try IERC721Light(config.companionNFT).ownerOf(config.companionTokenId) returns (address o) {
+                if (o != address(0)) liveOwner = o;
+            } catch { /* fall back to treasury */ }
+
+            address liveWallet = treasury;
+            try IBonzaiCompanionsAgent(config.companionNFT).getAgentWallet(config.companionTokenId) returns (address w) {
+                if (w != address(0)) liveWallet = w;
+            } catch { /* fall back to treasury */ }
+
+            unclaimedBeneficiary[liveWallet] += walletShare;
             totalUnclaimedBeneficiary += walletShare;
-            unclaimedBeneficiary[config.companionOwner] += ownerShare;
+            unclaimedBeneficiary[liveOwner] += ownerShare;
             totalUnclaimedBeneficiary += ownerShare;
-            unclaimedPool[5] += poolShare; // Pool index 5 = LVL6 (training)
+            unclaimedTreasury += treasuryShare;
+            _spreadAcrossPools(poolShare);
 
-            emit FeeCaptured(poolId, POOL_TYPE_COMPANION, feeAmount, walletShare, poolShare, ownerShare);
+            emit FeeCaptured(poolId, POOL_TYPE_COMPANION, feeAmount, walletShare, ownerShare, treasuryShare, poolShare);
         } else {
-            // FINETUNE: 80% beneficiary, 10% treasury, 10% MintPool
+            // FINETUNE: 80 beneficiary / 10 treasury / 10 MintPool
+            //  (MintPool slice spread equally across the 6 buckets)
             uint256 beneficiaryShare = (feeAmount * FINETUNE_BENEFICIARY_BPS) / BPS_DENOMINATOR;
             uint256 treasuryShare = (feeAmount * FINETUNE_TREASURY_BPS) / BPS_DENOMINATOR;
             uint256 poolShare = feeAmount - beneficiaryShare - treasuryShare;
@@ -267,9 +333,9 @@ contract BonzaiUniswapHook is Ownable, ReentrancyGuard {
             unclaimedBeneficiary[config.beneficiary] += beneficiaryShare;
             totalUnclaimedBeneficiary += beneficiaryShare;
             unclaimedTreasury += treasuryShare;
-            unclaimedPool[config.mintPoolIndex] += poolShare;
+            _spreadAcrossPools(poolShare);
 
-            emit FeeCaptured(poolId, POOL_TYPE_FINETUNE, feeAmount, beneficiaryShare, treasuryShare, poolShare);
+            emit FeeCaptured(poolId, POOL_TYPE_FINETUNE, feeAmount, beneficiaryShare, 0, treasuryShare, poolShare);
         }
 
         // Return negative delta to reduce swapper's output
@@ -284,16 +350,24 @@ contract BonzaiUniswapHook is Ownable, ReentrancyGuard {
      * @notice Register a pool with the hook for fee capture.
      * @dev Only callable by authorized factory contracts.
      *
+     *      For COMPANION pools, fees route to the LIVE NFT owner + LIVE
+     *      agent wallet at the moment of every swap (read via
+     *      companionNFT.ownerOf and BonzaiCompanions.getAgentWallet).
+     *      Selling the NFT on a marketplace transparently redirects future
+     *      hook revenue to the new owner — no manual update needed.
+     *
      * @param poolId Pool ID hash (keccak256 of PoolKey)
-     * @param beneficiary Address to receive fees (agent wallet for COMPANION, creator for FINETUNE)
-     * @param companionOwner NFT owner address (for COMPANION type; address(0) for FINETUNE)
+     * @param beneficiary Cached agent wallet (FineTune: creator; Companion: legacy fallback)
+     * @param companionNFT_ Address of BonzaiCompanions for live lookups (COMPANION only)
+     * @param companionTokenId NFT id (COMPANION only; 0 for FINETUNE)
      * @param poolType 0 = COMPANION, 1 = FINETUNE
-     * @param mintPoolIndex MintPool index (5 for training/LVL6; ignored for COMPANION)
+     * @param mintPoolIndex MintPool index (FineTune only; companion pool slice spreads across all 6)
      */
     function registerPool(
         bytes32 poolId,
         address beneficiary,
-        address companionOwner,
+        address companionNFT_,
+        uint256 companionTokenId,
         uint8 poolType,
         uint8 mintPoolIndex
     ) external {
@@ -301,14 +375,17 @@ contract BonzaiUniswapHook is Ownable, ReentrancyGuard {
         require(beneficiary != address(0), "Invalid beneficiary");
         require(!poolConfigs[poolId].active, "Pool already registered");
         if (poolType == POOL_TYPE_COMPANION) {
-            require(companionOwner != address(0), "Companion pool requires owner address");
+            require(companionNFT_ != address(0), "Companion pool requires NFT contract");
+            require(companionTokenId != 0, "Companion pool requires NFT id");
         } else if (poolType == POOL_TYPE_FINETUNE) {
             require(mintPoolIndex < 6, "Invalid mint pool index");
         }
 
         poolConfigs[poolId] = PoolConfig({
             beneficiary: beneficiary,
-            companionOwner: companionOwner,
+            companionOwner: address(0), // companion owner read live via companionNFT.ownerOf
+            companionNFT: companionNFT_,
+            companionTokenId: companionTokenId,
             poolType: poolType,
             mintPoolIndex: mintPoolIndex,
             active: true
@@ -382,12 +459,23 @@ contract BonzaiUniswapHook is Ownable, ReentrancyGuard {
         uint256 amount = unclaimedPool[mintPoolIndex];
         require(amount > 0, "No pool fees to claim");
 
+        // Effects-before-interactions: zero the bucket so a re-entry can't
+        // double-spend, but RE-CREDIT it on revert so the fees aren't lost
+        // permanently when the MintPool refuses the deposit (e.g., hook not
+        // wired as feeHook on MintPool, or MintPool paused).
         unclaimedPool[mintPoolIndex] = 0;
 
-        mintPool.depositForPool{value: amount}(mintPoolIndex);
-
-        emit PoolFeesClaimed(mintPoolIndex, amount);
+        try mintPool.depositForPool{value: amount}(mintPoolIndex) {
+            emit PoolFeesClaimed(mintPoolIndex, amount);
+        } catch {
+            // Restore the bucket — the fees stay claimable once MintPool
+            // is correctly wired or unpaused.
+            unclaimedPool[mintPoolIndex] = amount;
+            emit PoolFeesClaimFailed(mintPoolIndex, amount);
+        }
     }
+
+    event PoolFeesClaimFailed(uint8 indexed mintPoolIndex, uint256 amount);
 
     // ═══════════════════════════════════════════════════════════════════════════
     // ADMIN FUNCTIONS
@@ -426,7 +514,14 @@ contract BonzaiUniswapHook is Ownable, ReentrancyGuard {
         emit MintPoolUpdated(old, _mintPool);
     }
 
-    /// @notice Admin recovery for stuck beneficiary fees (e.g., lost wallet or reverting contract)
+    /// @notice Admin recovery for stuck beneficiary fees.
+    ///         INTENDED USE: a beneficiary address belongs to a smart
+    ///         contract that started reverting on receive() (e.g., paused
+    ///         multisig), or the beneficiary lost their key. Without this
+    ///         function the fees would be unrecoverable.
+    ///         RISK: a compromised owner can drain any beneficiary. Treat
+    ///         this contract's owner as a privileged role and protect with
+    ///         a multisig + timelock.
     function adminRecoverBeneficiaryFees(address beneficiary, address recipient) external onlyOwner {
         require(beneficiary != address(0) && recipient != address(0), "Zero address");
         uint256 amount = unclaimedBeneficiary[beneficiary];
@@ -506,6 +601,26 @@ contract BonzaiUniswapHook is Ownable, ReentrancyGuard {
      */
     function _computePoolId(IPoolManager.PoolKey calldata key) internal pure returns (bytes32) {
         return keccak256(abi.encode(key));
+    }
+
+    /**
+     * @dev Spread a MintPool share equally across all 6 content-type
+     *      buckets. Any rounding remainder rotates by `block.timestamp %
+     *      NUM_POOLS` so over time every bucket gets a fair share of dust,
+     *      not just bucket 0.
+     */
+    function _spreadAcrossPools(uint256 amount) internal {
+        if (amount == 0) return;
+        uint256 perPool = amount / NUM_POOLS;
+        uint256 remainder = amount - (perPool * NUM_POOLS);
+        for (uint8 i = 0; i < NUM_POOLS; ) {
+            unclaimedPool[i] += perPool;
+            unchecked { ++i; }
+        }
+        if (remainder > 0) {
+            uint8 dustBucket = uint8(block.timestamp % NUM_POOLS);
+            unclaimedPool[dustBucket] += remainder;
+        }
     }
 
     /// @notice Accept ETH (from PoolManager.take or direct transfers)

@@ -4,10 +4,6 @@ const {
   UNLOCK_PRICE,
   POOL_THRESHOLDS,
   EPOCH_DURATION,
-  PLATFORM_FEE_BPS,
-  MIN_STAKE,
-  SKILL_PURCHASE_PRICE,
-  SKILL_RUNNING_FEE,
 } = require("./constants");
 
 /**
@@ -32,16 +28,13 @@ async function deployMockERC20(name = "BONZAI", symbol = "BONZAI") {
 }
 
 /**
- * Deploy BonzaiMintPool with MockERC20
+ * Deploy BonzaiMintPool — Arbitrum-local: no CRE forwarder, simple
+ * (token, thresholds, epochDuration, treasury) constructor.
  */
 async function deployMintPool() {
   const [owner, user1, user2, user3, treasury] = await ethers.getSigners();
 
   const token = await deployMockERC20();
-
-  // Deploy mock CRE forwarder
-  const MockFunctionsRouter = await ethers.getContractFactory("MockFunctionsRouter");
-  const router = await MockFunctionsRouter.deploy();
 
   const BonzaiMintPool = await ethers.getContractFactory("BonzaiMintPool");
   const mintPool = await BonzaiMintPool.deploy(
@@ -49,14 +42,13 @@ async function deployMintPool() {
     POOL_THRESHOLDS,
     EPOCH_DURATION,
     treasury.address,
-    await router.getAddress()
   );
 
   // Genesis is next Monday 00:00 UTC — advance time so tests start in epoch 0
   const genesis = await mintPool.genesisTime();
   await time.increaseTo(genesis);
 
-  return { mintPool, token, router, owner, user1, user2, user3, treasury };
+  return { mintPool, token, owner, user1, user2, user3, treasury };
 }
 
 /**
@@ -70,31 +62,27 @@ async function deployContent() {
   const BonzaiCollectibles = await ethers.getContractFactory("BonzaiCollectibles");
   const implementation = await BonzaiCollectibles.deploy();
 
-  // Deploy mock pool and validator
+  // Mock pool
   const MockMintPool = await ethers.getContractFactory("MockMintPool");
   const mockPool = await MockMintPool.deploy();
 
-  const MockTransferValidator = await ethers.getContractFactory("MockTransferValidator");
-  const validator = await MockTransferValidator.deploy();
-
-  // Deploy factory
+  // Factory now takes (impl, treasury, mintPool, royaltySplitter, unlockContract)
   const BonzaiCollectiblesFactory = await ethers.getContractFactory("BonzaiCollectiblesFactory");
   const factory = await BonzaiCollectiblesFactory.deploy(
     await implementation.getAddress(),
     treasury.address,
     await mockPool.getAddress(),
-    ethers.ZeroAddress // royaltySplitter
+    ethers.ZeroAddress, // royaltySplitter
+    ethers.ZeroAddress, // unlockContract — tests opt out by default
   );
 
-  // Create a collection for the owner (default test user)
-  const tx = await factory.getOrCreateCollection("Test Collection");
-  const receipt = await tx.wait();
+  // Create a collection for the owner
+  await factory.getOrCreateCollection("Test Collection");
   const cloneAddress = await factory.collections(owner.address);
 
-  // Get the clone contract instance
   const content = BonzaiCollectibles.attach(cloneAddress);
 
-  return { factory, content, implementation, mockPool, validator, owner, treasury, user1, user2 };
+  return { factory, content, implementation, mockPool, owner, treasury, user1, user2 };
 }
 
 /**
@@ -113,7 +101,7 @@ async function deploySplitter() {
 }
 
 /**
- * Deploy BonzaiCompanions
+ * Deploy BonzaiCompanions (no unlock contract dependency anymore)
  */
 async function deployCompanions() {
   const [owner, treasury, user1, user2, user3] = await ethers.getSigners();
@@ -125,7 +113,7 @@ async function deployCompanions() {
 }
 
 /**
- * Deploy BonzaiUniswapHook with MockPoolManager and MockMintPool
+ * Deploy BonzaiUniswapHook with mocks
  */
 async function deployHook() {
   const [owner, treasury, beneficiary, companionOwner, user1] = await ethers.getSigners();
@@ -136,19 +124,29 @@ async function deployHook() {
   const MockMintPool = await ethers.getContractFactory("MockMintPool");
   const mockPool = await MockMintPool.deploy();
 
+  // Mock companions NFT — H7 routing reads ownerOf + getAgentWallet live.
+  const MockBonzaiCompanions = await ethers.getContractFactory("MockBonzaiCompanions");
+  const mockCompanions = await MockBonzaiCompanions.deploy();
+  // Mint NFT id 1 to companionOwner so live owner = companionOwner;
+  // mintTo also sets agentWallet = companionOwner by default. Tests can
+  // call mockCompanions.setAgentWallet(1, beneficiary) to differentiate.
+  await mockCompanions.mintTo(companionOwner.address);
+  await mockCompanions.setAgentWallet(1, beneficiary.address);
+  const mockCompanionsAddr = await mockCompanions.getAddress();
+
   const BonzaiUniswapHook = await ethers.getContractFactory("BonzaiUniswapHook");
   const hook = await BonzaiUniswapHook.deploy(
     await poolManager.getAddress(),
     treasury.address,
     await mockPool.getAddress(),
-    owner.address
+    owner.address,
   );
 
-  return { hook, poolManager, mockPool, owner, treasury, beneficiary, companionOwner, user1 };
+  return { hook, poolManager, mockPool, mockCompanions, mockCompanionsAddr, owner, treasury, beneficiary, companionOwner, user1 };
 }
 
 /**
- * Deploy CompanionTokenFactory with all mock infrastructure
+ * Deploy CompanionTokenFactory with mock infrastructure
  */
 async function deployCompanionTokenFactory() {
   const [owner, user1, agentWallet, companionOwner] = await ethers.getSigners();
@@ -173,17 +171,16 @@ async function deployCompanionTokenFactory() {
     await poolManager.getAddress(),
     await positionManager.getAddress(),
     await permit2.getAddress(),
-    await feeHook.getAddress()
+    await feeHook.getAddress(),
   );
 
-  // Set companion contract
   await factory.setCompanionContract(await mockCompanions.getAddress());
 
   return { factory, poolManager, positionManager, permit2, feeHook, mockCompanions, owner, user1, agentWallet, companionOwner };
 }
 
 /**
- * Deploy FineTuneTokenFactory with all mock infrastructure
+ * Deploy FineTuneTokenFactory with mock infrastructure
  */
 async function deployFineTuneTokenFactory() {
   const [owner, user1, creator] = await ethers.getSigners();
@@ -208,77 +205,47 @@ async function deployFineTuneTokenFactory() {
     await poolManager.getAddress(),
     await positionManager.getAddress(),
     await permit2.getAddress(),
-    await feeHook.getAddress()
+    await feeHook.getAddress(),
   );
 
-  // Set content contract
   await factory.setContentContract(await mockContent.getAddress());
 
   return { factory, poolManager, positionManager, permit2, feeHook, mockContent, owner, user1, creator };
 }
 
 /**
- * Deploy BonzaiPayment with MockERC20 (USDC) and treasury
- */
-async function deployPayment() {
-  const [owner, treasury, provider1, provider2, consumer1, consumer2] = await ethers.getSigners();
-
-  const MockERC20 = await ethers.getContractFactory("MockERC20");
-  const usdc = await MockERC20.deploy("USDC", "USDC");
-
-  const BonzaiPayment = await ethers.getContractFactory("BonzaiPayment");
-  const payment = await BonzaiPayment.deploy(
-    await usdc.getAddress(),
-    treasury.address,
-    PLATFORM_FEE_BPS
-  );
-
-  return { payment, usdc, owner, treasury, provider1, provider2, consumer1, consumer2 };
-}
-
-/**
- * Deploy BonzaiProviderRegistry with treasury
+ * Deploy BonzaiProviderRegistry — single-arg constructor (treasury only)
  */
 async function deployProviderRegistry() {
   const [owner, treasury, provider1, provider2, provider3, paymentContract] = await ethers.getSigners();
 
   const BonzaiProviderRegistry = await ethers.getContractFactory("BonzaiProviderRegistry");
-  const registry = await BonzaiProviderRegistry.deploy(
-    treasury.address,
-    MIN_STAKE,
-    PLATFORM_FEE_BPS
-  );
+  const registry = await BonzaiProviderRegistry.deploy(treasury.address);
 
   return { registry, owner, treasury, provider1, provider2, provider3, paymentContract };
 }
 
 /**
- * Deploy BonzaiSkillRegistry with MockERC20 (BONZAI) and mock ownership contract
+ * Deploy BonzaiSkillRegistry — ETH-only, 2-arg constructor
  */
 async function deploySkillRegistry() {
   const [owner, treasury, author1, author2, buyer1, buyer2] = await ethers.getSigners();
 
-  const MockERC20 = await ethers.getContractFactory("MockERC20");
-  const bonzaiToken = await MockERC20.deploy("BONZAI", "BONZAI");
-  const usdcToken = await MockERC20.deploy("USDC", "USDC");
-
-  // Deploy a simple mock ownership contract that accepts ETH
+  // Deploy a simple mock ownership contract that accepts ETH via payable distributeRevenue
   const MockSkillOwnership = await ethers.getContractFactory("MockSkillOwnership");
   const mockOwnership = await MockSkillOwnership.deploy();
 
   const BonzaiSkillRegistry = await ethers.getContractFactory("BonzaiSkillRegistry");
   const registry = await BonzaiSkillRegistry.deploy(
-    await bonzaiToken.getAddress(),
     treasury.address,
     await mockOwnership.getAddress(),
-    await usdcToken.getAddress()
   );
 
-  return { registry, bonzaiToken, usdcToken, mockOwnership, owner, treasury, author1, author2, buyer1, buyer2 };
+  return { registry, mockOwnership, owner, treasury, author1, author2, buyer1, buyer2 };
 }
 
 /**
- * Deploy BonzaiSkillOwnership with all dependencies
+ * Deploy BonzaiSkillOwnership — ETH-only
  */
 async function deploySkillOwnership() {
   const [owner, treasury, attestationSigner, registrar1, registrar2, skillRegistryWallet] = await ethers.getSigners();
@@ -295,29 +262,29 @@ async function deploySkillOwnership() {
     await bonzaiToken.getAddress(),
     treasury.address,
     attestationSigner.address,
-    await companionNFT.getAddress()
+    await companionNFT.getAddress(),
   );
 
   return { ownership, bonzaiToken, companionNFT, owner, treasury, attestationSigner, registrar1, registrar2, skillRegistryWallet };
 }
 
 /**
- * Deploy BonzaiPipelinePayment
+ * Deploy BonzaiServiceTime
  */
-async function deployPipelinePayment() {
-  const [owner, treasury, provider1, provider2, provider3, consumer1] = await ethers.getSigners();
+async function deployServiceTime() {
+  const [owner, provider, consumer, treasury] = await ethers.getSigners();
+  const { mintPool, token } = await deployMintPool();
 
-  const MockERC20 = await ethers.getContractFactory("MockERC20");
-  const usdc = await MockERC20.deploy("USDC", "USDC");
-
-  const BonzaiPipelinePayment = await ethers.getContractFactory("BonzaiPipelinePayment");
-  const payment = await BonzaiPipelinePayment.deploy(
-    await usdc.getAddress(),
-    treasury.address,
-    PLATFORM_FEE_BPS,
+  const BonzaiServiceTime = await ethers.getContractFactory("BonzaiServiceTime");
+  const serviceTime = await BonzaiServiceTime.deploy(
+    await token.getAddress(),
+    await mintPool.getAddress(),
   );
 
-  return { payment, usdc, owner, treasury, provider1, provider2, provider3, consumer1 };
+  // Wire up MintPool authorization
+  await mintPool.setServiceTimeContract(await serviceTime.getAddress());
+
+  return { serviceTime, mintPool, token, owner, provider, consumer, treasury };
 }
 
 module.exports = {
@@ -330,9 +297,8 @@ module.exports = {
   deployHook,
   deployCompanionTokenFactory,
   deployFineTuneTokenFactory,
-  deployPayment,
   deployProviderRegistry,
   deploySkillRegistry,
   deploySkillOwnership,
-  deployPipelinePayment,
+  deployServiceTime,
 };

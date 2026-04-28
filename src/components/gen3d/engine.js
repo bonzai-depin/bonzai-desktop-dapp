@@ -1814,6 +1814,13 @@ export function makeLibs({ THREE, addUpdateCallback }) {
       bowl.position.y = y;
       bowl.castShadow = true;
       bowl.receiveShadow = true;
+      // Engine-built marker — _autoFillVessels and FLUID.normalize both
+      // skip anything tagged this way. Without it, the heuristic auto-
+      // fill detects this bowl as a "vessel that needs water" and adds
+      // a duplicate RingGeometry surface AT A DIFFERENT Y, then strips
+      // the helper's own CircleGeometry water as a "duplicate." Result:
+      // visible-water → no-water + broken bowl artifacts.
+      bowl.userData.engineBuilt = true;
       group.add(bowl);
 
       // Dedicated floor disc inside the bowl — gives the water something
@@ -1833,6 +1840,7 @@ export function makeLibs({ THREE, addUpdateCallback }) {
       poolFloor.rotation.x = -Math.PI / 2;
       poolFloor.position.y = y + floor + 0.002;
       poolFloor.receiveShadow = true;
+      poolFloor.userData.engineBuilt = true;
       group.add(poolFloor);
 
       // Gold inlay band at rim.
@@ -1872,7 +1880,17 @@ export function makeLibs({ THREE, addUpdateCallback }) {
       });
       water.rotation.x = -Math.PI / 2;
       water.position.y = y + floor + (rimY - floor) * 0.75;
+      // Engine-built marker — keeps _autoFillVessels' "duplicate water"
+      // stripper from removing this surface AND keeps FLUID.normalize
+      // from second-guessing the material we already chose.
+      water.userData.engineBuilt = true;
+      water.userData.waterForContainer = bowl;
       group.add(water);
+
+      // Tag the group itself so callers (tieredFountain, user code) and
+      // the engine sweeps know the whole assembly is complete.
+      group.userData.engineBuilt = true;
+      group.userData.kind = "fountainBasin";
 
       return group;
     },
@@ -1929,6 +1947,12 @@ export function makeLibs({ THREE, addUpdateCallback }) {
       const rimMat = opts.rim || MAT.gold;
       const group = new THREE.Group();
       group.name = "TieredFountain";
+      // Engine-built marker — protects every nested mesh from the auto-
+      // fill stripper. Each child basin already sets its own marker, but
+      // tagging the wrapper too lets ThreeViewer skip the entire subtree
+      // in one check rather than walking it.
+      group.userData.engineBuilt = true;
+      group.userData.kind = "tieredFountain";
 
       // Build each basin and remember its rim world position for streams.
       const rims = [];
@@ -2278,6 +2302,10 @@ export function makeLibs({ THREE, addUpdateCallback }) {
       group.add(foamDisc);
       group.add(mist);
       group.userData.kind = "stream";
+      // Engine-built marker — keeps the auto-fill heuristic from treating
+      // the foam disc / mist plane as a misplaced "water surface" inside
+      // a nearby vessel.
+      group.userData.engineBuilt = true;
       return group;
     },
 
@@ -2516,6 +2544,229 @@ export function makeLibs({ THREE, addUpdateCallback }) {
         geom.attributes.position.needsUpdate = true;
       });
       return pts;
+    },
+
+    // ─── NORMALIZE — convention-driven post-pass ────────────────────────
+    // Walks the scene graph once after user code returns and upgrades any
+    // mesh tagged with the userData liquid convention to the proper
+    // transmissive water shader. This is the SCALABLE path that lets the
+    // codegen invent any liquid scenario without us having to pattern-
+    // match it in the prompt.
+    //
+    // Conventions the codegen learns:
+    //
+    //   surfaceMesh.userData.fluid = {
+    //     type: "water" | "lava" | "potion" | "blood" | "oil" | "mercury" | "acid" | "elixir",
+    //     color?: 0xRRGGBB,    // override default tint for the type
+    //     waveAmp?: 0.02,      // surface displacement amplitude
+    //     animated?: true,     // disable for ice / frozen liquid
+    //   };
+    //
+    //   vesselMesh.userData.fluidContainer = {
+    //     type: "water" | "potion" | ...,
+    //     color?: 0xRRGGBB,
+    //     fillLevel?: 0.7,     // 0..1 of vessel interior height
+    //   };
+    //
+    // The normalizer also defensively swaps obvious "MeshStandardMaterial
+    // with blue tint at low roughness" planes that the LLM forgot to tag,
+    // so legacy generations keep working.
+    //
+    // @param {THREE.Object3D} root  scene root returned by user code
+    // @param {object}         deps  { helpers } — needs helpers.fillLiquid
+    // @returns {{ tagged: number, fallback: number }} counts for telemetry
+    normalize(root, deps = {}) {
+      if (!root || !root.traverse) return { tagged: 0, fallback: 0 };
+      const helpers = deps.helpers;
+
+      // Default tint per fluid type. Used when userData.fluid.color is omitted.
+      const TYPE_COLOR = {
+        water:   0x5fb4ff,
+        lake:    0x4a90c4,
+        ocean:   0x1d6db0,
+        ice:     0xb8e3ff,
+        potion:  0x40ff80,
+        elixir:  0xa855f7,
+        blood:   0xb00020,
+        acid:    0x7fff40,
+        oil:     0x1a1408,
+        mercury: 0xc8cce0,
+        lava:    0xff5a1a,
+      };
+      // Type → reasonable surface-shader defaults. Lava and oil need
+      // different waveAmp / caustics than water.
+      const TYPE_OPTS = {
+        water:   { waveAmp: 0.018, caustics: 0.85, transmission: 0.9, roughness: 0.06 },
+        lake:    { waveAmp: 0.024, caustics: 0.75, transmission: 0.85, roughness: 0.08 },
+        ocean:   { waveAmp: 0.035, caustics: 0.85, transmission: 0.9,  roughness: 0.05 },
+        ice:     { waveAmp: 0.001, caustics: 0.4,  transmission: 0.92, roughness: 0.04 },
+        potion:  { waveAmp: 0.006, caustics: 0.95, transmission: 0.7,  roughness: 0.10 },
+        elixir:  { waveAmp: 0.004, caustics: 1.00, transmission: 0.65, roughness: 0.08 },
+        blood:   { waveAmp: 0.005, caustics: 0.30, transmission: 0.45, roughness: 0.30 },
+        acid:    { waveAmp: 0.012, caustics: 1.10, transmission: 0.7,  roughness: 0.10 },
+        oil:     { waveAmp: 0.002, caustics: 0.10, transmission: 0.2,  roughness: 0.55 },
+        mercury: { waveAmp: 0.001, caustics: 0.05, transmission: 0.0,  roughness: 0.02 },
+        lava:    { waveAmp: 0.020, caustics: 0.0,  transmission: 0.0,  roughness: 0.55 },
+      };
+
+      let tagged = 0;
+      let fallback = 0;
+
+      // Engine-built helpers (FLUID.fountainBasin etc.) tag every mesh
+      // they produce. Walk-up check so a single ancestor mark protects
+      // the whole subtree.
+      const isEngineBuilt = (n) => {
+        if (n.userData?.engineBuilt) return true;
+        let cur = n.parent;
+        while (cur) {
+          if (cur.userData?.engineBuilt) return true;
+          cur = cur.parent;
+        }
+        return false;
+      };
+
+      // Pass 1 — explicit userData.fluid (surface meshes).
+      const surfacesToUpgrade = [];
+      const containersToFill = [];
+      root.traverse((node) => {
+        if (!node.isMesh) return;
+        if (isEngineBuilt(node)) return; // helper already chose the right material
+        if (node.userData?.fluid && !node.userData?.fluidUpgraded) {
+          surfacesToUpgrade.push(node);
+        }
+        if (node.userData?.fluidContainer && !node.userData?.fluidFilled) {
+          containersToFill.push(node);
+        }
+      });
+
+      for (const mesh of surfacesToUpgrade) {
+        try {
+          const tag = mesh.userData.fluid;
+          const type = (tag.type || "water").toLowerCase();
+          const color = tag.color ?? TYPE_COLOR[type] ?? TYPE_COLOR.water;
+          const baseOpts = TYPE_OPTS[type] || TYPE_OPTS.water;
+          const animated = tag.animated !== false;
+
+          // Lava and mercury are special — they're not "water" semantically;
+          // route them through dedicated shaders when available.
+          if (type === "lava" && SHADER && typeof SHADER.lava === "function") {
+            mesh.material?.dispose?.();
+            mesh.material = SHADER.lava({ hot: tag.color ?? 0xffaa33, cold: 0xa00f00 });
+          } else {
+            // Generic transmissive surface — same path FLUID.surface uses.
+            const newMat = waterMaterial({
+              color,
+              deep: tag.deep ?? 0x0a3e5a,
+              waveAmp: tag.waveAmp ?? (animated ? baseOpts.waveAmp : 0),
+              waveFreq: tag.waveFreq ?? 4,
+              flow: tag.flow || [0.0, animated ? -0.15 : 0.0, 0.0],
+              caustics: tag.caustics ?? baseOpts.caustics,
+              transmission: tag.transmission ?? baseOpts.transmission,
+              roughness: tag.roughness ?? baseOpts.roughness,
+              foamThreshold: tag.foamThreshold ?? 0.72,
+              thickness: tag.thickness ?? 0.6,
+              chroma: tag.chroma,
+            });
+            mesh.material?.dispose?.();
+            mesh.material = newMat;
+          }
+          mesh.userData.fluidUpgraded = true;
+          mesh.userData.isWaterPlane = true; // so _autoFillVessels' duplicate stripper sees it
+          tagged++;
+        } catch (err) {
+          console.warn("[FLUID.normalize] surface upgrade failed:", err?.message);
+        }
+      }
+
+      for (const container of containersToFill) {
+        try {
+          const tag = container.userData.fluidContainer;
+          const type = (tag.type || "water").toLowerCase();
+          const color = tag.color ?? TYPE_COLOR[type] ?? TYPE_COLOR.water;
+          const fillLevel = Math.max(0, Math.min(1, tag.fillLevel ?? 0.65));
+
+          if (helpers && typeof helpers.fillLiquid === "function") {
+            const liquid = helpers.fillLiquid(container, color, { fillLevel });
+            if (liquid) {
+              container.add(liquid);
+              liquid.position.set(0, 0, 0);
+              liquid.quaternion.identity();
+              liquid.scale.set(1, 1, 1);
+              // Run our own surface upgrade on the disc inside the fill group.
+              FLUID.upgradeFill(liquid, {
+                color,
+                waveAmp: tag.waveAmp ?? 0.003,
+                caustics: tag.caustics ?? 0.9,
+              });
+              container.userData.fluidFilled = true;
+              tagged++;
+            }
+          }
+        } catch (err) {
+          console.warn("[FLUID.normalize] container fill failed:", err?.message);
+        }
+      }
+
+      // Pass 2 — defensive sweep. ONLY runs if no explicit userData tags
+      // were found anywhere in the scene (signal that the LLM ignored the
+      // convention entirely). Looks for unmistakable water-plane patterns:
+      // horizontal flat disc + (transmission > 0.7 OR very-low roughness +
+      // blue tint). False-positive risk is low because we require the
+      // geometry to be planar AND horizontal AND match the visual signature.
+      if (tagged === 0) {
+        root.traverse((node) => {
+          if (!node.isMesh || !node.geometry) return;
+          if (node.userData?.fluidUpgraded) return;
+          if (node.userData?.autoFilled) return;
+          if (isEngineBuilt(node)) return;
+          const g = node.geometry;
+          const isPlanar = g.type === "PlaneGeometry"
+                        || g.type === "CircleGeometry"
+                        || g.type === "RingGeometry";
+          if (!isPlanar) return;
+          // Horizontal check (rotation.x near ±π/2 OR baked into geometry → 0).
+          const rx = Math.abs(node.rotation.x);
+          const isHorizontal = Math.abs(rx - Math.PI / 2) < 0.3 || rx < 0.3;
+          if (!isHorizontal) return;
+          const m = node.material;
+          if (!m) return;
+          const transmissive = (m.transmission || 0) > 0.7;
+          const lowRough = m.roughness !== undefined && m.roughness < 0.12;
+          let waterTint = false;
+          if (m.color) {
+            const r = m.color.r, gC = m.color.g, b = m.color.b;
+            waterTint = (b > 0.45 && b > r * 1.25 && b > gC * 1.05) || (r + gC + b < 0.5 && b > r);
+          }
+          if (!(transmissive || (lowRough && waterTint))) return;
+
+          try {
+            const color = m.color ? m.color.getHex() : 0x5fb4ff;
+            m.dispose?.();
+            node.material = waterMaterial({
+              color,
+              deep: 0x0a3e5a,
+              waveAmp: 0.018,
+              waveFreq: 4,
+              flow: [0.0, -0.15, 0.0],
+              caustics: 0.85,
+              transmission: 0.9,
+              roughness: 0.06,
+              foamThreshold: 0.72,
+              thickness: 0.6,
+            });
+            node.userData.fluidUpgraded = true;
+            node.userData.isWaterPlane = true;
+            fallback++;
+          } catch (err) {
+            console.warn("[FLUID.normalize] fallback upgrade failed:", err?.message);
+          }
+        });
+      }
+
+      if (tagged > 0 || fallback > 0) {
+        console.log(`[FLUID.normalize] upgraded ${tagged} tagged + ${fallback} fallback meshes`);
+      }
+      return { tagged, fallback };
     },
   };
 

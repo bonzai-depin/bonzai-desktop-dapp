@@ -62,7 +62,14 @@ interface IPermit2FTF {
  * @title IBonzaiUniswapHookFTF
  */
 interface IBonzaiUniswapHookFTF {
-    function registerPool(bytes32 poolId, address beneficiary, address companionOwner, uint8 poolType, uint8 mintPoolIndex) external;
+    function registerPool(
+        bytes32 poolId,
+        address beneficiary,
+        address companionNFT,
+        uint256 companionTokenId,
+        uint8 poolType,
+        uint8 mintPoolIndex
+    ) external;
 }
 
 /**
@@ -130,11 +137,13 @@ contract FineTuneToken is ERC20, ERC20Burnable {
  *
  * Features:
  * - One-click token launch with 96% supply in liquidity, 4% to creator
- * - LP position NFT sent to DEAD_ADDRESS (unruggable - permanent liquidity)
+ * - LP position NFT BURNED at launch (sent to 0xdead — canonical V4 burn,
+ *   liquidity stays in the pool, NFT permanently unreachable)
  * - Tokens are burnable (deflationary)
  * - One token per content NFT (prevents duplicates)
  * - Links to content NFT token ID and IPFS model hash
- * - Hook captures 1% of swap output: 80% creator, 10% treasury, 10% MintPool(LVL6)
+ * - Hook captures 1% of swap output: 80% creator, 10% treasury, 10% MintPool
+ *   (MintPool slice spread equally across all 6 content-type buckets)
  */
 contract FineTuneTokenFactory is Ownable, ReentrancyGuard, IERC721Receiver {
     using SafeERC20 for IERC20;
@@ -156,7 +165,10 @@ contract FineTuneTokenFactory is Ownable, ReentrancyGuard, IERC721Receiver {
     uint256 public constant BPS_DENOMINATOR = 10000;
 
     /// @notice Dead address for locking LP position NFT
-    address public constant DEAD_ADDRESS = 0x000000000000000000000000000000000000dEaD;
+    /// @notice Address with no known private key. Receiving the LP position NFT
+    ///         here is equivalent to burning it: ERC-721 transfers to address(0)
+    ///         revert in OZ v5, so this is the canonical V4 burn pattern.
+    address public constant BURN_ADDRESS = 0x000000000000000000000000000000000000dEaD;
 
     /// @notice Native ETH placeholder (V4 uses address(0))
     address public constant NATIVE_ETH = address(0);
@@ -346,12 +358,13 @@ contract FineTuneTokenFactory is Ownable, ReentrancyGuard, IERC721Receiver {
 
         require(positionId > 0, "Position mint failed");
 
-        // 10. Transfer LP position NFT to DEAD_ADDRESS
-        positionManager.safeTransferFrom(address(this), DEAD_ADDRESS, positionId);
+        // 10. Burn LP position NFT (transferred to 0xdead — canonical V4 burn)
+        positionManager.safeTransferFrom(address(this), BURN_ADDRESS, positionId);
 
         // 11. Compute poolId and register with hook
         poolId = keccak256(abi.encode(poolKey));
-        feeHook.registerPool(poolId, creator, address(0), 1, MINT_POOL_INDEX); // 1 = FINETUNE, no companionOwner
+        // FineTune doesn't use live NFT lookups — pass zeros for NFT fields.
+        feeHook.registerPool(poolId, creator, address(0), 0, 1, MINT_POOL_INDEX); // 1 = FINETUNE
 
         emit ModelTokenLaunched(
             contentTokenId,

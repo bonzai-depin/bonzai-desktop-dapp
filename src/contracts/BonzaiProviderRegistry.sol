@@ -16,13 +16,11 @@ contract BonzaiProviderRegistry is Ownable, ReentrancyGuard, Pausable {
     // ═══════════════════════════════════════════════════════════════════════════
 
     struct Provider {
-        address wallet;           // Provider's Ethereum address (for payments)
+        address wallet;           // Provider's Ethereum address (used for service-time claim)
         string peerId;            // libp2p peer ID (e.g., "12D3KooW...")
         string[] multiaddrs;      // libp2p multiaddresses for dialing
         uint8[] pipelines;        // Supported pipeline IDs
-        uint256 pricePerToken;    // Price per 1000 tokens (token-agnostic: ETH or USDC)
-        uint256 stakedAmount;     // ETH staked for reputation
-        uint256 totalEarnings;    // Total earned
+        uint256 totalEarnings;    // Total ETH earned (recorded by BonzaiServiceTime)
         uint256 completedJobs;    // Number of completed inferences
         uint256 registeredAt;     // Registration timestamp
         uint256 lastSeenAt;       // Last activity timestamp
@@ -69,13 +67,8 @@ contract BonzaiProviderRegistry is Ownable, ReentrancyGuard, Pausable {
     error ZeroAddress();
     error EmptyPeerId();
     error NoPipelines();
-    error ZeroPrice();
     error PeerIdTaken(string peerId);
-    error InsufficientStake(uint256 sent, uint256 required);
     error NotRegistered();
-    error StillActive();
-    error ZeroAmount();
-    error InsufficientStakeBalance(uint256 requested, uint256 available);
     error TransferFailed(address recipient);
     error OnlyPaymentContract();
     error ProviderNotRegistered(address provider);
@@ -95,16 +88,11 @@ contract BonzaiProviderRegistry is Ownable, ReentrancyGuard, Pausable {
     // List of all provider addresses
     address[] public providerAddresses;
 
-    // Minimum stake required to register
-    uint256 public minStakeAmount;
-
-    // Platform fee in basis points (250 = 2.5%)
-    uint256 public platformFeeBps;
-
     // Platform treasury
     address public treasury;
 
-    // Authorized payment contract (only caller for recordEarnings)
+    // Authorized contract permitted to call recordEarnings (BonzaiServiceTime
+    // since payment-per-call has been replaced by free service-time accounting).
     address public paymentContract;
 
     // ═══════════════════════════════════════════════════════════════════════════
@@ -114,25 +102,19 @@ contract BonzaiProviderRegistry is Ownable, ReentrancyGuard, Pausable {
     event ProviderRegistered(
         address indexed wallet,
         string peerId,
-        uint8[] pipelines,
-        uint256 pricePerToken
+        uint8[] pipelines
     );
 
     event ProviderUpdated(
         address indexed wallet,
         string peerId,
-        uint8[] pipelines,
-        uint256 pricePerToken
+        uint8[] pipelines
     );
 
     event ProviderDeactivated(address indexed wallet);
     event ProviderActivated(address indexed wallet);
-    event ProviderSlashed(address indexed wallet, uint256 amount, string reason);
     event ShardCapabilitiesUpdated(address indexed wallet, uint16 maxLayers, uint32 computeScore, uint32 memoryMB);
     event EarningsRecorded(address indexed wallet, uint256 amount);
-    event StakeWithdrawn(address indexed wallet, uint256 amount);
-    event MinStakeUpdated(uint256 oldMinStake, uint256 newMinStake);
-    event PlatformFeeUpdated(uint256 oldFeeBps, uint256 newFeeBps);
     event TreasuryUpdated(address indexed oldTreasury, address indexed newTreasury);
     event PaymentContractUpdated(address indexed oldContract, address indexed newContract);
 
@@ -141,14 +123,10 @@ contract BonzaiProviderRegistry is Ownable, ReentrancyGuard, Pausable {
     // ═══════════════════════════════════════════════════════════════════════════
 
     constructor(
-        address _treasury,
-        uint256 _minStakeAmount,
-        uint256 _platformFeeBps
+        address _treasury
     ) Ownable(msg.sender) {
         if (_treasury == address(0)) revert ZeroAddress();
         treasury = _treasury;
-        minStakeAmount = _minStakeAmount;
-        platformFeeBps = _platformFeeBps;
     }
 
     // ═══════════════════════════════════════════════════════════════════════════
@@ -159,25 +137,23 @@ contract BonzaiProviderRegistry is Ownable, ReentrancyGuard, Pausable {
      * @notice Register as a provider
      * @param peerId libp2p peer ID
      * @param multiaddrs Array of libp2p multiaddresses
-     * @param pipelines Array of supported pipeline IDs (must be 0-10)
-     * @param pricePerToken Price per 1000 tokens (token-agnostic)
+     * @param pipelines Array of supported pipeline IDs (must be 0..MAX_PIPELINE_CATEGORY)
      * @param isRelay Whether this provider acts as a relay
+     * @dev Inference is free (free P2P + ServiceTime accounting), so there is no
+     *      per-token price and no stake.
      */
     function register(
         string calldata peerId,
         string[] calldata multiaddrs,
         uint8[] calldata pipelines,
-        uint256 pricePerToken,
         bool isRelay
-    ) external payable nonReentrant whenNotPaused {
+    ) external nonReentrant whenNotPaused {
         if (bytes(peerId).length == 0) revert EmptyPeerId();
         if (pipelines.length == 0) revert NoPipelines();
-        if (pricePerToken == 0) revert ZeroPrice();
         if (peerIdToWallet[peerId] != address(0) && peerIdToWallet[peerId] != msg.sender) {
             revert PeerIdTaken(peerId);
         }
 
-        // Validate all pipeline categories are in valid range
         for (uint256 i = 0; i < pipelines.length; ) {
             if (pipelines[i] > MAX_PIPELINE_CATEGORY) {
                 revert InvalidPipelineCategory(pipelines[i], MAX_PIPELINE_CATEGORY);
@@ -185,72 +161,52 @@ contract BonzaiProviderRegistry is Ownable, ReentrancyGuard, Pausable {
             unchecked { i++; }
         }
 
-        // Require minimum stake (optional, can be 0)
-        if (minStakeAmount > 0) {
-            if (msg.value < minStakeAmount) revert InsufficientStake(msg.value, minStakeAmount);
-        }
-
-        // Check if updating existing registration
         bool isUpdate = providers[msg.sender].wallet != address(0);
 
         if (!isUpdate) {
-            // New registration
             providerAddresses.push(msg.sender);
         } else {
-            // Clear old peer ID mapping if changed
             string memory oldPeerId = providers[msg.sender].peerId;
             if (keccak256(bytes(oldPeerId)) != keccak256(bytes(peerId))) {
                 delete peerIdToWallet[oldPeerId];
             }
         }
 
-        // Update provider data
         Provider storage provider = providers[msg.sender];
         provider.wallet = msg.sender;
         provider.peerId = peerId;
         provider.multiaddrs = multiaddrs;
         provider.pipelines = pipelines;
-        provider.pricePerToken = pricePerToken;
-        provider.stakedAmount += msg.value;
         provider.registeredAt = isUpdate ? provider.registeredAt : block.timestamp;
         provider.lastSeenAt = block.timestamp;
         provider.isActive = true;
         provider.isRelay = isRelay;
 
-        // Update peer ID lookup
         peerIdToWallet[peerId] = msg.sender;
 
         if (isUpdate) {
-            emit ProviderUpdated(msg.sender, peerId, pipelines, pricePerToken);
+            emit ProviderUpdated(msg.sender, peerId, pipelines);
         } else {
-            emit ProviderRegistered(msg.sender, peerId, pipelines, pricePerToken);
+            emit ProviderRegistered(msg.sender, peerId, pipelines);
         }
     }
 
     /**
      * @notice Update provider details without re-registering
-     * @param peerId New libp2p peer ID
-     * @param multiaddrs New multiaddresses
-     * @param pipelines New supported pipeline IDs (must be 0-10)
-     * @param pricePerToken New price per 1000 tokens
-     * @param isRelay Whether this provider acts as a relay
      */
     function updateProvider(
         string calldata peerId,
         string[] calldata multiaddrs,
         uint8[] calldata pipelines,
-        uint256 pricePerToken,
         bool isRelay
     ) external nonReentrant whenNotPaused {
         if (providers[msg.sender].wallet == address(0)) revert NotRegistered();
         if (bytes(peerId).length == 0) revert EmptyPeerId();
         if (pipelines.length == 0) revert NoPipelines();
-        if (pricePerToken == 0) revert ZeroPrice();
         if (peerIdToWallet[peerId] != address(0) && peerIdToWallet[peerId] != msg.sender) {
             revert PeerIdTaken(peerId);
         }
 
-        // Validate all pipeline categories
         for (uint256 i = 0; i < pipelines.length; ) {
             if (pipelines[i] > MAX_PIPELINE_CATEGORY) {
                 revert InvalidPipelineCategory(pipelines[i], MAX_PIPELINE_CATEGORY);
@@ -258,7 +214,6 @@ contract BonzaiProviderRegistry is Ownable, ReentrancyGuard, Pausable {
             unchecked { i++; }
         }
 
-        // Clear old peer ID mapping if changed
         string memory oldPeerId = providers[msg.sender].peerId;
         if (keccak256(bytes(oldPeerId)) != keccak256(bytes(peerId))) {
             delete peerIdToWallet[oldPeerId];
@@ -268,13 +223,12 @@ contract BonzaiProviderRegistry is Ownable, ReentrancyGuard, Pausable {
         provider.peerId = peerId;
         provider.multiaddrs = multiaddrs;
         provider.pipelines = pipelines;
-        provider.pricePerToken = pricePerToken;
         provider.lastSeenAt = block.timestamp;
         provider.isRelay = isRelay;
 
         peerIdToWallet[peerId] = msg.sender;
 
-        emit ProviderUpdated(msg.sender, peerId, pipelines, pricePerToken);
+        emit ProviderUpdated(msg.sender, peerId, pipelines);
     }
 
     /**
@@ -356,26 +310,6 @@ contract BonzaiProviderRegistry is Ownable, ReentrancyGuard, Pausable {
         providers[provider].lastSeenAt = block.timestamp;
 
         emit EarningsRecorded(provider, amount);
-    }
-
-    /**
-     * @notice Withdraw staked ETH (provider must deactivate first)
-     * @param amount Amount of stake to withdraw
-     */
-    function withdrawStake(uint256 amount) external nonReentrant {
-        if (providers[msg.sender].wallet == address(0)) revert NotRegistered();
-        if (providers[msg.sender].isActive) revert StillActive();
-        if (amount == 0) revert ZeroAmount();
-        if (providers[msg.sender].stakedAmount < amount) {
-            revert InsufficientStakeBalance(amount, providers[msg.sender].stakedAmount);
-        }
-
-        providers[msg.sender].stakedAmount -= amount;
-
-        (bool success, ) = msg.sender.call{value: amount}("");
-        if (!success) revert TransferFailed(msg.sender);
-
-        emit StakeWithdrawn(msg.sender, amount);
     }
 
     // ═══════════════════════════════════════════════════════════════════════════
@@ -503,25 +437,6 @@ contract BonzaiProviderRegistry is Ownable, ReentrancyGuard, Pausable {
     // ═══════════════════════════════════════════════════════════════════════════
 
     /**
-     * @notice Update platform fee
-     */
-    function setPlatformFee(uint256 _platformFeeBps) external onlyOwner {
-        if (_platformFeeBps > 1000) revert FeeTooHigh(_platformFeeBps, 1000);
-        uint256 old = platformFeeBps;
-        platformFeeBps = _platformFeeBps;
-        emit PlatformFeeUpdated(old, _platformFeeBps);
-    }
-
-    /**
-     * @notice Update minimum stake
-     */
-    function setMinStake(uint256 _minStakeAmount) external onlyOwner {
-        uint256 old = minStakeAmount;
-        minStakeAmount = _minStakeAmount;
-        emit MinStakeUpdated(old, _minStakeAmount);
-    }
-
-    /**
      * @notice Update treasury address
      */
     function setTreasury(address _treasury) external onlyOwner {
@@ -532,33 +447,15 @@ contract BonzaiProviderRegistry is Ownable, ReentrancyGuard, Pausable {
     }
 
     /**
-     * @notice Set the authorized payment contract for recordEarnings
+     * @notice Set the authorized payment contract for recordEarnings.
+     *         Should be set to BonzaiServiceTime — the only contract that
+     *         tracks per-provider earnings under the free-inference model.
      */
     function setPaymentContract(address _paymentContract) external onlyOwner {
         if (_paymentContract == address(0)) revert ZeroAddress();
         address old = paymentContract;
         paymentContract = _paymentContract;
         emit PaymentContractUpdated(old, _paymentContract);
-    }
-
-    /**
-     * @notice Slash a provider's stake (for misbehavior)
-     */
-    function slashProvider(address provider, uint256 amount, string calldata reason) external onlyOwner nonReentrant {
-        if (providers[provider].wallet == address(0)) revert ProviderNotRegistered(provider);
-        if (amount == 0) revert ZeroAmount();
-        if (providers[provider].stakedAmount < amount) {
-            revert InsufficientStakeBalance(amount, providers[provider].stakedAmount);
-        }
-
-        // Transfer slashed amount to treasury first (reverts on failure, preserving stake)
-        (bool success, ) = treasury.call{value: amount}("");
-        if (!success) revert TransferFailed(treasury);
-
-        // Only deduct stake after successful transfer
-        providers[provider].stakedAmount -= amount;
-
-        emit ProviderSlashed(provider, amount, reason);
     }
 
     /**

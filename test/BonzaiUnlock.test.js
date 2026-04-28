@@ -250,11 +250,11 @@ describe("BonzaiUnlock", function () {
         .withArgs(user1.address, owner.address, anyValue);
     });
 
-    it("should revert when called by non-owner", async function () {
+    it("should revert when called by non-owner/non-treasury", async function () {
       const { unlock, user1, user2 } = await loadFixture(deployUnlock);
       await expect(
         unlock.connect(user1).giftUnlock(user2.address)
-      ).to.be.revertedWithCustomError(unlock, "OwnableUnauthorizedAccount");
+      ).to.be.revertedWith("Not owner/treasury");
     });
 
     it("should revert with AlreadyUnlocked if recipient already unlocked", async function () {
@@ -316,11 +316,11 @@ describe("BonzaiUnlock", function () {
         .withArgs(101, 100);
     });
 
-    it("should revert when called by non-owner", async function () {
+    it("should revert when called by non-owner/non-treasury", async function () {
       const { unlock, user1, user2 } = await loadFixture(deployUnlock);
       await expect(
         unlock.connect(user1).batchGiftUnlock([user2.address])
-      ).to.be.revertedWithCustomError(unlock, "OwnableUnauthorizedAccount");
+      ).to.be.revertedWith("Not owner/treasury");
     });
 
     it("should handle empty array without reverting", async function () {

@@ -7,12 +7,14 @@ const {
   BPS_DENOMINATOR,
   COMPANION_WALLET_BPS,
   COMPANION_OWNER_BPS,
+  COMPANION_TREASURY_BPS,
   COMPANION_POOL_BPS,
   FINETUNE_BENEFICIARY_BPS,
   FINETUNE_TREASURY_BPS,
   FINETUNE_POOL_BPS,
   POOL_TYPE_COMPANION,
   POOL_TYPE_FINETUNE,
+  NUM_POOLS,
 } = require("./helpers/constants");
 
 /**
@@ -32,8 +34,6 @@ function makePoolKey(hookAddress, tokenAddress) {
 /**
  * Default SwapParams.
  * zeroForOne = false means user sells token1 (ERC-20) and receives token0 (ETH).
- * Since currency0 = address(0) in our PoolKey, outputCurrency = address(0) = native ETH,
- * which is required for the hook to capture fees after the ETH-only fee guard.
  */
 function makeSwapParams(zeroForOne = false) {
   return {
@@ -53,6 +53,27 @@ function computePoolId(key) {
       [key.currency0, key.currency1, key.fee, key.tickSpacing, key.hooks]
     )
   );
+}
+
+/**
+ * Helper that calls registerPool with the new 6-arg signature.
+ * For COMPANION pools, passes the mocked companions NFT contract + tokenId 1.
+ * For FINETUNE pools, passes zero NFT (FineTune doesn't use live lookups).
+ */
+async function regPool(hook, signer, poolId, beneficiary, poolType, mintPoolIdx, mockCompanionsAddr) {
+  const isCompanion = poolType === POOL_TYPE_COMPANION;
+  const nftAddr = isCompanion ? mockCompanionsAddr : ethers.ZeroAddress;
+  const tokenId = isCompanion ? 1n : 0n;
+  return hook.connect(signer).registerPool(poolId, beneficiary, nftAddr, tokenId, poolType, mintPoolIdx);
+}
+
+/**
+ * Sum unclaimed across all 6 MintPool buckets (since the pool slice is spread).
+ */
+async function sumPoolBuckets(hook) {
+  let total = 0n;
+  for (let i = 0; i < NUM_POOLS; i++) total += await hook.unclaimedPool(i);
+  return total;
 }
 
 describe("BonzaiUniswapHook", function () {
@@ -120,28 +141,28 @@ describe("BonzaiUniswapHook", function () {
 
   describe("registerPool()", function () {
     it("should register a COMPANION pool when called by authorized factory", async function () {
-      const { hook, owner, beneficiary, companionOwner } = await loadFixture(deployHook);
+      const { hook, owner, beneficiary, mockCompanionsAddr } = await loadFixture(deployHook);
       const hookAddr = await hook.getAddress();
       const key = makePoolKey(hookAddr);
       const poolId = computePoolId(key);
 
-      // Authorize owner as factory
       await hook.connect(owner).authorizeFactory(owner.address, true);
-      await hook.connect(owner).registerPool(poolId, beneficiary.address, companionOwner.address, POOL_TYPE_COMPANION, 0);
+      await regPool(hook, owner, poolId, beneficiary.address, POOL_TYPE_COMPANION, 0, mockCompanionsAddr);
 
       const config = await hook.getPoolConfig(poolId);
       expect(config.beneficiary).to.equal(beneficiary.address);
-      expect(config.companionOwner).to.equal(companionOwner.address);
+      // companionOwner is now zero in storage — read live from NFT at swap time
+      expect(config.companionOwner).to.equal(ethers.ZeroAddress);
       expect(config.poolType).to.equal(POOL_TYPE_COMPANION);
       expect(config.active).to.be.true;
     });
 
     it("should register a FINETUNE pool when called by authorized factory", async function () {
-      const { hook, owner, beneficiary } = await loadFixture(deployHook);
+      const { hook, owner, beneficiary, mockCompanionsAddr } = await loadFixture(deployHook);
       const poolId = ethers.keccak256(ethers.toUtf8Bytes("finetune-pool-1"));
 
       await hook.connect(owner).authorizeFactory(owner.address, true);
-      await hook.connect(owner).registerPool(poolId, beneficiary.address, ethers.ZeroAddress, POOL_TYPE_FINETUNE, 5);
+      await regPool(hook, owner, poolId, beneficiary.address, POOL_TYPE_FINETUNE, 5, mockCompanionsAddr);
 
       const config = await hook.getPoolConfig(poolId);
       expect(config.beneficiary).to.equal(beneficiary.address);
@@ -152,76 +173,87 @@ describe("BonzaiUniswapHook", function () {
     });
 
     it("should emit PoolRegistered event", async function () {
-      const { hook, owner, beneficiary, companionOwner } = await loadFixture(deployHook);
+      const { hook, owner, beneficiary, mockCompanionsAddr } = await loadFixture(deployHook);
       const poolId = ethers.keccak256(ethers.toUtf8Bytes("test-pool"));
 
       await hook.connect(owner).authorizeFactory(owner.address, true);
       await expect(
-        hook.connect(owner).registerPool(poolId, beneficiary.address, companionOwner.address, POOL_TYPE_COMPANION, 0)
+        regPool(hook, owner, poolId, beneficiary.address, POOL_TYPE_COMPANION, 0, mockCompanionsAddr)
       )
         .to.emit(hook, "PoolRegistered")
         .withArgs(poolId, beneficiary.address, POOL_TYPE_COMPANION, 0);
     });
 
     it("should revert when called by non-authorized factory", async function () {
-      const { hook, user1, beneficiary, companionOwner } = await loadFixture(deployHook);
+      const { hook, user1, beneficiary, mockCompanionsAddr } = await loadFixture(deployHook);
       const poolId = ethers.keccak256(ethers.toUtf8Bytes("test-pool"));
 
       await expect(
-        hook.connect(user1).registerPool(poolId, beneficiary.address, companionOwner.address, POOL_TYPE_COMPANION, 0)
+        regPool(hook, user1, poolId, beneficiary.address, POOL_TYPE_COMPANION, 0, mockCompanionsAddr)
       ).to.be.revertedWith("Not authorized factory");
     });
 
     it("should revert when beneficiary is zero address", async function () {
-      const { hook, owner, companionOwner } = await loadFixture(deployHook);
+      const { hook, owner, mockCompanionsAddr } = await loadFixture(deployHook);
       const poolId = ethers.keccak256(ethers.toUtf8Bytes("test-pool"));
 
       await hook.connect(owner).authorizeFactory(owner.address, true);
       await expect(
-        hook.connect(owner).registerPool(poolId, ethers.ZeroAddress, companionOwner.address, POOL_TYPE_COMPANION, 0)
+        regPool(hook, owner, poolId, ethers.ZeroAddress, POOL_TYPE_COMPANION, 0, mockCompanionsAddr)
       ).to.be.revertedWith("Invalid beneficiary");
     });
 
-    it("should revert when COMPANION pool has zero-address companionOwner", async function () {
+    it("should revert when COMPANION pool has zero NFT contract", async function () {
       const { hook, owner, beneficiary } = await loadFixture(deployHook);
       const poolId = ethers.keccak256(ethers.toUtf8Bytes("test-pool"));
 
       await hook.connect(owner).authorizeFactory(owner.address, true);
+      // Pass zero NFT addr explicitly (not via regPool helper)
       await expect(
-        hook.connect(owner).registerPool(poolId, beneficiary.address, ethers.ZeroAddress, POOL_TYPE_COMPANION, 0)
-      ).to.be.revertedWith("Companion pool requires owner address");
+        hook.connect(owner).registerPool(poolId, beneficiary.address, ethers.ZeroAddress, 1n, POOL_TYPE_COMPANION, 0)
+      ).to.be.revertedWith("Companion pool requires NFT contract");
+    });
+
+    it("should revert when COMPANION pool has zero token id", async function () {
+      const { hook, owner, beneficiary, mockCompanionsAddr } = await loadFixture(deployHook);
+      const poolId = ethers.keccak256(ethers.toUtf8Bytes("test-pool"));
+
+      await hook.connect(owner).authorizeFactory(owner.address, true);
+      await expect(
+        hook.connect(owner).registerPool(poolId, beneficiary.address, mockCompanionsAddr, 0n, POOL_TYPE_COMPANION, 0)
+      ).to.be.revertedWith("Companion pool requires NFT id");
     });
 
     it("should revert when FINETUNE pool has mintPoolIndex >= 6", async function () {
-      const { hook, owner, beneficiary } = await loadFixture(deployHook);
+      const { hook, owner, beneficiary, mockCompanionsAddr } = await loadFixture(deployHook);
       const poolId = ethers.keccak256(ethers.toUtf8Bytes("test-pool"));
 
       await hook.connect(owner).authorizeFactory(owner.address, true);
       await expect(
-        hook.connect(owner).registerPool(poolId, beneficiary.address, ethers.ZeroAddress, POOL_TYPE_FINETUNE, 6)
+        regPool(hook, owner, poolId, beneficiary.address, POOL_TYPE_FINETUNE, 6, mockCompanionsAddr)
       ).to.be.revertedWith("Invalid mint pool index");
     });
 
     it("should revert when registering a pool that is already active", async function () {
-      const { hook, owner, beneficiary, companionOwner } = await loadFixture(deployHook);
+      const { hook, owner, beneficiary, mockCompanionsAddr } = await loadFixture(deployHook);
       const poolId = ethers.keccak256(ethers.toUtf8Bytes("test-pool"));
 
       await hook.connect(owner).authorizeFactory(owner.address, true);
-      await hook.connect(owner).registerPool(poolId, beneficiary.address, companionOwner.address, POOL_TYPE_COMPANION, 0);
+      await regPool(hook, owner, poolId, beneficiary.address, POOL_TYPE_COMPANION, 0, mockCompanionsAddr);
 
       await expect(
-        hook.connect(owner).registerPool(poolId, beneficiary.address, companionOwner.address, POOL_TYPE_COMPANION, 0)
+        regPool(hook, owner, poolId, beneficiary.address, POOL_TYPE_COMPANION, 0, mockCompanionsAddr)
       ).to.be.revertedWith("Pool already registered");
     });
 
     it("should allow FINETUNE pool with mintPoolIndex 0 through 5", async function () {
-      const { hook, owner, beneficiary } = await loadFixture(deployHook);
+      const { hook, owner, beneficiary, mockCompanionsAddr } = await loadFixture(deployHook);
 
       await hook.connect(owner).authorizeFactory(owner.address, true);
 
       for (let i = 0; i < 6; i++) {
         const poolId = ethers.keccak256(ethers.toUtf8Bytes(`finetune-pool-${i}`));
-        await hook.connect(owner).registerPool(poolId, beneficiary.address, ethers.ZeroAddress, POOL_TYPE_FINETUNE, i);
+        await regPool(hook, owner, poolId, beneficiary.address, POOL_TYPE_FINETUNE, i, mockCompanionsAddr);
         const config = await hook.getPoolConfig(poolId);
         expect(config.mintPoolIndex).to.equal(i);
         expect(config.active).to.be.true;
@@ -235,11 +267,11 @@ describe("BonzaiUniswapHook", function () {
 
   describe("deregisterPool()", function () {
     it("should deregister an active pool (onlyOwner)", async function () {
-      const { hook, owner, beneficiary, companionOwner } = await loadFixture(deployHook);
+      const { hook, owner, beneficiary, mockCompanionsAddr } = await loadFixture(deployHook);
       const poolId = ethers.keccak256(ethers.toUtf8Bytes("test-pool"));
 
       await hook.connect(owner).authorizeFactory(owner.address, true);
-      await hook.connect(owner).registerPool(poolId, beneficiary.address, companionOwner.address, POOL_TYPE_COMPANION, 0);
+      await regPool(hook, owner, poolId, beneficiary.address, POOL_TYPE_COMPANION, 0, mockCompanionsAddr);
 
       await hook.connect(owner).deregisterPool(poolId);
 
@@ -248,11 +280,11 @@ describe("BonzaiUniswapHook", function () {
     });
 
     it("should emit PoolDeregistered event", async function () {
-      const { hook, owner, beneficiary, companionOwner } = await loadFixture(deployHook);
+      const { hook, owner, beneficiary, mockCompanionsAddr } = await loadFixture(deployHook);
       const poolId = ethers.keccak256(ethers.toUtf8Bytes("test-pool"));
 
       await hook.connect(owner).authorizeFactory(owner.address, true);
-      await hook.connect(owner).registerPool(poolId, beneficiary.address, companionOwner.address, POOL_TYPE_COMPANION, 0);
+      await regPool(hook, owner, poolId, beneficiary.address, POOL_TYPE_COMPANION, 0, mockCompanionsAddr);
 
       await expect(hook.connect(owner).deregisterPool(poolId))
         .to.emit(hook, "PoolDeregistered")
@@ -260,11 +292,11 @@ describe("BonzaiUniswapHook", function () {
     });
 
     it("should revert when called by non-owner", async function () {
-      const { hook, owner, user1, beneficiary, companionOwner } = await loadFixture(deployHook);
+      const { hook, owner, user1, beneficiary, mockCompanionsAddr } = await loadFixture(deployHook);
       const poolId = ethers.keccak256(ethers.toUtf8Bytes("test-pool"));
 
       await hook.connect(owner).authorizeFactory(owner.address, true);
-      await hook.connect(owner).registerPool(poolId, beneficiary.address, companionOwner.address, POOL_TYPE_COMPANION, 0);
+      await regPool(hook, owner, poolId, beneficiary.address, POOL_TYPE_COMPANION, 0, mockCompanionsAddr);
 
       await expect(
         hook.connect(user1).deregisterPool(poolId)
@@ -291,13 +323,13 @@ describe("BonzaiUniswapHook", function () {
      */
     async function deployWithCompanionPool() {
       const base = await deployHook();
-      const { hook, poolManager, owner, beneficiary, companionOwner } = base;
+      const { hook, owner, beneficiary, mockCompanionsAddr } = base;
       const hookAddr = await hook.getAddress();
       const key = makePoolKey(hookAddr);
       const poolId = computePoolId(key);
 
       await hook.connect(owner).authorizeFactory(owner.address, true);
-      await hook.connect(owner).registerPool(poolId, beneficiary.address, companionOwner.address, POOL_TYPE_COMPANION, 0);
+      await regPool(hook, owner, poolId, beneficiary.address, POOL_TYPE_COMPANION, 0, mockCompanionsAddr);
 
       return { ...base, key, poolId };
     }
@@ -307,26 +339,26 @@ describe("BonzaiUniswapHook", function () {
      */
     async function deployWithFineTunePool() {
       const base = await deployHook();
-      const { hook, poolManager, owner, beneficiary } = base;
+      const { hook, owner, beneficiary, mockCompanionsAddr } = base;
       const hookAddr = await hook.getAddress();
       const key = makePoolKey(hookAddr);
       const poolId = computePoolId(key);
       const mintPoolIndex = 5;
 
       await hook.connect(owner).authorizeFactory(owner.address, true);
-      await hook.connect(owner).registerPool(poolId, beneficiary.address, ethers.ZeroAddress, POOL_TYPE_FINETUNE, mintPoolIndex);
+      await regPool(hook, owner, poolId, beneficiary.address, POOL_TYPE_FINETUNE, mintPoolIndex, mockCompanionsAddr);
 
       return { ...base, key, poolId, mintPoolIndex };
     }
 
     it("should capture 1% fee on COMPANION pool swap (negative delta)", async function () {
-      const { hook, poolManager, key, user1 } = await loadFixture(deployWithCompanionPool);
+      const { hook, poolManager, key, beneficiary, companionOwner, user1 } =
+        await loadFixture(deployWithCompanionPool);
       const hookAddr = await hook.getAddress();
       const pmAddr = await poolManager.getAddress();
-      const swapOutput = ethers.parseEther("1"); // 1 ETH output
-      const delta = -swapOutput; // negative = output
+      const swapOutput = ethers.parseEther("1");
+      const delta = -swapOutput;
 
-      // Fund the MockPoolManager so it can forward ETH via take()
       await user1.sendTransaction({ to: pmAddr, value: swapOutput });
 
       await poolManager.callAfterSwap(
@@ -338,22 +370,18 @@ describe("BonzaiUniswapHook", function () {
         "0x"
       );
 
-      // 1% of 1 ETH = 0.01 ETH
       const expectedFee = (swapOutput * HOOK_FEE_BPS) / BPS_DENOMINATOR;
       expect(expectedFee).to.equal(ethers.parseEther("0.01"));
 
-      // Verify total fees accumulated (companion: wallet + owner + LVL6 pool, no treasury)
-      const poolFees = await hook.unclaimedPool(5); // LVL6 pool index
-      const ownerFees = await hook.unclaimedBeneficiary(
-        (await ethers.getSigners())[3].address // companionOwner
-      );
-      const beneficiaryFees = await hook.unclaimedBeneficiary(
-        (await ethers.getSigners())[2].address // beneficiary (companion wallet)
-      );
-      expect(poolFees + ownerFees + beneficiaryFees).to.equal(expectedFee);
+      // Total fees split across: agent wallet (beneficiary) + owner (companionOwner via live ownerOf) + treasury + 6-bucket pool
+      const poolTotal = await sumPoolBuckets(hook);
+      const ownerFees = await hook.unclaimedBeneficiary(companionOwner.address);
+      const walletFees = await hook.unclaimedBeneficiary(beneficiary.address);
+      const treasuryFees = await hook.unclaimedTreasury();
+      expect(poolTotal + ownerFees + walletFees + treasuryFees).to.equal(expectedFee);
     });
 
-    it("should split COMPANION fees 34/33/33 (wallet/owner/LVL6 pool)", async function () {
+    it("should split COMPANION fees 40/40/10/10 (wallet/owner/treasury/MintPool)", async function () {
       const { hook, poolManager, key, beneficiary, companionOwner, user1 } =
         await loadFixture(deployWithCompanionPool);
       const hookAddr = await hook.getAddress();
@@ -366,17 +394,19 @@ describe("BonzaiUniswapHook", function () {
       await poolManager.callAfterSwap(hookAddr, user1.address, key, makeSwapParams(), delta, "0x");
 
       const feeAmount = (swapOutput * HOOK_FEE_BPS) / BPS_DENOMINATOR; // 0.1 ETH
-      const expectedWallet = (feeAmount * COMPANION_WALLET_BPS) / BPS_DENOMINATOR; // 34%
-      const expectedOwner = (feeAmount * COMPANION_OWNER_BPS) / BPS_DENOMINATOR; // 33%
-      const expectedPool = feeAmount - expectedWallet - expectedOwner; // 33% → LVL6 pool (index 5)
+      const expectedWallet = (feeAmount * COMPANION_WALLET_BPS) / BPS_DENOMINATOR; // 40%
+      const expectedOwner = (feeAmount * COMPANION_OWNER_BPS) / BPS_DENOMINATOR; // 40%
+      const expectedTreasury = (feeAmount * COMPANION_TREASURY_BPS) / BPS_DENOMINATOR; // 10%
+      const expectedPool = feeAmount - expectedWallet - expectedOwner - expectedTreasury; // 10%
 
       expect(await hook.unclaimedBeneficiary(beneficiary.address)).to.equal(expectedWallet);
       expect(await hook.unclaimedBeneficiary(companionOwner.address)).to.equal(expectedOwner);
-      expect(await hook.unclaimedPool(5)).to.equal(expectedPool); // Pool index 5 = LVL6 training
+      expect(await hook.unclaimedTreasury()).to.equal(expectedTreasury);
+      expect(await sumPoolBuckets(hook)).to.equal(expectedPool);
     });
 
-    it("should split FINETUNE fees 80/10/10 (beneficiary/treasury/pool)", async function () {
-      const { hook, poolManager, key, beneficiary, user1, mintPoolIndex } =
+    it("should split FINETUNE fees 80/10/10 (beneficiary/treasury/pool spread across 6 buckets)", async function () {
+      const { hook, poolManager, key, beneficiary, user1 } =
         await loadFixture(deployWithFineTunePool);
       const hookAddr = await hook.getAddress();
       const pmAddr = await poolManager.getAddress();
@@ -387,21 +417,19 @@ describe("BonzaiUniswapHook", function () {
 
       await poolManager.callAfterSwap(hookAddr, user1.address, key, makeSwapParams(), delta, "0x");
 
-      const feeAmount = (swapOutput * HOOK_FEE_BPS) / BPS_DENOMINATOR; // 0.1 ETH
-      const expectedBeneficiary = (feeAmount * FINETUNE_BENEFICIARY_BPS) / BPS_DENOMINATOR; // 80%
-      const expectedTreasury = (feeAmount * FINETUNE_TREASURY_BPS) / BPS_DENOMINATOR; // 10%
-      const expectedPool = feeAmount - expectedBeneficiary - expectedTreasury; // 10%
+      const feeAmount = (swapOutput * HOOK_FEE_BPS) / BPS_DENOMINATOR;
+      const expectedBeneficiary = (feeAmount * FINETUNE_BENEFICIARY_BPS) / BPS_DENOMINATOR;
+      const expectedTreasury = (feeAmount * FINETUNE_TREASURY_BPS) / BPS_DENOMINATOR;
+      const expectedPool = feeAmount - expectedBeneficiary - expectedTreasury;
 
       expect(await hook.unclaimedBeneficiary(beneficiary.address)).to.equal(expectedBeneficiary);
       expect(await hook.unclaimedTreasury()).to.equal(expectedTreasury);
-      expect(await hook.unclaimedPool(mintPoolIndex)).to.equal(expectedPool);
+      expect(await sumPoolBuckets(hook)).to.equal(expectedPool);
     });
 
     it("should only allow PoolManager to call afterSwap", async function () {
       const { hook, key, user1 } = await loadFixture(deployWithCompanionPool);
-      const hookAddr = await hook.getAddress();
 
-      // Direct call from user1 (not PoolManager) should revert
       await expect(
         hook.connect(user1).afterSwap(
           user1.address,
@@ -418,13 +446,12 @@ describe("BonzaiUniswapHook", function () {
       const hookAddr = await hook.getAddress();
       const pmAddr = await poolManager.getAddress();
 
-      // Use a key whose poolId is NOT registered
       const key = makePoolKey(hookAddr, "0x0000000000000000000000000000000000000099");
       const delta = -ethers.parseEther("1");
 
       await user1.sendTransaction({ to: pmAddr, value: ethers.parseEther("1") });
 
-      const [selector, hookDelta] = await poolManager.callAfterSwap.staticCall(
+      const [, hookDelta] = await poolManager.callAfterSwap.staticCall(
         hookAddr,
         user1.address,
         key,
@@ -433,23 +460,20 @@ describe("BonzaiUniswapHook", function () {
         "0x"
       );
 
-      // hookDelta should be 0 (pass-through)
       expect(hookDelta).to.equal(0);
-      // No fees accumulated
       expect(await hook.unclaimedTreasury()).to.equal(0);
     });
 
     it("should return no fee when delta is zero", async function () {
       const { hook, poolManager, key, user1 } = await loadFixture(deployWithCompanionPool);
       const hookAddr = await hook.getAddress();
-      const pmAddr = await poolManager.getAddress();
 
-      const [selector, hookDelta] = await poolManager.callAfterSwap.staticCall(
+      const [, hookDelta] = await poolManager.callAfterSwap.staticCall(
         hookAddr,
         user1.address,
         key,
         makeSwapParams(),
-        0, // zero delta
+        0,
         "0x"
       );
 
@@ -460,12 +484,12 @@ describe("BonzaiUniswapHook", function () {
       const { hook, poolManager, key, user1 } = await loadFixture(deployWithCompanionPool);
       const hookAddr = await hook.getAddress();
 
-      const [selector, hookDelta] = await poolManager.callAfterSwap.staticCall(
+      const [, hookDelta] = await poolManager.callAfterSwap.staticCall(
         hookAddr,
         user1.address,
         key,
         makeSwapParams(),
-        ethers.parseEther("1"), // positive delta = no output
+        ethers.parseEther("1"),
         "0x"
       );
 
@@ -480,7 +504,7 @@ describe("BonzaiUniswapHook", function () {
 
       await user1.sendTransaction({ to: pmAddr, value: swapOutput });
 
-      const [selector, hookDelta] = await poolManager.callAfterSwap.staticCall(
+      const [, hookDelta] = await poolManager.callAfterSwap.staticCall(
         hookAddr,
         user1.address,
         key,
@@ -494,7 +518,7 @@ describe("BonzaiUniswapHook", function () {
     });
 
     it("should emit FeeCaptured event for COMPANION swap", async function () {
-      const { hook, poolManager, key, poolId, beneficiary, companionOwner, user1 } =
+      const { hook, poolManager, key, poolId, user1 } =
         await loadFixture(deployWithCompanionPool);
       const hookAddr = await hook.getAddress();
       const pmAddr = await poolManager.getAddress();
@@ -505,17 +529,18 @@ describe("BonzaiUniswapHook", function () {
       const feeAmount = (swapOutput * HOOK_FEE_BPS) / BPS_DENOMINATOR;
       const walletShare = (feeAmount * COMPANION_WALLET_BPS) / BPS_DENOMINATOR;
       const ownerShare = (feeAmount * COMPANION_OWNER_BPS) / BPS_DENOMINATOR;
-      const poolShare = feeAmount - walletShare - ownerShare;
+      const treasuryShare = (feeAmount * COMPANION_TREASURY_BPS) / BPS_DENOMINATOR;
+      const poolShare = feeAmount - walletShare - ownerShare - treasuryShare;
 
       await expect(
         poolManager.callAfterSwap(hookAddr, user1.address, key, makeSwapParams(), -swapOutput, "0x")
       )
         .to.emit(hook, "FeeCaptured")
-        .withArgs(poolId, POOL_TYPE_COMPANION, feeAmount, walletShare, poolShare, ownerShare);
+        .withArgs(poolId, POOL_TYPE_COMPANION, feeAmount, walletShare, ownerShare, treasuryShare, poolShare);
     });
 
     it("should emit FeeCaptured event for FINETUNE swap", async function () {
-      const { hook, poolManager, key, poolId, beneficiary, user1, mintPoolIndex } =
+      const { hook, poolManager, key, poolId, user1 } =
         await loadFixture(deployWithFineTunePool);
       const hookAddr = await hook.getAddress();
       const pmAddr = await poolManager.getAddress();
@@ -532,7 +557,7 @@ describe("BonzaiUniswapHook", function () {
         poolManager.callAfterSwap(hookAddr, user1.address, key, makeSwapParams(), -swapOutput, "0x")
       )
         .to.emit(hook, "FeeCaptured")
-        .withArgs(poolId, POOL_TYPE_FINETUNE, feeAmount, beneficiaryShare, treasuryShare, poolShare);
+        .withArgs(poolId, POOL_TYPE_FINETUNE, feeAmount, beneficiaryShare, 0, treasuryShare, poolShare);
     });
 
     it("should accumulate fees across multiple swaps", async function () {
@@ -541,7 +566,6 @@ describe("BonzaiUniswapHook", function () {
       const hookAddr = await hook.getAddress();
       const pmAddr = await poolManager.getAddress();
 
-      // Two swaps of 1 ETH each
       for (let i = 0; i < 2; i++) {
         await user1.sendTransaction({ to: pmAddr, value: ethers.parseEther("1") });
         await poolManager.callAfterSwap(
@@ -555,11 +579,12 @@ describe("BonzaiUniswapHook", function () {
       }
 
       const totalFee = (ethers.parseEther("2") * HOOK_FEE_BPS) / BPS_DENOMINATOR;
-      const poolFees = await hook.unclaimedPool(5); // LVL6 pool
+      const poolFees = await sumPoolBuckets(hook);
       const ownerFees = await hook.unclaimedBeneficiary(companionOwner.address);
       const walletFees = await hook.unclaimedBeneficiary(beneficiary.address);
+      const treasuryFees = await hook.unclaimedTreasury();
 
-      expect(poolFees + ownerFees + walletFees).to.equal(totalFee);
+      expect(poolFees + ownerFees + walletFees + treasuryFees).to.equal(totalFee);
     });
 
     it("should not capture fees after pool is deregistered", async function () {
@@ -569,10 +594,8 @@ describe("BonzaiUniswapHook", function () {
       const pmAddr = await poolManager.getAddress();
       const poolId = computePoolId(key);
 
-      // Deregister
       await hook.connect(owner).deregisterPool(poolId);
 
-      // Swap after deregistration
       await user1.sendTransaction({ to: pmAddr, value: ethers.parseEther("1") });
       const [, hookDelta] = await poolManager.callAfterSwap.staticCall(
         hookAddr,
@@ -588,7 +611,7 @@ describe("BonzaiUniswapHook", function () {
     });
 
     it("should update totalUnclaimedBeneficiary for COMPANION swaps", async function () {
-      const { hook, poolManager, key, beneficiary, companionOwner, user1 } =
+      const { hook, poolManager, key, user1 } =
         await loadFixture(deployWithCompanionPool);
       const hookAddr = await hook.getAddress();
       const pmAddr = await poolManager.getAddress();
@@ -601,7 +624,7 @@ describe("BonzaiUniswapHook", function () {
       const walletShare = (feeAmount * COMPANION_WALLET_BPS) / BPS_DENOMINATOR;
       const ownerShare = (feeAmount * COMPANION_OWNER_BPS) / BPS_DENOMINATOR;
 
-      // totalUnclaimedBeneficiary = walletShare + ownerShare (pool share goes to unclaimedPool, not beneficiary)
+      // totalUnclaimedBeneficiary tracks wallet + owner (treasury + pool slices have separate counters)
       expect(await hook.totalUnclaimedBeneficiary()).to.equal(walletShare + ownerShare);
     });
   });
@@ -613,13 +636,13 @@ describe("BonzaiUniswapHook", function () {
   describe("claimBeneficiaryFees()", function () {
     async function deployWithAccumulatedCompanionFees() {
       const base = await deployHook();
-      const { hook, poolManager, owner, beneficiary, companionOwner, user1 } = base;
+      const { hook, poolManager, owner, beneficiary, user1, mockCompanionsAddr } = base;
       const hookAddr = await hook.getAddress();
       const key = makePoolKey(hookAddr);
       const poolId = computePoolId(key);
 
       await hook.connect(owner).authorizeFactory(owner.address, true);
-      await hook.connect(owner).registerPool(poolId, beneficiary.address, companionOwner.address, POOL_TYPE_COMPANION, 0);
+      await regPool(hook, owner, poolId, beneficiary.address, POOL_TYPE_COMPANION, 0, mockCompanionsAddr);
 
       const swapOutput = ethers.parseEther("10");
       const pmAddr = await poolManager.getAddress();
@@ -674,16 +697,15 @@ describe("BonzaiUniswapHook", function () {
 
   describe("claimTreasuryFees()", function () {
     async function deployWithAccumulatedTreasuryFees() {
-      // Use FINETUNE pool type because COMPANION fees no longer go to treasury
-      // (they go to LVL6 pool instead). FINETUNE still has 10% treasury share.
+      // Either pool type produces treasury fees now (companion: 10%, finetune: 10%)
       const base = await deployHook();
-      const { hook, poolManager, owner, beneficiary, companionOwner, user1 } = base;
+      const { hook, poolManager, owner, beneficiary, user1, mockCompanionsAddr } = base;
       const hookAddr = await hook.getAddress();
       const key = makePoolKey(hookAddr);
       const poolId = computePoolId(key);
 
       await hook.connect(owner).authorizeFactory(owner.address, true);
-      await hook.connect(owner).registerPool(poolId, beneficiary.address, companionOwner.address, POOL_TYPE_FINETUNE, 5);
+      await regPool(hook, owner, poolId, beneficiary.address, POOL_TYPE_FINETUNE, 5, mockCompanionsAddr);
 
       const swapOutput = ethers.parseEther("10");
       const pmAddr = await poolManager.getAddress();
@@ -699,7 +721,7 @@ describe("BonzaiUniswapHook", function () {
       expect(fees).to.be.gt(0);
 
       const balBefore = await ethers.provider.getBalance(treasury.address);
-      await hook.claimTreasuryFees(); // permissionless
+      await hook.claimTreasuryFees();
       const balAfter = await ethers.provider.getBalance(treasury.address);
 
       expect(balAfter - balBefore).to.equal(fees);
@@ -725,14 +747,14 @@ describe("BonzaiUniswapHook", function () {
   describe("claimPoolFees()", function () {
     async function deployWithAccumulatedPoolFees() {
       const base = await deployHook();
-      const { hook, poolManager, owner, beneficiary, user1, mockPool } = base;
+      const { hook, poolManager, owner, beneficiary, user1, mockCompanionsAddr } = base;
       const hookAddr = await hook.getAddress();
       const key = makePoolKey(hookAddr);
       const poolId = computePoolId(key);
       const mintPoolIndex = 5;
 
       await hook.connect(owner).authorizeFactory(owner.address, true);
-      await hook.connect(owner).registerPool(poolId, beneficiary.address, ethers.ZeroAddress, POOL_TYPE_FINETUNE, mintPoolIndex);
+      await regPool(hook, owner, poolId, beneficiary.address, POOL_TYPE_FINETUNE, mintPoolIndex, mockCompanionsAddr);
 
       const swapOutput = ethers.parseEther("10");
       const pmAddr = await poolManager.getAddress();
@@ -742,25 +764,28 @@ describe("BonzaiUniswapHook", function () {
       return { ...base, key, poolId, mintPoolIndex, swapOutput };
     }
 
-    it("should call mintPool.depositForPool with accumulated fees", async function () {
-      const { hook, mockPool, mintPoolIndex } = await loadFixture(deployWithAccumulatedPoolFees);
-      const fees = await hook.unclaimedPool(mintPoolIndex);
-      expect(fees).to.be.gt(0);
+    it("should call mintPool.depositForPool with accumulated fees for each bucket", async function () {
+      const { hook, mockPool } = await loadFixture(deployWithAccumulatedPoolFees);
 
-      await hook.claimPoolFees(mintPoolIndex);
-
-      // Verify MockMintPool received the deposit
-      expect(await mockPool.poolDeposits(mintPoolIndex)).to.equal(fees);
-      expect(await hook.unclaimedPool(mintPoolIndex)).to.equal(0);
+      // Pool slice is spread across all 6 buckets — claim each one
+      for (let i = 0; i < NUM_POOLS; i++) {
+        const fees = await hook.unclaimedPool(i);
+        if (fees === 0n) continue;
+        await hook.claimPoolFees(i);
+        expect(await mockPool.poolDeposits(i)).to.equal(fees);
+        expect(await hook.unclaimedPool(i)).to.equal(0);
+      }
     });
 
     it("should emit PoolFeesClaimed event", async function () {
-      const { hook, mintPoolIndex } = await loadFixture(deployWithAccumulatedPoolFees);
-      const fees = await hook.unclaimedPool(mintPoolIndex);
+      const { hook } = await loadFixture(deployWithAccumulatedPoolFees);
+      // Bucket 0 always receives the equal share (perPool); use it for the event check
+      const fees = await hook.unclaimedPool(0);
+      expect(fees).to.be.gt(0);
 
-      await expect(hook.claimPoolFees(mintPoolIndex))
+      await expect(hook.claimPoolFees(0))
         .to.emit(hook, "PoolFeesClaimed")
-        .withArgs(mintPoolIndex, fees);
+        .withArgs(0, fees);
     });
 
     it("should revert when mintPoolIndex >= 6", async function () {
@@ -780,25 +805,20 @@ describe("BonzaiUniswapHook", function () {
 
   describe("withdrawSurplus()", function () {
     it("should withdraw only surplus ETH above accountable totals", async function () {
-      const { hook, owner, poolManager, beneficiary, companionOwner, user1 } = await loadFixture(deployHook);
+      const { hook, owner, poolManager, beneficiary, user1, mockCompanionsAddr } = await loadFixture(deployHook);
       const hookAddr = await hook.getAddress();
       const key = makePoolKey(hookAddr);
       const poolId = computePoolId(key);
 
-      // Register and do a swap to create accountable fees
       await hook.connect(owner).authorizeFactory(owner.address, true);
-      await hook.connect(owner).registerPool(poolId, beneficiary.address, companionOwner.address, POOL_TYPE_COMPANION, 0);
+      await regPool(hook, owner, poolId, beneficiary.address, POOL_TYPE_COMPANION, 0, mockCompanionsAddr);
 
       const swapOutput = ethers.parseEther("10");
       const pmAddr = await poolManager.getAddress();
       await user1.sendTransaction({ to: pmAddr, value: swapOutput });
       await poolManager.callAfterSwap(hookAddr, user1.address, key, makeSwapParams(), -swapOutput, "0x");
 
-      // accountable = treasury + beneficiaries + all pools
-      let accountable = await hook.unclaimedTreasury() + await hook.totalUnclaimedBeneficiary();
-      for (let i = 0; i < 6; i++) accountable += await hook.unclaimedPool(i);
-
-      // Send extra ETH directly to the hook contract (surplus)
+      // Send extra ETH directly to the hook (surplus)
       const surplus = ethers.parseEther("0.5");
       await user1.sendTransaction({ to: hookAddr, value: surplus });
 
@@ -821,8 +841,6 @@ describe("BonzaiUniswapHook", function () {
 
     it("should revert when called by non-owner", async function () {
       const { hook, user1 } = await loadFixture(deployHook);
-
-      // Send some ETH to create surplus
       const hookAddr = await hook.getAddress();
       await user1.sendTransaction({ to: hookAddr, value: ethers.parseEther("1") });
 
@@ -832,21 +850,19 @@ describe("BonzaiUniswapHook", function () {
     });
 
     it("should not withdraw ETH that is accounted for in unclaimedPool", async function () {
-      const { hook, owner, poolManager, beneficiary, user1 } = await loadFixture(deployHook);
+      const { hook, owner, poolManager, beneficiary, user1, mockCompanionsAddr } = await loadFixture(deployHook);
       const hookAddr = await hook.getAddress();
       const key = makePoolKey(hookAddr);
       const poolId = computePoolId(key);
-      const mintPoolIndex = 3;
 
       await hook.connect(owner).authorizeFactory(owner.address, true);
-      await hook.connect(owner).registerPool(poolId, beneficiary.address, ethers.ZeroAddress, POOL_TYPE_FINETUNE, mintPoolIndex);
+      await regPool(hook, owner, poolId, beneficiary.address, POOL_TYPE_FINETUNE, 3, mockCompanionsAddr);
 
       const swapOutput = ethers.parseEther("10");
       const pmAddr = await poolManager.getAddress();
       await user1.sendTransaction({ to: pmAddr, value: swapOutput });
       await poolManager.callAfterSwap(hookAddr, user1.address, key, makeSwapParams(), -swapOutput, "0x");
 
-      // No surplus since all ETH is accounted for
       await expect(
         hook.connect(owner).withdrawSurplus()
       ).to.be.revertedWith("No surplus");

@@ -740,6 +740,7 @@ export default {
   color: rgba(255, 255, 255, 0.92);
   font-size: 14px;
   line-height: 1.6;
+  text-align: left;
 }
 .response-text :deep(p) {
   margin: 0 0 0.75em;
@@ -774,11 +775,11 @@ export default {
 }
 .response-text :deep(ul),
 .response-text :deep(ol) {
-  padding-left: 1.3em;
-  margin: 0 0 0.75em;
+  padding-left: 1em;
+  margin: 0 0 2em;
 }
 .response-text :deep(li) {
-  margin: 0.2em 0;
+  margin: 0.75em 0 0.75em;
 }
 .response-text :deep(code) {
   background: rgba(155, 109, 200, 0.18);

@@ -578,9 +578,25 @@ export const CONFIG = {
   },
 
   // ═══════════════════════════════════════════════════════════════════════════
-  // UNISWAP V4 ADDRESSES (Base Network)
+  // UNISWAP V4 ADDRESSES
+  // Arbitrum is now the primary deployment target. Base addresses are kept
+  // here for any legacy reads but should not be used by new code.
   // ═══════════════════════════════════════════════════════════════════════════
   uniswap: {
+    arbitrum: {
+      // Source: Uniswap V4 official deployments
+      // https://docs.uniswap.org/contracts/v4/deployments
+      poolManager: '0x360E68faCcca8cA495c1B759Fd9EEe466db9FB32',
+      positionManager: '0xd88F38F930b7952f2DB2432Cb002E7abbF3dD869',
+      universalRouter: '0xa51afafe0263b40edaef0df8781ea9aa03e381a3',
+      quoter: '0x3972c00f7ed4885e145823eb7c655375d275a1c5',
+      stateView: '0x76fd297e2d437cd7f76d50f01afe6160f86e9990',
+      // Permit2 is the canonical singleton — same address on every EVM chain.
+      permit2: '0x000000000022D473030F116dDEE9F6B43aC78BA3',
+      // Hook address is set after CREATE2 deployment via deploy-arbitrum.js.
+      feeHook: '0x0000000000000000000000000000000000000000',
+    },
+    // Legacy — DO NOT USE for new code paths.
     base: {
       poolManager: '0x498581ff718922c3f8e6a244956af099b2652b2b',
       positionManager: '0x7c5f5a4bbd8fd63184577525326123b519429bdc',

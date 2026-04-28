@@ -73,7 +73,14 @@ interface IPermit2 {
  * @title IBonzaiUniswapHook
  */
 interface IBonzaiUniswapHook {
-    function registerPool(bytes32 poolId, address beneficiary, address companionOwner, uint8 poolType, uint8 mintPoolIndex) external;
+    function registerPool(
+        bytes32 poolId,
+        address beneficiary,
+        address companionNFT,
+        uint256 companionTokenId,
+        uint8 poolType,
+        uint8 mintPoolIndex
+    ) external;
 }
 
 /**
@@ -84,13 +91,16 @@ interface IBonzaiUniswapHook {
  *      registers the pool with BonzaiUniswapHook for 33/33/34 fee capture.
  *
  * Features:
- * - One-click token launch with 96% supply in liquidity, 4% to agent wallet
- * - LP position NFT sent to DEAD_ADDRESS (unruggable - liquidity is permanent)
+ * - One-click token launch with 96% supply in liquidity, 4% to companion (agent wallet)
+ * - LP position NFT BURNED at launch (sent to 0xdead — no private key exists, so
+ *   the NFT is permanently unreachable and the underlying liquidity stays in the
+ *   V4 pool forever; this is the canonical V4 burn pattern since ERC-721
+ *   transfers to address(0) revert).
  * - Tokens are burnable (deflationary)
  * - No trading tax, no honeypot, no special permissions
  * - One token per companion (prevents duplicates)
  * - Minimum ETH requirement to prevent dust attacks
- * - Hook captures 1% of swap output: 33% treasury, 33% companion owner, 34% companion wallet
+ * - Hook captures 1% of swap output: 40 wallet / 40 owner / 10 treasury / 10 MintPool
  */
 contract CompanionTokenFactory is Ownable, ReentrancyGuard, IERC721Receiver {
     using SafeERC20 for IERC20;
@@ -112,7 +122,10 @@ contract CompanionTokenFactory is Ownable, ReentrancyGuard, IERC721Receiver {
     uint256 public constant BPS_DENOMINATOR = 10000;
 
     /// @notice Dead address for locking LP position NFT (unruggable liquidity)
-    address public constant DEAD_ADDRESS = 0x000000000000000000000000000000000000dEaD;
+    /// @notice Address with no known private key. Receiving the LP position NFT
+    ///         here is equivalent to burning it: ERC-721 transfers to address(0)
+    ///         revert in OZ v5, so this is the canonical V4 burn pattern.
+    address public constant BURN_ADDRESS = 0x000000000000000000000000000000000000dEaD;
 
     /// @notice Native ETH placeholder (Uniswap V4 uses address(0) for native ETH)
     address public constant NATIVE_ETH = address(0);
@@ -312,13 +325,25 @@ contract CompanionTokenFactory is Ownable, ReentrancyGuard, IERC721Receiver {
 
         require(positionId > 0, "Position mint failed");
 
-        // 10. Transfer LP position NFT to DEAD_ADDRESS (locked permanently)
+        // 10. Burn LP position NFT (transferred to 0xdead — no private key, the
+        //     position is permanently unreachable and liquidity stays in the pool)
         // V4's BURN_POSITION removes liquidity first, so we use DEAD transfer
-        positionManager.safeTransferFrom(address(this), DEAD_ADDRESS, positionId);
+        positionManager.safeTransferFrom(address(this), BURN_ADDRESS, positionId);
 
-        // 11. Compute poolId and register with hook
+        // 11. Compute poolId and register with hook. The hook reads owner +
+        //     agent wallet LIVE from the NFT contract on every swap, so we
+        //     pass companionContract + nftTokenId rather than snapshotting
+        //     companionOwner. agentWallet is kept as a legacy fallback in
+        //     PoolConfig.beneficiary.
         poolId = keccak256(abi.encode(poolKey));
-        feeHook.registerPool(poolId, agentWallet, companionOwner, 0, MINT_POOL_INDEX); // 0 = COMPANION
+        feeHook.registerPool(
+            poolId,
+            agentWallet,
+            companionContract,   // NFT contract for live ownerOf / getAgentWallet
+            nftTokenId,
+            0,                    // 0 = COMPANION
+            MINT_POOL_INDEX
+        );
 
         emit CompanionTokenLaunched(
             nftTokenId,
