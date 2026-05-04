@@ -118,7 +118,7 @@ export const MODEL_TO_CATEGORY = {
   llm_llama_2_7b: 0,
   llm_llama_3_1_8b: 0,
   llm_mistral_7b: 0,
-  llm_mythomax_13b: 0,
+  llm_nemomix_12b_heretic: 0,
   llm_phi_3_mini: 0,
   llm_phi_4_mini: 0,
   llm_yi_coder_9b: 0,

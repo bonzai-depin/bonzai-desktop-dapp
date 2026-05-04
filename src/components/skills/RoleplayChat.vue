@@ -2657,7 +2657,7 @@
 
           <div
             v-for="(msg, idx) in chatHistory"
-            :key="msg.timestamp || idx"
+            :key="msg.id || msg.timestamp || idx"
             class="chat-message"
             :class="[msg.role, { 'is-new': isNewMessage(msg) }]"
           >
@@ -3411,6 +3411,7 @@ import {
   isDefaultSpendingProfile,
 } from "../../skills/flagship.js";
 import { useSkillStore } from "../../stores/skillStore.js";
+import * as roleplayStore from "../../services/roleplayStore.service.js";
 import { moltbookService } from "../../services/moltbook.service.js";
 import { companionService, Gender } from "../../services/companion.service.js";
 import { CONFIG } from "../../config/web3.config.js";
@@ -3720,9 +3721,9 @@ export default {
     };
 
     // Required LLM for roleplay
-    const REQUIRED_LLM = "llm_mythomax_13b";
+    const REQUIRED_LLM = "llm_nemomix_12b_heretic";
     const requiredLLMName = computed(
-      () => MODEL_REQUIREMENTS[REQUIRED_LLM]?.name || "MythoMax L2 13B",
+      () => MODEL_REQUIREMENTS[REQUIRED_LLM]?.name || "NemoMix Unleashed 12B Heretic",
     );
 
     // Check if a specific model is available
@@ -4380,6 +4381,14 @@ export default {
     // Note: Companions and scenarios are now unified lists defined above
     // (COMPANIONS_KEY, SCENARIOS_KEY, companions, scenarios)
 
+    // Stable per-message id. Required so multi-step turns (text → image
+    // → video) update the same SQL row across saves instead of inserting
+    // a new row each time. crypto.randomUUID is available in renderer.
+    const _msgId = () => {
+      try { return crypto.randomUUID(); }
+      catch { return `m_${Date.now()}_${Math.random().toString(36).slice(2, 10)}`; }
+    };
+
     // Generate unique session key from all parameters
     const getSessionKey = (companion, scenario, contentLevel, responseMode) => {
       if (!companion || !scenario) return null;
@@ -4419,9 +4428,16 @@ export default {
         .map(([key, session]) => ({
           key,
           ...session,
+          // updatedAt may be missing on freshly-imported rows; fall
+          // back to lastActiveAt so the most-recent session still
+          // floats to the top.
+          updatedAt: session.updatedAt || session.lastActiveAt || 0,
           messageCount: session.history?.length || 0,
         }))
-        .sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0));
+        .sort((a, b) => {
+          const diff = (b.updatedAt || 0) - (a.updatedAt || 0);
+          return diff !== 0 ? diff : a.key.localeCompare(b.key);
+        });
     });
 
     // Save current session to storage
@@ -4436,11 +4452,18 @@ export default {
         return;
       }
 
-      // Deep clone Vue reactive proxies to plain objects for Electron IPC
-      const plainCompanion = structuredClone(toRaw(selectedCompanion.value));
-      const plainScenario = structuredClone(toRaw(selectedScenario.value));
-      const plainSettings = structuredClone(toRaw(settings.value));
-      const plainSceneState = structuredClone(toRaw(sceneState.value));
+      // Deep clone Vue reactive proxies to plain objects for Electron IPC.
+      // structuredClone is strict — any nested array containing a Vue
+      // proxy or non-cloneable value (functions, DOM nodes, Errors)
+      // throws with no useful diagnostic. JSON round-trip is more
+      // forgiving: it strips functions and undefined, and Vue 3 proxies
+      // serialize transparently. Slightly less efficient but the saves
+      // are small and this avoids the crash.
+      const _plain = (v) => JSON.parse(JSON.stringify(toRaw(v) ?? null));
+      const plainCompanion = _plain(selectedCompanion.value);
+      const plainScenario = _plain(selectedScenario.value);
+      const plainSettings = _plain(settings.value);
+      const plainSceneState = _plain(sceneState.value);
 
       // Add responseMode string to settings for backward compatibility
       const settingsWithMode = {
@@ -4452,11 +4475,7 @@ export default {
         companion: plainCompanion,
         scenario: plainScenario,
         settings: settingsWithMode,
-        history: chatHistory.value.map((msg) => {
-          const plainMsg = structuredClone(toRaw(msg));
-          // Persist all media (image, audio, video) for full session restoration
-          return plainMsg;
-        }),
+        history: chatHistory.value.map((msg) => _plain(msg)),
         // Persist scene state for smart image generation continuity
         sceneState: plainSceneState,
         // Persist scenario background image
@@ -4478,7 +4497,10 @@ export default {
           const plainSessions = JSON.parse(
             JSON.stringify(toRaw(savedSessions.value)),
           );
-          await window.electronAPI.store.set(STORAGE_KEY, plainSessions);
+          // Phase 4b: SQLite-backed via roleplayStore — incremental
+          // session upsert + new-message insert; legacy electron-store
+          // mirror kept for one release.
+          await roleplayStore.saveSessions(plainSessions);
           console.log(
             `[Roleplay] Session saved for ${key}: ${session.history.length} messages`,
           );
@@ -4496,7 +4518,9 @@ export default {
     const loadSessions = async () => {
       try {
         if (window.electronAPI?.store?.get) {
-          const stored = await window.electronAPI.store.get(STORAGE_KEY, {});
+          // Phase 4b: SQLite-backed; blob refs auto-converted to
+          // bonzai-blob:// URLs the renderer's <img :src> uses directly.
+          const stored = await roleplayStore.loadSessions();
           savedSessions.value = stored || {};
           const sessionKeys = Object.keys(savedSessions.value);
           console.log(
@@ -4604,6 +4628,24 @@ export default {
         postInterval: 24,
       };
 
+      // Default socialPosting + per-platform social shape — the social
+      // settings UI binds to these directly (settings.socialPosting.*,
+      // settings.social.<platform>.*). Without them, the social-posting
+      // config block crashes when `anyPlatformConnected` is true.
+      const defaultSocialPosting = {
+        autoPost: true,
+        autoEngage: true,
+        promoteBonzai: true,
+        postInterval: 24,
+        contentMix: ["text", "image", "video"],
+      };
+      const defaultSocial = {
+        instagram: { enabled: false, postsPerDay: 2, contentMix: ["image", "video", "text"] },
+        tiktok:    { enabled: false, postsPerDay: 2, contentMix: ["video", "image"] },
+        x:         { enabled: false, postsPerDay: 4, contentMix: ["text", "image", "video"] },
+        moltbook:  { enabled: false },
+      };
+
       if (
         savedSettings.responseMode &&
         typeof savedSettings.responseMode === "string"
@@ -4616,43 +4658,29 @@ export default {
           enableAudio: mode.includes("audio"),
           enableVideo: mode.includes("video"),
           enableVision: mode.includes("vision"),
-          autonomous: savedSettings.autonomous || defaultAutonomous,
-          moltbook: savedSettings.moltbook || defaultMoltbook,
+          autonomous: { ...defaultAutonomous, ...savedSettings.autonomous },
+          moltbook: { ...defaultMoltbook, ...savedSettings.moltbook },
+          socialPosting: { ...defaultSocialPosting, ...savedSettings.socialPosting },
+          social: {
+            instagram: { ...defaultSocial.instagram, ...savedSettings.social?.instagram },
+            tiktok:    { ...defaultSocial.tiktok, ...savedSettings.social?.tiktok },
+            x:         { ...defaultSocial.x, ...savedSettings.social?.x },
+            moltbook:  { ...defaultSocial.moltbook, ...savedSettings.social?.moltbook },
+          },
         };
       } else if (savedSettings.enableImage !== undefined) {
         // New format: use checkbox settings directly, merge with defaults
         const { userName, userDescription, userImage, ...rest } = savedSettings;
-        const defaultSocial = {
-          instagram: {
-            enabled: false,
-            postsPerDay: 2,
-            contentMix: ["image", "video", "text"],
-          },
-          tiktok: {
-            enabled: false,
-            postsPerDay: 2,
-            contentMix: ["video", "image"],
-          },
-          x: {
-            enabled: false,
-            postsPerDay: 4,
-            contentMix: ["text", "image", "video"],
-          },
-        };
         settings.value = {
           ...rest,
           autonomous: { ...defaultAutonomous, ...savedSettings.autonomous },
           moltbook: { ...defaultMoltbook, ...savedSettings.moltbook },
+          socialPosting: { ...defaultSocialPosting, ...savedSettings.socialPosting },
           social: {
-            instagram: {
-              ...defaultSocial.instagram,
-              ...savedSettings.social?.instagram,
-            },
-            tiktok: {
-              ...defaultSocial.tiktok,
-              ...savedSettings.social?.tiktok,
-            },
-            x: { ...defaultSocial.x, ...savedSettings.social?.x },
+            instagram: { ...defaultSocial.instagram, ...savedSettings.social?.instagram },
+            tiktok:    { ...defaultSocial.tiktok, ...savedSettings.social?.tiktok },
+            x:         { ...defaultSocial.x, ...savedSettings.social?.x },
+            moltbook:  { ...defaultSocial.moltbook, ...savedSettings.social?.moltbook },
           },
         };
       } else {
@@ -4663,8 +4691,10 @@ export default {
           enableAudio: false,
           enableVideo: false,
           enableVision: false,
-          autonomous: defaultAutonomous,
-          moltbook: defaultMoltbook,
+          autonomous: { ...defaultAutonomous },
+          moltbook: { ...defaultMoltbook },
+          socialPosting: { ...defaultSocialPosting },
+          social: { ...defaultSocial },
         };
       }
 
@@ -4672,7 +4702,17 @@ export default {
         `[Roleplay] Restored contentLevel: ${settings.value.contentLevel}`,
       );
 
-      chatHistory.value = session.history || [];
+      // Normalize ids on every loaded message — sessions saved before
+      // the upsert+stable-id fix may have items with no `id` field.
+      // Without an id, upsertMessages would reject the row with
+      // "missing id" and the message would never persist again.
+      const _restored = (session.history || []).map((m) => {
+        if (m && typeof m === "object" && !m.id) {
+          return { ...m, id: _msgId(), ts: m.ts || m.timestamp || Date.now() };
+        }
+        return m;
+      });
+      chatHistory.value = _restored;
 
       // Restore scene state if available
       if (session.sceneState) {
@@ -4716,7 +4756,10 @@ export default {
           const plainSessions = JSON.parse(
             JSON.stringify(toRaw(savedSessions.value)),
           );
-          await window.electronAPI.store.set(STORAGE_KEY, plainSessions);
+          // Phase 4b: SQLite-backed via roleplayStore — incremental
+          // session upsert + new-message insert; legacy electron-store
+          // mirror kept for one release.
+          await roleplayStore.saveSessions(plainSessions);
           console.log(`[Roleplay] Session deleted: ${key}`);
         }
       } catch (e) {
@@ -6128,7 +6171,10 @@ export default {
             const plainSessions = JSON.parse(
               JSON.stringify(toRaw(savedSessions.value)),
             );
-            await window.electronAPI.store.set(STORAGE_KEY, plainSessions);
+            // Phase 4b: SQLite-backed via roleplayStore — incremental
+          // session upsert + new-message insert; legacy electron-store
+          // mirror kept for one release.
+          await roleplayStore.saveSessions(plainSessions);
           }
 
           console.log(`[Roleplay] Imported ${importedCount} sessions`);
@@ -6149,7 +6195,10 @@ export default {
               const plainSessions = JSON.parse(
                 JSON.stringify(toRaw(savedSessions.value)),
               );
-              await window.electronAPI.store.set(STORAGE_KEY, plainSessions);
+              // Phase 4b: SQLite-backed via roleplayStore — incremental
+          // session upsert + new-message insert; legacy electron-store
+          // mirror kept for one release.
+          await roleplayStore.saveSessions(plainSessions);
             }
 
             console.log(`[Roleplay] Imported session: ${key}`);
@@ -6267,11 +6316,11 @@ export default {
     // Load companions from storage, seeding defaults on first run or after update
     const loadCompanions = async () => {
       try {
+        // Phase 4b: route through the SQLite-backed roleplay store
+        // (defaults + custom in one indexed query). Falls back to
+        // electron-store automatically when the data layer is down.
         if (window.electronAPI?.store?.get) {
-          const stored = await window.electronAPI.store.get(
-            COMPANIONS_KEY,
-            null,
-          );
+          const stored = await roleplayStore.loadCompanions();
 
           // Get default companion IDs for migration check
           const defaultIds = DEFAULT_COMPANIONS.map((c) => c.id);
@@ -6642,10 +6691,10 @@ export default {
       try {
         if (window.electronAPI?.store?.set) {
           const localCompanions = companions.value.filter((c) => !c.isNFT);
-          await window.electronAPI.store.set(
-            COMPANIONS_KEY,
-            structuredClone(toRaw(localCompanions)),
-          );
+          // Phase 4b: SQLite-backed bulk upsert. The service mirrors
+          // back to the legacy electron-store key during the migration
+          // window so any code path still reading from there stays in sync.
+          await roleplayStore.saveCompanions(structuredClone(toRaw(localCompanions)));
           console.log(
             `[Roleplay] Saved ${localCompanions.length} companions (${companions.value.length - localCompanions.length} NFT excluded)`,
           );
@@ -8151,6 +8200,10 @@ export default {
     const getImageSrc = (image) => {
       if (!image) return "";
       if (image.startsWith("data:")) return image;
+      // bonzai-blob:// is the content-addressed scheme registered in
+      // main.js — pass straight through; the protocol handler resolves
+      // <id>.<ext> to the on-disk file.
+      if (image.startsWith("bonzai-blob://")) return image;
       if (image.startsWith("http")) return image;
       // Vite-resolved asset URLs (dev: /src/assets/..., prod: ./assets/...)
       // These are served by the dev server or bundled — return as-is
@@ -8168,6 +8221,7 @@ export default {
     const getAudioSrc = (audio) => {
       if (!audio) return "";
       if (audio.startsWith("data:")) return audio;
+      if (audio.startsWith("bonzai-blob://")) return audio;
       if (audio.startsWith("http")) return audio;
       // Local file path - use Flask media stream endpoint
       if (audio.startsWith("/")) {
@@ -8180,6 +8234,7 @@ export default {
     const getVideoSrc = (video) => {
       if (!video) return "";
       if (video.startsWith("data:")) return video;
+      if (video.startsWith("bonzai-blob://")) return video;
       if (video.startsWith("http")) return video;
       // Local file path - use Flask media stream endpoint
       if (video.startsWith("/")) {
@@ -8561,6 +8616,8 @@ export default {
       // Add placeholder assistant message for streaming display
       const assistantMessageIndex = chatHistory.value.length;
       chatHistory.value.push({
+        id: _msgId(),
+        ts: Date.now(),
         role: "assistant",
         content: null, // Will be filled by streaming callback
         emotion: null,
@@ -8890,6 +8947,8 @@ export default {
 
       // Add user message to chat immediately (include image if present)
       chatHistory.value.push({
+        id: _msgId(),
+        ts: Date.now(),
         role: "user",
         content: messageContent,
         image: visionData?.imageDataUrl || null, // Show uploaded image in chat

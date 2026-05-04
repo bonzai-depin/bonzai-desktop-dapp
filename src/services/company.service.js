@@ -33,25 +33,65 @@ import { SKILL_MANIFESTS, listManifests } from "./company/skillManifests.js";
 import { dispatchAction, queueDepths, clearQueues } from "./company/dispatcher.js";
 
 // ─────────────────────────────────────────────────────────────────────────
-// Persistence — companies index + per-company charter
+// Persistence — SQLite-backed via electronAPI.db.companies.* with a
+// safe legacy-store fallback when the data layer isn't up.
 // ─────────────────────────────────────────────────────────────────────────
 
-const INDEX_KEY = "companies/index"; // array of company ids
+const INDEX_KEY = "companies/index";              // legacy fallback
 const CHARTER_KEY = (id) => `companies/${id}/charter`;
+const _api = () => window.electronAPI?.db?.companies || null;
+let _warnedDb = false;
+function _warnDbOnce(err) {
+  if (_warnedDb) return;
+  _warnedDb = true;
+  console.warn(
+    "[companies] data layer not reachable — charter persistence falling " +
+    "back to legacy electron-store path. Run `npm install` and restart. " +
+    "Error: " + (err?.message || err || "no IPC handler"),
+  );
+}
 
 async function _readIndex() {
+  const api = _api();
+  if (api) {
+    try { return await api.listIds(); }
+    catch (err) { _warnDbOnce(err); }
+  }
   return (await window.electronAPI?.store?.get?.(INDEX_KEY, [])) || [];
 }
-async function _writeIndex(ids) {
-  await window.electronAPI?.store?.set?.(INDEX_KEY, _plain(ids));
+async function _writeIndex(_ids) {
+  // SQLite path doesn't need an explicit index — listIds derives from the
+  // companies table. Legacy fallback still writes the index key so users
+  // who haven't migrated yet retain the previous behavior.
+  if (!_api()) {
+    await window.electronAPI?.store?.set?.(INDEX_KEY, _plain(_ids));
+  }
 }
 async function _saveCharter(charter) {
-  await window.electronAPI?.store?.set?.(CHARTER_KEY(charter.id), _plain(charter));
+  const clean = _plain(charter);
+  const api = _api();
+  if (api) {
+    try { await api.save(clean); return; }
+    catch (err) { _warnDbOnce(err); }
+  }
+  // Legacy fallback
+  await window.electronAPI?.store?.set?.(CHARTER_KEY(clean.id), clean);
 }
 async function _loadCharter(id) {
+  const api = _api();
+  if (api) {
+    try { return await api.get(id); }
+    catch (err) { _warnDbOnce(err); }
+  }
   return window.electronAPI?.store?.get?.(CHARTER_KEY(id), null);
 }
 async function _deleteCharter(id) {
+  const api = _api();
+  if (api) {
+    try { await api.remove(id); }
+    catch (err) { _warnDbOnce(err); }
+  }
+  // Always also clean the legacy key (no-op if missing)
   await window.electronAPI?.store?.delete?.(CHARTER_KEY(id));
 }
 

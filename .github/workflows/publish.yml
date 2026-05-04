@@ -58,6 +58,32 @@ jobs:
           # mlx-vlm for Apple Silicon vision — must use --no-deps to avoid transformers 5.x
           pip install --no-deps mlx-vlm mlx-lm mlx mlx-metal
 
+      # basicsr 1.4.2 (used by /video/enhance via realesrgan) imports
+      # `torchvision.transforms.functional_tensor` which was removed in
+      # torchvision >= 0.17. Patch the one offending import so the
+      # bundled binary doesn't crash on first /video/enhance request.
+      - name: Patch basicsr torchvision import
+        shell: bash
+        run: |
+          python -c "
+          import site, pathlib, sys
+          for sp in site.getsitepackages() + [site.getusersitepackages()]:
+              p = pathlib.Path(sp) / 'basicsr' / 'data' / 'degradations.py'
+              if p.exists():
+                  s = p.read_text()
+                  new = s.replace(
+                      'from torchvision.transforms.functional_tensor',
+                      'from torchvision.transforms.functional',
+                  )
+                  if new != s:
+                      p.write_text(new)
+                      print(f'Patched: {p}')
+                      sys.exit(0)
+                  print(f'Already patched or unchanged: {p}')
+                  sys.exit(0)
+          print('basicsr/data/degradations.py not found; skipping')
+          "
+
       - name: Build Python binary (macOS ARM64)
         run: |
           mkdir -p binaries/${{ env.OS_KEY }}-${{ env.ARCH_KEY }}
@@ -80,6 +106,11 @@ jobs:
             --collect-submodules=acestep \
             --collect-submodules=mlx_vlm \
             --collect-submodules=mlx_lm \
+            --collect-submodules=realesrgan \
+            --collect-submodules=basicsr \
+            --collect-data=basicsr \
+            --collect-submodules=imageio_ffmpeg \
+            --collect-data=imageio_ffmpeg \
             --hidden-import=mlx \
             --hidden-import=pytorch_lightning \
             --hidden-import=torchaudio \
@@ -92,6 +123,7 @@ jobs:
             --hidden-import=psutil \
             --hidden-import=PIL \
             --hidden-import=PIL.Image \
+            --hidden-import=cv2 \
             ${{ env.MAIN_PY_FILE }}
 
       - name: Decode & Import Certificates

@@ -1,184 +1,124 @@
 /**
- * BonzAI Company — Goals (the unit of intent)
+ * BonzAI Company — Goals (renderer-side adapter, SQLite-backed).
  *
- * A goal is the rationale that ties one or more issues to the company's
- * mission. The CEO heartbeat emits goals from the charter; the user can
- * also create goals manually. Every issue belongs to exactly one goal —
- * issues without a goal are not allowed in the unified model.
+ * Thin pass-through to `window.electronAPI.db.goals.*`. The actual
+ * storage lives in SQLite in the main process via the goals repo.
+ * Audit-trail entries are appended through the audit adapter, so the
+ * Live feed still shows goal-create / goal-cancel / goal-complete
+ * events even though the row write is now SQL.
  *
- * Lifecycle:  active → completed (all child issues done)
- *           or active → cancelled (owner action — cancels open children)
- *
- * Storage: `companies/<id>/goals` (full list).
+ * Same shape as the legacy module so consumers (dispatcher, store,
+ * UI) don't change. Graceful degradation when the data layer isn't
+ * up — every call resolves with a safe default + a one-time warning.
  */
 
-import { v4 as uuid } from "uuid";
 import { append, _notify } from "./auditLog.js";
-
-const KEY = (id) => `companies/${id}/goals`;
 
 export const STATUSES = ["active", "completed", "cancelled"];
 
-const _cache = new Map(); // companyId -> goals[]
-
-async function _hydrate(companyId) {
-  if (_cache.has(companyId)) return _cache.get(companyId);
-  const raw = await window.electronAPI?.store?.get?.(KEY(companyId), []);
-  const goals = Array.isArray(raw) ? raw : [];
-  _cache.set(companyId, goals);
-  return goals;
+const _api = () => window.electronAPI?.db?.goals || null;
+let _warned = false;
+function _warnOnce(err) {
+  if (_warned) return;
+  _warned = true;
+  console.warn(
+    "[goals] data layer not reachable — goal writes will be dropped " +
+    "until the DB is open. Run `npm install` and restart. Underlying error: " +
+    (err?.message || err || "no IPC handler"),
+  );
+}
+async function _safe(fn, fallback) {
+  const api = _api();
+  if (!api) { _warnOnce(); return fallback; }
+  try { return await fn(api); }
+  catch (err) { _warnOnce(err); return fallback; }
 }
 
-async function _persist(companyId) {
-  const goals = _cache.get(companyId) || [];
-  await window.electronAPI?.store?.set?.(KEY(companyId), goals);
-}
+// ─────────────────────────────────────────────────────────────────────
+// Public API
+// ─────────────────────────────────────────────────────────────────────
 
-// ─────────────────────────────────────────────────────────────────────────
-// CRUD
-// ─────────────────────────────────────────────────────────────────────────
-
-/**
- * Create a goal. Caller is responsible for then creating the child
- * issues with `goalId: goal.id`.
- *
- * @param {string} companyId
- * @param {object} input  { title, rationale?, missionAlignment?, deadline?,
- *                          createdBy?, createdByRole? }
- */
 export async function create(companyId, input) {
-  if (!input?.title?.trim()) throw new Error("title required");
-
-  const now = Date.now();
-  const goal = {
-    id: uuid(),
-    companyId,
-    title: input.title.trim(),
-    rationale: (input.rationale || "").trim(),
-    missionAlignment: (input.missionAlignment || input.rationale || "").trim(),
-    deadline: input.deadline || null,
-    status: "active",
-    createdBy: input.createdBy || "user",        // "ceo" | "user"
-    createdByRole: input.createdByRole || null,  // role key when createdBy=ceo
-    createdAt: now,
-    updatedAt: now,
-    completedAt: null,
-  };
-
-  const goals = await _hydrate(companyId);
-  goals.push(goal);
-  await _persist(companyId);
-
-  await append(companyId, {
-    kind: "system",
-    role: input.createdByRole || (input.createdBy === "ceo" ? "CEO" : null),
-    action: "createGoal",
-    status: "executed",
-    note: goal.title.slice(0, 160),
-    goalId: goal.id,
-  });
-  _notify();
+  const goal = await _safe((api) => api.create(companyId, input), null);
+  if (goal) {
+    await append(companyId, {
+      kind: "system",
+      role: input?.createdByRole || (input?.createdBy === "ceo" ? "CEO" : null),
+      action: "createGoal",
+      status: "executed",
+      note: (goal.title || "").slice(0, 160),
+      goalId: goal.id,
+    });
+    _notify();
+  }
   return goal;
 }
 
-/** List all goals (newest first by default). */
 export async function list(companyId, filter = {}) {
-  const goals = await _hydrate(companyId);
-  let out = [...goals];
-  if (filter.status) out = out.filter((g) => g.status === filter.status);
-  if (filter.createdBy) out = out.filter((g) => g.createdBy === filter.createdBy);
-  return out.reverse();
+  return _safe((api) => api.list(companyId, filter), []);
 }
 
 export async function get(companyId, goalId) {
-  const goals = await _hydrate(companyId);
-  return goals.find((g) => g.id === goalId) || null;
+  return _safe((api) => api.get(companyId, goalId), null);
 }
 
-/** Update editable fields. */
 export async function update(companyId, goalId, patch) {
-  const goals = await _hydrate(companyId);
-  const idx = goals.findIndex((g) => g.id === goalId);
-  if (idx < 0) throw new Error(`goal ${goalId} not found`);
-  goals[idx] = { ...goals[idx], ...patch, id: goals[idx].id, companyId, updatedAt: Date.now() };
-  await _persist(companyId);
-  _notify();
-  return goals[idx];
+  const goal = await _safe((api) => api.update(companyId, goalId, patch), null);
+  if (goal) _notify();
+  return goal;
 }
 
-/**
- * Cancel a goal. Caller is responsible for cancelling child issues
- * (the dashboard bulk-cancels via issues.update).
- */
 export async function cancel(companyId, goalId, reason) {
-  const goals = await _hydrate(companyId);
-  const idx = goals.findIndex((g) => g.id === goalId);
-  if (idx < 0) throw new Error(`goal ${goalId} not found`);
-  goals[idx] = {
-    ...goals[idx],
-    status: "cancelled",
-    cancelReason: reason || null,
-    updatedAt: Date.now(),
-    completedAt: Date.now(),
-  };
-  await _persist(companyId);
-  await append(companyId, {
-    kind: "system", action: "cancelGoal", status: "executed",
-    note: reason || goals[idx].title.slice(0, 160), goalId,
-  });
-  _notify();
-  return goals[idx];
+  const goal = await _safe((api) => api.cancel(companyId, goalId, reason), null);
+  if (goal) {
+    await append(companyId, {
+      kind: "system", action: "cancelGoal", status: "executed",
+      note: reason || (goal.title || "").slice(0, 160), goalId,
+    });
+    _notify();
+  }
+  return goal;
 }
 
-/**
- * Mark a goal complete. Called automatically by the issue-rollup helper
- * below when every child issue reaches a terminal state.
- */
 export async function complete(companyId, goalId) {
-  const goals = await _hydrate(companyId);
-  const idx = goals.findIndex((g) => g.id === goalId);
-  if (idx < 0) return null;
-  if (goals[idx].status !== "active") return goals[idx];
-  goals[idx] = {
-    ...goals[idx], status: "completed",
-    updatedAt: Date.now(), completedAt: Date.now(),
-  };
-  await _persist(companyId);
-  await append(companyId, {
-    kind: "system", action: "completeGoal", status: "executed",
-    note: goals[idx].title.slice(0, 160), goalId,
-  });
-  _notify();
-  return goals[idx];
+  const goal = await _safe((api) => api.complete(companyId, goalId), null);
+  if (goal) {
+    await append(companyId, {
+      kind: "system", action: "completeGoal", status: "executed",
+      note: (goal.title || "").slice(0, 160), goalId,
+    });
+    _notify();
+  }
+  return goal;
 }
 
 /**
- * Roll up child-issue state into the parent goal status. Called by
- * issues.finishAttempt + issues.update whenever an issue terminates.
- *
- * Rules:
- * - All children done                       → goal.completed
- * - All children done/cancelled (no open)   → goal.completed
- * - Otherwise no change
+ * Roll up sibling-issue state into the parent goal status. Called by
+ * the dispatcher's tickRole after a child issue terminates.
  */
 export async function maybeComplete(companyId, goalId, allIssuesForGoal) {
-  if (!goalId || !allIssuesForGoal?.length) return null;
-  const open = allIssuesForGoal.filter((i) =>
-    i.status !== "done" && i.status !== "cancelled",
+  if (!goalId) return null;
+  const goal = await _safe(
+    (api) => api.maybeComplete(companyId, goalId, allIssuesForGoal),
+    null,
   );
-  if (open.length > 0) return null;
-  return complete(companyId, goalId);
+  if (goal && goal.status === "completed") {
+    await append(companyId, {
+      kind: "system", action: "completeGoal", status: "executed",
+      note: (goal.title || "").slice(0, 160), goalId,
+    });
+    _notify();
+  }
+  return goal;
 }
 
-/** Aggregates for the UI. */
 export async function counts(companyId) {
-  const goals = await _hydrate(companyId);
-  const out = { total: goals.length, active: 0, completed: 0, cancelled: 0 };
-  for (const g of goals) if (out[g.status] !== undefined) out[g.status]++;
-  return out;
+  return _safe(
+    (api) => api.counts(companyId),
+    { total: 0, active: 0, completed: 0, cancelled: 0 },
+  );
 }
 
 export async function clear(companyId) {
-  _cache.delete(companyId);
-  await window.electronAPI?.store?.delete?.(KEY(companyId));
+  await _safe((api) => api.clear(companyId), null);
 }

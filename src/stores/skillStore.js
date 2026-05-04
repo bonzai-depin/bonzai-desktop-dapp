@@ -340,42 +340,72 @@ export const useSkillStore = defineStore('skill', () => {
   };
 
   /**
-   * Load execution history from storage
+   * Load execution history. SQL is the source of truth (Phase 7b);
+   * electron-store remains as a one-release fallback for users still
+   * mid-migration.
    */
   const loadExecutionHistory = async () => {
+    const skillsApi = window.electronAPI?.db?.skills;
+    if (skillsApi?.listRuns) {
+      try {
+        const rows = await skillsApi.listRuns({ limit: 100 });
+        executionHistory.value = (Array.isArray(rows) ? rows : []).map((r) => ({
+          skillId: r.skillId,
+          skillName: r.skillId,                 // schema doesn't carry name; UI derives via getSkillById
+          startedAt: r.createdAt,
+          completedAt: r.createdAt + (r.durationMs || 0),
+          status: r.status === 'executed' ? 'completed' : r.status,
+          error: null,
+          requiredLevel: null,
+          resultSuccess: r.status === 'executed',
+        }));
+        return;
+      } catch (e) { console.warn('[SkillStore] db.skills.listRuns failed:', e?.message); }
+    }
     try {
-      if (window.electronAPI?.store?.get) {
-        const stored = await window.electronAPI.store.get('skillExecutionHistory', []);
-        executionHistory.value = stored;
-      }
+      const stored = await window.electronAPI?.store?.get('skillExecutionHistory', []);
+      executionHistory.value = Array.isArray(stored) ? stored : [];
     } catch (e) {
       console.warn('[SkillStore] Failed to load execution history:', e);
     }
   };
 
   /**
-   * Save execution history to storage
+   * Save execution history. Writes the latest record to SQL via
+   * db.skills.recordRun, then mirrors a sanitized list to electron-store
+   * during the migration window.
    */
   const saveExecutionHistory = async () => {
+    const skillsApi = window.electronAPI?.db?.skills;
+    const recent = executionHistory.value.slice(-100);
+    const last = recent[recent.length - 1];
+    if (skillsApi?.recordRun && last) {
+      try {
+        await skillsApi.recordRun({
+          id: last.id || `run_${last.startedAt}_${Math.random().toString(36).slice(2, 8)}`,
+          skillId: last.skillId,
+          actionType: last.actionType || 'execute',
+          triggeredBy: last.triggeredBy || 'user',
+          status: last.status === 'completed' ? 'executed' : (last.status || 'unknown'),
+          durationMs: last.completedAt && last.startedAt ? (last.completedAt - last.startedAt) : null,
+          createdAt: last.startedAt || Date.now(),
+          result: { success: last.resultSuccess ?? false, error: last.error || null },
+        });
+      } catch (e) { console.warn('[SkillStore] db.skills.recordRun failed:', e?.message); }
+    }
+    // Legacy electron-store mirror (Phase 9 cleanup target)
     try {
-      if (window.electronAPI?.store?.set) {
-        // Keep only last 100 executions
-        const recent = executionHistory.value.slice(-100);
-
-        // Sanitize execution records to only store serializable metadata
-        const sanitized = recent.map(record => ({
-          skillId: record.skillId,
-          skillName: record.skillName,
-          startedAt: record.startedAt,
-          completedAt: record.completedAt,
-          status: record.status,
-          error: record.error,
-          requiredLevel: record.requiredLevel,
-          resultSuccess: record.result?.success ?? record.status === 'completed',
-        }));
-
-        await window.electronAPI.store.set('skillExecutionHistory', sanitized);
-      }
+      const sanitized = recent.map((record) => ({
+        skillId: record.skillId,
+        skillName: record.skillName,
+        startedAt: record.startedAt,
+        completedAt: record.completedAt,
+        status: record.status,
+        error: record.error,
+        requiredLevel: record.requiredLevel,
+        resultSuccess: record.result?.success ?? record.status === 'completed',
+      }));
+      await window.electronAPI?.store?.set?.('skillExecutionHistory', sanitized);
     } catch (e) {
       console.warn('[SkillStore] Failed to save execution history:', e);
     }
@@ -922,7 +952,16 @@ REQUIREMENTS:
       }
 
       // Create assistant message (only the response, no fake user message)
+      // `id` is required so the SQL upsert path can update this row when
+      // media (image/video) lands later — without it, position-based
+      // fallback ids collide and edits get dropped silently.
+      const _autoMsgId = (() => {
+        try { return crypto.randomUUID(); }
+        catch { return `m_${Date.now()}_${Math.random().toString(36).slice(2, 10)}`; }
+      })();
       const assistantMsg = {
+        id: _autoMsgId,
+        ts: Date.now(),
         role: 'assistant',
         content: responseText,
         emotion: responseData.emotion,

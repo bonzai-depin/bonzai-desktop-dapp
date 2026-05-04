@@ -465,7 +465,7 @@ export const CONFIG = {
         "llm_llama_2_7b",
         "llm_llama_3_1_8b",
         "llm_mistral_7b",
-        "llm_mythomax_13b",
+        "llm_nemomix_12b_heretic",
         "llm_phi_3_mini",
         "llm_phi_4_mini",
         "llm_yi_coder_9b",

@@ -12,6 +12,7 @@
  * - Zero-knowledge mode for remote requests
  */
 
+import * as roleplayStore from "./roleplayStore.service.js";
 import {
   findCompanion,
   findScenario,
@@ -180,22 +181,24 @@ async function ensureValidAuth() {
   return false;
 }
 
-// Roleplay LLM - MythoMax L2 13B for excellent creative roleplay
+// Roleplay LLM — NemoMix Unleashed 12B Heretic (Mistral-Nemo merge,
+// 128k context). Replaced MythoMax L2 13B which had 4k context and
+// crashed memory summarization on long sessions.
 const ROLEPLAY_LLM = {
-  modelKey: 'llm_mythomax_13b',
-  modelname: 'MythoMax L2 13B',
-  filename: 'mythomax-l2-13b.q4_k_m.gguf',
-  url: 'https://huggingface.co/TheBloke/MythoMax-L2-13B-GGUF/resolve/main/mythomax-l2-13b.Q4_K_M.gguf',
-  filesizeBytes: 7.87e9,
-  parameters: 13000000000,
-  context: 4096,
+  modelKey: 'llm_nemomix_12b_heretic',
+  modelname: 'NemoMix Unleashed 12B Heretic',
+  filename: 'nemomix-unleashed-12b-heretic.q4_k_m.gguf',
+  url: 'https://huggingface.co/mradermacher/NemoMix-Unleashed-12B-Heretic-GGUF/resolve/main/NemoMix-Unleashed-12B-Heretic.Q4_K_M.gguf',
+  filesizeBytes: 7.48e9,
+  parameters: 12000000000,
+  context: 131072,
 };
 
 // Track the model before roleplay so we can restore it
 let preRoleplayModel = null;
 
 /**
- * Load the roleplay LLM (MythoMax) and save the current model for later restoration.
+ * Load the roleplay LLM (NemoMix) and save the current model for later restoration.
  */
 async function loadRoleplayLLM() {
   if (!window.electronAPI?.loadModel) {
@@ -213,27 +216,27 @@ async function loadRoleplayLLM() {
     console.log(`[OpenClaw] Saving current model for restoration: ${preRoleplayModel}`);
   }
 
-  // Check if MythoMax is already loaded
+  // Check if NemoMix is already loaded
   if (modelInfo?.modelName === ROLEPLAY_LLM.modelname) {
-    console.log('[OpenClaw] MythoMax already loaded');
+    console.log('[OpenClaw] NemoMix already loaded');
     return true;
   }
 
-  // Load MythoMax for roleplay
-  console.log('[OpenClaw] Loading MythoMax for companion chat...');
+  // Load NemoMix for roleplay
+  console.log('[OpenClaw] Loading NemoMix for companion chat...');
   try {
     const loadResult = await window.electronAPI.loadModel(ROLEPLAY_LLM);
     if (loadResult?.success) {
       networkSettings.currentModel = ROLEPLAY_LLM.modelKey;
       await saveNetworkSettings();
-      console.log('[OpenClaw] MythoMax loaded successfully');
+      console.log('[OpenClaw] NemoMix loaded successfully');
       return true;
     } else {
-      console.error('[OpenClaw] Failed to load MythoMax:', loadResult?.error);
+      console.error('[OpenClaw] Failed to load NemoMix:', loadResult?.error);
       return false;
     }
   } catch (error) {
-    console.error('[OpenClaw] Error loading MythoMax:', error.message);
+    console.error('[OpenClaw] Error loading NemoMix:', error.message);
     return false;
   }
 }
@@ -347,7 +350,10 @@ let skillsLoaded = false;
 async function loadData() {
   if (loaded) return;
   try {
-    savedSessions = await window.electronAPI.store.get(STORAGE_KEY, {});
+    // Sessions live in SQL via roleplayStore — same backing store as
+    // RoleplayChat, so OpenClaw inbound messages and the desktop UI
+    // share session/companion/message state without duplicate writes.
+    savedSessions = await roleplayStore.loadSessions();
     channelMappings = await window.electronAPI.store.get(CHANNEL_MAPPING_KEY, {});
     networkSettings = await window.electronAPI.store.get(NETWORK_SETTINGS_KEY, networkSettings);
 
@@ -361,7 +367,7 @@ async function loadData() {
 
 async function saveSessions() {
   try {
-    await window.electronAPI.store.set(STORAGE_KEY, savedSessions);
+    await roleplayStore.saveSessions(savedSessions);
   } catch (e) {
     console.error('[OpenClaw] Failed to save sessions:', e);
   }
@@ -1150,11 +1156,18 @@ async function storeGenerationInHistory(channelId, type, prompt, result) {
   const data = await getOrCreateSession(channelId, companions, scenarios);
 
   if (data?.session) {
+    const _id = () => {
+      try { return crypto.randomUUID(); }
+      catch { return `m_${Date.now()}_${Math.random().toString(36).slice(2, 10)}`; }
+    };
+    const ts = Date.now();
     const historyEntry = {
+      id: _id(),
+      ts,
       role: 'generation',
       type,
       prompt,
-      timestamp: Date.now(),
+      timestamp: ts,
     };
 
     // Store result data based on type
@@ -2141,7 +2154,7 @@ Available models:
 - \`llama_3_1_8b\` - Llama 3.1 8B
 - \`mistral_7b\` - Mistral 7B
 - \`deepseek_r1_7b\` - DeepSeek R1 7B
-- \`mythomax_13b\` - MythoMax 13B (roleplay)
+- \`nemomix_12b_heretic\` - NemoMix Unleashed 12B Heretic (roleplay)
 - \`qwen_coder_32b\` - Qwen Coder 32B
 
 Use \`!bonzai models\` for full list.`,
@@ -2414,17 +2427,17 @@ async function handleChat(channelId, message) {
   const chatStartTime = Date.now();
   console.log(`[OpenClaw] Starting chat with ${companion.name} (audio: ${mapping.settings.enableAudio}, image: ${mapping.settings.enableImage}, video: ${mapping.settings.enableVideo})`);
 
-  // Load MythoMax for roleplay (saves current model for later restoration)
+  // Load NemoMix for roleplay (saves current model for later restoration)
   const llmLoaded = await loadRoleplayLLM();
   if (!llmLoaded) {
-    console.warn('[OpenClaw] Could not load MythoMax, using current model');
+    console.warn('[OpenClaw] Could not load NemoMix, using current model');
   }
 
   let textResponse;
   try {
     const llmStart = Date.now();
     textResponse = await generateText(channelId, `${systemPrompt}\n\n${context}`);
-    console.log(`[OpenClaw] LLM response in ${((Date.now() - llmStart) / 1000).toFixed(1)}s (using ${llmLoaded ? 'MythoMax' : 'current model'})`);
+    console.log(`[OpenClaw] LLM response in ${((Date.now() - llmStart) / 1000).toFixed(1)}s (using ${llmLoaded ? 'NemoMix' : 'current model'})`);
   } catch (error) {
     console.error(`[OpenClaw] LLM failed: ${error.message}`);
     textResponse = `*${companion.name} smiles warmly* I'm here with you. What would you like to talk about?`;
@@ -2433,13 +2446,19 @@ async function handleChat(channelId, message) {
   // Infer emotion
   const emotion = inferEmotion(textResponse);
 
-  // Update history
-  const userMessage = { role: 'user', content: message, timestamp: Date.now() };
-  const assistantMessage = { role: 'assistant', content: textResponse, emotion, timestamp: Date.now() };
+  // Update history. Stable ids required so multi-step turns (text → media)
+  // upsert the same SQL row instead of inserting fresh ones each save.
+  const _id = () => {
+    try { return crypto.randomUUID(); }
+    catch { return `m_${Date.now()}_${Math.random().toString(36).slice(2, 10)}`; }
+  };
+  const now = Date.now();
+  const userMessage = { id: _id(), ts: now, role: 'user', content: message, timestamp: now };
+  const assistantMessage = { id: _id(), ts: now, role: 'assistant', content: textResponse, emotion, timestamp: now };
 
   session.history.push(userMessage);
   session.history.push(assistantMessage);
-  session.updatedAt = Date.now();
+  session.updatedAt = now;
 
   // Update scene state
   if (session.sceneState.recentEmotions.length >= 3) {

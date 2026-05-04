@@ -53,6 +53,19 @@ const DEFAULT_CHAIN_ID = 8453;            // Base
  * @returns {Promise<TransactionRecord[]>}
  */
 export async function getTransactionHistory(companionId) {
+  // SQL is the source of truth (db.web3.paymentsList scoped to this
+  // companion via sessionId). Falls back to electron-store reads only
+  // if the data layer is down — should never trigger after Phase 7b.
+  const api = window.electronAPI?.db?.web3;
+  if (api?.paymentsList) {
+    try {
+      const rows = await api.paymentsList({ sessionId: companionId, limit: 200 });
+      return Array.isArray(rows) ? rows.map(_paymentRowToTxRecord) : [];
+    } catch (e) {
+      console.warn('[x402Executor] db.web3.paymentsList failed, falling back:', e?.message);
+    }
+  }
+  // Legacy electron-store fallback (drops in Phase 9 cleanup)
   try {
     const key = `${TX_HISTORY_PREFIX}${companionId}`;
     const stored = await window.electronAPI?.store?.get(key, []);
@@ -64,30 +77,81 @@ export async function getTransactionHistory(companionId) {
 }
 
 /**
+ * Map a SQL x402_payments row → the legacy TransactionRecord shape the
+ * UI expects. Renderer code reads `id, timestamp, companionId, service,
+ * amountEth, amount, status, txHash, provider, chainId, error`.
+ */
+function _paymentRowToTxRecord(row) {
+  return {
+    id: row.id,
+    timestamp: row.paidAt || row.settledAt || Date.now(),
+    companionId: row.sessionId,
+    service: row.pipeline || 'unknown',
+    amount: String(row.amountWei || '0'),
+    amountEth: _formatEther(row.amountWei),
+    status: row.status === 'settled' ? 'success' : (row.status || 'pending'),
+    txHash: row.txHash || undefined,
+    provider: row.payeeWallet || undefined,
+    chainId: row.chainId,
+  };
+}
+
+function _formatEther(wei) {
+  try {
+    if (wei == null) return '0';
+    return ethers.formatEther(BigInt(String(wei)));
+  } catch { return '0'; }
+}
+
+/**
  * Log a transaction
  * @param {string} companionId - Companion ID
  * @param {Omit<TransactionRecord, 'id'|'timestamp'|'companionId'>} transaction - Transaction details
  * @returns {Promise<TransactionRecord|undefined>}
  */
 export async function logTransaction(companionId, transaction) {
+  const tx = {
+    id: `tx_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
+    timestamp: Date.now(),
+    companionId,
+    ...transaction,
+  };
+
+  // Write through to SQL (durable, queryable). The schema's `sessionId`
+  // column scopes records per companion; `pipeline` carries the service
+  // tag (inference/mint/etc).
+  const api = window.electronAPI?.db?.web3;
+  if (api?.paymentRecord) {
+    try {
+      await api.paymentRecord({
+        id: tx.id,
+        chainId: tx.chainId || DEFAULT_CHAIN_ID,
+        payerWallet: tx.payer || '0x0000000000000000000000000000000000000000',
+        payeeWallet: tx.provider || '0x0000000000000000000000000000000000000000',
+        amountWei: tx.amount || '0',
+        pipeline: tx.service || null,
+        sessionId: companionId,
+        txHash: tx.txHash || null,
+        status: tx.status === 'success' ? 'settled' : (tx.status || 'pending'),
+        paidAt: tx.timestamp,
+        settledAt: tx.status === 'success' ? tx.timestamp : null,
+      });
+      console.log(`[x402Executor] Transaction logged (SQL): ${tx.service} - ${tx.amountEth} ETH`);
+      return tx;
+    } catch (e) {
+      console.warn('[x402Executor] db.web3.paymentRecord failed, falling back:', e?.message);
+    }
+  }
+
+  // Legacy electron-store fallback
   try {
     const key = `${TX_HISTORY_PREFIX}${companionId}`;
-    const history = await getTransactionHistory(companionId);
-
-    const tx = {
-      id: `tx_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
-      timestamp: Date.now(),
-      companionId,
-      ...transaction,
-    };
-
+    const stored = await window.electronAPI?.store?.get(key, []);
+    const history = Array.isArray(stored) ? stored : [];
     history.unshift(tx);
-
-    // Keep last 100 transactions
     const trimmed = history.slice(0, 100);
     await window.electronAPI?.store?.set(key, trimmed);
-
-    console.log(`[x402Executor] Transaction logged: ${tx.service} - ${tx.amountEth} ETH`);
+    console.log(`[x402Executor] Transaction logged (legacy): ${tx.service} - ${tx.amountEth} ETH`);
     return tx;
   } catch (e) {
     console.error('[x402Executor] Failed to log transaction:', e);

@@ -600,6 +600,12 @@ const restartServerManually = async () => {
 protocol.registerSchemesAsPrivileged([
   { scheme: "app", privileges: { bypassCSP: true } },
   { scheme: "local-video", privileges: { bypassCSP: true, stream: true, supportFetchAPI: true, corsEnabled: true } },
+  // bonzai-blob:// resolves <id>.<ext> to the on-disk content-addressed
+  // blob path. Lets <img :src> / <audio :src> / <video :src> reference
+  // blob-stored media synchronously without IPC round-trips. Critical
+  // for the migrated roleplay sessions which now hold blob refs in
+  // place of inline base64 payloads.
+  { scheme: "bonzai-blob", privileges: { bypassCSP: true, stream: true, supportFetchAPI: true, corsEnabled: true, secure: true } },
 ]);
 
 // Register bonzai:// protocol for OAuth callbacks
@@ -648,6 +654,43 @@ app.whenReady().then(() => {
       return new Response("Forbidden", { status: 403 });
     }
     return net.fetch(pathToFileURL(decoded).toString());
+  });
+
+  /**
+   * bonzai-blob://<sha256>.<ext>
+   *   → resolves to <userData>/blobs/<sha256[0:2]>/<sha256>.<ext>
+   *
+   * Strict input validation: id must be a 64-char lowercase hex sha256
+   * (otherwise reject — keeps anyone who guesses the URL space from
+   * directing the protocol at arbitrary file paths). The ext is
+   * checked against a whitelist of media types the renderer reads.
+   */
+  protocol.handle("bonzai-blob", (req) => {
+    try {
+      const u = new URL(req.url);
+      // Some renderers normalize host into the URL.host slot, others
+      // put it in pathname. Cover both shapes: bonzai-blob://abc.png OR
+      // bonzai-blob:///abc.png
+      const target = u.host
+        ? `${u.host}${u.pathname}`
+        : u.pathname.replace(/^\/+/, "");
+      const m = target.match(/^([a-f0-9]{64})\.([a-z0-9]{1,8})$/i);
+      if (!m) return new Response("Bad request", { status: 400 });
+      const id = m[1].toLowerCase();
+      const ext = m[2].toLowerCase();
+      const allowed = ["png", "jpg", "jpeg", "webp", "gif",
+                       "mp3", "wav", "ogg", "m4a", "flac",
+                       "mp4", "webm", "mov", "m4v",
+                       "gltf", "glb"];
+      if (!allowed.includes(ext)) return new Response("Forbidden", { status: 403 });
+      const userData = app.getPath("userData");
+      const filePath = path.join(userData, "blobs", id.slice(0, 2), `${id}.${ext}`);
+      if (!fs.existsSync(filePath)) return new Response("Not found", { status: 404 });
+      return net.fetch(pathToFileURL(filePath).toString());
+    } catch (err) {
+      console.warn("[bonzai-blob] handler error:", err?.message);
+      return new Response("Internal error", { status: 500 });
+    }
   });
 });
 
@@ -1729,6 +1772,10 @@ app.on("before-quit", () => {
     rpcServerProcess.kill("SIGTERM");
   }
   try { llamaServer.stopModel({ force: true }); } catch {}
+  // Close the SQLite handle so WAL is checkpointed cleanly before exit.
+  try {
+    import("./main/db/connection.js").then((m) => m.close());
+  } catch {}
 });
 
 // Consumer-mode: update the local llama-server's -rpc peer list. Safe to
@@ -1922,9 +1969,19 @@ async function routeInferenceRequest(request) {
  */
 async function ensureLocalLLMReady() {
   if (llamaServer.isRunning()) return true;
-  if (!currentLoadedModel?.filename) return false;
+  // Prefer the live currentLoadedModel; fall back to the persisted
+  // lastLoadedSpec if the user (or pipeline) called unloadModel and
+  // wiped currentLoadedModel. This is what restores the node-llama-cpp
+  // era behavior: after a TTS+image generation cycle in RoleplayChat,
+  // the next user message respawns the same LLM automatically.
+  let spec = currentLoadedModel?.filename ? currentLoadedModel : null;
+  if (!spec && lastLoadedSpec?.filename) {
+    spec = lastLoadedSpec;
+    console.log(`[Inference] Auto-respawning previous model: ${spec.filename}`);
+  }
+  if (!spec) return false;
   try {
-    await loadModel(null, { ...currentLoadedModel });
+    await loadModel(null, { ...spec });
     return llamaServer.isRunning();
   } catch (e) {
     console.warn("[Inference] Failed to restore local model session:", e.message);
@@ -3571,6 +3628,24 @@ let currentLoadedModel = null;
 let alwaysLoadedEnabled = false; // When true, model stays in memory (still allows hot-swap)
 let currentSystemPrompt = null;  // Optional system prompt prepended to chat history
 
+/**
+ * Spec of the most recently loaded model — preserved across unload
+ * cycles so `ensureLocalLLMReady()` can auto-respawn it. The legacy
+ * node-llama-cpp era kept the LLM effectively always-available; with
+ * llama-server we aggressively unload to share GPU memory with
+ * diffusion / TTS pipelines, but we still need the next text turn
+ * (e.g. the user typing the next message after a TTS+image cycle in
+ * RoleplayChat) to bring the same model back automatically.
+ *
+ * Hydrated on app boot from electron-store and updated on every
+ * successful loadModel(). Never cleared by unloadModel.
+ */
+let lastLoadedSpec = null;
+try {
+  // store may not be in scope yet at module evaluation; the actual
+  // hydration runs in the app-ready hook below.
+} catch {}
+
 // Query current loaded model and always-loaded setting
 ipcMain.handle("model-get-loaded", () => {
   if (!currentLoadedModel) return null;
@@ -3786,6 +3861,85 @@ const createWindow = async () => {
 // ─────────────────────────────────────────────────────────────────────────────
 app.on("ready", async () => {
   const flaskURL = `http://127.0.0.1:${PY_SERVER_PORT}`;
+
+  // Hydrate the last-loaded LLM spec so RoleplayChat / Generative Text
+  // / ZHC can auto-respawn the user's previous model after a quit +
+  // reopen mid-conversation. Treated as best-effort — corrupt JSON
+  // just leaves the slot null and the user picks a model normally.
+  try {
+    const stored = store.get("llm.lastLoadedSpec", null);
+    if (stored?.filename) {
+      lastLoadedSpec = stored;
+      console.log(`[Startup] hydrated lastLoadedSpec: ${stored.filename}`);
+    }
+  } catch (err) {
+    console.warn("[Startup] lastLoadedSpec hydrate failed:", err?.message);
+  }
+
+  // ─────────────────────────────────────────────────────────────────────────────
+  // Local data layer — open SQLite, take a launch-time snapshot, run
+  // any unapplied migrations. Errors here ABORT the boot intentionally:
+  // running on a half-migrated schema risks data corruption.
+  // ─────────────────────────────────────────────────────────────────────────────
+  try {
+    const dbConn = await import("./main/db/connection.js");
+    const dbMigrate = await import("./main/db/migrate.js");
+    const dbSnap = await import("./main/db/snapshots.js");
+    const dbIpc = await import("./main/ipc/db.js");
+    const dbStoreImport = await import("./main/db/import-from-store.js");
+    const { dbPath } = dbConn.open();
+    console.log(`[Startup] DB open at ${dbPath}`);
+    try { dbSnap.takeBootSnapshot(); } catch (err) { console.warn("[Startup] snapshot failed:", err?.message); }
+    const result = dbMigrate.runMigrations();
+    if (result.applied.length) console.log(`[Startup] applied ${result.applied.length} migrations`);
+    if (result.skipped.length) console.log(`[Startup] ${result.skipped.length} migrations already applied`);
+    dbIpc.registerDbIpc();
+    // First-boot one-shot: copy each domain's data from electron-store
+    // into SQLite. Idempotent — flagged per-table in store.
+    try { await dbStoreImport.runFirstBootImport(store); }
+    catch (err) { console.warn("[Startup] store→sqlite import warning:", err?.message); }
+
+    // Run a repair pass on every boot: recompute roleplay_sessions
+    // content_level + modes from the immutable session id. Cheap (one
+    // pass + a couple of UPDATEs at most) and idempotent.
+    try {
+      const roleplayRepo = await import("./main/db/repos/roleplay.js");
+      const stats = roleplayRepo.repairContentLevelsFromKey();
+      if (stats.updated) {
+        console.log(
+          `[Startup] roleplay content-level repair: scanned ${stats.scanned}, ` +
+          `updated ${stats.updated} (${stats.mismatched} drifted, ${stats.nullFilled} null)`,
+        );
+      }
+    } catch (err) { console.warn("[Startup] content-level repair warning:", err?.message); }
+  } catch (err) {
+    // Distinguish "deps not installed" from real DB errors so the user
+    // gets an actionable message instead of a stack trace.
+    const isMissingDep = err?.code === "ERR_MODULE_NOT_FOUND"
+      || /Cannot find package '(better-sqlite3|drizzle-orm|sqlite-vec)'/.test(err?.message || "");
+    if (isMissingDep) {
+      console.error(
+        "\n══════════════════════════════════════════════════════════════════\n" +
+        "[Startup] Local data layer dependencies are missing.\n" +
+        "          Run:  npm install\n" +
+        "          (then restart the app)\n" +
+        "\n" +
+        "          The app will keep booting. Generative Text, RoleplayChat,\n" +
+        "          skills, and wallet are unaffected — they don't depend on\n" +
+        "          the new SQLite layer.\n" +
+        "\n" +
+        "          ZHC's audit-log-derived views (Live feed, KPIs, Trail)\n" +
+        "          will read empty and audit writes will silently drop\n" +
+        "          until the install completes.\n" +
+        "══════════════════════════════════════════════════════════════════\n",
+      );
+    } else {
+      console.error("[Startup] DB bootstrap failed:", err);
+    }
+    // Defer crashing — the rest of the app boots, but data-layer IPC
+    // calls will fail with clear errors. Lets the user open the app
+    // and see the failure rather than a black window.
+  }
 
   // ─────────────────────────────────────────────────────────────────────────────
   // Auto-migrate history paths to current MODEL_DIR on startup
@@ -4798,7 +4952,7 @@ const MODEL_SPECS = {
   "meta-llama-3.1-8b-instruct":    { parameters: 8e9, context: 131072 },
   "llama-3-3-8b":                   { parameters: 8e9, context: 131072 },
   "llama-2-7b-chat":               { parameters: 7e9, context: 4096 },
-  "mythomax-l2-13b":               { parameters: 13e9, context: 4096 },
+  "nemomix-unleashed-12b-heretic": { parameters: 12e9, context: 131072 },
   "mistral-7b-instruct":           { parameters: 7e9, context: 32768 },
   "codestral-22b":                  { parameters: 22e9, context: 32768 },
   "deepseek-r1-distill-qwen-1.5b": { parameters: 1.5e9, context: 131072 },
@@ -4841,7 +4995,7 @@ const MODEL_NAMES = {
   "llama-2-7b-chat":               "LLaMA 2 7B",
   "meta-llama-3.1-8b-instruct":    "LLaMA 3.1 8B",
   "mistral-7b-instruct":           "Mistral 7B",
-  "mythomax-l2-13b":               "MythoMax L2 13B",
+  "nemomix-unleashed-12b-heretic": "NemoMix Unleashed 12B Heretic",
   "phi-3-mini-4k-instruct":        "Phi-3 Mini 3.8B",
   "phi-4-mini-instruct":           "Phi-4 Mini 3.8B",
   "yi-coder-9b-chat":              "Yi-Coder 9B",
@@ -4959,6 +5113,32 @@ async function ensureModel(_event, modelOrKey) {
         filename: requestedFilename,
         port: llamaServer.getActivePort(),
         cached: true,
+      };
+    }
+
+    // CRITICAL — never swap models while another caller is mid-flight.
+    // The singleton serves both Generative Text + RoleplayChat + ZHC ticks;
+    // killing it under an active companion conversation is the bug
+    // surfaced as `[llama-server] exited (intentional=true)` mid-roleplay.
+    // Instead: hold the existing model and tell the caller we declined.
+    // The dispatcher's `_completeJSON` then proceeds against whatever is
+    // already loaded — possibly the "wrong" model for a ZHC role, but
+    // never breaks the user's active session.
+    const inFlight = (typeof llamaServer.inFlightCount === "function") ? llamaServer.inFlightCount() : 0;
+    if (llamaServer.isRunning() && inFlight > 0) {
+      const currentName = currentLoadedModel?.filename || null;
+      console.warn(
+        `[ensureModel] requested ${requestedFilename} but ${inFlight} request(s) ` +
+        `in flight against ${currentName} — declining swap to protect active sessions.`,
+      );
+      return {
+        ok: true,
+        filename: currentName,
+        port: llamaServer.getActivePort(),
+        cached: false,
+        declined: true,
+        reason: "in_flight",
+        inFlight,
       };
     }
 
@@ -5123,6 +5303,27 @@ async function loadModel(_event, currentModel) {
     isMultimodal: !!mmprojPath,
     port,
   };
+  // Remember the most-recent spec across unload/reload cycles so the
+  // multimodal pipeline (RoleplayChat → text → TTS → image → video →
+  // back to text) can auto-respawn the LLM the user was actually using.
+  // Mirrors the node-llama-cpp era where the LLM was effectively
+  // always-available; the llama-server era unloads aggressively to
+  // share GPU memory with diffusion pipelines.
+  lastLoadedSpec = {
+    filename: currentModel.filename,
+    parameters: currentModel.parameters,
+    activeParameters: currentModel.activeParameters,
+    isMoE: currentModel.isMoE,
+    context: currentModel.context,
+    mmproj: currentModel.mmproj,
+    draftModel: currentModel.draftModel,
+    flashAttention: currentModel.flashAttention,
+    parallelSlots: currentModel.parallelSlots,
+    enableThinking: currentModel.enableThinking,
+  };
+  // Persist so a full app restart can auto-respawn (next text turn
+  // after a quit + reopen during an active conversation).
+  try { store.set("llm.lastLoadedSpec", lastLoadedSpec); } catch {}
   chatHistory = [];
 
   console.log(`Model loaded: ${currentModel.filename} on :${port}, multimodal: ${!!mmprojPath}`);
@@ -5189,10 +5390,63 @@ function checkModel(_event, modelname) {
   return true;
 }
 
-function _buildMessages(userMessage) {
+/**
+ * Approximate token count for a message. Llama tokenizers average ~4
+ * chars per token for English. Off by ~20% but plenty good for budget
+ * accounting against context windows.
+ */
+function _estTokens(text) {
+  if (typeof text !== "string") return 0;
+  return Math.ceil(text.length / 4);
+}
+
+/**
+ * Trim chatHistory to fit within the active model's context window.
+ *
+ * Reserves space for:
+ *   - the system prompt (kept verbatim — companion personas + scenario
+ *     guidelines in roleplay mode are large and load-bearing)
+ *   - the new user message
+ *   - the response budget (maxTokens, default 2048)
+ *
+ * Then walks backwards from the most recent history message, including
+ * messages until the running total would exceed the budget. The oldest
+ * messages are dropped first — chat needs recent context, not the
+ * opening turn from 200 messages ago.
+ *
+ * Without this trim, a long roleplay session crashes mid-turn with
+ * "request exceeds the available context size" once history grows.
+ */
+function _buildMessages(userMessage, opts = {}) {
+  const ctxSize = currentLoadedModel?.context || lastLoadedSpec?.ctxSize || 4096;
+  const maxTokens = opts.maxTokens || 2048;
+  const systemTokens = _estTokens(currentSystemPrompt || "");
+  const userTokens = _estTokens(userMessage || "");
+  // 256-token safety margin for the chat-template wrapper, role tags,
+  // and tokenization slop between our 4-char heuristic and the real
+  // tokenizer.
+  const budget = Math.max(0, ctxSize - systemTokens - userTokens - maxTokens - 256);
+
+  const trimmed = [];
+  let used = 0;
+  for (let i = chatHistory.length - 1; i >= 0; i--) {
+    const m = chatHistory[i];
+    const cost = _estTokens(m.content);
+    if (used + cost > budget) break;
+    used += cost;
+    trimmed.unshift(m);
+  }
+
+  if (trimmed.length < chatHistory.length) {
+    console.log(
+      `[chat] Trimmed history ${chatHistory.length} → ${trimmed.length} messages ` +
+      `(ctx=${ctxSize}, sys=${systemTokens}, user=${userTokens}, resp=${maxTokens})`,
+    );
+  }
+
   const msgs = [];
   if (currentSystemPrompt) msgs.push({ role: "system", content: currentSystemPrompt });
-  msgs.push(...chatHistory);
+  msgs.push(...trimmed);
   msgs.push({ role: "user", content: userMessage });
   return msgs;
 }
@@ -5210,7 +5464,7 @@ async function chat(_event, input) {
 
   const startTime = Date.now();
   const result = await llamaServer.chat({
-    messages: _buildMessages(userMessage),
+    messages: _buildMessages(userMessage, { maxTokens }),
     temperature,
     maxTokens,
     seed: Math.floor(Math.random() * 2147483647),
@@ -5303,7 +5557,7 @@ async function chatStream(event, input) {
   const win = BrowserWindow.fromWebContents(event.sender);
   const assistantMessage = await llamaServer.chatStream(
     {
-      messages: _buildMessages(userMessage),
+      messages: _buildMessages(userMessage, { maxTokens }),
       temperature,
       maxTokens,
       seed: Math.floor(Math.random() * 2147483647),

@@ -32,6 +32,20 @@ const ALWAYS_BLOCKED_TERMS = [
 ];
 
 /**
+ * Adult-only keywords used to flag explicit scenes for downstream
+ * model selection (SDXL vs Z-Turbo for image, two-character framing
+ * for video). Single source of truth — referenced from validateCompanionAge,
+ * the image-gen block, and the video-gen block. Keep additions in sync
+ * with `pgOnlyPatterns` in validateContentLevel for cross-coverage.
+ */
+const SEX_KEYWORDS = [
+  'fuck', 'thrust', 'penetrat', 'orgasm', 'cum', 'cumming',
+  'cock', 'dick', 'pussy', 'cunt',
+  'riding him', 'riding her', 'inside her', 'inside him',
+  'balls deep', 'deep inside',
+];
+
+/**
  * Terms blocked in appearance/description (current state) but allowed in background (past)
  * These words are fine when describing someone's history/upbringing
  */
@@ -341,12 +355,12 @@ export const LLM_BASE_MODELS = {
       q4: { repo: 'bartowski/Yi-Coder-9B-Chat-GGUF', file: 'Yi-Coder-9B-Chat-Q5_K_M.gguf', size: 6.26, vram: 8 },
     },
   },
-  mythomax_13b: {
-    name: 'MythoMax L2 13B',
-    description: 'Excellent for creative roleplay and storytelling',
-    parameters: 13e9, context: 4096,
+  nemomix_12b_heretic: {
+    name: 'NemoMix Unleashed 12B Heretic',
+    description: 'Mistral-Nemo-based merge tuned for uncensored roleplay; 128k context, sharper persona consistency than MythoMax',
+    parameters: 12e9, context: 131072,
     tiers: {
-      q4: { repo: 'TheBloke/MythoMax-L2-13B-GGUF', file: 'mythomax-l2-13b.Q4_K_M.gguf', size: 7.87, vram: 10 },
+      q4: { repo: 'mradermacher/NemoMix-Unleashed-12B-Heretic-GGUF', file: 'NemoMix-Unleashed-12B-Heretic.Q4_K_M.gguf', size: 7.48, vram: 10 },
     },
   },
   hermes_4_14b: {
@@ -867,7 +881,7 @@ export const SKILL_MODEL_REQUIREMENTS = {
   'game-maker-v1.0.0': ['llm_llama_3_1_8b', 'image_turbo'],
   'manga-to-anime-v1.0.0': ['llm_llama_3_1_8b', 'image_turbo', 'video_fast'],
   'hairstyle-studio-v1.0.0': ['llm_llama_3_1_8b', 'image_turbo'],
-  'roleplay-companion-v1.0.0': ['llm_mythomax_13b', 'image_advanced', 'image_turbo'],
+  'roleplay-companion-v1.0.0': ['llm_nemomix_12b_heretic', 'image_advanced', 'image_turbo'],
   'live-streaming-v1.0.0': ['image_turbo', 'audio_turbo', 'music_fast', 'video_fast'],
   // Mass Chat needs a default LLM for the "ask my companion" panel + at least
   // one small model the user can pick to compare. It effectively works with
@@ -2488,6 +2502,39 @@ function getFlaskPort() {
   return window.BONZAI_SERVER_PORT || 65000;
 }
 
+/**
+ * Normalize an image source into raw base64 bytes for Flask `image_base64`.
+ * After a roleplay session is saved + reloaded, message.image is a
+ * `bonzai-blob://<sha256>.<ext>` URL (see roleplayStore.service.js). The
+ * Python `_decode_image_base64` helper handles `data:` URLs and padding,
+ * but it cannot resolve blob refs — base64-decoding the URL string itself
+ * yields garbage and PIL raises UnidentifiedImageError on /video/quality.
+ *
+ * Accepts: raw base64, `data:image/...;base64,…`, `bonzai-blob://…`.
+ * Returns: raw base64 string (no prefix), or null if input is falsy.
+ */
+async function resolveImageBase64(src) {
+  if (!src || typeof src !== 'string') return src ?? null;
+  if (src.startsWith('data:')) {
+    const idx = src.indexOf(',');
+    return idx >= 0 ? src.slice(idx + 1) : src;
+  }
+  const blobMatch = src.match(/^bonzai-blob:\/\/([a-f0-9]{64})\.([a-z0-9]{1,8})$/i);
+  if (blobMatch) {
+    const blobsApi = window.electronAPI?.db?.blobs;
+    if (!blobsApi?.url) {
+      throw new Error('blob API unavailable — cannot resolve ' + src);
+    }
+    const dataUrl = await blobsApi.url(blobMatch[1].toLowerCase(), blobMatch[2].toLowerCase());
+    if (typeof dataUrl !== 'string') {
+      throw new Error('blob ' + blobMatch[1] + ' not found');
+    }
+    const idx = dataUrl.indexOf(',');
+    return idx >= 0 ? dataUrl.slice(idx + 1) : dataUrl;
+  }
+  return src;
+}
+
 async function callFlaskEndpoint(endpoint, payload) {
   const port = getFlaskPort();
 
@@ -2532,13 +2579,16 @@ const DEFAULT_LLM = {
   context: 131072,
 };
 
-// Roleplay LLM - MythoMax L2 13B for excellent creative roleplay
+// Roleplay LLM — NemoMix Unleashed 12B Heretic. Mistral-Nemo merge with
+// 128k context. Replaced MythoMax L2 13B (4k context, llama-2 era) — the
+// 4k window made long sessions hit context overflow during memory
+// summarization, and Nemo's persona stability is materially better.
 const ROLEPLAY_LLM = {
-  modelname: 'MythoMax L2 13B',
-  filename: 'mythomax-l2-13b.q4_k_m.gguf',
-  url: 'https://huggingface.co/TheBloke/MythoMax-L2-13B-GGUF/resolve/main/mythomax-l2-13b.Q4_K_M.gguf',
-  parameters: 13000000000,
-  context: 4096,
+  modelname: 'NemoMix Unleashed 12B Heretic',
+  filename: 'nemomix-unleashed-12b-heretic.q4_k_m.gguf',
+  url: 'https://huggingface.co/mradermacher/NemoMix-Unleashed-12B-Heretic-GGUF/resolve/main/NemoMix-Unleashed-12B-Heretic.Q4_K_M.gguf',
+  parameters: 12000000000,
+  context: 131072,
 };
 
 // Llama 3.1 8B is used for all image prompt enhancement (see DEFAULT_LLM above)
@@ -3143,12 +3193,50 @@ function extractJSON(response) {
   throw new Error('Could not extract response from LLM output');
 }
 
+/**
+ * Comprehensive negative prompt covering anatomy, body proportions,
+ * face/eye quality, and image quality. Used as the default for every
+ * Flask image endpoint so degraded outputs (extra fingers, fused
+ * limbs, twisted torsos, asymmetric eyes) are suppressed up front.
+ *
+ * Callers can append their own terms (e.g., layout-specific or
+ * character-consistency terms for roleplay) — see `IMAGE_NEG_LAYOUT`
+ * for the multi-panel/collage suppressors used by SDXL.
+ */
+const IMAGE_NEG_BASE = [
+  // Anatomy + body proportions
+  'deformed', 'disfigured', 'malformed', 'mutated', 'mutation',
+  'bad anatomy', 'bad proportions', 'wrong proportions', 'wrong anatomy',
+  'distorted body', 'twisted body', 'contorted', 'broken body',
+  'extra limbs', 'extra arms', 'extra legs', 'missing limbs', 'missing arms', 'missing legs',
+  'extra fingers', 'fused fingers', 'too many fingers', 'missing fingers',
+  'mutated hands', 'malformed hands', 'poorly drawn hands', 'badly drawn hands',
+  'long neck', 'extra heads', 'two heads',
+  // Face + eyes
+  'poorly drawn face', 'asymmetric face', 'distorted face',
+  'deformed eyes', 'crossed eyes', 'cross-eyed', 'lazy eye',
+  'misaligned eyes', 'asymmetric eyes', 'poorly drawn eyes',
+  'mismatched pupils', 'extra eyes',
+  // General quality
+  'blurry', 'out of focus', 'low quality', 'low resolution', 'lowres',
+  'jpeg artifacts', 'noise', 'pixelated', 'oversaturated', 'overexposed',
+  'ugly', 'amateur', 'tiling',
+  'watermark', 'signature', 'text', 'logo',
+].join(', ');
+
+const IMAGE_NEG_LAYOUT = [
+  'split image', 'collage', 'side by side panels', 'multiple frames',
+  'diptych', 'triptych', 'grid', 'comic panels', 'photo montage',
+  'picture-in-picture', 'two separate images', 'multiple pictures',
+  'photo grid', 'dual panel', 'before and after',
+].join(', ');
+
 // Image generation - quality (Z-Image Turbo) or turbo (FLUX Klein)
 async function generateImage(prompt, options = {}) {
   const endpoint = (options.quality || options.advanced) ? '/image/quality' : '/image/turbo';
   return await callFlaskEndpoint(endpoint, {
     prompt,
-    negative_prompt: options.negativePrompt || '',
+    negative_prompt: options.negativePrompt || IMAGE_NEG_BASE,
     width: options.width || 1024,
     height: options.height || 1024,
     steps: options.steps || ((options.quality || options.advanced) ? 9 : 4),
@@ -3160,7 +3248,7 @@ async function generateImage(prompt, options = {}) {
 async function generateImageSDXL(prompt, options = {}) {
   return await callFlaskEndpoint('/image/standard', {
     prompt,
-    negative_prompt: options.negativePrompt || 'blurry, low quality, distorted, split image, collage, side by side panels, multiple frames, diptych, triptych, grid, comic panels, photo montage, picture-in-picture, two separate images, multiple pictures, photo grid, dual panel, before and after',
+    negative_prompt: options.negativePrompt || `${IMAGE_NEG_BASE}, ${IMAGE_NEG_LAYOUT}`,
     width: options.width || 1024,
     height: options.height || 1024,
     steps: options.steps || 25,
@@ -3720,12 +3808,62 @@ async function getMemoryStatus() {
 
 // Video generation (I2V or T2V)
 // Landscape defaults for better cinematic feel
+/**
+ * Default video negative prompt: motion-quality terms PLUS anti-crop /
+ * anti-censor suppressors. LTX-2 honours per-frame, so this keeps
+ * framing wide and anatomy uncropped throughout the clip — the still
+ * starting frame can be perfect and animation still crops body parts
+ * if the negative prompt is weak.
+ */
+const VIDEO_NEG_DEFAULT = [
+  'static', 'frozen', 'low quality', 'blurry', 'distorted face',
+  'deformed body', 'bad anatomy', 'extra limbs', 'missing limbs',
+  'extra fingers', 'fused fingers', 'mutated hands',
+  'cropped body', 'cropped torso', 'cropped at hips', 'cropped at waist',
+  'cropped genitals', 'cropped penis', 'cropped cock', 'missing genitals',
+  'partial body', 'half body cut off', 'lower body cut off',
+  'limbs out of frame', 'feet cropped', 'head cropped',
+  'censored', 'censorship', 'mosaic censor', 'pixelated censor',
+  'blurred genitals', 'black bar', 'covered genitals',
+  'zoom in', 'close-up', 'tight framing',
+].join(', ');
+
 async function generateVideo(imageBase64OrNull, prompt, options = {}) {
-  const mode = imageBase64OrNull ? 'i2v' : 't2v';
+  // Pipeline selection:
+  //   - 'fast'    → LTX-2 GGUF at /video (default for skill batch jobs
+  //                 like story-studio / music-video-forge — fastest, can
+  //                 run pure text-to-video).
+  //   - 'quality' → Wan 2.2 i2v at /video/quality (better motion +
+  //                 character consistency; requires a starting image).
+  // Roleplay calls /video/quality directly with the full Wan param set;
+  // this helper routes other skill consumers cleanly.
+  const wantQuality = options.quality === true || options.pipeline === 'quality';
+  // Resolve `bonzai-blob://` URLs / data URLs back to raw base64 — message
+  // images coming off a reloaded session are blob refs, not inline data.
+  const resolvedImage = imageBase64OrNull
+    ? await resolveImageBase64(imageBase64OrNull)
+    : null;
+  if (wantQuality && resolvedImage) {
+    return await callFlaskEndpoint('/video/quality', {
+      prompt,
+      negative_prompt: options.negativePrompt || VIDEO_NEG_DEFAULT,
+      image_base64: resolvedImage,
+      height: options.height || 448,
+      width: options.width || 640,
+      num_frames: options.frames || 81,
+      fps: options.frameRate || 16,
+      // QuantStack Q5_K_M GGUF + Lightning Seko V1 LoRA on top.
+      // Locked to the distillation point: 4 steps + CFG 1.0.
+      num_inference_steps: options.steps || 4,
+      guidance_scale: options.guidanceScale || 1.0,
+    });
+  }
+  const mode = resolvedImage ? 'i2v' : 't2v';
   return await callFlaskEndpoint('/video', {
     mode,
     prompt,
-    ...(imageBase64OrNull && { image_base64: imageBase64OrNull }),
+    negative_prompt: options.negativePrompt || VIDEO_NEG_DEFAULT,
+    ...(resolvedImage && { image_base64: resolvedImage }),
     height: options.height || 448,
     width: options.width || 640,  // Landscape orientation
     frames: options.frames || 121,  // 5 seconds at 24fps
@@ -4047,60 +4185,79 @@ async function generateEnhancedImagePrompt({
       positionGuidance = `EXACT POSITION (MANDATORY): Describe ONE clear sex position from ACTION — one person's body placement, then the other, then how genitals connect. FORBIDDEN: do NOT mix multiple positions, do NOT describe body parts in contradictory locations.`;
     }
 
-    llmPrompt = `TASK: Write a short SDXL image prompt for an explicit sex scene. Output ONLY the prompt, nothing else.
+    llmPrompt = `TASK: Write an explicit SDXL image prompt for a sex scene. Output ONLY the prompt, nothing else. Be anatomically explicit — name body parts directly (cock, pussy, breasts, ass, nipples). Do not censor, imply, or fade out.
 
-ACTION: ${actionSummary}
-${companionGenderLabel.toUpperCase()}: ${compTraits}
-${userGenderLabel.toUpperCase()}: ${userTraits}
+ACTION (the scene that just happened — your prompt MUST reflect these specific physical details, expanded with cinematographic detail; do NOT replace them with generic actions):
+${actionSummary}
+
+${companionGenderLabel.toUpperCase()} (identity anchors — preserve these exact terms for character consistency, especially hair color, eye color, skin tone, breast size, and build):
+${compTraits}
+
+${userGenderLabel.toUpperCase()} (identity anchors — preserve these exact terms):
+${userTraits}
+
 LOCATION: ${envString || 'bedroom'}
 ${positionGuidance}
 
 CRITICAL RULES:
-- Sentence 1: describe the EXACT position from EXACT POSITION above — who is where, body placement, how genitals connect. Copy the position faithfully, do NOT invent a different position.
-- Sentence 2: ${companionGenderLabel}'s key traits (hair color, skin tone, body shape, breast size) woven into the pose
-- Sentence 3: ${userGenderLabel}'s key traits (build, skin tone) woven into the pose
-- Sentence 4: describe the LOCATION in detail — include background elements, time of day, sky colors, weather, atmosphere, lighting mood, and any scenic details from the LOCATION field above
-- EVERY body part description MUST be physically consistent with the EXACT POSITION — if someone lies on their back, their buttocks CANNOT press against the other person's back
-- Genitals must not be cropped or hidden — keep full bodies in frame
-- Both fully nude, no clothing
-- Say "${companionGenderLabel}" and "${userGenderLabel}" — NEVER use names
-- Exactly 4 sentences, one paragraph, NO repetition, NO contradictory body placements`;
-    promptSuffix = 'explicit sex, full bodies in frame, anatomical clarity, realistic body proportions, two intertwined nude bodies';
+- Sentence 1: describe the EXACT position from EXACT POSITION above — who is where, body placement, how genitals connect, and elaborate with explicit physical specifics from ACTION (penetration depth, angle, what hands/mouth are doing, fluid/wetness details). Copy the position faithfully — do NOT invent a different position.
+- Sentence 2: ${companionGenderLabel}'s appearance woven into the pose. Copy hair color, eye color, skin tone, breast size, and body type from ${companionGenderLabel.toUpperCase()} above LITERALLY — these are SDXL identity tokens and must match for the character to render as herself.
+- Sentence 3: ${userGenderLabel}'s appearance woven into the pose. Copy build, skin tone, hair, and any distinguishing features from ${userGenderLabel.toUpperCase()} above LITERALLY.
+- Sentence 4: describe the LOCATION in detail — background elements, time of day, sky colors, weather, atmosphere, lighting mood, scenic details from LOCATION above.
+- EVERY body part description MUST be physically consistent with the EXACT POSITION — if someone lies on their back, their buttocks CANNOT press against the other person's back.
+- FRAMING (critical): explicitly describe a WIDE shot showing both bodies completely from head to toes, with margin around them. Both genitals must be fully visible and uncropped — NO close-ups, NO tight framing, NO hip-level crops. The camera is positioned to capture the full scene.
+- Both fully nude, no clothing of any kind, no censorship of any kind.
+- Say "${companionGenderLabel}" and "${userGenderLabel}" — NEVER use names.
+- Exactly 4 sentences, one paragraph, NO repetition, NO contradictory body placements, NO euphemisms.`;
+    promptSuffix = 'explicit sex, anatomically detailed, full bodies in frame from head to toes, both genitals fully visible and uncropped, complete anatomy in shot, wide framing with margin around bodies, realistic body proportions, two nude intertwined bodies, uncensored, sharp focus';
 
   } else if (isNudeScene && isAdult) {
     // ── NUDE (NON-SEX) SCENE ──
     llmPrompt = `TASK: Write an SDXL image prompt for an artistic nude scene. Output ONLY the prompt, nothing else.
 
-ACTION: ${actionSummary}
-${companionGenderLabel.toUpperCase()}: ${compTraits}
-${userGenderLabel.toUpperCase()}: ${userTraits}
+ACTION (the scene that just happened — your prompt MUST reflect these physical details):
+${actionSummary}
+
+${companionGenderLabel.toUpperCase()} (identity anchors — preserve these exact terms, especially hair color, eye color, skin tone, body type):
+${compTraits}
+
+${userGenderLabel.toUpperCase()} (identity anchors — preserve these exact terms):
+${userTraits}
+
 LOCATION: ${envString || 'intimate setting'}
 
 RULES:
-- Describe the pose and body language of both people together — who faces whom, body angles, posture
-- Describe ${companionGenderLabel}'s nude body: hair color, eye color, skin tone, body shape, curves or build
-- Describe ${userGenderLabel}'s nude body: build, skin tone, hair, physique
+- Describe the pose and body language of both people together — who faces whom, body angles, posture, what hands are doing
+- Reflect the ACTION above — keep its specific physical details
+- Describe ${companionGenderLabel}'s nude body using ${companionGenderLabel.toUpperCase()}'s exact terms (hair color, eye color, skin tone, breast size, body shape) — these are SDXL identity tokens and must be literal
+- Describe ${userGenderLabel}'s nude body using ${userGenderLabel.toUpperCase()}'s exact terms (build, skin tone, hair) literally
 - Show physical proximity and touch — hands, skin contact, closeness
 - Both characters fully nude, no clothing
 - End with setting and lighting
 - Say "${companionGenderLabel}" and "${userGenderLabel}" — NEVER use character names
 - Single unified scene, one paragraph, max 5 sentences, no repetition`;
-    promptSuffix = 'artistic nude, realistic body proportions, single unified scene, high quality';
+    promptSuffix = 'artistic nude, full bodies in frame from head to toes, complete anatomy uncropped, wide framing, realistic body proportions, single unified scene, high quality, sharp focus';
 
   } else if ((isIntimateScene && isAdult) || (isIntimateScene && isMature)) {
     // ── INTIMATE SCENE (mature/adult, not explicit) ──
     llmPrompt = `TASK: Write an SDXL image prompt for a romantic intimate scene. Output ONLY the prompt, nothing else.
 
-ACTION: ${actionSummary}
-${companionGenderLabel.toUpperCase()}: ${compTraits}
-${userGenderLabel.toUpperCase()}: ${userTraits}
+ACTION (the scene that just happened — your prompt MUST reflect these specifics):
+${actionSummary}
+
+${companionGenderLabel.toUpperCase()} (identity anchors — preserve hair color, eye color, skin tone, build LITERALLY):
+${compTraits}
+
+${userGenderLabel.toUpperCase()} (identity anchors — preserve build, skin tone, hair LITERALLY):
+${userTraits}
+
 LOCATION: ${envString || 'romantic setting'}
 MOOD: ${emotion}
 
 RULES:
-- Describe the romantic/sensual action and where both bodies are positioned relative to each other
-- Describe ${companionGenderLabel}'s appearance: hair, eyes, skin tone, body shape, clothing or state of undress
-- Describe ${userGenderLabel}'s appearance: build, skin tone, clothing or state of undress
+- Describe the romantic/sensual action from ACTION above — how the bodies are positioned relative to each other, what hands are doing, where lips are
+- Describe ${companionGenderLabel}'s appearance using ${companionGenderLabel.toUpperCase()}'s exact terms (hair, eyes, skin tone, body shape, state of undress)
+- Describe ${userGenderLabel}'s appearance using ${userGenderLabel.toUpperCase()}'s exact terms (build, skin tone, state of undress)
 - Show physical contact: how they touch, hold, or press against each other
 - Sensual and romantic but not explicit
 - End with setting, atmosphere, and lighting
@@ -4110,19 +4267,33 @@ RULES:
 
   } else {
     // ── REGULAR SCENE (all content levels) ──
+    // Detect whether the user is present in the scene from the action
+    // extraction — pronoun + verb pattern targeting the user. Avoids
+    // cluttering single-character portraits with a user that isn't
+    // actually in the frame.
+    const userPronouns = /\b(you|your|me|my|i\b|user|him|his|he)\b/i;
+    const userInFrame = !!userCharacter && (
+      userPronouns.test(actionSummary) ||
+      /\b(together|both|each other|with him|with me|with you)\b/i.test(combinedText)
+    );
+
     llmPrompt = `TASK: Write an SDXL image prompt for a scene. Output ONLY the prompt, nothing else.
 
-ACTION: ${actionSummary}
-CHARACTER: ${companion.appearance}
+ACTION (the scene that just happened — your prompt MUST reflect these specific physical details):
+${actionSummary}
+
+${companionGenderLabel.toUpperCase()} (identity anchors — preserve these exact terms LITERALLY, especially hair color, eye color, skin tone, distinctive features — these are SDXL identity tokens):
+${companion.appearance}
+${userInFrame ? `\n${userGenderLabel.toUpperCase()} (in the scene — preserve these exact terms LITERALLY):\n${userTraits}\n` : ''}
 LOCATION: ${envString || 'beautiful background'}
 MOOD: ${emotion}
 
 RULES:
-- Describe what the character is doing physically in the scene
-- Weave in their appearance (hair, eyes, outfit, body language) naturally into the action
-- End with setting, atmosphere, and lighting
-- Say "${companionGenderLabel}" — NO character names
-- One paragraph, max 4 sentences, no repetition`;
+- Describe what ${userInFrame ? `${companionGenderLabel} and ${userGenderLabel} are` : `${companionGenderLabel} is`} doing physically — reflect ACTION above with cinematographic detail
+- Weave appearance terms from ${companionGenderLabel.toUpperCase()} above LITERALLY into the action (hair color, eyes, outfit, body language)
+${userInFrame ? `- Weave appearance terms from ${userGenderLabel.toUpperCase()} above LITERALLY into the scene\n- Show physical proximity / interaction between the two\n` : ''}- End with setting, atmosphere, and lighting
+- Say "${companionGenderLabel}"${userInFrame ? ` and "${userGenderLabel}"` : ''} — NO character names
+- One paragraph, max ${userInFrame ? 5 : 4} sentences, no repetition`;
     promptSuffix = `${lightingPart}, consistent character design, same person, same face, highly detailed, high quality`;
   }
 
@@ -4204,73 +4375,101 @@ RULES:
   };
 
   /**
-   * Validate that the LLM actually transformed the input, not just pasted it.
+   * Validate the LLM output. Earlier versions rejected outputs that
+   * "pasted appearance verbatim" — but we actually WANT the appearance
+   * preserved (otherwise SDXL renders Scarlett with black hair when her
+   * profile says red). Now we only check the things that actually break
+   * a render:
+   *   1. Empty / too-short outputs (LLM bailed)
+   *   2. Clothing terms in a nude/sex scene (SDXL would render clothes)
+   *   3. Missing the action entirely (output is just a portrait when
+   *      the scene was supposed to be active)
+   *
+   * Verbatim copy is fine — paraphrasing isn't the goal, faithful
+   * detailed prompting is.
    */
   const isLLMOutputValid = (output) => {
     if (!output || output.length < 30) return false;
-    const outputLower = output.toLowerCase();
-    // Check if companion appearance was pasted verbatim (>60 char match)
-    const rawComp = (companion.appearance || '').toLowerCase();
-    if (rawComp.length > 60 && outputLower.includes(rawComp.substring(0, 60))) return false;
-    // Check if user appearance was pasted verbatim
-    const rawUser = (userDesc || '').toLowerCase();
-    if (rawUser.length > 40 && outputLower.includes(rawUser.substring(0, 40))) return false;
     // Check for clothing terms that shouldn't be in nude/sex scenes
-    if (needsNudity && /\b(lingerie|dress|outfit|heels|stockings|provocatively|revealing outfits)\b/i.test(output)) return false;
+    if (needsNudity && /\b(lingerie|dress|outfit|heels|stockings|provocatively|revealing outfits|fully clothed)\b/i.test(output)) return false;
     return true;
   };
 
-  // ── Generate with Llama (single LLM, no fallback chain) ──
-  const generateWithLlama = async () => {
-    await unloadLLM();
-    console.log(`[Roleplay] Loading ${DEFAULT_LLM.modelname} for enhanced image prompt...`);
-    await ensureLLMLoaded(DEFAULT_LLM);
-
-    const result = await window.electronAPI.chat(llmPrompt, { maxTokens: 200, temperature: 0.3 });
-
-    await unloadLLM();
-    await clearGenerationMemory();
-
+  // ── Generate with the roleplay LLM (already loaded — no swap) ──
+  // Reuses ROLEPLAY_LLM (NemoMix) instead of swapping to LLaMA 3.1 8B
+  // and back. Saves ~5-10s per image (model reload + Metal shader
+  // recompile) and avoids the unload/reload races that were corrupting
+  // memory state during multi-modal turns.
+  const generateWithRoleplayLLM = async () => {
+    console.log(`[Roleplay] Generating enhanced image prompt with ${ROLEPLAY_LLM.modelname}...`);
+    await ensureLLMLoaded(ROLEPLAY_LLM);
+    // 200 was way too low — a 4-sentence prompt with identity anchors,
+    // location detail, and explicit anatomical phrasing routinely runs
+    // 600-800 tokens. The LLM was stopping mid-sentence and the
+    // cleanup step would then propagate a truncated prompt to SDXL.
+    // 1024 leaves comfortable headroom for the longest scenes.
+    const result = await window.electronAPI.chat(llmPrompt, { maxTokens: 1024, temperature: 0.3 });
     return cleanImagePrompt(result);
   };
 
   // ── Template-based fallback (no LLM needed) ──
+  // Uses the FULL appearance text (capped at ~250 chars) instead of
+  // the previous "first 4 comma-separated traits" pickTraits logic —
+  // dropping appearance terms after the 4th caused identity drift
+  // (Scarlett rendered with black hair when "fiery red hair" was the
+  // 5th trait). SDXL handles longer trait lists fine; the cap is
+  // generous enough to keep all the identity tokens.
   const buildTemplateFallback = () => {
-    const pickTraits = (traits) => (traits || '').split(',').map(s => s.trim()).filter(s => s.length > 3).slice(0, 4).join(', ');
+    const pickAppearance = (traits) => {
+      if (!traits) return '';
+      const cleaned = traits.replace(/\s+/g, ' ').trim();
+      if (cleaned.length <= 250) return cleaned;
+      // Trim at the last comma before 250 chars so we don't cut a phrase mid-word
+      const slice = cleaned.slice(0, 250);
+      const lastComma = slice.lastIndexOf(',');
+      return lastComma > 100 ? slice.slice(0, lastComma) : slice;
+    };
     const actionPart = actionDescription || (isExplicitSexScene ? 'passionate sex, bodies pressed together, deep penetration' : 'in a dramatic pose');
-    const compKey = pickTraits(compTraits);
+    const compKey = pickAppearance(compTraits);
 
     if (isExplicitSexScene && userCharacter) {
-      const userKey = pickTraits(userTraits);
+      const userKey = pickAppearance(userTraits);
       let positionPart = 'bodies intertwined, deep penetration';
       if (isOral) positionPart = /\b(she|her)\b.*\b(suck|lick|mouth|tongue)\b/i.test(combinedText)
-        ? `${companionGenderLabel} kneeling, mouth on cock`
-        : `${userGenderLabel} kneeling, face between legs, mouth on pussy`;
-      else if (isFromBehind) positionPart = `${companionGenderLabel} bent forward, ${userGenderLabel} behind, deep penetration from behind`;
-      else if (isOnTop) positionPart = `${companionGenderLabel} straddling ${userGenderLabel} lying back, riding, deep penetration`;
-      else if (isMissionary) positionPart = `${companionGenderLabel} on back legs spread, ${userGenderLabel} on top between thighs, deep penetration`;
-      return `${companionGenderLabel} with ${compKey} and ${userGenderLabel} with ${userKey}, both fully nude, ${positionPart}, full bodies in frame, skin against skin, ${envString || 'bedroom'}, ${promptSuffix}`;
+        ? `${companionGenderLabel} kneeling, mouth on cock, hands gripping thighs`
+        : `${userGenderLabel} kneeling, face between legs, mouth on pussy, hands gripping thighs`;
+      else if (isFromBehind) positionPart = `${companionGenderLabel} bent forward on all fours, ${userGenderLabel} behind, deep penetration from behind, hands on hips`;
+      else if (isOnTop) positionPart = `${companionGenderLabel} straddling ${userGenderLabel} lying flat on back, riding, deep penetration, breasts visible`;
+      else if (isMissionary) positionPart = `${companionGenderLabel} on back legs spread wide, ${userGenderLabel} on top between thighs, deep penetration, faces close`;
+      return `${companionGenderLabel} (${compKey}) and ${userGenderLabel} (${userKey}), both fully nude, ${positionPart}, ${actionPart}, full bodies in frame, anatomically detailed, skin against skin, ${envString || 'bedroom'}, ${promptSuffix}`;
     }
     if ((isNudeScene || isIntimateScene) && userCharacter) {
-      const userKey = pickTraits(userTraits);
-      return `${companionGenderLabel} with ${compKey} and ${userGenderLabel} with ${userKey}, ${needsNudity ? 'both fully nude, ' : ''}${actionPart}, bodies close together, touching, ${emotion} expressions, ${envString || 'intimate setting'}, single unified scene, ${promptSuffix}`;
+      const userKey = pickAppearance(userTraits);
+      return `${companionGenderLabel} (${compKey}) and ${userGenderLabel} (${userKey}), ${needsNudity ? 'both fully nude, ' : ''}${actionPart}, bodies close together, touching, ${emotion} expressions, ${envString || 'intimate setting'}, single unified scene, ${promptSuffix}`;
     }
-    return `${companionGenderLabel} with ${compKey}, ${emotion} expression, ${actionPart}, ${envString || 'beautiful background'}, ${promptSuffix}`;
+    return `${companionGenderLabel} (${compKey}), ${emotion} expression, ${actionPart}, ${envString || 'beautiful background'}, ${promptSuffix}`;
   };
 
-  // Try Llama
+  // Try the roleplay LLM (already loaded for the main response)
   try {
-    console.log(`[Roleplay] Generating enhanced ${isExplicitSexScene ? 'explicit' : isNudeScene ? 'nude' : isIntimateScene ? 'intimate' : 'regular'} image prompt with Llama...`);
-    const enhancedPrompt = await generateWithLlama();
+    console.log(`[Roleplay] Generating enhanced ${isExplicitSexScene ? 'explicit' : isNudeScene ? 'nude' : isIntimateScene ? 'intimate' : 'regular'} image prompt...`);
+    const enhancedPrompt = await generateWithRoleplayLLM();
 
     if (enhancedPrompt && isLLMOutputValid(enhancedPrompt)) {
-      console.log('[Roleplay] Llama output valid, using LLM prompt');
-      return `${enhancedPrompt}, ${promptSuffix}`;
+      console.log('[Roleplay] Image prompt valid, using LLM prompt');
+      // Belt-and-suspenders identity anchor: even if the LLM compressed
+      // or paraphrased the appearance, append the raw description as a
+      // final clause. SDXL weighs end tokens too — this keeps hair color,
+      // eye color, skin tone reachable regardless of LLM output.
+      const identityAnchor = userCharacter
+        ? `${companionGenderLabel}: ${compTraits}; ${userGenderLabel}: ${userTraits}`
+        : `${companionGenderLabel}: ${compTraits}`;
+      return `${enhancedPrompt}, ${identityAnchor}, ${promptSuffix}`;
     }
-    console.warn('[Roleplay] Llama output failed validation, using template fallback');
+    console.warn('[Roleplay] Image prompt failed validation, using template fallback');
     return buildTemplateFallback();
-  } catch (llamaError) {
-    console.warn('[Roleplay] Llama failed, using template fallback:', llamaError.message);
+  } catch (llmErr) {
+    console.warn('[Roleplay] Image prompt LLM failed, using template fallback:', llmErr.message);
     return buildTemplateFallback();
   }
 }
@@ -4348,15 +4547,25 @@ async function regenerateMessageMedia({
     try {
       let imageResult;
 
+      // Roleplay-specific negative prompt — same as the live-turn path.
+      const roleplayNeg = [
+        IMAGE_NEG_BASE,
+        IMAGE_NEG_LAYOUT,
+        'face swap', 'identity drift', 'wrong character', 'different person',
+        'inconsistent face', 'face morph', 'unrecognizable face',
+        'crowd', 'multiple people', 'many people', 'background characters',
+        'extra people', 'group of people', 'audience',
+      ].join(', ');
+
       if (isExplicitScene) {
         // SDXL for explicit content
-        imageResult = await generateImageSDXL(enhancedPrompt, { width: 1024, height: 768 });
+        imageResult = await generateImageSDXL(enhancedPrompt, { width: 1024, height: 768, negativePrompt: roleplayNeg });
       } else if (isMature) {
         // Z Turbo for mature
-        imageResult = await generateImage(enhancedPrompt, { width: 1024, height: 768, advanced: true });
+        imageResult = await generateImage(enhancedPrompt, { width: 1024, height: 768, advanced: true, negativePrompt: roleplayNeg });
       } else {
         // Z Turbo for general
-        imageResult = await generateImage(enhancedPrompt, { width: 1024, height: 768, advanced: true });
+        imageResult = await generateImage(enhancedPrompt, { width: 1024, height: 768, advanced: true, negativePrompt: roleplayNeg });
       }
 
       result.image = imageResult.image_base64 || imageResult.image;
@@ -4374,13 +4583,16 @@ async function regenerateMessageMedia({
     onProgress?.({ type: 'status', message: 'Generating video...' });
 
     try {
-      // Use the enhanced prompt for video too
+      // Use the enhanced prompt for video too. Routed to Wan 2.2 via
+      // quality:true so manual regenerate matches the live-turn quality.
       const videoResult = await generateVideo(result.image, enhancedPrompt, {
+        quality: true,
         height: 448,
         width: 640,
-        frames: 61,  // 5s @ 24fps
-        frameRate: 24,
-        steps: 8,
+        frames: 81,
+        frameRate: 16,
+        // Defaults via generateVideo helper: 4 steps + CFG 1.0
+        // (QuantStack Q5_K_M GGUF + Lightning Seko V1 LoRA).
       });
 
       result.video = videoResult.video_path || videoResult.video_base64 || videoResult.video;
@@ -4628,9 +4840,37 @@ async function summarizeMemory(history, companion, existingSummary = '') {
 
   if (messagesToSummarize.length < 10) return existingSummary;
 
-  const historyText = messagesToSummarize.map(h =>
-    h.role === 'user' ? `User: ${h.content}` : `${companion.name}: ${h.content}`
-  ).join('\n');
+  // Token budget: leave room for the framing prompt (~250 tokens), the
+  // existing summary if present (~400 tokens), and the response budget
+  // (MEMORY_SUMMARY_MAX_TOKENS = 300). Smallest supported context is
+  // 4096 (legacy llama-2-era). Reserve 600 chars/150 tokens of safety
+  // margin for chat-template wrapper.
+  //
+  // Walk newest → oldest, including messages until the running total
+  // would exceed the budget. Long roleplay turns can be 1k+ tokens
+  // each, so 20 raw messages can easily be 13k tokens — the trim has
+  // to be token-aware, not message-count-aware.
+  const HISTORY_TOKEN_BUDGET = 2800;
+  const _est = (s) => Math.ceil((s?.length || 0) / 4);
+  const lines = [];
+  let usedTokens = 0;
+  for (let i = messagesToSummarize.length - 1; i >= 0; i--) {
+    const h = messagesToSummarize[i];
+    const line = h.role === 'user'
+      ? `User: ${h.content}`
+      : `${companion.name}: ${h.content}`;
+    const cost = _est(line);
+    if (usedTokens + cost > HISTORY_TOKEN_BUDGET && lines.length > 0) break;
+    lines.unshift(line);
+    usedTokens += cost;
+  }
+  const historyText = lines.join('\n');
+  if (lines.length < messagesToSummarize.length) {
+    console.log(
+      `[Roleplay] Memory summary trimmed history ${messagesToSummarize.length} → ${lines.length} ` +
+      `messages (~${usedTokens} tokens, budget ${HISTORY_TOKEN_BUDGET})`,
+    );
+  }
 
   const prompt = `Summarize the key details from this conversation between a user and ${companion.name}. Focus on:
 - User's personal details shared (name, job, hobbies, preferences, life events)
@@ -6077,29 +6317,48 @@ NOTE: "suggestedResponses" are short replies (3-8 words) the USER might say - fi
 
         if (hasExplicitContent) {
           console.warn(`[Roleplay] Content level violation detected (${contentLevel}), sanitizing...`);
-          const sanitizePrompt = `You are ${companion.name}. Rewrite your response to "${userMessage}" following these ABSOLUTE rules:
-
-${contentConfig.guidelines}
+          // IMPORTANT: do NOT include square-bracket placeholders like
+          // "[Your clean response]" in the JSON template — smaller
+          // models echo them back verbatim. Use a concrete worked
+          // example instead and label it as such, then ask for the
+          // real reply.
+          const sanitizePrompt = `You are ${companion.name}. The user just said: "${userMessage}"
 
 Your personality: ${companion.personality}
 Setting: ${scenario?.setting || 'casual setting'}
+Content rating: ${contentLevel.toUpperCase()}. ABSOLUTE rules:
 
-You MUST keep the response completely within ${contentLevel.toUpperCase()} boundaries. No exceptions.
+${contentConfig.guidelines}
 
-Output JSON:
-{
-  "response": "[Your clean, compliant response]",
-  "emotion": "[appropriate emotion - NOT aroused/passionate/breathless]",
-  "action": "[non-sexual action]",
-  "suggestedResponses": ["reply 1", "reply 2", "reply 3"]
-}`;
+Reply ONLY with a JSON object in this exact shape (no prose, no code fences):
+
+Example of the format (for a different scene — do NOT copy these words):
+{"response":"That sounds wonderful! I've been thinking about that exact thing.","emotion":"curious","action":"tilting head with interest","suggestedResponses":["Tell me more","I agree","What do you mean?"]}
+
+Now write YOUR own JSON in the same shape, in character as ${companion.name}, replying to the user's actual message above. Stay strictly within ${contentLevel.toUpperCase()} boundaries.`;
+
+          const _isPlaceholder = (s) => {
+            if (typeof s !== 'string') return false;
+            const t = s.trim();
+            // Bracket-wrapped instructions like "[Your clean, compliant response]"
+            if (/^\[.+\]$/.test(t)) return true;
+            // Phrases that only appear in the prompt template
+            if (/your\s+(clean|compliant|response)|appropriate\s+emotion|non-sexual\s+action/i.test(t)) return true;
+            return false;
+          };
 
           try {
             const sanitized = extractJSON(await generateTextWithModel(sanitizePrompt, '', ROLEPLAY_LLM));
-            if (sanitized.response && !patternsToCheck.some(p => p.test(sanitized.response))) {
+            const looksClean =
+              sanitized.response &&
+              !_isPlaceholder(sanitized.response) &&
+              !_isPlaceholder(sanitized.emotion) &&
+              !_isPlaceholder(sanitized.action) &&
+              !patternsToCheck.some(p => p.test(sanitized.response));
+            if (looksClean) {
               response.response = sanitized.response;
-              response.emotion = sanitized.emotion || 'content';
-              response.action = sanitized.action || response.action;
+              response.emotion = _isPlaceholder(sanitized.emotion) ? 'content' : (sanitized.emotion || 'content');
+              response.action = _isPlaceholder(sanitized.action) ? response.action : (sanitized.action || response.action);
             } else {
               // Hard fallback - safe generic response
               response.response = `*${companion.name} smiles warmly* "I'm really enjoying our conversation. What else is on your mind?"`;
@@ -6224,17 +6483,18 @@ Output JSON:
         try {
           let imageResult;
 
-          // Detect explicit/sexual scenes based on content
-          // Only triggers SDXL when content level is set to "adult" AND scene has actual sex content
-          // Note: "intimate", "passionate", "breast" alone don't make a scene explicit - actual sex keywords do
-          const sexKeywords = ['fuck', 'thrust', 'penetrat', 'orgasm', 'cum', 'cumming', 'cock', 'dick', 'pussy',
-            'cunt', 'riding him', 'riding her', 'inside her', 'inside him', 'balls deep', 'deep inside'];
+          // Detect explicit/sexual scenes. Uses the module-level
+          // SEX_KEYWORDS constant so live-turn and regenerate share
+          // the same classifier — earlier the local copy here was a
+          // shorter subset, so "she straddled him" wouldn't fire as
+          // explicit at the live turn but generateEnhancedImagePrompt
+          // (regenerate path) classified it correctly. That model-
+          // selection mismatch sent some explicit scenes to Z Turbo
+          // instead of SDXL.
           const actionLower = (response.action || '').toLowerCase();
           const responseLower = (response.response || '').toLowerCase();
           const combinedLower = `${actionLower} ${responseLower}`;
-
-          // Explicit scene detection: requires adult content level AND actual sex keywords
-          const hasExplicitKeywords = sexKeywords.some(k => combinedLower.includes(k));
+          const hasExplicitKeywords = SEX_KEYWORDS.some(k => combinedLower.includes(k));
           const isExplicitScene = isAdult && hasExplicitKeywords;
 
           // Model selection:
@@ -6248,86 +6508,85 @@ Output JSON:
           // Use LLM to create detailed prompts from the full response text
           // ═══════════════════════════════════════════════════════════════════
 
-          let prompt;
-          const isMatureOrAdult = isAdult || contentLevel === 'mature';
+          // Build the image prompt via generateEnhancedImagePrompt for
+          // EVERY content level. Previously PG/PG13 fell through to a
+          // bare-bones template that only included companion.name +
+          // companion.appearance + sceneContext, which:
+          //   - omitted user appearance entirely
+          //   - skipped the action-extraction logic (so "she walked
+          //     over and kissed him" became "neutral expression,
+          //     in a dramatic pose")
+          //   - had no identity anchors / scene-type-specific rules
+          //   - was inconsistent with the manual-regenerate path
+          //     (which always uses generateEnhancedImagePrompt)
+          // Unifying both paths through generateEnhancedImagePrompt
+          // means the PG-rated regular-scene branch inside that
+          // function (with its own action extraction + identity
+          // anchors) gets used for every turn.
           const settingContext = response.newLocation || currentLocation || scenario?.setting || '';
-
-          // Vision context - incorporate elements from user's uploaded image if present
           const visionImageContext = visionData?.imageAnalysis
             ? `, incorporating elements from: ${visionData.imageAnalysis.substring(0, 150)}`
             : '';
 
-          if (isMatureOrAdult && isExplicitScene) {
-            // For explicit adult scenes, use enhanced prompt generation to capture all visual details
-            context.updateStatus?.('Creating detailed scene description...');
-            prompt = await generateEnhancedImagePrompt({
-              responseText: response.response,
-              companion,
-              contentLevel,
-              emotion: response.emotion || 'passionate',
-              action: response.action || '',
-              location: settingContext,
-              userAppearance: sceneState.userAppearance || 'a man',
-              // Use updated environment state (may have changed in this response)
-              timeOfDay: response.timeOfDay || timeOfDay,
-              lighting: response.lighting || lighting,
-              weather: response.weather || weather,
-            });
+          context.updateStatus?.(isExplicitScene
+            ? 'Creating detailed scene description...'
+            : 'Building scene prompt...');
+          let prompt = await generateEnhancedImagePrompt({
+            responseText: response.response,
+            companion,
+            contentLevel,
+            emotion: response.emotion || (isExplicitScene ? 'passionate' : 'neutral'),
+            action: response.action || '',
+            location: settingContext,
+            userAppearance: sceneState.userAppearance || scenario?.userAppearance || 'a man',
+            // Use updated environment state (may have changed in this response)
+            timeOfDay: response.timeOfDay || timeOfDay,
+            lighting: response.lighting || lighting,
+            weather: response.weather || weather,
+          });
 
-            // Append vision context if present
-            if (visionImageContext) {
-              prompt += visionImageContext;
-            }
-          } else if (isMatureOrAdult) {
-            // Mature/adult non-explicit: use enhanced prompt for better detail
-            prompt = await generateEnhancedImagePrompt({
-              responseText: response.response,
-              companion,
-              contentLevel,
-              emotion: response.emotion || 'neutral',
-              action: response.action || '',
-              location: settingContext,
-              userAppearance: sceneState.userAppearance || 'a man',
-              // Use updated environment state (may have changed in this response)
-              timeOfDay: response.timeOfDay || timeOfDay,
-              lighting: response.lighting || lighting,
-              weather: response.weather || weather,
-            });
-
-            if (visionImageContext) {
-              prompt += visionImageContext;
-            }
-          } else {
-            // PG/PG13: use simpler prompt construction (faster) but still include environment
-            const characterBase = `${companion.name}, ${companion.appearance}`;
-            const sceneContext = response.imagePrompt || `${response.emotion || 'neutral'} expression, ${response.action || 'in a dramatic pose'}`;
-            const styleAnchors = 'consistent character design, same person, same face, same features';
-
-            // Build environment description for PG/PG13 scenes
-            const currentTimeOfDay = response.timeOfDay || timeOfDay;
-            const currentLighting = response.lighting || lighting;
-            const currentWeather = response.weather || weather;
-            const envParts = [];
-            if (currentTimeOfDay) envParts.push(currentTimeOfDay.replace('_', ' '));
-            if (currentLighting) envParts.push(currentLighting.replace('_', ' ') + ' lighting');
-            if (currentWeather) envParts.push(currentWeather + ' weather');
-            const envDesc = envParts.length > 0 ? envParts.join(', ') + ', ' : '';
-
-            prompt = `${characterBase}, ${sceneContext}, ${settingContext}${visionImageContext}, ${envDesc}beautiful, elegant, ${styleAnchors}, high quality, detailed`;
+          // Append vision context if the user uploaded a reference image
+          if (visionImageContext) {
+            prompt += visionImageContext;
           }
 
           console.log(`[Roleplay] Image prompt (enhanced): ${prompt.substring(0, 250)}...`);
 
+          // Roleplay-specific negative prompt: layered on top of the
+          // shared anatomy/quality base, plus character-consistency
+          // suppressors (we don't want the model to swap faces or
+          // multiply the cast). Falls back gracefully when SDXL/Z is
+          // chosen — both pipelines accept the same string.
+          const roleplayNeg = [
+            IMAGE_NEG_BASE,
+            IMAGE_NEG_LAYOUT,
+            // Character / identity consistency
+            'face swap', 'identity drift', 'wrong character', 'different person',
+            'inconsistent face', 'face morph', 'unrecognizable face',
+            // Cast cardinality (a turn is always 1 or 2 people; suppress crowds)
+            'crowd', 'multiple people', 'many people', 'background characters',
+            'extra people', 'group of people', 'audience',
+            // Framing — explicitly prohibit cropping body parts that
+            // SDXL likes to slice off (genitals, especially male, get
+            // cropped at hip-line aspect ratios).
+            'cropped body', 'cropped torso', 'cropped at hips', 'cropped at waist',
+            'cropped genitals', 'cropped penis', 'cropped cock', 'missing genitals',
+            'missing penis', 'partial body', 'half body cut off', 'lower body cut off',
+            'feet cropped', 'head cropped', 'limbs out of frame',
+            'censored', 'censorship', 'mosaic censor', 'pixelated censor',
+            'blurred genitals', 'black bar', 'covered genitals',
+          ].join(', ');
+
           // Use appropriate model based on content level (landscape orientation)
           if (imageModel === 'image_standard') {
             // SDXL for explicit/NSFW scenes (uncensored)
-            imageResult = await generateImageSDXL(prompt, { width: 1024, height: 768 });
+            imageResult = await generateImageSDXL(prompt, { width: 1024, height: 768, negativePrompt: roleplayNeg });
           } else if (imageModel === 'image_quality' || imageModel === 'image_advanced') {
             // Z-Image Turbo for quality content
-            imageResult = await generateImage(prompt, { width: 1024, height: 768, quality: true });
+            imageResult = await generateImage(prompt, { width: 1024, height: 768, quality: true, negativePrompt: roleplayNeg });
           } else {
             // Fallback to Z-Image Turbo (quality) as default
-            imageResult = await generateImage(prompt, { width: 1024, height: 768, quality: true });
+            imageResult = await generateImage(prompt, { width: 1024, height: 768, quality: true, negativePrompt: roleplayNeg });
           }
           response.image = imageResult.image_base64 || imageResult.image;
 
@@ -6443,16 +6702,34 @@ Output JSON:
         try {
           // Generate image prompt if not available
           const vidUserAppearance = sceneState.userAppearance || '';
-          const vidIsExplicit = isAdult && sexKeywords.some(k => (response.response || '').toLowerCase().includes(k));
+          const vidIsExplicit = isAdult && SEX_KEYWORDS.some(k => (response.response || '').toLowerCase().includes(k));
           const videoImagePrompt = response.imagePrompt ||
             (vidIsExplicit && vidUserAppearance
               ? `a couple: ${companion.name} (${companion.appearance}) together with ${vidUserAppearance}, ${response.emotion || 'passionate'} expression, ${response.action || 'intimate embrace'}, intertwined, cinematic lighting, high quality`
               : `${companion.name}, ${companion.appearance}, ${response.emotion || 'expressive'} expression, ${response.action || 'dramatic pose'}, cinematic lighting, high quality`);
 
-          // Use SDXL for video frames (better quality for animation)
+          // Use SDXL for video frames (better quality for animation).
+          // Same roleplay-specific negative prompt as the live-turn
+          // image path so the starting frame matches the in-chat image
+          // anatomy/quality/identity standard.
+          const videoFrameNeg = [
+            IMAGE_NEG_BASE,
+            IMAGE_NEG_LAYOUT,
+            'face swap', 'identity drift', 'wrong character', 'different person',
+            'inconsistent face', 'crowd', 'multiple people', 'extra people',
+            // Framing — same anti-crop suppressors as the live-turn
+            // image. The video starting frame gets fed straight to
+            // LTX-2, so anything cropped here propagates through every
+            // animated frame.
+            'cropped body', 'cropped torso', 'cropped at hips', 'cropped at waist',
+            'cropped genitals', 'cropped penis', 'cropped cock', 'missing genitals',
+            'missing penis', 'partial body', 'half body cut off', 'lower body cut off',
+            'censored', 'censorship', 'mosaic censor', 'blurred genitals',
+            'black bar', 'covered genitals',
+          ].join(', ');
           const videoImageResult = await generateImageSDXL(
             `${videoImagePrompt}, cinematic, film still, single scene composition, high quality`,
-            { width: 1024, height: 768 }
+            { width: 1024, height: 768, negativePrompt: videoFrameNeg }
           );
           response.image = videoImageResult.image_base64 || videoImageResult.image;
           console.log('[Roleplay] Generated image for video input');
@@ -6490,7 +6767,7 @@ Output JSON:
           // Use LLM to create a detailed cinematographic video prompt
           // LTX-2 needs highly detailed, chronological descriptions
           const videoUserAppearance = sceneState.userAppearance || 'a person';
-          const isAdultVideo = isAdult && sexKeywords.some(k => (response.response || '').toLowerCase().includes(k));
+          const isAdultVideo = isAdult && SEX_KEYWORDS.some(k => (response.response || '').toLowerCase().includes(k));
           const videoCharacterBlock = isAdultVideo
             ? `CHARACTER 1 (companion): ${companion.name}, ${companion.appearance}
 CHARACTER 2 (user): ${videoUserAppearance}
@@ -6507,16 +6784,16 @@ SCENE CONTEXT: ${response.response?.substring(0, 300) || 'A quiet moment'}
 IMAGE PROMPT (starting frame): ${response.imagePrompt || 'character portrait'}
 SETTING: ${currentLocation || scenario?.setting || 'indoor scene'}
 
-Write a single flowing paragraph (under 200 words) describing what happens in this 5-second video clip. Follow this structure:
+Write a single flowing paragraph describing what happens in this 5-second video clip. Follow this structure:
 1. Start with the main action in one sentence${isAdultVideo ? ' — describe both people interacting physically' : ''}
 2. Add specific details about movements and gestures
 3. Describe ${isAdultVideo ? 'both characters\' appearances' : 'the character\'s appearance'} precisely (hair, skin, clothing, expression)
 4. Include background and environment details
-5. Specify camera angle and any camera movement
+5. Specify camera angle and framing — describe a WIDE shot capturing both bodies completely from head to toes${isAdultVideo ? ', genitals fully visible and uncropped, NEVER frame at hip level or chest level' : ''}
 6. Describe lighting and colors
 7. Note any changes during the clip
 
-Be literal and precise. Think like a cinematographer describing a shot list. Start directly with the action.${isAdultVideo ? ' Show both bodies in the same frame, interacting.' : ''}
+Be literal and precise. Think like a cinematographer describing a shot list. Start directly with the action.${isAdultVideo ? ' Show both bodies in the same frame, interacting, with anatomy fully visible. Do NOT crop limbs, torsos, or genitals. The camera is positioned to keep the entire scene in frame throughout the clip — no zoom-ins, no close-ups, no censorship.' : ''}
 
 Write ONLY the video description paragraph, nothing else:`;
 
@@ -6524,12 +6801,17 @@ Write ONLY the video description paragraph, nothing else:`;
           const videoPromptRaw = await generateTextWithModel(videoPromptInstruction, '', ROLEPLAY_LLM);
           await unloadLLM();
 
-          // Clean up the prompt - remove any quotes or prefixes
-          const videoPrompt = videoPromptRaw
+          // Clean up the prompt — strip quotes/prefixes and normalize.
+          // No length cap: LTX-2 handles long, detailed cinematographic
+          // descriptions natively, and earlier truncation was causing
+          // visible problems (sentences cut mid-clause, body parts
+          // dropped from descriptions which then got cropped in the
+          // render). The LLM's own maxTokens cap (2048 default in
+          // generateTextWithModel) is the only ceiling now.
+          let videoPrompt = videoPromptRaw
             .replace(/^["']|["']$/g, '')
             .replace(/^(Video description|Shot description|Paragraph):\s*/i, '')
-            .trim()
-            .substring(0, 500); // Keep under 500 chars for LTX-2
+            .trim();
 
           console.log(`[Roleplay] Video prompt (LLM generated): ${videoPrompt}`);
 
@@ -6553,20 +6835,36 @@ Write ONLY the video description paragraph, nothing else:`;
             }
           }
 
-          const videoResponse = await fetch(`http://localhost:${port}/video`, {
+          // Roleplay video uses Wan 2.2 (/video/quality) — QuantStack
+          // Q5_K_M GGUF + Lightning Seko V1 LoRA loaded on top. Locked
+          // to the distillation point: 4 steps + CFG 1.0.
+          //
+          // Generate small at 320×240 then auto-enhance via /video/enhance
+          // (Real-ESRGAN x4 + RIFE 4x). Final delivered video is 1280×960
+          // at 64fps from a much faster base generation than rendering
+          // 640×480 directly. Also dodges the chroma-confetti regression
+          // we saw at 640×480 native.
+          // Defensive: response.image is fresh raw base64 on the live
+          // turn, but resolveImageBase64 also handles bonzai-blob:// /
+          // data: prefixes for any future call site that reuses this
+          // path with a stored image.
+          const videoImageBase64 = await resolveImageBase64(response.image);
+          const videoResponse = await fetch(`http://localhost:${port}/video/quality`, {
             method: 'POST',
             headers: videoHeaders,
             body: JSON.stringify({
-              mode: 'i2v',  // Image-to-video
               prompt: videoPrompt,
-              negative_prompt: 'static, frozen, low quality, blurry, distorted face',
-              image_base64: response.image,  // Use generated image as starting frame
-              audio_base64: audioBase64ForVideo,  // Companion voice for audio conditioning
-              height: 448,   // 480p landscape
-              width: 640,
-              frames: 61,   // 5 seconds at 24fps (must be 8n+1: 8*15+1=121)
-              frame_rate: 24,
-              steps: 8,
+              negative_prompt: VIDEO_NEG_DEFAULT,
+              image_base64: videoImageBase64,
+              // NOTE: /video/quality doesn't currently consume audio for
+              // conditioning — audio_base64 is kept here so the call
+              // stays forward-compatible if Wan adds audio sync later.
+              audio_base64: audioBase64ForVideo,
+              height: 240,
+              width: 320,
+              num_frames: 81,           // 16 fps × ~5s
+              fps: 16,
+              num_inference_steps: 4,
               guidance_scale: 1.0,
               auto_download: true,
             }),
@@ -6575,7 +6873,51 @@ Write ONLY the video description paragraph, nothing else:`;
           if (videoResponse.ok) {
             const videoData = await videoResponse.json();
             if (videoData.video_path || videoData.video_base64) {
-              response.video = videoData.video_path || `data:video/mp4;base64,${videoData.video_base64}`;
+              let finalVideoPath = videoData.video_path;
+
+              // Auto-enhance: x4 spatial + 4x temporal. /video/enhance
+              // returns 202 the first time when ESRGAN weights still need
+              // to download — wait and retry. Skip silently on hard
+              // failure (fall back to raw 320×240).
+              if (finalVideoPath) {
+                try {
+                  const enhBody = JSON.stringify({
+                    video_path: finalVideoPath,
+                    upscale: true,
+                    interp_factor: 4,
+                    variant: 'default',
+                    auto_download: true,
+                  });
+                  let enhDone = null;
+                  for (let attempt = 0; attempt < 12; attempt++) {  // ≤ 60s
+                    const enhResp = await fetch(`http://localhost:${port}/video/enhance`, {
+                      method: 'POST',
+                      headers: videoHeaders,
+                      body: enhBody,
+                    });
+                    if (enhResp.status === 202) {
+                      await new Promise((res) => setTimeout(res, 5000));
+                      continue;
+                    }
+                    if (enhResp.ok) {
+                      enhDone = await enhResp.json();
+                    } else {
+                      console.warn(`[Roleplay] Enhance failed (${enhResp.status}); using raw 320×240`);
+                    }
+                    break;
+                  }
+                  if (enhDone?.video_path) {
+                    finalVideoPath = enhDone.video_path;
+                    console.log('[Roleplay] Video enhanced (x4 + RIFE 4x):', finalVideoPath);
+                  } else if (!enhDone) {
+                    console.warn('[Roleplay] Enhance timed out waiting for weight download');
+                  }
+                } catch (e) {
+                  console.warn('[Roleplay] Enhance error:', e?.message || e);
+                }
+              }
+
+              response.video = finalVideoPath || `data:video/mp4;base64,${videoData.video_base64}`;
               console.log('[Roleplay] Video generated successfully');
 
               // If we have audio, the frontend can combine them

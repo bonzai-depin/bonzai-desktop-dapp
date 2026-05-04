@@ -178,7 +178,7 @@ All LLM inference goes through OpenClaw's OpenAI-compatible API at `/v1/chat/com
 | `llm_llama_2_7b` | LLaMA 2 7B | 4 GB | 6 GB |
 | `llm_llama_3_1_8b` | LLaMA 3.1 8B | 5 GB | 6 GB |
 | `llm_mistral_7b` | Mistral 7B | 4.4 GB | 6 GB |
-| `llm_mythomax_13b` | MythoMax 13B | 7.9 GB | 10 GB |
+| `llm_nemomix_12b_heretic` | NemoMix Unleashed 12B Heretic | 7.5 GB | 10 GB |
 | `llm_phi_3_mini` | Phi-3 Mini | 2.4 GB | 4 GB |
 | `llm_phi_4_mini` | Phi-4 Mini | 2.5 GB | 4 GB |
 | `llm_qwen_2_5_3b` | Qwen 2.5 3B | 2 GB | 4 GB |

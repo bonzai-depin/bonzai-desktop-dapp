@@ -579,6 +579,23 @@ function _getRpcUrl(chainId) {
 // EXPORT
 // ═══════════════════════════════════════════════════════════════════════════
 
+// Server-wallet stubs — Privy server wallets are WIP (see MEMORY.md
+// "Privy Integration"). walletProvider.service.js calls these on every
+// getAgentWalletCredentials / checkSpendingLimit, so they must exist
+// even before the @privy-io/js-sdk-core wiring lands. Returning
+// null/false is the same shape as "no Privy wallet for this companion".
+async function hasServerWallet() { return false; }
+async function getServerWalletMapping() { return null; }
+async function getServerWalletAddress() { return null; }
+async function getServerWalletBalance() { return null; }
+async function getServerWalletSigner() {
+  throw new Error("Privy server wallets not yet enabled");
+}
+async function createServerWallet() {
+  throw new Error("Privy server wallets not yet enabled");
+}
+async function setWalletPolicy() { /* no-op */ }
+
 export const privyService = {
   state,
 
@@ -599,6 +616,15 @@ export const privyService = {
   setCompanionWallet,
   getCompanionBalance,
   getCompanionSigner,
+
+  // Server wallet (WIP — stubbed to return null/false)
+  hasServerWallet,
+  getServerWalletMapping,
+  getServerWalletAddress,
+  getServerWalletBalance,
+  getServerWalletSigner,
+  createServerWallet,
+  setWalletPolicy,
 
   // Policies
   buildAgentWalletPolicy,

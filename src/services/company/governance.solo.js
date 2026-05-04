@@ -1,51 +1,41 @@
 /**
- * BonzAI Company — Solo Mode governance adapter (owner veto)
+ * BonzAI Company — Solo Mode governance (renderer-side adapter,
+ * SQLite-backed).
  *
- * In Solo Mode, the user is the sole owner. "Governance" is just a queue
- * of pending approvals plus three veto modes per action class:
+ * Owner-veto with three modes per action class. The dispatcher calls
+ * `gateAction(...)` BEFORE executing any action. Result:
+ *   AUTO     → { pass: true, mode, cls }
+ *   NOTIFY   → { pass: true, notify: true, mode, cls }
+ *   APPROVE  → enqueue + { pass: false, queued: pendingId, mode, cls }
  *
- *   AUTO     — execute immediately, log it
- *   NOTIFY   — execute immediately, emit a desktop notification, log it
- *   APPROVE  — queue for owner click in the dapp; do NOT execute until
- *              owner explicitly approves (or rejects) via the UI
- *
- * The dispatcher consults `gateAction(charter, action)` BEFORE executing
- * any action. If the result is `{ pass: true }`, the dispatcher proceeds.
- * If `{ pass: false, queued: pendingId }`, the dispatcher logs that the
- * action is queued and returns; the action will be re-attempted when the
- * owner approves it via `approve(companyId, pendingId)`.
- *
- * Persistence: Electron Store at `companies/<id>/approvals`.
+ * Same shape as the legacy module so the dispatcher's gate / approve /
+ * reject paths don't change. Only the storage layer moves.
  */
 
-import { v4 as uuid } from "uuid";
 import { append, _notify } from "./auditLog.js";
 import { vetoModeFor, VETO_MODES } from "./charter.js";
 
-const KEY = (id) => `companies/${id}/approvals`;
-const _cache = new Map();
-
-async function _hydrate(companyId) {
-  if (_cache.has(companyId)) return _cache.get(companyId);
-  const raw = await window.electronAPI?.store?.get?.(KEY(companyId), []);
-  const queue = Array.isArray(raw) ? raw : [];
-  _cache.set(companyId, queue);
-  return queue;
+const _api = () => window.electronAPI?.db?.approvals || null;
+let _warned = false;
+function _warnOnce(err) {
+  if (_warned) return;
+  _warned = true;
+  console.warn(
+    "[governance] data layer not reachable. Approvals will fall back to " +
+    "auto-execute until the DB is open. Run `npm install` and restart. " +
+    "Error: " + (err?.message || err || "no IPC handler"),
+  );
+}
+async function _safe(fn, fallback) {
+  const api = _api();
+  if (!api) { _warnOnce(); return fallback; }
+  try { return await fn(api); }
+  catch (err) { _warnOnce(err); return fallback; }
 }
 
-async function _persist(companyId) {
-  const queue = _cache.get(companyId) || [];
-  await window.electronAPI?.store?.set?.(KEY(companyId), queue);
-}
-
-/**
- * Classify an action so the veto-mode lookup hits the right key.
- * Returns one of the entries in ACTION_CLASSES.
- */
+/** Classify an action so the veto-mode lookup hits the right key. */
 function _classify(action) {
-  if (action.type === "produce" && action.pipeline) {
-    return `produce.${action.pipeline}`;
-  }
+  if (action.type === "produce" && action.pipeline) return `produce.${action.pipeline}`;
   if (action.type === "publishContent") return "publishContent";
   if (action.type === "broadcastChannel" || action.type === "scheduleBroadcast") return "broadcastChannel";
   if (action.type === "replyToInbox") return "replyToInbox";
@@ -59,15 +49,9 @@ function _classify(action) {
   if (action.type === "proposeHire" || action.type === "hire") return "hire";
   if (action.type === "proposeFire" || action.type === "fire") return "fire";
   if (action.type === "proposeCharterAmendment" || action.type === "amendCharter") return "amendCharter";
-  return action.type; // fall through; veto map lookup will return AUTO default
+  return action.type;
 }
 
-/**
- * The dispatcher's pre-execution gate.
- * - AUTO   → returns { pass: true }; caller proceeds.
- * - NOTIFY → returns { pass: true, notify: true }; caller proceeds + posts a Notification.
- * - APPROVE → enqueues a pending approval, returns { pass: false, queued: pendingId }.
- */
 export async function gateAction(companyId, charter, action, ctx = {}) {
   const cls = _classify(action);
   const mode = vetoModeFor(charter, cls);
@@ -76,83 +60,62 @@ export async function gateAction(companyId, charter, action, ctx = {}) {
   if (mode === VETO_MODES.NOTIFY) return { pass: true, notify: true, mode, cls };
 
   // APPROVE → enqueue
-  const queue = await _hydrate(companyId);
-  const pending = {
-    id: uuid(),
-    companyId,
-    cls,
-    action,
-    role: ctx.role || null,
-    requestedBy: ctx.companion || null,
-    requestedAt: Date.now(),
-    status: "pending", // pending | approved | rejected | expired
-  };
-  queue.push(pending);
-  _cache.set(companyId, queue);
-  await _persist(companyId);
-
+  const row = await _safe(
+    (api) => api.enqueue(companyId, {
+      cls,
+      action,
+      role: ctx.role || null,
+      requestedBy: ctx.companion || null,
+    }),
+    null,
+  );
+  if (!row) {
+    // Data layer is down → degrade safely to AUTO so the company keeps
+    // ticking. The user will see no Approvals queue; this is fine
+    // because the DB-down warning makes the situation obvious.
+    return { pass: true, mode: VETO_MODES.AUTO, cls, degraded: true };
+  }
   await append(companyId, {
-    kind: "approval",
-    role: ctx.role || null,
-    action: action.type,
-    status: "queued",
-    note: `awaiting owner approval (${cls})`,
-    pendingId: pending.id,
+    kind: "approval", role: ctx.role || null, action: action.type,
+    status: "queued", note: `awaiting owner approval (${cls})`, pendingId: row.id,
   });
   _notify();
-  return { pass: false, queued: pending.id, mode, cls };
+  return { pass: false, queued: row.id, mode, cls };
 }
 
-/** Read the current approvals queue (newest first). */
 export async function pending(companyId) {
-  const queue = await _hydrate(companyId);
-  return [...queue].filter((p) => p.status === "pending").reverse();
+  const rows = await _safe((api) => api.pending(companyId), []);
+  // Re-hydrate `action` JSON blobs (stored as string in SQLite)
+  return rows.map((r) => ({
+    ...r,
+    action: typeof r.action === "string" ? JSON.parse(r.action) : r.action,
+  }));
 }
 
-/** Owner approved — mark + return the action so the caller can dispatch it. */
 export async function approve(companyId, pendingId) {
-  const queue = await _hydrate(companyId);
-  const idx = queue.findIndex((p) => p.id === pendingId);
-  if (idx < 0) throw new Error("pending action not found");
-  if (queue[idx].status !== "pending") throw new Error(`already ${queue[idx].status}`);
-  queue[idx].status = "approved";
-  queue[idx].decidedAt = Date.now();
-  await _persist(companyId);
-  await append(companyId, {
-    kind: "approval",
-    role: queue[idx].role,
-    action: queue[idx].action.type,
-    status: "approved",
-    pendingId,
-  });
-  _notify();
-  return queue[idx].action;
+  const action = await _safe((api) => api.approve(companyId, pendingId), null);
+  if (action) {
+    await append(companyId, {
+      kind: "approval", role: null, action: action.type,
+      status: "approved", pendingId,
+    });
+    _notify();
+  }
+  return action;
 }
 
-/** Owner rejected — discard, log. */
 export async function reject(companyId, pendingId, reason) {
-  const queue = await _hydrate(companyId);
-  const idx = queue.findIndex((p) => p.id === pendingId);
-  if (idx < 0) throw new Error("pending action not found");
-  if (queue[idx].status !== "pending") throw new Error(`already ${queue[idx].status}`);
-  queue[idx].status = "rejected";
-  queue[idx].decidedAt = Date.now();
-  queue[idx].rejectReason = reason || null;
-  await _persist(companyId);
-  await append(companyId, {
-    kind: "approval",
-    role: queue[idx].role,
-    action: queue[idx].action.type,
-    status: "rejected",
-    note: reason || "",
-    pendingId,
-  });
-  _notify();
-  return queue[idx];
+  const row = await _safe((api) => api.reject(companyId, pendingId, reason), null);
+  if (row) {
+    await append(companyId, {
+      kind: "approval", role: null, action: row.action?.type || "unknown",
+      status: "rejected", note: reason || "", pendingId,
+    });
+    _notify();
+  }
+  return row;
 }
 
-/** Wipe approvals (used on dissolve). */
 export async function clear(companyId) {
-  _cache.delete(companyId);
-  await window.electronAPI?.store?.delete?.(KEY(companyId));
+  await _safe((api) => api.clear(companyId), null);
 }

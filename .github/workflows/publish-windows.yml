@@ -53,6 +53,32 @@ jobs:
           pip install -U qwen-tts --no-deps
           pip install git+https://github.com/ace-step/ACE-Step-1.5.git --no-deps
 
+      # basicsr 1.4.2 (used by /video/enhance via realesrgan) imports
+      # `torchvision.transforms.functional_tensor` which was removed in
+      # torchvision >= 0.17. Patch the one offending import so the
+      # bundled binary doesn't crash on first /video/enhance request.
+      - name: Patch basicsr torchvision import
+        shell: bash
+        run: |
+          python -c "
+          import site, pathlib, sys
+          for sp in site.getsitepackages() + [site.getusersitepackages()]:
+              p = pathlib.Path(sp) / 'basicsr' / 'data' / 'degradations.py'
+              if p.exists():
+                  s = p.read_text()
+                  new = s.replace(
+                      'from torchvision.transforms.functional_tensor',
+                      'from torchvision.transforms.functional',
+                  )
+                  if new != s:
+                      p.write_text(new)
+                      print(f'Patched: {p}')
+                      sys.exit(0)
+                  print(f'Already patched or unchanged: {p}')
+                  sys.exit(0)
+          print('basicsr/data/degradations.py not found; skipping')
+          "
+
       # Use --onedir instead of --onefile: CUDA PyTorch exceeds the 4GB
       # uint32 limit for onefile CArchive. onedir produces an executable +
       # _internal/ folder with shared libraries — no size limit.
@@ -76,6 +102,11 @@ jobs:
             --collect-submodules=qwen_vl_utils `
             --collect-submodules=acestep `
             --collect-submodules=torch `
+            --collect-submodules=realesrgan `
+            --collect-submodules=basicsr `
+            --collect-data=basicsr `
+            --collect-submodules=imageio_ffmpeg `
+            --collect-data=imageio_ffmpeg `
             --hidden-import=pytorch_lightning `
             --hidden-import=torchaudio `
             --hidden-import=torchaudio.functional `
@@ -89,6 +120,7 @@ jobs:
             --hidden-import=PIL.Image `
             --hidden-import=torch.cuda `
             --hidden-import=torch.backends.cudnn `
+            --hidden-import=cv2 `
             "${{ env.MAIN_PY_FILE }}"
 
       - name: Verify Python binary

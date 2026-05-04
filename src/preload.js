@@ -58,6 +58,265 @@ contextBridge.exposeInMainWorld("electronAPI", {
    * Returns { ok, port?, filename?, cached?, error? }.
    */
   ensureModel: (modelOrKey) => ipcRenderer.invoke("model-ensure", modelOrKey),
+
+  /**
+   * Local data layer (better-sqlite3 + Drizzle). Renderer-side service
+   * modules call these instead of touching electron-store for per-table
+   * data. New tables get wired here as the migration progresses.
+   */
+  db: {
+    audit: {
+      append: (companyId, entry) => ipcRenderer.invoke("db:audit:append", companyId, entry),
+      recent: (companyId, n) => ipcRenderer.invoke("db:audit:recent", companyId, n),
+      all: (companyId) => ipcRenderer.invoke("db:audit:all", companyId),
+      filter: (companyId, opts) => ipcRenderer.invoke("db:audit:filter", companyId, opts),
+      summarize: (companyId, windowMs) => ipcRenderer.invoke("db:audit:summarize", companyId, windowMs),
+      clear: (companyId) => ipcRenderer.invoke("db:audit:clear", companyId),
+      bulkInsert: (rows) => ipcRenderer.invoke("db:audit:bulkInsert", rows),
+      /** Subscribe to "table changed" broadcasts. cb receives { companyId }. */
+      onChanged: (cb) => {
+        const handler = (_event, payload) => cb(payload);
+        ipcRenderer.on("db:audit:changed", handler);
+        return () => ipcRenderer.removeListener("db:audit:changed", handler);
+      },
+    },
+    generations: {
+      /**
+       * Create a generation row. Pass `input` as the typed shape and
+       * optional `blobInputs` for output media:
+       *   blobInputs = [{ base64, ext, role: "image"|"audio"|"video"|"thumbnail", mime?, width?, height?, durationMs? }]
+       * The main process writes the blobs first, then inserts the row.
+       */
+      create: (input, blobInputs) => ipcRenderer.invoke("db:generations:create", input, blobInputs),
+      list: (filter) => ipcRenderer.invoke("db:generations:list", filter),
+      get: (id) => ipcRenderer.invoke("db:generations:get", id),
+      update: (id, patch) => ipcRenderer.invoke("db:generations:update", id, patch),
+      delete: (id) => ipcRenderer.invoke("db:generations:delete", id),
+      searchByPrompt: (query, opts) => ipcRenderer.invoke("db:generations:searchByPrompt", query, opts),
+      countsByPipeline: () => ipcRenderer.invoke("db:generations:countsByPipeline"),
+      bulkInsert: (rows) => ipcRenderer.invoke("db:generations:bulkInsert", rows),
+      onChanged: (cb) => {
+        const handler = (_event, payload) => cb(payload);
+        ipcRenderer.on("db:generations:changed", handler);
+        return () => ipcRenderer.removeListener("db:generations:changed", handler);
+      },
+    },
+    blobs: {
+      /** Write base64 → file. Returns `{ id, path, dedup }`. */
+      write: (base64, ext, meta) => ipcRenderer.invoke("db:blobs:write", base64, ext, meta),
+      /** Read a local file path → blob store. For Flask audio_path / video_path. */
+      writeFromPath: (srcPath, ext, meta) => ipcRenderer.invoke("db:blobs:writeFromPath", srcPath, ext, meta),
+      /** Raw bytes (Uint8Array). Use `url()` for `<img>` binding. */
+      read: (id, ext) => ipcRenderer.invoke("db:blobs:read", id, ext),
+      /** Convenience: returns a `data:<mime>;base64,…` URL. */
+      url: (id, ext, mime) => ipcRenderer.invoke("db:blobs:url", id, ext, mime),
+      get: (id) => ipcRenderer.invoke("db:blobs:get", id),
+      recent: (opts) => ipcRenderer.invoke("db:blobs:recent", opts),
+      diskUsage: () => ipcRenderer.invoke("db:blobs:diskUsage"),
+      sweepOrphans: () => ipcRenderer.invoke("db:blobs:sweepOrphans"),
+    },
+    companies: {
+      save: (charter) => ipcRenderer.invoke("db:companies:save", charter),
+      get: (id) => ipcRenderer.invoke("db:companies:get", id),
+      list: () => ipcRenderer.invoke("db:companies:list"),
+      listIds: () => ipcRenderer.invoke("db:companies:listIds"),
+      setStatus: (id, status) => ipcRenderer.invoke("db:companies:setStatus", id, status),
+      remove: (id) => ipcRenderer.invoke("db:companies:remove", id),
+      bulkInsert: (rows) => ipcRenderer.invoke("db:companies:bulkInsert", rows),
+      onChanged: (cb) => {
+        const h = (_e, p) => cb(p);
+        ipcRenderer.on("db:companies:changed", h);
+        return () => ipcRenderer.removeListener("db:companies:changed", h);
+      },
+    },
+    goals: {
+      create: (companyId, input) => ipcRenderer.invoke("db:goals:create", companyId, input),
+      list: (companyId, filter) => ipcRenderer.invoke("db:goals:list", companyId, filter),
+      get: (companyId, goalId) => ipcRenderer.invoke("db:goals:get", companyId, goalId),
+      update: (companyId, goalId, patch) => ipcRenderer.invoke("db:goals:update", companyId, goalId, patch),
+      cancel: (companyId, goalId, reason) => ipcRenderer.invoke("db:goals:cancel", companyId, goalId, reason),
+      complete: (companyId, goalId) => ipcRenderer.invoke("db:goals:complete", companyId, goalId),
+      maybeComplete: (companyId, goalId, siblings) => ipcRenderer.invoke("db:goals:maybeComplete", companyId, goalId, siblings),
+      counts: (companyId) => ipcRenderer.invoke("db:goals:counts", companyId),
+      clear: (companyId) => ipcRenderer.invoke("db:goals:clear", companyId),
+      bulkInsert: (rows) => ipcRenderer.invoke("db:goals:bulkInsert", rows),
+      onChanged: (cb) => {
+        const h = (_e, p) => cb(p);
+        ipcRenderer.on("db:goals:changed", h);
+        return () => ipcRenderer.removeListener("db:goals:changed", h);
+      },
+    },
+    issues: {
+      create: (companyId, input) => ipcRenderer.invoke("db:issues:create", companyId, input),
+      list: (companyId, filter) => ipcRenderer.invoke("db:issues:list", companyId, filter),
+      get: (companyId, id) => ipcRenderer.invoke("db:issues:get", companyId, id),
+      update: (companyId, id, patch) => ipcRenderer.invoke("db:issues:update", companyId, id, patch),
+      reopen: (companyId, id) => ipcRenderer.invoke("db:issues:reopen", companyId, id),
+      remove: (companyId, id) => ipcRenderer.invoke("db:issues:remove", companyId, id),
+      nextForRole: (companyId, roleKey, currentCompanion) => ipcRenderer.invoke("db:issues:nextForRole", companyId, roleKey, currentCompanion),
+      startAttempt: (companyId, issueId, role, companion) => ipcRenderer.invoke("db:issues:startAttempt", companyId, issueId, role, companion),
+      finishAttempt: (companyId, issueId, outcome) => ipcRenderer.invoke("db:issues:finishAttempt", companyId, issueId, outcome),
+      attempts: (issueId) => ipcRenderer.invoke("db:issues:attempts", issueId),
+      counts: (companyId) => ipcRenderer.invoke("db:issues:counts", companyId),
+      clear: (companyId) => ipcRenderer.invoke("db:issues:clear", companyId),
+      bulkInsert: (rows) => ipcRenderer.invoke("db:issues:bulkInsert", rows),
+      onChanged: (cb) => {
+        const h = (_e, p) => cb(p);
+        ipcRenderer.on("db:issues:changed", h);
+        return () => ipcRenderer.removeListener("db:issues:changed", h);
+      },
+    },
+    treasury: {
+      getState: (companyId) => ipcRenderer.invoke("db:treasury:getState", companyId),
+      recordRevenue: (companyId, opts) => ipcRenderer.invoke("db:treasury:recordRevenue", companyId, opts),
+      paySupplier: (companyId, opts) => ipcRenderer.invoke("db:treasury:paySupplier", companyId, opts),
+      listEntries: (companyId, opts) => ipcRenderer.invoke("db:treasury:listEntries", companyId, opts),
+      reset: (companyId) => ipcRenderer.invoke("db:treasury:reset", companyId),
+      bulkInsertState: (rows) => ipcRenderer.invoke("db:treasury:bulkInsertState", rows),
+      bulkInsertEntries: (rows) => ipcRenderer.invoke("db:treasury:bulkInsertEntries", rows),
+      onChanged: (cb) => {
+        const h = (_e, p) => cb(p);
+        ipcRenderer.on("db:treasury:changed", h);
+        return () => ipcRenderer.removeListener("db:treasury:changed", h);
+      },
+    },
+    approvals: {
+      enqueue: (companyId, opts) => ipcRenderer.invoke("db:approvals:enqueue", companyId, opts),
+      pending: (companyId) => ipcRenderer.invoke("db:approvals:pending", companyId),
+      approve: (companyId, pendingId) => ipcRenderer.invoke("db:approvals:approve", companyId, pendingId),
+      reject: (companyId, pendingId, reason) => ipcRenderer.invoke("db:approvals:reject", companyId, pendingId, reason),
+      clear: (companyId) => ipcRenderer.invoke("db:approvals:clear", companyId),
+      bulkInsert: (rows) => ipcRenderer.invoke("db:approvals:bulkInsert", rows),
+      onChanged: (cb) => {
+        const h = (_e, p) => cb(p);
+        ipcRenderer.on("db:approvals:changed", h);
+        return () => ipcRenderer.removeListener("db:approvals:changed", h);
+      },
+    },
+    distribution: {
+      publish: (companyId, opts) => ipcRenderer.invoke("db:distribution:publish", companyId, opts),
+      listCatalog: (companyId) => ipcRenderer.invoke("db:distribution:listCatalog", companyId),
+      getRecord: (companyId, id) => ipcRenderer.invoke("db:distribution:getRecord", companyId, id),
+      clear: (companyId) => ipcRenderer.invoke("db:distribution:clear", companyId),
+      bulkInsert: (rows) => ipcRenderer.invoke("db:distribution:bulkInsert", rows),
+      onChanged: (cb) => {
+        const h = (_e, p) => cb(p);
+        ipcRenderer.on("db:distribution:changed", h);
+        return () => ipcRenderer.removeListener("db:distribution:changed", h);
+      },
+    },
+    connectors: {
+      create: (companyId, input) => ipcRenderer.invoke("db:connectors:create", companyId, input),
+      list: (companyId, filter) => ipcRenderer.invoke("db:connectors:list", companyId, filter),
+      get: (companyId, id) => ipcRenderer.invoke("db:connectors:get", companyId, id),
+      getByKind: (companyId, kind) => ipcRenderer.invoke("db:connectors:getByKind", companyId, kind),
+      update: (companyId, id, patch) => ipcRenderer.invoke("db:connectors:update", companyId, id, patch),
+      setSecretRef: (companyId, id, secretRef) => ipcRenderer.invoke("db:connectors:setSecretRef", companyId, id, secretRef),
+      revoke: (companyId, id, reason) => ipcRenderer.invoke("db:connectors:revoke", companyId, id, reason),
+      remove: (companyId, id) => ipcRenderer.invoke("db:connectors:remove", companyId, id),
+      healthSummary: (companyId) => ipcRenderer.invoke("db:connectors:healthSummary", companyId),
+      clear: (companyId) => ipcRenderer.invoke("db:connectors:clear", companyId),
+      bulkInsert: (rows) => ipcRenderer.invoke("db:connectors:bulkInsert", rows),
+      onChanged: (cb) => {
+        const h = (_e, p) => cb(p);
+        ipcRenderer.on("db:connectors:changed", h);
+        return () => ipcRenderer.removeListener("db:connectors:changed", h);
+      },
+    },
+    companions: {
+      upsert: (record) => ipcRenderer.invoke("db:companions:upsert", record),
+      get: (id) => ipcRenderer.invoke("db:companions:get", id),
+      list: (filter) => ipcRenderer.invoke("db:companions:list", filter),
+      remove: (id) => ipcRenderer.invoke("db:companions:remove", id),
+      bulkInsert: (rows) => ipcRenderer.invoke("db:companions:bulkInsert", rows),
+      memoryAdd: (companionId, mem) => ipcRenderer.invoke("db:companions:memoryAdd", companionId, mem),
+      memoryList: (companionId, scope) => ipcRenderer.invoke("db:companions:memoryList", companionId, scope),
+      memoryRecall: (companionId, scope, limit) => ipcRenderer.invoke("db:companions:memoryRecall", companionId, scope, limit),
+      memoryRemove: (memoryId) => ipcRenderer.invoke("db:companions:memoryRemove", memoryId),
+      memoryClear: (companionId) => ipcRenderer.invoke("db:companions:memoryClear", companionId),
+      memoryBulkInsert: (rows) => ipcRenderer.invoke("db:companions:memoryBulkInsert", rows),
+      onChanged: (cb) => {
+        const h = (_e, p) => cb(p);
+        ipcRenderer.on("db:companions:changed", h);
+        return () => ipcRenderer.removeListener("db:companions:changed", h);
+      },
+    },
+    /**
+     * Cross-app semantic search via sqlite-vec. The renderer hands us
+     * an already-embedded query vector (Phase 5b: the renderer can
+     * also call `electronAPI.embed(text)` to compute one). Returns
+     * `[{ sourceTable, sourceId, distance, embeddedAt, model }]`.
+     */
+    embeddings: {
+      enqueue: (item) => ipcRenderer.invoke("db:embeddings:enqueue", item),
+      enqueueMany: (items) => ipcRenderer.invoke("db:embeddings:enqueueMany", items),
+      search: (queryEmbedding, opts) => ipcRenderer.invoke("db:embeddings:search", queryEmbedding, opts),
+      drop: (key) => ipcRenderer.invoke("db:embeddings:drop", key),
+      pendingCount: () => ipcRenderer.invoke("db:embeddings:pendingCount"),
+      totalCount: () => ipcRenderer.invoke("db:embeddings:totalCount"),
+      countsBySource: () => ipcRenderer.invoke("db:embeddings:countsBySource"),
+      tick: () => ipcRenderer.invoke("db:embeddings:tick"),
+      stats: () => ipcRenderer.invoke("db:embeddings:stats"),
+      backfill: () => ipcRenderer.invoke("db:embeddings:backfill"),
+    },
+    skills: {
+      upsert: (record) => ipcRenderer.invoke("db:skills:upsert", record),
+      list: (filter) => ipcRenderer.invoke("db:skills:list", filter),
+      get: (id) => ipcRenderer.invoke("db:skills:get", id),
+      bulkInsert: (rows) => ipcRenderer.invoke("db:skills:bulkInsert", rows),
+      recordRun: (run) => ipcRenderer.invoke("db:skills:recordRun", run),
+      listRuns: (filter) => ipcRenderer.invoke("db:skills:listRuns", filter),
+      runStats: (skillId) => ipcRenderer.invoke("db:skills:runStats", skillId),
+      bulkInsertRuns: (rows) => ipcRenderer.invoke("db:skills:bulkInsertRuns", rows),
+      registerOwnership: (reg) => ipcRenderer.invoke("db:skills:registerOwnership", reg),
+      listOwnership: (filter) => ipcRenderer.invoke("db:skills:listOwnership", filter),
+      recordClaim: (skillId, companionId, payoutCents) => ipcRenderer.invoke("db:skills:recordClaim", skillId, companionId, payoutCents),
+    },
+    moltbook: {
+      postCreate: (post) => ipcRenderer.invoke("db:moltbook:postCreate", post),
+      postsList: (filter) => ipcRenderer.invoke("db:moltbook:postsList", filter),
+      engagement: (eng) => ipcRenderer.invoke("db:moltbook:engagement", eng),
+    },
+    openclaw: {
+      upsertConversation: (conv) => ipcRenderer.invoke("db:openclaw:upsertConversation", conv),
+      listConversations: (filter) => ipcRenderer.invoke("db:openclaw:listConversations", filter),
+      findConversation: (channel, externalChatId) => ipcRenderer.invoke("db:openclaw:findConversation", channel, externalChatId),
+      appendMessage: (conversationId, msg) => ipcRenderer.invoke("db:openclaw:appendMessage", conversationId, msg),
+      listMessages: (conversationId, opts) => ipcRenderer.invoke("db:openclaw:listMessages", conversationId, opts),
+    },
+    web3: {
+      mintUpsert: (mint) => ipcRenderer.invoke("db:web3:mintUpsert", mint),
+      mintsList: (filter) => ipcRenderer.invoke("db:web3:mintsList", filter),
+      paymentRecord: (p) => ipcRenderer.invoke("db:web3:paymentRecord", p),
+      paymentSettle: (id, txHash) => ipcRenderer.invoke("db:web3:paymentSettle", id, txHash),
+      paymentsList: (filter) => ipcRenderer.invoke("db:web3:paymentsList", filter),
+      epochUpsert: (epoch) => ipcRenderer.invoke("db:web3:epochUpsert", epoch),
+      epochsList: (filter) => ipcRenderer.invoke("db:web3:epochsList", filter),
+      claimRecord: (claim) => ipcRenderer.invoke("db:web3:claimRecord", claim),
+      claimsList: (filter) => ipcRenderer.invoke("db:web3:claimsList", filter),
+    },
+    roleplay: {
+      upsertSession: (record) => ipcRenderer.invoke("db:roleplay:upsertSession", record),
+      getSession: (id) => ipcRenderer.invoke("db:roleplay:getSession", id),
+      listSessions: (filter) => ipcRenderer.invoke("db:roleplay:listSessions", filter),
+      archiveSession: (id) => ipcRenderer.invoke("db:roleplay:archiveSession", id),
+      clearSession: (id) => ipcRenderer.invoke("db:roleplay:clearSession", id),
+      bulkInsertSessions: (rows) => ipcRenderer.invoke("db:roleplay:bulkInsertSessions", rows),
+      appendMessage: (sessionId, msg) => ipcRenderer.invoke("db:roleplay:appendMessage", sessionId, msg),
+      listMessages: (sessionId, opts) => ipcRenderer.invoke("db:roleplay:listMessages", sessionId, opts),
+      deleteMessage: (messageId) => ipcRenderer.invoke("db:roleplay:deleteMessage", messageId),
+      bulkInsertMessages: (rows) => ipcRenderer.invoke("db:roleplay:bulkInsertMessages", rows),
+      upsertMessages: (rows) => ipcRenderer.invoke("db:roleplay:upsertMessages", rows),
+      messageCount: (sessionId) => ipcRenderer.invoke("db:roleplay:messageCount", sessionId),
+      resetAndReimport: (opts) => ipcRenderer.invoke("db:roleplay:resetAndReimport", opts),
+      repairContentLevels: () => ipcRenderer.invoke("db:roleplay:repairContentLevels"),
+      onChanged: (cb) => {
+        const h = (_e, p) => cb(p);
+        ipcRenderer.on("db:roleplay:changed", h);
+        return () => ipcRenderer.removeListener("db:roleplay:changed", h);
+      },
+    },
+  },
   /**
    * Stateless streaming chat for the ZHC dispatcher. Returns the full
    * assistant text on completion. Tokens stream via `onZhcChatToken`

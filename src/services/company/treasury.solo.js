@@ -1,143 +1,91 @@
 /**
- * BonzAI Company — Solo Mode treasury adapter (local books)
+ * BonzAI Company — Solo Mode treasury (renderer-side adapter, SQLite-backed).
  *
- * v1: pure local accounting. The user records:
- *   - revenue (a customer paid us, source + amount)
- *   - spending (the company paid for something, recipient + amount + memo)
- *   - balance (just the running sum; no real bank account)
- *
- * No Stripe Connect / no bank API integration in this cut. v0.1 will add:
- *   - Stripe Connect OAuth + balance/payout polling
- *   - Plaid / bank webhook ingestion
- *   - Crypto-to-fiat off-ramp via Coinbase Commerce
- *
- * The CFO role calls these methods through the dispatcher. Owner can also
- * record manual entries via the UI for revenue that landed off-platform.
- *
- * Persistence: `companies/<id>/treasury` in Electron Store +
- * mirror to the audit log so the Treasury view derives from the log.
+ * Same API as the legacy module: recordRevenue / paySupplier / getState
+ * / recomputeFromLog. Heavy logic (cap + reserve-floor checks, ledger
+ * entry insertion, balance update) lives in the main-process repo
+ * inside a single transaction. Audit-log entries are mirrored from
+ * the renderer side so the live feed picks them up.
  */
 
 import { append, _notify } from "./auditLog.js";
 
-const ENTRY_KEY = (id) => `companies/${id}/treasury`;
-const STATE_KEY = (id) => `companies/${id}/treasury-state`;
-
-/** Hydrate (or seed) the treasury state for a company. */
-async function _state(companyId) {
-  const raw = await window.electronAPI?.store?.get?.(STATE_KEY(companyId), null);
-  return raw || { balance: 0, totalIn: 0, totalOut: 0, currency: "USD" };
+const _api = () => window.electronAPI?.db?.treasury || null;
+let _warned = false;
+function _warnOnce(err) {
+  if (_warned) return;
+  _warned = true;
+  console.warn(
+    "[treasury] data layer not reachable — ledger writes will be dropped. " +
+    "Run `npm install` and restart. Error: " + (err?.message || err || "no IPC handler"),
+  );
+}
+async function _safe(fn, fallback) {
+  const api = _api();
+  if (!api) { _warnOnce(); return fallback; }
+  try { return await fn(api); }
+  catch (err) {
+    // recordRevenue / paySupplier throw on currency / cap / reserve
+    // floor violations — those are EXPECTED business-rule errors that
+    // should propagate to the caller (the dispatcher logs them as
+    // action errors). Only swallow IPC-level failures.
+    if (err?.message && /no handler|disconnected|destroyed/i.test(err.message)) {
+      _warnOnce(err);
+      return fallback;
+    }
+    throw err;
+  }
 }
 
-async function _saveState(companyId, s) {
-  await window.electronAPI?.store?.set?.(STATE_KEY(companyId), s);
-}
-
-/**
- * Record a payment received. Amount is positive in the company's currency.
- *
- * @param {string} companyId
- * @param {object} opts  { amount, currency, source, memo, externalId? }
- * @returns {Promise<{entry, state}>}
- */
 export async function recordRevenue(companyId, opts) {
-  const amount = Number(opts.amount);
-  if (!Number.isFinite(amount) || amount <= 0) throw new Error("amount must be > 0");
-  const state = await _state(companyId);
-  if (opts.currency && opts.currency !== state.currency) {
-    // v1: no FX. The user picked the company currency at formation; we
-    // refuse mixed currencies rather than silently mis-book.
-    throw new Error(
-      `currency mismatch: company books are ${state.currency}, entry was ${opts.currency}`,
-    );
+  const out = await _safe((api) => api.recordRevenue(companyId, opts), null);
+  if (out?.entry) {
+    await append(companyId, {
+      kind: "treasury", direction: "in", role: out.entry.role,
+      action: "recordRevenue", status: "executed",
+      amount: out.entry.amount / 100, currency: out.entry.currency,
+      source: out.entry.source, note: out.entry.note || "",
+      externalId: out.entry.externalId, balanceAfter: (out.entry.balanceAfter ?? 0) / 100,
+    });
+    _notify();
   }
-  state.balance += amount;
-  state.totalIn += amount;
-  await _saveState(companyId, state);
-
-  const entry = await append(companyId, {
-    kind: "treasury",
-    direction: "in",
-    role: opts.role || "CFO",
-    action: "recordRevenue",
-    status: "executed",
-    amount,
-    currency: state.currency,
-    source: opts.source || "unknown",
-    note: opts.memo || "",
-    externalId: opts.externalId || null,
-    balanceAfter: state.balance,
-  });
-  _notify();
-  return { entry, state };
+  return out;
 }
 
-/**
- * Record an outgoing payment / expense. Honors the per-heartbeat spend cap
- * if present in opts.cap (the dispatcher passes the resolved role budget).
- */
 export async function paySupplier(companyId, opts) {
-  const amount = Number(opts.amount);
-  if (!Number.isFinite(amount) || amount <= 0) throw new Error("amount must be > 0");
-  const state = await _state(companyId);
-  if (opts.currency && opts.currency !== state.currency) {
-    throw new Error(`currency mismatch: ${opts.currency} vs ${state.currency}`);
+  const out = await _safe((api) => api.paySupplier(companyId, opts), null);
+  if (out?.entry) {
+    await append(companyId, {
+      kind: "treasury", direction: "out", role: out.entry.role,
+      action: "paySupplier", status: "executed",
+      amount: out.entry.amount / 100, currency: out.entry.currency,
+      recipient: out.entry.recipient, note: out.entry.note || "",
+      balanceAfter: (out.entry.balanceAfter ?? 0) / 100,
+    });
+    _notify();
   }
-  if (Number.isFinite(opts.cap) && amount > opts.cap) {
-    throw new Error(`amount ${amount} exceeds role budget cap ${opts.cap}`);
-  }
-  if (Number.isFinite(opts.reserveFloor) && state.balance - amount < opts.reserveFloor) {
-    throw new Error(
-      `payment would breach reserve floor (${state.balance} - ${amount} < ${opts.reserveFloor})`,
-    );
-  }
-  state.balance -= amount;
-  state.totalOut += amount;
-  await _saveState(companyId, state);
-
-  const entry = await append(companyId, {
-    kind: "treasury",
-    direction: "out",
-    role: opts.role || "CFO",
-    action: "paySupplier",
-    status: "executed",
-    amount,
-    currency: state.currency,
-    recipient: opts.recipient || "unknown",
-    note: opts.memo || "",
-    balanceAfter: state.balance,
-  });
-  _notify();
-  return { entry, state };
+  return out;
 }
 
-/** Read current state for the Treasury view. */
 export async function getState(companyId) {
-  return _state(companyId);
+  return _safe(
+    (api) => api.getState(companyId),
+    { balance: 0, totalIn: 0, totalOut: 0, currency: "USD" },
+  );
 }
 
-/**
- * Reset treasury (used on dissolve). Doesn't touch the audit log; the
- * caller is responsible for wiping that separately if desired.
- */
+export async function listEntries(companyId, opts) {
+  return _safe((api) => api.listEntries(companyId, opts), []);
+}
+
 export async function reset(companyId) {
-  await window.electronAPI?.store?.delete?.(STATE_KEY(companyId));
+  await _safe((api) => api.reset(companyId), null);
 }
 
 /**
- * Recompute state from the audit log. Useful after a manual ledger
- * edit or to verify integrity.
+ * Legacy `recomputeFromLog` — derived from audit. Now derived from
+ * SQL state; kept for API compatibility. Returns the current state.
  */
-export async function recomputeFromLog(companyId, currency) {
-  const all = (await import("./auditLog.js")).all;
-  const entries = await all(companyId);
-  let balance = 0, totalIn = 0, totalOut = 0;
-  for (const e of entries.reverse()) {
-    if (e.kind !== "treasury") continue;
-    if (e.direction === "in") { balance += +e.amount || 0; totalIn += +e.amount || 0; }
-    if (e.direction === "out") { balance -= +e.amount || 0; totalOut += +e.amount || 0; }
-  }
-  const state = { balance, totalIn, totalOut, currency: currency || "USD" };
-  await _saveState(companyId, state);
-  return state;
+export async function recomputeFromLog(companyId) {
+  return getState(companyId);
 }

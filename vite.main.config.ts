@@ -14,6 +14,14 @@ export default defineConfig({
         "electron",
         "node-llama-cpp",
         "ps-tree",
+        // Native + extension-loading modules — must resolve at runtime
+        // via Electron's require, not via Vite/Rollup bundling.
+        "better-sqlite3",
+        "sqlite-vec",
+        // drizzle-orm is pure ESM but importing from node_modules at
+        // runtime keeps the bundle small + avoids tree-shake surprises
+        // around the better-sqlite3 driver path.
+        /^drizzle-orm($|\/)/,
         /^.*\/lib\/python\/.*$/,
         // Externalize all Node.js built-ins
         ...builtinModules,
@@ -36,6 +44,14 @@ export default defineConfig({
         {
           src: resolve(__dirname, "src/template.jinja"),
           dest: "",
+        },
+        // Ship the .sql migrations alongside the bundled main.js so
+        // src/main/db/migrate.js can read them at runtime. The runner
+        // resolves them via __dirname which, post-bundle, points at
+        // .vite/build/.
+        {
+          src: resolve(__dirname, "src/main/db/migrations") + "/*.sql",
+          dest: "migrations",
         },
       ],
     }),

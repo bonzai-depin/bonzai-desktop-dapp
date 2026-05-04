@@ -819,14 +819,23 @@ async function _completeJSON(prompt, opts = {}) {
   // mode — sequential / swap / fallthrough-from-parallel — so ZHC never
   // requires the user to pre-load a model in Generative Text. The IPC
   // is idempotent, so paying the cost once per role-tick is cheap.
+  //
+  // ensureModel may DECLINE the swap when another request is mid-flight
+  // (e.g. a RoleplayChat conversation). In that case it returns
+  // { ok: true, declined: true, filename: <current> } and we proceed
+  // against whatever model is already loaded — protecting the user's
+  // active session at the cost of (sometimes) using a non-preferred
+  // model for this tick. The next tick retries.
   if (opts.llmModel && typeof window.electronAPI?.ensureModel === "function") {
     try {
       const res = await window.electronAPI.ensureModel(opts.llmModel);
-      // ensureModel returns { ok, error?, cached? } — we don't fail the
-      // dispatch if it errored; the chat() call below will surface a
-      // clearer "model not loaded" message via _friendlyError.
       if (res && res.ok === false) {
         console.warn(`[zhc] ensureModel failed for ${opts.llmModel}: ${res.error}`);
+      } else if (res?.declined) {
+        console.info(
+          `[zhc] ensureModel declined for ${opts.llmModel} (reason=${res.reason}, ` +
+          `using ${res.filename}) — protected an in-flight request.`,
+        );
       }
     } catch (err) {
       console.warn(`[zhc] ensureModel threw for ${opts.llmModel}:`, err?.message);

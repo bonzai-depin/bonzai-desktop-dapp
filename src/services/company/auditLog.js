@@ -1,155 +1,114 @@
 /**
- * BonzAI Company — Append-only audit log
+ * BonzAI Company — Audit log (renderer-side adapter)
  *
- * Every action a company takes (or vetoes, or proposes) lands here.
- * The log is the only honest source of truth for "what did this
- * company do?" The UI's Audit, Production, Treasury, and Approvals
- * views all derive from it.
+ * Thin pass-through to `window.electronAPI.db.audit.*`. The actual
+ * storage lives in SQLite in the main process; this module exists
+ * solely to keep the existing service consumers (dispatcher, treasury,
+ * goals, issues, etc.) on a stable import path.
  *
- * Storage: in-memory ring buffer (last 5000 entries) backed by
- * Electron Store on every mutation. Survives app restarts.
+ * Graceful-degradation contract: when the main-process data layer is
+ * unavailable (e.g. `npm install` hasn't been run yet so better-sqlite3
+ * couldn't be imported), every call resolves with a safe default and
+ * we log ONCE so the user has a clear pointer to the install step.
+ * The rest of the app — Generative Text, RoleplayChat, skills — runs
+ * untouched; only ZHC's audit-log-derived views (Live, KPIs, Trail)
+ * read empty until the data layer comes online.
  */
 
-import { v4 as uuid } from "uuid";
+const _api = () => window.electronAPI?.db?.audit || null;
 
-const MAX_ENTRIES = 5000;
-
-function _key(companyId) {
-  return `companies/${companyId}/audit`;
+let _warned = false;
+function _warnOnce(err) {
+  if (_warned) return;
+  _warned = true;
+  console.warn(
+    "[audit] data layer not reachable — ZHC audit log writes will be dropped " +
+    "until the DB is open. Run `npm install` to install better-sqlite3 + " +
+    "drizzle-orm + sqlite-vec, then restart the app. Underlying error: " +
+    (err?.message || err || "no IPC handler"),
+  );
 }
-
-/** In-memory cache so the renderer doesn't re-read disk every render. */
-const _cache = new Map(); // companyId -> entries[]
 
 /**
- * Hydrate from disk on first access. Idempotent.
+ * Wrap an IPC call so a missing handler / rejection becomes a safe
+ * default. This is what makes the app survive a deps-missing bootstrap
+ * — every audit append silently no-ops, every read returns empty.
  */
-async function _hydrate(companyId) {
-  if (_cache.has(companyId)) return _cache.get(companyId);
-  let entries = [];
+async function _safe(fn, fallback) {
+  const api = _api();
+  if (!api) { _warnOnce(); return fallback; }
   try {
-    const raw = await window.electronAPI?.store?.get?.(_key(companyId), []);
-    if (Array.isArray(raw)) entries = raw;
-  } catch {}
-  _cache.set(companyId, entries);
-  return entries;
-}
-
-async function _persist(companyId) {
-  const entries = _cache.get(companyId) || [];
-  try {
-    await window.electronAPI?.store?.set?.(_key(companyId), entries);
+    return await fn(api);
   } catch (err) {
-    console.warn("[audit] persist failed:", err?.message);
+    _warnOnce(err);
+    return fallback;
   }
 }
 
-/**
- * Append an entry. Returns the persisted entry (with id + timestamp).
- *
- * @param {string} companyId
- * @param {object} entry  { kind, role, action, status, txOrLink, note, amount, currency }
- *   kind:    "action" | "veto" | "proposal" | "approval" | "system"
- *   role:    role key (e.g. "CEO", "Producer:text")
- *   action:  action type (e.g. "produce", "paySupplier", "broadcastChannel")
- *   status:  "executed" | "vetoed" | "queued" | "proposed" | "approved" | "rejected" | "error"
- *   txOrLink: optional URL / receipt / inference id
- *   note:    free-form short text
- *   amount, currency: optional, for spend actions
- */
+// ─────────────────────────────────────────────────────────────────────
+// Public API — same shape as the legacy module so callers don't change
+// ─────────────────────────────────────────────────────────────────────
+
 export async function append(companyId, entry) {
-  const entries = await _hydrate(companyId);
-  const record = {
-    id: uuid(),
-    ts: Date.now(),
-    ...entry,
-  };
-  entries.push(record);
-  // Ring-buffer cap
-  if (entries.length > MAX_ENTRIES) {
-    entries.splice(0, entries.length - MAX_ENTRIES);
-  }
-  _cache.set(companyId, entries);
-  await _persist(companyId);
-  return record;
+  const row = await _safe((api) => api.append(companyId, entry), null);
+  if (row) _notify();
+  return row;
 }
 
-/**
- * Read the last N entries (newest first). Default 200.
- */
 export async function recent(companyId, n = 200) {
-  const entries = await _hydrate(companyId);
-  return entries.slice(-n).reverse();
+  return _safe((api) => api.recent(companyId, n), []);
 }
 
-/**
- * Read all entries (newest first). Caller's responsibility to paginate.
- */
 export async function all(companyId) {
-  const entries = await _hydrate(companyId);
-  return [...entries].reverse();
+  return _safe((api) => api.all(companyId), []);
 }
 
 /**
- * Filter entries by predicate. Useful for production queue, treasury
- * ledger, approvals queue.
+ * The legacy filter() took a JS predicate; SQL-side filtering needs a
+ * shape. Callers passing predicates fall back to a client-side filter
+ * on the full set. New callers should pass typed opts:
+ *   { kind, role, status, action, goalId, issueId, sinceMs }
  */
-export async function filter(companyId, predicate) {
-  const entries = await _hydrate(companyId);
-  return entries.filter(predicate).reverse();
-}
-
-/**
- * Aggregate counts by status for the most recent `windowMs` ms.
- * Used by the dashboard KPI tiles.
- */
-export async function summarize(companyId, windowMs = 24 * 60 * 60 * 1000) {
-  const entries = await _hydrate(companyId);
-  const since = Date.now() - windowMs;
-  const recent = entries.filter((e) => e.ts >= since);
-  const out = {
-    total: recent.length,
-    executed: 0,
-    vetoed: 0,
-    queued: 0,
-    proposed: 0,
-    error: 0,
-    spend: 0,
-    revenue: 0,
-  };
-  for (const e of recent) {
-    if (e.status && Object.prototype.hasOwnProperty.call(out, e.status)) {
-      out[e.status]++;
-    }
-    if (e.kind === "treasury" && e.direction === "out") out.spend += +e.amount || 0;
-    if (e.kind === "treasury" && e.direction === "in") out.revenue += +e.amount || 0;
+export async function filter(companyId, predicateOrOpts) {
+  if (typeof predicateOrOpts === "function") {
+    const list = await all(companyId);
+    return list.filter(predicateOrOpts);
   }
-  return out;
+  return _safe((api) => api.filter(companyId, predicateOrOpts || {}), []);
 }
 
-/**
- * Drop a company's entire audit log (used on dissolve / reset).
- */
+export async function summarize(companyId, windowMs = 24 * 60 * 60 * 1000) {
+  return _safe(
+    (api) => api.summarize(companyId, windowMs),
+    { total: 0, executed: 0, vetoed: 0, queued: 0, proposed: 0, error: 0, spend: 0, revenue: 0 },
+  );
+}
+
 export async function clear(companyId) {
-  _cache.delete(companyId);
-  try {
-    await window.electronAPI?.store?.delete?.(_key(companyId));
-  } catch {}
+  await _safe((api) => api.clear(companyId), { ok: false });
+  _notify();
 }
 
-/**
- * Subscribe to live updates. Returns an unsubscribe function.
- *
- * Implementation note: this is a poll-based pub/sub using a tick. The
- * dispatcher and treasury also write to the log, so anything that
- * appends triggers a tick. Keeps the API simple and avoids EventTarget
- * boilerplate; if perf becomes an issue we can swap for an emitter.
- */
+// ─────────────────────────────────────────────────────────────────────
+// Pub/sub — bridges the main-process broadcast event into the legacy
+// onChange listener API. Existing companyStore.init() subscribes via
+// this, so no consumer change needed.
+// ─────────────────────────────────────────────────────────────────────
+
 const _listeners = new Set();
+let _ipcUnsub = null;
+
+function _ensureSubscribed() {
+  if (_ipcUnsub || !window.electronAPI?.db?.audit?.onChanged) return;
+  _ipcUnsub = window.electronAPI.db.audit.onChanged(() => _notify());
+}
+
 export function onChange(listener) {
   _listeners.add(listener);
+  _ensureSubscribed();
   return () => _listeners.delete(listener);
 }
+
 export function _notify() {
   for (const l of _listeners) try { l(); } catch {}
 }

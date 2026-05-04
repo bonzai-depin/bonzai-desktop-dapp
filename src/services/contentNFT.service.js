@@ -462,6 +462,23 @@ export async function mintContent({
       await markAsMinted(inferenceType, inferenceId, nftData);
     }
 
+    // Mirror the mint to the SQL web3 cache (Phase 7b). Best-effort —
+    // the dashboard reads from this cache to render mint history without
+    // touching the chain. Failures here don't fail the user-visible mint.
+    try {
+      await window.electronAPI?.db?.web3?.mintUpsert?.({
+        chainId: networkConfig.chainId,
+        contractAddress: mintResult.contractAddress,
+        tokenId: String(mintResult.tokenId),
+        contentType: inferenceType || null,
+        ownerWallet: mintResult.recipient || mintResult.minter || null,
+        generationId: inferenceId || null,
+        ipfsCid: contentReceipt.cid || null,
+        txHash: mintResult.transactionHash,
+        mintedAt: Date.now(),
+      });
+    } catch (e) { console.warn('[ContentNFT] mint mirror to SQL failed:', e?.message); }
+
     onProgress('done', 'Complete!', 100);
 
     return {

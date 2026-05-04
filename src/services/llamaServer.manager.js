@@ -75,6 +75,17 @@ let _lastResourcesPath = null;
 // restart cycle doesn't wipe user state.
 let _stopping = false;
 
+/**
+ * Count of in-flight requests against the singleton llama-server. Each
+ * `chat`/`chatStream`/`chatVision`/`proxyRequest` increments on entry and
+ * decrements in `finally`. ZHC's `ensureModel` reads this to refuse a
+ * model swap that would interrupt an active companion conversation —
+ * the user's request to "the server must not quit during a companion
+ * conversation."
+ */
+let _inFlight = 0;
+export function inFlightCount() { return _inFlight; }
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Binary resolution
 // ─────────────────────────────────────────────────────────────────────────────
@@ -504,17 +515,22 @@ export async function chat({ messages, temperature, maxTokens, stop, tools, tool
     body.chat_template_kwargs = { enable_thinking: enableThinking };
   }
 
-  const res = await fetch(`http://127.0.0.1:${port}/v1/chat/completions`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(body),
-    dispatcher: llamaFetchDispatcher,
-  });
-  if (!res.ok) {
-    const text = await res.text().catch(() => "");
-    throw new Error(`llama-server /v1/chat/completions ${res.status}: ${text}`);
+  _inFlight++;
+  try {
+    const res = await fetch(`http://127.0.0.1:${port}/v1/chat/completions`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+      dispatcher: llamaFetchDispatcher,
+    });
+    if (!res.ok) {
+      const text = await res.text().catch(() => "");
+      throw new Error(`llama-server /v1/chat/completions ${res.status}: ${text}`);
+    }
+    return await res.json();
+  } finally {
+    _inFlight = Math.max(0, _inFlight - 1);
   }
-  return res.json();
 }
 
 /**
@@ -536,52 +552,57 @@ export async function chatStream({ messages, temperature, maxTokens, stop, seed,
     body.chat_template_kwargs = { enable_thinking: enableThinking };
   }
 
-  const res = await fetch(`http://127.0.0.1:${port}/v1/chat/completions`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(body),
-    signal,
-    dispatcher: llamaFetchDispatcher,
-  });
-  if (!res.ok || !res.body) {
-    const text = await res.text().catch(() => "");
-    throw new Error(`llama-server stream ${res.status}: ${text}`);
-  }
+  _inFlight++;
+  try {
+    const res = await fetch(`http://127.0.0.1:${port}/v1/chat/completions`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+      signal,
+      dispatcher: llamaFetchDispatcher,
+    });
+    if (!res.ok || !res.body) {
+      const text = await res.text().catch(() => "");
+      throw new Error(`llama-server stream ${res.status}: ${text}`);
+    }
 
-  const decoder = new TextDecoder();
-  const reader = res.body.getReader();
-  let buffer = "";
-  let full = "";
+    const decoder = new TextDecoder();
+    const reader = res.body.getReader();
+    let buffer = "";
+    let full = "";
 
-  while (true) {
-    const { value, done } = await reader.read();
-    if (done) break;
-    buffer += decoder.decode(value, { stream: true });
-    let newlineIdx;
-    while ((newlineIdx = buffer.indexOf("\n")) !== -1) {
-      const line = buffer.slice(0, newlineIdx).trim();
-      buffer = buffer.slice(newlineIdx + 1);
-      if (!line || !line.startsWith("data:")) continue;
-      const payload = line.slice(5).trim();
-      if (payload === "[DONE]") return full;
-      try {
-        const parsed = JSON.parse(payload);
-        const deltaObj = parsed.choices?.[0]?.delta ?? {};
-        // Merge reasoning_content into the visible stream. With
-        // `--reasoning-format none` everything already arrives in
-        // `content`; this is a safety net for callers that override the
-        // flag or for future llama-server defaults.
-        const delta = (deltaObj.reasoning_content ?? "") + (deltaObj.content ?? "");
-        if (delta) {
-          full += delta;
-          onChunk?.(delta, parsed);
+    while (true) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+      let newlineIdx;
+      while ((newlineIdx = buffer.indexOf("\n")) !== -1) {
+        const line = buffer.slice(0, newlineIdx).trim();
+        buffer = buffer.slice(newlineIdx + 1);
+        if (!line || !line.startsWith("data:")) continue;
+        const payload = line.slice(5).trim();
+        if (payload === "[DONE]") return full;
+        try {
+          const parsed = JSON.parse(payload);
+          const deltaObj = parsed.choices?.[0]?.delta ?? {};
+          // Merge reasoning_content into the visible stream. With
+          // `--reasoning-format none` everything already arrives in
+          // `content`; this is a safety net for callers that override the
+          // flag or for future llama-server defaults.
+          const delta = (deltaObj.reasoning_content ?? "") + (deltaObj.content ?? "");
+          if (delta) {
+            full += delta;
+            onChunk?.(delta, parsed);
+          }
+        } catch {
+          // Ignore non-JSON keepalive lines
         }
-      } catch {
-        // Ignore non-JSON keepalive lines
       }
     }
+    return full;
+  } finally {
+    _inFlight = Math.max(0, _inFlight - 1);
   }
-  return full;
 }
 
 /**
@@ -613,18 +634,23 @@ export async function chatVision({ message, imageBase64, imageMime = "image/png"
   if (typeof temperature === "number") body.temperature = temperature;
   if (typeof maxTokens === "number") body.max_tokens = maxTokens;
 
-  const res = await fetch(`http://127.0.0.1:${port}/v1/chat/completions`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(body),
-    dispatcher: llamaFetchDispatcher,
-  });
-  if (!res.ok) {
-    const text = await res.text().catch(() => "");
-    throw new Error(`llama-server vision ${res.status}: ${text}`);
+  _inFlight++;
+  try {
+    const res = await fetch(`http://127.0.0.1:${port}/v1/chat/completions`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+      dispatcher: llamaFetchDispatcher,
+    });
+    if (!res.ok) {
+      const text = await res.text().catch(() => "");
+      throw new Error(`llama-server vision ${res.status}: ${text}`);
+    }
+    const json = await res.json();
+    return json.choices?.[0]?.message?.content ?? "";
+  } finally {
+    _inFlight = Math.max(0, _inFlight - 1);
   }
-  const json = await res.json();
-  return json.choices?.[0]?.message?.content ?? "";
 }
 
 /**

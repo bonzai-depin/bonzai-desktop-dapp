@@ -143,6 +143,7 @@ from diffusers import (
     WanTransformer3DModel,
     AutoencoderKLWan,
     UniPCMultistepScheduler,
+    FlowMatchEulerDiscreteScheduler,
 )
 from diffusers.utils import load_image, export_to_video
 from diffusers.hooks import apply_group_offloading
@@ -230,22 +231,30 @@ LTX2_I2V_LORA_REPO = "MachineDelusions/LTX-2_Image2Video_Adapter_LoRa"
 LTX2_I2V_LORA_FILENAME = "LTX-2-Image2Vid-Adapter.safetensors"
 
 # Wan2.2 I2V 14B — High-quality image-to-video (GGUF quantized)
-# Two-stage denoising: high-noise transformer (coarse structure, 90% of steps)
-# + low-noise transformer (fine details, last 10% of steps). boundary_ratio=0.9.
+# Two-stage denoising: high-noise transformer (coarse structure) +
+# low-noise transformer (fine details). With Lightning, boundary_ratio=0.5.
 WAN_REPO = "Wan-AI/Wan2.2-I2V-A14B-Diffusers"
-WAN_GGUF_REPO = "bullerwins/Wan2.2-I2V-A14B-GGUF"
-WAN_GGUF_HIGH = "wan2.2_i2v_high_noise_14b_q2_k.gguf"
-WAN_GGUF_LOW = "wan2.2_i2v_low_noise_14b_q2_k.gguf"
-WAN_GGUF_HIGH_URL = f"https://huggingface.co/{WAN_GGUF_REPO}/resolve/main/wan2.2_i2v_high_noise_14B_Q2_K.gguf"
-WAN_GGUF_LOW_URL = f"https://huggingface.co/{WAN_GGUF_REPO}/resolve/main/wan2.2_i2v_low_noise_14B_Q2_K.gguf"
+# Dasiwa GGUFs — pre-merged Wan 2.2 I2V variant with all LoRAs (Lightning
+# distillation + animation style) baked into the quantized weights.
+# Designed for: 4 steps, CFG 1.0, Sampler/Scheduler Euler/Simple or
+# UniPC_BH2/Simple. No separate LoRA loading needed.
+#
+# Files live in MODEL_DIR; will be served from the R2 CDN once uploaded.
+WAN_GGUF_REPO = "dasiwa/local"
+WAN_GGUF_HIGH = "wan2.2_high_Q5.gguf"
+WAN_GGUF_LOW = "wan2.2_low_Q5.gguf"
+WAN_GGUF_HIGH_URL = "https://pub-c63241af101045fb837462e5c4c67e33.r2.dev/wan2.2_high_Q5.gguf"
+WAN_GGUF_LOW_URL = "https://pub-c63241af101045fb837462e5c4c67e33.r2.dev/wan2.2_low_Q5.gguf"
+WAN_GGUF_HIGH_QUANTSTACK_URL = WAN_GGUF_HIGH_URL
+WAN_GGUF_LOW_QUANTSTACK_URL = WAN_GGUF_LOW_URL
 WAN_VAE = "wan2.1_vae.safetensors"
 WAN_VAE_URL = "https://huggingface.co/QuantStack/Wan2.2-I2V-A14B-GGUF/resolve/main/VAE/Wan2.1_VAE.safetensors"
 WAN_LORA_CDN = "https://pub-c63241af101045fb837462e5c4c67e33.r2.dev"
-# All 4 LoRAs loaded simultaneously: general + animation for each noise stage.
-# High-noise LoRAs go into transformer, low-noise into transformer_2.
+# Animation LoRAs (high → transformer, low → transformer_2) — applied on
+# top of the QuantStack base GGUF for stylized motion. The legacy
+# "general" LoRAs were re-packaged Lightning weights; obsolete now that
+# the real Lightning Seko V1 LoRA is loaded explicitly (WAN_LIGHTNING_*).
 WAN_LORAS = {
-    "general_low": f"{WAN_LORA_CDN}/wan_lora_general_low.safetensors",
-    "general_high": f"{WAN_LORA_CDN}/wan_lora_general_high.safetensors",
     "animation_low": f"{WAN_LORA_CDN}/wan_lora_animation_low.safetensors",
     "animation_high": f"{WAN_LORA_CDN}/wan_lora_animation_high.safetensors",
 }
@@ -255,6 +264,27 @@ WAN_LIGHTNING_HIGH = "wan_lightning_high_noise.safetensors"
 WAN_LIGHTNING_LOW = "wan_lightning_low_noise.safetensors"
 WAN_LIGHTNING_HIGH_URL = f"https://huggingface.co/{WAN_LIGHTNING_REPO}/resolve/main/Wan2.2-I2V-A14B-4steps-lora-rank64-Seko-V1/high_noise_model.safetensors"
 WAN_LIGHTNING_LOW_URL = f"https://huggingface.co/{WAN_LIGHTNING_REPO}/resolve/main/Wan2.2-I2V-A14B-4steps-lora-rank64-Seko-V1/low_noise_model.safetensors"
+
+# Extra + physics LoRAs (safetensors, ~300 MB each). NOTE: filenames
+# carry a `.gguf` suffix on disk despite being safetensors — diffusers
+# detects format from file content, so the misnaming is harmless. Both
+# loaded by default on top of the dasiwa GGUF; pass `use_extra:false` /
+# `use_physics:false` to opt out for ablation testing.
+WAN_EXTRA_HIGH = "wan2.2_high_extra_Q5.gguf"
+WAN_EXTRA_LOW = "wan2.2_low_extra_Q5.gguf"
+WAN_PHYSICS_HIGH = "wan2.2_high_physics_Q5.gguf"
+WAN_PHYSICS_LOW = "wan2.2_low_physics_Q5.gguf.safetensors"
+
+# --- /video/enhance: upscale (Real-ESRGAN x4) + interpolate (RIFE 4x) ---
+# Real-ESRGAN x4plus weights for spatial upscaling (~64 MB).
+ESRGAN_X4_NAME = "RealESRGAN_x4plus.pth"
+ESRGAN_X4_URL = "https://github.com/xinntao/Real-ESRGAN/releases/download/v0.1.0/RealESRGAN_x4plus.pth"
+# Real-ESRGAN-Animevideo for animation-style outputs.
+ESRGAN_X4_ANIME_NAME = "realesr-animevideov3.pth"
+ESRGAN_X4_ANIME_URL = "https://github.com/xinntao/Real-ESRGAN/releases/download/v0.2.5.0/realesr-animevideov3.pth"
+# RIFE backend: binary CLI wrapped by `rife-ncnn-vulkan-python`. The
+# package downloads ncnn models on first import; weights live inside
+# the wheel. Nothing for us to manage here.
 
 # --- /video/test (Wan 2.2 I2V — FastDM Lightning merge + Q2 GGUF) ---
 # Used by wan_i2v_video_test() below. Loads Q2_K GGUF transformer weights from
@@ -337,6 +367,33 @@ EXPECTED_SIZES = {
 # AUDIO UTILITIES
 # =============================================================================
 
+
+
+def _decode_image_base64(s: str) -> bytes:
+    """Tolerant base64 decode for image payloads.
+
+    Handles three real-world inputs that vanilla `base64.b64decode` rejects:
+      - data-URL prefixes (`data:image/png;base64,...`) — split on the comma.
+      - whitespace / newlines from JSON pretty-printing or transport.
+      - missing `=` padding (length not a multiple of 4).
+
+    Without this helper, regenerated companion videos crash with
+    `binascii.Error: Incorrect padding` when the renderer round-trips the
+    image through a data URL on its way back to /video/quality.
+    """
+    if not s:
+        raise ValueError("empty base64 string")
+    s = s.strip()
+    # Strip data URL prefix if present.
+    if s.startswith("data:") and "," in s:
+        s = s.split(",", 1)[1]
+    # Drop any embedded whitespace (newlines from pretty-printed JSON, etc).
+    s = "".join(s.split())
+    # Pad to multiple of 4.
+    pad = (-len(s)) % 4
+    if pad:
+        s += "=" * pad
+    return base64.b64decode(s)
 
 
 def _load_audio_sf(path, target_sr: int = 24000):
@@ -1587,20 +1644,31 @@ def _plan_for(pipeline: str) -> Dict[str, Any]:
             "repos_to_fetch": [LTX2_REPO],
             "single_files": [],
         }
+    if pipeline in ("video_enhance",):
+        # Real-ESRGAN x4 (spatial) + RIFE (temporal). RIFE weights are
+        # bundled inside `rife-ncnn-vulkan-python`; only ESRGAN weights
+        # need pre-flight.
+        return {
+            "repos_to_fetch": [],
+            "single_files": [
+                _sf(ESRGAN_X4_NAME, ESRGAN_X4_URL),
+                _sf(ESRGAN_X4_ANIME_NAME, ESRGAN_X4_ANIME_URL),
+            ],
+        }
     if pipeline in ("video_quality", "wan_i2v"):
-        # Wan2.2 I2V 14B: repo (text_encoder, tokenizer, scheduler, image_processor, config)
-        # Quanto int8: full repo (both transformers loaded from repo, quantized on the fly)
-        # + 4 style LoRAs + 2 Lightning LoRAs
+        # Wan2.2 I2V 14B with dasiwa pre-merged GGUF transformers
+        # (Lightning + animation LoRAs baked in). The full WAN_REPO
+        # download is still required for VAE, text_encoder, tokenizer,
+        # scheduler, image_processor, config.
+        #
+        # NOTE: dasiwa GGUFs are user-provided locally in MODEL_DIR for
+        # now; not in the manifest single_files because the R2 upload
+        # hasn't happened yet. Endpoint guards on path.exists() and
+        # returns 503 if missing. Add `_sf(WAN_GGUF_HIGH, WAN_GGUF_HIGH_URL)`
+        # and `_sf(WAN_GGUF_LOW, WAN_GGUF_LOW_URL)` here once uploaded.
         return {
             "repos_to_fetch": [WAN_REPO],
-            "single_files": [
-                _sf("wan_lora_general_high.safetensors", WAN_LORAS["general_high"]),
-                _sf("wan_lora_general_low.safetensors", WAN_LORAS["general_low"]),
-                _sf("wan_lora_animation_high.safetensors", WAN_LORAS["animation_high"]),
-                _sf("wan_lora_animation_low.safetensors", WAN_LORAS["animation_low"]),
-                _sf(WAN_LIGHTNING_HIGH, WAN_LIGHTNING_HIGH_URL),
-                _sf(WAN_LIGHTNING_LOW, WAN_LIGHTNING_LOW_URL),
-            ],
+            "single_files": [],
         }
 
     # Vision pipeline (Qwen3.5-0.8B 4-bit MLX — Apple Silicon)
@@ -2557,7 +2625,7 @@ def image_standard_sdxl():
     width  = int(data.get("width", 1024))
 
     ckpt_filename = (data.get("ckpt") or "sdxl-lora.safetensors").strip()
-    lora_filename = (data.get("lora") or "sdxl-lora.safetensors").strip()
+    lora_filename = (data.get("lora") or "sdxl-lora-body.safetensors").strip()
     lora_strength = float(data.get("lora_strength", 1.0))
 
     steps_base = int(data.get("steps_base", 40))
@@ -4256,7 +4324,7 @@ def ltx2_gguf_video():
             if image_url:
                 pil_image = load_image(image_url).convert("RGB")
             else:
-                pil_image = Image.open(io.BytesIO(base64.b64decode(image_b64))).convert("RGB")
+                pil_image = Image.open(io.BytesIO(_decode_image_base64(image_b64))).convert("RGB")
 
             # Resize image preserving aspect ratio (cover and center crop)
             src_w, src_h = pil_image.size
@@ -4573,10 +4641,22 @@ def wan_i2v_video():
     W = int(data.get("width", 512))
     num_frames = int(data.get("num_frames", 33))
     output_fps = int(data.get("fps", 8))
+    # Lightning Seko V1 LoRA is loaded on top of the base GGUF — locked
+    # to its 4-step distillation point: 4 steps + CFG 1.0 +
+    # boundary_ratio 0.5 + scheduler shift 5.0. Anything else produces
+    # broken output (verified: 16 steps under-denoises, 25 + CFG 3.5 in
+    # base mode produces chromatic aberration over a 4-hour run).
     steps = int(data.get("num_inference_steps", 4))
     guidance = float(data.get("guidance_scale", 1.0))
     seed = data.get("seed")
     auto_dl = bool(data.get("auto_download", False))
+    # Style LoRAs — enabled by default on top of the dasiwa GGUF.
+    # Pass `use_extra: false` / `use_physics: false` to opt out for
+    # ablation. Weights default to 0.7 each (set _weight params to tune).
+    use_extra = bool(data.get("use_extra", True))
+    use_physics = bool(data.get("use_physics", True))
+    extra_weight = float(data.get("extra_weight", 0.7))
+    physics_weight = float(data.get("physics_weight", 0.7))
 
     if not prompt:
         return jsonify({"error": "Missing 'prompt'"}), 400
@@ -4603,6 +4683,8 @@ def wan_i2v_video():
     pipe = None
 
     try:
+        from huggingface_hub import hf_hub_download
+
         device = DeviceManager.get_device()
         gc.collect()
         if torch.cuda.is_available():
@@ -4623,7 +4705,7 @@ def wan_i2v_video():
         if image_url:
             pil_image = load_image(image_url).convert("RGB")
         else:
-            pil_image = Image.open(io.BytesIO(base64.b64decode(image_b64))).convert("RGB")
+            pil_image = Image.open(io.BytesIO(_decode_image_base64(image_b64))).convert("RGB")
 
         # Resize to target dimensions preserving aspect ratio (cover + center crop)
         import numpy as _np
@@ -4634,53 +4716,50 @@ def wan_i2v_video():
         crop_x, crop_y = (new_w - W) // 2, (new_h - H) // 2
         pil_image = resized.crop((crop_x, crop_y, crop_x + W, crop_y + H))
 
-        logger.info(f"[Wan2.2] Generating {num_frames} frames @ {W}x{H}, {steps} steps")
+        logger.info(f"[Wan2.2] Generating {num_frames} frames @ {W}x{H}, {steps} steps (QuantStack Q5_K_M GGUF + Lightning LoRA)")
 
         genbus.progress(gen_id, "loading model", 2, 4)
 
-        # Wan2.2 two-stage denoising with quanto int8 quantization.
-        # First run: load each transformer individually, quantize, save to disk,
-        # free memory between them — halves the load-time memory peak vs. loading
-        # both transformers simultaneously via PipelineQuantizationConfig.
-        # Subsequent runs: load the pre-quantized snapshots directly from disk.
-        # No GGUF — diffusers GGUF dequantization is broken on MPS.
-        quanto_cache = MODEL_DIR / "wan22_i2v_quanto_int8"
-        t_cache = quanto_cache / "transformer"
-        t2_cache = quanto_cache / "transformer_2"
-        cache_ready = (t_cache / "config.json").exists() and (t2_cache / "config.json").exists()
+        # QuantStack Q5_K_M GGUF Wan 2.2 I2V — diffusers-compatible tensor
+        # naming. Q5_K_M (~10.8 GB per transformer) is the highest sub-12GB
+        # variant. We tried Q2_K first (5.3 GB) — produced visible chroma
+        # confetti on the 14B model. Q2's 2-bit weight precision is below
+        # the floor where Lightning's bf16-trained residual deltas can
+        # blend cleanly. Q5_K_M keeps ~5 effective bits per weight.
+        #
+        # GGUF bypasses the bf16 download peak entirely (the file on disk
+        # IS quantized) so cold start drops from ~20min one-time quantize
+        # to ~minutes.
+        #
+        # Caveat: fuse_lora() is BROKEN with GGUF tensors (the merge tries
+        # to write into a read-only quantized tensor and shape-mismatches).
+        # We use load_lora_weights + set_adapters only — never fuse.
+        high_path = MODEL_DIR / WAN_GGUF_HIGH
+        low_path = MODEL_DIR / WAN_GGUF_LOW
+        if not high_path.exists() or not low_path.exists():
+            return jsonify({
+                "error": "Wan 2.2 Q5_K_M GGUF transformer files not found. "
+                         "Trigger pre-flight via auto_download=true and retry."
+            }), 503
+        logger.info(f"[Wan2.2] Q5_K_M GGUF shards ready: high={high_path.name} low={low_path.name}")
 
-        if not cache_ready:
-            logger.info("[Wan2.2] No quanto cache — quantizing from full-precision (one-time, ~20min)")
-            quanto_cache.mkdir(parents=True, exist_ok=True)
+        transformer = WanTransformer3DModel.from_single_file(
+            str(high_path),
+            quantization_config=GGUFQuantizationConfig(compute_dtype=model_dtype),
+            config=WAN_REPO,
+            subfolder="transformer",
+            torch_dtype=model_dtype,
+        )
+        transformer_2 = WanTransformer3DModel.from_single_file(
+            str(low_path),
+            quantization_config=GGUFQuantizationConfig(compute_dtype=model_dtype),
+            config=WAN_REPO,
+            subfolder="transformer_2",
+            torch_dtype=model_dtype,
+        )
 
-            logger.info("[Wan2.2] Quantizing transformer (high-noise)")
-            t_tmp = WanTransformer3DModel.from_pretrained(
-                WAN_REPO, subfolder="transformer", torch_dtype=model_dtype,
-                quantization_config=QuantoConfig(weights_dtype="int8"),
-            )
-            t_tmp.save_pretrained(str(t_cache))
-            del t_tmp
-            gc.collect()
-            if torch.backends.mps.is_available():
-                torch.mps.empty_cache()
-
-            logger.info("[Wan2.2] Quantizing transformer_2 (low-noise)")
-            t2_tmp = WanTransformer3DModel.from_pretrained(
-                WAN_REPO, subfolder="transformer_2", torch_dtype=model_dtype,
-                quantization_config=QuantoConfig(weights_dtype="int8"),
-            )
-            t2_tmp.save_pretrained(str(t2_cache))
-            del t2_tmp
-            gc.collect()
-            if torch.backends.mps.is_available():
-                torch.mps.empty_cache()
-            logger.info(f"[Wan2.2] Quanto cache saved to {quanto_cache}")
-
-        logger.info(f"[Wan2.2] Loading pre-quantized transformers from {quanto_cache}")
-        transformer = WanTransformer3DModel.from_pretrained(str(t_cache), torch_dtype=model_dtype)
-        transformer_2 = WanTransformer3DModel.from_pretrained(str(t2_cache), torch_dtype=model_dtype)
-
-        # Load VAE in fp32 (not quantized)
+        # Load VAE in fp32 (not quantized) — matches ComfyUI workflow's
+        # `wan_2.1_vae.safetensors` in fp32.
         vae = AutoencoderKLWan.from_pretrained(
             WAN_REPO, subfolder="vae", torch_dtype=torch.float32,
         )
@@ -4692,85 +4771,138 @@ def wan_i2v_video():
             transformer_2=transformer_2,
             torch_dtype=model_dtype,
         )
-        # Equal contribution from both noise experts
+        # boundary_ratio: 0.5 (50/50 split between high/low noise experts)
+        # — matches the 4-step distillation regime baked into dasiwa.
         pipe._internal_dict["boundary_ratio"] = 0.5
-        logger.info(f"[Wan2.2] boundary_ratio={pipe.config.boundary_ratio}, transformer_2={'yes' if pipe.transformer_2 is not None else 'NO'}")
+        logger.info(f"[Wan2.2] boundary_ratio=0.5 (4-step distillation 50/50 split)")
 
-        # Lightning 4-step distillation uses a tighter sigma schedule than the
-        # non-distilled default (shift=8) — shift=5 is the Seko V1 recommendation.
-        pipe.scheduler.config.shift = 5.0
-        logger.info("[Wan2.2] Scheduler shift=5.0")
+        # Scheduler: Euler/Simple per dasiwa spec. FlowMatchEuler with
+        # the model's default sigmas (no shift override).
+        pipe.scheduler = FlowMatchEulerDiscreteScheduler.from_config(
+            pipe.scheduler.config,
+        )
+        logger.info(f"[Wan2.2] Scheduler: FlowMatchEulerDiscreteScheduler (model default sigmas, dasiwa Euler/Simple)")
 
-        # Use model-level CPU offload instead of group_offloading:
-        # group_offloading assigns moved tensors via `tensor.data = src.to(device)`,
-        # which strips quanto's WeightQBytesTensor subclass wiring (inner _data/_scale
-        # bindings) and leaves weights effectively on CPU at compute time. Model-level
-        # offload uses `module.to(device)`, which recurses through quanto tensors
-        # correctly. Pages one transformer + encoders on-device at a time; peak ~14GB
-        # (one int8 transformer) + activations.
-        pipe.vae.to(dtype=torch.float32)
-        pipe.enable_model_cpu_offload(device=device)
-
-        gc.collect()
-        if torch.backends.mps.is_available():
-            torch.mps.empty_cache()
-
-        # Baseline: Lightning-only. Style LoRAs disabled for now.
+        # Optional style LoRAs (extra / physics) — load BEFORE
+        # apply_group_offloading so the offload hooks wrap the LoRA
+        # layers. Loading after offloading silently bypasses LoRA
+        # forward. NEVER fuse_lora — it errors on GGUF read-only tensors.
+        # Files are misnamed `.gguf` on disk but actually safetensors;
+        # diffusers detects format from content.
         loaded_adapters = []
-        # for lora_key in ["general_high", "animation_high"]:
-        #     lora_path = MODEL_DIR / f"wan_lora_{lora_key}.safetensors"
-        #     if lora_path.exists():
-        #         try:
-        #             pipe.load_lora_weights(str(lora_path), adapter_name=lora_key)
-        #             loaded_adapters.append(lora_key)
-        #             logger.info(f"[Wan2.2] LoRA → transformer: {lora_key}")
-        #         except Exception as e:
-        #             logger.warning(f"[Wan2.2] Failed to load LoRA {lora_key}: {e}")
-        #
-        # for lora_key in ["general_low", "animation_low"]:
-        #     lora_path = MODEL_DIR / f"wan_lora_{lora_key}.safetensors"
-        #     if lora_path.exists():
-        #         try:
-        #             pipe.load_lora_weights(str(lora_path), adapter_name=lora_key, load_into_transformer_2=True)
-        #             loaded_adapters.append(lora_key)
-        #             logger.info(f"[Wan2.2] LoRA → transformer_2: {lora_key}")
-        #         except Exception as e:
-        #             logger.warning(f"[Wan2.2] Failed to load LoRA {lora_key}: {e}")
+        adapter_weights = []
 
-        # Lightning distillation LoRAs (Seko I2V rank64, 4-step)
-        lightning_high = MODEL_DIR / WAN_LIGHTNING_HIGH
-        if lightning_high.exists():
-            try:
-                pipe.load_lora_weights(str(lightning_high), adapter_name="lightning_high")
-                loaded_adapters.append("lightning_high")
-                logger.info("[Wan2.2] Lightning LoRA → transformer: high_noise")
-            except Exception as e:
-                logger.warning(f"[Wan2.2] Failed to load Lightning high: {e}")
-        lightning_low = MODEL_DIR / WAN_LIGHTNING_LOW
-        if lightning_low.exists():
-            try:
-                pipe.load_lora_weights(str(lightning_low), adapter_name="lightning_low", load_into_transformer_2=True)
-                loaded_adapters.append("lightning_low")
-                logger.info("[Wan2.2] Lightning LoRA → transformer_2: low_noise")
-            except Exception as e:
-                logger.warning(f"[Wan2.2] Failed to load Lightning low: {e}")
+        # `low_cpu_mem_usage=False` forces eager allocation. Without it,
+        # diffusers builds LoRA layers via init_empty_weights and leaves
+        # some adapter params on the meta device, which crashes
+        # apply_group_offloading downstream when it tries to .to("cpu").
+        if use_extra:
+            extra_high = MODEL_DIR / WAN_EXTRA_HIGH
+            extra_low = MODEL_DIR / WAN_EXTRA_LOW
+            if extra_high.exists():
+                try:
+                    pipe.load_lora_weights(
+                        str(extra_high),
+                        adapter_name="extra_high",
+                        low_cpu_mem_usage=False,
+                    )
+                    loaded_adapters.append("extra_high")
+                    adapter_weights.append(extra_weight)
+                    logger.info(f"[Wan2.2] LoRA → transformer: extra_high (w={extra_weight})")
+                except Exception as e:
+                    logger.warning(f"[Wan2.2] Failed to load extra_high: {e}")
+            if extra_low.exists():
+                try:
+                    pipe.load_lora_weights(
+                        str(extra_low),
+                        adapter_name="extra_low",
+                        load_into_transformer_2=True,
+                        low_cpu_mem_usage=False,
+                    )
+                    loaded_adapters.append("extra_low")
+                    adapter_weights.append(extra_weight)
+                    logger.info(f"[Wan2.2] LoRA → transformer_2: extra_low (w={extra_weight})")
+                except Exception as e:
+                    logger.warning(f"[Wan2.2] Failed to load extra_low: {e}")
+
+        if use_physics:
+            physics_high = MODEL_DIR / WAN_PHYSICS_HIGH
+            physics_low = MODEL_DIR / WAN_PHYSICS_LOW
+            if physics_high.exists():
+                try:
+                    pipe.load_lora_weights(
+                        str(physics_high),
+                        adapter_name="physics_high",
+                        low_cpu_mem_usage=False,
+                    )
+                    loaded_adapters.append("physics_high")
+                    adapter_weights.append(physics_weight)
+                    logger.info(f"[Wan2.2] LoRA → transformer: physics_high (w={physics_weight})")
+                except Exception as e:
+                    logger.warning(f"[Wan2.2] Failed to load physics_high: {e}")
+            if physics_low.exists():
+                try:
+                    pipe.load_lora_weights(
+                        str(physics_low),
+                        adapter_name="physics_low",
+                        load_into_transformer_2=True,
+                        low_cpu_mem_usage=False,
+                    )
+                    loaded_adapters.append("physics_low")
+                    adapter_weights.append(physics_weight)
+                    logger.info(f"[Wan2.2] LoRA → transformer_2: physics_low (w={physics_weight})")
+                except Exception as e:
+                    logger.warning(f"[Wan2.2] Failed to load physics_low: {e}")
 
         if loaded_adapters:
-            # Seko V1 rank64 is designed for 1.0/1.0 on both experts.
-            adapter_weights = []
-            for name in loaded_adapters:
-                if name == "lightning_high":
-                    adapter_weights.append(1.0)
-                elif name == "lightning_low":
-                    adapter_weights.append(1.0)
-                elif "general" in name:
-                    adapter_weights.append(0.7)
-                elif "animation" in name:
-                    adapter_weights.append(0.5)
-                else:
-                    adapter_weights.append(1.0)
             pipe.set_adapters(loaded_adapters, adapter_weights)
             logger.info(f"[Wan2.2] Active adapters: {list(zip(loaded_adapters, adapter_weights))}")
+
+            # Defensive sweep: even with low_cpu_mem_usage=False, some
+            # diffusers versions still leave a few LoRA adapter buffers
+            # on the meta device. apply_group_offloading then errors with
+            # "Cannot copy out of meta tensor". Walk both transformers
+            # and materialize any stragglers as zero-init real tensors.
+            # Zeros are a no-op contribution from a dead LoRA branch — far
+            # better than crashing the whole generation.
+            def _materialize_meta(module, label):
+                fixed = 0
+                for name, param in list(module.named_parameters(recurse=True)):
+                    if param.is_meta:
+                        real = torch.zeros(param.shape, dtype=param.dtype, device="cpu")
+                        parts = name.split(".")
+                        parent = module
+                        for p in parts[:-1]:
+                            parent = getattr(parent, p)
+                        setattr(parent, parts[-1], torch.nn.Parameter(real, requires_grad=param.requires_grad))
+                        fixed += 1
+                if fixed:
+                    logger.warning(f"[Wan2.2] Materialized {fixed} stray meta tensors in {label}")
+            _materialize_meta(pipe.transformer, "transformer")
+            _materialize_meta(pipe.transformer_2, "transformer_2")
+        else:
+            logger.info("[Wan2.2] No external LoRAs (dasiwa baked-in only)")
+
+        # apply_group_offloading at leaf_level — REQUIRED for GGUF tensors.
+        # Block-level was incompatible with quanto; leaf_level + GGUF is
+        # the supported combo. Runs AFTER LoRA loading so hooks wrap them.
+        apply_group_offloading(pipe.transformer, onload_device=device, offload_device="cpu", offload_type="leaf_level")
+        apply_group_offloading(pipe.transformer_2, onload_device=device, offload_device="cpu", offload_type="leaf_level")
+        apply_group_offloading(pipe.text_encoder, onload_device=device, offload_device="cpu", offload_type="leaf_level")
+        for component_name in ["image_encoder"]:
+            component = getattr(pipe, component_name, None)
+            if component is not None and isinstance(component, torch.nn.Module):
+                apply_group_offloading(component, onload_device=device, offload_device="cpu", offload_type="leaf_level")
+        # VAE: keep pinned to device for decode. apply_group_offloading
+        # at leaf_level interferes with Wan VAE's `feat_cache` propagation
+        # between consecutive frames — at small spatial extents (240p)
+        # the cache survives the offload round-trip, but at 640×480+ the
+        # larger activations cause cache buffers to land on the wrong
+        # device or stale memory, producing chroma-confetti decode.
+        # VAE itself is small (~200-500 MB fp32) so device-pinning fits
+        # comfortably alongside the leaf-offloaded transformers.
+        pipe.vae.to(dtype=torch.float32)
+        pipe.vae.to(device)
 
         genbus.progress(gen_id, "generating", 3, 4)
 
@@ -4921,7 +5053,7 @@ def wan_i2v_video_test():
         if image_url:
             pil_image = load_image(image_url).convert("RGB")
         else:
-            pil_image = Image.open(io.BytesIO(base64.b64decode(image_b64))).convert("RGB")
+            pil_image = Image.open(io.BytesIO(_decode_image_base64(image_b64))).convert("RGB")
 
         # Resize preserving aspect ratio to target dims (cover + center crop)
         src_w, src_h = pil_image.size
@@ -5039,6 +5171,294 @@ def wan_i2v_video_test():
     finally:
         if pipe is not None:
             del pipe
+        gc.collect()
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+        if torch.backends.mps.is_available():
+            torch.mps.empty_cache()
+
+
+# =============================================================================
+# REST API: VIDEO ENHANCE — Real-ESRGAN x4 + ffmpeg minterpolate (Nx temporal)
+# =============================================================================
+#
+# Post-processes a video file:
+#   1. Spatial upscale x4 via Real-ESRGAN (RealESRGAN_x4plus or
+#      realesr-animevideov3 for animation-style content).
+#   2. Temporal upscale Nx via ffmpeg's `minterpolate` motion-compensated
+#      filter (mci + aobmc + bidir + vsbmc=1).
+#
+# Order matters: upscaling first gives the interpolator a cleaner spatial
+# signal to estimate flow from. Reversing the order propagates ESRGAN
+# artifacts into every interpolated frame.
+#
+# Why ffmpeg minterpolate instead of RIFE: rife-ncnn-vulkan-python has no
+# arm64 wheel, requires the LunarG Vulkan SDK to build from source on
+# macOS (~500 MB). minterpolate ships with the ffmpeg already pulled in
+# by imageio_ffmpeg (transitive dep of diffusers), so zero extra install.
+# Quality tradeoff is acceptable here because the upscale step does the
+# heavy lifting on detail.
+#
+# Dependencies:
+#   - realesrgan, basicsr  (PyPI; pure Python — install with --no-deps to
+#                           avoid pulling outdated torch / opencv)
+#   - imageio_ffmpeg       (already installed via diffusers transitive)
+
+
+_ESRGAN_CACHE = {"model": None, "variant": None}
+
+
+def _load_realesrgan(variant: str = "default"):
+    """Lazy-load RealESRGANer. variant: 'default' (RealESRGAN_x4plus) or 'anime'."""
+    if _ESRGAN_CACHE["model"] is not None and _ESRGAN_CACHE["variant"] == variant:
+        return _ESRGAN_CACHE["model"]
+    try:
+        from realesrgan import RealESRGANer
+        from basicsr.archs.rrdbnet_arch import RRDBNet
+        from realesrgan.archs.srvgg_arch import SRVGGNetCompact
+    except ImportError as e:
+        raise RuntimeError(
+            f"realesrgan backend not installed: {e}. "
+            "Run: pip install realesrgan basicsr"
+        )
+    if variant == "anime":
+        model = SRVGGNetCompact(
+            num_in_ch=3, num_out_ch=3, num_feat=64,
+            num_conv=16, upscale=4, act_type="prelu",
+        )
+        weights = MODEL_DIR / ESRGAN_X4_ANIME_NAME
+    else:
+        model = RRDBNet(
+            num_in_ch=3, num_out_ch=3, num_feat=64,
+            num_block=23, num_grow_ch=32, scale=4,
+        )
+        weights = MODEL_DIR / ESRGAN_X4_NAME
+    if not weights.exists():
+        raise RuntimeError(
+            f"Real-ESRGAN weights missing: {weights.name}. "
+            "Trigger pre-flight on /video/enhance with auto_download=true."
+        )
+    device = DeviceManager.get_device()
+    upsampler = RealESRGANer(
+        scale=4,
+        model_path=str(weights),
+        model=model,
+        tile=0,           # no tiling — full-frame upscale on unified memory
+        tile_pad=10,
+        pre_pad=0,
+        half=False,       # bf16/fp16 unstable on MPS for RRDBNet
+        device=device,
+    )
+    _ESRGAN_CACHE["model"] = upsampler
+    _ESRGAN_CACHE["variant"] = variant
+    return upsampler
+
+
+def _ffmpeg_exe():
+    """Locate an ffmpeg binary. Uses imageio_ffmpeg's bundled exe (transitive
+    dep of diffusers, always present)."""
+    try:
+        import imageio_ffmpeg
+        return imageio_ffmpeg.get_ffmpeg_exe()
+    except Exception as e:
+        raise RuntimeError(f"ffmpeg unavailable via imageio_ffmpeg: {e}")
+
+
+def _write_video_uint8(frames, output_path: str, fps: int):
+    """Write a list of uint8 RGB HxWx3 frames to MP4. We can't use diffusers'
+    `export_to_video` here because it does `(frame * 255).astype(uint8)` on
+    every numpy array (it assumes float [0,1] input from a diffusion pipeline
+    output) — feeding it our uint8 [0,255] frames wraps mod 256 and produces
+    negative-looking output."""
+    import imageio
+    with imageio.get_writer(
+        output_path,
+        fps=fps,
+        codec="libx264",
+        quality=8,            # imageio scale 0-10; 8 ≈ CRF 18-20
+        macro_block_size=16,
+        pixelformat="yuv420p",
+    ) as writer:
+        for frame in frames:
+            writer.append_data(frame)
+
+
+def _read_video_frames(path: str):
+    """Decode a video file into a list of HxWx3 uint8 numpy frames + fps."""
+    import imageio.v3 as iio
+    meta = iio.immeta(path, plugin="pyav")
+    fps = float(meta.get("fps") or 24.0)
+    frames = [f for f in iio.imiter(path, plugin="pyav")]
+    return frames, fps
+
+
+def _upscale_frames(frames, variant: str = "default"):
+    """Run Real-ESRGAN x4 on each frame (numpy HxWx3 uint8 → upscaled)."""
+    upsampler = _load_realesrgan(variant)
+    out = []
+    for i, frame in enumerate(frames):
+        # RealESRGANer.enhance expects BGR uint8 (OpenCV convention).
+        bgr = frame[:, :, ::-1].copy()
+        upscaled, _ = upsampler.enhance(bgr, outscale=4)
+        out.append(upscaled[:, :, ::-1].copy())  # back to RGB
+    return out
+
+
+def _interpolate_video_ffmpeg(input_path: str, output_path: str, factor: int):
+    """Temporal interpolation via ffmpeg's `minterpolate` (motion-compensated,
+    optical-flow-based). Cross-platform, no extra binaries required.
+
+    Quality is below RIFE 4.6 but acceptable for our use case (video already
+    upscaled to 1280×960 by Real-ESRGAN — interpolation has plenty of detail
+    to estimate flow from). `mi_mode=mci` + `mc_mode=aobmc` + `vsbmc=1` gives
+    the smoothest result without obvious tearing.
+    """
+    if factor <= 1:
+        # No interpolation requested — just copy the file.
+        import shutil
+        shutil.copyfile(input_path, output_path)
+        return
+    import subprocess
+    # Probe input fps via imageio_ffmpeg to compute target fps.
+    import imageio.v3 as iio
+    meta = iio.immeta(input_path, plugin="pyav")
+    in_fps = float(meta.get("fps") or 24.0)
+    target_fps = in_fps * factor
+    cmd = [
+        _ffmpeg_exe(),
+        "-y",
+        "-i", input_path,
+        "-filter:v", (
+            f"minterpolate=fps={target_fps}:"
+            "mi_mode=mci:mc_mode=aobmc:me_mode=bidir:vsbmc=1"
+        ),
+        "-c:v", "libx264",
+        "-pix_fmt", "yuv420p",
+        "-crf", "18",
+        "-preset", "medium",
+        output_path,
+    ]
+    logger.info(f"[Enhance] ffmpeg minterpolate: in_fps={in_fps} target_fps={target_fps} factor={factor}")
+    proc = subprocess.run(cmd, capture_output=True, text=True)
+    if proc.returncode != 0:
+        raise RuntimeError(f"ffmpeg minterpolate failed: {proc.stderr[-2000:]}")
+
+
+@app.route("/video/enhance", methods=["POST"])
+def video_enhance():
+    """
+    Enhance a video: x4 spatial upscale (Real-ESRGAN) + Nx temporal
+    interpolation (ffmpeg minterpolate). Input video stays untouched.
+
+    Request body:
+      - video_path (str)        — absolute path to source MP4 (preferred)
+      - video_base64 (str)      — alternative if no path available
+      - variant (str)           — 'default' (photo) or 'anime'. Default 'default'.
+      - upscale (bool)          — default True. Set False to skip upscaling.
+      - interp_factor (int)     — temporal multiplier. Default 4.
+      - auto_download (bool)    — pull missing weights inline. Default False.
+
+    Response:
+      - generation_id (str)
+      - video_path (str)        — enhanced output MP4
+      - input_fps (float)
+      - output_fps (float)
+      - input_size [w,h]
+      - output_size [w,h]
+      - frame_count (int)
+    """
+    data = request.get_json(force=True) or {}
+
+    video_path = (data.get("video_path") or "").strip()
+    video_b64 = (data.get("video_base64") or "").strip()
+    variant = (data.get("variant") or "default").strip().lower()
+    do_upscale = bool(data.get("upscale", True))
+    interp_factor = int(data.get("interp_factor", 4))
+    auto_dl = bool(data.get("auto_download", False))
+
+    if not video_path and not video_b64:
+        return jsonify({"error": "Provide 'video_path' or 'video_base64'"}), 400
+    if interp_factor not in (1, 2, 4, 8):
+        return jsonify({"error": "interp_factor must be 1, 2, 4, or 8"}), 400
+
+    if do_upscale:
+        guard = _ensure_files_present_or_start("video_enhance", auto_download=auto_dl)
+        if guard:
+            return guard
+
+    gen_id = genbus.new("video_enhance", {
+        "endpoint": "/video/enhance", "variant": variant,
+        "upscale": do_upscale, "interp_factor": interp_factor,
+    })
+
+    files_dir = MODEL_DIR / "files"
+    files_dir.mkdir(parents=True, exist_ok=True)
+
+    try:
+        if video_b64 and not video_path:
+            tmp_in = files_dir / f"enhance_in_{gen_id}.mp4"
+            tmp_in.write_bytes(base64.b64decode(video_b64))
+            video_path = str(tmp_in)
+
+        genbus.progress(gen_id, "decoding", 1, 4)
+        frames, in_fps = _read_video_frames(video_path)
+        in_h, in_w = frames[0].shape[:2]
+        logger.info(f"[Enhance] decoded {len(frames)} frames @ {in_w}x{in_h}, {in_fps}fps")
+
+        if do_upscale:
+            genbus.progress(gen_id, "upscaling", 2, 4)
+            frames = _upscale_frames(frames, variant=variant)
+            out_h, out_w = frames[0].shape[:2]
+            logger.info(f"[Enhance] upscaled to {out_w}x{out_h}")
+        else:
+            out_h, out_w = in_h, in_w
+
+        # Write the upscaled (or untouched) frames to an intermediate mp4
+        # at the original fps. If no interpolation was requested, this IS
+        # the final output. If interpolation was requested, ffmpeg
+        # minterpolate reads this and writes the final.
+        intermediate_path = str(files_dir / f"enhance_mid_{gen_id}.mp4")
+        out_path = str(files_dir / f"enhance_{gen_id}.mp4")
+
+        genbus.progress(gen_id, "encoding intermediate", 3, 4)
+        _write_video_uint8(frames, intermediate_path, fps=int(round(in_fps)))
+
+        if interp_factor > 1:
+            genbus.progress(gen_id, "interpolating", 4, 4)
+            _interpolate_video_ffmpeg(intermediate_path, out_path, interp_factor)
+            try:
+                Path(intermediate_path).unlink()
+            except Exception:
+                pass
+            out_fps = in_fps * interp_factor
+            # Frame count after interpolation isn't known exactly without
+            # re-decoding; estimate from fps target.
+            est_frames = int(round(len(frames) * interp_factor))
+        else:
+            # Just rename intermediate → final (no interp pass).
+            import shutil
+            shutil.move(intermediate_path, out_path)
+            out_fps = in_fps
+            est_frames = len(frames)
+
+        genbus.finish(gen_id, {"video_path": out_path})
+        logger.info(f"[Enhance] wrote {out_path} ({out_w}x{out_h} @ {out_fps}fps)")
+
+        return jsonify({
+            "generation_id": gen_id,
+            "video_path": out_path,
+            "input_fps": in_fps,
+            "output_fps": out_fps,
+            "input_size": [in_w, in_h],
+            "output_size": [out_w, out_h],
+            "frame_count": est_frames,
+        })
+
+    except Exception as e:
+        logger.exception("[Enhance] failed")
+        genbus.error(gen_id, str(e))
+        return jsonify({"error": str(e)}), 500
+    finally:
         gc.collect()
         if torch.cuda.is_available():
             torch.cuda.empty_cache()

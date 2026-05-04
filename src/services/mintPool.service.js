@@ -342,6 +342,23 @@ async function claimEpoch(epochId, poolIndex) {
 
     await fetchPoolStats();
 
+    // Mirror the claim into the SQL web3 cache (Phase 7b/8b). The
+    // dashboard reads from this cache to render claim history without
+    // touching the chain. Best-effort — failures don't break the claim.
+    try {
+      const wallet = await web3Service.getAddress?.();
+      const chainId = web3Service.state?.chainId || 8453;
+      await window.electronAPI?.db?.web3?.claimRecord?.({
+        chainId,
+        poolIndex,
+        epochNumber: Number(epochId),
+        wallet,
+        amountWei: claimedAmount ? ethers.parseEther(String(claimedAmount)).toString() : '0',
+        txHash: receipt.hash,
+        claimedAt: Date.now(),
+      });
+    } catch (e) { console.warn('[MintPool] claim mirror to SQL failed:', e?.message); }
+
     return {
       success: true,
       txHash: receipt.hash,

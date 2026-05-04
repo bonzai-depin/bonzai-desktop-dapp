@@ -109,11 +109,11 @@
                   <!-- DURATION TOGGLES -->
                   <span class="control">
                     <template v-if="videoModel === 'quality'">
-                      <input v-model="duration" :value="2" id="video_duration_2s" type="radio" name="video_duration" checked />
+                      <input v-model="duration" :value="2" id="video_duration_2s" type="radio" name="video_duration" />
                       <label for="video_duration_2s" class="radio duration">2s</label>
                       <input v-model="duration" :value="3" id="video_duration_3s" type="radio" name="video_duration" />
                       <label for="video_duration_3s" class="radio duration">3s</label>
-                      <input v-model="duration" :value="5" id="video_duration_5s_q" type="radio" name="video_duration" />
+                      <input v-model="duration" :value="5" id="video_duration_5s_q" type="radio" name="video_duration" checked />
                       <label for="video_duration_5s_q" class="radio duration">5s</label>
                     </template>
                     <template v-else>
@@ -134,16 +134,25 @@
                     <label for="video_fps_48" class="radio fps">48fps</label>
                   </span>
                   <span v-else class="control">
-                    <input v-model="wanFps" :value="8" id="wan_fps_8" type="radio" name="wan_fps" checked />
+                    <input v-model="wanFps" :value="8" id="wan_fps_8" type="radio" name="wan_fps" />
                     <label for="wan_fps_8" class="radio fps">8fps</label>
-                    <input v-model="wanFps" :value="16" id="wan_fps_16" type="radio" name="wan_fps" />
+                    <input v-model="wanFps" :value="16" id="wan_fps_16" type="radio" name="wan_fps" checked />
                     <label for="wan_fps_16" class="radio fps">16fps</label>
                   </span>
 
                   <!-- RESOLUTION TOGGLES (real resolutions shown for quality mode) -->
                   <span class="control resolution-toggles">
                     <template v-if="videoModel === 'quality'">
-                      <input v-model="quality" value="480p" id="vq_480" type="radio" name="video_quality" checked />
+                      <!-- 240p Draft is intentionally tiny so iteration on
+                           prompt / framing / negative-prompt tweaks
+                           takes ~2-3min on M3 Max instead of 10+. -->
+                      <input v-model="quality" value="240p" id="vq_240" type="radio" name="video_quality" />
+                      <label for="vq_240" class="radio quality">240×240 (Draft)</label>
+                      <input v-model="quality" value="320x240" id="vq_320x240" type="radio" name="video_quality" />
+                      <label for="vq_320x240" class="radio quality">320×240</label>
+                      <input v-model="quality" value="640x480" id="vq_640x480" type="radio" name="video_quality" checked />
+                      <label for="vq_640x480" class="radio quality">640×480</label>
+                      <input v-model="quality" value="480p" id="vq_480" type="radio" name="video_quality" />
                       <label for="vq_480" class="radio quality">320×512</label>
                       <input v-model="quality" value="540p" id="vq_540" type="radio" name="video_quality" />
                       <label for="vq_540" class="radio quality">384×672</label>
@@ -162,6 +171,14 @@
                       <input v-model="quality" value="1080p" id="video_quality_1080p" type="radio" name="video_quality" />
                       <label for="video_quality_1080p" class="radio quality mr-0">1080p</label>
                     </template>
+                  </span>
+
+                  <!-- AUTO-ENHANCE TOGGLE (Wan/quality only) -->
+                  <span v-if="videoModel === 'quality'" class="control">
+                    <input v-model="autoEnhance" id="video_auto_enhance" type="checkbox" />
+                    <label for="video_auto_enhance" class="radio quality" :title="'After generation, run Real-ESRGAN x4 + RIFE 4x. Adds 2-4 min.'">
+                      Auto-enhance ×4
+                    </label>
                   </span>
                 </div>
 
@@ -470,6 +487,20 @@
                           </span>
                         </button>
                         <button
+                          class="button is-medium is-link copy is-pulled-left ml-5 pl-2"
+                          @click="enhanceInference(inference)"
+                          :disabled="!!inference.answer?.data?.enhanced || !!enhancingIds[inference.id] || !inference.answer?.data?.video_path"
+                          :title="inference.answer?.data?.enhanced ? 'Already enhanced (×4 spatial + 4× temporal)' : 'Upscale ×4 + interpolate to 4× framerate (Real-ESRGAN + RIFE)'"
+                        >
+                          <span
+                            class="material-symbols-outlined is-size-2 mr-1"
+                            :class="{ 'is-rotating': enhancingIds[inference.id] }"
+                          >
+                            {{ inference.answer?.data?.enhanced ? 'check_circle' : (enhancingIds[inference.id] ? 'progress_activity' : 'high_quality') }}
+                          </span>
+                          {{ inference.answer?.data?.enhanced ? 'Enhanced' : (enhancingIds[inference.id] ? 'Enhancing…' : 'Upscale ×4') }}
+                        </button>
+                        <button
                           class="button is-medium is-warning copy is-pulled-left ml-5 pl-2"
                           @click="openMint(inference)"
                           :disabled="!!inference.nft"
@@ -622,11 +653,22 @@ export default {
     };
 
     const mode = ref("i2v"); // "t2v" (text-to-video) or "i2v" (image-to-video)
-    const videoModel = ref("fast"); // "fast" (LTX-2) or "quality" (Wan2.2)
-    const quality = ref("480p");  // 480p, 540p, 720p, 1080p
-    const duration = ref(5);       // seconds: 5 or 10 (default 5s for good motion)
+    // Default to quality (Wan 2.2). LTX-2 is kept available for the
+    // text-to-video path and faster batch jobs, but Wan's two-stage
+    // diffusion + Lightning 4-step distillation produces materially
+    // better motion + character consistency on MPS.
+    const videoModel = ref("quality");
+    // Default to 640×480 (4:3 landscape) for Wan/quality mode — solid
+    // working resolution. 240p Draft is still available one click away
+    // for fast prompt iteration. LTX (fast) mode overrides this to
+    // 480p in the watch() below since 640x480 isn't an LTX preset.
+    const quality = ref("640x480");
+    const duration = ref(5);       // seconds: default 5s
     const fps = ref(12);           // 12 or 24 (default 12fps for memory efficiency)
-    const wanFps = ref(8);          // 8 or 16 (default 8fps for Wan2.2)
+    const wanFps = ref(16);         // 8 or 16 (default 16fps for Wan2.2)
+    // Auto-enhance: chain /video/enhance (Real-ESRGAN x4 + RIFE 4x) after
+    // /video/quality completes. Default off — adds 2-4 min per generation.
+    const autoEnhance = ref(false);
     const isLoading = ref(false);
     const form = reactive({ prompt: "" });
     // Use shallowRef for inferences - video data is large
@@ -1416,6 +1458,79 @@ export default {
 
     let _lastRoutingMode = 'local';
 
+    // /video/enhance is gated by the same _ensure_files_present_or_start
+    // pre-flight as other pipelines: when ESRGAN weights are missing
+    // and `auto_download:true`, the first POST returns 202 (download
+    // accepted) without running the enhance. We need to wait for the
+    // download to finish (small files, ~64 MB total) and retry. After
+    // first run, weights are cached and the first POST succeeds.
+    const callEnhanceWithRetry = async (videoPath) => {
+      const body = JSON.stringify({
+        video_path: videoPath,
+        upscale: true,
+        interp_factor: 4,
+        variant: "default",
+        auto_download: true,
+      });
+      for (let attempt = 0; attempt < 12; attempt++) {  // ≤ 60s wait window
+        const r = await fetch(`${API_BASE}/video/enhance`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body,
+        });
+        if (r.status === 202) {
+          await new Promise((res) => setTimeout(res, 5000));
+          continue;
+        }
+        if (!r.ok) {
+          console.warn("[GenerativeVideo] Enhance failed:", r.status, await r.text());
+          return null;
+        }
+        return await r.json();
+      }
+      console.warn("[GenerativeVideo] Enhance timed out waiting for weight download");
+      return null;
+    };
+
+    // Per-inference enhance state. Map<inferenceId, true> while in flight.
+    const enhancingIds = ref({});
+
+    const enhanceInference = async (inference) => {
+      const id = inference?.id;
+      const data = inference?.answer?.data;
+      if (!id || !data?.video_path || data?.enhanced || enhancingIds.value[id]) return;
+      enhancingIds.value = { ...enhancingIds.value, [id]: true };
+      try {
+        const enh = await callEnhanceWithRetry(data.video_path);
+        if (enh?.video_path) {
+          const arr = inferences.value.slice();
+          const idx = arr.findIndex((i) => i.id === id);
+          if (idx >= 0) {
+            arr[idx] = {
+              ...arr[idx],
+              answer: {
+                ...arr[idx].answer,
+                data: {
+                  ...arr[idx].answer.data,
+                  video_path: enh.video_path,
+                  enhanced: true,
+                  enhanced_from: data.video_path,
+                  output_fps: enh.output_fps,
+                  output_size: enh.output_size,
+                },
+              },
+            };
+            inferences.value = arr;
+            persistInferences([...arr]);
+          }
+        }
+      } finally {
+        const next = { ...enhancingIds.value };
+        delete next[id];
+        enhancingIds.value = next;
+      }
+    };
+
     const sendMessage = async (prompt) => {
       if (!prompt) return;
       // For i2v mode, require an image
@@ -1433,6 +1548,17 @@ export default {
         "1080p": [1088, 1920],
       };
       const wanSizeMaps = {
+        // 640×480 (4:3 landscape) — default working resolution. Stored
+        // as [h, w] like the other entries.
+        "640x480": [480, 640],
+        // 320×240 (4:3 landscape) — small-bracket preview between draft
+        // and full 640×480.
+        "320x240": [240, 320],
+        // 240p draft preset: square 240×240 matches the M3 Max
+        // benchmark in the published Wan workflow (~150-180s end-to-end
+        // for 81 frames). Use this to iterate on prompt / negative /
+        // framing before committing to a higher-res render.
+        "240p":  [240, 240],
         "480p":  [320, 512],
         "540p":  [384, 672],
         "720p":  [480, 832],
@@ -1458,6 +1584,9 @@ export default {
             width: w,
             num_frames: frames,
             fps: wanFps.value,
+            // QuantStack Q5_K_M GGUF + Lightning Seko V1 LoRA on top.
+            // Locked to the distillation point: 4 steps + CFG 1.0.
+            // Anything else produces broken output.
             num_inference_steps: 4,
             guidance_scale: 1.0,
             auto_download: true,
@@ -1492,15 +1621,37 @@ export default {
       ensureGenerationSocket();
       startGeneration("video"); // Initialize generation state
       const _genStart = Date.now();
+
       const onSuccess = async (response) => {
         // UPDATED: Check for video_url OR video_path
         if (response?.data?.video_path || response?.data?.video_url) {
+          let finalData = response.data;
+
+          // Auto-enhance: only meaningful for /video/quality (Wan) since LTX
+          // already produces higher-FPS output. Chain Real-ESRGAN x4 + RIFE 4x
+          // before surfacing the result so the inference card lands enhanced.
+          if (isQuality && autoEnhance.value && finalData.video_path) {
+            try {
+              const enh = await callEnhanceWithRetry(finalData.video_path);
+              if (enh?.video_path) {
+                finalData = {
+                  ...finalData,
+                  video_path: enh.video_path,
+                  enhanced: true,
+                  enhanced_from: response.data.video_path,
+                  output_fps: enh.output_fps,
+                  output_size: enh.output_size,
+                };
+              }
+            } catch (e) {
+              console.warn("[GenerativeVideo] Enhance error:", e?.message || e);
+            }
+          }
+
           const elapsedMs = Date.now() - _genStart;
-          // Update shallowRef by replacing array
-          // Save only response.data (JSON body) - full axios response is not serializable
           const newInference = {
             question: `${mode.value}-i2v`,
-            answer: { data: response.data },
+            answer: { data: finalData },
             id: uuid(),
             model: isQuality ? 'wan2.2-14b' : 'ltx-2',
             elapsedMs,
@@ -1508,24 +1659,22 @@ export default {
           };
           inferences.value = [...inferences.value, newInference];
           hasCopy.value = [...hasCopy.value, false];
-          // Debounced persistence
           persistInferences([...inferences.value]);
 
-          // Save to unified inference store with performance metadata
           addVideoInference(
             `${mode.value}-i2v`,
-            response.data.video_path || response.data.video_url,
+            finalData.video_path || finalData.video_url,
             {
               pipeline: pipelineForMode(),
               duration: duration.value,
-              fps: fps.value,
+              fps: finalData.output_fps || fps.value,
               elapsed: elapsedMs / 1000,
               source: 'bonzai',
               networkMode: _lastRoutingMode,
+              enhanced: !!finalData.enhanced,
             },
           );
 
-          // Reset to first page to show the new result
           resetToFirstPage();
         }
       };
@@ -1733,9 +1882,11 @@ export default {
 
     // Re-probe when switching between fast (LTX-2) and quality (Wan2.2)
     watch(videoModel, (newModel) => {
-      // Reset duration and quality to mode-appropriate defaults
-      duration.value = newModel === "quality" ? 2 : 5;
-      quality.value = "480p";
+      // Reset duration and quality to mode-appropriate defaults.
+      // Quality (Wan) defaults to 640×480 / 5s; fast (LTX-2) goes to
+      // its own 480p preset.
+      duration.value = 5;
+      quality.value = newModel === "quality" ? "640x480" : "480p";
       probeCurrentMode();
     });
 
@@ -1746,6 +1897,7 @@ export default {
       duration,
       fps,
       wanFps,
+      autoEnhance,
       form,
       isLoading,
       inferences,
@@ -1797,12 +1949,25 @@ export default {
       mintTarget,
       openMint,
       onMinted,
+      // Enhance (Real-ESRGAN x4 + RIFE 4x)
+      enhanceInference,
+      enhancingIds,
     };
   },
 };
 </script>
 
 <style scoped>
+/* Spinner for the Upscale CTA while /video/enhance is in flight */
+.is-rotating {
+  animation: spin 1s linear infinite;
+  display: inline-block;
+}
+@keyframes spin {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
+
 /* Fonts imported from App.vue for offline mode */
 .generation {
   position: fixed;
