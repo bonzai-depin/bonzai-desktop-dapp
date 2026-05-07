@@ -272,6 +272,13 @@
   </div>
   <BonzaiBottomBar />
 
+  <!-- Global LLM model picker — callable from anywhere via
+       `import modelPicker from "../services/modelPicker.service.js"`
+       then `modelPicker.show()`. Lives at App.vue level so it doesn't
+       depend on any specific tab being mounted. Uses Teleport inside
+       its own template to escape this stacking context. -->
+  <LlmModelPickerModal />
+
   <!-- Hardware Specifications & Performance Modal -->
   <div
     v-if="showSpecsModal"
@@ -456,6 +463,7 @@ import GenerativeTraining from "./components/GenerativeTraining.vue";
 import Company from "./components/Company.vue";
 import SmartAgent from "./components/SmartAgent.vue";
 import BonzaiBottomBar from "./components/BonzaiBottomBar.vue";
+import LlmModelPickerModal from "./components/LlmModelPickerModal.vue";
 import { authService } from "./services/auth.service.js";
 import { useSkillStore } from "./stores/skillStore.js";
 import { initOpenClawHandler } from "./services/openclaw.handler.js";
@@ -475,6 +483,7 @@ export default {
     SmartAgent,
     Company,
     BonzaiBottomBar,
+    LlmModelPickerModal,
   },
   setup() {
     const modelMode = ref("chat");

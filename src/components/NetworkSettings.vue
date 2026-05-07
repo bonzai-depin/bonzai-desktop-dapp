@@ -812,6 +812,78 @@
           </div>
         </div>
       </div>
+
+      <!-- ServiceTime / MintPool rewards (provider-only) -->
+      <hr v-if="networkMode === 'provider'" />
+      <div
+        class="service-time-section mt-5"
+        v-if="networkMode === 'provider'"
+      >
+        <h2 class="section-title fira-sans-condensed-black-italic">
+          Service Time
+        </h2>
+        <p class="has-text-grey is-size-7 mb-3">
+          Seconds you've served as a shard provider, queued for submission
+          to <code>BonzaiServiceTime</code> on Arbitrum. Rewards land at
+          epoch close from the relevant MintPool's provider-side share.
+        </p>
+
+        <div v-if="!serviceTimeReady" class="notification is-warning is-light">
+          <strong>Pending audit deploy.</strong>
+          The on-chain BonzaiServiceTime address isn't populated yet.
+          Sessions still accumulate locally — they'll submit when the
+          contract goes live and the address lands in <code>web3.config.js</code>.
+        </div>
+
+        <div v-if="serviceTimePending && serviceTimePending.rows > 0" class="pending-summary mt-3">
+          <div class="pending-row">
+            <strong>{{ serviceTimePending.rows }} sessions</strong>
+            <span class="ml-2 has-text-grey">({{ (serviceTimePending.bytes / 1024).toFixed(1) }} KB ledger)</span>
+          </div>
+          <ul class="pipeline-list mt-2">
+            <li
+              v-for="(secs, pid) in serviceTimePending.pendingSeconds"
+              :key="pid"
+              class="pipeline-row"
+            >
+              <span class="pipeline-name">{{ pipelineLabel(pid) }}</span>
+              <span class="pipeline-seconds">{{ formatSeconds(secs) }}</span>
+            </li>
+          </ul>
+        </div>
+        <div v-else class="has-text-grey is-italic mt-2">
+          No pending service-time rows.
+        </div>
+
+        <div class="mt-4 buttons">
+          <button
+            class="button is-info"
+            :disabled="!serviceTimeReady || serviceTimeFlushing || !serviceTimePending?.rows"
+            @click="flushServiceTime"
+            :title="serviceTimeEligibility?.ok ? 'Submit pending seconds to Arbitrum' : (serviceTimeEligibility?.balance >= 0n ? 'Need 1000 BONZAI on Arbitrum to submit' : 'Connect wallet to check eligibility')"
+          >
+            <span class="material-symbols-outlined mr-2">cloud_upload</span>
+            <span v-if="serviceTimeFlushing">Submitting…</span>
+            <span v-else>Submit Pending</span>
+          </button>
+          <button
+            class="button is-light"
+            @click="refreshServiceTime"
+            :disabled="serviceTimeFlushing"
+          >
+            <span class="material-symbols-outlined mr-2">refresh</span>
+            Refresh
+          </button>
+        </div>
+
+        <div v-if="serviceTimeFlushResult" class="mt-3 notification is-success is-light">
+          Submitted {{ serviceTimeFlushResult.rowsSubmitted }} rows · tx
+          <code>{{ serviceTimeFlushResult.txHash?.slice(0, 10) }}…</code>
+        </div>
+        <div v-if="serviceTimeFlushError" class="mt-3 notification is-danger is-light">
+          {{ serviceTimeFlushError }}
+        </div>
+      </div>
     </div>
   </div>
 </template>
@@ -820,6 +892,12 @@
 import { ref, computed, onMounted, onUnmounted, watch } from "vue";
 import { getProviderPerformanceStats } from "../stores/inferenceStore.js";
 import PipelineStatus from "./PipelineStatus.vue";
+import {
+  isConfigured as serviceTimeIsConfigured,
+  getPendingSummary as serviceTimeGetPending,
+  flushPending as serviceTimeFlush,
+  checkEligibility as serviceTimeCheckEligibility,
+} from "../services/serviceTime.service.js";
 
 // State
 const isLoadingSettings = ref(true);
@@ -1006,6 +1084,99 @@ const relayFee = ref(5);
 
 const testPeerId = ref("");
 const testResult = ref(null);
+
+// ─── ServiceTime / MintPool rewards (provider only) ───────────────────
+//
+// State driven by:
+//   - serviceTime.isConfigured()      → contract address present in web3.config.js
+//   - serviceTime.getPendingSummary() → reads NDJSON ledger via IPC
+//   - serviceTime.checkEligibility()  → on-chain BONZAI balance >= LVL1
+//   - serviceTime.flushPending()      → tx + truncate
+const serviceTimeReady = ref(false);
+const serviceTimePending = ref(null);   // { pendingSeconds, rows, bytes } or null
+const serviceTimeEligibility = ref(null); // { ok, configured, balance, threshold } or null
+const serviceTimeFlushing = ref(false);
+const serviceTimeFlushResult = ref(null); // last { rowsSubmitted, txHash }
+const serviceTimeFlushError = ref(null);
+
+// pipelineId → human label, mirrors p2p.contract.service.js PIPELINE_CATEGORY_IDS
+const PIPELINE_LABELS = {
+  0: "LLM",
+  1: "Image (Turbo)",
+  2: "Image (Quality)",
+  3: "Image (Standard)",
+  6: "Audio (Turbo)",
+  7: "Audio (Quality)",
+  8: "Music",
+  9: "Video",
+  10: "Vision",
+  11: "Pipeline Shard",
+};
+const pipelineLabel = (pid) => PIPELINE_LABELS[pid] ?? `Pipeline #${pid}`;
+const formatSeconds = (s) => {
+  const n = Number(s) || 0;
+  if (n < 60) return `${n.toFixed(1)}s`;
+  if (n < 3600) return `${(n / 60).toFixed(1)}m`;
+  return `${(n / 3600).toFixed(2)}h`;
+};
+
+const refreshServiceTime = async () => {
+  serviceTimeReady.value = serviceTimeIsConfigured();
+  try {
+    serviceTimePending.value = await serviceTimeGetPending();
+  } catch (e) {
+    serviceTimePending.value = null;
+  }
+  // Eligibility only makes sense when the contract is live; otherwise
+  // we'd surface a wrong "below threshold" error before the deploy.
+  if (serviceTimeReady.value) {
+    try {
+      serviceTimeEligibility.value = await serviceTimeCheckEligibility();
+    } catch (e) {
+      serviceTimeEligibility.value = null;
+    }
+  } else {
+    serviceTimeEligibility.value = null;
+  }
+};
+
+const flushServiceTime = async () => {
+  serviceTimeFlushError.value = null;
+  serviceTimeFlushResult.value = null;
+  serviceTimeFlushing.value = true;
+  try {
+    const result = await serviceTimeFlush();
+    if (result.skipped) {
+      serviceTimeFlushError.value = `Skipped: ${result.skipped}`;
+    } else {
+      serviceTimeFlushResult.value = result;
+      // Reload pending — successful flush truncates the ledger.
+      await refreshServiceTime();
+    }
+  } catch (e) {
+    serviceTimeFlushError.value = e?.message || String(e);
+  } finally {
+    serviceTimeFlushing.value = false;
+  }
+};
+
+// Auto-refresh while the user is on the panel — rows accumulate as the
+// shard worker writes the ledger. 10s cadence is enough; the wall-clock
+// granularity for a session is typically minutes.
+let _serviceTimePoll = null;
+watch(networkMode, (v) => {
+  if (v === "provider") {
+    refreshServiceTime();
+    if (!_serviceTimePoll) {
+      _serviceTimePoll = setInterval(refreshServiceTime, 10_000);
+    }
+  } else {
+    if (_serviceTimePoll) { clearInterval(_serviceTimePoll); _serviceTimePoll = null; }
+  }
+}, { immediate: true });
+onUnmounted(() => {
+  if (_serviceTimePoll) { clearInterval(_serviceTimePoll); _serviceTimePoll = null; }
+});
 
 let statusInterval = null;
 

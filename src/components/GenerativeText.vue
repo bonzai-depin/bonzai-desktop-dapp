@@ -455,6 +455,14 @@
                     neurology
                   </span>
                   {{ model.modelname }}
+                  <span
+                    v-if="model.fitLabel"
+                    class="fit-badge"
+                    :class="`fit-badge--tier${model.fitTier}`"
+                    :title="model.fitReason"
+                  >
+                    {{ model.fitLabel }}
+                  </span>
                   <span class="filesize">
                     <span
                       class="material-symbols-outlined is-size-3 mr-2 is-pulled-left"
@@ -858,153 +866,13 @@ function stripThinkBlocks(text) {
  * @param {number} options.contextSize - Override default context size
  * @returns {Object} { vram, ram, diskSpace, canOffload, description }
  */
-const computeMemoryRequirements = (model, options = {}) => {
-  const {
-    parameters,
-    activeParameters,
-    isMoE = false,
-    context: defaultContext,
-    filename = "",
-  } = model;
+// Memory + fit-tier math lives in src/services/modelFit.service.js so
+// LlmModelPickerModal.vue uses the same algorithm. Re-imported into this
+// module's scope so the existing template references and the
+// component's `return { computeMemoryRequirements }` continue to resolve
+// without changes.
+import { computeMemoryRequirements, computeFitTier } from "../services/modelFit.service.js";
 
-  const contextSize = options.contextSize || defaultContext || 4096;
-
-  // For VRAM estimation, cap KV cache context at a practical inference size.
-  // The model's max context is a capability, not a static allocation —
-  // KV cache grows dynamically during inference. Most engines default to 4096-8192.
-  const kvContextSize = Math.min(contextSize, 8192);
-
-  // Estimate bytes per parameter based on quantization from filename
-  const getQuantBytesPerParam = (fname) => {
-    const f = fname.toLowerCase();
-    if (f.includes("tq1_0") || f.includes("q1_0")) return 0.2; // ~1.6 bits
-    if (f.includes("iq2_")) return 0.28; // ~2.25 bits
-    if (f.includes("q2_k")) return 0.3125; // ~2.5 bits
-    if (f.includes("iq3_")) return 0.375; // ~3 bits
-    if (f.includes("q3_k")) return 0.4375; // ~3.5 bits
-    if (f.includes("iq4_")) return 0.5; // ~4 bits
-    if (f.includes("q4_k") || f.includes("q4_0") || f.includes("q4_1"))
-      return 0.5625; // ~4.5 bits
-    if (f.includes("q5_k") || f.includes("q5_0") || f.includes("q5_1"))
-      return 0.6875; // ~5.5 bits
-    if (f.includes("q6_k")) return 0.8125; // ~6.5 bits
-    if (f.includes("q8_k") || f.includes("q8_0")) return 1.0; // 8 bits
-    if (f.includes("f16") || f.includes("fp16")) return 2.0; // 16 bits
-    if (f.includes("f32") || f.includes("fp32")) return 4.0; // 32 bits
-    return 0.5625; // Default to Q4_K estimate
-  };
-
-  const bytesPerParam = getQuantBytesPerParam(options.quantization || filename);
-
-  // Estimate model dimensions from parameters (rough approximation)
-  // For transformer: params ≈ 12 * L * d^2 where L=layers, d=hidden_dim
-  // Simplify: assume layers ≈ sqrt(params / 2e9) * 8, capped
-  //
-  // For MoE models, use activeParameters for estimation since total params
-  // are inflated by expert FFNs, not by additional layers/heads.
-  const estimateFrom = isMoE && activeParameters ? activeParameters : parameters;
-
-  const estimateLayers = (params) => {
-    const p = params / 1e9;
-    if (p <= 1.5) return 12;
-    if (p <= 3) return 24;
-    if (p <= 8) return 32;
-    if (p <= 14) return 40;
-    if (p <= 20) return 48;
-    if (p <= 34) return 60;
-    if (p <= 70) return 80;
-    return 96;
-  };
-
-  const estimateHeadDim = (params) => {
-    const p = params / 1e9;
-    if (p <= 3) return 64;
-    if (p <= 8) return 128;
-    return 128;
-  };
-
-  const estimateKVHeads = (params) => {
-    const p = params / 1e9;
-    if (p <= 3) return 8;
-    if (p <= 8) return 8;
-    if (p <= 14) return 8;
-    return 8; // GQA typically uses fewer KV heads
-  };
-
-  // Use model-specified architecture values if available, otherwise estimate.
-  // MoE models should specify these since generic estimation from total params is unreliable.
-  const layers = model.layers || estimateLayers(estimateFrom);
-  const headDim = model.headDim || estimateHeadDim(estimateFrom);
-  const kvHeads = model.kvHeads || estimateKVHeads(estimateFrom);
-
-  // KV cache size: 2 (K+V) * layers * kvHeads * headDim * context * 2 (fp16)
-  const kvCacheBytes = 2 * layers * kvHeads * headDim * kvContextSize * 2;
-
-  // Model weights size
-  const modelWeightsBytes = parameters * bytesPerParam;
-
-  // Overhead for activations, scratch space (~10-15%)
-  const overheadFactor = 1.1;
-
-  let vramBytes, ramBytes, canOffload, description;
-
-  if (isMoE && activeParameters) {
-    // MoE model: only active parameters needed in VRAM for compute
-    // Full model loads to RAM, experts swap in/out as needed
-
-    // Active parameters for VRAM (what's actually computed per token)
-    const activeWeightsBytes = activeParameters * bytesPerParam;
-
-    // VRAM: active weights + KV cache + overhead
-    vramBytes = (activeWeightsBytes + kvCacheBytes) * overheadFactor;
-
-    // RAM: full model weights (experts stay in RAM until needed)
-    // In practice, node-llama-cpp loads full model to RAM, GPU pulls active layers
-    ramBytes = modelWeightsBytes * overheadFactor;
-
-    canOffload = true;
-
-    description =
-      `MoE model with ${(parameters / 1e9).toFixed(1)}B total / ${(activeParameters / 1e9).toFixed(1)}B active params. ` +
-      `VRAM needed: ${(vramBytes / 1e9).toFixed(1)}GB (active params + KV cache). ` +
-      `RAM needed: ${(ramBytes / 1e9).toFixed(1)}GB (full model). ` +
-      `Experts offload to RAM when not in use.`;
-  } else {
-    // Dense model: all weights needed in VRAM for inference
-    vramBytes = (modelWeightsBytes + kvCacheBytes) * overheadFactor;
-    ramBytes = modelWeightsBytes * 0.5; // System RAM as backup/swap
-
-    canOffload = false;
-
-    description =
-      `Dense model with ${(parameters / 1e9).toFixed(1)}B params. ` +
-      `VRAM needed: ${(vramBytes / 1e9).toFixed(1)}GB (weights + KV cache). ` +
-      `Can offload layers to RAM if VRAM is insufficient.`;
-  }
-
-  return {
-    vram: vramBytes,
-    vramGB: +(vramBytes / 1e9).toFixed(2),
-    ram: ramBytes,
-    ramGB: +(ramBytes / 1e9).toFixed(2),
-    diskSpace: modelWeightsBytes,
-    diskSpaceGB: +(modelWeightsBytes / 1e9).toFixed(2),
-    kvCacheGB: +(kvCacheBytes / 1e9).toFixed(2),
-    canOffload,
-    isMoE,
-    description,
-    // Breakdown for debugging
-    breakdown: {
-      parameters,
-      activeParameters: activeParameters || parameters,
-      bytesPerParam,
-      layers,
-      headDim,
-      kvHeads,
-      contextSize,
-    },
-  };
-};
 
 import GenerativeImage from "./GenerativeImage.vue";
 import AccessRequirements from "./AccessRequirements.vue";
@@ -1134,11 +1002,32 @@ export default {
       tierByBase.value[baseKey] = tier;
     };
 
-    const sortedModels = computed(() =>
-      Object.values(availableModels.value).sort((a, b) =>
-        a.modelname.localeCompare(b.modelname)
-      )
-    );
+    // Hardware-fit ranking: load once on mount, then re-sort when it lands.
+    // Sort key, low → high:
+    //   1. fitTier            (0=comfortable, 1=tight, 2=offload, 3=won't fit)
+    //   2. -parameters        (within each tier, prefer the largest model that
+    //                          still fits — better quality at the same compute)
+    //   3. modelname          (alphabetical tiebreaker for stable ordering)
+    //
+    // Until sysInfo arrives we use a placeholder that returns tier=1 for all,
+    // collapsing the sort to "biggest first". After mount the computed re-runs
+    // and the fit tiering takes over.
+    const sysInfo = ref(null);
+    const sortedModels = computed(() => {
+      const info = sysInfo.value;
+      const enriched = Object.values(availableModels.value).map((m) => {
+        const mem = computeMemoryRequirements(m);
+        const fit = computeFitTier(mem, info);
+        return { ...m, vramGB: mem.vramGB, fitTier: fit.tier, fitLabel: fit.label, fitReason: fit.reason };
+      });
+      enriched.sort((a, b) => {
+        if (a.fitTier !== b.fitTier) return a.fitTier - b.fitTier;
+        const pa = a.parameters || 0, pb = b.parameters || 0;
+        if (pa !== pb) return pb - pa;
+        return a.modelname.localeCompare(b.modelname);
+      });
+      return enriched;
+    });
 
     // Default model sourced from the registry — Qwen3.5 0.8B Q4 is the
     // lightest option and always has a single tier, so it's safe as a start.
@@ -1967,6 +1856,23 @@ export default {
       pipelineErrorUnsub = window.electronAPI?.onPipelineError?.((err) => {
         pipelineError.value = err;
       });
+      // Fetch hardware profile so the picker can rank models by fit. The
+      // detail (gpu name, exact vram) lands on a second call once the
+      // si.* probes finish in main; the first call returns instantly with
+      // ram + memBudget which is enough to start ordering.
+      const fetchSysInfo = async () => {
+        try {
+          const info = await window.electronAPI?.systemInformation?.();
+          if (info) sysInfo.value = info;
+        } catch (e) {
+          console.warn("[GenerativeText] systemInformation failed:", e?.message);
+        }
+      };
+      fetchSysInfo();
+      // Second pass after 1.5s gives main's background si.graphics() probe
+      // a chance to populate vram/gpu — without this, discrete-GPU users
+      // would see the conservative fallback ranking on first paint.
+      setTimeout(fetchSysInfo, 1500);
     });
     onUnmounted(() => {
       window.removeEventListener("bonzai:show-browse-models", handleShowBrowseModels);
@@ -2988,4 +2894,24 @@ ol.chat li {
     opacity: 1;
   }
 }
+
+/* Hardware-fit indicator on model picker cards. Color encodes the
+   fit tier; the title attribute carries the human-readable reason. */
+.fit-badge {
+  display: inline-block;
+  margin-left: 0.6rem;
+  padding: 0.15rem 0.55rem;
+  border-radius: 999px;
+  font-size: 0.72rem;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  text-transform: none;
+  vertical-align: middle;
+  line-height: 1.4;
+  border: 1px solid currentColor;
+}
+.fit-badge--tier0 { color: #1f8b4c; background: rgba(31, 139, 76, 0.10); }
+.fit-badge--tier1 { color: #c9a227; background: rgba(201, 162, 39, 0.10); }
+.fit-badge--tier2 { color: #cf6a1e; background: rgba(207, 106, 30, 0.10); }
+.fit-badge--tier3 { color: #b13a3a; background: rgba(177, 58, 58, 0.10); }
 </style>

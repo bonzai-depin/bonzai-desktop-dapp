@@ -351,6 +351,15 @@ const startPythonSubprocess = async () => {
     BONZAI_MODEL_DIR: MODEL_DIR,
     // Pass JWT secret so tokens survive server restarts
     BONZAI_JWT_SECRET: JWT_SECRET,
+    // Privacy-pipeline UDS path. The bridge listener may not be up yet
+    // (it starts on p2p-start, often after the diffuser is already
+    // running) — the diffuser's pipeline_transport.default_socket_path()
+    // computes the same path from os.getppid() if the env var is absent,
+    // so this is a hint, not a hard dependency. Passing it explicitly
+    // also covers the case where the user runs two BonzAI instances and
+    // the parent-pid heuristic would collide.
+    BONZAI_SHARD_SOCKET: process.env.BONZAI_SHARD_SOCKET
+      || path.join(os.tmpdir(), `bonzai-shard-${process.pid}.sock`),
   };
 
   // Log detailed spawn info
@@ -1461,6 +1470,36 @@ ipcMain.handle("p2p-start", async (_event, options = {}) => {
       }
     };
 
+    // Start the privacy-pipeline UDS bridge so the local diffuser can
+    // open sharded inference sessions when the user picks Consumer +
+    // Privacy. Idempotent — safe to call on every p2p-start. Surfacing
+    // the socket path via env lets the Python diffuser discover it
+    // without an extra IPC roundtrip.
+    try {
+      const { startConsumerBridge, startProviderBridge } = await import("./main/shardSession.js");
+      const sockPath = await startConsumerBridge();
+      process.env.BONZAI_SHARD_SOCKET = sockPath;
+      if (mainWindow && !mainWindow.isDestroyed()) {
+        mainWindow.webContents.send("shard-socket-ready", sockPath);
+      }
+
+      // Provider role: register inbound libp2p handlers (SHARD_LOAD on
+      // /bonzai/v2/pipeline + raw streams on /bonzai/v2/rpc-tunnel)
+      // that bridge incoming sessions to the local Flask shard worker.
+      // Networkmode-gated so consumers don't unintentionally serve
+      // shards. Mode change → next p2p-start picks up the new role.
+      const mode = store.get("p2p.networkMode", "local");
+      if (mode === "provider") {
+        const flaskPort = parseInt(process.env.BONZAI_SERVER_PORT || "65000", 10);
+        await startProviderBridge({ flaskPort });
+      }
+    } catch (err) {
+      // Bridge is non-fatal — Consumer + Privacy / Provider modes just
+      // won't work until the user resolves the underlying issue (e.g.,
+      // stale socket file in /tmp from a prior crash).
+      console.warn("[P2P] shard bridge failed to start:", err.message);
+    }
+
     return {
       ok: true,
       peerId,
@@ -1477,6 +1516,13 @@ ipcMain.handle("p2p-start", async (_event, options = {}) => {
  */
 ipcMain.handle("p2p-stop", async () => {
   try {
+    try {
+      const { stopConsumerBridge, stopProviderBridge } = await import("./main/shardSession.js");
+      await stopConsumerBridge();
+      await stopProviderBridge();
+    } catch (err) {
+      console.warn("[P2P] shard bridge stop failed:", err.message);
+    }
     await stopP2PNode();
     return { ok: true };
   } catch (err) {
@@ -1766,6 +1812,76 @@ ipcMain.handle("p2p-shard-stop", async () => {
   return { ok: true };
 });
 
+// ─────────────────────────────────────────────────────────────────────────
+// SERVICE-TIME LEDGER IPC
+// ─────────────────────────────────────────────────────────────────────────
+// The renderer's serviceTime.service.js can't read filesystem directly;
+// these IPCs expose the NDJSON ledger that shard.py and the consumer
+// bridge append to. `read` returns parsed rows, `truncate` removes
+// rows whose ts is <= a watermark (used after a successful submission
+// tx confirms). Both ops are best-effort idempotent — re-running a
+// flush after a partial truncate replays the same rows; the contract
+// dedupes via the (provider, epoch) accumulator.
+
+function _serviceTimeLedgerPath() {
+  const home = process.env.HOME || process.env.USERPROFILE || os.tmpdir();
+  return path.join(home, "bonzai-server", "service_time.ndjson");
+}
+
+ipcMain.handle("service-time:read-ledger", async () => {
+  const p = _serviceTimeLedgerPath();
+  if (!fs.existsSync(p)) return [];
+  try {
+    const text = fs.readFileSync(p, "utf8");
+    const rows = [];
+    for (const line of text.split("\n")) {
+      const trimmed = line.trim();
+      if (!trimmed) continue;
+      try {
+        const row = JSON.parse(trimmed);
+        row._raw_size = Buffer.byteLength(trimmed, "utf8") + 1;
+        rows.push(row);
+      } catch {
+        // Skip malformed rows rather than poisoning the whole flush
+      }
+    }
+    return rows;
+  } catch (err) {
+    console.warn("[service-time] read failed:", err.message);
+    return [];
+  }
+});
+
+ipcMain.handle("service-time:truncate-ledger", async (_event, beforeTs) => {
+  const p = _serviceTimeLedgerPath();
+  if (!fs.existsSync(p)) return { kept: 0, removed: 0 };
+  try {
+    const text = fs.readFileSync(p, "utf8");
+    const kept = [];
+    let removed = 0;
+    for (const line of text.split("\n")) {
+      const trimmed = line.trim();
+      if (!trimmed) continue;
+      let row;
+      try { row = JSON.parse(trimmed); } catch { continue; }
+      if (typeof beforeTs === "number" && row.ts <= beforeTs) {
+        removed++;
+        continue;
+      }
+      kept.push(trimmed);
+    }
+    // Write atomically: temp file + rename. Avoids a half-truncated
+    // ledger if the shard worker appends mid-write.
+    const tmp = p + ".tmp";
+    fs.writeFileSync(tmp, kept.length ? kept.join("\n") + "\n" : "", "utf8");
+    fs.renameSync(tmp, p);
+    return { kept: kept.length, removed };
+  } catch (err) {
+    console.warn("[service-time] truncate failed:", err.message);
+    return { kept: 0, removed: 0, error: err.message };
+  }
+});
+
 // Kill rpc-server on app quit
 app.on("before-quit", () => {
   if (rpcServerProcess && !rpcServerProcess.killed) {
@@ -1904,6 +2020,15 @@ async function routeInferenceRequest(request) {
       // Video pipeline (LTX-2)
       case "video_fast":
         endpoint = "/video";
+        break;
+
+      // Video quality pipeline (Wan 2.2 i2v) — no dedicated category in
+      // BonzaiProviderRegistry yet (enum stops at VISION=10). Eligible
+      // providers fall under the same `video_fast` advertisement until the
+      // contract gets a VIDEO_QUALITY slot; revisit when ServiceTime is
+      // populated in web3.config.js.
+      case "video_quality":
+        endpoint = "/video/quality";
         break;
 
       // Vision pipeline (Qwen3.5-0.8B 4-bit MLX)
@@ -2103,6 +2228,73 @@ ipcMain.handle("inference-request", async (event, { pipeline, params }) => {
         }
         // Otherwise: reload model and fall through to provider selection.
         await ensureLocalLLMReady();
+      }
+    }
+
+    // ── Privacy pipeline (Consumer + Privacy, DiT routes only) ──
+    // When the user has enabled privacy AND picked a DiT pipeline, we
+    // route through the LOCAL Flask with `pipeline_mode=private` +
+    // `peer_id` injected. Local Flask's ShardedDiTPipeline patches the
+    // transformer's layer list so the middle blocks ride the libp2p
+    // bridge to the chosen provider; head + tail run locally. Free —
+    // no per-gen payment plumbing here.
+    const SHARDABLE_DIT = new Set([
+      "image_quality", "image_advanced",
+      "image_turbo",
+      "video_fast", "video_quality",
+      "audio_quality", "music",
+    ]);
+    if (pipelineEnabled && !isLLM && SHARDABLE_DIT.has(pipeline)) {
+      const node = getP2PNode();
+      const providersRaw = store.get("p2p.selectedProviders", null);
+      const providers = providersRaw
+        ? (typeof providersRaw === "string" ? JSON.parse(providersRaw) : providersRaw)
+        : [];
+      if (node?.isStarted && Array.isArray(providers) && providers.length > 0) {
+        // Path-state machine — selection filters out peers in SKIP /
+        // ASSUMED_BAD / DENIED, weights by compute_score, and bumps a
+        // peer back to GOOD on success. See pipelinePlanner.service.js.
+        const planner = await import("./services/pipelinePlanner.service.js");
+        const peer = planner.pickPeer(pipeline, providers);
+        if (peer) {
+          const enrichedParams = {
+            ...params,
+            pipeline_mode: "private",
+            peer_id: peer.peerId,
+          };
+          try {
+            console.log(`[Inference] Private mode: routing ${pipeline} via peer ${peer.peerId.slice(0, 12)}…`);
+            const result = await routeInferenceRequest({ pipeline, params: enrichedParams });
+            planner.markSuccess(peer.peerId);
+            return { ok: true, result, remote: false, private: true, peerId: peer.peerId };
+          } catch (err) {
+            // Categorize the error so the planner state machine takes
+            // the right transition. Timeouts / TRIM-class are transient
+            // (→ SKIP); shardId mismatch / PSN errors are fatal
+            // (→ ASSUMED_BAD); UDS hangup means the local bridge died.
+            const msg = String(err.message || "");
+            let reason = planner.FAILURE_REASON.WORKER_ERROR;
+            if (/timeout|deadline/i.test(msg))         reason = planner.FAILURE_REASON.TIMEOUT;
+            else if (/trim/i.test(msg))                reason = planner.FAILURE_REASON.NACK_TRIM;
+            else if (/no.?bitmap|no_bitmap/i.test(msg)) reason = planner.FAILURE_REASON.NACK_NOBITMAP;
+            else if (/psn.?out.?of.?range|psn_oor/i.test(msg)) reason = planner.FAILURE_REASON.NACK_PSN_OOR;
+            else if (/uds|socket closed/i.test(msg))   reason = planner.FAILURE_REASON.UDS_DISCONNECT;
+            const newState = planner.markFailure(peer.peerId, reason);
+            console.warn(`[Inference] Private-mode dispatch failed (${reason} → ${newState}): ${msg}`);
+            event.sender.send("pipeline-error", {
+              code: "private_failed",
+              message: msg,
+              peerId: peer.peerId,
+              reason,
+              newState,
+              fatal: false,
+            });
+            // Fall through to single-provider routing — graceful
+            // degradation. Same privacy model as Consumer mode.
+          }
+        } else {
+          console.warn(`[Inference] No GOOD-state peers for private ${pipeline}; falling through`);
+        }
       }
     }
 

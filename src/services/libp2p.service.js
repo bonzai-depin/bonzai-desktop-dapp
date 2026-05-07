@@ -26,6 +26,7 @@ export const PROTOCOLS = {
   DISCOVERY: '/bonzai/v1/discovery',
   PIPELINE: '/bonzai/v2/pipeline',          // Pipeline negotiation (JSON)
   RPC_TUNNEL: '/bonzai/v2/rpc-tunnel',      // Raw TCP tunnel for llama.cpp RPC traffic
+  SHARD_TUNNEL: '/bonzai/v2/shard-tunnel',  // Raw stream for sharded DiT activation frames
 };
 
 // Default configuration

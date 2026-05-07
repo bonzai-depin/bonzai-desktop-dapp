@@ -8,6 +8,7 @@
 
 import { createSkillDefinition } from './types.js';
 import { getAuthHeaders, authFetch, ensureAuth } from '../services/auth.service.js';
+import { routeFlaskRequest } from '../services/inferenceRouter.service.js';
 
 // ═══════════════════════════════════════════════════════════════════════════
 // AGE VALIDATION - COMPANION SAFETY
@@ -2536,6 +2537,17 @@ async function resolveImageBase64(src) {
 }
 
 async function callFlaskEndpoint(endpoint, payload) {
+  // Network-mode aware routing: ask the main process first. It reads
+  // `p2p.networkMode` + `p2p.pipeline.enabled` and either runs the request
+  // on a remote provider (Consumer mode) or sharded across N peers
+  // (Consumer + Privacy), or signals "use local" so we hit localhost
+  // ourselves. Returns `handled: false` on any non-ok shape — local fetch
+  // is the safe fallback in every case.
+  const routed = await routeFlaskRequest(endpoint, payload);
+  if (routed.handled) {
+    return routed.result;
+  }
+
   const port = getFlaskPort();
 
   // Proactively ensure auth token is valid before making the request

@@ -549,6 +549,24 @@ socketio = SocketIO(
 )
 
 # =============================================================================
+# PRIVACY-PIPELINE PROVIDER BLUEPRINT
+# =============================================================================
+# Mount the /shard/* control plane + UDS data-plane listener when this
+# Flask process is running on a provider (BONZAI_NETWORK_MODE=provider).
+# In every other mode the import + install is a no-op, so consumer-only
+# users carry no extra threads or sockets. The blueprint owns its own
+# state — see src/server/shard.py for the full surface.
+try:
+    import shard as _shard_blueprint
+    _shard_path = _shard_blueprint.install(app)
+    if _shard_path:
+        logger.info("[shard] privacy pipeline ENABLED — worker UDS at %s", _shard_path)
+except Exception as _shard_err:
+    # Provider mode is opt-in; bridge failures shouldn't block the
+    # rest of Flask. Log and continue with no-op behavior.
+    logger.warning("[shard] blueprint failed to install: %s", _shard_err)
+
+# =============================================================================
 # JWT AUTHENTICATION SYSTEM
 # =============================================================================
 
@@ -912,9 +930,20 @@ def generation_url() -> str:
 # DEVICE MANAGEMENT
 # =============================================================================
 
+def _is_rocm_runtime() -> bool:
+    """PyTorch on ROCm exposes the same `torch.cuda.*` API but reports a
+    HIP version via `torch.version.hip`. Using that as the discriminator
+    avoids spawning a hipinfo subprocess at import time."""
+    return bool(torch.cuda.is_available() and getattr(torch.version, "hip", None))
+
+
 class DeviceManager:
     @staticmethod
     def get_device() -> torch.device:
+        # MPS first — Apple Silicon never has CUDA/HIP; this short-
+        # circuits cleanly. Then CUDA (which transparently covers ROCm
+        # via HIP-on-CUDA-API; the device string stays "cuda" even on
+        # AMD). CPU as the universal fallback.
         if torch.backends.mps.is_available():
             return torch.device("mps")
         if torch.cuda.is_available():
@@ -922,9 +951,24 @@ class DeviceManager:
         return torch.device("cpu")
 
     @staticmethod
+    def is_rocm() -> bool:
+        return _is_rocm_runtime()
+
+    @staticmethod
     def get_dtype(device: Optional[torch.device] = None) -> torch.dtype:
         device = device or DeviceManager.get_device()
-        return torch.float16 if device.type in ("cuda", "mps") else torch.bfloat16
+        if device.type == "mps":
+            # MPS reliably handles fp16; bf16 is supported on M2+ but
+            # we keep fp16 for backwards compat with M1.
+            return torch.float16
+        if device.type == "cuda":
+            # ROCm: RDNA2/3 prefer bfloat16 (handles wider exponent
+            # range without overflow surprises in attention). CUDA
+            # standardizes on float16 for inference.
+            if _is_rocm_runtime():
+                return torch.bfloat16
+            return torch.float16
+        return torch.bfloat16
 
     @staticmethod
     def free_memory():
@@ -932,6 +976,8 @@ class DeviceManager:
         if torch.backends.mps.is_available():
             torch.mps.empty_cache()
         if torch.cuda.is_available():
+            # Same call works for both CUDA and HIP — PyTorch routes it
+            # to hipDeviceSynchronize / hipFree internally on ROCm.
             torch.cuda.empty_cache()
 
 
@@ -2854,6 +2900,15 @@ def z_image_quality():
     seed = data.get("seed", None)
     auto_dl = bool(data.get("auto_download", False))
 
+    # Private mode (Consumer + Privacy in the networking modal). Main.js
+    # injects these three keys when the user has selected providers and
+    # the pipeline toggle is on. The renderer / flagship.js never sees
+    # them — they're added inside the inference-request orchestrator.
+    pipeline_mode = (data.get("pipeline_mode") or "").lower()
+    peer_id = data.get("peer_id") or None
+    requested_block_range = data.get("block_range")  # [k, m] or None
+    use_private = pipeline_mode == "private" and peer_id
+
     if not prompt:
         return jsonify(_json_sanitize({"error": "Missing 'prompt'"})), 400
 
@@ -2861,7 +2916,7 @@ def z_image_quality():
     if guard:
         return guard
 
-    gen_id = genbus.new("z_image_quality", {"endpoint": "/image/quality", "w": W, "h": H, "steps": steps})
+    gen_id = genbus.new("z_image_quality", {"endpoint": "/image/quality", "w": W, "h": H, "steps": steps, "private": bool(use_private)})
 
     try:
         genbus.progress(gen_id, "loading", 0, 3)
@@ -2900,16 +2955,46 @@ def z_image_quality():
 
         genbus.progress(gen_id, "generating", 1, 3)
 
-        out = pipe(
-            prompt=prompt,
-            negative_prompt=negative_prompt,
-            height=H,
-            width=W,
-            num_inference_steps=steps,
-            guidance_scale=0.0,
-            generator=generator,
-        )
-        image = out.images[0]
+        # Private-mode wrap: patch transformer.layers so middle blocks
+        # ride the libp2p bridge to a remote shard provider. Head/tail
+        # run locally; if the bridge call fails, the session.close()
+        # path restores the originals so a follow-up local request
+        # doesn't see the patched module list.
+        _private_session = None
+        if use_private:
+            try:
+                from sharded_pipeline_client import with_pipeline, get_adapter
+                adapter = get_adapter("z_image_turbo")
+                if adapter is None:
+                    logger.warning("[z-image] no adapter for private mode — falling back to local")
+                else:
+                    k, r = 4, 4
+                    if isinstance(requested_block_range, list) and len(requested_block_range) == 2:
+                        L = len(adapter.get_layers(pipe.transformer))
+                        k = max(0, int(requested_block_range[0]))
+                        r = max(0, L - int(requested_block_range[1]))
+                    _private_session = with_pipeline(
+                        pipe, adapter, peer_id=peer_id, k=k, r=r,
+                    )
+                    logger.info("[z-image] private mode: peer=%s k=%d r=%d", peer_id[:12], k, r)
+            except Exception as e:
+                logger.warning("[z-image] private mode init failed (%s) — falling back to local", e)
+                _private_session = None
+
+        try:
+            out = pipe(
+                prompt=prompt,
+                negative_prompt=negative_prompt,
+                height=H,
+                width=W,
+                num_inference_steps=steps,
+                guidance_scale=0.0,
+                generator=generator,
+            )
+            image = out.images[0]
+        finally:
+            if _private_session is not None:
+                _private_session.close()
 
         genbus.progress(gen_id, "finalizing", 2, 3)
 

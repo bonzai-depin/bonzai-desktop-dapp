@@ -53,6 +53,16 @@ jobs:
           pip install -U qwen-tts --no-deps
           pip install git+https://github.com/ace-step/ACE-Step-1.5.git --no-deps
 
+      # Privacy-pipeline smoke tests — see publish-linux.yml for rationale.
+      # Cross-platform AF_UNIX is supported on Win10 1803+, well within our
+      # supported floor. Catches wire-format / codec / provider-blueprint
+      # regressions before the PyInstaller step.
+      - name: Privacy-pipeline smoke tests
+        shell: bash
+        run: |
+          python src/server/pipeline_transport.py
+          python scripts/smoke-shard-provider.py
+
       # basicsr 1.4.2 (used by /video/enhance via realesrgan) imports
       # `torchvision.transforms.functional_tensor` which was removed in
       # torchvision >= 0.17. Patch the one offending import so the

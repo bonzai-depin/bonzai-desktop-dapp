@@ -424,6 +424,7 @@ import { authVault } from "../services/authVault.service.js";
 import NetworkSettings from "./NetworkSettings.vue";
 import RewardsModal from "./RewardsModal.vue";
 import { mintStore } from "../stores/mintStore.js";
+import { modelPicker } from "../services/modelPicker.service.js";
 import { switchNetwork } from "../services/web3.service.js";
 import { modelStore } from "../stores/modelStore.js";
 
@@ -493,6 +494,11 @@ const isPipelineModel = computed(
 const alwaysLoaded = computed(() => modelStore.state.alwaysLoaded);
 
 const openBrowseModels = () => {
+  // Use the global picker so we don't have to switch to the Chat tab
+  // (and remount GenerativeText) just to pick a model. The legacy
+  // `bonzai:open-browse-models` custom event is still dispatched as a
+  // fallback for any other surface that might still be listening.
+  modelPicker.show();
   window.dispatchEvent(new CustomEvent("bonzai:open-browse-models"));
 };
 

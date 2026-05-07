@@ -1,22 +1,35 @@
 /**
- * BonzAI ServiceTime Service
+ * BonzAI ServiceTime — provider-side reward accounting (post-audit shape).
  *
- * Client-side helper for the free P2P inference accounting flow.
+ * The audit (see memory/audit_app_integration.md) replaced the EIP-712
+ * envelope handshake that the v1 client used. Sessions are no longer
+ * signed by the consumer — the provider self-reports seconds served:
  *
- * Flow:
- *   1. Consumer opens a session with a provider. A single EIP-712 envelope is
- *      built and signed ONCE per session (~1h default). No per-request sigs.
- *   2. Consumer sends the signed envelope to the provider over libp2p.
- *   3. Provider uses inference freely until expiryTime.
- *   4. After expiryTime, provider submits batches of closed sessions to
- *      BonzaiServiceTime on Arbitrum. Time is credited per (epoch, pool).
- *   5. At epoch close, provider claims their weighted share of the pool's
- *      provider side (50% by default).
+ *     BonzaiServiceTime.recordServiceTime(uint8 pipelineId, uint256 sec)
  *
- * Sybil resistance: ONLY the provider needs >= 1000 BONZAI on Arbitrum at
- * submit time. Consumers have no token requirement — end-user mobile apps
- * built on top of BonzAI skills can consume inference freely without any
- * Web3 wallet. No oracle, no attestor.
+ * Submission flow:
+ *   1. The shard worker (src/server/shard.py) appends one row per
+ *      completed session to ~/bonzai-server/service_time.ndjson.
+ *   2. The Electron main bridge (src/main/shardSession.js) appends rows
+ *      from its own bookkeeping path (kept symmetric so both halves can
+ *      contribute when we add bridge-only sessions later).
+ *   3. This module reads the ledger via IPC, batches by pipelineId,
+ *      submits one `recordServiceTimeBatch` tx, and on success asks
+ *      main to truncate the ingested rows.
+ *   4. At epoch close the provider calls `claimProviderRewards(epochId,
+ *      poolIndex)` to pull their weighted share of the MintPool's
+ *      provider-side allocation.
+ *
+ * Sybil resistance: provider must hold >= LVL1_THRESHOLD (1000 BONZAI)
+ * on Arbitrum at submit time. We check before sending the tx so a
+ * provider below threshold sees a clean error instead of a wasted
+ * gas estimate.
+ *
+ * Address gap: `BonzaiServiceTime` is not yet populated in
+ * web3.config.js (web3.config.js → arbitrum.contracts.serviceTime is
+ * pending the audit-deploy). Every on-chain call throws a typed
+ * `ServiceTimeNotConfigured` error until that lands; UI surfaces hide
+ * the corresponding buttons via `isConfigured()`.
  */
 
 import { ethers } from "ethers";
@@ -24,296 +37,279 @@ import { CONFIG } from "../config/web3.config.js";
 import { getSigner, getProvider, switchNetwork } from "./web3.service.js";
 
 // ═══════════════════════════════════════════════════════════════════════════
-// ABIs
+// ABIs (audit-aligned)
 // ═══════════════════════════════════════════════════════════════════════════
 
 const SERVICE_TIME_ABI = [
-  "function submitReceipts((address consumer,address provider,uint8 pipelineId,uint256 openTime,uint256 expiryTime,uint256 nonce,bytes32 providerPeerId)[] sessions, bytes[] signatures)",
+  // Provider self-reports session time after the consumer disconnects.
+  // pipelineId maps to a MintPool poolIndex via pipelineToPool().
+  "function recordServiceTime(uint8 pipelineId, uint256 secondsServed)",
+  "function recordServiceTimeBatch(uint8[] pipelineIds, uint256[] secondsServed)",
+
+  // Claim weighted share of the pool's provider-side after epoch close.
   "function claimProviderRewards(uint256 epochId, uint8 poolIndex)",
+
+  // Reads — for UI, eligibility checks, claim availability.
   "function providerServiceTime(uint256 epochId, uint8 poolIndex, address provider) view returns (uint256)",
   "function totalServiceTime(uint256 epochId, uint8 poolIndex) view returns (uint256)",
   "function providerClaimed(uint256 epochId, uint8 poolIndex, address provider) view returns (bool)",
-  "function usedNonces(address consumer, uint256 nonce) view returns (bool)",
   "function pipelineToPool(uint8 pipelineId) pure returns (uint8)",
-  "function domainSeparator() view returns (bytes32)",
   "function LVL1_THRESHOLD() view returns (uint256)",
-  "function MAX_SESSION_DURATION() view returns (uint256)",
-  "event SessionSubmitted(address indexed provider, address indexed consumer, uint8 indexed poolIndex, uint256 epochId, uint256 secondsServed, uint256 nonce)",
+
+  "event ServiceTimeRecorded(address indexed provider, uint8 indexed poolIndex, uint256 indexed epochId, uint256 secondsServed)",
   "event ProviderRewardsClaimed(address indexed provider, uint256 indexed epochId, uint8 indexed poolIndex, uint256 providerTime, uint256 totalTime)",
 ];
 
 const MINT_POOL_ABI = [
   "function currentEpoch() view returns (uint256)",
   "function isEpochFinalized(uint256 epochId) view returns (bool)",
-  "function getEpochProviderDeposits(uint256 epochId) view returns (uint256[6])",
 ];
 
-// ═══════════════════════════════════════════════════════════════════════════
-// CONSTANTS
-// ═══════════════════════════════════════════════════════════════════════════
+const BONZAI_TOKEN_ABI = [
+  "function balanceOf(address) view returns (uint256)",
+];
 
 const ARBITRUM_CHAIN_ID = 42161;
-const DEFAULT_SESSION_DURATION_SEC = 60 * 60; // 1 hour
-const LVL1_BONZAI = 1000n * 10n ** 18n;
-
-// EIP-712 types used for signing (must match SESSION_TYPEHASH in contract).
-const SESSION_TYPES = {
-  ServiceSession: [
-    { name: "consumer", type: "address" },
-    { name: "provider", type: "address" },
-    { name: "pipelineId", type: "uint8" },
-    { name: "openTime", type: "uint256" },
-    { name: "expiryTime", type: "uint256" },
-    { name: "nonce", type: "uint256" },
-    { name: "providerPeerId", type: "bytes32" },
-  ],
-};
-
-const SESSION_ENVELOPE_VERSION = 1;
+// Default LVL1 threshold — used as a UI-side hint when the contract
+// read fails (e.g., address gap). Real threshold comes from
+// `LVL1_THRESHOLD()` view at submit time.
+const DEFAULT_LVL1_BONZAI = 1000n * 10n ** 18n;
 
 // ═══════════════════════════════════════════════════════════════════════════
-// CONTRACT FACTORIES
+// CONFIG ACCESS
 // ═══════════════════════════════════════════════════════════════════════════
 
-function requireAddress(key) {
-  const addr = CONFIG.contracts?.arbitrum?.[key];
-  if (!addr || addr === ethers.ZeroAddress) {
-    throw new Error(`Missing Arbitrum address for ${key} in web3.config.js`);
+export class ServiceTimeNotConfigured extends Error {
+  constructor() {
+    super(
+      "BonzaiServiceTime address is not yet populated in web3.config.js " +
+      "(arbitrum.contracts.serviceTime). Pending the audit deploy.",
+    );
+    this.code = "SERVICE_TIME_NOT_CONFIGURED";
   }
-  return addr;
 }
 
-async function getReadClient() {
+function _addr(key) {
+  const a = CONFIG.contracts?.arbitrum?.[key];
+  if (!a || a === ethers.ZeroAddress) return null;
+  return a;
+}
+
+export function isConfigured() {
+  return Boolean(_addr("serviceTime"));
+}
+
+function _requireServiceTime() {
+  const a = _addr("serviceTime");
+  if (!a) throw new ServiceTimeNotConfigured();
+  return a;
+}
+
+async function _getReadClients() {
   const provider = await getProvider("arbitrum");
   return {
-    serviceTime: new ethers.Contract(requireAddress("serviceTime"), SERVICE_TIME_ABI, provider),
-    mintPool: new ethers.Contract(requireAddress("mintPool"), MINT_POOL_ABI, provider),
+    serviceTime: new ethers.Contract(_requireServiceTime(), SERVICE_TIME_ABI, provider),
+    mintPool:    _addr("mintPool")
+      ? new ethers.Contract(_addr("mintPool"), MINT_POOL_ABI, provider) : null,
+    bonzai:      _addr("bonzaiToken")
+      ? new ethers.Contract(_addr("bonzaiToken"), BONZAI_TOKEN_ABI, provider) : null,
+    provider,
   };
 }
 
-async function getWriteClient() {
+async function _getWriteClient() {
   await switchNetwork("arbitrum");
   const signer = await getSigner();
   return {
     signer,
-    serviceTime: new ethers.Contract(requireAddress("serviceTime"), SERVICE_TIME_ABI, signer),
+    serviceTime: new ethers.Contract(_requireServiceTime(), SERVICE_TIME_ABI, signer),
   };
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
-// SESSION CREATION (consumer side)
+// LEDGER ACCESS (IPC to main)
+// ═══════════════════════════════════════════════════════════════════════════
+//
+// The NDJSON ledger lives on disk under ~/bonzai-server/service_time.ndjson.
+// Renderer can't read filesystem directly; main exposes:
+//   electronAPI.serviceTime.readLedger() → row[]
+//   electronAPI.serviceTime.truncateLedger(beforeTs) → bytesRemoved
+// preload.js wires these.
+
+async function _readLedger() {
+  const api = window.electronAPI?.serviceTime;
+  if (!api?.readLedger) {
+    throw new Error("electronAPI.serviceTime.readLedger not exposed — preload wiring missing");
+  }
+  return await api.readLedger();
+}
+
+async function _truncateLedger(beforeTs) {
+  const api = window.electronAPI?.serviceTime;
+  if (!api?.truncateLedger) {
+    throw new Error("electronAPI.serviceTime.truncateLedger not exposed");
+  }
+  return await api.truncateLedger(beforeTs);
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// PUBLIC API
 // ═══════════════════════════════════════════════════════════════════════════
 
 /**
- * Build + sign a session envelope. Called ONCE per session on the consumer.
+ * Aggregate the on-disk ledger into per-pipelineId totals. Used by
+ * NetworkSettings.vue to show what's pending submission. Doesn't mutate
+ * anything.
  *
- * @param {object} opts
- * @param {string} opts.providerAddress - Provider EOA (Arbitrum)
- * @param {string} opts.providerPeerId  - libp2p peer ID (string form)
- * @param {number} opts.pipelineId      - 0..11 (see BonzaiProviderRegistry)
- * @param {number} [opts.durationSec]   - defaults to 1 hour
- * @returns {Promise<object>} envelope: { session, signature, domain, consumer, wireJson }
+ * @returns {Promise<{ pendingSeconds: Record<number, number>, rows: number, bytes: number }>}
  */
-export async function openSession({
-  providerAddress,
-  providerPeerId,
-  pipelineId,
-  durationSec = DEFAULT_SESSION_DURATION_SEC,
-}) {
-  if (!ethers.isAddress(providerAddress)) throw new Error("Invalid provider address");
-  if (!providerPeerId) throw new Error("Missing provider peer ID");
-  if (pipelineId < 0 || pipelineId > 11) throw new Error("Invalid pipelineId");
-  if (durationSec <= 0 || durationSec > 24 * 3600) throw new Error("Invalid durationSec");
+export async function getPendingSummary() {
+  const rows = await _readLedger();
+  const pendingSeconds = {};
+  let bytes = 0;
+  for (const r of rows) {
+    pendingSeconds[r.pipelineId] = (pendingSeconds[r.pipelineId] ?? 0) + (r.seconds ?? 0);
+    bytes += r._raw_size ?? 0;
+  }
+  return { pendingSeconds, rows: rows.length, bytes };
+}
 
-  await switchNetwork("arbitrum");
+/**
+ * Verify the signer holds enough BONZAI on Arbitrum to record service
+ * time. Returns { ok, balance, threshold, address }; UI surfaces this
+ * before letting the provider attempt submission. Does NOT throw on a
+ * config gap — the renderer treats "not configured" as "gating off".
+ */
+export async function checkEligibility() {
+  if (!isConfigured()) {
+    return { ok: false, configured: false, balance: 0n, threshold: DEFAULT_LVL1_BONZAI };
+  }
+  const { serviceTime, bonzai, provider } = await _getReadClients();
   const signer = await getSigner();
-  const consumer = await signer.getAddress();
-
-  const now = Math.floor(Date.now() / 1000);
-  const session = {
-    consumer,
-    provider: ethers.getAddress(providerAddress),
-    pipelineId,
-    openTime: now,
-    expiryTime: now + durationSec,
-    nonce: _randomNonce(),
-    providerPeerId: _peerIdToBytes32(providerPeerId),
+  const address = await signer.getAddress();
+  let threshold = DEFAULT_LVL1_BONZAI;
+  try { threshold = await serviceTime.LVL1_THRESHOLD(); } catch {}
+  let balance = 0n;
+  if (bonzai) {
+    try { balance = await bonzai.balanceOf(address); } catch {}
+  }
+  return {
+    ok: balance >= threshold,
+    configured: true,
+    address,
+    balance,
+    threshold,
   };
+}
 
-  const domain = {
-    name: "BonzaiServiceTime",
-    version: "1",
-    chainId: ARBITRUM_CHAIN_ID,
-    verifyingContract: requireAddress("serviceTime"),
-  };
+/**
+ * Read the ledger, batch by pipelineId, submit
+ * `recordServiceTimeBatch`, truncate ingested rows on success.
+ *
+ * Returns { rowsSubmitted, txHash, totals } or { rowsSubmitted: 0,
+ * skipped: <reason> }. Caller can re-run safely; truncation only
+ * happens after the tx confirms.
+ */
+export async function flushPending() {
+  if (!isConfigured()) {
+    return { rowsSubmitted: 0, skipped: "not_configured" };
+  }
+  const elig = await checkEligibility();
+  if (!elig.ok) {
+    return { rowsSubmitted: 0, skipped: "below_lvl1_threshold", balance: elig.balance };
+  }
 
-  const signature = await signer.signTypedData(domain, SESSION_TYPES, session);
+  const rows = await _readLedger();
+  if (rows.length === 0) return { rowsSubmitted: 0, skipped: "ledger_empty" };
+
+  // Batch by pipelineId. We round seconds DOWN to integer — the contract
+  // stores uint256 seconds; partial-second rows in the ledger get
+  // accumulated and only the floor is reported per batch. Trailing
+  // sub-second remainder per pipeline stays in the ledger for the next
+  // flush.
+  const totals = new Map();
+  let maxTs = 0;
+  for (const r of rows) {
+    if (r.ts > maxTs) maxTs = r.ts;
+    totals.set(r.pipelineId, (totals.get(r.pipelineId) ?? 0) + (r.seconds ?? 0));
+  }
+  const pipelineIds = [];
+  const secondsServed = [];
+  for (const [pid, sec] of totals) {
+    const intSec = Math.floor(sec);
+    if (intSec <= 0) continue;
+    pipelineIds.push(pid);
+    secondsServed.push(BigInt(intSec));
+  }
+  if (pipelineIds.length === 0) {
+    return { rowsSubmitted: 0, skipped: "no_complete_seconds" };
+  }
+
+  const { serviceTime } = await _getWriteClient();
+  const tx = pipelineIds.length === 1
+    ? await serviceTime.recordServiceTime(pipelineIds[0], secondsServed[0])
+    : await serviceTime.recordServiceTimeBatch(pipelineIds, secondsServed);
+  const receipt = await tx.wait();
+
+  await _truncateLedger(maxTs);
 
   return {
-    session,
-    signature,
-    domain,
-    consumer,
-    // Wire-format blob sent to provider over libp2p.
-    wireJson: JSON.stringify({
-      v: SESSION_ENVELOPE_VERSION,
-      session: {
-        ...session,
-        openTime: session.openTime.toString(),
-        expiryTime: session.expiryTime.toString(),
-        nonce: session.nonce.toString(),
-      },
-      signature,
-    }),
+    rowsSubmitted: rows.length,
+    txHash: receipt?.hash ?? tx.hash,
+    totals: Object.fromEntries(
+      pipelineIds.map((pid, i) => [pid, secondsServed[i].toString()]),
+    ),
   };
 }
 
 /**
- * Provider-side: parse an incoming wire envelope. Does not verify the sig
- * (submitReceipts does that on-chain); validates structure only.
- */
-export function parseSessionEnvelope(wireJson) {
-  const payload = typeof wireJson === "string" ? JSON.parse(wireJson) : wireJson;
-  if (payload.v !== SESSION_ENVELOPE_VERSION) throw new Error("Unknown envelope version");
-  const s = payload.session;
-  if (!s || !payload.signature) throw new Error("Malformed envelope");
-  const session = {
-    consumer: ethers.getAddress(s.consumer),
-    provider: ethers.getAddress(s.provider),
-    pipelineId: Number(s.pipelineId),
-    openTime: BigInt(s.openTime),
-    expiryTime: BigInt(s.expiryTime),
-    nonce: BigInt(s.nonce),
-    providerPeerId: s.providerPeerId,
-  };
-  return { session, signature: payload.signature };
-}
-
-// ═══════════════════════════════════════════════════════════════════════════
-// PROVIDER: SUBMIT RECEIPTS
-// ═══════════════════════════════════════════════════════════════════════════
-
-/**
- * Provider submits a batch of closed sessions. Each entry is the parsed output
- * of parseSessionEnvelope(). Sessions must have expiryTime <= now.
- *
- * Submission window: the close epoch + 1 epoch of grace.
- */
-export async function submitReceipts(entries) {
-  if (!Array.isArray(entries) || entries.length === 0) {
-    throw new Error("Empty receipt batch");
-  }
-  const nowSec = BigInt(Math.floor(Date.now() / 1000));
-  for (const { session } of entries) {
-    if (session.expiryTime > nowSec) throw new Error("Session not yet expired");
-  }
-
-  const { serviceTime } = await getWriteClient();
-  const sessions = entries.map(({ session }) => session);
-  const signatures = entries.map(({ signature }) => signature);
-
-  const tx = await serviceTime.submitReceipts(sessions, signatures);
-  return tx.wait();
-}
-
-// ═══════════════════════════════════════════════════════════════════════════
-// PROVIDER: CLAIM REWARDS
-// ═══════════════════════════════════════════════════════════════════════════
-
-/**
- * Provider claims their weighted share of the pool's provider side for a
- * finalized epoch. Can be called once per (epoch, poolIndex).
+ * Provider claim — withdraw weighted share for one (epoch, poolIndex).
+ * Renderer-triggered, one tx per claim.
  */
 export async function claimProviderRewards(epochId, poolIndex) {
   if (poolIndex < 0 || poolIndex > 5) throw new Error("Invalid poolIndex");
-  const { serviceTime } = await getWriteClient();
+  const { serviceTime } = await _getWriteClient();
   const tx = await serviceTime.claimProviderRewards(epochId, poolIndex);
   return tx.wait();
 }
 
-// ═══════════════════════════════════════════════════════════════════════════
-// READS
-// ═══════════════════════════════════════════════════════════════════════════
+// ─── Reads (UI-facing) ──────────────────────────────────────────────────
 
 export async function getProviderServiceTime(epochId, poolIndex, providerAddress) {
-  const { serviceTime } = await getReadClient();
-  return serviceTime.providerServiceTime(epochId, poolIndex, providerAddress);
+  const { serviceTime } = await _getReadClients();
+  return await serviceTime.providerServiceTime(epochId, poolIndex, providerAddress);
 }
 
 export async function getTotalServiceTime(epochId, poolIndex) {
-  const { serviceTime } = await getReadClient();
-  return serviceTime.totalServiceTime(epochId, poolIndex);
+  const { serviceTime } = await _getReadClients();
+  return await serviceTime.totalServiceTime(epochId, poolIndex);
 }
 
 export async function hasProviderClaimed(epochId, poolIndex, providerAddress) {
-  const { serviceTime } = await getReadClient();
-  return serviceTime.providerClaimed(epochId, poolIndex, providerAddress);
+  const { serviceTime } = await _getReadClients();
+  return await serviceTime.providerClaimed(epochId, poolIndex, providerAddress);
 }
 
-export async function previewProviderRewards(epochId, poolIndex, providerAddress) {
-  const { serviceTime, mintPool } = await getReadClient();
-  const [providerTime, totalTime, providerPools] = await Promise.all([
-    serviceTime.providerServiceTime(epochId, poolIndex, providerAddress),
-    serviceTime.totalServiceTime(epochId, poolIndex),
-    mintPool.getEpochProviderDeposits(epochId),
-  ]);
-  if (totalTime === 0n || providerTime === 0n) return 0n;
-  const poolBalance = providerPools[poolIndex];
-  return (poolBalance * providerTime) / totalTime;
+export async function pipelineToPool(pipelineId) {
+  const { serviceTime } = await _getReadClients();
+  return Number(await serviceTime.pipelineToPool(pipelineId));
 }
 
-export async function getCurrentEpoch() {
-  const { mintPool } = await getReadClient();
-  return mintPool.currentEpoch();
+export async function currentEpoch() {
+  const { mintPool } = await _getReadClients();
+  if (!mintPool) throw new Error("MintPool address not configured");
+  return await mintPool.currentEpoch();
 }
 
 export async function isEpochFinalized(epochId) {
-  const { mintPool } = await getReadClient();
-  return mintPool.isEpochFinalized(epochId);
+  const { mintPool } = await _getReadClients();
+  if (!mintPool) throw new Error("MintPool address not configured");
+  return await mintPool.isEpochFinalized(epochId);
 }
 
-export function pipelineToPoolIndex(pipelineId) {
-  if (pipelineId === 0) return 0;                       // LLM -> text
-  if (pipelineId >= 1 && pipelineId <= 4) return 2;     // IMAGE_* -> image
-  if (pipelineId >= 5 && pipelineId <= 8) return 1;     // AUDIO_* + MUSIC -> audio
-  if (pipelineId === 9) return 3;                       // VIDEO_FAST -> video
-  if (pipelineId === 10) return 2;                      // VISION -> image
-  if (pipelineId === 11) return 0;                      // PIPELINE_SHARD -> text
-  throw new Error(`Invalid pipelineId: ${pipelineId}`);
-}
+// ─── Constants exposed for tests ────────────────────────────────────────
 
-// ═══════════════════════════════════════════════════════════════════════════
-// SYBIL / ELIGIBILITY HELPERS
-// ═══════════════════════════════════════════════════════════════════════════
-
-const BONZAI_BALANCE_ABI = ["function balanceOf(address owner) view returns (uint256)"];
-
-export async function hasLvl1OnArbitrum(address) {
-  const provider = await getProvider("arbitrum");
-  const bonzai = new ethers.Contract(
-    CONFIG.tokens.BONZAI.arbitrum,
-    BONZAI_BALANCE_ABI,
-    provider,
-  );
-  const bal = await bonzai.balanceOf(address);
-  return bal >= LVL1_BONZAI;
-}
-
-export const LVL1_THRESHOLD_BONZAI = LVL1_BONZAI;
-
-// ═══════════════════════════════════════════════════════════════════════════
-// INTERNAL
-// ═══════════════════════════════════════════════════════════════════════════
-
-function _randomNonce() {
-  // 128 bits of entropy is plenty. Stored on-chain per consumer.
-  const bytes = ethers.randomBytes(16);
-  return BigInt("0x" + Array.from(bytes).map((b) => b.toString(16).padStart(2, "0")).join(""));
-}
-
-function _peerIdToBytes32(peerId) {
-  // Hash the ASCII form of the libp2p peer ID to pack it into bytes32.
-  // The on-chain contract never decodes this — it only needs binding to the
-  // peer identity claimed at session-open time.
-  return ethers.keccak256(ethers.toUtf8Bytes(peerId));
-}
+export const __test = {
+  ARBITRUM_CHAIN_ID,
+  DEFAULT_LVL1_BONZAI,
+};

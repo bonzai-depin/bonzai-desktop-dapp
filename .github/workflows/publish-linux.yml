@@ -15,10 +15,25 @@ env:
 jobs:
   publish_on_linux:
     runs-on: ubuntu-latest
+    strategy:
+      # GPU backend matrix: each target produces a distinct .deb. Users
+      # download the variant matching their hardware. fail-fast off so a
+      # broken ROCm wheel upstream doesn't cancel the working CUDA build.
+      fail-fast: false
+      matrix:
+        gpu_backend: [cuda, rocm]
+        include:
+          - gpu_backend: cuda
+            torch_index_url: https://download.pytorch.org/whl/cu124
+            backend_label: CUDA 12.4
+          - gpu_backend: rocm
+            torch_index_url: https://download.pytorch.org/whl/rocm6.1
+            backend_label: ROCm 6.1
     env:
       MAIN_PY_FILE: src/server/diffuser.py
       OS_KEY: linux
       ARCH_KEY: x64
+      GPU_BACKEND: ${{ matrix.gpu_backend }}
       HF_TOKEN: ${{ secrets.HF_TOKEN }}
       GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       RELEASE_TAG: ${{ inputs.tag || github.event.release.tag_name }}
@@ -54,14 +69,14 @@ jobs:
         with:
           python-version: '3.11'
 
-      # Install CUDA-enabled PyTorch for full GPU performance on NVIDIA GPUs.
-      # cu124 = CUDA 12.4, compatible with drivers 525+. The PyInstaller binary
-      # will fall back to CPU if no NVIDIA GPU is present at runtime.
-      - name: Install PyTorch (CUDA 12.4)
+      # GPU-enabled PyTorch wheel selection per matrix backend. CUDA cu124
+      # for NVIDIA, ROCm 6.1 for AMD. Both fall back to CPU at runtime if
+      # the corresponding driver/toolkit isn't present.
+      - name: Install PyTorch (${{ matrix.backend_label }})
         run: |
           pip install --no-cache-dir --upgrade \
             torch torchvision torchaudio \
-            --index-url https://download.pytorch.org/whl/cu124
+            --index-url ${{ matrix.torch_index_url }}
 
       - name: Install Python deps
         run: |
@@ -98,8 +113,23 @@ jobs:
           print('basicsr/data/degradations.py not found; skipping')
           "
 
+      # Privacy-pipeline smoke tests — codec + provider blueprint. These run
+      # against the just-installed deps (torch + lz4 + flask), independently
+      # of model weights, so they catch wire-format / framing / runner-
+      # registry regressions before we waste a 30-min PyInstaller build on
+      # a broken Python tree. Cheap to run; expensive to skip.
+      - name: Privacy-pipeline smoke tests
+        run: |
+          python src/server/pipeline_transport.py
+          python scripts/smoke-shard-provider.py
+          # Two-host scaffold: JS bridge + Python provider in parallel.
+          # Catches CTRL_BEGIN / wire-format mismatches the single-
+          # process smokes miss.
+          node scripts/smoke-shard-twohost.mjs
+
       # Strip CUDA libs BEFORE PyInstaller bundles them — keeps onefile under 4GB
       - name: Strip CUDA from torch installation
+        if: matrix.gpu_backend == 'cuda'
         run: |
           TORCH_DIR=$(python -c "import torch; import os; print(os.path.dirname(torch.__file__))")
           echo "Torch dir: $TORCH_DIR"
@@ -159,7 +189,58 @@ jobs:
 
           echo "Size after: $(du -sh "$TORCH_DIR" | cut -f1)"
 
-      # Onefile: single compressed binary. CUDA libs stripped above keep it under 4GB.
+      # ROCm strip pass — mirrors the CUDA pass above for AMD's HIP
+      # runtime. The wheel ships rocBLAS / MIOpen / hipblasLt which are
+      # ~800MB-1.2GB combined; stripping the training-only and JIT-only
+      # libs keeps the onefile under 4GB. RDNA2/RDNA3 inference uses
+      # rocBLAS LT (different lib than rocBLAS) so we keep that one.
+      - name: Strip ROCm from torch installation
+        if: matrix.gpu_backend == 'rocm'
+        run: |
+          TORCH_DIR=$(python -c "import torch; import os; print(os.path.dirname(torch.__file__))")
+          SITE=$(python -c 'import site; print(site.getsitepackages()[0])')
+          echo "Torch dir: $TORCH_DIR"
+          echo "Size before: $(du -sh "$TORCH_DIR" | cut -f1)"
+
+          # rocBLAS Tensile kernels — large fixture archive used for
+          # training matmul shapes. Inference uses a much smaller subset.
+          find "$TORCH_DIR" -path "*/rocblas*/library*" -delete 2>/dev/null || true
+          find "$SITE" -path "*/rocblas/library*" -delete 2>/dev/null || true
+          # MIOpen kernels database (training paths)
+          find "$TORCH_DIR" -name "libMIOpen*train*" -delete 2>/dev/null || true
+          find "$TORCH_DIR" -name "libMIOpen*db*" -delete 2>/dev/null || true
+          # RCCL (collective comm — multi-GPU training, not inference)
+          find "$TORCH_DIR" -name "librccl*" -delete 2>/dev/null || true
+          # hipFFT / hipsolver / hipsparse — most diffusion ops don't use these
+          find "$TORCH_DIR" -name "libhipfft*" -delete 2>/dev/null || true
+          find "$TORCH_DIR" -name "libhipsolver*" -delete 2>/dev/null || true
+          find "$TORCH_DIR" -name "libhipsparse*" -delete 2>/dev/null || true
+          find "$TORCH_DIR" -name "librocfft*" -delete 2>/dev/null || true
+          find "$TORCH_DIR" -name "librocsolver*" -delete 2>/dev/null || true
+          find "$TORCH_DIR" -name "librocsparse*" -delete 2>/dev/null || true
+          # Hip runtime debug variants
+          find "$TORCH_DIR" -name "libamd*debug*" -delete 2>/dev/null || true
+          # Triton (HIP backend is experimental; torch.compile is gated to CUDA only)
+          find "$SITE" -type d -name "triton" -exec rm -rf {} + 2>/dev/null || true
+          # caffe2 + tests + docs (same as CUDA strip)
+          find "$TORCH_DIR" -type d -name "caffe2" -exec rm -rf {} + 2>/dev/null || true
+          find "$TORCH_DIR" -type d -name "test" -exec rm -rf {} + 2>/dev/null || true
+          find "$TORCH_DIR" -type d -name "benchmarks" -exec rm -rf {} + 2>/dev/null || true
+          for PKG in torchvision diffusers transformers datasets peft; do
+            if [ -d "$SITE/$PKG" ]; then
+              find "$SITE/$PKG" -type d \( -name tests -o -name test -o -name docs -o -name "docs_src" -o -name examples -o -name benchmarks -o -name __pycache__ \) -exec rm -rf {} + 2>/dev/null || true
+              find "$SITE/$PKG" -name "*.md" -delete 2>/dev/null || true
+              find "$SITE/$PKG" -name "*.rst" -delete 2>/dev/null || true
+              find "$SITE/$PKG" -name "*.pyi" -delete 2>/dev/null || true
+            fi
+          done
+
+          find "$TORCH_DIR" -name "*.so" -exec strip --strip-debug {} + 2>/dev/null || true
+          find "$TORCH_DIR" -name "*.so.*" -exec strip --strip-debug {} + 2>/dev/null || true
+
+          echo "Size after: $(du -sh "$TORCH_DIR" | cut -f1)"
+
+      # Onefile: single compressed binary. GPU libs stripped above keep it under 4GB.
       - name: Build Python binary (Linux x64)
         run: |
           pyinstaller \
@@ -353,13 +434,14 @@ jobs:
             --options.categories "Utility;Science;ArtificialIntelligence" \
             --options.section misc
 
-          # Rename
+          # Rename — backend-suffixed so cuda + rocm releases coexist.
           DEB=$(ls out/make/*.deb | head -1)
+          BACKEND="${{ matrix.gpu_backend }}"
           if [ -n "$DEB" ]; then
-            mv "$DEB" "out/make/BonzAI-${TAG}-linux-amd64.deb"
+            mv "$DEB" "out/make/BonzAI-${TAG}-linux-amd64-${BACKEND}.deb"
           fi
 
-          DEB_PATH="out/make/BonzAI-${TAG}-linux-amd64.deb"
+          DEB_PATH="out/make/BonzAI-${TAG}-linux-amd64-${BACKEND}.deb"
           DEB_SIZE=$(stat --format='%s' "$DEB_PATH")
           echo "DEB size: $(echo $DEB_SIZE | numfmt --to=iec)"
 
@@ -384,12 +466,13 @@ jobs:
             echo "Split result:"
             ls -lh *.part-* 2>/dev/null | awk '{print $9, $5}'
             # Write a small README so users know how to reassemble.
-            cat > "BonzAI-${TAG}-linux-amd64.README.txt" <<EOF
+            cat > "BonzAI-${TAG}-linux-amd64-${BACKEND}.README.txt" <<EOF
 GitHub rejected the single .deb (>2GB). To reassemble:
 
-  cat BonzAI-${TAG}-linux-amd64.deb.part-* > BonzAI-${TAG}-linux-amd64.deb
-  sudo dpkg -i BonzAI-${TAG}-linux-amd64.deb
+  cat BonzAI-${TAG}-linux-amd64-${BACKEND}.deb.part-* > BonzAI-${TAG}-linux-amd64-${BACKEND}.deb
+  sudo dpkg -i BonzAI-${TAG}-linux-amd64-${BACKEND}.deb
 
+GPU backend: ${BACKEND} (use the cuda variant on NVIDIA, rocm on AMD).
 Verify checksum if published alongside this file.
 EOF
             # Remove the original oversize .deb so we only upload parts.

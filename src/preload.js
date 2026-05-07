@@ -560,6 +560,19 @@ contextBridge.exposeInMainWorld("electronAPI", {
   inferenceRequest: (pipeline, params) => ipcRenderer.invoke("inference-request", { pipeline, params }),
 
   /**
+   * Privacy-pipeline service-time ledger access. The shard worker and
+   * main bridge append rows to ~/bonzai-server/service_time.ndjson;
+   * serviceTime.service.js batches + submits them on Arbitrum.
+   * `read` returns parsed rows (with `_raw_size` for diagnostics).
+   * `truncate(beforeTs)` removes rows with ts <= watermark; called
+   * after a `recordServiceTimeBatch` tx confirms.
+   */
+  serviceTime: {
+    readLedger: () => ipcRenderer.invoke("service-time:read-ledger"),
+    truncateLedger: (beforeTs) => ipcRenderer.invoke("service-time:truncate-ledger", beforeTs),
+  },
+
+  /**
    * Listen for LAN peer discovery events (from main process)
    */
   /**

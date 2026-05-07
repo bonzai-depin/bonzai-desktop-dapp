@@ -84,6 +84,16 @@ jobs:
           print('basicsr/data/degradations.py not found; skipping')
           "
 
+      # Privacy-pipeline smoke tests — codec round-trip + provider
+      # blueprint loopback + runner-dispatch. Independent of model
+      # weights; catches wire-format / codec / runner-registry
+      # regressions before the multi-GB PyInstaller pass. See
+      # publish-linux.yml for rationale.
+      - name: Privacy-pipeline smoke tests
+        run: |
+          python src/server/pipeline_transport.py
+          python scripts/smoke-shard-provider.py
+
       - name: Build Python binary (macOS ARM64)
         run: |
           mkdir -p binaries/${{ env.OS_KEY }}-${{ env.ARCH_KEY }}

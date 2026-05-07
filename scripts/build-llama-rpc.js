@@ -86,21 +86,39 @@ function getCmakeFlags() {
       flags.push("-DCMAKE_OSX_ARCHITECTURES=arm64");
     }
   } else if (PLATFORM === "linux" || PLATFORM === "win32") {
-    // Check for CUDA toolkit
-    const hasCuda = (() => {
-      try {
-        execSync("nvcc --version", { stdio: "ignore" });
-        return true;
-      } catch {
-        return false;
-      }
-    })();
+    // Backend selection priority (whichever toolchain is installed wins):
+    //   1. CUDA (NVIDIA, both Linux and Windows — most common discrete GPU path)
+    //   2. HIP (AMD ROCm on Linux, also AMD HIP-SDK on Windows)
+    //   3. Vulkan (cross-vendor fallback on Linux when neither toolkit
+    //      is around — slower than native but covers AMD users without
+    //      the ROCm stack and integrated GPUs)
+    //   4. CPU-only
+    const probe = (cmd) => {
+      try { execSync(cmd, { stdio: "ignore" }); return true; }
+      catch { return false; }
+    };
+    const hasCuda    = probe("nvcc --version");
+    const hasHip     = !hasCuda && probe("hipcc --version");
+    // glslc ships with the Vulkan SDK; if it's present, GGML_VULKAN can build.
+    const hasVulkan  = !hasCuda && !hasHip && probe("glslc --version");
 
     if (hasCuda) {
       flags.push("-DGGML_CUDA=ON");
-      console.log("  CUDA detected — enabling GPU acceleration");
+      console.log("  CUDA detected — enabling GPU acceleration (NVIDIA)");
+    } else if (hasHip) {
+      flags.push("-DGGML_HIP=ON");
+      // RDNA2/3 GPUs use gfx1030/gfx1100/gfx1101/gfx1102. Override via
+      // AMDGPU_TARGETS env if your card is older (e.g. gfx900 for Vega).
+      const amdgpu = process.env.AMDGPU_TARGETS || "gfx1030;gfx1100;gfx1101;gfx1102";
+      flags.push(`-DAMDGPU_TARGETS=${amdgpu}`);
+      flags.push("-DCMAKE_C_COMPILER=hipcc");
+      flags.push("-DCMAKE_CXX_COMPILER=hipcc");
+      console.log(`  HIP detected — enabling GPU acceleration (AMD ROCm, targets=${amdgpu})`);
+    } else if (hasVulkan) {
+      flags.push("-DGGML_VULKAN=ON");
+      console.log("  Vulkan SDK detected — enabling cross-vendor GPU fallback");
     } else {
-      console.log("  No CUDA detected — CPU-only build");
+      console.log("  No GPU toolkit detected — CPU-only build");
     }
   }
 
