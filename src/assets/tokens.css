@@ -21,6 +21,17 @@
   --bz-raised:        #1d2230;   /* card on hover / active row */
   --bz-overlay:       rgba(8, 10, 16, 0.78);  /* modal backdrop */
 
+  /* ─── 1b. SURFACE LADDER ALIASES (v2.0) ─────────────────────────
+     Linear-style named steps for components that think in levels.
+     Maps cleanly onto the existing BonzAI surface vocabulary. */
+  --bz-surface-0:     var(--bz-canvas);
+  --bz-surface-1:     var(--bz-panel);
+  --bz-surface-2:     var(--bz-card);
+  --bz-surface-3:     var(--bz-raised);
+  --bz-hairline-0:    rgba(255, 255, 255, 0.04);
+  --bz-hairline-1:    var(--bz-border);
+  --bz-hairline-2:    var(--bz-border-strong);
+
   /* ─── 2. BRAND PURPLE · the 30% ───────────────────────────────── */
   --bz-purple-100:    #c4a8e8;   /* tints — chip backgrounds, focus rings on dark */
   --bz-purple-300:    #8b5cf6;   /* highlight / hover-on-brand */
@@ -37,6 +48,19 @@
     linear-gradient(135deg, #61378e 0%, #8b5cf6 100%);
   --bz-gradient-brand-soft:
     linear-gradient(135deg, rgba(97, 55, 142, 0.18) 0%, rgba(139, 92, 246, 0.18) 100%);
+
+  /* ─── 2b. ATMOSPHERIC GRADIENT ORBS (v2.0) ──────────────────────
+     Soft radial blooms for empty states and decorative moments.
+     Inspired by ElevenLabs' pastel orbs, tinted to BonzAI purple.
+     These are pure atmosphere — never button fills, never text colors. */
+  --bz-orb-core:    rgba(139, 92, 246, 0.22);
+  --bz-orb-mid:     rgba(97, 55, 142, 0.14);
+  --bz-orb-edge:    rgba(139, 92, 246, 0.04);
+  --bz-orb-gradient:
+    radial-gradient(ellipse 80% 60% at 50% 40%,
+      var(--bz-orb-core) 0%,
+      var(--bz-orb-mid) 45%,
+      transparent 70%);
 
   /* ─── 3. ENERGY ACCENT · the 10% (semantic ONLY) ──────────────── */
   /* Emerald means "good / done / online / ready". Never "primary
@@ -90,6 +114,14 @@
   --bz-scrim-strong:  rgba(0, 0, 0, 0.55);
   --bz-scrim-deep:    rgba(0, 0, 0, 0.75);
 
+  /* ─── 8b. CINEMATIC CONTENT (v2.0) ──────────────────────────────
+     Runway-style content-first presentation. Full-bleed outputs,
+     invisible chrome, edge-to-edge imagery. */
+  --bz-content-radius: var(--bz-r-sm);
+  --bz-content-max-h:  85vh;
+  --bz-content-scrim:
+    linear-gradient(180deg, transparent 60%, var(--bz-scrim-deep) 100%);
+
   /* ─── 9. SPACING RHYTHM (multiples of 4) ──────────────────────── */
   --bz-space-1:   4px;
   --bz-space-2:   8px;
@@ -126,6 +158,14 @@
   --bz-track-display: -0.02em;
   --bz-track-eyebrow:  0.10em;   /* uppercase category labels */
   --bz-track-mono:    -0.01em;
+
+  /* ─── 10b. FINTECH TYPOGRAPHY (v2.0) ────────────────────────────
+     Data-dense surfaces: wallet balances, token amounts, gas fees.
+     Tighter tracking, explicit tabular numerics, smaller sizes. */
+  --bz-size-data:     13px;
+  --bz-line-data:     1.4;
+  --bz-track-data:    -0.03em;
+  --bz-track-tnum:    -0.02em;
 
   /* ─── 11. MOTION ──────────────────────────────────────────────── */
   /* One language across the whole app. Six keyframes max. */
@@ -282,6 +322,28 @@
   to   { transform: rotate(360deg); }
 }
 
+/* Cinematic content entrance — fade + rise + slight scale.
+   Used for generative outputs appearing in the stream.
+   Duration: 600ms, ease-out. */
+@keyframes bz-fade-rise {
+  from { opacity: 0; transform: translateY(12px) scale(0.985); }
+  to   { opacity: 1; transform: translateY(0) scale(1); }
+}
+
+/* Subtle scale-in for panels, inspectors, dropdowns. */
+@keyframes bz-scale-in {
+  from { opacity: 0; transform: scale(0.97); }
+  to   { opacity: 1; transform: scale(1); }
+}
+
+/* Orb drift — slow ambient movement for decorative gradient orbs.
+   12s cycle, subtle horizontal drift. */
+@keyframes bz-orb-drift {
+  0%, 100% { transform: translate(0, 0) scale(1); }
+  33%      { transform: translate(8px, -6px) scale(1.03); }
+  66%      { transform: translate(-4px, 4px) scale(0.98); }
+}
+
 /* The "generation in progress" brand moment. Apply to a 1-2px tall
    strip to signal active work without a spinner. */
 .bz-generating {
@@ -293,6 +355,51 @@
   );
   background-size: 200% 100%;
   animation: bz-gradient-sweep 2.4s linear infinite;
+}
+
+/* ─── FINTECH DATA CLASS (v2.0) ─────────────────────────────────
+   Tabular numerics, tighter tracking, mono. For wallet balances,
+   token amounts, gas fees, block numbers — any numeric value where
+   alignment and precision signal trust. */
+.bz-data {
+  font-family: var(--bz-font-mono);
+  font-size: var(--bz-size-data);
+  line-height: var(--bz-line-data);
+  letter-spacing: var(--bz-track-tnum);
+  font-feature-settings: "tnum" 1, "ss01" 1, "calt" 0;
+  font-variant-numeric: tabular-nums;
+}
+
+/* ─── CINEMATIC CONTENT FRAME (v2.0) ────────────────────────────
+   Runway-style full-bleed output wrapper. The content IS the design.
+   Zero shadows, minimal radius, edge-to-edge within its container. */
+.bz-content-frame {
+  display: block;
+  width: 100%;
+  max-height: var(--bz-content-max-h);
+  object-fit: contain;
+  border-radius: var(--bz-content-radius);
+}
+
+/* ─── ATMOSPHERIC ORB DECORATION (v2.0) ─────────────────────────
+   Soft purple radial bloom for empty states, loading screens, and
+   brand atmosphere. Pure decoration — never behind readable text. */
+.bz-orb {
+  position: relative;
+  overflow: hidden;
+}
+.bz-orb::before {
+  content: "";
+  position: absolute;
+  inset: -20%;
+  background: var(--bz-orb-gradient);
+  animation: bz-orb-drift 12s ease-in-out infinite;
+  pointer-events: none;
+  z-index: 0;
+}
+.bz-orb > * {
+  position: relative;
+  z-index: 1;
 }
 
 /* ─── FOCUS RING ────────────────────────────────────────────────

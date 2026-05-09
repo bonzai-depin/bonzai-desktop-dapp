@@ -1,23 +1,17 @@
 # BonzAI Design System
 
-> Status: **v1.13** — App shell + chat workspace fully revamped.
-> The 33 %-wide tab column with giant-icon Bulma menu retired — replaced
-> by a compact 240 px `<nav class="bz-nav">` rail (collapses to 64 px
-> at narrow viewports). The `Chat` tab now actually adopts
-> `<ChatLayout>`'s three-column shell (rail · stream · input dock),
-> with the new `<ChatHistoryRail>` component grouping past
-> conversations by date and `<EmptyChat>` rendering Mistral-style
-> prompt cards on first land. Pre-chat setup state is a single
-> editorial card with hardware-footprint chips and one primary CTA
-> instead of four giant Bulma buttons. Bottom bar moved off the
-> Bulma purple flat to `--bz-panel` with a subtle brand-purple
-> radial glow. Six themes still ship via `[data-theme]`.
-> Reference implementations: `LlmModelPickerModal.vue`,
-> `CommandPalette.vue`, `GenerationInspector.vue`, `BonzaiPulse.vue`,
-> `BzCloseButton.vue`, `NetworkSettings.vue` (rail + theme picker),
-> `src/components/chat/*`, `src/components/generative/*`,
-> `src/services/theme.service.js`, `src/assets/themes.css`,
-> all four Generative tab components.
+> Status: **v2.0** — Research-driven design system elevation. Synthesizes
+> best practices from Linear (dark precision + surface ladder), Stripe
+> (fintech gravitas + tabular numerics), Runway (cinematic content-first),
+> ElevenLabs (atmospheric gradient orbs), and Mistral (editorial cadence).
+> All 8 primary tabs now fill 100% available width (fixed `.column.is-8`
+> constraint). Each tab owns its scroll containment — input fields stay
+> docked at bottom. New tokens: surface ladder aliases, purple atmospheric
+> orbs, fintech data typography, cinematic content frames. New motion:
+> `bz-fade-rise`, `bz-scale-in`, `bz-orb-drift`. Six themes ship.
+> Reference implementations: `tokens.css`, `App.vue` (bz-tab-shell),
+> `LlmModelPickerModal.vue`, `CommandPalette.vue`, `GenerationInspector.vue`,
+> `src/components/chat/*`, `src/components/generative/*`, all Generative tabs.
 
 This document captures the visual + interaction system for BonzAI. It is
 the contract: every component should reach for the rules and tokens
@@ -732,3 +726,4 @@ Generative3D (canvas-first hero + 2-per-row grid).
 | **v1.11** | 2026-05-08 | System-wide migration sweep + theming. **Token sweep**: two automated passes (text scale + scrim/state) across 30+ Vue components — 815 literal-color replacements total (547 + 268). New scrim tokens `--bz-scrim-soft / -scrim / -scrim-strong / -scrim-deep` replace ad-hoc `rgba(0,0,0,0.X)` literals. Bulma state hexes routed to canonical status tokens. **Themes**: `themes.css` ships five alternates beside default (midnight, terminal, mistral, warm, nocturne); `theme.service.js` persists choice to localStorage and applies via `[data-theme]`; picker UI in NetworkSettings → Appearance. **Close-button unification**: all `.delete` and Company icon-only-btn close patterns migrated to `<BzCloseButton>` with imports + registrations verified. **Input polish**: focus halo, italic placeholder, purple caret-color, sweeping brand-gradient strip during streaming on both `<GenerativeInput>` and `<ChatInput>`. Renderer rebuild green. |
 | **v1.12** | 2026-05-08 | Global primitives + interior migrations. **Two new global stylesheets** imported from `App.vue`: `buttons.css` (`.bz-btn` family with primary / ghost / success / warning / destructive / running variants + `.bz-iconbtn`) and `notices.css` (`.bz-notice` banners with info / success / warning / danger variants). Both are unscoped so every component reaches for the same primitives. **Surfaces migrated**: `AccessRequirements.vue` (full rewrite — calm card with brand-purple soft tint replaces Bulma `notification is-info`), `MintModal.vue` interior (3 banners + 4 buttons + status header migrated), `RewardsModal.vue` interior (5 banners + 5 buttons migrated), `Generative3D.vue` (canvas-first hero + 2-per-row history grid pattern from GenerativeImage applied). **Third token pass**: brand-soft literals (`rgba(97,55,142,X)`, `rgba(72,199,142,X)`, `rgba(241,70,104,X)`, `rgba(255,224,138,X)`, `rgba(62,142,208,X)`) routed to `--bz-purple-soft` / `--bz-emerald-soft` / `--bz-danger-soft` / `--bz-warning-soft` / `--bz-info-soft` — 123 replacements across 24 files. Cumulative: **938 literal-color replacements** since v1.7. Renderer rebuild green. |
 | **v1.13** | 2026-05-08 | App shell rebuilt + Chat tab finally adopts ChatLayout. **App shell**: replaced the Bulma `column is-4` (33% wide) tab column + `tabs.menu` giant-icon stack with a compact `<nav class="bz-nav">` — fixed 240 px on desktop, 64 px icon-only at narrow viewports. Each row keeps its WebP brand image with a graduated shade overlay; active state shows a brand-purple gradient bar on the left edge + tinted shade. Memory-budget pill in the brand header. **Chat tab**: now uses `<ChatLayout>` with `<ChatHistoryRail>` (new — date-grouped past inferences with prompt previews) in the rail slot, `<EmptyChat>` (Mistral-style prompt cards) when no history, ChatMessage iteration in the stream slot, ChatInput docked at the bottom. The legacy `openChat` modal-style overlay is gone — the input is always visible once the model is ready. **Setup state**: pre-download view collapsed from a 175-line Bulma `level` + four giant 3D-shadowed buttons to a single editorial card with eyebrow + display title + 4 hardware-footprint chips + one primary CTA. **Bottom bar**: traded the loud `#61378e` flat for `--bz-panel` with a subtle brand-purple radial glow underneath; height to 80 px. |
+| **v2.0** | 2026-05-09 | **Foundation elevation** — research-driven design system upgrade competing with Linear (precision), Stripe (fintech), Runway (cinematic), ElevenLabs (atmosphere), Mistral (editorial). **Layout fix**: all 8 primary tabs freed from `.column.is-8` (66% width) constraint — now fill 100% of `.bz-main` via `.bz-tab-shell` flex container. `.bz-main` no longer scrolls; each tab owns its scroll containment, fixing the "input at end of scroll" UX flaw. **Tokens**: added surface ladder aliases (`--bz-surface-0..3`, `--bz-hairline-0..2`), atmospheric gradient orb tokens (`--bz-orb-*`, `.bz-orb` utility), fintech typography (`--bz-size-data`, `--bz-track-tnum`, `.bz-data` class with tabular nums + ss01), cinematic content tokens (`--bz-content-radius`, `--bz-content-max-h`, `.bz-content-frame`). **Motion**: 3 new keyframes (`bz-fade-rise`, `bz-scale-in`, `bz-orb-drift`). Renderer rebuild green. |

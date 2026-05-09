@@ -795,10 +795,22 @@ body {
 .bz-main {
   min-width: 0;
   height: 100%;
-  overflow-y: auto;
+  overflow: hidden;
   background: var(--bz-canvas);
   display: flex;
   flex-direction: column;
+}
+
+/* Each tab component mounts as a direct child of .bz-main.
+   Replaces the legacy Bulma column grid so content fills the
+   available width and height without overflow fights. */
+.bz-tab-shell {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  width: 100%;
+  min-height: 0;
+  overflow: hidden;
 }
 
 .bz-nav {

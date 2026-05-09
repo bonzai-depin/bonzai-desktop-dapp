@@ -2,7 +2,7 @@
   <div class="background"></div>
   <div class="shade"></div>
 
-  <div class="models__deployment column is-8 is-paddingless company-tab">
+  <div class="bz-tab-shell company-tab">
     <div class="models__deployment-install company-shell">
       <!-- ════════════ Form mode ════════════ -->
       <CompanyForm

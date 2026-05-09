@@ -1,7 +1,7 @@
 <template>
   <div class="background"></div>
 
-  <div class="models__deployment column is-8 is-paddingless">
+  <div class="bz-tab-shell">
     <div class="models__deployment-install">
       <!-- ─────────────────────────────────────────────────────────────
            SETUP STATE — model not yet downloaded (or vision file
@@ -2028,9 +2028,10 @@ hr {
 .models__deployment-install {
   position: relative;
   overflow-y: auto;
-  padding: 6em;
-  /* aspect-ratio: 16/9; */
-  height: 100vh;
+  padding: var(--bz-space-5) var(--bz-space-6);
+  flex: 1;
+  min-height: 0;
+  width: 100%;
   background: var(--bz-scrim-strong);
 }
 

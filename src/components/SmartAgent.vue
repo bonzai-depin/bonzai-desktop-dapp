@@ -27,7 +27,7 @@
     </div>
   </Transition>
 
-  <div class="models__deployment column is-8 is-paddingless">
+  <div class="bz-tab-shell">
     <div class="models__deployment-install">
       <div class="columns">
         <div class="column is-12 p-5">
@@ -2972,8 +2972,10 @@ Provide a concise analysis covering:
 
 .models__deployment-install {
   overflow-y: auto;
-  padding: 6em;
-  height: 100vh;
+  padding: var(--bz-space-5) var(--bz-space-6);
+  flex: 1;
+  min-height: 0;
+  width: 100%;
   background: var(--bz-scrim-strong);
 }
 
