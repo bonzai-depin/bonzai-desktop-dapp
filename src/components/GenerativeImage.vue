@@ -1955,12 +1955,12 @@ export default {
 }
 
 .generated__image {
-  width: 100% !important;
-  height: auto !important;
-  max-height: 60vh;
+  width: 100%;
+  height: auto;
+  max-height: var(--bz-content-max-h);
   object-fit: contain;
-  border: 8px solid rgba(255, 255, 255, 1);
-  border-radius: 4px !important;
+  border-radius: var(--bz-content-radius);
+  display: block;
 }
 h1 {
   margin-top: 0 !important;
@@ -1980,15 +1980,11 @@ p {
   transform: translate3d(0, 0, 0);
 }
 div.question {
-  border: 1px solid rgba(255, 255, 255, 0);
-  padding: 2em 2em 5em;
-  margin-top: 2em !important;
-  margin-bottom: 1em !important;
-  font-weight: 700;
-  background-color: var(--bz-border);
-  box-shadow: 8px 8px 0 var(--bz-purple-glow);
-  border-radius: 4px;
-  backdrop-filter: blur(26px);
+  position: relative;
+  padding: var(--bz-space-4);
+  background: var(--bz-card);
+  border: 1px solid var(--bz-border);
+  border-radius: var(--bz-r);
 }
 
 div.question .generated__image {
@@ -2089,18 +2085,16 @@ ol.chat li {
   border-radius: 4px;
 }
 
-/* Fade-in animation for history items — uses the canonical bz-rise
-   keyframe from tokens.css (legacy fadeInUp retired). */
+/* ── Cinematic content-first treatment — Phase 3 (Runway-style) ──
+   Hero image is full-bleed edge-to-edge with metadata overlay.
+   History items are a dense 2-column grid with minimal chrome.
+   The content IS the design; the interface retreats. */
+
 .history-item {
-  animation: bz-rise var(--bz-dur-slow) var(--bz-ease-out) forwards;
+  animation: bz-fade-rise 600ms var(--bz-ease-out) forwards;
   opacity: 0;
 }
 
-/* Canvas-first treatment — Milestone 3c.
-   First child renders as a full-width hero. Subsequent items wrap
-   into a 2-column responsive grid so the action cluster on each card
-   never breaks across multiple lines. Each card is a complete unit
-   (image + metadata + actions), 50% width on desktop. */
 ol.chat {
   display: grid;
   grid-template-columns: minmax(0, 1fr);
@@ -2110,39 +2104,81 @@ ol.chat {
   margin: var(--bz-space-5) 0;
 }
 
-/* Hero — first item spans full width. */
+/* ── HERO — first item is cinematic full-bleed ───────────────── */
 ol.chat .history-item:first-child {
   grid-column: 1 / -1;
 }
+ol.chat .history-item:first-child .question {
+  background: transparent;
+  border: none;
+  padding: 0;
+  border-radius: 0;
+}
 ol.chat .history-item:first-child .generated__image {
-  max-width: min(880px, 70vh);
+  max-height: 85vh;
   width: 100%;
-  display: block;
-  margin: 0 auto;
+  max-width: 100%;
+  border-radius: var(--bz-r-sm);
+}
+/* Hide watermark on hero — the image speaks for itself */
+ol.chat .history-item:first-child .watermark {
+  display: none;
+}
+/* Subtle bottom scrim so overlay controls read on any image */
+ol.chat .history-item:first-child .question::after {
+  content: "";
+  position: absolute;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  height: 120px;
+  background: var(--bz-content-scrim);
+  pointer-events: none;
+  border-radius: 0 0 var(--bz-r-sm) var(--bz-r-sm);
+}
+/* Overlay metadata at the bottom of the hero image */
+ol.chat .history-item:first-child .bz-img-meta {
+  position: absolute;
+  bottom: var(--bz-space-4);
+  left: var(--bz-space-4);
+  z-index: 1;
+  margin: 0;
+}
+ol.chat .history-item:first-child .bz-gen-actions {
+  position: absolute;
+  bottom: var(--bz-space-4);
+  right: var(--bz-space-4);
+  z-index: 1;
+}
+/* Dark-backed pills for readability over images */
+ol.chat .history-item:first-child .bz-origin-pill {
+  background: var(--bz-scrim-deep);
+  border-color: transparent;
+  color: var(--bz-fg);
 }
 
-/* History items — 2 per row on desktop, 1 per row on narrow. */
+/* ── HISTORY GRID ───────────────────────────────────────────── */
 @media (min-width: 880px) {
   ol.chat {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
   ol.chat .history-item:first-child {
-    grid-column: 1 / -1;  /* hero spans both columns */
+    grid-column: 1 / -1;
   }
 }
 
-/* Each card sits in its column at full width — no auto-margin. The
-   image + metadata + actions all flow in the cell. */
 ol.chat .history-item:not(:first-child) {
   width: 100%;
+}
+ol.chat .history-item:not(:first-child) .question {
+  padding: var(--bz-space-3);
 }
 ol.chat .history-item:not(:first-child) .generated__image {
   width: 100%;
   max-width: 100%;
   display: block;
+  border-radius: var(--bz-r-sm);
 }
-
-/* Soft divider — keep the existing hr but thin it. */
 ol.chat .history-item:not(:first-child) hr {
   border: 0;
   border-top: 1px solid var(--bz-border);

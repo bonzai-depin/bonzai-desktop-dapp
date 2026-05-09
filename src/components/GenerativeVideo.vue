@@ -2015,14 +2015,11 @@ p {
   transform: translate3d(0, 0, 0);
 }
 div.question {
-  border: 1px solid var(--bz-border-strong);
-  padding: 1em 1em 2em;
-  margin-top: 2em !important;
-  margin-bottom: 1em !important;
-  font-weight: 700;
-  box-shadow: 8px 8px 0 var(--bz-purple-glow);
-  border-radius: 4px;
-  backdrop-filter: blur(6px);
+  position: relative;
+  padding: var(--bz-space-4);
+  background: var(--bz-card);
+  border: 1px solid var(--bz-border);
+  border-radius: var(--bz-r);
 }
 hr {
   margin: 12px 0;
@@ -2113,21 +2110,9 @@ ol.chat li {
   opacity: 0.5;
 }
 
-/* Fade-in animation for history items */
 .history-item {
-  animation: fadeInUp 0.4s ease-out forwards;
+  animation: bz-fade-rise 600ms var(--bz-ease-out) forwards;
   opacity: 0;
-}
-
-@keyframes fadeInUp {
-  from {
-    opacity: 0;
-    transform: translateY(20px);
-  }
-  to {
-    opacity: 1;
-    transform: translateY(0);
-  }
 }
 
 .load-more-sentinel {
@@ -2182,10 +2167,10 @@ ol.chat li {
 }
 
 /* ════════════════════════════════════════════════════════════════
-   Milestone 6 — canvas-first grid + unified action vocabulary.
-   Same pattern as GenerativeImage: latest video is hero, history
-   wraps into a 2-column grid on desktop, single column narrow.
-   ════════════════════════════════════════════════════════════════ */
+    Phase 3 — cinematic content-first (Runway-style).
+    Hero video is full-bleed edge-to-edge with metadata overlay.
+    History wraps into a 2-column grid with minimal chrome.
+    ════════════════════════════════════════════════════════════════ */
 
 ol.chat {
   display: grid;
@@ -2195,21 +2180,65 @@ ol.chat {
   padding: 0;
   margin: var(--bz-space-5) 0;
 }
+
+/* Hero */
+ol.chat .history-item:first-child {
+  grid-column: 1 / -1;
+}
+ol.chat .history-item:first-child .question {
+  background: transparent;
+  border: none;
+  padding: 0;
+  border-radius: 0;
+}
+ol.chat .history-item:first-child video {
+  max-height: 85vh;
+  width: 100%;
+  max-width: 100%;
+  height: auto;
+  display: block;
+  border-radius: var(--bz-r-sm);
+}
+/* Bottom scrim for overlay controls */
+ol.chat .history-item:first-child .question::after {
+  content: "";
+  position: absolute;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  height: 120px;
+  background: var(--bz-content-scrim);
+  pointer-events: none;
+  border-radius: 0 0 var(--bz-r-sm) var(--bz-r-sm);
+}
+ol.chat .history-item:first-child .bz-img-meta {
+  position: absolute;
+  bottom: var(--bz-space-4);
+  left: var(--bz-space-4);
+  z-index: 1;
+  margin: 0;
+}
+ol.chat .history-item:first-child .bz-gen-actions {
+  position: absolute;
+  bottom: var(--bz-space-4);
+  right: var(--bz-space-4);
+  z-index: 1;
+}
+
+/* History grid */
 @media (min-width: 880px) {
   ol.chat { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   ol.chat .history-item:first-child { grid-column: 1 / -1; }
 }
-ol.chat .history-item:first-child video {
-  width: 100%;
-  max-width: min(880px, 70vh);
-  height: auto;
-  display: block;
-  margin: 0 auto;
+ol.chat .history-item:not(:first-child) .question {
+  padding: var(--bz-space-3);
 }
 ol.chat .history-item:not(:first-child) video {
   width: 100%;
   max-width: 100%;
   height: auto;
+  display: block;
+  border-radius: var(--bz-r-sm);
 }
 
 .bz-img-meta {
