@@ -1773,8 +1773,11 @@ export default {
 
 /* When ChatLayout is active, remove the outer padding and disable
    scrolling on the deployment-install wrapper so ChatLayout owns
-   the scroll behaviour. */
-.models__deployment-install--chat {
+   the scroll behaviour.
+   NOTE: chained selector (.base.modifier) raises specificity so this
+   beats the base .models__deployment-install rule that is declared
+   further down in the stylesheet. */
+.models__deployment-install.models__deployment-install--chat {
   padding: 0;
   overflow: hidden;
 }
