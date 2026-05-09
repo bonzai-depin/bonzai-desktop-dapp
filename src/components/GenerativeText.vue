@@ -2,7 +2,10 @@
   <div class="background"></div>
 
   <div class="bz-tab-shell">
-    <div class="models__deployment-install">
+    <div
+      class="models__deployment-install"
+      :class="{ 'models__deployment-install--chat': isModel && (!currentModel.isMultimodal || isMmprojAvailable) }"
+    >
       <!-- ─────────────────────────────────────────────────────────────
            SETUP STATE — model not yet downloaded (or vision file
            missing for a multimodal model). Editorial card with the
@@ -186,88 +189,72 @@
             @browse-models="openModelPicker"
           />
 
-          <div v-else class="bz-text-chat__messages">
-            <template
-              v-for="(inference, displayIndex) in paginatedInferences"
-              :key="inference._originalIndex"
+          <div v-else-if="activeInference" class="bz-text-chat__messages">
+            <!-- User -->
+            <ChatMessage
+              :data-inference-id="activeInference.id"
+              role="user"
+              :content="activeInference.question"
+              :ts="activeInference.timestamp"
+            />
+
+            <!-- Assistant -->
+            <ChatMessage
+              role="assistant"
+              :model="activeInference.model"
+              :ts="activeInference.timestamp"
+              :streaming="isLoading && activeInference.answer.id === streamingInferenceId"
+              @inspect="onInspectInference(activeInference)"
             >
-              <!-- User -->
-              <ChatMessage
-                :data-inference-id="inference.id"
-                role="user"
-                :content="inference.question"
-                :ts="inference.timestamp"
-              />
-
-              <!-- Assistant -->
-              <ChatMessage
-                role="assistant"
-                :model="inference.model"
-                :ts="inference.timestamp"
-                :streaming="isLoading && inference.answer.id === streamingInferenceId"
-                @inspect="onInspectInference(inference)"
-              >
-                <div class="answer markdown-body" @click="handleAnswerClick">
-                  <div
-                    v-if="inference.tokensPerSecond || (inference.networkMode && inference.networkMode !== 'local')"
-                    class="bz-msg-extra-meta"
+              <div class="answer markdown-body" @click="handleAnswerClick">
+                <div
+                  v-if="activeInference.tokensPerSecond || (activeInference.networkMode && activeInference.networkMode !== 'local')"
+                  class="bz-msg-extra-meta"
+                >
+                  <span v-if="activeInference.tokensPerSecond" class="bz-mono bz-meta">
+                    {{ activeInference.tokensPerSecond }} tok/s
+                  </span>
+                  <span
+                    v-if="activeInference.networkMode && activeInference.networkMode !== 'local'"
+                    class="network-mode-tag"
+                    :class="'nm-' + activeInference.networkMode"
                   >
-                    <span v-if="inference.tokensPerSecond" class="bz-mono bz-meta">
-                      {{ inference.tokensPerSecond }} tok/s
+                    <span class="material-symbols-outlined" style="font-size: 12px">
+                      {{ activeInference.networkMode === 'private' ? 'lock' : 'cloud' }}
                     </span>
-                    <span
-                      v-if="inference.networkMode && inference.networkMode !== 'local'"
-                      class="network-mode-tag"
-                      :class="'nm-' + inference.networkMode"
-                    >
-                      <span class="material-symbols-outlined" style="font-size: 12px">
-                        {{ inference.networkMode === 'private' ? 'lock' : 'cloud' }}
-                      </span>
-                      {{ inference.networkMode === 'private' ? 'Private' : 'Remote' }}
-                    </span>
-                  </div>
-
-                  <template
-                    v-for="(seg, segIdx) in splitThinkSegments(inference.answer.text)"
-                    :key="`${inference.answer.id}-seg-${segIdx}`"
-                  >
-                    <details
-                      v-if="seg.type === 'think' && reasoningEnabled"
-                      class="thought-bubble"
-                      :class="{ 'thought-bubble--partial': seg.partial }"
-                      open
-                    >
-                      <summary :title="seg.partial ? 'Thinking…' : 'Thought process'">
-                        <span class="material-symbols-outlined">network_intelligence_history</span>
-                      </summary>
-                      <div class="thought-bubble__body">
-                        <vue-markdown :source="seg.text" />
-                      </div>
-                    </details>
-                    <vue-markdown
-                      v-else-if="seg.type === 'content'"
-                      :source="seg.text"
-                    />
-                  </template>
-
-                  <GenerativeActions
-                    :actions="actionsFor(inference)"
-                    @action="(id) => handleAction(id, inference)"
-                  />
+                    {{ activeInference.networkMode === 'private' ? 'Private' : 'Remote' }}
+                  </span>
                 </div>
-              </ChatMessage>
-            </template>
 
-            <!-- Lazy-load sentinel — keeps the IntersectionObserver -->
-            <div
-              ref="loadMoreSentinel"
-              v-if="hasMore && inferences.length > 0"
-              class="load-more-sentinel has-text-centered p-4"
-            >
-              <span v-if="isLoadingMore" class="bz-meta" style="color: var(--bz-fg-low);">
-                Loading more…
-              </span>
-            </div>
+                <template
+                  v-for="(seg, segIdx) in splitThinkSegments(activeInference.answer.text)"
+                  :key="`${activeInference.answer.id}-seg-${segIdx}`"
+                >
+                  <details
+                    v-if="seg.type === 'think' && reasoningEnabled"
+                    class="thought-bubble"
+                    :class="{ 'thought-bubble--partial': seg.partial }"
+                    open
+                  >
+                    <summary :title="seg.partial ? 'Thinking…' : 'Thought process'">
+                      <span class="material-symbols-outlined">network_intelligence_history</span>
+                    </summary>
+                    <div class="thought-bubble__body">
+                      <vue-markdown :source="seg.text" />
+                    </div>
+                  </details>
+                  <vue-markdown
+                    v-else-if="seg.type === 'content'"
+                    :source="seg.text"
+                  />
+                </template>
+
+                <GenerativeActions
+                  :actions="actionsFor(activeInference)"
+                  @action="(id) => handleAction(id, activeInference)"
+                />
+              </div>
+            </ChatMessage>
           </div>
         </template>
 
@@ -1288,6 +1275,7 @@ export default {
       };
       inferences.value = [...inferences.value, newInference];
       hasCopy.value = [...hasCopy.value, false];
+      activeRailId.value = null; // snap to the new inference
 
       try {
         let assistantResult;
@@ -1582,14 +1570,20 @@ export default {
 
     const selectFromRail = (entry) => {
       activeRailId.value = entry.id;
-      // Defer until DOM updates so the message has its data-attribute
-      nextTick(() => {
-        const el = document.querySelector(`[data-inference-id="${entry.id}"]`);
-        if (el && typeof el.scrollIntoView === "function") {
-          el.scrollIntoView({ behavior: "smooth", block: "start" });
-        }
-      });
     };
+
+    // The inference currently shown in the main stream. When the user
+    // picks an item from the history rail, only that conversation is
+    // rendered. Otherwise the most recent inference is shown.
+    const activeInference = computed(() => {
+      if (!inferences.value?.length) return null;
+      if (activeRailId.value) {
+        const found = inferences.value.find((inf) => inf.id === activeRailId.value);
+        if (found) return found;
+      }
+      // Default to most recent (reversedInferences is newest-first)
+      return reversedInferences.value[0] || null;
+    });
 
     const pickPrompt = (p) => {
       // EmptyChat passes the prompt object — value or title becomes the
@@ -1647,6 +1641,7 @@ export default {
       streamingInferenceId,
       // lazy loading pagination
       paginatedInferences,
+      activeInference,
       loadMoreSentinel,
       hasMore,
       isLoadingMore,
@@ -1834,10 +1829,18 @@ export default {
    messages container so a Text-tab-specific feel survives.
    ───────────────────────────────────────────────────────────────── */
 .bz-text-chat {
-  /* Fill the available height of the deployment-install scroll area
-     so the input stays docked at the bottom. */
-  height: calc(100vh - 80px);
-  min-height: 600px;
+  /* Fill the parent flex container edge-to-edge. The input stays
+     docked at the bottom via ChatLayout's grid. */
+  height: 100%;
+  min-height: 0;
+}
+
+/* When ChatLayout is active, remove the outer padding and disable
+   scrolling on the deployment-install wrapper so ChatLayout owns
+   the scroll behaviour. */
+.models__deployment-install--chat {
+  padding: 0;
+  overflow: hidden;
 }
 
 .bz-text-chat__head {

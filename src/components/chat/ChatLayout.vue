@@ -168,11 +168,12 @@ watch(
    so wide screens don't render uncomfortable line-lengths. */
 .bz-chat__stream {
   overflow-y: auto;
-  padding: var(--bz-space-6) var(--bz-space-5) var(--bz-space-5);
+  padding: 0;
 }
 .bz-chat__messages {
   max-width: 760px;
   margin: 0 auto;
+  padding: var(--bz-space-4) var(--bz-space-4) var(--bz-space-6);
 }
 
 .bz-chat__stream--empty {
@@ -182,10 +183,10 @@ watch(
 }
 
 /* Composer dock — the input lives in a constrained column matching
-   the stream's width above. Bordered top to read as part of the
-   chat surface, not as a separate band. */
+    the stream's width above. Bordered top to read as part of the
+    chat surface, not as a separate band. */
 .bz-chat__input {
-  padding: var(--bz-space-4) var(--bz-space-5) var(--bz-space-5);
+  padding: var(--bz-space-3) var(--bz-space-4) var(--bz-space-4);
   border-top: 1px solid var(--bz-border);
   background: var(--bz-canvas);
 }
