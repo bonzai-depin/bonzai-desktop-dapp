@@ -1161,7 +1161,9 @@ export default {
       input.click();
     };
 
-    // Load persisted text inferences on component mount
+    // Load persisted text inferences on component mount.
+    // Guarantee every inference has an id so the history rail and
+    // activeInference lookup never fail.
     const loadHistory = async () => {
       try {
         const saved = await window.electronAPI?.store?.get?.(
@@ -1169,7 +1171,10 @@ export default {
           [],
         );
         if (Array.isArray(saved)) {
-          inferences.value = saved;
+          inferences.value = saved.map((inf) => ({
+            ...inf,
+            id: inf.id || uuid(),
+          }));
           hasCopy.value = new Array(saved.length).fill(false);
         }
       } catch (e) {
@@ -1200,10 +1205,12 @@ export default {
       streamingText.value = "";
 
       // Create the inference entry immediately so streaming text appears
+      const inferenceId = uuid();
       const answerId = uuid();
       streamingInferenceId.value = answerId;
       const modelName = currentModel.value?.modelname || "Unknown";
       const newInference = {
+        id: inferenceId,
         question: prompt,
         answer: { id: answerId, text: "" },
         image: attachedImage.value?.dataUrl || null,
@@ -1818,7 +1825,7 @@ export default {
 }
 .bz-text-chat__setup-cta {
   display: flex;
-  justify-content: center;
+  justify-content: flex-start;
   margin-top: var(--bz-space-5);
 }
 

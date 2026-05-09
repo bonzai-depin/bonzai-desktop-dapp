@@ -66,7 +66,7 @@ defineEmits(["pick", "browse-models"]);
 <style scoped>
 .bz-empty-chat {
   max-width: 760px;
-  margin: 0 auto;
+  margin: 0;
   padding: var(--bz-space-8) var(--bz-space-5);
   display: flex;
   flex-direction: column;

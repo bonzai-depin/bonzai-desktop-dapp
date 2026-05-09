@@ -171,14 +171,14 @@ watch(
 }
 .bz-chat__messages {
   max-width: 760px;
-  margin: 0 auto;
+  margin: 0;
   padding: var(--bz-space-4);
 }
 
 .bz-chat__stream--empty {
   display: flex;
   align-items: center;
-  justify-content: center;
+  justify-content: flex-start;
 }
 
 /* Composer dock — sticks to the bottom of the main column.
@@ -190,7 +190,7 @@ watch(
 }
 .bz-chat__input > :deep(*) {
   max-width: 760px;
-  margin: 0 auto;
+  margin: 0;
 }
 
 .bz-chat__inspector {
