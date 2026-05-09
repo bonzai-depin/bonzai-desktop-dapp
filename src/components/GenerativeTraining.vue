@@ -859,13 +859,7 @@
     >
       <div class="dataset-modal">
         <div class="has-text-right">
-          <button
-            class="button is-danger"
-            @click="showCreateDataset = false"
-            title="Close"
-          >
-            <span class="material-symbols-outlined">close</span>
-          </button>
+          <BzCloseButton size="md" aria-label="Close" @click="showCreateDataset = false" />
         </div>
 
         <div class="dataset-modal-header has-text-center">
@@ -1036,13 +1030,7 @@
               <span class="material-symbols-outlined mr-2 is-size-2">currency_exchange</span>
               Issue Model Token
             </h2>
-            <button
-              class="button is-danger is-small"
-              @click="showTokenLaunchModal = false"
-              :disabled="isLaunchingToken"
-            >
-              <span class="material-symbols-outlined">close</span>
-            </button>
+            <BzCloseButton size="md" aria-label="Close" @click="showTokenLaunchModal = false" />
           </div>
 
           <div class="token-launch-body p-5">
@@ -1136,6 +1124,7 @@ import axios from "axios";
 import { io } from "socket.io-client";
 import AccessRequirements from "./AccessRequirements.vue";
 import MintModal from "./MintModal.vue";
+import BzCloseButton from "./BzCloseButton.vue";
 import { fineTuneTokenService } from "../services/fineTuneToken.service.js";
 
 const API_BASE =
@@ -1889,19 +1878,19 @@ export default {
   overflow-y: auto;
   padding: 6em;
   height: 100vh;
-  background: rgba(0, 0, 0, 0.4);
+  background: var(--bz-scrim);
 }
 
 .models__activity--payouts {
   padding: 4em;
-  border: 1px solid rgba(255, 255, 255, 0.1);
+  border: 1px solid var(--bz-border);
   backdrop-filter: blur(32px);
   border-radius: 4px !important;
 }
 
 h1,
 h3 {
-  color: #fff;
+  color: var(--bz-fg);
   text-align: left;
 }
 
@@ -1924,7 +1913,7 @@ hr {
 }
 
 .label {
-  color: #fff;
+  color: var(--bz-fg);
   font-weight: 600;
 }
 
@@ -1942,8 +1931,8 @@ input[type="radio"] {
 
 input[type="radio"] + label {
   padding: 6px 16px 12px;
-  color: rgba(255, 255, 255, 0.3) !important;
-  border: 1px solid rgba(255, 255, 255, 0.3);
+  color: var(--bz-fg-faint) !important;
+  border: 1px solid var(--bz-fg-faint);
   border-radius: 4px;
   cursor: pointer;
   transition: all 0.2s ease;
@@ -1952,25 +1941,25 @@ input[type="radio"] + label {
 input[type="radio"]:checked + label {
   color: rgba(255, 255, 255, 1) !important;
   border: 1px solid rgba(255, 255, 255, 1) !important;
-  background: rgba(97, 55, 142, 0.33) !important;
+  background: var(--bz-purple-soft) !important;
   backdrop-filter: blur(64px) !important;
 }
 
 .notification.is-dark {
   background: rgba(30, 30, 40, 0.8);
-  border: 1px solid rgba(255, 255, 255, 0.1);
+  border: 1px solid var(--bz-border);
 }
 
 .notification.is-warning {
   background: rgba(255, 221, 87, 0.15);
-  color: #fff;
+  color: var(--bz-fg);
   border: 1px solid rgba(255, 221, 87, 0.3);
 }
 
 .notification.is-success {
-  background: rgba(72, 199, 142, 0.15);
-  color: #fff;
-  border: 1px solid rgba(72, 199, 142, 0.3);
+  background: var(--bz-emerald-soft);
+  color: var(--bz-fg);
+  border: 1px solid var(--bz-emerald-soft);
 }
 
 .dataset-list {
@@ -1984,20 +1973,20 @@ input[type="radio"]:checked + label {
   align-items: center;
   padding: 0.75rem 1rem;
   margin-bottom: 0.5rem;
-  background: rgba(255, 255, 255, 0.05);
-  border: 1px solid rgba(255, 255, 255, 0.1);
+  background: var(--bz-canvas);
+  border: 1px solid var(--bz-border);
   border-radius: 4px;
   cursor: pointer;
   transition: all 0.2s ease;
 }
 
 .dataset-item:hover {
-  background: rgba(255, 255, 255, 0.1);
+  background: var(--bz-border);
 }
 
 .dataset-item.is-selected {
-  background: rgba(97, 55, 142, 0.3);
-  border-color: rgba(97, 55, 142, 0.6);
+  background: var(--bz-purple-soft);
+  border-color: var(--bz-border-brand);
 }
 
 .dataset-info {
@@ -2011,8 +2000,8 @@ input[type="radio"]:checked + label {
   align-items: center;
   padding: 0.75rem 1rem;
   margin-bottom: 0.5rem;
-  background: rgba(255, 255, 255, 0.05);
-  border: 1px solid rgba(255, 255, 255, 0.1);
+  background: var(--bz-canvas);
+  border: 1px solid var(--bz-border);
   border-radius: 4px;
 }
 
@@ -2026,7 +2015,7 @@ input[type="radio"]:checked + label {
   width: 100%;
   height: 8px;
   border-radius: 5px;
-  background: rgba(255, 255, 255, 0.2);
+  background: var(--bz-border-strong);
   outline: none;
 }
 
@@ -2042,32 +2031,32 @@ input[type="radio"]:checked + label {
 
 .input,
 .select select {
-  background: rgba(255, 255, 255, 0.1);
-  border-color: rgba(255, 255, 255, 0.3);
-  color: #fff;
+  background: var(--bz-border);
+  border-color: var(--bz-fg-faint);
+  color: var(--bz-fg);
 }
 
 .input::placeholder {
-  color: rgba(255, 255, 255, 0.4);
+  color: var(--bz-fg-low);
 }
 
 .checkbox {
-  color: #fff;
+  color: var(--bz-fg);
 }
 
 .modal-card {
   background: #1a1a2e;
-  color: #fff;
+  color: var(--bz-fg);
 }
 
 .modal-card-head,
 .modal-card-foot {
   background: rgba(30, 30, 40, 0.9);
-  border-color: rgba(255, 255, 255, 0.1);
+  border-color: var(--bz-border);
 }
 
 .modal-card-title {
-  color: #fff;
+  color: var(--bz-fg);
 }
 
 .modal-card-body {
@@ -2075,25 +2064,25 @@ input[type="radio"]:checked + label {
 }
 
 .modal-card-body .label {
-  color: #fff;
+  color: var(--bz-fg);
 }
 
 .modal-card-body .input,
 .modal-card-body .select select {
-  background: rgba(255, 255, 255, 0.1);
-  border-color: rgba(255, 255, 255, 0.3);
-  color: #fff;
+  background: var(--bz-border);
+  border-color: var(--bz-fg-faint);
+  color: var(--bz-fg);
 }
 
 .file-cta,
 .file-name {
-  background: rgba(255, 255, 255, 0.1);
-  border-color: rgba(255, 255, 255, 0.3);
-  color: #fff;
+  background: var(--bz-border);
+  border-color: var(--bz-fg-faint);
+  color: var(--bz-fg);
 }
 
 .help {
-  color: rgba(255, 255, 255, 0.6);
+  color: var(--bz-fg-mid);
 }
 
 .loader {
@@ -2131,11 +2120,11 @@ input[type="radio"]:checked + label {
   width: 92%;
   max-width: 520px;
   background: #0a0a0f;
-  border: 1px solid rgba(255, 255, 255, 0.1);
+  border: 1px solid var(--bz-border);
   border-radius: 16px;
   padding: 24px;
   position: relative;
-  color: #fff;
+  color: var(--bz-fg);
 }
 
 .dataset-modal-header {
@@ -2155,13 +2144,13 @@ input[type="radio"]:checked + label {
   background: linear-gradient(135deg, #9333ea 0%, #7c3aed 100%);
   border-radius: 20px;
   font-weight: 900;
-  color: #fff;
+  color: var(--bz-fg);
   margin-bottom: 10px;
 }
 
 .dataset-modal-header h2 {
   margin: 0;
-  color: #fff;
+  color: var(--bz-fg);
 }
 
 .dataset-modal-body {
@@ -2169,7 +2158,7 @@ input[type="radio"]:checked + label {
 }
 
 .dataset-type-preview {
-  background: rgba(255, 255, 255, 0.04);
+  background: var(--bz-canvas);
   border-radius: 10px;
   padding: 1.5em;
   border: 1px solid rgba(147, 51, 234, 0.25);
@@ -2205,8 +2194,8 @@ input[type="radio"]:checked + label {
 .dataset-tag {
   padding: 4px 10px;
   border-radius: 6px;
-  background: rgba(255, 255, 255, 0.08);
-  color: rgba(255, 255, 255, 0.8);
+  background: var(--bz-card);
+  color: var(--bz-fg-mid);
   font-size: 12px;
 }
 
@@ -2217,10 +2206,10 @@ input[type="radio"]:checked + label {
 }
 
 .dataset-form-section {
-  background: rgba(255, 255, 255, 0.04);
+  background: var(--bz-canvas);
   border-radius: 10px;
   padding: 1.5em;
-  border: 1px solid rgba(255, 255, 255, 0.1);
+  border: 1px solid var(--bz-border);
   margin-bottom: 16px;
 }
 
@@ -2234,7 +2223,7 @@ input[type="radio"]:checked + label {
 
 .dataset-label {
   display: block;
-  color: rgba(255, 255, 255, 0.9);
+  color: var(--bz-fg);
   margin-bottom: 8px;
   font-size: 14px;
 }
@@ -2243,10 +2232,10 @@ input[type="radio"]:checked + label {
 .dataset-select {
   width: 100%;
   padding: 12px 14px;
-  background: rgba(255, 255, 255, 0.06);
-  border: 1px solid rgba(255, 255, 255, 0.15);
+  background: var(--bz-canvas);
+  border: 1px solid var(--bz-border-strong);
   border-radius: 8px;
-  color: #fff;
+  color: var(--bz-fg);
   font-size: 16px;
   transition: border-color 0.2s ease;
 }
@@ -2258,7 +2247,7 @@ input[type="radio"]:checked + label {
 }
 
 .dataset-input::placeholder {
-  color: rgba(255, 255, 255, 0.4);
+  color: var(--bz-fg-low);
 }
 
 .dataset-select-wrapper {
@@ -2272,7 +2261,7 @@ input[type="radio"]:checked + label {
 
 .dataset-select option {
   background: #1a1a2e;
-  color: #fff;
+  color: var(--bz-fg);
 }
 
 .dataset-upload-zone {
@@ -2304,7 +2293,7 @@ input[type="radio"]:checked + label {
   flex-direction: column;
   align-items: center;
   gap: 8px;
-  color: rgba(255, 255, 255, 0.7);
+  color: var(--bz-fg-mid);
   cursor: pointer;
 }
 
@@ -2314,7 +2303,7 @@ input[type="radio"]:checked + label {
 
 .dataset-upload-hint {
   font-size: 12px;
-  color: rgba(255, 255, 255, 0.5);
+  color: var(--bz-fg-low);
 }
 
 .dataset-files-preview {
@@ -2355,7 +2344,7 @@ input[type="radio"]:checked + label {
 }
 
 .dataset-preview-text {
-  color: rgba(255, 255, 255, 0.85);
+  color: var(--bz-fg);
   font-size: 14px;
   line-height: 1.5;
 }
@@ -2368,7 +2357,7 @@ input[type="radio"]:checked + label {
   display: flex;
   gap: 12px;
   padding-top: 16px;
-  border-top: 1px solid rgba(255, 255, 255, 0.08);
+  border-top: 1px solid var(--bz-card);
 }
 
 .dataset-modal-footer .button {
@@ -2379,7 +2368,7 @@ input[type="radio"]:checked + label {
 .dataset-primary-btn {
   background: linear-gradient(135deg, #9333ea 0%, #7c3aed 100%);
   border: none;
-  color: #fff;
+  color: var(--bz-fg);
 }
 
 .dataset-primary-btn:hover:not(:disabled) {
@@ -2414,9 +2403,9 @@ input[type="radio"]:checked + label {
 .studio-example-list {
   max-height: 400px;
   overflow-y: auto;
-  border: 1px solid rgba(255, 255, 255, 0.1);
+  border: 1px solid var(--bz-border);
   border-radius: 4px;
-  background: rgba(0, 0, 0, 0.2);
+  background: var(--bz-scrim-soft);
 }
 
 .studio-example-item {
@@ -2426,14 +2415,14 @@ input[type="radio"]:checked + label {
   padding: 6px 8px;
   cursor: pointer;
   font-size: 12px;
-  color: rgba(255, 255, 255, 0.7);
-  border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+  color: var(--bz-fg-mid);
+  border-bottom: 1px solid var(--bz-canvas);
   transition: background 0.15s ease;
 }
 
 .tabs a {
-  color: rgba(255, 255, 255, 0.3);
-  border-color: rgba(255, 255, 255, 0.1);
+  color: var(--bz-fg-faint);
+  border-color: var(--bz-border);
 }
 
 .tabs a:hover {
@@ -2442,17 +2431,17 @@ input[type="radio"]:checked + label {
 }
 
 .tabs li.is-active a {
-  color: #ffe08a;
-  border-color: #ffe08a;
+  color: var(--bz-warning);
+  border-color: var(--bz-warning);
 }
 
 .studio-example-item:hover {
-  background: rgba(255, 255, 255, 0.05);
+  background: var(--bz-canvas);
 }
 
 .studio-example-item.is-active {
-  background: rgba(97, 55, 142, 0.3);
-  color: #fff;
+  background: var(--bz-purple-soft);
+  color: var(--bz-fg);
 }
 
 .studio-example-title {
@@ -2464,7 +2453,7 @@ input[type="radio"]:checked + label {
 
 .studio-mode-toggle {
   padding-bottom: 8px;
-  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+  border-bottom: 1px solid var(--bz-card);
   margin-bottom: 12px;
 }
 
@@ -2476,8 +2465,8 @@ input[type="radio"]:checked + label {
 .studio-tier-select select {
   width: 100%;
   padding: 6px 10px;
-  background: rgba(0, 0, 0, 0.4);
-  border: 1px solid rgba(255, 255, 255, 0.15);
+  background: var(--bz-scrim);
+  border: 1px solid var(--bz-border-strong);
   border-radius: 4px;
   color: #e0e0e0;
   font-size: 12px;
@@ -2492,21 +2481,21 @@ input[type="radio"]:checked + label {
 
 .studio-tier-select select option {
   background: #1a1a2e;
-  color: #fff;
+  color: var(--bz-fg);
 }
 
 .studio-preview {
   padding: 12px;
-  border: 1px solid rgba(255, 255, 255, 0.1);
+  border: 1px solid var(--bz-border);
   border-radius: 4px;
-  background: rgba(0, 0, 0, 0.2);
+  background: var(--bz-scrim-soft);
 }
 
 .studio-code-area {
   width: 100%;
   min-height: 200px;
-  background: rgba(0, 0, 0, 0.4);
-  border: 1px solid rgba(255, 255, 255, 0.15);
+  background: var(--bz-scrim);
+  border: 1px solid var(--bz-border-strong);
   border-radius: 4px;
   color: #e0e0e0;
   font-family: "SF Mono", "Fira Code", "Consolas", monospace;
@@ -2558,8 +2547,8 @@ input[type="radio"]:checked + label {
 
 .studio-description-area {
   flex: 1;
-  background: rgba(0, 0, 0, 0.4);
-  border: 1px solid rgba(255, 255, 255, 0.15);
+  background: var(--bz-scrim);
+  border: 1px solid var(--bz-border-strong);
   border-radius: 4px;
   color: #e0e0e0;
   font-size: 13px;
@@ -2599,7 +2588,7 @@ input[type="radio"]:checked + label {
   align-items: center;
   justify-content: space-between;
   padding: 10px 0;
-  border-top: 1px solid rgba(255, 255, 255, 0.1);
+  border-top: 1px solid var(--bz-border);
 }
 
 @keyframes move {
@@ -2631,7 +2620,7 @@ input[type="radio"]:checked + label {
 .token-launch-modal {
   width: 90%;
   max-width: 480px;
-  border: 1px solid rgba(255, 255, 255, 0.1);
+  border: 1px solid var(--bz-border);
   border-radius: 16px;
   overflow: hidden;
 }
@@ -2641,8 +2630,8 @@ input[type="radio"]:checked + label {
   align-items: center;
   justify-content: space-between;
   padding: 16px 20px;
-  background: rgba(0, 0, 0, 0.3);
-  border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+  background: var(--bz-scrim);
+  border-bottom: 1px solid var(--bz-border);
 }
 
 .token-launch-header h2 {

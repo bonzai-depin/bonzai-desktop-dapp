@@ -46,7 +46,7 @@ defineEmits(['dismiss']);
   padding: 12px 16px;
   border-radius: 8px;
   font-size: 13px;
-  color: rgba(255, 255, 255, 0.9);
+  color: var(--bz-fg);
   line-height: 1.4;
 }
 
@@ -64,13 +64,13 @@ defineEmits(['dismiss']);
 
 /* Warning — yellow */
 .context-banner.warning {
-  background: rgba(255, 224, 138, 0.12);
+  background: var(--bz-warning-soft);
   border: 1px solid rgba(255, 224, 138, 0.35);
 }
 
 /* Error — red */
 .context-banner.error {
-  background: rgba(241, 70, 104, 0.12);
+  background: var(--bz-danger-soft);
   border: 1px solid rgba(241, 70, 104, 0.35);
 }
 
@@ -80,9 +80,9 @@ defineEmits(['dismiss']);
 }
 
 .info .banner-icon { color: #fe7eb0; }
-.success .banner-icon { color: #48c78e; }
-.warning .banner-icon { color: #ffe08a; }
-.error .banner-icon { color: #f14668; }
+.success .banner-icon { color: var(--bz-emerald-500); }
+.warning .banner-icon { color: var(--bz-warning); }
+.error .banner-icon { color: var(--bz-danger); }
 
 .banner-content {
   flex: 1;
@@ -101,13 +101,13 @@ defineEmits(['dismiss']);
 .banner-dismiss {
   background: none;
   border: none;
-  color: rgba(255, 255, 255, 0.5);
+  color: var(--bz-fg-low);
   cursor: pointer;
   padding: 2px;
   flex-shrink: 0;
 }
 
 .banner-dismiss:hover {
-  color: rgba(255, 255, 255, 0.8);
+  color: var(--bz-fg-mid);
 }
 </style>

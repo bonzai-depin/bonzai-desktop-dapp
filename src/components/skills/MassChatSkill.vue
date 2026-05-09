@@ -655,7 +655,7 @@ export default {
   gap: 10px;
 }
 .mass-chat-model-card {
-  background: rgba(0, 0, 0, 0.2);
+  background: var(--bz-scrim-soft);
   border: 1px solid rgba(255, 255, 255, 0.25);
   border-radius: 4px;
   padding: 12px 14px;
@@ -670,11 +670,11 @@ export default {
 }
 .mass-chat-model-card:hover {
   border-color: rgba(255, 255, 255, 0.6);
-  background: rgba(97, 55, 142, 0.2);
+  background: var(--bz-purple-soft);
 }
 .mass-chat-model-card.selected {
   border: 1px solid rgba(255, 255, 255, 1);
-  background: rgba(97, 55, 142, 0.33);
+  background: var(--bz-purple-soft);
 }
 .mass-chat-checkbox {
   margin-top: 4px;
@@ -703,7 +703,7 @@ export default {
   gap: 16px;
 }
 .mass-chat-panel {
-  background: rgba(0, 0, 0, 0.25);
+  background: var(--bz-scrim);
   border: 1px solid rgba(255, 255, 255, 0.12);
   border-radius: 8px;
   overflow: hidden;
@@ -791,7 +791,7 @@ export default {
   color: rgba(255, 200, 140, 0.95);
 }
 .response-text :deep(pre) {
-  background: rgba(0, 0, 0, 0.35);
+  background: var(--bz-scrim);
   border: 1px solid rgba(255, 255, 255, 0.08);
   border-radius: 4px;
   padding: 10px 12px;
@@ -867,7 +867,7 @@ export default {
 /* Form inputs */
 .input,
 .textarea {
-  background: rgba(0, 0, 0, 0.3);
+  background: var(--bz-scrim);
   border-color: rgba(255, 255, 255, 0.2);
   color: white;
 }

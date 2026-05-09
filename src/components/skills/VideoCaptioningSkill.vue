@@ -1136,9 +1136,9 @@ export default {
   font-weight: 600;
   font-size: 14px;
   background: transparent;
-  border: 1px solid rgba(255, 255, 255, 0.3);
+  border: 1px solid var(--bz-fg-faint);
   border-radius: 4px;
-  color: rgba(255, 255, 255, 0.3);
+  color: var(--bz-fg-faint);
   cursor: pointer;
   transition: all 0.3s ease;
   white-space: nowrap;
@@ -1146,15 +1146,15 @@ export default {
 }
 
 .category-selector input[type="radio"] + label.radio.category:hover {
-  background: rgba(97, 55, 142, 0.2);
-  border-color: rgba(255, 255, 255, 0.5);
-  color: rgba(255, 255, 255, 0.8);
+  background: var(--bz-purple-soft);
+  border-color: var(--bz-fg-low);
+  color: var(--bz-fg-mid);
 }
 
 .category-selector input[type="radio"]:checked + label.radio.category {
   color: rgba(255, 255, 255, 1);
   border: 1px solid rgba(255, 255, 255, 1);
-  background: rgba(97, 55, 142, 0.33);
+  background: var(--bz-purple-soft);
   backdrop-filter: blur(64px);
 }
 
@@ -1166,7 +1166,7 @@ export default {
   background: rgba(155, 109, 200, 0.1);
   border: 1px solid rgba(155, 109, 200, 0.3);
   border-radius: 8px;
-  color: rgba(255, 255, 255, 0.8);
+  color: var(--bz-fg-mid);
   font-size: 0.9rem;
 }
 
@@ -1253,7 +1253,7 @@ export default {
 .overlay-icon {
   font-size: 72px;
   color: white;
-  background: rgba(0, 0, 0, 0.45);
+  background: var(--bz-scrim);
   border-radius: 50%;
   width: 96px;
   height: 96px;
@@ -1327,9 +1327,9 @@ hr {
   border-radius: 8px;
   display: flex;
   align-items: center;
-  color: #fff;
+  color: var(--bz-fg);
   backdrop-filter: blur(10px);
-  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.3);
+  box-shadow: 0 4px 20px var(--bz-scrim);
 }
 .status-notification.is-info { background: rgba(62, 142, 208, 0.95); }
 .status-notification.is-success { background: rgba(57, 213, 130, 0.95); }
@@ -1353,8 +1353,8 @@ hr {
   bottom: 1rem;
   right: 1rem;
   z-index: 20;
-  background: rgba(0, 0, 0, 0.5);
-  border: 1px solid rgba(255, 255, 255, 0.3);
+  background: var(--bz-scrim-strong);
+  border: 1px solid var(--bz-fg-faint);
   border-radius: 8px;
   padding: 8px;
   cursor: pointer;
@@ -1363,8 +1363,8 @@ hr {
 }
 
 .fullscreen-toggle:hover {
-  background: rgba(97, 55, 142, 0.6);
-  border-color: rgba(255, 255, 255, 0.6);
+  background: var(--bz-border-brand);
+  border-color: var(--bz-fg-mid);
 }
 
 .fullscreen-toggle.m-5 {
@@ -1378,7 +1378,7 @@ hr {
   width: 100%;
   height: 8px;
   border-radius: 4px;
-  background: rgba(255, 255, 255, 0.2);
+  background: var(--bz-border-strong);
   outline: none;
 }
 
@@ -1442,7 +1442,7 @@ hr {
 }
 
 .transcript-entry .entry-text {
-  color: rgba(255, 255, 255, 0.85);
+  color: var(--bz-fg);
   font-size: 0.85rem;
   line-height: 1.4;
   flex: 1;
@@ -1479,7 +1479,7 @@ hr {
   padding: 0.75rem 1rem;
   border-radius: 10px;
   background: rgba(255, 255, 255, 0.03);
-  border: 1px solid rgba(255, 255, 255, 0.06);
+  border: 1px solid var(--bz-canvas);
   cursor: pointer;
   transition: all 0.2s ease;
 }
@@ -1512,7 +1512,7 @@ hr {
 
 .session-card-title {
   font-size: 0.85rem;
-  color: rgba(255, 255, 255, 0.9);
+  color: var(--bz-fg);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -1520,14 +1520,14 @@ hr {
 
 .session-card-meta {
   font-size: 0.75rem;
-  color: rgba(255, 255, 255, 0.4);
+  color: var(--bz-fg-low);
   margin-top: 2px;
 }
 
 /* ─── Shared Styles (MeditationForge) ─────────────────────────────── */
 .models__activity--payouts {
   padding: 2em;
-  border: 1px solid rgba(255, 255, 255, 0.1);
+  border: 1px solid var(--bz-border);
   border-radius: 12px;
   backdrop-filter: blur(32px);
 }
@@ -1545,7 +1545,7 @@ hr {
 }
 
 .skill-description {
-  color: rgba(255, 255, 255, 0.8);
+  color: var(--bz-fg-mid);
   text-align: left;
 }
 

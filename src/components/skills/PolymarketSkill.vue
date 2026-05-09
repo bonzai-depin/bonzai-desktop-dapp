@@ -686,8 +686,8 @@ Be direct and analytical.`;
   align-items: center;
   justify-content: center;
   padding: 0.5rem 1rem;
-  border: 1px solid rgba(255, 255, 255, 0.2);
-  background: rgba(0, 0, 0, 0.3);
+  border: 1px solid var(--bz-border-strong);
+  background: var(--bz-scrim);
   color: white;
   cursor: pointer;
   transition: all 0.2s ease;
@@ -696,7 +696,7 @@ Be direct and analytical.`;
 .category-selector .radio:hover,
 .timeperiod-selector .radio:hover,
 .conviction-selector .radio:hover {
-  background: rgba(255, 255, 255, 0.1);
+  background: var(--bz-border);
 }
 
 .category-selector input[type='radio']:checked + .radio,
@@ -707,9 +707,9 @@ Be direct and analytical.`;
 }
 
 .market-card {
-  background: rgba(0, 0, 0, 0.3);
+  background: var(--bz-scrim);
   border-radius: 8px;
-  border: 1px solid rgba(255, 255, 255, 0.1);
+  border: 1px solid var(--bz-border);
 }
 
 .rotating {
@@ -741,7 +741,7 @@ Be direct and analytical.`;
 
 .models__activity--payouts {
   padding: 2em;
-  border: 1px solid rgba(255, 255, 255, 0.1);
+  border: 1px solid var(--bz-border);
   backdrop-filter: blur(32px);
   border-radius: 4px !important;
 }
@@ -764,7 +764,7 @@ Be direct and analytical.`;
 }
 
 .skill-description {
-  color: rgba(255, 255, 255, 0.8);
+  color: var(--bz-fg-mid);
   margin-bottom: 0.5em;
   text-align: left;
 }
@@ -787,7 +787,7 @@ Be direct and analytical.`;
 }
 .whale-pulse-question {
   flex: 1;
-  color: rgba(255, 255, 255, 0.9);
+  color: var(--bz-fg);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -799,8 +799,8 @@ Be direct and analytical.`;
   height: 28px;
   border-radius: 4px;
   overflow: hidden;
-  background: rgba(0, 0, 0, 0.4);
-  border: 1px solid rgba(255, 255, 255, 0.08);
+  background: var(--bz-scrim);
+  border: 1px solid var(--bz-card);
 }
 .price-bar-yes,
 .price-bar-no {

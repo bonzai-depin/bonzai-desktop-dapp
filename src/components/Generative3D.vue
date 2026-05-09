@@ -559,9 +559,7 @@
     @click.self="closeScreenshotModal"
   >
     <div class="screenshot-modal">
-      <button class="screenshot-modal-close" @click="closeScreenshotModal">
-        <span class="material-symbols-outlined">close</span>
-      </button>
+      <BzCloseButton class="screenshot-modal-close" size="md" aria-label="Close screenshot" @click="closeScreenshotModal" />
       <div class="screenshot-modal-header">
         <h3 class="fira-sans-condensed-black-italic">
           {{ screenshotModal.currentShot?.label || "Screenshot" }}
@@ -636,6 +634,7 @@ import {
 import ThreeViewer from "./ThreeViewer.vue";
 import AccessRequirements from "./AccessRequirements.vue";
 import MintModal from "./MintModal.vue";
+import BzCloseButton from "./BzCloseButton.vue";
 import { requestOpenNetworkModal } from "../services/level.service.js";
 import { fetchNFT3DCode } from "../services/contentNFT.service.js";
 import { resolveLLM } from "../skills/flagship.js";
@@ -1173,7 +1172,7 @@ ${indent(out, 2)}
 
 export default {
   name: "Generative3D",
-  components: { ThreeViewer, AccessRequirements, MintModal },
+  components: { ThreeViewer, AccessRequirements, MintModal, BzCloseButton },
   setup() {
     // ------------ NFT Minting ---------
     const mintTarget = ref(null);
@@ -4140,7 +4139,7 @@ OUTPUT CODE:`;
   position: relative;
   margin: 2em 0;
   border-radius: 8px !important;
-  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.4);
+  box-shadow: 0 8px 32px var(--bz-scrim);
   aspect-ratio: 16 / 9;
   width: 100%;
 }
@@ -4148,7 +4147,7 @@ OUTPUT CODE:`;
   position: relative;
   width: 100%;
   height: 100%;
-  background: rgba(0, 0, 0, 0.8);
+  background: var(--bz-scrim-deep);
   border-radius: 8px;
   overflow: hidden;
   display: flex;
@@ -4166,23 +4165,23 @@ OUTPUT CODE:`;
   overflow-y: auto;
   padding: 6em;
   height: 100vh;
-  background: rgba(0, 0, 0, 0.5);
+  background: var(--bz-scrim-strong);
 }
 .models__activity--payouts {
   padding: 4em;
-  border: 1px solid rgba(255, 255, 255, 0.1);
+  border: 1px solid var(--bz-border);
   backdrop-filter: blur(32px);
   border-radius: 4px !important;
 }
 h1 {
   margin-top: 0 !important;
   font-size: 64px;
-  color: #fff;
+  color: var(--bz-fg);
 }
 p {
   margin-bottom: 1em;
   font-size: 24px;
-  color: #fff;
+  color: var(--bz-fg);
   text-align: justify;
   font-family: "Fira Sans", sans-serif;
   font-weight: 100;
@@ -4205,13 +4204,13 @@ p {
 .control-label {
   display: flex;
   align-items: center;
-  color: #fff;
+  color: var(--bz-fg);
   font-size: 16px;
   margin-bottom: 0.75em;
 }
 .control-label .material-symbols-outlined {
   font-size: 22px;
-  color: rgba(97, 55, 142, 1);
+  color: var(--bz-purple-500);
 }
 .time-buttons,
 .weather-buttons {
@@ -4228,8 +4227,8 @@ p {
   flex-direction: column;
   align-items: center;
   padding: 9px 12px 9px;
-  color: rgba(255, 255, 255, 0.3) !important;
-  border: 1px solid rgba(255, 255, 255, 0.3);
+  color: var(--bz-fg-faint) !important;
+  border: 1px solid var(--bz-fg-faint);
   border-radius: 4px;
   background: transparent;
   cursor: pointer;
@@ -4239,14 +4238,14 @@ p {
 .time-btn:hover,
 .weather-btn:hover {
   color: rgba(255, 255, 255, 1) !important;
-  background: rgba(97, 55, 142, 0.4);
+  background: var(--bz-purple-soft);
   border-color: rgba(255, 255, 255, 1);
 }
 .time-btn.active,
 .weather-btn.active {
   color: rgba(255, 255, 255, 1) !important;
   border: 1px solid rgba(255, 255, 255, 1) !important;
-  background: rgba(97, 55, 142, 0.33) !important;
+  background: var(--bz-purple-soft) !important;
   backdrop-filter: blur(64px) !important;
 }
 .time-icon,
@@ -4273,8 +4272,8 @@ p {
   flex-direction: column;
   align-items: center;
   padding: 12px 16px;
-  color: rgba(255, 255, 255, 0.3) !important;
-  border: 1px solid rgba(255, 255, 255, 0.3);
+  color: var(--bz-fg-faint) !important;
+  border: 1px solid var(--bz-fg-faint);
   border-radius: 4px;
   background: transparent;
   cursor: pointer;
@@ -4283,7 +4282,7 @@ p {
 }
 .mode-btn:hover {
   color: rgba(255, 255, 255, 1) !important;
-  background: rgba(97, 55, 142, 0.4);
+  background: var(--bz-purple-soft);
   border-color: rgba(255, 255, 255, 1);
 }
 .mode-btn.active {
@@ -4329,9 +4328,9 @@ p {
   width: 32px;
   height: 32px;
   border-radius: 50%;
-  border: 1px solid rgba(255, 255, 255, 0.3);
+  border: 1px solid var(--bz-fg-faint);
   background: transparent;
-  color: rgba(255, 255, 255, 0.6);
+  color: var(--bz-fg-mid);
   font-size: 0.9em;
   cursor: pointer;
   transition: all 0.2s;
@@ -4340,7 +4339,7 @@ p {
   justify-content: center;
 }
 .iteration-pill:hover {
-  border-color: rgba(255, 255, 255, 0.6);
+  border-color: var(--bz-fg-mid);
   color: white;
 }
 .iteration-pill.active {
@@ -4380,13 +4379,13 @@ p {
   display: flex;
   align-items: center;
   padding: 0.5em 0;
-  border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+  border-bottom: 1px solid var(--bz-border);
 }
 .download-list li:last-child {
   border-bottom: none;
 }
 .download-list .material-symbols-outlined {
-  color: rgba(255, 255, 255, 0.7);
+  color: var(--bz-fg-mid);
   font-size: 1.25em;
 }
 .download-item-name {
@@ -4394,7 +4393,7 @@ p {
   font-weight: 500;
 }
 .download-item-size {
-  color: rgba(255, 255, 255, 0.5);
+  color: var(--bz-fg-low);
   font-size: 0.9em;
   margin-left: 1em;
 }
@@ -4423,17 +4422,17 @@ p {
 }
 .example-card {
   padding: 1.5em;
-  background: rgba(0, 0, 0, 0.5);
-  border: 2px solid rgba(255, 255, 255, 0.1);
+  background: var(--bz-scrim-strong);
+  border: 2px solid var(--bz-border);
   border-radius: 12px;
   cursor: pointer;
   transition: all 0.3s ease;
 }
 .example-card:hover {
-  background: rgba(97, 55, 142, 0.4);
-  border-color: rgba(255, 255, 255, 0.3);
+  background: var(--bz-purple-soft);
+  border-color: var(--bz-fg-faint);
   transform: translateY(-4px);
-  box-shadow: 0 12px 24px rgba(97, 55, 142, 0.4);
+  box-shadow: 0 12px 24px var(--bz-purple-soft);
 }
 .example-icon {
   font-size: 3em;
@@ -4441,14 +4440,14 @@ p {
   text-align: center;
 }
 .example-title {
-  color: #fff;
+  color: var(--bz-fg);
   font-weight: bold;
   font-size: 18px;
   margin-bottom: 0.5em;
   font-family: "Fira Sans", sans-serif;
 }
 .example-desc {
-  color: rgba(255, 255, 255, 0.7);
+  color: var(--bz-fg-mid);
   font-size: 14px;
   margin-bottom: 0.5em;
 }
@@ -4457,7 +4456,7 @@ div.question {
   padding: 2em 3em 6em;
   margin-top: 2em !important;
   margin-bottom: 1em !important;
-  box-shadow: 8px 8px 0 rgba(97, 55, 142, 0.66);
+  box-shadow: 8px 8px 0 var(--bz-purple-glow);
   border-radius: 4px;
   backdrop-filter: blur(32px);
   background: rgba(0, 0, 0, 0.66);
@@ -4467,7 +4466,7 @@ div.question {
   align-items: center;
   gap: 0.75em;
   font-size: 18px;
-  color: #fff;
+  color: var(--bz-fg);
   flex-wrap: wrap;
 }
 .history-icon {
@@ -4475,8 +4474,8 @@ div.question {
 }
 .history-badge {
   padding: 3px 24px 4px 8px;
-  border: 1px solid rgba(255, 255, 255, 0.25);
-  background-color: rgba(255, 255, 255, 0.1);
+  border: 1px solid var(--bz-border-strong);
+  background-color: var(--bz-border);
   border-radius: 24px;
   font-size: 22px;
   font-weight: 600;
@@ -4484,12 +4483,12 @@ div.question {
 }
 .history-meta {
   margin-left: auto;
-  color: rgba(255, 255, 255, 0.5);
+  color: var(--bz-fg-low);
   font-size: 14px;
 }
 .answer__model {
   font-weight: 600;
-  color: rgba(255, 255, 255, 0.5);
+  color: var(--bz-fg-low);
   display: flex;
   align-items: center;
 }
@@ -4499,7 +4498,7 @@ div.question {
   margin-left: 4px;
 }
 .history-prompt {
-  color: rgba(255, 255, 255, 0.9);
+  color: var(--bz-fg);
   font-size: 16px;
   font-weight: 400;
   margin: 0.75em 0;
@@ -4535,14 +4534,14 @@ hr {
   background-color: rgba(255, 255, 255, 0.015);
 }
 .input {
-  color: #fff;
-  background: rgba(255, 255, 255, 0.1);
-  box-shadow: 8px 8px 0 rgba(97, 55, 142, 0.66);
-  border: 1px solid rgba(255, 255, 255, 0.3) !important;
+  color: var(--bz-fg);
+  background: var(--bz-border);
+  box-shadow: 8px 8px 0 var(--bz-purple-glow);
+  border: 1px solid var(--bz-fg-faint) !important;
   transition: 200ms ease-in;
 }
 ::placeholder {
-  color: rgba(255, 255, 255, 0.1) !important;
+  color: var(--bz-border) !important;
   opacity: 1 !important;
 }
 
@@ -4556,23 +4555,23 @@ hr {
   display: inline-flex;
   align-items: center;
   gap: 4px;
-  background: rgba(255, 255, 255, 0.1);
-  border: 2px solid rgba(255, 255, 255, 0.2);
-  color: rgba(255, 255, 255, 0.5);
+  background: var(--bz-border);
+  border: 2px solid var(--bz-border-strong);
+  color: var(--bz-fg-low);
   cursor: pointer;
   transition: all 0.2s ease;
 }
 
 .reasoning-toggle-btn:hover {
-  background: rgba(255, 255, 255, 0.2);
-  border-color: rgba(255, 255, 255, 0.4);
-  color: #fff;
+  background: var(--bz-border-strong);
+  border-color: var(--bz-fg-low);
+  color: var(--bz-fg);
 }
 
 .reasoning-toggle-btn.active {
   background: rgba(32, 156, 238, 0.4);
   border-color: #209cee;
-  color: #fff;
+  color: var(--bz-fg);
   box-shadow: 0 0 12px rgba(32, 156, 238, 0.4);
 }
 
@@ -4594,9 +4593,39 @@ ol {
   padding: 0;
   list-style-type: none;
 }
+/* Canvas-first treatment — first child renders as a full-width hero,
+   subsequent items wrap into a 2-column grid (50% each on desktop) so
+   the action cluster on every card stays on a single line. Same shape
+   GenerativeImage / Video / Audio use. */
 ol.chat {
-  display: flex;
-  flex-direction: column;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: var(--bz-space-5);
+  list-style: none;
+  padding: 0;
+  margin: var(--bz-space-5) 0;
+}
+ol.chat .history-item:first-child {
+  grid-column: 1 / -1;
+}
+ol.chat .history-item:first-child .screenshots-grid {
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+}
+@media (min-width: 880px) {
+  ol.chat {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+  ol.chat .history-item:first-child {
+    grid-column: 1 / -1;
+  }
+}
+ol.chat .history-item:not(:first-child) {
+  width: 100%;
+}
+ol.chat .history-item:not(:first-child) hr {
+  border: 0;
+  border-top: 1px solid var(--bz-border);
+  margin: var(--bz-space-4) 0;
 }
 .button.copy {
   transition: all 0.15s ease;
@@ -4642,23 +4671,23 @@ ol.chat {
   width: 48px;
   height: 48px;
   border-radius: 50%;
-  background: rgba(97, 55, 142, 0.9);
-  border: 2px solid rgba(255, 255, 255, 0.3);
-  color: #fff;
+  background: var(--bz-purple-500);
+  border: 2px solid var(--bz-fg-faint);
+  color: var(--bz-fg);
   cursor: pointer;
   display: flex;
   align-items: center;
   justify-content: center;
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+  box-shadow: 0 4px 12px var(--bz-scrim);
   transition: all 0.2s ease;
   z-index: 100;
   animation: fadeInUp 0.3s ease-out;
 }
 
 .scroll-to-top-btn:hover {
-  background: rgba(97, 55, 142, 1);
+  background: var(--bz-purple-500);
   transform: translateY(-2px);
-  box-shadow: 0 6px 16px rgba(0, 0, 0, 0.4);
+  box-shadow: 0 6px 16px var(--bz-scrim);
 }
 
 .scroll-to-top-btn .material-symbols-outlined {
@@ -4672,7 +4701,7 @@ ol.chat {
 .screenshots-preview {
   margin: 1rem 0;
   padding: 0.75rem;
-  background: rgba(0, 0, 0, 0.2);
+  background: var(--bz-scrim-soft);
   border-radius: 8px;
 }
 
@@ -4709,7 +4738,7 @@ ol.chat {
   left: 0;
   right: 0;
   padding: 2px 4px;
-  background: rgba(0, 0, 0, 0.7);
+  background: var(--bz-scrim-deep);
   color: white;
   font-size: 0.65rem;
   text-align: center;
@@ -4749,8 +4778,8 @@ ol.chat {
   max-height: 90vh;
   display: flex;
   flex-direction: column;
-  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.5);
-  border: 1px solid rgba(255, 255, 255, 0.1);
+  box-shadow: 0 20px 60px var(--bz-scrim-strong);
+  border: 1px solid var(--bz-border);
 }
 
 .screenshot-modal-close {
@@ -4775,7 +4804,7 @@ ol.chat {
   justify-content: space-between;
   align-items: center;
   padding: 1rem 1.5rem;
-  border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+  border-bottom: 1px solid var(--bz-border);
 }
 
 .screenshot-modal-header h3 {
@@ -4791,7 +4820,7 @@ ol.chat {
 }
 
 .nav-btn {
-  background: rgba(255, 255, 255, 0.1);
+  background: var(--bz-border);
   border: none;
   color: white;
   padding: 6px;
@@ -4813,7 +4842,7 @@ ol.chat {
 }
 
 .nav-indicator {
-  color: rgba(255, 255, 255, 0.7);
+  color: var(--bz-fg-mid);
   font-size: 0.85rem;
   min-width: 50px;
   text-align: center;
@@ -4833,7 +4862,7 @@ ol.chat {
   max-width: 100%;
   max-height: 70vh;
   border-radius: 8px;
-  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.3);
+  box-shadow: 0 4px 20px var(--bz-scrim);
 }
 
 .screenshot-modal-footer {
@@ -4841,24 +4870,24 @@ ol.chat {
   justify-content: center;
   gap: 0.5rem;
   padding: 1rem 1.5rem;
-  border-top: 1px solid rgba(255, 255, 255, 0.1);
+  border-top: 1px solid var(--bz-border);
 }
 
 .refine-section {
-  border: 1px solid rgba(72, 199, 142, 0.3);
+  border: 1px solid var(--bz-emerald-soft);
   border-radius: 6px;
   padding: 0.5rem;
   background: rgba(72, 199, 142, 0.05);
 }
 
 .refine-section .input {
-  background: rgba(0, 0, 0, 0.3);
-  border-color: rgba(72, 199, 142, 0.3);
+  background: var(--bz-scrim);
+  border-color: var(--bz-emerald-soft);
   color: white;
 }
 
 .refine-section .input::placeholder {
-  color: rgba(255, 255, 255, 0.4);
+  color: var(--bz-fg-low);
 }
 
 /* ───────── Game-style loading screen ──────────────────────────────────────
@@ -4938,7 +4967,7 @@ ol.chat {
   font-style: italic;
   font-weight: 900;
   font-size: 1.85rem;
-  color: #fff;
+  color: var(--bz-fg);
   text-shadow: 0 0 12px rgba(32, 156, 238, 0.7);
   letter-spacing: 0.02em;
 }
@@ -4955,7 +4984,7 @@ ol.chat {
 .game-loader__bar {
   position: relative;
   height: 14px;
-  background: rgba(0, 0, 0, 0.55);
+  background: var(--bz-scrim-strong);
   border: 1px solid rgba(32, 156, 238, 0.55);
   border-radius: 2px;
   overflow: hidden;
@@ -4968,7 +4997,7 @@ ol.chat {
   background: linear-gradient(90deg, #209cee 0%, #4ec1ff 50%, #209cee 100%);
   background-size: 200% 100%;
   animation: gl-bar-flow 2s linear infinite;
-  box-shadow: 0 0 12px rgba(32, 156, 238, 0.9), inset 0 0 8px rgba(255, 255, 255, 0.4);
+  box-shadow: 0 0 12px rgba(32, 156, 238, 0.9), inset 0 0 8px var(--bz-fg-low);
   transition: width 0.35s cubic-bezier(0.22, 1, 0.36, 1);
 }
 
@@ -4978,9 +5007,9 @@ ol.chat {
   background: linear-gradient(
     90deg,
     transparent 0%,
-    rgba(255, 255, 255, 0.15) 45%,
-    rgba(255, 255, 255, 0.4) 50%,
-    rgba(255, 255, 255, 0.15) 55%,
+    var(--bz-border-strong) 45%,
+    var(--bz-fg-low) 50%,
+    var(--bz-border-strong) 55%,
     transparent 100%
   );
   background-size: 200% 100%;
@@ -5022,7 +5051,7 @@ ol.chat {
   align-items: center;
   gap: 0.55rem;
   padding: 0.5rem 0.7rem;
-  background: rgba(0, 0, 0, 0.3);
+  background: var(--bz-scrim);
   border-left: 3px solid #209cee;
   border-radius: 2px;
   font-size: 0.92rem;
@@ -5049,7 +5078,7 @@ ol.chat {
 /* Live preview window */
 .game-loader__preview {
   margin-top: 0.5rem;
-  background: rgba(0, 0, 0, 0.55);
+  background: var(--bz-scrim-strong);
   border: 1px solid rgba(32, 156, 238, 0.4);
   border-radius: 3px;
   overflow: hidden;

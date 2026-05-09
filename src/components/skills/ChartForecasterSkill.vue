@@ -619,7 +619,7 @@ export default {
   line-height: 1.7;
   white-space: pre-wrap;
   color: rgba(255, 255, 255, 0.92);
-  background: rgba(0, 0, 0, 0.25);
+  background: var(--bz-scrim);
   border-left: 3px solid var(--bulma-primary);
   padding: 16px 20px;
   border-radius: 4px;
@@ -630,7 +630,7 @@ export default {
   grid-template-columns: repeat(5, 1fr) !important;
 }
 .ticker-pill {
-  background: rgba(0, 0, 0, 0.2);
+  background: var(--bz-scrim-soft);
   border: 1px solid rgba(255, 255, 255, 0.25);
   border-radius: 4px;
   padding: 10px 14px;
@@ -644,7 +644,7 @@ export default {
 }
 .ticker-pill:not(:disabled):hover {
   border-color: rgba(255, 255, 255, 0.6);
-  background: rgba(97, 55, 142, 0.2);
+  background: var(--bz-purple-soft);
 }
 .ticker-pill:disabled {
   opacity: 0.35;
@@ -652,7 +652,7 @@ export default {
 }
 .ticker-pill.is-selected {
   border: 1px solid rgba(255, 255, 255, 1);
-  background: rgba(97, 55, 142, 0.33);
+  background: var(--bz-purple-soft);
 }
 /* Brand-gradient ticker labels — match the skill title color treatment. */
 .ticker-symbol {
@@ -796,14 +796,14 @@ export default {
   backdrop-filter: blur(32px);
 }
 .category-selector input[type='radio'] + label.radio.category:hover {
-  background: rgba(97, 55, 142, 0.2);
+  background: var(--bz-purple-soft);
   border-color: rgba(255, 255, 255, 0.5);
   color: rgba(255, 255, 255, 0.8);
 }
 .category-selector input[type='radio']:checked + label.radio.category {
   color: rgba(255, 255, 255, 1);
   border: 1px solid rgba(255, 255, 255, 1);
-  background: rgba(97, 55, 142, 0.33);
+  background: var(--bz-purple-soft);
   backdrop-filter: blur(64px);
 }
 .category-selector input[type='radio']:disabled + label.radio.category {
@@ -812,7 +812,7 @@ export default {
 }
 
 .input {
-  background: rgba(0, 0, 0, 0.3);
+  background: var(--bz-scrim);
   border-color: rgba(255, 255, 255, 0.2);
   color: white;
 }

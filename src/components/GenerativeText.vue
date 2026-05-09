@@ -3,593 +3,299 @@
 
   <div class="models__deployment column is-8 is-paddingless">
     <div class="models__deployment-install">
-      <div class="columns">
-        <div class="column is-12">
-          <div class="level">
-            <div class="level-left">
-              <div class="level-item">
-                <h1 class="fira-sans-condensed-black-italic">
-                  <span
-                    class="material-symbols-outlined is-size-1 mr-2"
-                    style="font-size: 92px !important"
-                  >
-                    neurology
-                  </span>
-                  {{ currentModel.modelname }}
-                </h1>
-              </div>
-            </div>
-            <div class="level-right">
-              <div class="level-item">
-                <!-- OpenClaw toggle moved to BonzaiBottomBar -->
-                <button
-                  class="button is-outlined is-info is-medium fira-sans-condensed-black-italic ml-2 mt-4"
-                  @click="openModel = true"
-                >
-                  <span class="material-symbols-outlined is-size-3 mr-2">
-                    folder_open
-                  </span>
-                  Browse Models
-                </button>
-              </div>
-            </div>
-          </div>
-          <div class="desc models__activity--payouts pb-0">
-            <div class="desc-content">
+      <!-- ─────────────────────────────────────────────────────────────
+           SETUP STATE — model not yet downloaded (or vision file
+           missing for a multimodal model). Editorial card with the
+           model identity, hardware footprint, and a single primary
+           CTA. Hidden once the model is ready; the chat workspace
+           (ChatLayout below) takes over the surface. -->
+      <div
+        v-if="!isModel || (currentModel.isMultimodal && !isMmprojAvailable)"
+        class="bz-text-setup"
+      >
+        <div class="bz-text-setup__head">
+          <div>
+            <span class="bz-eyebrow">Model</span>
+            <h1 class="bz-display fira-sans-condensed-black-italic">
+              {{ currentModel.modelname }}
+            </h1>
+            <p class="bz-body bz-text-setup__desc" v-if="currentModel.modeldesc">
               {{ currentModel.modeldesc }}
+            </p>
+          </div>
+          <div class="bz-text-setup__head-actions">
+            <button
+              type="button"
+              class="bz-btn"
+              @click="openModelPicker"
+              title="Browse model catalog"
+            >
+              <span class="material-symbols-outlined">folder_open</span>
+              Browse models
+            </button>
+          </div>
+        </div>
 
-              <hr />
-              <span class="fira-sans-condensed-black-italic mt-5 has-text-left">
-                <span class="material-symbols-outlined is-size-1 mr-2">
-                  computer
-                </span>
-                Hardware Requirements
-              </span>
-              <span class="tags pt-3 fira-sans-condensed-black-italic">
-                <span class="tag is-info">
-                  <span class="material-symbols-outlined">memory</span>
-                  {{ computeMemoryRequirements(currentModel).vramGB }} GB VRAM
-                </span>
-                <span class="tag is-info">
-                  <span class="material-symbols-outlined">memory</span>
-                  {{ computeMemoryRequirements(currentModel).ramGB }} GB RAM
-                </span>
-                <span class="tag is-info">
-                  {{
-                    computeMemoryRequirements(currentModel).breakdown
-                      .contextSize
-                  }}
-                  CTX
-                </span>
-              </span>
-            </div>
-          </div>
-          <div class="models__deployment-install--cta has-text-right p-0">
-            <button
-              class="button is-success is-large fira-sans-condensed-black-italic mr-5"
-              :class="{ 'is-loading': isLoading }"
-              :disabled="isLoading"
-              @click="downloadModel(currentModel.url, currentModel.filename)"
-              v-if="!isModel"
-            >
-              <span class="material-symbols-outlined is-size-3 mr-2">
-                deployed_code_update
-              </span>
-              Download
-              <span
-                class="filesize"
-                style="
-                  font-size: 15px;
-                  top: -20px;
-                  right: -25px;
-                  text-shadow: none;
-                "
-                v-if="downloadProgress"
-              >
-                {{ downloadProgress }}%
-              </span>
-              <span
-                v-else
-                class="filesize"
-                style="
-                  font-size: 15px;
-                  top: -20px;
-                  right: -25px;
-                  text-shadow: none;
-                "
-              >
-                {{ currentModel.filesize }}
-              </span>
-            </button>
-            <button
-              class="button is-danger is-large fira-sans-condensed-black-italic mr-5"
-              :class="{ 'is-loading': isLoading }"
-              :disabled="isLoading"
-              @click="deleteModel(currentModel.filename)"
-              v-if="isModel"
-            >
-              <span class="material-symbols-outlined is-size-3 mr-2">
-                delete
-              </span>
-              Delete
-              <span
-                class="filesize"
-                style="font-size: 15px; top: -20px; right: -25px"
-              >
-                {{ currentModel.filesize }}
-              </span>
-            </button>
-            <!-- Mmproj download for multimodal models -->
-            <button
-              class="button is-warning is-large fira-sans-condensed-black-italic ml-5 mr-5"
-              :class="{ 'is-loading': isLoading }"
-              :disabled="isLoading"
-              @click="downloadMmproj(currentModel)"
-              v-if="isModel && currentModel.isMultimodal && !isMmprojAvailable"
-            >
-              <span class="material-symbols-outlined is-size-3 mr-2">
-                visibility
-              </span>
-              Download Vision
-              <span
-                class="filesize"
-                style="
-                  font-size: 15px;
-                  top: -20px;
-                  right: -25px;
-                  text-shadow: none;
-                "
-                v-if="mmprojDownloadProgress"
-              >
-                {{ mmprojDownloadProgress }}%
-              </span>
-              <span
-                v-else
-                class="filesize"
-                style="
-                  font-size: 15px;
-                  top: -20px;
-                  right: -25px;
-                  text-shadow: none;
-                "
-              >
-                {{ currentModel.mmprojFilesize }}
-              </span>
-            </button>
-            <button
-              class="button is-success is-large fira-sans-condensed-black-italic ml-5 mr-5"
-              v-if="
-                !isLoading &&
-                isModel &&
-                (!currentModel.isMultimodal || isMmprojAvailable)
-              "
-              @click="openChat = true"
-            >
-              <span class="material-symbols-outlined is-size-3 mr-2">
-                forum
-              </span>
-              Chat with {{ currentModel.modelname }}
-            </button>
-          </div>
-        </div>
-      </div>
-      <div class="models__activity has-text-left mt-5">
-        <div class="models__activity--payouts mt-5">
-          <div class="level">
-            <div class="level-left">
-              <div class="level-item">
-                <h2
-                  class="fira-sans-condensed-black-italic has-text-left mt-0"
-                  v-if="inferences"
-                >
-                  <span class="material-symbols-outlined is-size-1 mr-2">
-                    forum
-                  </span>
-                  Chat History
-                </h2>
-              </div>
-            </div>
-            <div class="level-right">
-              <div class="level-item buttons">
-                <button
-                  class="button is-warning is-small"
-                  @click="importHistory()"
-                >
-                  <span class="material-symbols-outlined mr-2">upload</span>
-                  Import
-                </button>
-                <button
-                  class="button is-warning is-small ml-4"
-                  @click="exportHistory()"
-                  :disabled="!inferences || inferences.length === 0"
-                >
-                  <span class="material-symbols-outlined mr-2">download</span>
-                  Export
-                </button>
-                <button
-                  class="button is-danger is-small ml-4"
-                  @click="resetChat()"
-                >
-                  <span class="material-symbols-outlined mr-2">ink_eraser</span>
-                  Clear
-                </button>
-              </div>
-            </div>
-          </div>
-          <ol class="chat" v-if="inferences && inferences.length > 0">
-            <li
-              v-for="(inference, displayIndex) in paginatedInferences"
-              :key="inference._originalIndex"
-              class="history-item"
-              :style="{
-                animationDelay: `${Math.min(displayIndex * 50, 500)}ms`,
-              }"
-            >
-              <p class="question">{{ inference.question }}</p>
-              <div class="answer markdown-body" @click="handleAnswerClick">
-                <div class="answer__meta">
-                  <span v-if="inference.model" class="answer__model p-5">
-                    <span class="material-symbols-outlined mr-2">
-                      neurology
-                    </span>
-                    {{ inference.model }}
-                    <span v-if="inference.tokensPerSecond" class="answer__tps">
-                      @ {{ inference.tokensPerSecond }} tok/s
-                    </span>
-                  </span>
-                  <span v-if="inference.networkMode && inference.networkMode !== 'local'" class="network-mode-tag" :class="'nm-' + inference.networkMode">
-                    <span class="material-symbols-outlined" style="font-size: 12px">{{ inference.networkMode === 'private' ? 'lock' : 'cloud' }}</span>
-                    {{ inference.networkMode === 'private' ? 'Private' : 'Remote' }}
-                  </span>
-                </div>
-                <template
-                  v-for="(seg, segIdx) in splitThinkSegments(inference.answer.text)"
-                  :key="`${inference.answer.id}-seg-${segIdx}`"
-                >
-                  <details
-                    v-if="seg.type === 'think' && reasoningEnabled"
-                    class="thought-bubble"
-                    :class="{ 'thought-bubble--partial': seg.partial }"
-                    open
-                  >
-                    <summary :title="seg.partial ? 'Thinking…' : 'Thought process'">
-                      <span class="material-symbols-outlined">
-                        network_intelligence_history
-                      </span>
-                    </summary>
-                    <div class="thought-bubble__body">
-                      <vue-markdown :source="seg.text" />
-                    </div>
-                  </details>
-                  <vue-markdown
-                    v-else-if="seg.type === 'content'"
-                    :source="seg.text"
-                  />
-                </template>
-                <span
-                  v-if="
-                    isLoading && inference.answer.id === streamingInferenceId
-                  "
-                  class="streaming-cursor"
-                ></span>
-                <hr class="answer-divider" />
-                <button
-                  class="button is-medium is-success copy p-0 pl-1 pr-1 mr-3"
-                  @click="
-                    copy(stripThinkBlocks(inference.answer.text));
-                    hasCopy[inference._originalIndex] = true;
-                  "
-                  v-if="!hasCopy[inference._originalIndex]"
-                >
-                  <span class="material-symbols-outlined is-size-2">
-                    content_copy
-                  </span>
-                </button>
-                <button
-                  class="button is-medium is-outlined copy p-0 pl-1 pr-1 mr-3"
-                  @click="copy(stripThinkBlocks(inference.answer.text))"
-                  v-if="hasCopy[inference._originalIndex]"
-                >
-                  <span class="material-symbols-outlined is-size-2">check</span>
-                </button>
-                <button
-                  class="button is-medium is-warning copy ml-3 pl-2"
-                  @click="openMint(inference)"
-                  :disabled="!!inference.nft"
-                >
-                  <span class="material-symbols-outlined is-size-2 mr-2">
-                    {{ inference.nft ? "check_circle" : "token" }}
-                  </span>
-                  {{ inference.nft ? "Minted" : "Mint" }}
-                </button>
-                <button
-                  class="button is-medium is-danger is-pulled-right ml- p-0 pl-1 pr-1"
-                  @click="removeInference(inference._originalIndex)"
-                  title="Remove this result"
-                >
-                  <span class="material-symbols-outlined is-size-2">
-                    delete
-                  </span>
-                </button>
-              </div>
-            </li>
-          </ol>
-          <!-- LAZY LOAD SENTINEL -->
-          <div
-            ref="loadMoreSentinel"
-            v-if="hasMore && inferences.length > 0"
-            class="load-more-sentinel has-text-centered p-4"
-          >
-            <span v-if="isLoadingMore" class="has-text-grey">
-              Loading more...
+        <div class="bz-text-setup__specs">
+          <span class="bz-eyebrow" style="color: var(--bz-fg-low);">Hardware footprint</span>
+          <div class="bz-text-setup__chips">
+            <span class="bz-chip bz-mono">
+              <span class="material-symbols-outlined">memory</span>
+              {{ computeMemoryRequirements(currentModel).vramGB }} GB VRAM
+            </span>
+            <span class="bz-chip bz-mono">
+              <span class="material-symbols-outlined">developer_board</span>
+              {{ computeMemoryRequirements(currentModel).ramGB }} GB RAM
+            </span>
+            <span class="bz-chip bz-mono">
+              <span class="material-symbols-outlined">data_object</span>
+              {{ computeMemoryRequirements(currentModel).breakdown.contextSize }} ctx
+            </span>
+            <span class="bz-chip bz-mono">
+              <span class="material-symbols-outlined">database</span>
+              {{ currentModel.filesize }}
             </span>
           </div>
         </div>
-      </div>
-    </div>
-    <div class="models__deployment-use" v-if="openModel">
-      <div class="columns">
-        <div class="column is-12 p-5">
-          <div class="level">
-            <div class="level-left">
-              <div class="level-item">
-                <h1 class="fira-sans-condensed-black-italic">
-                  <span
-                    class="material-symbols-outlined is-size-1 mr-2"
-                    style="font-size: 92px !important"
-                  >
-                    folder_open
-                  </span>
-                  Pick a Model
-                </h1>
-              </div>
-            </div>
-            <div class="level-right">
-              <div class="level-item mr-4">
-                <label
-                  class="always-loaded-toggle"
-                  :class="{ active: alwaysLoaded }"
-                  title="Keep the loaded LLM in memory at all times (still allows hot-swapping)"
-                  style="height: 60px"
-                >
-                  <span class="material-symbols-outlined" style="font-size: 24x; vertical-align: middle">
-                    {{ alwaysLoaded ? 'lock' : 'lock_open' }}
-                  </span>
-                  <span class="fira-sans-condensed-black-italic" style="font-size: 24px">
-                    Always On
-                  </span>
-                  <input
-                    type="checkbox"
-                    :checked="alwaysLoaded"
-                    @change="toggleAlwaysLoaded"
-                    style="display: none"
-                  />
-                  <span class="toggle-switch"></span>
-                </label>
-              </div>
-              <div class="level-item">
-                <button
-                  class="button is-danger is-large"
-                  @click="openModel = false"
-                >
-                  <span class="material-symbols-outlined is-size-1">close</span>
-                </button>
-              </div>
-            </div>
-          </div>
-          <!-- Migration Progress -->
-          <div
-            v-if="migrationProgress.active"
-            class="notification is-info mb-4"
+
+        <div class="bz-text-setup__cta">
+          <!-- Download (model not yet local) -->
+          <button
+            v-if="!isModel"
+            type="button"
+            class="bz-btn bz-btn--primary bz-btn--lg"
+            :class="{ 'bz-btn--running': isLoading }"
+            :disabled="isLoading"
+            @click="downloadModel(currentModel.url, currentModel.filename)"
           >
-            <p class="mb-2">
-              <strong class="fira-sans-condensed-black-italic">
-                Migrating model files...
-              </strong>
-              <span class="is-pulled-right fira-sans-condensed-black-italic">
-                {{ migrationProgress.pct }}%
-              </span>
-            </p>
-            <progress
-              class="progress is-success"
-              :value="migrationProgress.pct"
-              max="100"
-            >
-              {{ migrationProgress.pct }}%
-            </progress>
-            <p class="is-size-7 has-text-white">
-              {{ migrationProgress.detail }}
-            </p>
-          </div>
-          <div
-            v-if="migrationProgress.error"
-            class="notification is-danger mb-4"
+            <span class="material-symbols-outlined">deployed_code_update</span>
+            <span v-if="isLoading && downloadProgress">
+              Downloading · {{ downloadProgress }}%
+            </span>
+            <span v-else>Download · {{ currentModel.filesize }}</span>
+          </button>
+          <!-- Delete (model is local; we're in setup because vision file is missing) -->
+          <button
+            v-if="isModel"
+            type="button"
+            class="bz-btn bz-btn--destructive"
+            :disabled="isLoading"
+            @click="deleteModel(currentModel.filename)"
           >
-            <strong>Migration failed:</strong>
-            {{ migrationProgress.error }}
-          </div>
-          <!-- Model Directory -->
-          <div class="model-dir-bar mb-5 p-4">
-            <span
-              class="material-symbols-outlined mr-2 has-text-white is-size-1"
-              style="vertical-align: middle"
-            >
-              folder
+            <span class="material-symbols-outlined">delete</span>
+            Delete · {{ currentModel.filesize }}
+          </button>
+          <!-- Vision file (multimodal models only, when missing) -->
+          <button
+            v-if="isModel && currentModel.isMultimodal && !isMmprojAvailable"
+            type="button"
+            class="bz-btn bz-btn--primary bz-btn--lg"
+            :class="{ 'bz-btn--running': isLoading }"
+            :disabled="isLoading"
+            @click="downloadMmproj(currentModel)"
+          >
+            <span class="material-symbols-outlined">visibility</span>
+            <span v-if="isLoading && mmprojDownloadProgress">
+              Downloading vision · {{ mmprojDownloadProgress }}%
             </span>
-            <span class="is-size-7 has-text-grey-light model-dir-path">
-              {{ modelDir }}
+            <span v-else>
+              Download vision · {{ currentModel.mmprojFilesize }}
             </span>
-            <button
-              class="button is-medium is-outlined is-warning ml-3"
-              @click="changeModelDir"
-              title="Change model storage location"
-              style="box-shadow: none"
-            >
-              Change
-            </button>
-          </div>
-          <ul class="columns is-multiline has-text-left mt-5">
-            <li
-              class="column is-6"
-              v-for="model in sortedModels"
-              :key="model.filename"
-            >
-              <div
-                class="model-card mb-5"
-                :class="{
-                  'model-card--downloaded':
-                    modelAvailabilityMap[model.filename],
-                  'model-card--selected':
-                    currentModel.filename === model.filename,
-                }"
-              >
-                <button
-                  class="button is-outlined is-info is-large fira-sans-condensed-black-italic is-size-5 is-fullwidth"
-                  @click="
-                    pickModel(model);
-                    openModel = false;
-                  "
-                  style="justify-content: left; box-shadow: none"
-                >
-                  <span class="material-symbols-outlined is-size-2 mr-2">
-                    neurology
-                  </span>
-                  {{ model.modelname }}
-                  <span
-                    v-if="model.fitLabel"
-                    class="fit-badge"
-                    :class="`fit-badge--tier${model.fitTier}`"
-                    :title="model.fitReason"
-                  >
-                    {{ model.fitLabel }}
-                  </span>
-                  <span class="filesize">
-                    <span
-                      class="material-symbols-outlined is-size-3 mr-2 is-pulled-left"
-                    >
-                      hard_drive
-                    </span>
-                    {{ model.filesize }}
-                    <button
-                      v-if="!modelAvailabilityMap[model.filename]"
-                      class="button is-success is-small ml-2"
-                      :disabled="modelDownloading[model.filename]"
-                      @click.stop="downloadModelInList(model)"
-                      title="Download model"
-                      style="box-shadow: none"
-                    >
-                      <span
-                        v-if="modelDownloading[model.filename]"
-                        class="is-size-7 fira-sans-condensed-black-italic"
-                      >
-                        {{ modelDownloadProgress[model.filename] || 0 }}%
-                      </span>
-                      <template v-else>
-                        <span
-                          class="material-symbols-outlined"
-                          style="font-size: 20px"
-                        >
-                          download
-                        </span>
-                      </template>
-                    </button>
-                    <button
-                      v-if="modelAvailabilityMap[model.filename]"
-                      class="button is-danger is-small ml-2"
-                      :disabled="modelDownloading[model.filename]"
-                      @click.stop="deleteModelInList(model)"
-                      title="Delete model from disk"
-                      style="box-shadow: none"
-                    >
-                      <span
-                        class="material-symbols-outlined"
-                        style="font-size: 20px"
-                      >
-                        delete
-                      </span>
-                    </button>
-                  </span>
-                </button>
-                <div class="model-card__tip models__activity--payouts">
-                  {{ model.modeldesc }}
-                </div>
-              </div>
-            </li>
-          </ul>
+          </button>
         </div>
       </div>
-    </div>
-    <div class="models__deployment-use" v-if="openChat">
-      <div class="columns">
-        <div class="column is-12 p-5">
-          <div class="level">
-            <div class="level-left">
-              <div class="level-item">
-                <h1 class="fira-sans-condensed-black-italic is-size-1">
-                  <span
-                    class="material-symbols-outlined mr-2"
-                    style="font-size: 64px !important"
-                  >
-                    chat
-                  </span>
-                  Chat with {{ currentModel.modelname }}
-                </h1>
-              </div>
+      <!-- ─────────────────────────────────────────────────────────────
+           CHAT WORKSPACE — three-column editorial shell
+           Shown once the loaded model is ready (downloaded + vision
+           file present if multimodal). Replaces both the legacy
+           "browse history" panel and the openChat overlay. The same
+           composer is always docked at the bottom — the Mistral /
+           Claude / Stripe pattern. The left rail groups past
+           inferences by date so the user can pick up any thread; the
+           right inspector mounts globally via GenerationInspector. -->
+      <ChatLayout
+        v-if="isModel && (!currentModel.isMultimodal || isMmprojAvailable)"
+        class="bz-text-chat"
+        :messages="[]"
+        :autoscroll="false"
+      >
+        <!-- LEFT RAIL — date-grouped history -->
+        <template #rail>
+          <ChatHistoryRail
+            :inferences="railEntries"
+            :active-id="activeRailId"
+            @select="selectFromRail"
+          />
+        </template>
+
+        <!-- HEADER — model name + toolset (clear / import / export) -->
+        <template #header>
+          <div class="bz-text-chat__head">
+            <div class="bz-text-chat__head-left">
+              <span class="bz-eyebrow">Chat</span>
+              <h1 class="bz-h1 fira-sans-condensed-black-italic">
+                {{ currentModel.modelname }}
+              </h1>
             </div>
-            <div class="level-right">
-              <div class="level-item">
-                <button
-                  class="button is-danger is-large"
-                  @click="openChat = false"
-                >
-                  <span class="material-symbols-outlined is-size-1">close</span>
-                </button>
+            <div class="bz-text-chat__head-actions">
+              <button type="button" class="bz-iconbtn" title="Browse models" aria-label="Browse models" @click="openModelPicker">
+                <span class="material-symbols-outlined">folder_open</span>
+              </button>
+              <button type="button" class="bz-iconbtn" title="Import history" aria-label="Import history" @click="importHistory()">
+                <span class="material-symbols-outlined">upload</span>
+              </button>
+              <button type="button" class="bz-iconbtn" title="Export history" aria-label="Export history" :disabled="!inferences || inferences.length === 0" @click="exportHistory()">
+                <span class="material-symbols-outlined">download</span>
+              </button>
+              <button type="button" class="bz-iconbtn" title="Clear chat" aria-label="Clear chat" @click="resetChat()">
+                <span class="material-symbols-outlined">ink_eraser</span>
+              </button>
+            </div>
+          </div>
+        </template>
+
+        <!-- STREAM — empty state OR ChatMessage iteration -->
+        <template #stream>
+          <!-- Access gate (level requirement) — sits above the stream -->
+          <div class="bz-text-chat__gate">
+            <AccessRequirements
+              ref="accessRef"
+              level="LVL1"
+              @access-changed="onAccessChanged"
+            />
+            <div v-if="pipelineError" class="bz-notice bz-notice--danger mt-3">
+              <span class="bz-notice__icon"><span class="material-symbols-outlined">error</span></span>
+              <div class="bz-notice__body">
+                <p class="bz-notice__title">Pipeline error</p>
+                <p v-if="pipelineError.code === 'no_providers'" class="bz-notice__text">
+                  Your remote providers are offline. Switch network mode or wait for one to come back online.
+                </p>
+              </div>
+              <div class="bz-notice__cta">
+                <BzCloseButton size="sm" aria-label="dismiss" @click="pipelineError = null" />
               </div>
             </div>
           </div>
-          <!-- ACCESS REQUIREMENTS -->
-          <AccessRequirements
-            ref="accessRef"
-            level="LVL1"
-            @access-changed="onAccessChanged"
+
+          <EmptyChat
+            v-if="!inferences || inferences.length === 0"
+            :model-name="currentModel.modelname"
+            :headline="`What are we making with ${currentModel.modelname}?`"
+            subhead="Streaming, vision, code, roleplay — same input. Local first, remote if you want to."
+            @pick="pickPrompt"
+            @browse-models="openModelPicker"
           />
 
-          <!-- Pipeline error banner -->
-          <div v-if="pipelineError" class="notification is-danger mb-4" style="display: flex; align-items: flex-start; gap: 12px">
-            <span class="material-symbols-outlined" style="font-size: 28px">error</span>
-            <div class="fira-sans-condensed-black-italic" style="flex: 1">
-              <div v-if="pipelineError.code === 'no_providers'" style="margin-top: 6px; font-size: 0.9em; opacity: 0.85">
-                Your remote providers are offline. Please switch network mode, or wait for remote providers to come online.
-              </div>
-            </div>
-            <button class="delete" @click="pipelineError = null" aria-label="dismiss"></button>
-          </div>
-
-          <form ref="promptForm" @submit.prevent>
-            <!-- Image attachment preview for multimodal models -->
-            <div
-              v-if="isMultimodalModel && attachedImage"
-              class="attached-image-preview"
+          <div v-else class="bz-text-chat__messages">
+            <template
+              v-for="(inference, displayIndex) in paginatedInferences"
+              :key="inference._originalIndex"
             >
-              <img :src="attachedImage.dataUrl" alt="Attached image" />
-              <button
-                type="button"
-                class="delete-btn"
-                @click="removeAttachedImage"
-                title="Remove image"
-              >
-                <span class="material-symbols-outlined">close</span>
-              </button>
-              <span class="image-name">{{ attachedImage.name }}</span>
-            </div>
+              <!-- User -->
+              <ChatMessage
+                :data-inference-id="inference.id"
+                role="user"
+                :content="inference.question"
+                :ts="inference.timestamp"
+              />
 
-            <div class="chat-input-row">
-              <!-- Reasoning toggle for thinking models -->
+              <!-- Assistant -->
+              <ChatMessage
+                role="assistant"
+                :model="inference.model"
+                :ts="inference.timestamp"
+                :streaming="isLoading && inference.answer.id === streamingInferenceId"
+                @inspect="onInspectInference(inference)"
+              >
+                <div class="answer markdown-body" @click="handleAnswerClick">
+                  <div
+                    v-if="inference.tokensPerSecond || (inference.networkMode && inference.networkMode !== 'local')"
+                    class="bz-msg-extra-meta"
+                  >
+                    <span v-if="inference.tokensPerSecond" class="bz-mono bz-meta">
+                      {{ inference.tokensPerSecond }} tok/s
+                    </span>
+                    <span
+                      v-if="inference.networkMode && inference.networkMode !== 'local'"
+                      class="network-mode-tag"
+                      :class="'nm-' + inference.networkMode"
+                    >
+                      <span class="material-symbols-outlined" style="font-size: 12px">
+                        {{ inference.networkMode === 'private' ? 'lock' : 'cloud' }}
+                      </span>
+                      {{ inference.networkMode === 'private' ? 'Private' : 'Remote' }}
+                    </span>
+                  </div>
+
+                  <template
+                    v-for="(seg, segIdx) in splitThinkSegments(inference.answer.text)"
+                    :key="`${inference.answer.id}-seg-${segIdx}`"
+                  >
+                    <details
+                      v-if="seg.type === 'think' && reasoningEnabled"
+                      class="thought-bubble"
+                      :class="{ 'thought-bubble--partial': seg.partial }"
+                      open
+                    >
+                      <summary :title="seg.partial ? 'Thinking…' : 'Thought process'">
+                        <span class="material-symbols-outlined">network_intelligence_history</span>
+                      </summary>
+                      <div class="thought-bubble__body">
+                        <vue-markdown :source="seg.text" />
+                      </div>
+                    </details>
+                    <vue-markdown
+                      v-else-if="seg.type === 'content'"
+                      :source="seg.text"
+                    />
+                  </template>
+
+                  <GenerativeActions
+                    :actions="actionsFor(inference)"
+                    @action="(id) => handleAction(id, inference)"
+                  />
+                </div>
+              </ChatMessage>
+            </template>
+
+            <!-- Lazy-load sentinel — keeps the IntersectionObserver -->
+            <div
+              ref="loadMoreSentinel"
+              v-if="hasMore && inferences.length > 0"
+              class="load-more-sentinel has-text-centered p-4"
+            >
+              <span v-if="isLoadingMore" class="bz-meta" style="color: var(--bz-fg-low);">
+                Loading more…
+              </span>
+            </div>
+          </div>
+        </template>
+
+        <!-- INPUT — composer docks at the bottom of the main column -->
+        <template #input>
+          <ChatInput
+            ref="chatInputRef"
+            v-model="form.prompt"
+            :placeholder="
+              isMultimodalModel
+                ? 'Ask about an image or just chat…'
+                : `Message ${currentModel.modelname}…`
+            "
+            :streaming="isLoading"
+            :disabled="!hasAccess"
+            :attachments="chatAttachments"
+            :enable-attachments="isMultimodalModel && isMmprojAvailable"
+            :hint="reasoningEnabled && isThinkingModel ? 'Reasoning ON' : ''"
+            @submit="hasAccess && sendMessage(form.prompt)"
+            @attach="triggerImageAttach"
+            @remove-attachment="removeAttachedImage"
+          >
+            <template #tools>
               <button
                 v-if="isThinkingModel"
                 type="button"
-                class="button reasoning-toggle-btn is-pulled-left mr-3"
-                :class="{ active: reasoningEnabled }"
+                class="bz-chat-tool"
+                :class="{ 'bz-chat-tool--on': reasoningEnabled }"
                 @click="reasoningEnabled = !reasoningEnabled"
                 :disabled="isLoading"
                 :title="
@@ -598,143 +304,24 @@
                     : 'Reasoning OFF — direct answers'
                 "
               >
-                <span class="material-symbols-outlined is-size-2">
+                <span class="material-symbols-outlined" aria-hidden="true">
                   network_intelligence_history
                 </span>
+                <span class="bz-meta">Reasoning</span>
               </button>
-              <!-- Image attachment button for multimodal models -->
-              <label
-                v-if="isMultimodalModel && isMmprojAvailable"
-                class="button attach-image-btn"
-                :class="{ 'has-image': attachedImage }"
-                title="Attach an image for analysis"
-              >
-                <span class="material-symbols-outlined">
-                  add_photo_alternate
-                </span>
-                <input
-                  type="file"
-                  accept="image/*"
-                  @change="attachImage"
-                  style="display: none"
-                />
-              </label>
-
-              <input
-                class="input is-large is-fullwidth"
-                type="text"
-                :placeholder="
-                  isMultimodalModel
-                    ? 'Ask about an image or just chat...'
-                    : 'Ask me something and press enter...'
-                "
-                v-model="form.prompt"
-                @keyup.enter.native="hasAccess && sendMessage(form.prompt)"
-                :disabled="isLoading || !hasAccess"
-              />
-            </div>
-            <button
-              class="button chat is-loading is-outlined is-info is-large is-fullwidth"
-              v-if="isLoading"
-            ></button>
-          </form>
-          <ol class="chat" v-if="inferences && inferences.length > 0">
-            <li
-              v-for="(inference, displayIndex) in paginatedInferences"
-              :key="inference._originalIndex"
-              class="history-item"
-              :style="{
-                animationDelay: `${Math.min(displayIndex * 50, 500)}ms`,
-              }"
-            >
-              <p class="question">{{ inference.question }}</p>
-              <div class="answer markdown-body" @click="handleAnswerClick">
-                <div class="answer__meta">
-                  <span v-if="inference.model" class="answer__model">
-                    From {{ inference.model }}
-                    <span v-if="inference.tokensPerSecond" class="answer__tps">
-                      @ {{ inference.tokensPerSecond }} tok/s
-                    </span>
-                  </span>
-                  <span v-if="inference.networkMode && inference.networkMode !== 'local'" class="network-mode-tag" :class="'nm-' + inference.networkMode">
-                    <span class="material-symbols-outlined" style="font-size: 12px">{{ inference.networkMode === 'private' ? 'lock' : 'cloud' }}</span>
-                    {{ inference.networkMode === 'private' ? 'Private' : 'Remote' }}
-                  </span>
-                </div>
-                <template
-                  v-for="(seg, segIdx) in splitThinkSegments(inference.answer.text)"
-                  :key="`${inference.answer.id}-seg-${segIdx}`"
-                >
-                  <details
-                    v-if="seg.type === 'think' && reasoningEnabled"
-                    class="thought-bubble"
-                    :class="{ 'thought-bubble--partial': seg.partial }"
-                    open
-                  >
-                    <summary :title="seg.partial ? 'Thinking…' : 'Thought process'">
-                      <span class="material-symbols-outlined">
-                        network_intelligence_history
-                      </span>
-                    </summary>
-                    <div class="thought-bubble__body">
-                      <vue-markdown :source="seg.text" />
-                    </div>
-                  </details>
-                  <vue-markdown
-                    v-else-if="seg.type === 'content'"
-                    :source="seg.text"
-                  />
-                </template>
-                <span
-                  v-if="
-                    isLoading && inference.answer.id === streamingInferenceId
-                  "
-                  class="streaming-cursor"
-                ></span>
-                <hr class="answer-divider" />
-                <button
-                  class="button is-medium is-success copy p-0 pl-1 pr-1 mr-3"
-                  @click="
-                    copy(stripThinkBlocks(inference.answer.text));
-                    hasCopy[inference._originalIndex] = true;
-                  "
-                  v-if="!hasCopy[inference._originalIndex]"
-                >
-                  <span class="material-symbols-outlined is-size-2">
-                    content_copy
-                  </span>
-                </button>
-                <button
-                  class="button is-medium is-outlined copy p-0 pl-1 pr-1 mr-3"
-                  @click="copy(stripThinkBlocks(inference.answer.text))"
-                  v-if="hasCopy[inference._originalIndex]"
-                >
-                  <span class="material-symbols-outlined is-size-2">check</span>
-                </button>
-                <button
-                  class="button is-medium is-warning copy ml-3 pl-2"
-                  @click="openMint(inference)"
-                  :disabled="!!inference.nft"
-                >
-                  <span class="material-symbols-outlined is-size-2 mr-2">
-                    {{ inference.nft ? "check_circle" : "token" }}
-                  </span>
-                  {{ inference.nft ? "Minted" : "Mint" }}
-                </button>
-                <button
-                  class="button is-medium is-danger is-pulled-right ml-5 p-0 pl-1 pr-1"
-                  @click="removeInference(inference._originalIndex)"
-                  title="Remove this result"
-                >
-                  <span class="material-symbols-outlined is-size-2">
-                    delete
-                  </span>
-                </button>
-              </div>
-            </li>
-          </ol>
-        </div>
-      </div>
+            </template>
+          </ChatInput>
+          <!-- Hidden file input — programmatically triggered by the
+               attach button on <ChatInput>. -->
+          <input
+            ref="hiddenImageInput"
+            type="file"
+            accept="image/*"
+            style="display: none"
+            @change="attachImage"
+          />
+        </template>
+      </ChatLayout>
     </div>
   </div>
 
@@ -876,16 +463,32 @@ import { computeMemoryRequirements, computeFitTier } from "../services/modelFit.
 
 import GenerativeImage from "./GenerativeImage.vue";
 import AccessRequirements from "./AccessRequirements.vue";
+import ChatLayout from "./chat/ChatLayout.vue";
+import ChatMessage from "./chat/ChatMessage.vue";
+import ChatInput from "./chat/ChatInput.vue";
+import ChatHistoryRail from "./chat/ChatHistoryRail.vue";
+import EmptyChat from "./chat/EmptyChat.vue";
+import GenerativeActions from "./generative/GenerativeActions.vue";
+import BzCloseButton from "./BzCloseButton.vue";
 import { requestOpenNetworkModal } from "../services/level.service.js";
 import { useInferenceRouter } from "../composables/useInferenceRouter.js";
+import { modelPicker } from "../services/modelPicker.service.js";
+import { inspector as generationInspector } from "../services/generationInspector.service.js";
 
 export default {
   name: "GenerativeText",
   components: {
+    BzCloseButton,
     VueMarkdown,
     GenerativeImage,
     AccessRequirements,
     MintModal,
+    ChatLayout,
+    ChatMessage,
+    ChatInput,
+    ChatHistoryRail,
+    EmptyChat,
+    GenerativeActions,
   },
   setup() {
     const { inferenceRequest } = useInferenceRouter();
@@ -1215,6 +818,73 @@ export default {
       }
     });
 
+    // Browse-models button now opens the global LLM picker modal
+    // (LlmModelPickerModal at App.vue level) instead of toggling a
+    // local panel. The legacy panel was 192 lines of duplicated UI;
+    // retired in v1.6 of the design system.
+    const openModelPicker = () => {
+      modelPicker.show();
+    };
+
+    // Unified action descriptors fed into <GenerativeActions> for
+    // chat messages. Replaces the previous bz-msg-tool inline
+    // buttons with the same shared component the image / video /
+    // audio tabs use — one action vocabulary across the whole app.
+    const actionsFor = (inference) => {
+      const minted = !!inference?.nft;
+      const copied = !!hasCopy[inference._originalIndex];
+      return [
+        { id: "copy",
+          icon: copied ? "check" : "content_copy",
+          label: copied ? "Copied" : "Copy",
+          variant: copied ? "success" : "default",
+          title: "Copy answer" },
+        { id: "mint",
+          icon: minted ? "check_circle" : "token",
+          label: minted ? "Minted" : "Mint",
+          variant: minted ? "success" : "default",
+          disabled: minted },
+        { id: "delete",
+          icon: "delete",
+          label: "Delete",
+          variant: "destructive",
+          title: "Remove this result" },
+      ];
+    };
+    const handleAction = (id, inference) => {
+      switch (id) {
+        case "copy":
+          copy(stripThinkBlocks(inference.answer.text));
+          hasCopy[inference._originalIndex] = true;
+          break;
+        case "mint":   openMint(inference); break;
+        case "delete": removeInference(inference._originalIndex); break;
+      }
+    };
+
+    // Per-message inspector — wired through ChatMessage's @inspect
+    // event. Pulls the chat-specific metadata onto the global rail
+    // shape (kind/text, model, network origin, mint state if minted).
+    const onInspectInference = (inference) => {
+      if (!inference) return;
+      generationInspector.show({
+        kind: "text",
+        prompt: inference.question || "",
+        model: inference.model || (currentModel.value?.modelname || ""),
+        modelId: currentModel.value?.filename,
+        ts: inference.timestamp,
+        networkMode: inference.networkMode || "local",
+        peerId: inference.peerId,
+        mintState: inference.nft || null,
+        extra: {
+          ...(inference.tokensPerSecond ? { tokensPerSecond: inference.tokensPerSecond } : {}),
+          ...(inference.answer?.text
+            ? { responseChars: String(inference.answer.text.length) }
+            : {}),
+        },
+      });
+    };
+
     const loadModel = async (model) => {
       console.log("Now loading (raw)...", model);
 
@@ -1263,6 +933,21 @@ export default {
 
     const removeAttachedImage = () => {
       attachedImage.value = null;
+    };
+
+    // ChatInput attachment-chip integration. The component renders a
+    // chip stack from `attachments` (an array); we translate the
+    // single-image attachedImage ref into an array shape for that
+    // contract. The hidden <input type="file"> sits next to ChatInput
+    // in the template and `triggerImageAttach` clicks it.
+    const hiddenImageInput = ref(null);
+    const chatInputRef = ref(null);
+    const chatAttachments = computed(() => {
+      if (!attachedImage.value) return [];
+      return [{ kind: "image", name: attachedImage.value.name }];
+    });
+    const triggerImageAttach = () => {
+      hiddenImageInput.value?.click();
     };
 
     // Download mmproj for multimodal models
@@ -1847,9 +1532,11 @@ export default {
       },
     );
 
-    // Listen for bottom bar "browse models" event
+    // Bottom bar's "browse models" event now opens the global picker.
+    // The chat tab no longer hosts its own panel, so this listener is
+    // a thin shim — kept so older event dispatches still land correctly.
     const handleShowBrowseModels = () => {
-      openModel.value = true;
+      modelPicker.show();
     };
     onMounted(() => {
       window.addEventListener("bonzai:show-browse-models", handleShowBrowseModels);
@@ -1879,6 +1566,40 @@ export default {
       if (pipelineErrorUnsub) { pipelineErrorUnsub(); pipelineErrorUnsub = null; }
     });
 
+    // ─── Chat-layout integration (rail + empty state) ──────────────
+    // Map inferences → rail-friendly entries. Prompt = the question
+    // text; ts = inference timestamp. Most-recent first; ChatHistoryRail
+    // re-sorts and groups by date itself.
+    const railEntries = computed(() =>
+      (inferences.value || []).map((inf) => ({
+        id: inf.id,
+        prompt: inf.question || "(empty prompt)",
+        model: inf.model,
+        ts: inf.timestamp,
+      })),
+    );
+    const activeRailId = ref(null);
+
+    const selectFromRail = (entry) => {
+      activeRailId.value = entry.id;
+      // Defer until DOM updates so the message has its data-attribute
+      nextTick(() => {
+        const el = document.querySelector(`[data-inference-id="${entry.id}"]`);
+        if (el && typeof el.scrollIntoView === "function") {
+          el.scrollIntoView({ behavior: "smooth", block: "start" });
+        }
+      });
+    };
+
+    const pickPrompt = (p) => {
+      // EmptyChat passes the prompt object — value or title becomes the
+      // composer's seed text, leaving the cursor at the end so the user
+      // continues typing from where the suggestion stops.
+      const seed = p?.value ?? p?.title ?? "";
+      form.prompt = seed;
+      nextTick(() => chatInputRef.value?.focus?.());
+    };
+
     return {
       downloadProgress,
       isLoading,
@@ -1892,6 +1613,15 @@ export default {
       deleteModel,
       loadModel,
       openModel,
+      openModelPicker,
+      onInspectInference,
+      actionsFor,
+      handleAction,
+      // ChatInput integration
+      hiddenImageInput,
+      chatInputRef,
+      chatAttachments,
+      triggerImageAttach,
       // Model list management
       loadModelDir,
       modelDir,
@@ -1956,6 +1686,11 @@ export default {
       // Always loaded
       alwaysLoaded,
       toggleAlwaysLoaded,
+      // ChatLayout integration
+      railEntries,
+      activeRailId,
+      selectFromRail,
+      pickPrompt,
     };
   },
   async mounted() {
@@ -2009,6 +1744,133 @@ export default {
 <!-- Add "scoped" attribute to limit CSS to this component only -->
 <style scoped>
 
+/* ─────────────────────────────────────────────────────────────────
+   SETUP STATE — quiet editorial card. Replaces the legacy giant
+   neurology icon + Bulma column header. The setup view appears only
+   when the model isn't yet downloaded (or vision file is missing
+   for a multimodal model). Once ready, ChatLayout takes over.
+   ───────────────────────────────────────────────────────────────── */
+.bz-text-setup {
+  max-width: 880px;
+  margin: var(--bz-space-7) auto;
+  padding: var(--bz-space-7) var(--bz-space-6);
+  background: var(--bz-card);
+  border: 1px solid var(--bz-border);
+  border-radius: var(--bz-r-lg);
+  position: relative;
+  overflow: hidden;
+}
+.bz-text-setup::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background:
+    radial-gradient(
+      ellipse 50% 80% at 0% 0%,
+      var(--bz-purple-soft),
+      transparent 60%
+    );
+  pointer-events: none;
+  z-index: 0;
+}
+.bz-text-setup > * { position: relative; z-index: 1; }
+
+.bz-text-setup__head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--bz-space-5);
+  margin-bottom: var(--bz-space-6);
+}
+.bz-text-setup__head h1 { margin: var(--bz-space-2) 0 0; }
+.bz-text-setup__desc {
+  margin-top: var(--bz-space-3);
+  max-width: 60ch;
+  color: var(--bz-fg-mid);
+}
+
+.bz-text-setup__specs {
+  display: flex;
+  flex-direction: column;
+  gap: var(--bz-space-3);
+  padding: var(--bz-space-4) 0;
+  margin-bottom: var(--bz-space-5);
+  border-top: 1px solid var(--bz-border);
+  border-bottom: 1px solid var(--bz-border);
+}
+.bz-text-setup__chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--bz-space-2);
+}
+.bz-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--bz-space-2);
+  padding: 4px var(--bz-space-3);
+  background: var(--bz-canvas);
+  border: 1px solid var(--bz-border);
+  border-radius: var(--bz-r-pill);
+  color: var(--bz-fg-mid);
+  font-size: var(--bz-size-meta);
+  white-space: nowrap;
+}
+.bz-chip .material-symbols-outlined {
+  font-size: 14px !important;
+  color: var(--bz-purple-300);
+}
+
+.bz-text-setup__cta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--bz-space-3);
+  align-items: center;
+  justify-content: flex-end;
+}
+
+/* ─────────────────────────────────────────────────────────────────
+   CHAT WORKSPACE — overrides for ChatLayout slots. The layout
+   itself is generic; these styles tune the header strip and the
+   messages container so a Text-tab-specific feel survives.
+   ───────────────────────────────────────────────────────────────── */
+.bz-text-chat {
+  /* Fill the available height of the deployment-install scroll area
+     so the input stays docked at the bottom. */
+  height: calc(100vh - 80px);
+  min-height: 600px;
+}
+
+.bz-text-chat__head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--bz-space-3);
+}
+.bz-text-chat__head-left .bz-eyebrow {
+  display: block;
+  margin-bottom: 2px;
+  color: var(--bz-fg-low);
+}
+.bz-text-chat__head-left h1 { margin: 0; font-size: var(--bz-size-h1); }
+
+.bz-text-chat__head-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--bz-space-2);
+}
+
+.bz-text-chat__gate {
+  margin-bottom: var(--bz-space-5);
+}
+
+.bz-text-chat__messages {
+  max-width: 760px;
+  margin: 0 auto;
+  display: flex;
+  flex-direction: column;
+  gap: var(--bz-space-5);
+}
+
 hr {
   margin: 24px 0 !important;
   width: 100%;
@@ -2017,7 +1879,7 @@ hr {
   background: linear-gradient(
     to right,
     transparent,
-    rgba(255, 255, 255, 1),
+    var(--bz-border-strong),
     transparent
   );
 }
@@ -2053,7 +1915,7 @@ hr {
   position: absolute;
   width: 100% !important;
   height: 100% !important;
-  background: rgba(0, 0, 0, 0.5);
+  background: var(--bz-scrim-strong);
   z-index: -1;
 }
 
@@ -2085,8 +1947,8 @@ hr {
 }
 
 .tabs li.is-active a {
-  border-bottom-color: #fff;
-  color: #fff;
+  border-bottom-color: var(--bz-fg);
+  color: var(--bz-fg);
 }
 
 .tabs li:not(.is-active) {
@@ -2108,7 +1970,7 @@ hr {
 }
 
 .tabs li a h1 {
-  color: #fff;
+  color: var(--bz-fg);
   font-size: 48px;
   font-weight: 100;
   text-shadow: 1px 1px 1px #777;
@@ -2169,7 +2031,7 @@ hr {
   padding: 6em;
   /* aspect-ratio: 16/9; */
   height: 100vh;
-  background: rgba(0, 0, 0, 0.5);
+  background: var(--bz-scrim-strong);
 }
 
 .models__deployment-install--cta {
@@ -2180,7 +2042,7 @@ hr {
 
 .models__activity--payouts {
   padding: 4em;
-  border: 1px solid rgba(255, 255, 255, 0.1);
+  border: 1px solid var(--bz-border);
   backdrop-filter: blur(32px) !important;
   border-radius: 4px !important;
 }
@@ -2188,13 +2050,13 @@ hr {
 h1 {
   margin-top: 0 !important;
   font-size: 64px;
-  color: #fff;
+  color: var(--bz-fg);
   text-align: right;
 }
 
 h2 {
   font-size: 48px;
-  color: #fff;
+  color: var(--bz-fg);
   text-align: right;
 }
 
@@ -2202,7 +2064,7 @@ h2 {
 p {
   margin-bottom: 3em;
   font-size: 24px;
-  color: #fff;
+  color: var(--bz-fg);
   text-align: justify;
   font-family: "Fira Sans", sans-serif;
   font-weight: 100;
@@ -2216,7 +2078,7 @@ div.desc p {
   font-size: 28px;
   border-radius: 4px;
   min-height: 126px;
-  border: 1px solid rgba(255, 255, 255, 0.1);
+  border: 1px solid var(--bz-border);
   backdrop-filter: blur(32px);
 }
 
@@ -2227,12 +2089,12 @@ div.desc p {
   margin-bottom: 12px;
   font-size: 12px;
   font-family: "Fira Sans", sans-serif;
-  color: rgba(255, 255, 255, 0.4);
+  color: var(--bz-fg-low);
 }
 
 .answer__model {
   font-weight: 600;
-  color: rgba(255, 255, 255, 0.5);
+  color: var(--bz-fg-low);
 }
 
 .answer__tps {
@@ -2256,14 +2118,14 @@ div.desc p {
 
 .nm-remote {
   background: rgba(62, 142, 208, 0.15);
-  color: #3e8ed0;
+  color: var(--bz-info);
   border: 1px solid rgba(62, 142, 208, 0.3);
 }
 
 .nm-private {
   background: rgba(72, 199, 142, 0.12);
-  color: #48c78e;
-  border: 1px solid rgba(72, 199, 142, 0.3);
+  color: var(--bz-emerald-500);
+  border: 1px solid var(--bz-emerald-soft);
 }
 
 .models__deployment-install .card {
@@ -2278,8 +2140,8 @@ div.desc p {
   padding: 5px;
   font-size: 20px;
   color: rgba(255, 255, 255, 1);
-  background: rgba(255, 255, 255, 0.25);
-  border: 1px solid rgba(255, 255, 255, 0.25);
+  background: var(--bz-border-strong);
+  border: 1px solid var(--bz-border-strong);
   border-radius: 4px;
   backdrop-filter: blur(32px) !important;
   text-align: right;
@@ -2293,7 +2155,7 @@ div.desc p {
   height: 100%;
   width: 100%;
   padding: 6em;
-  background: rgba(0, 0, 0, 0.75);
+  background: var(--bz-scrim-deep);
   backdrop-filter: blur(6px);
   transform: translate3d(0, 0, 0);
   overflow: auto;
@@ -2321,16 +2183,16 @@ form {
   display: flex;
   align-items: center;
   justify-content: center;
-  background: rgba(255, 255, 255, 0.1);
-  border: 2px solid rgba(255, 255, 255, 0.2);
-  color: #fff;
+  background: var(--bz-border);
+  border: 2px solid var(--bz-border-strong);
+  color: var(--bz-fg);
   cursor: pointer;
   transition: all 0.2s ease;
 }
 
 .attach-image-btn:hover {
-  background: rgba(255, 255, 255, 0.2);
-  border-color: rgba(255, 255, 255, 0.4);
+  background: var(--bz-border-strong);
+  border-color: var(--bz-fg-low);
 }
 
 .attach-image-btn.has-image {
@@ -2346,24 +2208,24 @@ form {
   padding: 0;
   position: relative;
   top: -24px;
-  background: rgba(255, 255, 255, 0.1);
-  border: 2px solid rgba(255, 255, 255, 0.2);
-  color: rgba(255, 255, 255, 0.5);
+  background: var(--bz-border);
+  border: 2px solid var(--bz-border-strong);
+  color: var(--bz-fg-low);
   cursor: pointer;
   transition: all 0.2s ease;
   border-radius: 4px;
 }
 
 .reasoning-toggle-btn:hover {
-  background: rgba(255, 255, 255, 0.2);
-  border-color: rgba(255, 255, 255, 0.4);
-  color: #fff;
+  background: var(--bz-border-strong);
+  border-color: var(--bz-fg-low);
+  color: var(--bz-fg);
 }
 
 .reasoning-toggle-btn.active {
   background: rgba(32, 156, 238, 0.4);
   border-color: #209cee;
-  color: #fff;
+  color: var(--bz-fg);
   box-shadow: 0 0 12px rgba(32, 156, 238, 0.4);
 }
 
@@ -2375,7 +2237,7 @@ form {
   position: relative;
   margin-bottom: 12px;
   padding: 8px;
-  background: rgba(0, 0, 0, 0.3);
+  background: var(--bz-scrim);
   border-radius: 8px;
   display: inline-flex;
   align-items: center;
@@ -2399,7 +2261,7 @@ form {
   background: #ff3860;
   border: none;
   border-radius: 50%;
-  color: #fff;
+  color: var(--bz-fg);
   cursor: pointer;
   display: flex;
   align-items: center;
@@ -2412,7 +2274,7 @@ form {
 
 .attached-image-preview .image-name {
   font-size: 12px;
-  color: rgba(255, 255, 255, 0.7);
+  color: var(--bz-fg-mid);
   max-width: 150px;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -2421,15 +2283,15 @@ form {
 
 .input {
   margin-bottom: 2em;
-  color: #fff;
-  background: rgba(255, 255, 255, 0.1);
-  box-shadow: 8px 8px 0 rgba(97, 55, 142, 0.66);
+  color: var(--bz-fg);
+  background: var(--bz-border);
+  box-shadow: 8px 8px 0 var(--bz-purple-glow);
   transition: 200ms ease-in;
   transform: translate3d(0, 0, 0);
 }
 
 ::placeholder {
-  color: rgba(255, 255, 255, 0.1) !important;
+  color: var(--bz-border) !important;
   opacity: 1 !important;
 }
 
@@ -2488,23 +2350,23 @@ ol.chat li {
   width: 48px;
   height: 48px;
   border-radius: 50%;
-  background: rgba(97, 55, 142, 0.9);
-  border: 2px solid rgba(255, 255, 255, 0.3);
-  color: #fff;
+  background: var(--bz-purple-500);
+  border: 2px solid var(--bz-fg-faint);
+  color: var(--bz-fg);
   cursor: pointer;
   display: flex;
   align-items: center;
   justify-content: center;
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+  box-shadow: 0 4px 12px var(--bz-scrim);
   transition: all 0.2s ease;
   z-index: 100;
   animation: fadeInUp 0.3s ease-out;
 }
 
 .scroll-to-top-btn:hover {
-  background: rgba(97, 55, 142, 1);
+  background: var(--bz-purple-500);
   transform: translateY(-2px);
-  box-shadow: 0 6px 16px rgba(0, 0, 0, 0.4);
+  box-shadow: 0 6px 16px var(--bz-scrim);
 }
 
 .scroll-to-top-btn .material-symbols-outlined {
@@ -2533,8 +2395,8 @@ ol.chat li {
   align-items: center;
   padding: 0.5rem 0.75rem;
   border-radius: 6px;
-  background: rgba(255, 255, 255, 0.05);
-  border: 1px solid rgba(255, 255, 255, 0.1);
+  background: var(--bz-canvas);
+  border: 1px solid var(--bz-border);
 }
 
 .model-dir-path {
@@ -2572,7 +2434,7 @@ ol.chat li {
   z-index: 10;
   font-size: 0.75rem;
   line-height: 1.4;
-  color: rgba(255, 255, 255, 0.85);
+  color: var(--bz-fg);
   padding: 1em !important;
   margin-bottom: 4px;
   backdrop-filter: blur(32px);
@@ -2590,14 +2452,14 @@ ol.chat li {
   cursor: pointer;
   padding: 6px 14px;
   border-radius: 8px;
-  background: rgba(255, 255, 255, 0.08);
-  border: 1px solid rgba(255, 255, 255, 0.15);
-  color: rgba(255, 255, 255, 0.7);
+  background: var(--bz-card);
+  border: 1px solid var(--bz-border-strong);
+  color: var(--bz-fg-mid);
   transition: all 0.2s ease;
 }
 
 .always-loaded-toggle:hover {
-  background: rgba(255, 255, 255, 0.12);
+  background: var(--bz-border-strong);
 }
 
 .always-loaded-toggle.active {
@@ -2610,7 +2472,7 @@ ol.chat li {
   position: relative;
   width: 36px;
   height: 20px;
-  background: rgba(255, 255, 255, 0.2);
+  background: var(--bz-border-strong);
   border-radius: 10px;
   transition: background 0.2s;
 }
@@ -2658,7 +2520,7 @@ ol.chat li {
 .markdown-body :deep(h2),
 .markdown-body :deep(h3),
 .markdown-body :deep(h4) {
-  color: #fff;
+  color: var(--bz-fg);
   margin-top: 1em;
   margin-bottom: 0.5em;
   line-height: 1.3;
@@ -2688,22 +2550,22 @@ ol.chat li {
 }
 
 .markdown-body :deep(li::marker) {
-  color: rgba(255, 255, 255, 0.5);
+  color: var(--bz-fg-low);
 }
 
 /* Blockquotes */
 .markdown-body :deep(blockquote) {
-  border-left: 3px solid rgba(255, 255, 255, 0.3);
+  border-left: 3px solid var(--bz-fg-faint);
   padding-left: 1em;
   margin: 0.75em 0;
-  color: rgba(255, 255, 255, 0.7);
+  color: var(--bz-fg-mid);
 }
 
 /* Code blocks */
 .markdown-body :deep(pre) {
   position: relative;
-  background: rgba(0, 0, 0, 0.5);
-  border: 1px solid rgba(255, 255, 255, 0.15);
+  background: var(--bz-scrim-strong);
+  border: 1px solid var(--bz-border-strong);
   border-radius: 6px;
   padding: 1em;
   margin: 0.75em 0;
@@ -2725,7 +2587,7 @@ ol.chat li {
 .markdown-body :deep(code) {
   font-family: "Fira Code", "SF Mono", "Cascadia Code", "Consolas", monospace;
   font-size: 14px;
-  background: rgba(97, 55, 142, 0.3);
+  background: var(--bz-purple-soft);
   padding: 2px 6px;
   border-radius: 3px;
   color: #c4a0ff;
@@ -2747,18 +2609,18 @@ ol.chat li {
   padding: 4px 10px;
   font-size: 12px;
   font-family: "Fira Sans", sans-serif;
-  background: rgba(255, 255, 255, 0.15);
-  border: 1px solid rgba(255, 255, 255, 0.25);
+  background: var(--bz-border-strong);
+  border: 1px solid var(--bz-border-strong);
   border-radius: 4px;
-  color: rgba(255, 255, 255, 0.7);
+  color: var(--bz-fg-mid);
   cursor: pointer;
   transition: all 0.15s ease;
   z-index: 2;
 }
 
 .markdown-body :deep(.code-copy-btn:hover) {
-  background: rgba(255, 255, 255, 0.3);
-  color: #fff;
+  background: var(--bz-fg-faint);
+  color: var(--bz-fg);
 }
 
 .answer-divider {
@@ -2805,10 +2667,10 @@ ol.chat li {
 .thought-bubble {
   display: inline-block;
   margin: 0.5rem 0 0.85rem;
-  background: rgba(255, 255, 255, 0.1);
-  border: 2px solid rgba(255, 255, 255, 0.2);
+  background: var(--bz-border);
+  border: 2px solid var(--bz-border-strong);
   border-radius: 4px;
-  color: rgba(255, 255, 255, 0.5);
+  color: var(--bz-fg-low);
   font-size: 0.92em;
   transition: all 0.2s ease;
   overflow: hidden;
@@ -2818,7 +2680,7 @@ ol.chat li {
   display: block;
   background: rgba(32, 156, 238, 0.12);
   border-color: #209cee;
-  color: #fff;
+  color: var(--bz-fg);
   box-shadow: 0 0 12px rgba(32, 156, 238, 0.4);
 }
 
@@ -2842,9 +2704,9 @@ ol.chat li {
 }
 
 .thought-bubble:hover {
-  background: rgba(255, 255, 255, 0.2);
-  border-color: rgba(255, 255, 255, 0.4);
-  color: #fff;
+  background: var(--bz-border-strong);
+  border-color: var(--bz-fg-low);
+  color: var(--bz-fg);
 }
 
 .thought-bubble[open]:hover {
@@ -2862,17 +2724,17 @@ ol.chat li {
 
 .thought-bubble__body {
   padding: 0.5rem 0.85rem 0.6rem;
-  background: rgba(0, 0, 0, 0.15);
+  background: var(--bz-scrim-soft);
 }
 
 .thought-bubble :deep(p),
 .thought-bubble :deep(li) {
-  color: rgba(255, 255, 255, 0.85);
+  color: var(--bz-fg);
   margin: 0.25rem 0;
 }
 
 .thought-bubble :deep(code) {
-  background: rgba(0, 0, 0, 0.3);
+  background: var(--bz-scrim);
 }
 
 .thought-bubble--partial > summary::after {
@@ -2914,4 +2776,123 @@ ol.chat li {
 .fit-badge--tier1 { color: #c9a227; background: rgba(201, 162, 39, 0.10); }
 .fit-badge--tier2 { color: #cf6a1e; background: rgba(207, 106, 30, 0.10); }
 .fit-badge--tier3 { color: #b13a3a; background: rgba(177, 58, 58, 0.10); }
+
+/* ════════════════════════════════════════════════════════════════
+   CHAT STREAM (Milestone 5b) — replaces .chat<ol> + .history-item.
+   Centered max-width column carrying ChatMessage cards. The chat
+   tab inherits this from the new vocabulary; the legacy block above
+   is kept where v-if=inferences references it but is no longer
+   rendered after this milestone lands.
+   ════════════════════════════════════════════════════════════════ */
+
+.bz-chat-stream {
+  max-width: 760px;
+  margin: var(--bz-space-5) auto 0;
+  padding: 0 var(--bz-space-3);
+}
+
+/* Inline meta inside the assistant body slot — tokens/sec + origin
+   pill. Sits above the markdown render. */
+.bz-msg-extra-meta {
+  display: flex;
+  align-items: center;
+  gap: var(--bz-space-3);
+  margin-bottom: var(--bz-space-3);
+  flex-wrap: wrap;
+}
+
+/* Chat-specific message tools — copy / mint / delete. The
+   ChatMessage component carries copy/inspect/regenerate as built-in
+   hover actions; mint and delete are chat-tab features kept here. */
+.bz-msg-tools {
+  display: flex;
+  gap: var(--bz-space-2);
+  margin-top: var(--bz-space-4);
+  padding-top: var(--bz-space-3);
+  border-top: 1px solid var(--bz-border);
+}
+.bz-msg-tool {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--bz-space-2);
+  padding: 6px var(--bz-space-3);
+  background: transparent;
+  border: 1px solid var(--bz-border);
+  border-radius: var(--bz-r-sm);
+  color: var(--bz-fg-mid);
+  font-family: var(--bz-font-body);
+  font-size: var(--bz-size-meta);
+  cursor: pointer;
+  transition:
+    background var(--bz-dur-fast) var(--bz-ease-out),
+    color var(--bz-dur-fast) var(--bz-ease-out),
+    border-color var(--bz-dur-fast) var(--bz-ease-out);
+}
+.bz-msg-tool:hover:not(:disabled) {
+  background: var(--bz-raised);
+  color: var(--bz-fg);
+  border-color: var(--bz-border-strong);
+}
+.bz-msg-tool:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+.bz-msg-tool .material-symbols-outlined { font-size: 16px !important; }
+.bz-msg-tool--done {
+  color: var(--bz-emerald-500);
+  border-color: var(--bz-emerald-soft);
+}
+.bz-msg-tool--minted {
+  color: var(--bz-emerald-500);
+  border-color: var(--bz-emerald-soft);
+  background: var(--bz-emerald-soft);
+}
+.bz-msg-tool--destructive {
+  margin-left: auto;
+}
+.bz-msg-tool--destructive:hover:not(:disabled) {
+  color: var(--bz-danger);
+  border-color: var(--bz-danger-soft);
+  background: var(--bz-danger-soft);
+}
+
+/* Tools-slot button inside <ChatInput> — reasoning toggle.
+   Same shape as the chat-tool buttons above ChatMessage's body,
+   sized for the smaller composer toolbar. */
+.bz-chat-tool {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--bz-space-2);
+  height: 32px;
+  padding: 0 var(--bz-space-3);
+  background: transparent;
+  border: 1px solid var(--bz-border);
+  border-radius: var(--bz-r-sm);
+  color: var(--bz-fg-mid);
+  font-family: var(--bz-font-body);
+  font-size: var(--bz-size-meta);
+  cursor: pointer;
+  transition:
+    background var(--bz-dur-fast),
+    color var(--bz-dur-fast),
+    border-color var(--bz-dur-fast);
+}
+.bz-chat-tool:hover:not(:disabled) {
+  background: var(--bz-raised);
+  color: var(--bz-fg);
+  border-color: var(--bz-border-strong);
+}
+.bz-chat-tool:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+.bz-chat-tool .material-symbols-outlined { font-size: 16px !important; }
+.bz-chat-tool--on {
+  color: var(--bz-purple-300);
+  border-color: var(--bz-border-brand);
+  background: var(--bz-purple-soft);
+}
+.bz-chat-tool--on:hover:not(:disabled) {
+  color: var(--bz-purple-100);
+}
 </style>

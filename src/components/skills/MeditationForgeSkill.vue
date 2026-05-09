@@ -1179,9 +1179,9 @@ Output ONLY the meditation script text, nothing else.`;
   font-weight: 600;
   font-size: 14px;
   background: transparent;
-  border: 1px solid rgba(255, 255, 255, 0.3);
+  border: 1px solid var(--bz-fg-faint);
   border-radius: 4px;
-  color: rgba(255, 255, 255, 0.3);
+  color: var(--bz-fg-faint);
   cursor: pointer;
   transition: all 0.3s ease;
   white-space: nowrap;
@@ -1189,15 +1189,15 @@ Output ONLY the meditation script text, nothing else.`;
 }
 
 .category-selector input[type='radio'] + label.radio.category:hover {
-  background: rgba(97, 55, 142, 0.2);
-  border-color: rgba(255, 255, 255, 0.5);
-  color: rgba(255, 255, 255, 0.8);
+  background: var(--bz-purple-soft);
+  border-color: var(--bz-fg-low);
+  color: var(--bz-fg-mid);
 }
 
 .category-selector input[type='radio']:checked + label.radio.category {
   color: rgba(255, 255, 255, 1);
   border: 1px solid rgba(255, 255, 255, 1);
-  background: rgba(97, 55, 142, 0.33);
+  background: var(--bz-purple-soft);
   backdrop-filter: blur(64px);
 }
 
@@ -1213,7 +1213,7 @@ Output ONLY the meditation script text, nothing else.`;
 }
 
 .meditation-display.is-active {
-  box-shadow: 0 0 60px rgba(97, 55, 142, 0.4);
+  box-shadow: 0 0 60px var(--bz-purple-soft);
 }
 
 .meditation-display.is-fullscreen {
@@ -1268,9 +1268,9 @@ Output ONLY the meditation script text, nothing else.`;
   height: 100%;
   background: linear-gradient(
     to bottom,
-    rgba(0, 0, 0, 0.3) 0%,
-    rgba(0, 0, 0, 0.1) 50%,
-    rgba(0, 0, 0, 0.4) 100%
+    var(--bz-scrim) 0%,
+    var(--bz-scrim-soft) 50%,
+    var(--bz-scrim) 100%
   );
 }
 
@@ -1302,8 +1302,8 @@ Output ONLY the meditation script text, nothing else.`;
   bottom: 1rem;
   right: 1rem;
   z-index: 20;
-  background: rgba(0, 0, 0, 0.5);
-  border: 1px solid rgba(255, 255, 255, 0.3);
+  background: var(--bz-scrim-strong);
+  border: 1px solid var(--bz-fg-faint);
   border-radius: 8px;
   padding: 8px;
   cursor: pointer;
@@ -1312,8 +1312,8 @@ Output ONLY the meditation script text, nothing else.`;
 }
 
 .fullscreen-toggle:hover {
-  background: rgba(97, 55, 142, 0.6);
-  border-color: rgba(255, 255, 255, 0.6);
+  background: var(--bz-border-brand);
+  border-color: var(--bz-fg-mid);
 }
 
 .fullscreen-toggle.m-5 {
@@ -1329,8 +1329,8 @@ Output ONLY the meditation script text, nothing else.`;
   display: flex;
   align-items: center;
   justify-content: center;
-  background: rgba(97, 55, 142, 0.4);
-  border: 3px solid rgba(255, 255, 255, 0.5);
+  background: var(--bz-purple-soft);
+  border: 3px solid var(--bz-fg-low);
   transition: all 0.5s ease;
 }
 
@@ -1353,7 +1353,7 @@ Output ONLY the meditation script text, nothing else.`;
 }
 
 .breathing-text {
-  text-shadow: 0 2px 10px rgba(0, 0, 0, 0.5);
+  text-shadow: 0 2px 10px var(--bz-scrim-strong);
 }
 
 /* Controls */
@@ -1366,7 +1366,7 @@ Output ONLY the meditation script text, nothing else.`;
   width: 100%;
   height: 8px;
   border-radius: 4px;
-  background: rgba(255, 255, 255, 0.2);
+  background: var(--bz-border-strong);
   outline: none;
 }
 
@@ -1381,22 +1381,22 @@ Output ONLY the meditation script text, nothing else.`;
 
 /* Session History */
 .session-card {
-  background: rgba(0, 0, 0, 0.3);
+  background: var(--bz-scrim);
   border-radius: 8px;
-  border: 1px solid rgba(255, 255, 255, 0.1);
+  border: 1px solid var(--bz-border);
   cursor: pointer;
   transition: all 0.2s ease;
 }
 
 .session-card:hover {
-  background: rgba(97, 55, 142, 0.2);
-  border-color: rgba(255, 255, 255, 0.3);
+  background: var(--bz-purple-soft);
+  border-color: var(--bz-fg-faint);
 }
 
 /* Common Styles */
 .models__activity--payouts {
   padding: 2em;
-  border: 1px solid rgba(255, 255, 255, 0.1);
+  border: 1px solid var(--bz-border);
   backdrop-filter: blur(32px);
   border-radius: 4px !important;
 }
@@ -1417,7 +1417,7 @@ Output ONLY the meditation script text, nothing else.`;
 }
 
 .skill-description {
-  color: rgba(255, 255, 255, 0.8);
+  color: var(--bz-fg-mid);
   margin-bottom: 0.5em;
   text-align: left;
 }
@@ -1433,7 +1433,7 @@ Output ONLY the meditation script text, nothing else.`;
 
 /* Progress bar styling */
 .progress {
-  background-color: rgba(255, 255, 255, 0.2);
+  background-color: var(--bz-border-strong);
 }
 
 .progress::-webkit-progress-value {

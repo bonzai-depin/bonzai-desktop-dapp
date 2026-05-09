@@ -146,13 +146,13 @@ onUnmounted(() => {
 
 .audit-meta {
   font-size: 12px;
-  color: rgba(255, 255, 255, 0.4);
+  color: var(--bz-fg-low);
   margin-left: 8px;
 }
 
 .chevron {
   font-size: 20px;
-  color: rgba(255, 255, 255, 0.4);
+  color: var(--bz-fg-low);
   transition: transform 0.2s;
 }
 
@@ -170,7 +170,7 @@ onUnmounted(() => {
 .audit-section {
   padding: 10px 12px;
   border-radius: 8px;
-  background: rgba(0, 0, 0, 0.15);
+  background: var(--bz-scrim-soft);
 }
 
 .audit-section-title {
@@ -206,7 +206,7 @@ onUnmounted(() => {
 
 .audit-status {
   font-size: 11px;
-  color: rgba(255, 255, 255, 0.35);
+  color: var(--bz-fg-faint);
   padding-top: 4px;
 }
 </style>

@@ -13,13 +13,11 @@
               </span>
               Rewards
             </h2>
-            <button
-              class="button is-danger is-small"
+            <BzCloseButton
+              size="md"
+              aria-label="Close rewards"
               @click="$emit('close')"
-              title="Close"
-            >
-              <span class="material-symbols-outlined">close</span>
-            </button>
+            />
           </div>
 
           <div class="rewards-modal-body">
@@ -32,14 +30,17 @@
             </div>
 
             <!-- Error State -->
-            <div v-else-if="loadError" class="notification is-danger m-4" style="background: rgba(241, 70, 104, 0.12); border: 1px solid rgba(241, 70, 104, 0.3);">
-              <p class="has-text-danger has-text-weight-bold">
-                <span class="material-symbols-outlined mr-1" style="font-size: 18px; vertical-align: middle;">error</span>
-                {{ loadError }}
-              </p>
-              <button class="button is-small is-warning mt-3" @click="loadData">
-                Retry
-              </button>
+            <div v-else-if="loadError" class="bz-notice bz-notice--danger bz-notice--stacked m-4">
+              <span class="bz-notice__icon"><span class="material-symbols-outlined">error</span></span>
+              <div class="bz-notice__body">
+                <p class="bz-notice__title">{{ loadError }}</p>
+              </div>
+              <div class="bz-notice__cta">
+                <button type="button" class="bz-btn bz-btn--primary bz-btn--sm" @click="loadData">
+                  <span class="material-symbols-outlined">refresh</span>
+                  Retry
+                </button>
+              </div>
             </div>
 
             <template v-else>
@@ -121,13 +122,14 @@
                           </span>
                           <button
                             v-else-if="pool.qualified"
-                            class="button is-success is-small is-fullwidth"
+                            type="button"
+                            class="bz-btn bz-btn--success bz-btn--sm"
+                            style="width: 100%;"
                             @click="handleRegister"
                             :disabled="isRegistering"
-                            :class="{ 'is-loading': isRegistering }"
                           >
-                            <span class="material-symbols-outlined mr-1" style="font-size: 16px;">app_registration</span>
-                            Register for Epoch #{{ poolState.currentEpoch }}
+                            <span class="material-symbols-outlined">app_registration</span>
+                            {{ isRegistering ? 'Registering…' : `Register for Epoch #${poolState.currentEpoch}` }}
                           </button>
                           <span v-else class="tag is-dark" style="white-space: normal; height: auto">
                             Hold {{ pool.threshold.toLocaleString() }} BONZAI or unlock with 1 ETH
@@ -149,21 +151,27 @@
                 </h3>
 
                 <!-- Total Available Rewards -->
-                <div v-if="totalAvailableRewards > 0" class="notification mb-3" style="background: rgba(72, 199, 142, 0.08); border: 1px solid rgba(72, 199, 142, 0.25); border-radius: 10px;">
-                  <p class="has-text-success-light" style="font-size: 14px;">
-                    <span class="material-symbols-outlined mr-1" style="font-size: 18px; vertical-align: middle;">savings</span>
-                    <strong class="fira-sans-condensed-black-italic">{{ formatEth(totalAvailableRewards) }} ETH</strong> available to claim
-                  </p>
+                <div v-if="totalAvailableRewards > 0" class="bz-notice bz-notice--success mb-3">
+                  <span class="bz-notice__icon"><span class="material-symbols-outlined">savings</span></span>
+                  <div class="bz-notice__body">
+                    <p class="bz-notice__title">{{ formatEth(totalAvailableRewards) }} ETH available to claim</p>
+                  </div>
                 </div>
 
-                <div v-if="!isConnected" class="notification is-dark mb-3" style="background: rgba(255,255,255,0.04); border: 1px solid rgba(255,255,255,0.08);">
-                  <p class="has-text-grey-light">Connect your wallet to view claimable rewards.</p>
+                <div v-if="!isConnected" class="bz-notice mb-3">
+                  <span class="bz-notice__icon"><span class="material-symbols-outlined">account_balance_wallet</span></span>
+                  <div class="bz-notice__body">
+                    <p class="bz-notice__text">Connect your wallet to view claimable rewards.</p>
+                  </div>
                 </div>
 
                 <template v-else>
                   <!-- Previous Epoch Claims -->
-                  <div v-if="claimableEpochs.length === 0" class="notification is-dark mb-3" style="background: rgba(255,255,255,0.04); border: 1px solid rgba(255,255,255,0.08);">
-                    <p class="has-text-grey-light">No claimable epochs found. Register for the current epoch to earn rewards.</p>
+                  <div v-if="claimableEpochs.length === 0" class="bz-notice mb-3">
+                    <span class="bz-notice__icon"><span class="material-symbols-outlined">inbox</span></span>
+                    <div class="bz-notice__body">
+                      <p class="bz-notice__text">No claimable epochs found. Register for the current epoch to earn rewards.</p>
+                    </div>
                   </div>
 
                   <div
@@ -190,23 +198,23 @@
                     <div class="epoch-card-actions">
                       <button
                         v-if="!epoch.confirmed"
-                        class="button is-warning is-small"
+                        type="button"
+                        class="bz-btn bz-btn--warning bz-btn--sm"
                         @click="handleConfirmClaim(epoch.epochId)"
                         :disabled="isClaiming"
-                        :class="{ 'is-loading': isClaiming }"
                       >
-                        <span class="material-symbols-outlined mr-1" style="font-size: 16px;">verified</span>
-                        Confirm Claim
+                        <span class="material-symbols-outlined">verified</span>
+                        {{ isClaiming ? 'Confirming…' : 'Confirm Claim' }}
                       </button>
                       <button
                         v-else
-                        class="button is-success is-small"
+                        type="button"
+                        class="bz-btn bz-btn--success bz-btn--sm"
                         @click="handleBatchClaim(epoch.epochId, epoch.claimablePoolIndices)"
                         :disabled="isClaiming"
-                        :class="{ 'is-loading': isClaiming }"
                       >
-                        <span class="material-symbols-outlined mr-1" style="font-size: 16px;">redeem</span>
-                        Claim
+                        <span class="material-symbols-outlined">redeem</span>
+                        {{ isClaiming ? 'Claiming…' : 'Claim' }}
                       </button>
                     </div>
                   </div>
@@ -226,8 +234,11 @@
                   <span class="material-symbols-outlined rotating has-text-grey-light" style="font-size: 24px;">progress_activity</span>
                 </div>
 
-                <div v-else-if="parseFloat(unclaimedSkillRevenue) === 0" class="notification is-dark mb-3" style="background: rgba(255,255,255,0.04); border: 1px solid rgba(255,255,255,0.08);">
-                  <p class="has-text-grey-light">No unclaimed skill revenue. Register companions as skill co-owners to earn.</p>
+                <div v-else-if="parseFloat(unclaimedSkillRevenue) === 0" class="bz-notice mb-3">
+                  <span class="bz-notice__icon"><span class="material-symbols-outlined">monetization_on</span></span>
+                  <div class="bz-notice__body">
+                    <p class="bz-notice__text">No unclaimed skill revenue. Register companions as skill co-owners to earn.</p>
+                  </div>
                 </div>
 
                 <div v-else class="skill-revenue-card">
@@ -238,13 +249,14 @@
                     </span>
                   </div>
                   <button
-                    class="button is-warning is-fullwidth mt-3"
+                    type="button"
+                    class="bz-btn bz-btn--primary mt-3"
+                    style="width: 100%;"
                     @click="handleClaimSkillRevenue"
                     :disabled="isClaimingSkillRevenue"
-                    :class="{ 'is-loading': isClaimingSkillRevenue }"
                   >
-                    <span class="material-symbols-outlined mr-2">redeem</span>
-                    Claim All
+                    <span class="material-symbols-outlined">redeem</span>
+                    {{ isClaimingSkillRevenue ? 'Claiming…' : 'Claim All' }}
                   </button>
                 </div>
               </div>
@@ -266,6 +278,7 @@
 
 <script setup>
 import { ref, computed, watch, onMounted, onUnmounted } from 'vue';
+import BzCloseButton from './BzCloseButton.vue';
 import { mintPoolService } from '../services/mintPool.service.js';
 import { getUnclaimedRevenue, claimAllRevenue } from '../services/skillOwnership.service.js';
 import { web3Service } from '../services/web3.service.js';
@@ -580,7 +593,7 @@ defineExpose({ hasClaimableRewards });
   max-width: 800px;
   max-height: 90vh;
   background: #0a0a0f;
-  border: 1px solid rgba(255, 255, 255, 0.1);
+  border: 1px solid var(--bz-border);
   border-radius: 16px;
   overflow: hidden;
   display: flex;
@@ -593,8 +606,8 @@ defineExpose({ hasClaimableRewards });
   align-items: center;
   justify-content: space-between;
   padding: 16px 24px;
-  background: rgba(0, 0, 0, 0.3);
-  border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+  background: var(--bz-scrim);
+  border-bottom: 1px solid var(--bz-border);
 }
 
 .rewards-modal-header h2 {
@@ -613,7 +626,7 @@ defineExpose({ hasClaimableRewards });
 /* Epoch Info */
 .epoch-info-section {
   background: rgba(255, 255, 255, 0.03);
-  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+  border-bottom: 1px solid var(--bz-canvas);
 }
 
 .epoch-stat {
@@ -636,23 +649,23 @@ defineExpose({ hasClaimableRewards });
 
 /* Pool Cards */
 .pool-cards-section {
-  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+  border-bottom: 1px solid var(--bz-canvas);
 }
 
 .pool-card {
-  background: rgba(255, 255, 255, 0.04);
-  border: 1px solid rgba(255, 255, 255, 0.08);
+  background: var(--bz-canvas);
+  border: 1px solid var(--bz-card);
   border-radius: 12px;
   padding: 16px;
   transition: border-color 0.2s;
 }
 
 .pool-card.qualified {
-  border-color: rgba(72, 199, 142, 0.3);
+  border-color: var(--bz-emerald-soft);
 }
 
 .pool-card:hover {
-  border-color: rgba(255, 255, 255, 0.2);
+  border-color: var(--bz-border-strong);
 }
 
 .pool-card-header {
@@ -664,7 +677,7 @@ defineExpose({ hasClaimableRewards });
 
 .pool-icon {
   font-size: 24px;
-  color: #ffe08a;
+  color: var(--bz-warning);
 }
 
 .pool-name {
@@ -679,11 +692,11 @@ defineExpose({ hasClaimableRewards });
 }
 
 .qualification-badge.is-success {
-  color: #48c78e;
+  color: var(--bz-emerald-500);
 }
 
 .qualification-badge.is-danger {
-  color: #f14668;
+  color: var(--bz-danger);
 }
 
 .pool-card-body {
@@ -707,7 +720,7 @@ defineExpose({ hasClaimableRewards });
 
 .pool-balance-value {
   font-size: 14px;
-  color: #ffe08a;
+  color: var(--bz-warning);
   font-weight: 600;
 }
 
@@ -722,12 +735,12 @@ defineExpose({ hasClaimableRewards });
 
 /* Claimable Section */
 .claimable-section {
-  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+  border-bottom: 1px solid var(--bz-canvas);
 }
 
 .claimable-epoch-card {
-  background: rgba(255, 255, 255, 0.04);
-  border: 1px solid rgba(255, 255, 255, 0.08);
+  background: var(--bz-canvas);
+  border: 1px solid var(--bz-card);
   border-radius: 12px;
   overflow: hidden;
 }
@@ -737,8 +750,8 @@ defineExpose({ hasClaimableRewards });
   justify-content: space-between;
   align-items: center;
   padding: 12px 16px;
-  background: rgba(0, 0, 0, 0.2);
-  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+  background: var(--bz-scrim-soft);
+  border-bottom: 1px solid var(--bz-canvas);
 }
 
 .epoch-card-header span:first-child {
@@ -767,20 +780,20 @@ defineExpose({ hasClaimableRewards });
 
 .epoch-pool-amount {
   font-size: 13px;
-  color: #ffe08a;
+  color: var(--bz-warning);
 }
 
 .epoch-card-actions {
   padding: 12px 16px;
-  border-top: 1px solid rgba(255, 255, 255, 0.06);
+  border-top: 1px solid var(--bz-canvas);
   display: flex;
   justify-content: flex-end;
 }
 
 /* Skill Revenue */
 .skill-revenue-card {
-  background: rgba(255, 255, 255, 0.04);
-  border: 1px solid rgba(255, 255, 255, 0.08);
+  background: var(--bz-canvas);
+  border: 1px solid var(--bz-card);
   border-radius: 12px;
   padding: 16px;
 }
@@ -805,22 +818,22 @@ defineExpose({ hasClaimableRewards });
   margin: 0;
   font-size: 13px;
   text-align: center;
-  border-top: 1px solid rgba(255, 255, 255, 0.06);
+  border-top: 1px solid var(--bz-canvas);
 }
 
 .status-bar.is-success {
-  background: rgba(72, 199, 142, 0.1);
-  color: #48c78e;
+  background: var(--bz-emerald-soft);
+  color: var(--bz-emerald-500);
 }
 
 .status-bar.is-danger {
   background: rgba(241, 70, 104, 0.1);
-  color: #f14668;
+  color: var(--bz-danger);
 }
 
 .status-bar.is-info {
-  background: rgba(62, 142, 208, 0.1);
-  color: #3e8ed0;
+  background: var(--bz-info-soft);
+  color: var(--bz-info);
 }
 
 /* Animations */
@@ -853,11 +866,11 @@ defineExpose({ hasClaimableRewards });
 }
 
 .rewards-modal-body::-webkit-scrollbar-thumb {
-  background: rgba(255, 255, 255, 0.15);
+  background: var(--bz-border-strong);
   border-radius: 3px;
 }
 
 .rewards-modal-body::-webkit-scrollbar-thumb:hover {
-  background: rgba(255, 255, 255, 0.25);
+  background: var(--bz-border-strong);
 }
 </style>

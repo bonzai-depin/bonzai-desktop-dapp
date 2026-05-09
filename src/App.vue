@@ -123,152 +123,70 @@
     ></progress>
   </div>
 
-  <div id="bonzai" class="columns is-gapless">
-    <div class="column is-4 is-paddingless">
-      <div class="models tabs menu">
-        <ul class="models__list">
-          <li class="models__list-item model bonzai has-text-left">
-            <div class="shade"></div>
-            <div class="logo">
-              <span
-                v-if="systemValues && systemValues.memBudget"
-                class="system tag is-info is-large is-pulled-right memory fira-sans-condensed-black-italic is-size-2"
-                style="cursor: pointer"
-                title="Available memory budget for AI inference (click for details)"
-                @click="openSpecsModal"
-              >
-                <span
-                  class="material-symbols-outlined is-size-1 mr-2"
-                  style="font-size: 50px !important"
-                >
-                  memory
-                </span>
-                {{
-                  (systemValues.memBudget / 1024 ** 3).toFixed(0)
-                }}
-                GB
-              </span>
-            </div>
-          </li>
-          <li
-            class="models__list-item model chat"
-            :class="{ 'is-active': modelMode == 'chat' }"
-            @click="modelMode = 'chat'"
-          >
-            <div class="shade"></div>
-            <a>
-              <h1>
-                <span class="material-symbols-outlined is-size-1">chat</span>
-                Chat
-              </h1>
-            </a>
-          </li>
-          <li
-            class="models__list-item model music"
-            :class="{ 'is-active': modelMode == 'music' }"
-            @click="modelMode = 'music'"
-          >
-            <a>
-              <h1>
-                <span class="material-symbols-outlined is-size-1">
-                  headphones
-                </span>
-                Audio
-              </h1>
-            </a>
-          </li>
-          <li
-            class="models__list-item model image"
-            :class="{ 'is-active': modelMode == 'image' }"
-            @click="modelMode = 'image'"
-          >
-            <a>
-              <h1>
-                <span class="material-symbols-outlined is-size-1">image</span>
-                Image
-              </h1>
-            </a>
-          </li>
-          <li
-            class="models__list-item model video"
-            :class="{ 'is-active': modelMode == 'video' }"
-            @click="modelMode = 'video'"
-          >
-            <a>
-              <h1>
-                <span class="material-symbols-outlined is-size-1">movie</span>
-                Video
-              </h1>
-            </a>
-          </li>
-          <li
-            class="models__list-item model three"
-            :class="{ 'is-active': modelMode == '3D' }"
-            @click="modelMode = '3D'"
-          >
-            <a>
-              <h1>
-                <span class="material-symbols-outlined is-size-1">
-                  3d_rotation
-                </span>
-                Assets
-              </h1>
-            </a>
-          </li>
-          <li
-            class="models__list-item model robot"
-            :class="{ 'is-active': modelMode == 'robot' }"
-            @click="modelMode = 'robot'"
-          >
-            <a>
-              <h1>
-                <span class="material-symbols-outlined is-size-1">
-                  exercise
-                </span>
-                Training
-              </h1>
-            </a>
-          </li>
-          <li
-            class="models__list-item model agent"
-            :class="{ 'is-active': modelMode == 'agent' }"
-            @click="modelMode = 'agent'"
-          >
-            <a>
-              <h1>
-                <span class="material-symbols-outlined is-size-1">automation</span>
-                Agents
-              </h1>
-            </a>
-          </li>
-          <li
-            class="models__list-item model company"
-            :class="{ 'is-active': modelMode == 'company' }"
-            @click="modelMode = 'company'"
-          >
-            <a>
-              <h1>
-                <span class="material-symbols-outlined is-size-1">storefront</span>
-                Company
-              </h1>
-            </a>
-          </li>
-        </ul>
-      </div>
-    </div>
-    <!-- Each component has inline access requirements -->
-    <GenerativeText v-if="modelMode == 'chat'" key="chat" />
-    <GenerativeAudio v-if="modelMode == 'music'" key="music" />
-    <GenerativeImage v-if="modelMode == 'image'" key="image" />
-    <GenerativeVideo
-      v-if="modelMode == 'video'"
-      key="video"
-      :existingImageBase64="videoImageBase64"
-    />
-    <Generative3D v-if="modelMode == '3D'" key="3D" />
-    <GenerativeTraining v-if="modelMode == 'robot'" key="robot" />
-    <SmartAgent v-if="modelMode == 'agent'" key="agent" />
-    <Company v-if="modelMode == 'company'" key="company" />
+  <!-- APP SHELL — compact 240px left-rail nav + main work area.
+       Each row keeps its branded image with a shade overlay so labels
+       stay legible. Active state shows a brand-purple bar on the
+       left edge and a tinted shade. Collapses to icon-only at
+       narrow viewports. -->
+  <div id="bonzai">
+    <nav class="bz-nav" aria-label="Primary">
+      <header class="bz-nav__brand">
+        <div class="bz-nav__logo" aria-hidden="true"></div>
+        <button
+          v-if="systemValues && systemValues.memBudget"
+          class="bz-nav__mem"
+          title="Available memory budget for AI inference (click for details)"
+          @click="openSpecsModal"
+        >
+          <span class="material-symbols-outlined" aria-hidden="true">memory</span>
+          <span class="bz-mono">
+            {{ (systemValues.memBudget / 1024 ** 3).toFixed(0) }}&nbsp;GB
+          </span>
+        </button>
+      </header>
+
+      <ul class="bz-nav__list">
+        <li
+          v-for="t in navTabs"
+          :key="t.id"
+          class="bz-nav__item"
+          :class="[`bz-nav__item--${t.id}`, { 'is-active': modelMode === t.id }]"
+          @click="modelMode = t.id"
+          tabindex="0"
+          role="button"
+          :aria-pressed="modelMode === t.id"
+          :aria-label="t.label"
+          @keydown.enter.prevent="modelMode = t.id"
+          @keydown.space.prevent="modelMode = t.id"
+        >
+          <span class="bz-nav__shade" aria-hidden="true"></span>
+          <span class="bz-nav__icon material-symbols-outlined" aria-hidden="true">
+            {{ t.icon }}
+          </span>
+          <span class="bz-nav__label fira-sans-condensed-black-italic">
+            {{ t.label }}
+          </span>
+          <span class="bz-nav__active-bar" aria-hidden="true"></span>
+        </li>
+      </ul>
+    </nav>
+
+    <main class="bz-main">
+      <!-- Each component carries inline access requirements; the main
+           column flexes to fill the rest of the viewport. -->
+      <GenerativeText v-if="modelMode == 'chat'" key="chat" />
+      <GenerativeAudio v-if="modelMode == 'music'" key="music" />
+      <GenerativeImage v-if="modelMode == 'image'" key="image" />
+      <GenerativeVideo
+        v-if="modelMode == 'video'"
+        key="video"
+        :existingImageBase64="videoImageBase64"
+      />
+      <Generative3D v-if="modelMode == '3D'" key="3D" />
+      <GenerativeTraining v-if="modelMode == 'robot'" key="robot" />
+      <SmartAgent v-if="modelMode == 'agent'" key="agent" />
+      <Company v-if="modelMode == 'company'" key="company" />
+    </main>
   </div>
   <BonzaiBottomBar />
 
@@ -279,6 +197,16 @@
        its own template to escape this stacking context. -->
   <LlmModelPickerModal />
 
+  <!-- Global command palette — Cmd-K / Ctrl-K from anywhere.
+       Lists tabs + tools; runtime sources can register dynamic
+       commands via `commandPalette.register({...})`. -->
+  <CommandPalette />
+
+  <!-- Generation inspector — slide-in 360 px right rail. Open via
+       `inspector.show(generation)` from any Generative tab when the
+       user picks an output. Replaces inline metadata clutter. -->
+  <GenerationInspector />
+
   <!-- Hardware Specifications & Performance Modal -->
   <div
     v-if="showSpecsModal"
@@ -287,9 +215,11 @@
   >
     <div class="specs-modal">
       <div class="has-text-right">
-        <button class="button is-danger" @click="showSpecsModal = false">
-          <span class="material-symbols-outlined">close</span>
-        </button>
+        <BzCloseButton
+          size="md"
+          aria-label="Close hardware specs"
+          @click="showSpecsModal = false"
+        />
       </div>
 
       <div class="specs-modal-header has-text-center">
@@ -464,7 +394,11 @@ import Company from "./components/Company.vue";
 import SmartAgent from "./components/SmartAgent.vue";
 import BonzaiBottomBar from "./components/BonzaiBottomBar.vue";
 import LlmModelPickerModal from "./components/LlmModelPickerModal.vue";
+import CommandPalette from "./components/CommandPalette.vue";
+import GenerationInspector from "./components/GenerationInspector.vue";
+import BzCloseButton from "./components/BzCloseButton.vue";
 import { authService } from "./services/auth.service.js";
+import { themeService } from "./services/theme.service.js";
 import { useSkillStore } from "./stores/skillStore.js";
 import { initOpenClawHandler } from "./services/openclaw.handler.js";
 import { modelStore } from "./stores/modelStore.js";
@@ -484,9 +418,24 @@ export default {
     Company,
     BonzaiBottomBar,
     LlmModelPickerModal,
+    CommandPalette,
+    GenerationInspector,
+    BzCloseButton,
   },
   setup() {
     const modelMode = ref("chat");
+    // Nav tab catalog. The order here is the visual order in the rail.
+    // Adding a tab is one entry here + a `<v-if>` row in the main column.
+    const navTabs = [
+      { id: "chat",    label: "Chat",     icon: "chat" },
+      { id: "music",   label: "Audio",    icon: "headphones" },
+      { id: "image",   label: "Image",    icon: "image" },
+      { id: "video",   label: "Video",    icon: "movie" },
+      { id: "3D",      label: "Assets",   icon: "3d_rotation" },
+      { id: "robot",   label: "Training", icon: "exercise" },
+      { id: "agent",   label: "Agents",   icon: "automation" },
+      { id: "company", label: "Company",  icon: "storefront" },
+    ];
     const systemValues = ref({});
     const videoImageBase64 = ref("");
     let sysInfoInterval = null;
@@ -534,6 +483,19 @@ export default {
       }, 50);
     };
 
+    // External tab-switch via window event — used by the command
+    // palette and other global UI surfaces. The event detail is the
+    // tab key (chat / image / video / music / 3D / agent / robot /
+    // company); unknown values are ignored so a stale dispatch can't
+    // wedge the UI on a non-existent route.
+    const VALID_MODES = new Set(["chat", "image", "video", "music", "3D", "agent", "robot", "company"]);
+    const onSetModeEvent = (e) => {
+      const next = e?.detail;
+      if (typeof next === "string" && VALID_MODES.has(next)) {
+        modelMode.value = next;
+      }
+    };
+
     // Provide goAnimateToVideo so child components can use it
     provide("goAnimateToVideo", goAnimateToVideo);
 
@@ -566,6 +528,11 @@ export default {
     };
 
     onMounted(() => {
+      // Apply the user's persisted theme before any component paints —
+      // setting data-theme on <html> is synchronous so first render
+      // already uses the chosen palette.
+      themeService.init();
+
       // Initialize unified inference store (loads persisted generation history)
       initializeStore();
 
@@ -599,6 +566,15 @@ export default {
 
       // Listen for bottom bar → browse models request
       window.addEventListener("bonzai:open-browse-models", openBrowseModels);
+
+      // Command palette → tab switch. The palette dispatches a
+      // `bonzai:set-mode` event with the tab key in `detail`; we map
+      // it onto the local `modelMode` ref so the same tab UI updates.
+      window.addEventListener("bonzai:set-mode", onSetModeEvent);
+
+      // Command palette → hardware modal. The picker / palette
+      // owns no modal state itself; it just dispatches an event.
+      window.addEventListener("bonzai:open-specs", openSpecsModal);
 
       // Subscribe to server status events
       unsubscribeServerStatus = window.electronAPI.onServerStatus((data) => {
@@ -636,11 +612,14 @@ export default {
       }
       modelStore.stopListening();
       window.removeEventListener("bonzai:open-browse-models", openBrowseModels);
+      window.removeEventListener("bonzai:set-mode", onSetModeEvent);
+      window.removeEventListener("bonzai:open-specs", openSpecsModal);
     });
 
     return {
       systemValues,
       modelMode,
+      navTabs,
       videoImageBase64,
       goAnimateToVideo,
       goToCompanionChat,
@@ -659,6 +638,26 @@ export default {
 <style>
 /* Local fonts for offline mode - bundled with the app */
 @import "./assets/fonts/fonts.css";
+
+/* Global design tokens — the single source of truth for colour,
+   typography, spacing, motion, elevation. Components consume the
+   --bz-* custom properties; new literals must be promoted here.
+   See /DESIGN.md for the system rationale and rules. */
+@import "./assets/tokens.css";
+
+/* Theme variants — each `data-theme="X"` selector overrides the
+   color tokens above. Default theme requires no attribute set.
+   See themes.css for the catalog and theme.service.js for the
+   runtime switcher. */
+@import "./assets/themes.css";
+
+/* Button + icon-button system. Global so every component reaches for
+   the same primitives — see buttons.css for the variant catalog. */
+@import "./assets/buttons.css";
+
+/* Notice / banner system — small inline state surfaces (info / success
+   / warning / danger). Replaces ad-hoc Bulma `notification` tints. */
+@import "./assets/notices.css";
 
 /* ═══════════════════════════════════════════════════════════════════════════
    BASE STYLES
@@ -776,163 +775,221 @@ body {
    NAVIGATION TABS / MENU
    ═══════════════════════════════════════════════════════════════════════════ */
 
-.tabs.menu {
-  width: 100%;
+/* ─────────────────────────────────────────────────────────────────
+   APP SHELL — left-rail nav + main work area. Editorial sidebar
+   inspired by Linear / Mistral / Stripe — fixed 240 px width on
+   desktop, with the brand tile at the top and a memory-budget pill
+   the user can click for system specs. Each tab keeps its branded
+   image (the BonzAI character) but tightens to 60 px tall with a
+   shade overlay so the text stays legible against any background.
+   ────────────────────────────────────────────────────────────── */
+
+#bonzai {
+  display: grid;
+  grid-template-columns: 240px minmax(0, 1fr);
+  height: calc(100vh - 80px);
+  overflow: hidden;
+  background: var(--bz-canvas);
 }
 
-.tabs.menu ul {
+.bz-main {
+  min-width: 0;
+  height: 100%;
+  overflow-y: auto;
+  background: var(--bz-canvas);
+  display: flex;
   flex-direction: column;
 }
 
-.tabs.menu ul li {
-  box-shadow: 10px 0 25px #000;
-  cursor: pointer;
-  transform: translate3d(0, 0, 0);
-  transition: 400ms ease-in;
-}
-
-.tabs.menu ul li .notification {
-  position: absolute;
-  top: 1em;
-  right: 1em;
-  padding: 0.5em 1em;
-  width: 100px;
-}
-
-.tabs.menu li + li {
-  margin-left: 0;
-  width: 100%;
-}
-
-.tabs.menu li a {
-  -moz-osx-font-smoothing: grayscale;
-  -webkit-font-smoothing: antialiased;
-  border: none;
-  justify-content: left;
-}
-
-.tabs.menu li a h1 {
-  align-items: center;
-  border: none;
-  color: #fff;
+.bz-nav {
   display: flex;
-  font-family: "Fira Sans", sans-serif;
-  font-size: 48px;
-  font-style: normal;
-  font-weight: 100 !important;
-  gap: 0.5rem;
-  text-shadow: 1px 1px 1px #000;
+  flex-direction: column;
+  background: var(--bz-panel);
+  border-right: 1px solid var(--bz-border);
+  height: 100%;
+  overflow-y: auto;
 }
 
-/* Fixed icon sizing to prevent layout shift on font load */
-.tabs.menu li a h1 .material-symbols-outlined {
+/* Brand header — logo strip + memory budget pill */
+.bz-nav__brand {
+  padding: var(--bz-space-5) var(--bz-space-4) var(--bz-space-4);
+  border-bottom: 1px solid var(--bz-border);
+  background:
+    linear-gradient(180deg, var(--bz-purple-soft) 0%, transparent 100%);
+  display: flex;
+  flex-direction: column;
+  gap: var(--bz-space-3);
+}
+.bz-nav__logo {
+  background: url("./assets/bonzai_logo-full.png") no-repeat center;
+  background-size: contain;
+  height: 40px;
+  width: 100%;
+  filter: drop-shadow(0 2px 4px rgba(0, 0, 0, 0.4));
+}
+.bz-nav__mem {
   display: inline-flex;
   align-items: center;
   justify-content: center;
+  gap: var(--bz-space-2);
+  padding: var(--bz-space-2) var(--bz-space-3);
+  background: var(--bz-card);
+  border: 1px solid var(--bz-border);
+  border-radius: var(--bz-r-pill);
+  color: var(--bz-fg-mid);
+  font-size: var(--bz-size-meta);
+  cursor: pointer;
+  transition:
+    border-color var(--bz-dur-fast) var(--bz-ease-out),
+    color var(--bz-dur-fast) var(--bz-ease-out);
+}
+.bz-nav__mem:hover {
+  border-color: var(--bz-purple-300);
+  color: var(--bz-fg);
+}
+.bz-nav__mem .material-symbols-outlined {
+  font-size: 16px !important;
+  color: var(--bz-purple-300);
+}
+
+/* Tab list — vertical, dense, scrolls */
+.bz-nav__list {
+  list-style: none;
+  margin: 0;
+  padding: var(--bz-space-3) var(--bz-space-2);
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+/* Each item — icon (left) · label (center) · brand image (background)
+   · active bar (left edge). Hover lifts the shade; active state
+   holds the lift and shows the brand-purple bar. */
+.bz-nav__item {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: var(--bz-space-3);
+  padding: var(--bz-space-3) var(--bz-space-4);
+  height: 56px;
+  border-radius: var(--bz-r);
+  cursor: pointer;
+  outline: none;
+  background-position: center;
+  background-size: cover;
+  background-repeat: no-repeat;
+  transition:
+    transform var(--bz-dur-base) var(--bz-ease-out),
+    box-shadow var(--bz-dur-base) var(--bz-ease-out);
+  overflow: hidden;
+}
+.bz-nav__shade {
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(
+    to right,
+    rgba(0, 0, 0, 0.7) 0%,
+    rgba(0, 0, 0, 0.45) 60%,
+    rgba(0, 0, 0, 0.6) 100%
+  );
+  transition: background var(--bz-dur-base) var(--bz-ease-out);
+  pointer-events: none;
+}
+.bz-nav__icon {
+  position: relative;
+  z-index: 1;
+  font-size: 22px !important;
+  color: var(--bz-fg-mid);
+  font-variation-settings: "FILL" 0, "wght" 300, "opsz" 24;
+  transition: color var(--bz-dur-fast) var(--bz-ease-out);
   flex-shrink: 0;
-  height: 48px;
-  min-width: 48px;
-  width: 48px;
+}
+.bz-nav__label {
+  position: relative;
+  z-index: 1;
+  font-size: var(--bz-size-h3);
+  color: var(--bz-fg);
+  letter-spacing: 0.01em;
+  flex: 1;
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.6);
+}
+.bz-nav__active-bar {
+  position: absolute;
+  left: 0;
+  top: 12px;
+  bottom: 12px;
+  width: 3px;
+  background: var(--bz-gradient-brand);
+  border-radius: var(--bz-r-pill);
+  opacity: 0;
+  transform: scaleY(0.6);
+  transition:
+    opacity var(--bz-dur-base) var(--bz-ease-out),
+    transform var(--bz-dur-base) var(--bz-ease-out);
 }
 
-.tabs.menu li.disabled {
-  cursor: not-allowed !important;
-  filter: grayscale(100%) !important;
+.bz-nav__item:hover .bz-nav__shade {
+  background: linear-gradient(
+    to right,
+    rgba(20, 8, 40, 0.55) 0%,
+    rgba(0, 0, 0, 0.30) 60%,
+    rgba(0, 0, 0, 0.45) 100%
+  );
+}
+.bz-nav__item:hover .bz-nav__icon {
+  color: var(--bz-purple-100);
+}
+.bz-nav__item:focus-visible {
+  box-shadow: 0 0 0 2px var(--bz-border-brand);
 }
 
-.tabs.menu li.is-active {
-  font-family: "Fira Sans", sans-serif;
-  font-style: normal;
-  font-weight: 300;
-  width: 100%;
+.bz-nav__item.is-active .bz-nav__shade {
+  background: linear-gradient(
+    to right,
+    rgba(97, 55, 142, 0.7) 0%,
+    rgba(97, 55, 142, 0.32) 50%,
+    rgba(0, 0, 0, 0.4) 100%
+  );
+}
+.bz-nav__item.is-active .bz-nav__icon { color: var(--bz-fg); }
+.bz-nav__item.is-active .bz-nav__label { color: var(--bz-fg); }
+.bz-nav__item.is-active .bz-nav__active-bar {
+  opacity: 1;
+  transform: scaleY(1);
 }
 
-.tabs.menu li.is-active a {
-  border-bottom-color: #fff;
-  color: #fff;
-}
-
-.tabs.menu li:not(.is-active) {
-  filter: grayscale(100%);
-  transform: translate3d(0, 0, 0);
-  transition: 400ms ease-in;
-}
-
-.tabs.menu li:not(.is-active):hover {
-  filter: none;
-}
-
-/* Menu Item Backgrounds */
-.tabs.menu li.agent {
-  background: url("./assets/bonzai_agent.webp") no-repeat;
-  background-position: center 66%;
-  background-size: cover;
-  height: 9.75vh;
-}
-
-.tabs.menu li.company {
-  background: url("./assets/bonzai_company.webp") no-repeat;
-  background-position: center 50%;
-  background-size: cover;
-  height: 9.75vh;
-}
-
-.tabs.menu li.bonzai {
-  background: #61378e;
-  border-bottom: 10vh solid #61378e;
-  filter: none !important;
-  height: 14.25vh;
-  padding-top: 1em;
-  width: 100%;
-}
-
-.tabs.menu li.bonzai .logo {
-  background: url("./assets/bonzai_logo-full.png") no-repeat;
-  background-size: contain;
-  height: 9.75vh;
-  margin: 5px;
-  width: 100%;
-}
-
-.tabs.menu li.bonzai .memory {
-  height: 7vh;
-}
-
-.tabs.menu li.chat {
-  background: url("./assets/bonzai_chat.webp") no-repeat;
-  background-size: cover;
-  height: 9.75vh;
-}
-
-.tabs.menu li.image {
-  background: url("./assets/bonzai_image.webp") no-repeat;
-  background-size: cover;
-  height: 9.75vh;
-}
-
-.tabs.menu li.music {
-  background: url("./assets/bonzai_music.webp") no-repeat;
-  background-size: cover;
-  height: 9.75vh;
-}
-
-.tabs.menu li.robot {
-  background: url("./assets/bonzai_robots.webp") no-repeat;
+/* Brand image per tab — kept from the previous design so each row
+   carries BonzAI's visual identity. The shade overlay above keeps
+   the label legible against any image. */
+.bz-nav__item--chat    { background-image: url("./assets/bonzai_chat.webp"); }
+.bz-nav__item--image   { background-image: url("./assets/bonzai_image.webp"); }
+.bz-nav__item--music   { background-image: url("./assets/bonzai_music.webp"); }
+.bz-nav__item--video   { background-image: url("./assets/bonzai_video.webp"); }
+.bz-nav__item--3D      { background-image: url("./assets/bonzai_3d.webp"); }
+.bz-nav__item--robot   {
+  background-image: url("./assets/bonzai_robots.webp");
   background-position: center 33%;
-  background-size: cover;
-  height: 9.75vh;
+}
+.bz-nav__item--agent   {
+  background-image: url("./assets/bonzai_agent.webp");
+  background-position: center 66%;
+}
+.bz-nav__item--company {
+  background-image: url("./assets/bonzai_company.webp");
+  background-position: center 50%;
 }
 
-.tabs.menu li.three {
-  background: url("./assets/bonzai_3d.webp") no-repeat;
-  background-size: cover;
-  height: 9.75vh;
-}
-
-.tabs.menu li.video {
-  background: url("./assets/bonzai_video.webp") no-repeat;
-  background-size: cover;
-  height: 9.75vh;
+/* Narrow viewport — collapse to 64 px icon-only rail. Labels still
+   render but at meta scale, so the muscle memory survives. */
+@media (max-width: 1024px) {
+  #bonzai { grid-template-columns: 64px minmax(0, 1fr); }
+  .bz-nav__brand { padding: var(--bz-space-3) var(--bz-space-2); }
+  .bz-nav__logo  { height: 28px; }
+  .bz-nav__mem   { display: none; }
+  .bz-nav__item  { padding: var(--bz-space-2); justify-content: center; }
+  .bz-nav__label { display: none; }
+  .bz-nav__icon  { font-size: 24px !important; }
 }
 
 /* ═══════════════════════════════════════════════════════════════════════════

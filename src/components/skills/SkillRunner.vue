@@ -523,7 +523,7 @@ Return ONLY the JSON, no explanation.`;
   justify-content: space-between;
   align-items: center;
   padding: 0.75rem 0;
-  border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+  border-bottom: 1px solid var(--bz-border);
 }
 
 .model-requirements .model-item:last-child {
@@ -545,13 +545,13 @@ Return ONLY the JSON, no explanation.`;
 }
 
 .autofill-section {
-  background: rgba(0, 0, 0, 0.3);
+  background: var(--bz-scrim);
   border-radius: 8px;
   padding: 1rem;
 }
 
 .skill-inputs {
-  background: rgba(0, 0, 0, 0.2);
+  background: var(--bz-scrim-soft);
   border-radius: 8px;
   padding: 1.5rem;
 }
@@ -571,7 +571,7 @@ Return ONLY the JSON, no explanation.`;
 }
 
 .execution-results pre {
-  background: rgba(0, 0, 0, 0.3);
+  background: var(--bz-scrim);
   padding: 1rem;
   border-radius: 4px;
   font-size: 0.85rem;

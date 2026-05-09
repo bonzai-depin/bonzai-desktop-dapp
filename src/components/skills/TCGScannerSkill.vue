@@ -1740,7 +1740,7 @@ Replace the example numbers with your actual scores based on what you see. Check
 /* ─── Shared Skill Styles ─────────────────────────────────────────── */
 .models__activity--payouts {
   padding: 2em;
-  border: 1px solid rgba(255, 255, 255, 0.1);
+  border: 1px solid var(--bz-border);
   border-radius: 12px;
   backdrop-filter: blur(32px);
 }
@@ -1755,7 +1755,7 @@ Replace the example numbers with your actual scores based on what you see. Check
   -webkit-text-fill-color: transparent;
 }
 .skill-description {
-  color: rgba(255, 255, 255, 0.8);
+  color: var(--bz-fg-mid);
   text-align: left;
 }
 .rotating {
@@ -1800,23 +1800,23 @@ Replace the example numbers with your actual scores based on what you see. Check
   font-weight: 600;
   font-size: 14px;
   background: transparent;
-  border: 1px solid rgba(255, 255, 255, 0.3);
+  border: 1px solid var(--bz-fg-faint);
   border-radius: 4px;
-  color: rgba(255, 255, 255, 0.3);
+  color: var(--bz-fg-faint);
   cursor: pointer;
   transition: all 0.3s ease;
   white-space: nowrap;
   backdrop-filter: blur(32px);
 }
 .category-selector input[type="radio"] + label.radio.category:hover {
-  background: rgba(97, 55, 142, 0.2);
-  border-color: rgba(255, 255, 255, 0.5);
-  color: rgba(255, 255, 255, 0.8);
+  background: var(--bz-purple-soft);
+  border-color: var(--bz-fg-low);
+  color: var(--bz-fg-mid);
 }
 .category-selector input[type="radio"]:checked + label.radio.category {
   color: rgba(255, 255, 255, 1);
   border: 1px solid rgba(255, 255, 255, 1);
-  background: rgba(97, 55, 142, 0.33);
+  background: var(--bz-purple-soft);
   backdrop-filter: blur(64px);
 }
 
@@ -1873,7 +1873,7 @@ Replace the example numbers with your actual scores based on what you see. Check
 .grading-panel-inline .sub-grade-name {
   width: 110px;
   font-size: 0.72rem;
-  color: rgba(255, 255, 255, 0.6);
+  color: var(--bz-fg-mid);
   flex-shrink: 0;
 }
 
@@ -1885,7 +1885,7 @@ Replace the example numbers with your actual scores based on what you see. Check
   background: rgba(155, 109, 200, 0.08);
   border: 1px solid rgba(155, 109, 200, 0.2);
   border-radius: 8px;
-  color: rgba(255, 255, 255, 0.8);
+  color: var(--bz-fg-mid);
   font-size: 0.85rem;
 }
 
@@ -1899,9 +1899,9 @@ Replace the example numbers with your actual scores based on what you see. Check
   border-radius: 8px;
   display: flex;
   align-items: center;
-  color: #fff;
+  color: var(--bz-fg);
   backdrop-filter: blur(10px);
-  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.3);
+  box-shadow: 0 4px 20px var(--bz-scrim);
 }
 .status-notification.is-info {
   background: rgba(62, 142, 208, 0.95);
@@ -2018,7 +2018,7 @@ Replace the example numbers with your actual scores based on what you see. Check
 .detail-row.detail-section {
   margin-top: 0.5rem;
   padding-top: 0.5rem;
-  border-top: 1px solid rgba(255, 255, 255, 0.08);
+  border-top: 1px solid var(--bz-card);
 }
 .detail-label {
   font-size: 0.8rem;
@@ -2027,7 +2027,7 @@ Replace the example numbers with your actual scores based on what you see. Check
 }
 .detail-value {
   font-size: 0.85rem;
-  color: rgba(255, 255, 255, 0.85);
+  color: var(--bz-fg);
 }
 
 /* ─── Analysis Panel ──────────────────────────────────────────────── */
@@ -2038,7 +2038,7 @@ Replace the example numbers with your actual scores based on what you see. Check
   padding: 1rem 1.25rem;
 }
 .analysis-content {
-  color: rgba(255, 255, 255, 0.85);
+  color: var(--bz-fg);
   font-size: 0.85rem;
   line-height: 1.7;
   max-height: 320px;
@@ -2122,11 +2122,11 @@ Replace the example numbers with your actual scores based on what you see. Check
 .grade-label-text {
   font-size: 1rem;
   font-weight: 700;
-  color: rgba(255, 255, 255, 0.9);
+  color: var(--bz-fg);
 }
 .grade-score {
   font-size: 0.78rem;
-  color: rgba(255, 255, 255, 0.5);
+  color: var(--bz-fg-low);
   margin-top: 2px;
 }
 .grade-number {
@@ -2147,13 +2147,13 @@ Replace the example numbers with your actual scores based on what you see. Check
 .sub-grade-name {
   width: 120px;
   font-size: 0.78rem;
-  color: rgba(255, 255, 255, 0.6);
+  color: var(--bz-fg-mid);
   flex-shrink: 0;
 }
 .sub-grade-bar-track {
   flex: 1;
   height: 6px;
-  background: rgba(255, 255, 255, 0.06);
+  background: var(--bz-canvas);
   border-radius: 3px;
   overflow: hidden;
 }
@@ -2208,7 +2208,7 @@ Replace the example numbers with your actual scores based on what you see. Check
 .price-loading,
 .price-error {
   font-size: 0.85rem;
-  color: rgba(255, 255, 255, 0.5);
+  color: var(--bz-fg-low);
   display: flex;
   align-items: center;
 }
@@ -2224,7 +2224,7 @@ Replace the example numbers with your actual scores based on what you see. Check
   flex: 1;
   min-width: 160px;
   background: rgba(255, 255, 255, 0.03);
-  border: 1px solid rgba(255, 255, 255, 0.06);
+  border: 1px solid var(--bz-canvas);
   border-radius: 10px;
   padding: 0.75rem 1rem;
 }
@@ -2242,20 +2242,20 @@ Replace the example numbers with your actual scores based on what you see. Check
 }
 .price-range {
   font-size: 0.72rem;
-  color: rgba(255, 255, 255, 0.4);
+  color: var(--bz-fg-low);
 }
 
 /* ─── OCR Details ─────────────────────────────────────────────────── */
 .ocr-details {
   background: rgba(10, 5, 20, 0.3);
-  border: 1px solid rgba(255, 255, 255, 0.06);
+  border: 1px solid var(--bz-canvas);
   border-radius: 10px;
 }
 .ocr-summary {
   padding: 0.75rem 1rem;
   cursor: pointer;
   font-size: 0.8rem;
-  color: rgba(255, 255, 255, 0.5);
+  color: var(--bz-fg-low);
   display: flex;
   align-items: center;
   list-style: none;
@@ -2277,10 +2277,10 @@ details[open] .ocr-summary::before {
   font-family: monospace;
   font-size: 0.8rem;
   color: rgba(255, 255, 255, 0.65);
-  background: rgba(0, 0, 0, 0.15);
+  background: var(--bz-scrim-soft);
   padding: 0.75rem 1rem;
   margin: 0;
-  border-top: 1px solid rgba(255, 255, 255, 0.04);
+  border-top: 1px solid var(--bz-canvas);
   max-height: 200px;
   overflow-y: auto;
 }
@@ -2316,7 +2316,7 @@ details[open] .ocr-summary::before {
   padding: 0.5rem 0.75rem;
   border-radius: 10px;
   background: rgba(255, 255, 255, 0.03);
-  border: 1px solid rgba(255, 255, 255, 0.06);
+  border: 1px solid var(--bz-canvas);
   cursor: pointer;
   transition: all 0.2s ease;
 }
@@ -2342,14 +2342,14 @@ details[open] .ocr-summary::before {
 }
 .history-name {
   font-size: 0.85rem;
-  color: rgba(255, 255, 255, 0.9);
+  color: var(--bz-fg);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
 }
 .history-meta {
   font-size: 0.75rem;
-  color: rgba(255, 255, 255, 0.4);
+  color: var(--bz-fg-low);
   margin-top: 2px;
 }
 .history-grade {

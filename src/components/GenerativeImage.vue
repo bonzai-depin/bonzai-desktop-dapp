@@ -20,33 +20,18 @@
             </div>
           </div>
 
-          <!-- GENERATION PROGRESS -->
-          <div
-            v-if="generation.active"
-            class="generation notification is-info"
-            style="margin-bottom: 1rem"
-          >
-            <p class="mb-2">
-              <span class="fira-sans-condensed-black-italic is-size-4">
-                <button
-                  disabled
-                  class="button is-loading is-info is-small mr-2 p-4"
-                ></button>
-                Crafting...
-              </span>
-              <span
-                class="fira-sans-condensed-black-italic is-pulled-right is-size-4"
-              >
+          <!-- GENERATION PROGRESS — Milestone 4 motion language.
+               Replaces the Bulma `is-loading` spinner + green progress
+               bar with the BonzAI pulse: brand-purple sweep over the
+               determinate fill, mono percent, .bz-shout caption. -->
+          <div v-if="generation.active" class="bz-genprogress">
+            <div class="bz-genprogress__row">
+              <span class="bz-shout bz-genprogress__label">Crafting…</span>
+              <span class="bz-mono bz-genprogress__pct">
                 {{ generationPctRounded }}%
               </span>
-            </p>
-            <progress
-              class="progress is-success"
-              :value="generationPctClamped"
-              max="100"
-            >
-              {{ generationPctRounded }}%
-            </progress>
+            </div>
+            <BonzaiPulse variant="bar" :percent="generationPctClamped" />
           </div>
 
           <div class="models__activity--payouts">
@@ -370,34 +355,27 @@
                   </div>
                 </div>
 
-                <!-- PROMPT -->
-                <form ref="promptForm" @submit.prevent>
-                  <input
-                    ref="promptInput"
-                    class="input is-large is-fullwidth"
-                    type="text"
-                    :placeholder="
-                      isEditMode
-                        ? 'Describe how to edit the image...'
-                        : 'Describe your image and press enter to generate...'
-                    "
-                    v-model="form.prompt"
-                    @keyup.enter="
-                      canGenerateWithAccess &&
-                      (!isEditMode || hasInputImage) &&
-                      sendMessage(form.prompt)
-                    "
-                    :disabled="
-                      isLoading ||
-                      !canGenerateWithAccess ||
-                      (isEditMode && !hasInputImage)
-                    "
-                  />
-                  <button
-                    class="button chat is-loading is-outlined is-info is-large is-fullwidth"
-                    v-if="isLoading"
-                  ></button>
-                </form>
+                <!-- PROMPT — Milestone 6 unified input. Replaces the
+                     bulma is-large + is-loading scaffold with the
+                     shared <GenerativeInput> shape used across the
+                     image / video / audio tabs. -->
+                <GenerativeInput
+                  v-model="form.prompt"
+                  :placeholder="
+                    isEditMode
+                      ? 'Describe how to edit the image…'
+                      : 'Describe your image…'
+                  "
+                  submit-label="Generate"
+                  running-label="Crafting"
+                  :running="isLoading"
+                  :disabled="
+                    !canGenerateWithAccess ||
+                    (isEditMode && !hasInputImage)
+                  "
+                  shortcut-hint="⌘⏎"
+                  @submit="sendMessage(form.prompt)"
+                />
 
                 <hr class="mt-5" />
 
@@ -476,85 +454,25 @@
                         :src="
                           'data:image/png;base64,' + inference.answer.data.image
                         "
+                        @click="openInspector(inference)"
+                        style="cursor: zoom-in"
+                        title="Open inspector"
                       />
-                      <hr />
-                      <span v-if="inference.networkMode && inference.networkMode !== 'local'" class="network-mode-tag" :class="'nm-' + inference.networkMode" style="margin-bottom: 8px; display: inline-flex">
-                        <span class="material-symbols-outlined" style="font-size: 12px">{{ inference.networkMode === 'private' ? 'lock' : 'cloud' }}</span>
-                        {{ inference.networkMode === 'private' ? 'Private' : 'Remote' }}
-                      </span>
-                      <button
-                        class="button is-medium is-success copy is-pulled-right ml-5 mr-0 p-0 pl-1 pr-4"
-                        @click="downloadImage(inference._originalIndex)"
-                      >
-                        <span class="material-symbols-outlined is-size-2 mr-1">
-                          save
+                      <!-- Origin pill — Milestone 6 unified vocabulary -->
+                      <div class="bz-img-meta" v-if="inference.networkMode && inference.networkMode !== 'local'">
+                        <span class="bz-origin-pill" :class="`bz-origin-pill--${inference.networkMode}`">
+                          <span class="bz-origin-pill__dot"></span>
+                          {{ inference.networkMode === 'private' ? 'Private' : 'Remote' }}
                         </span>
-                        Download
-                      </button>
-                      <button
-                        class="button is-medium is-danger is-pulled-right ml-2 p-0 pl-1 pr-1"
-                        @click="removeInference(inference._originalIndex)"
-                        title="Remove this result"
-                      >
-                        <span class="material-symbols-outlined is-size-2">
-                          delete
-                        </span>
-                      </button>
-                      <button
-                        class="button is-medium is-success copy is-pulled-left p-0 pl-1 pr-1"
-                        @click="
-                          form.prompt = inference.question;
-                          copy(inference.question);
-                          setCopied(inference._originalIndex);
-                          scrollToTop();
-                        "
-                        title="Reuse this prompt"
-                      >
-                        <span
-                          class="material-symbols-outlined is-size-2"
-                          v-if="!hasCopy[inference._originalIndex]"
-                        >
-                          content_copy
-                        </span>
-                        <span
-                          class="material-symbols-outlined is-size-2"
-                          v-else
-                        >
-                          check
-                        </span>
-                      </button>
-                      <button
-                        class="button is-medium is-warning copy is-pulled-left ml-5 pl-2"
-                        @click="openMint(inference)"
-                        :disabled="!!inference.nft"
-                      >
-                        <span class="material-symbols-outlined is-size-2 mr-1">
-                          {{ inference.nft ? "check_circle" : "token" }}
-                        </span>
-                        {{ inference.nft ? "Minted" : "Mint" }}
-                      </button>
-                      <button
-                        class="button is-medium is-warning copy is-pulled-left ml-5 pl-2"
-                        @click="loadImageForEdit(inference)"
-                        :disabled="!inference?.answer?.data?.image"
-                        title="Edit this image with Flux Kontext"
-                      >
-                        <span class="material-symbols-outlined is-size-2 mr-1">
-                          edit
-                        </span>
-                        Edit
-                      </button>
-                      <button
-                        class="button is-medium is-warning copy is-pulled-left ml-5 pl-2"
-                        @click="animate(inference)"
-                        :disabled="!inference?.answer?.data?.image"
-                        title="Animate this image"
-                      >
-                        <span class="material-symbols-outlined is-size-2 mr-1">
-                          animation
-                        </span>
-                        Animate
-                      </button>
+                      </div>
+
+                      <!-- Unified action cluster — replaces 6 inline
+                           Bulma buttons with the canonical
+                           <GenerativeActions> component. -->
+                      <GenerativeActions
+                        :actions="actionsFor(inference)"
+                        @action="(id) => handleAction(id, inference)"
+                      />
                     </div>
                   </li>
                 </ol>
@@ -641,8 +559,12 @@ import {
 } from "../stores/generationStore";
 import AccessRequirements from "./AccessRequirements.vue";
 import MintModal from "./MintModal.vue";
+import BonzaiPulse from "./BonzaiPulse.vue";
+import GenerativeActions from "./generative/GenerativeActions.vue";
+import GenerativeInput from "./generative/GenerativeInput.vue";
 import { requestOpenNetworkModal } from "../services/level.service.js";
 import { addImageInference } from "../stores/inferenceStore.js";
+import { inspector } from "../services/generationInspector.service.js";
 
 const API_BASE =
   (typeof process !== "undefined" && process.env?.VITE_API_BASE) ||
@@ -654,7 +576,7 @@ const WS_GEN = `${API_BASE}/generation`;
 
 export default {
   name: "GenerativeImage",
-  components: { AccessRequirements, MintModal },
+  components: { AccessRequirements, MintModal, BonzaiPulse, GenerativeActions, GenerativeInput },
   setup() {
     const { inferenceRequest } = useInferenceRouter();
 
@@ -1819,6 +1741,86 @@ export default {
       { immediate: true },
     );
 
+    // Open the global generation inspector for a clicked output.
+    // Maps the local inference shape onto the inspector's forgiving
+    // schema; only the fields we have populate. Image is base64 today
+    // so we wrap it as a data URL for the inspector's <img>.
+    const openInspector = (inference) => {
+      if (!inference) return;
+      const data = inference.answer?.data || {};
+      const mediaUrl = data.image
+        ? "data:image/png;base64," + data.image
+        : null;
+      inspector.show({
+        kind: "image",
+        mediaUrl,
+        prompt: inference.question || data.prompt,
+        negativePrompt: data.negative_prompt,
+        model: inference.model || (mode.value ? `Z-Image (${mode.value})` : null),
+        modelId: inference.modelId || (mode.value ? `image_${mode.value}` : null),
+        seed: data.seed,
+        steps: data.steps,
+        guidanceScale: data.guidance_scale,
+        width: data.width || form.width,
+        height: data.height || form.height,
+        networkMode: inference.networkMode || "local",
+        peerId: inference.peerId,
+        ts: inference.timestamp || inference.ts,
+      });
+    };
+
+    // Unified action descriptors fed into <GenerativeActions>. Each
+    // entry maps an action id → its visual + the handler that runs.
+    // The variant gates which colour the button picks up; primary is
+    // reserved for "do the thing" CTAs (download), success for
+    // confirmed states (mint already done), warning for transformative
+    // follow-ups (edit / animate), destructive for delete.
+    const actionsFor = (inference) => {
+      const hasImage = !!inference?.answer?.data?.image;
+      const minted = !!inference?.nft;
+      return [
+        { id: "download", icon: "save",          label: "Download",  variant: "primary",     disabled: !hasImage },
+        { id: "copy",     icon: hasCopy[inference._originalIndex] ? "check" : "content_copy",
+          label: hasCopy[inference._originalIndex] ? "Copied" : "Reuse",
+          title: "Reuse this prompt", variant: "default" },
+        { id: "mint",     icon: minted ? "check_circle" : "token",
+          label: minted ? "Minted" : "Mint",
+          variant: minted ? "success" : "default", disabled: minted },
+        { id: "edit",     icon: "edit",       label: "Edit",      variant: "warning",  disabled: !hasImage,
+          title: "Edit this image with Flux Kontext" },
+        { id: "animate",  icon: "animation",  label: "Animate",   variant: "warning",  disabled: !hasImage,
+          title: "Animate this image" },
+        { id: "delete",   icon: "delete",     label: "Delete",    variant: "destructive",
+          title: "Remove this result" },
+      ];
+    };
+
+    const handleAction = (id, inference) => {
+      switch (id) {
+        case "download":
+          downloadImage(inference._originalIndex);
+          break;
+        case "copy":
+          form.prompt = inference.question;
+          copy(inference.question);
+          setCopied(inference._originalIndex);
+          scrollToTop();
+          break;
+        case "mint":
+          openMint(inference);
+          break;
+        case "edit":
+          loadImageForEdit(inference);
+          break;
+        case "animate":
+          animate(inference);
+          break;
+        case "delete":
+          removeInference(inference._originalIndex);
+          break;
+      }
+    };
+
     return {
       // state
       mode,
@@ -1828,6 +1830,11 @@ export default {
       isLoading,
       inferences,
       hasCopy,
+      // inspector
+      openInspector,
+      // unified action cluster
+      actionsFor,
+      handleAction,
       // lazy loading pagination
       paginatedInferences,
       loadMoreSentinel,
@@ -1929,19 +1936,19 @@ export default {
   overflow-y: auto;
   padding: 6em;
   height: 100vh;
-  background: rgba(0, 0, 0, 0.5);
+  background: var(--bz-scrim-strong);
 }
 
 .models__activity--payouts {
   padding: 4em;
-  border: 1px solid rgba(255, 255, 255, 0.1);
+  border: 1px solid var(--bz-border);
   backdrop-filter: blur(32px);
   border-radius: 4px !important;
 }
 
 .models__activity--payouts h2 {
   font-size: 48px;
-  color: #fff;
+  color: var(--bz-fg);
   text-align: right;
 }
 
@@ -1956,13 +1963,13 @@ export default {
 h1 {
   margin-top: 0 !important;
   font-size: 64px;
-  color: #fff;
+  color: var(--bz-fg);
   text-align: right;
 }
 p {
   margin-bottom: 1em;
   font-size: 24px;
-  color: #fff;
+  color: var(--bz-fg);
   text-align: justify;
   font-family: "Fira Sans", sans-serif;
   font-weight: 100;
@@ -1976,14 +1983,14 @@ div.question {
   margin-top: 2em !important;
   margin-bottom: 1em !important;
   font-weight: 700;
-  background-color: rgba(255, 255, 255, 0.1);
-  box-shadow: 8px 8px 0 rgba(97, 55, 142, 0.66);
+  background-color: var(--bz-border);
+  box-shadow: 8px 8px 0 var(--bz-purple-glow);
   border-radius: 4px;
   backdrop-filter: blur(26px);
 }
 
 div.question .generated__image {
-  /* box-shadow: 8px 8px 0 rgba(97, 55, 142, 0.66); */
+  /* box-shadow: 8px 8px 0 var(--bz-purple-glow); */
 }
 form {
   position: relative;
@@ -2001,14 +2008,14 @@ hr {
   );
 }
 .input {
-  color: #fff;
-  background: rgba(255, 255, 255, 0.1);
-  box-shadow: 8px 8px 0 rgba(97, 55, 142, 0.66);
+  color: var(--bz-fg);
+  background: var(--bz-border);
+  box-shadow: 8px 8px 0 var(--bz-purple-glow);
   transition: 200ms ease-in;
   transform: translate3d(0, 0, 0);
 }
 ::placeholder {
-  color: rgba(255, 255, 255, 0.1) !important;
+  color: var(--bz-border) !important;
   opacity: 1 !important;
 }
 .button.chat.is-loading {
@@ -2028,14 +2035,14 @@ input[type="radio"] {
 }
 input[type="radio"] + label {
   padding: 3px 12px 9px;
-  color: rgba(255, 255, 255, 0.3) !important;
-  border: 1px solid rgba(255, 255, 255, 0.3);
+  color: var(--bz-fg-faint) !important;
+  border: 1px solid var(--bz-fg-faint);
   border-radius: 4px;
 }
 input[type="radio"]:checked + label {
   color: rgba(255, 255, 255, 1) !important;
   border: 1px solid rgba(255, 255, 255, 1) !important;
-  background: rgba(97, 55, 142, 0.33) !important;
+  background: var(--bz-purple-soft) !important;
   backdrop-filter: blur(64px) !important;
 }
 label.radio.quality {
@@ -2072,29 +2079,72 @@ ol.chat li {
   opacity: 0.5;
 }
 .notification.preview {
-  box-shadow: 8px 8px 0 rgba(97, 55, 142, 0.66);
+  box-shadow: 8px 8px 0 var(--bz-purple-glow);
 }
 .preview-image {
   width: 100%;
-  border: 1px solid rgba(255, 255, 255, 0.25);
+  border: 1px solid var(--bz-border-strong);
   border-radius: 4px;
 }
 
-/* Fade-in animation for history items */
+/* Fade-in animation for history items — uses the canonical bz-rise
+   keyframe from tokens.css (legacy fadeInUp retired). */
 .history-item {
-  animation: fadeInUp 0.4s ease-out forwards;
+  animation: bz-rise var(--bz-dur-slow) var(--bz-ease-out) forwards;
   opacity: 0;
 }
 
-@keyframes fadeInUp {
-  from {
-    opacity: 0;
-    transform: translateY(20px);
+/* Canvas-first treatment — Milestone 3c.
+   First child renders as a full-width hero. Subsequent items wrap
+   into a 2-column responsive grid so the action cluster on each card
+   never breaks across multiple lines. Each card is a complete unit
+   (image + metadata + actions), 50% width on desktop. */
+ol.chat {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: var(--bz-space-5);
+  list-style: none;
+  padding: 0;
+  margin: var(--bz-space-5) 0;
+}
+
+/* Hero — first item spans full width. */
+ol.chat .history-item:first-child {
+  grid-column: 1 / -1;
+}
+ol.chat .history-item:first-child .generated__image {
+  max-width: min(880px, 70vh);
+  width: 100%;
+  display: block;
+  margin: 0 auto;
+}
+
+/* History items — 2 per row on desktop, 1 per row on narrow. */
+@media (min-width: 880px) {
+  ol.chat {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
-  to {
-    opacity: 1;
-    transform: translateY(0);
+  ol.chat .history-item:first-child {
+    grid-column: 1 / -1;  /* hero spans both columns */
   }
+}
+
+/* Each card sits in its column at full width — no auto-margin. The
+   image + metadata + actions all flow in the cell. */
+ol.chat .history-item:not(:first-child) {
+  width: 100%;
+}
+ol.chat .history-item:not(:first-child) .generated__image {
+  width: 100%;
+  max-width: 100%;
+  display: block;
+}
+
+/* Soft divider — keep the existing hr but thin it. */
+ol.chat .history-item:not(:first-child) hr {
+  border: 0;
+  border-top: 1px solid var(--bz-border);
+  margin: var(--bz-space-4) 0;
 }
 
 .load-more-sentinel {
@@ -2109,23 +2159,23 @@ ol.chat li {
   width: 48px;
   height: 48px;
   border-radius: 50%;
-  background: rgba(97, 55, 142, 0.9);
-  border: 2px solid rgba(255, 255, 255, 0.3);
-  color: #fff;
+  background: var(--bz-purple-500);
+  border: 2px solid var(--bz-fg-faint);
+  color: var(--bz-fg);
   cursor: pointer;
   display: flex;
   align-items: center;
   justify-content: center;
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+  box-shadow: 0 4px 12px var(--bz-scrim);
   transition: all 0.2s ease;
   z-index: 100;
   animation: fadeInUp 0.3s ease-out;
 }
 
 .scroll-to-top-btn:hover {
-  background: rgba(97, 55, 142, 1);
+  background: var(--bz-purple-500);
   transform: translateY(-2px);
-  box-shadow: 0 6px 16px rgba(0, 0, 0, 0.4);
+  box-shadow: 0 6px 16px var(--bz-scrim);
 }
 
 .scroll-to-top-btn .material-symbols-outlined {
@@ -2162,13 +2212,78 @@ ol.chat li {
 
 .nm-remote {
   background: rgba(62, 142, 208, 0.15);
-  color: #3e8ed0;
+  color: var(--bz-info);
   border: 1px solid rgba(62, 142, 208, 0.3);
 }
 
 .nm-private {
   background: rgba(72, 199, 142, 0.12);
-  color: #48c78e;
-  border: 1px solid rgba(72, 199, 142, 0.3);
+  color: var(--bz-emerald-500);
+  border: 1px solid var(--bz-emerald-soft);
 }
+
+/* Generation progress block — Milestone 4 motion. The legacy
+   notification + Bulma spinner combo is replaced by:
+   shout label · mono percent · BonzaiPulse bar with sweep. */
+.bz-genprogress {
+  display: flex;
+  flex-direction: column;
+  gap: var(--bz-space-3);
+  margin-bottom: var(--bz-space-4);
+  padding: var(--bz-space-4) var(--bz-space-5);
+  background: var(--bz-card);
+  border: 1px solid var(--bz-border);
+  border-radius: var(--bz-r);
+}
+.bz-genprogress__row {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--bz-space-3);
+}
+.bz-genprogress__label {
+  font-size: var(--bz-size-h2);
+  color: var(--bz-fg);
+}
+.bz-genprogress__pct {
+  font-size: var(--bz-size-h3);
+  color: var(--bz-fg-mid);
+}
+
+/* Inline image meta — origin pill row above the action cluster. */
+.bz-img-meta {
+  display: flex;
+  align-items: center;
+  gap: var(--bz-space-3);
+  margin: var(--bz-space-3) 0;
+}
+
+/* Origin pill — same vocabulary as the inspector's network badge. */
+.bz-origin-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--bz-space-2);
+  padding: 4px var(--bz-space-3);
+  border-radius: var(--bz-r-pill);
+  font-size: var(--bz-size-micro);
+  letter-spacing: var(--bz-track-eyebrow);
+  text-transform: uppercase;
+  border: 1px solid var(--bz-border);
+}
+.bz-origin-pill__dot {
+  width: 6px; height: 6px;
+  border-radius: var(--bz-r-pill);
+  background: var(--bz-fg-low);
+}
+.bz-origin-pill--consumer {
+  color: var(--bz-info);
+  border-color: var(--bz-info-soft);
+}
+.bz-origin-pill--consumer .bz-origin-pill__dot { background: var(--bz-info); }
+.bz-origin-pill--private {
+  color: var(--bz-purple-300);
+  border-color: var(--bz-border-brand);
+  background: var(--bz-purple-soft);
+}
+.bz-origin-pill--private .bz-origin-pill__dot { background: var(--bz-purple-300); }
 </style>

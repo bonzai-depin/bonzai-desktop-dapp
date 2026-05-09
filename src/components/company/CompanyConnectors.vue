@@ -129,9 +129,7 @@
             <span class="material-symbols-outlined is-size-1 mr-2">vpn_key</span>
             <span class="conn-auth__title">{{ labelFor(authFor.kind) }}</span>
           </h2>
-          <button class="button is-medium is-light icon-only-btn" @click="authFor = null" aria-label="Close">
-            <span class="material-symbols-outlined">close</span>
-          </button>
+          <BzCloseButton size="md" aria-label="Close" @click="authFor = null" />
         </div>
         <p class="muted">
           Paste your API key or OAuth token. Stored locally in your OS keychain — never synced
@@ -171,6 +169,7 @@
 <script>
 import { ref, reactive, computed } from "vue";
 import companyStore from "../../stores/companyStore.js";
+import BzCloseButton from "../BzCloseButton.vue";
 
 const CATALOG = [
   { kind: "twilio",          name: "Twilio",          icon: "call" },
@@ -198,6 +197,7 @@ const CATALOG = [
 
 export default {
   name: "CompanyConnectors",
+  components: { BzCloseButton },
   props: {
     state: { type: Object, required: true },
     charter: { type: Object, required: true },
@@ -458,7 +458,7 @@ hr {
 .conn-auth {
   width: 100%; max-width: 520px;
   padding: 2em 2.5em !important;
-  background: rgba(0, 0, 0, 0.55) !important;
+  background: var(--bz-scrim-strong) !important;
   border: 1px solid rgba(255, 255, 255, 0.18) !important;
   backdrop-filter: blur(32px) !important;
   border-radius: 8px !important;
@@ -489,7 +489,7 @@ hr {
 }
 
 :deep(.input) {
-  background: rgba(0, 0, 0, 0.45) !important;
+  background: var(--bz-scrim) !important;
   border: 1px solid rgba(255, 255, 255, 0.22) !important;
   color: #fff !important;
   backdrop-filter: blur(32px) !important;

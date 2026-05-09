@@ -794,9 +794,7 @@
             <span class="material-symbols-outlined is-size-1 mr-2">settings</span>
             <span class="role-modal__title">{{ roleDisplayName(editingRoleKey) }}</span>
           </h2>
-          <button class="button is-medium is-light icon-only-btn" @click="closeRoleEdit" aria-label="Close">
-            <span class="material-symbols-outlined">close</span>
-          </button>
+          <BzCloseButton size="md" aria-label="Close" @click="closeRoleEdit" />
         </div>
 
         <p class="role-modal__desc">
@@ -1017,10 +1015,12 @@ import { DEFAULT_COMPANIONS, LLM_BASE_MODELS } from "../../skills/flagship.js";
 import { SKILL_MANIFESTS } from "../../services/company/skillManifests.js";
 import CompanyConnectors from "./CompanyConnectors.vue";
 import CompanyLiveFeed from "./CompanyLiveFeed.vue";
+import BzCloseButton from "../BzCloseButton.vue";
 
 export default {
   name: "CompanyDashboard",
-  components: { CompanyConnectors, CompanyLiveFeed },
+  components: {
+    BzCloseButton, CompanyConnectors, CompanyLiveFeed },
   props: {
     charter: { type: Object, required: true },
     state: { type: Object, required: true },
@@ -1474,7 +1474,7 @@ hr {
 }
 
 .dash {
-  color: #fff;
+  color: var(--bz-fg);
   padding-bottom: 4em;
 }
 
@@ -1495,10 +1495,10 @@ hr {
   aspect-ratio: 1 / 1;
   min-height: 180px;
   padding: 1.25em;
-  border: 1px solid rgba(255, 255, 255, 0.1);
+  border: 1px solid var(--bz-border);
   backdrop-filter: blur(32px) !important;
   border-radius: 4px;
-  background: rgba(0, 0, 0, 0.25);
+  background: var(--bz-scrim);
   display: flex;
   flex-direction: column;
   justify-content: space-between;
@@ -1506,11 +1506,11 @@ hr {
   overflow: hidden;
 }
 .kpi-tile:hover {
-  border-color: rgba(255, 255, 255, 0.25);
+  border-color: var(--bz-border-strong);
   transform: translateY(-2px);
 }
 .kpi-tile.is-attention {
-  border-color: #ffe08a !important;
+  border-color: var(--bz-warning) !important;
   box-shadow: 0 0 16px rgba(255, 224, 138, 0.4);
 }
 
@@ -1530,7 +1530,7 @@ hr {
 
 .kpi-tile__value {
   font-size: 36px !important;
-  color: #fff !important;
+  color: var(--bz-fg) !important;
   line-height: 1.1;
   margin: 0;
   text-align: left !important;
@@ -1538,7 +1538,7 @@ hr {
 }
 .kpi-tile__label {
   font-size: 14px !important;
-  color: rgba(255, 255, 255, 0.85) !important;
+  color: var(--bz-fg) !important;
   margin: 0 !important;
   text-align: left !important;
   font-style: italic;
@@ -1573,9 +1573,9 @@ hr {
   padding: 6px 12px;
   line-height: 1.5;
   background: transparent;
-  border: 1px solid rgba(255, 255, 255, 0.3);
+  border: 1px solid var(--bz-fg-faint);
   border-radius: 4px;
-  color: rgba(255, 255, 255, 0.3);
+  color: var(--bz-fg-faint);
   cursor: pointer;
   display: inline-flex;
   align-items: center;
@@ -1597,19 +1597,19 @@ hr {
   margin-right: 0 !important;
 }
 .subtab:hover {
-  background: rgba(97, 55, 142, 0.2);
-  border-color: rgba(255, 255, 255, 0.5);
-  color: rgba(255, 255, 255, 0.8);
+  background: var(--bz-purple-soft);
+  border-color: var(--bz-fg-low);
+  color: var(--bz-fg-mid);
 }
 .subtab.is-active {
   color: rgba(255, 255, 255, 1) !important;
   border: 1px solid rgba(255, 255, 255, 1) !important;
-  background: rgba(97, 55, 142, 0.33) !important;
+  background: var(--bz-purple-soft) !important;
   backdrop-filter: blur(64px) !important;
 }
 .subtab__badge {
-  background: #f14668;
-  color: #fff;
+  background: var(--bz-danger);
+  color: var(--bz-fg);
   padding: 0.1em 0.5em;
   border-radius: 12px;
   font-size: 0.7rem;
@@ -1623,14 +1623,14 @@ hr {
 .dash-body { padding: 0.5em 0; }
 .panel {
   padding: 2em 2.5em !important;
-  border: 1px solid rgba(255, 255, 255, 0.1);
+  border: 1px solid var(--bz-border);
   backdrop-filter: blur(32px) !important;
   border-radius: 4px !important;
-  background: rgba(0, 0, 0, 0.25);
+  background: var(--bz-scrim);
 }
 .panel-title {
   font-size: 24px !important;
-  color: #fff !important;
+  color: var(--bz-fg) !important;
   margin: 0 0 1em !important;
   text-align: left !important;
   display: flex;
@@ -1639,16 +1639,16 @@ hr {
 }
 .panel-title .material-symbols-outlined {
   font-size: 32px;
-  color: #48c78e;
+  color: var(--bz-emerald-500);
 }
 .panel-title .muted {
-  color: rgba(255, 255, 255, 0.5);
+  color: var(--bz-fg-low);
   font-size: 0.7em;
   margin-left: 0.4em;
 }
 .panel-subtitle {
   font-size: 18px !important;
-  color: #fff !important;
+  color: var(--bz-fg) !important;
   margin: 0 0 1em !important;
   text-align: left !important;
   display: flex;
@@ -1657,9 +1657,9 @@ hr {
 }
 .panel-subtitle .material-symbols-outlined {
   font-size: 24px;
-  color: #3e8ed0;
+  color: var(--bz-info);
 }
-.muted { color: rgba(255, 255, 255, 0.6); }
+.muted { color: var(--bz-fg-mid); }
 
 .empty {
   padding: 3em 2em;
@@ -1676,10 +1676,10 @@ hr {
   gap: 1em;
 }
 .org-card {
-  background: rgba(255, 255, 255, 0.05);
+  background: var(--bz-canvas);
   padding: 1.25em;
   border-radius: 4px;
-  border: 1px solid rgba(255, 255, 255, 0.1);
+  border: 1px solid var(--bz-border);
   backdrop-filter: blur(32px);
   transition: all 0.15s;
   display: flex;
@@ -1687,8 +1687,8 @@ hr {
   gap: 0.4em;
 }
 .org-card:hover {
-  background: rgba(255, 255, 255, 0.08);
-  border-color: rgba(255, 255, 255, 0.25);
+  background: var(--bz-card);
+  border-color: var(--bz-border-strong);
   transform: translateY(-1px);
 }
 .org-card__role {
@@ -1710,8 +1710,8 @@ hr {
   padding: 3px 8px;
   border-radius: 999px;
   border: 1px solid rgba(255, 224, 138, 0.6);
-  background: rgba(255, 224, 138, 0.12);
-  -webkit-text-fill-color: #ffe08a !important;
+  background: var(--bz-warning-soft);
+  -webkit-text-fill-color: var(--bz-warning) !important;
   background-clip: border-box !important;
   display: inline-flex;
   align-items: center;
@@ -1719,7 +1719,7 @@ hr {
 }
 .org-card__kind-badge .material-symbols-outlined {
   font-size: 14px;
-  -webkit-text-fill-color: #ffe08a !important;
+  -webkit-text-fill-color: var(--bz-warning) !important;
 }
 
 .org-card__grants {
@@ -1740,7 +1740,7 @@ hr {
   border-radius: 3px;
   background: rgba(155, 109, 200, 0.18);
   border: 1px solid rgba(155, 109, 200, 0.38);
-  color: #fff;
+  color: var(--bz-fg);
   font-family: "Fira Sans", sans-serif;
   font-weight: 600;
   letter-spacing: 0.02em;
@@ -1756,12 +1756,12 @@ hr {
 }
 .org-card__humans .material-symbols-outlined {
   font-size: 14px;
-  color: #ffe08a;
+  color: var(--bz-warning);
 }
 .org-card__human-tag {
   padding: 1px 7px;
   border-radius: 3px;
-  background: rgba(255, 224, 138, 0.12);
+  background: var(--bz-warning-soft);
   border: 1px solid rgba(255, 224, 138, 0.4);
   color: rgba(255, 255, 255, 0.92);
   font-family: "Fira Sans", sans-serif;
@@ -1772,7 +1772,7 @@ hr {
   color: rgba(255, 224, 138, 0.65);
 }
 .org-card__companion {
-  color: #fff;
+  color: var(--bz-fg);
   font-size: 1.2rem;
   font-style: italic;
 }
@@ -1803,7 +1803,7 @@ hr {
   margin: 0.5em 0 !important;
   border: none !important;
   height: 1px;
-  background: rgba(255, 255, 255, 0.15) !important;
+  background: var(--bz-border-strong) !important;
   width: 100%;
 }
 
@@ -1820,9 +1820,9 @@ hr {
   align-items: center;
   gap: 0.4em;
   padding: 0 0.7em;
-  border: 1px solid rgba(255, 255, 255, 0.2);
+  border: 1px solid var(--bz-border-strong);
   border-radius: 4px;
-  background: rgba(255, 255, 255, 0.05);
+  background: var(--bz-canvas);
   backdrop-filter: blur(8px);
   color: rgba(255, 255, 255, 0.55);
   font-size: 13px;
@@ -1831,21 +1831,21 @@ hr {
   transition: all 0.15s ease;
 }
 .org-card__queue-badge.has-work {
-  background: rgba(72, 199, 142, 0.15);
+  background: var(--bz-emerald-soft);
   border-color: rgba(72, 199, 142, 0.55);
-  color: #fff;
-  box-shadow: 0 0 8px rgba(72, 199, 142, 0.25);
+  color: var(--bz-fg);
+  box-shadow: 0 0 8px var(--bz-emerald-soft);
 }
 .org-card__queue-badge .material-symbols-outlined {
   font-size: 18px;
   opacity: 0.8;
 }
 .org-card__queue-badge.has-work .material-symbols-outlined {
-  color: #48c78e;
+  color: var(--bz-emerald-500);
   opacity: 1;
 }
 .org-card__queue-count {
-  color: #fff;
+  color: var(--bz-fg);
   font-size: 14px;
   min-width: 1ch;
   text-align: center;
@@ -1880,10 +1880,10 @@ hr {
 /* ───────── Tables ───────── */
 .dash-table {
   background: transparent !important;
-  color: rgba(255, 255, 255, 0.85) !important;
+  color: var(--bz-fg) !important;
 }
 .dash-table th, .dash-table td {
-  border-color: rgba(255, 255, 255, 0.08) !important;
+  border-color: var(--bz-card) !important;
   color: inherit !important;
   vertical-align: middle;
 }
@@ -1895,7 +1895,7 @@ hr {
   letter-spacing: 0.05em;
 }
 .dash-table tbody tr:hover {
-  background: rgba(255, 255, 255, 0.04);
+  background: var(--bz-canvas);
 }
 .ellipsis {
   max-width: 28rem;
@@ -1907,13 +1907,13 @@ hr {
 /* ───────── Approvals ───────── */
 .approval-list { display: flex; flex-direction: column; gap: 1em; }
 .approval-card {
-  background: rgba(255, 255, 255, 0.05);
+  background: var(--bz-canvas);
   padding: 1.25em 1.5em;
   border-radius: 4px;
-  border-left: 3px solid #ffe08a;
-  border-top: 1px solid rgba(255, 255, 255, 0.08);
-  border-right: 1px solid rgba(255, 255, 255, 0.08);
-  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+  border-left: 3px solid var(--bz-warning);
+  border-top: 1px solid var(--bz-card);
+  border-right: 1px solid var(--bz-card);
+  border-bottom: 1px solid var(--bz-card);
   backdrop-filter: blur(32px);
 }
 .approval-card__head {
@@ -1923,12 +1923,12 @@ hr {
   flex-wrap: wrap;
 }
 .approval-card__head strong {
-  color: #fff;
+  color: var(--bz-fg);
   font-size: 1.15rem;
   font-style: italic;
 }
 .approval-card__time {
-  color: rgba(255, 255, 255, 0.5);
+  color: var(--bz-fg-low);
   font-size: 0.85rem;
   margin-left: auto;
 }
@@ -1938,7 +1938,7 @@ hr {
   margin: 0.4em 0 0.75em;
 }
 .approval-card__action {
-  background: rgba(0, 0, 0, 0.4);
+  background: var(--bz-scrim);
   padding: 0.85em 1em;
   border-radius: 3px;
   font-size: 0.8rem;
@@ -1968,7 +1968,7 @@ hr {
   margin: 1em 0;
 }
 .charter-dump {
-  background: rgba(0, 0, 0, 0.4);
+  background: var(--bz-scrim);
   padding: 1.25em;
   border-radius: 4px;
   font-size: 0.78rem;
@@ -1976,7 +1976,7 @@ hr {
   overflow: auto;
   color: #b8e3ff;
   font-family: "Fira Mono", monospace;
-  border: 1px solid rgba(255, 255, 255, 0.08);
+  border: 1px solid var(--bz-card);
 }
 
 /* ───────── Goals (parent of issues) ───────── */
@@ -2020,7 +2020,7 @@ hr {
   background: rgba(0, 0, 0, 0.32);
   padding: 1.25em 1.5em;
   border-radius: 6px;
-  border: 1px solid rgba(255, 255, 255, 0.12);
+  border: 1px solid var(--bz-border-strong);
   backdrop-filter: blur(32px);
   transition: all 0.15s ease;
 }
@@ -2036,7 +2036,7 @@ hr {
 .goal-card__time {
   margin-left: auto;
   font-size: 0.75em;
-  color: rgba(255, 255, 255, 0.5);
+  color: var(--bz-fg-low);
 }
 .goal-card__title {
   font-size: 1.25rem;
@@ -2070,7 +2070,7 @@ hr {
 .goal-progress-bar {
   flex: 1;
   height: 6px;
-  background: rgba(255, 255, 255, 0.08);
+  background: var(--bz-card);
   border-radius: 999px;
   overflow: hidden;
 }
@@ -2094,8 +2094,8 @@ hr {
   margin-top: 0.75em;
 }
 .issue-card--nested {
-  background: rgba(255, 255, 255, 0.04);
-  border-color: rgba(255, 255, 255, 0.06);
+  background: var(--bz-canvas);
+  border-color: var(--bz-canvas);
 }
 .goal-card__no-issues {
   font-size: 0.85em;
@@ -2119,7 +2119,7 @@ hr {
   font-size: 11px;
   letter-spacing: 0.04em;
   text-transform: uppercase;
-  color: rgba(255, 255, 255, 0.6);
+  color: var(--bz-fg-mid);
   margin: 1em 0 0.4em;
 }
 .goal-modal__task {
@@ -2151,10 +2151,10 @@ hr {
 }
 .issue-filter__chip {
   padding: 4px 10px;
-  border: 1px solid rgba(255, 255, 255, 0.3);
+  border: 1px solid var(--bz-fg-faint);
   border-radius: 4px;
   background: transparent;
-  color: rgba(255, 255, 255, 0.5);
+  color: var(--bz-fg-low);
   cursor: pointer;
   font-family: "Fira Sans", sans-serif !important;
   font-weight: 600 !important;
@@ -2165,14 +2165,14 @@ hr {
   transition: all 0.2s ease;
 }
 .issue-filter__chip:hover {
-  background: rgba(97, 55, 142, 0.2);
-  border-color: rgba(255, 255, 255, 0.5);
-  color: #fff;
+  background: var(--bz-purple-soft);
+  border-color: var(--bz-fg-low);
+  color: var(--bz-fg);
 }
 .issue-filter__chip.is-active {
-  color: #fff !important;
-  border-color: #fff !important;
-  background: rgba(97, 55, 142, 0.33) !important;
+  color: var(--bz-fg) !important;
+  border-color: var(--bz-fg) !important;
+  background: var(--bz-purple-soft) !important;
 }
 
 .issue-list {
@@ -2181,15 +2181,15 @@ hr {
   gap: 0.75em;
 }
 .issue-card {
-  background: rgba(255, 255, 255, 0.05);
+  background: var(--bz-canvas);
   padding: 1em 1.25em;
   border-radius: 4px;
-  border: 1px solid rgba(255, 255, 255, 0.08);
+  border: 1px solid var(--bz-card);
   backdrop-filter: blur(32px);
   transition: all 0.15s ease;
 }
 .issue-card:hover {
-  background: rgba(255, 255, 255, 0.08);
+  background: var(--bz-card);
   border-color: rgba(255, 255, 255, 0.18);
 }
 .issue-card__head {
@@ -2207,7 +2207,7 @@ hr {
   align-items: center;
   gap: 0.3em;
   font-size: 13px;
-  color: rgba(255, 255, 255, 0.7);
+  color: var(--bz-fg-mid);
 }
 .issue-card__role .material-symbols-outlined {
   font-size: 16px;
@@ -2215,16 +2215,16 @@ hr {
 .issue-card__time {
   margin-left: auto;
   font-size: 12px;
-  color: rgba(255, 255, 255, 0.5);
+  color: var(--bz-fg-low);
 }
 .issue-card__title {
   font-size: 1.15rem;
-  color: #fff;
+  color: var(--bz-fg);
   margin-bottom: 0.4em;
 }
 .issue-card__desc {
   font-size: 13px;
-  color: rgba(255, 255, 255, 0.7);
+  color: var(--bz-fg-mid);
   line-height: 1.5;
   margin-bottom: 0.5em;
   white-space: pre-wrap;
@@ -2268,21 +2268,21 @@ hr {
   align-items: center;
   gap: 0.5em;
   padding: 0.85em 1em;
-  background: rgba(241, 70, 104, 0.15);
-  border-left: 3px solid #f14668;
+  background: var(--bz-danger-soft);
+  border-left: 3px solid var(--bz-danger);
   border-radius: 4px;
-  color: #fff;
+  color: var(--bz-fg);
   margin-bottom: 1em;
   font-size: 14px;
 }
-.pool-err .material-symbols-outlined { color: #f14668; }
+.pool-err .material-symbols-outlined { color: var(--bz-danger); }
 .model-key-sub {
   font-size: 11px;
-  color: rgba(255, 255, 255, 0.45);
+  color: var(--bz-fg-low);
   font-family: "Fira Mono", monospace;
 }
 code {
-  background: rgba(0, 0, 0, 0.3);
+  background: var(--bz-scrim);
   padding: 0.15em 0.4em;
   border-radius: 3px;
   font-family: "Fira Mono", monospace;
@@ -2313,8 +2313,8 @@ code {
   max-height: calc(100vh - 4em);
   overflow-y: auto;
   padding: 2em 2.5em !important;
-  border: 1px solid rgba(255, 255, 255, 0.15) !important;
-  background: rgba(0, 0, 0, 0.55) !important;
+  border: 1px solid var(--bz-border-strong) !important;
+  background: var(--bz-scrim-strong) !important;
 }
 .role-modal__header {
   display: flex;
@@ -2325,14 +2325,14 @@ code {
 .role-modal__header h2 {
   font-size: 28px !important;
   margin: 0 !important;
-  color: #fff !important;
+  color: var(--bz-fg) !important;
   text-align: left !important;
   display: flex;
   align-items: center;
 }
 .role-modal__header h2 .material-symbols-outlined {
   font-size: 32px !important;
-  color: #fff !important;
+  color: var(--bz-fg) !important;
   background: none;
   -webkit-text-fill-color: initial;
 }
@@ -2342,14 +2342,14 @@ code {
   background: linear-gradient(135deg, rgb(155, 109, 200), rgb(255, 153, 51)) text;
 }
 .role-modal__desc {
-  color: rgba(255, 255, 255, 0.7) !important;
+  color: var(--bz-fg-mid) !important;
   margin: 0.5em 0 0 !important;
   font-size: 15px !important;
   text-align: left !important;
   font-style: italic;
 }
 .role-modal .field { margin-bottom: 1em; }
-.role-modal .label { color: rgba(255, 255, 255, 0.85) !important; }
+.role-modal .label { color: var(--bz-fg) !important; }
 .role-modal .hint {
   font-size: 12px !important;
   color: rgba(255, 255, 255, 0.55) !important;
@@ -2360,7 +2360,7 @@ code {
 }
 .role-modal .hint-inline {
   font-size: 11px;
-  color: rgba(255, 255, 255, 0.5);
+  color: var(--bz-fg-low);
   font-weight: 400;
   font-style: italic;
   margin-left: 0.4em;
@@ -2436,7 +2436,7 @@ code {
 .wiz-toggle__track {
   display: inline-block;
   width: 44px; height: 24px;
-  background: rgba(255, 255, 255, 0.15);
+  background: var(--bz-border-strong);
   border-radius: 999px;
   position: relative;
   transition: background 0.2s;
@@ -2457,22 +2457,22 @@ code {
 .wiz-toggle input:checked + .wiz-toggle__track::after { transform: translateX(20px); }
 
 /* ───────── Status colors ───────── */
-.status-executed { color: #48c78e; }
-.status-vetoed { color: #ffe08a; }
-.status-error { color: #f14668; }
-.status-queued { color: #3e8ed0; }
-.status-approved { color: #48c78e; }
-.status-rejected { color: #f14668; }
+.status-executed { color: var(--bz-emerald-500); }
+.status-vetoed { color: var(--bz-warning); }
+.status-error { color: var(--bz-danger); }
+.status-queued { color: var(--bz-info); }
+.status-approved { color: var(--bz-emerald-500); }
+.status-rejected { color: var(--bz-danger); }
 
 /* ───────── Form inputs (manual entry / treasury) ───────── */
 :deep(.input), :deep(.textarea), :deep(.select select) {
-  background: rgba(255, 255, 255, 0.08) !important;
+  background: var(--bz-card) !important;
   border: 2px solid rgba(255, 255, 255, 0.18) !important;
-  color: #fff !important;
+  color: var(--bz-fg) !important;
   backdrop-filter: blur(8px);
 }
 :deep(.input:focus), :deep(.textarea:focus), :deep(.select select:focus) {
-  border-color: #48c78e !important;
-  box-shadow: 0 0 0 0.125em rgba(72, 199, 142, 0.25) !important;
+  border-color: var(--bz-emerald-500) !important;
+  box-shadow: 0 0 0 0.125em var(--bz-emerald-soft) !important;
 }
 </style>

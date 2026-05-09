@@ -1,79 +1,78 @@
 <template>
-  <!-- Inline access requirements - shown next to prompt area -->
-  <div
-    v-if="!hasAccess"
-    class="access-requirements notification is-info pr-5"
-    :class="{ 'is-success': hasAccess }"
-  >
-    <!-- Requirements panel when no access -->
-    <div class="requirements-panel p-5">
-      <div class="requirements-header">
-        <div class="header-text fira-sans-condensed-black-italic is-size-4">
-          <span class="requirement-text">
-            <template v-if="!isConnected">
-              Connect your Wallet to unlock this module.
-            </template>
-            <template v-else-if="isConnecting || isCheckingLevels">
-              Checking access...
-            </template>
-            <template v-else-if="allLevelsUnlocked">
-              All levels unlocked!
-            </template>
-            <template v-else>
-              Hold {{ holdingRequired.toLocaleString() }}+ BONZAI
-              <span class="is-size-5">or</span>
-              pay {{ unlockPrice }} ETH to unlock all levels
-            </template>
-          </span>
-        </div>
-      </div>
+  <!-- Inline access gate — sits next to a prompt area or above a CTA.
+       Calm, branded, no notification chrome. -->
+  <div v-if="!hasAccess" class="bz-access" role="status">
+    <div class="bz-access__icon" aria-hidden="true">
+      <span class="material-symbols-outlined">{{ iconName }}</span>
+    </div>
 
-      <div class="requirements-actions">
-        <!-- Connect Wallet -->
-        <button
-          v-if="!isConnected"
-          class="button is-success connect mr-5"
-          :disabled="isConnecting"
-          @click="connect"
-        >
-          <span class="material-symbols-outlined mr-2">
-            {{ isConnecting ? "hourglass_empty" : "wallet" }}
-          </span>
-          {{ isConnecting ? "Connecting..." : "Connect Wallet" }}
-        </button>
+    <div class="bz-access__body">
+      <span class="bz-access__eyebrow bz-eyebrow">Access required</span>
+      <p class="bz-access__title fira-sans-condensed-black-italic">
+        <template v-if="!isConnected">
+          Connect your wallet to unlock this module.
+        </template>
+        <template v-else-if="isConnecting || isCheckingLevels">
+          Checking access&hellip;
+        </template>
+        <template v-else-if="allLevelsUnlocked">
+          All levels unlocked.
+        </template>
+        <template v-else>
+          Hold {{ holdingRequired.toLocaleString() }}+ BONZAI
+          <span class="bz-access__or">or</span>
+          unlock all levels for {{ unlockPrice }} ETH.
+        </template>
+      </p>
+    </div>
 
-        <!-- Show loading spinner while checking levels -->
-        <span v-else-if="isCheckingLevels" class="button is-loading is-ghost">
-          Checking...
+    <div class="bz-access__actions">
+      <!-- Connect Wallet -->
+      <button
+        v-if="!isConnected"
+        type="button"
+        class="bz-btn bz-btn--primary bz-access__cta"
+        :disabled="isConnecting"
+        @click="connect"
+      >
+        <span class="material-symbols-outlined" aria-hidden="true">
+          {{ isConnecting ? "hourglass_empty" : "wallet" }}
         </span>
+        {{ isConnecting ? "Connecting…" : "Connect Wallet" }}
+      </button>
 
-        <!-- Buy BONZAI (only show after level check completes) -->
-        <a
-          v-else-if="!holdingMet && !allLevelsUnlocked"
-          class="button is-success buy mr-5"
-          :href="buyLink"
-          target="_blank"
-          rel="noopener noreferrer"
-        >
-          <span class="material-symbols-outlined mr-2">shopping_cart</span>
-          Buy BONZAI
-        </a>
+      <!-- Loading while checking -->
+      <span v-else-if="isCheckingLevels" class="bz-access__pending bz-meta">
+        <span class="material-symbols-outlined rotating" aria-hidden="true">progress_activity</span>
+        Checking&hellip;
+      </span>
 
-        <!-- Unlock All Levels with ETH (only show after level check completes) -->
-        <button
-          v-if="isConnected && !isCheckingLevels && !allLevelsUnlocked && canUnlock"
-          class="button is-warning unlock mr-5"
-          :disabled="isUnlocking"
-          @click="unlockAllLevels"
-          :title="`Pay ${unlockPrice} ETH on Base to unlock all 6 levels permanently`"
-        >
-          <span class="material-symbols-outlined mr-2">
-            {{ isUnlocking ? "hourglass_empty" : "lock_open" }}
-          </span>
-          {{ isUnlocking ? (unlockStatus || "Unlocking...") : `Unlock Everything` }}
-        </button>
+      <!-- Buy BONZAI -->
+      <a
+        v-else-if="!holdingMet && !allLevelsUnlocked"
+        class="bz-btn bz-btn--ghost bz-access__cta"
+        :href="buyLink"
+        target="_blank"
+        rel="noopener noreferrer"
+      >
+        <span class="material-symbols-outlined" aria-hidden="true">shopping_cart</span>
+        Buy BONZAI
+      </a>
 
-      </div>
+      <!-- Unlock All Levels with ETH -->
+      <button
+        v-if="isConnected && !isCheckingLevels && !allLevelsUnlocked && canUnlock"
+        type="button"
+        class="bz-btn bz-btn--primary bz-access__cta"
+        :disabled="isUnlocking"
+        @click="unlockAllLevels"
+        :title="`Pay ${unlockPrice} ETH on Base to unlock all 6 levels permanently`"
+      >
+        <span class="material-symbols-outlined" aria-hidden="true">
+          {{ isUnlocking ? "hourglass_empty" : "lock_open" }}
+        </span>
+        {{ isUnlocking ? (unlockStatus || "Unlocking…") : "Unlock everything" }}
+      </button>
     </div>
   </div>
 </template>
@@ -131,6 +130,13 @@ const hasAccess = computed(
   () => hasTokenAccess.value || allLevelsUnlocked.value
 );
 
+// Icon — wallet glyph if disconnected, lock once we're past that
+const iconName = computed(() => {
+  if (!isConnected.value) return "account_balance_wallet";
+  if (isCheckingLevels.value) return "progress_activity";
+  return "lock";
+});
+
 // Links
 const buyLink = CONFIG.links.buyBonzai;
 
@@ -139,28 +145,25 @@ const connect = async () => {
   await doConnect();
 };
 
-// Unlock status message
-const unlockStatus = ref('');
+const unlockStatus = ref("");
 
-// Unlock all levels with ETH payment
 const unlockAllLevels = async () => {
   if (isUnlocking.value) return;
 
   isUnlocking.value = true;
-  unlockStatus.value = '';
+  unlockStatus.value = "";
 
   try {
     const result = await unlockAllWithEth((status) => {
-      // Update status based on unlock flow
       switch (status) {
-        case 'switching_network':
-          unlockStatus.value = 'Switching to Base...';
+        case "switching_network":
+          unlockStatus.value = "Switching to Base…";
           break;
-        case 'awaiting_payment':
-          unlockStatus.value = 'Please confirm in your wallet...';
+        case "awaiting_payment":
+          unlockStatus.value = "Confirm in your wallet…";
           break;
-        case 'confirming':
-          unlockStatus.value = 'Transaction submitted, waiting for confirmation...';
+        case "confirming":
+          unlockStatus.value = "Submitted — waiting…";
           break;
         default:
           unlockStatus.value = status;
@@ -168,23 +171,22 @@ const unlockAllLevels = async () => {
     });
 
     if (result.success) {
-      unlockStatus.value = 'Success! All levels unlocked.';
+      unlockStatus.value = "Success — all levels unlocked.";
       await checkAllLevels();
     } else {
       console.error("[AccessRequirements] Unlock failed:", result.error);
-      unlockStatus.value = '';
+      unlockStatus.value = "";
       alert(`Unlock failed: ${result.error}`);
     }
   } catch (e) {
     console.error("[AccessRequirements] Unlock error:", e);
-    unlockStatus.value = '';
+    unlockStatus.value = "";
     alert(`Unlock error: ${e.message}`);
   } finally {
     isUnlocking.value = false;
   }
 };
 
-// Watch access changes and emit
 watch(
   hasAccess,
   (newVal) => {
@@ -193,7 +195,6 @@ watch(
   { immediate: true }
 );
 
-// Check levels on mount
 onMounted(async () => {
   if (isConnected.value) {
     isCheckingLevels.value = true;
@@ -205,7 +206,6 @@ onMounted(async () => {
   }
 });
 
-// Re-check levels when wallet connects
 watch(isConnected, async (connected) => {
   if (connected) {
     isCheckingLevels.value = true;
@@ -217,46 +217,131 @@ watch(isConnected, async (connected) => {
   }
 });
 
-// Expose for parent components
 defineExpose({
   hasAccess,
 });
 </script>
 
 <style scoped>
-/* Requirements panel */
+/* Inline access gate.
+   Calm card-shaped surface with a brand left bar — reads like a polite
+   waypoint, not a red error. Three columns on desktop (icon · message ·
+   actions), single column on narrow viewports. */
 
-.requirements-panel {
+.bz-access {
   display: flex;
-  flex-wrap: wrap;
   align-items: center;
-  gap: 12px;
-  width: 100%;
+  gap: var(--bz-space-4);
+  padding: var(--bz-space-4) var(--bz-space-5);
+  background: var(--bz-card);
+  border: 1px solid var(--bz-border);
+  border-left: 3px solid var(--bz-purple-500);
+  border-radius: var(--bz-r-lg);
+  position: relative;
+  overflow: hidden;
+}
+.bz-access::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: var(--bz-purple-soft);
+  opacity: 0.5;
+  pointer-events: none;
+  z-index: 0;
+}
+.bz-access > * { position: relative; z-index: 1; }
+
+.bz-access__icon {
+  width: 40px;
+  height: 40px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--bz-purple-soft);
+  border: 1px solid var(--bz-border-brand);
+  border-radius: var(--bz-r);
+  color: var(--bz-purple-100);
+  flex-shrink: 0;
+}
+.bz-access__icon .material-symbols-outlined {
+  font-size: 22px !important;
+  font-variation-settings: "FILL" 1;
 }
 
-.requirements-header {
-  display: flex;
-  align-items: center;
-  gap: 10px;
+.bz-access__body {
   flex: 1;
-  min-width: 200px;
-}
-
-.header-text {
+  min-width: 0;
   display: flex;
   flex-direction: column;
   gap: 2px;
 }
+.bz-access__eyebrow {
+  color: var(--bz-purple-100);
+}
+.bz-access__title {
+  margin: 0;
+  font-size: var(--bz-size-h3);
+  line-height: 1.3;
+  color: var(--bz-fg);
+}
+.bz-access__or {
+  color: var(--bz-fg-low);
+  font-style: normal;
+  font-weight: 400;
+  font-family: var(--bz-font-body);
+  font-size: var(--bz-size-body);
+  margin: 0 4px;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
 
-/* Responsive */
-@media (max-width: 600px) {
-  .requirements-panel {
+.bz-access__actions {
+  display: flex;
+  align-items: center;
+  gap: var(--bz-space-2);
+  flex-shrink: 0;
+}
+.bz-access__cta {
+  white-space: nowrap;
+}
+.bz-access__cta .material-symbols-outlined {
+  font-size: 18px !important;
+  margin-right: var(--bz-space-2);
+  vertical-align: middle;
+}
+
+.bz-access__pending {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--bz-space-2);
+  color: var(--bz-fg-mid);
+  white-space: nowrap;
+}
+.bz-access__pending .material-symbols-outlined {
+  font-size: 16px !important;
+}
+
+/* Reduced motion respects user preference; the rotating spinner is
+   already gated by the global @media (prefers-reduced-motion) rule
+   in themes.css. */
+.rotating {
+  animation: bz-spin 1s linear infinite;
+}
+
+/* Stack on narrow viewports — title reads first, actions sit beneath. */
+@media (max-width: 720px) {
+  .bz-access {
     flex-direction: column;
     align-items: flex-start;
+    gap: var(--bz-space-3);
   }
-
-  .requirements-actions {
+  .bz-access__actions {
     width: 100%;
+    flex-wrap: wrap;
+  }
+  .bz-access__cta {
+    flex: 1;
+    justify-content: center;
   }
 }
 </style>

@@ -6,10 +6,29 @@
       <p class="loading-text">Loading network settings...</p>
     </div>
 
-    <div v-else class="panel">
+    <div v-else class="panel bz-net-shell">
+      <!-- Left rail — section navigation. Anchor-based so we don't
+           have to reshape the existing 11-section template. -->
+      <nav class="bz-net-rail" aria-label="Network settings sections">
+        <p class="bz-eyebrow bz-net-rail__head">Network</p>
+        <ul class="bz-net-rail__list">
+          <li v-for="s in sections" :key="s.id">
+            <button
+              class="bz-net-rail__btn"
+              :class="{ 'bz-net-rail__btn--active': activeSection === s.id }"
+              @click="goToSection(s.id)"
+            >
+              <span class="bz-net-rail__dot"></span>
+              <span>{{ s.label }}</span>
+            </button>
+          </li>
+        </ul>
+      </nav>
+
+      <div class="bz-net-pane" ref="paneEl">
       <!-- Network Mode Selector -->
       <div class="network-mode-section">
-        <h2 class="section-title fira-sans-condensed-black-italic">
+        <h2 id="net-mode" class="section-title">
           Network Mode
         </h2>
 
@@ -109,7 +128,7 @@
 
       <!-- Node Status (consumer + provider) -->
       <div class="status-section mt-5" v-if="networkMode === 'consumer' || networkMode === 'provider'">
-        <h2 class="section-title fira-sans-condensed-black-italic">
+        <h2 id="net-status" class="section-title">
           Node Status
         </h2>
         <div class="status-panel mt-3 mb-3" :class="{ online: p2pStatus.started, offline: !p2pStatus.started }">
@@ -165,7 +184,7 @@
 
       <!-- Network Address Translation (provider mode, below Node Status) -->
       <div class="mt-5 mb-5" v-if="networkMode === 'provider'">
-        <h2 class="section-title fira-sans-condensed-black-italic">Network Address Translation</h2>
+        <h2 id="net-nat" class="section-title">Network Address Translation</h2>
         <div class="orchestration-controls mt-4">
           <div class="orchestration-label">Act as Relay</div>
           <div class="orchestration-toggle-row">
@@ -193,7 +212,7 @@
           <input type="range" class="pipeline-slider" min="1" max="10" step="1" v-model.number="relayFee" />
           <div class="slider-labels">
             <span>1%</span>
-            <span class="fira-sans-condensed-black-italic" style="color: #fff">{{ relayFee }}%</span>
+            <span class="bz-mono" style="color: var(--bz-fg)">{{ relayFee }}%</span>
             <span>10%</span>
           </div>
         </div>
@@ -201,7 +220,7 @@
 
       <!-- LAN Providers (auto-discovered via mDNS, free) -->
       <div class="consumer-section mt-5" v-if="networkMode === 'consumer' && lanProviders.length > 0">
-        <h2 class="section-title fira-sans-condensed-black-italic">
+        <h2 id="net-local-providers" class="section-title">
           <span class="material-symbols-outlined mr-2" style="vertical-align: middle">wifi</span>
           Local Network Providers
         </h2>
@@ -290,7 +309,7 @@
 
       <!-- Consumer Mode: Remote Provider Selection -->
       <div class="consumer-section mt-5" v-if="networkMode === 'consumer'">
-        <h2 class="section-title fira-sans-condensed-black-italic">
+        <h2 id="net-remote-providers" class="section-title">
           Remote Providers
         </h2>
 
@@ -420,7 +439,7 @@
 
       <!-- Private Networking (Consumer Mode — after providers) -->
       <div class="pipeline-section mt-5 mb-5" v-if="networkMode === 'consumer'">
-        <h2 class="section-title fira-sans-condensed-black-italic">Private Networking</h2>
+        <h2 id="net-privacy" class="section-title">Private Networking</h2>
         <div class="description-card pipeline">
           <span class="material-symbols-outlined">lock</span>
           <div>
@@ -458,7 +477,7 @@
           <div class="orchestration-controls mt-3">
             <div class="orchestration-label">Privacy Level — {{ pipelineLocalProportion }}%</div>
             <input type="range" class="pipeline-slider" min="25" max="75" step="5" v-model.number="pipelineLocalProportion" />
-            <div class="slider-labels"><span>25% — Faster</span><span class="fira-sans-condensed-black-italic" style="color: #fff">{{ pipelineLocalProportion }}%</span><span>75% — More Private</span></div>
+            <div class="slider-labels"><span>25% — Faster</span><span class="bz-mono" style="color: var(--bz-fg)">{{ pipelineLocalProportion }}%</span><span>75% — More Private</span></div>
           </div>
           <div class="orchestration-controls mt-3">
             <div class="orchestration-label">Extra Privacy <span class="material-symbols-outlined ml-1 info-tooltip" style="font-size: 16px; vertical-align: middle; cursor: help" title="Adds calibrated noise to activation tensors. Makes model inversion attacks infeasible.">info</span></div>
@@ -473,7 +492,7 @@
               <div class="mt-3">
                 <div class="orchestration-label">Privacy Budget (ε) — {{ pipelineEpsilon }}</div>
                 <input type="range" class="pipeline-slider" min="2" max="16" step="1" v-model.number="pipelineEpsilon" />
-                <div class="slider-labels"><span>ε = 2 — Strong Privacy</span><span class="fira-sans-condensed-black-italic" style="color: #fff">ε = {{ pipelineEpsilon }}</span><span>ε = 16 — High Quality</span></div>
+                <div class="slider-labels"><span>ε = 2 — Strong Privacy</span><span class="bz-mono" style="color: var(--bz-fg)">ε = {{ pipelineEpsilon }}</span><span>ε = 16 — High Quality</span></div>
               </div>
             </template>
           </div>
@@ -485,7 +504,7 @@
 
       <!-- Agentic Orchestration (consumer + provider) -->
       <div class="orchestration-section mt-5 mb-5" v-if="networkMode === 'consumer' || networkMode === 'provider'">
-        <h2 class="section-title fira-sans-condensed-black-italic">Agentic Orchestration</h2>
+        <h2 id="net-orchestration" class="section-title">Agentic Orchestration</h2>
         <div class="description-card orchestration">
           <span class="material-symbols-outlined">info</span>
           <div>
@@ -530,7 +549,7 @@
         class="provider-section mt-5"
         v-if="networkMode === 'provider' && p2pStatus.started"
       >
-        <h2 class="section-title fira-sans-condensed-black-italic">
+        <h2 id="net-pricing" class="section-title">
           Pricing
         </h2>
 
@@ -667,7 +686,7 @@
 
       <!-- Network Test -->
       <div class="test-section mt-5">
-        <h2 class="section-title fira-sans-condensed-black-italic">
+        <h2 id="net-self-test" class="section-title">
           Network Test
         </h2>
 
@@ -766,7 +785,7 @@
       <!-- Peer Connection Test -->
       <div class="test-section" v-if="p2pStatus.started">
         <hr />
-        <h2 class="section-title fira-sans-condensed-black-italic mt-5">
+        <h2 id="net-peer-test" class="section-title mt-5">
           Peer Connection Test
         </h2>
 
@@ -813,13 +832,42 @@
         </div>
       </div>
 
+      <!-- Appearance — theme picker. Always visible regardless of
+           network mode; lives in the rail under "Appearance". -->
+      <hr />
+      <div class="theme-section mt-5" id="net-appearance">
+        <h2 class="section-title">Appearance</h2>
+        <p class="has-text-grey is-size-7 mb-4">
+          Same components, different palette. Pick the theme that suits
+          your eyes — it persists across launches.
+        </p>
+        <div class="bz-theme-grid">
+          <button
+            v-for="t in themeOptions"
+            :key="t.id"
+            type="button"
+            class="bz-theme-card"
+            :class="{ 'bz-theme-card--active': themeService.state.current === t.id }"
+            @click="themeService.set(t.id)"
+          >
+            <span class="bz-theme-card__swatch">
+              <span :style="{ background: t.swatch[0] }"></span>
+              <span :style="{ background: t.swatch[1] }"></span>
+              <span :style="{ background: t.swatch[2] }"></span>
+            </span>
+            <span class="bz-theme-card__title">{{ t.name }}</span>
+            <span class="bz-theme-card__blurb bz-meta">{{ t.blurb }}</span>
+          </button>
+        </div>
+      </div>
+
       <!-- ServiceTime / MintPool rewards (provider-only) -->
       <hr v-if="networkMode === 'provider'" />
       <div
         class="service-time-section mt-5"
         v-if="networkMode === 'provider'"
       >
-        <h2 class="section-title fira-sans-condensed-black-italic">
+        <h2 id="net-service-time" class="section-title">
           Service Time
         </h2>
         <p class="has-text-grey is-size-7 mb-3">
@@ -884,6 +932,7 @@
           {{ serviceTimeFlushError }}
         </div>
       </div>
+      </div><!-- /.bz-net-pane -->
     </div>
   </div>
 </template>
@@ -898,6 +947,46 @@ import {
   flushPending as serviceTimeFlush,
   checkEligibility as serviceTimeCheckEligibility,
 } from "../services/serviceTime.service.js";
+import { themeService } from "../services/theme.service.js";
+
+const themeOptions = themeService.list();
+
+// ─── Section rail navigation ───────────────────────────────────
+//
+// 11 sections, anchored by id on each <h2>. The rail is a vertical
+// list of buttons that scrollIntoView() the corresponding section,
+// and an IntersectionObserver keeps the active item in sync as the
+// user scrolls the pane manually.
+//
+// `visible` predicates mirror the v-if guards on each section's
+// parent so the rail only lists targets that actually exist in the
+// DOM — clicking a rail item that points at a hidden section was
+// silently broken before.
+const _allSections = [
+  { id: "net-mode",             label: "Mode",            visible: () => true },
+  { id: "net-status",           label: "Node Status",     visible: () => networkMode.value === "consumer" || networkMode.value === "provider" },
+  { id: "net-nat",              label: "NAT",             visible: () => networkMode.value === "provider" },
+  { id: "net-local-providers",  label: "Local Providers", visible: () => networkMode.value === "consumer" && lanProviders.value && lanProviders.value.length > 0 },
+  { id: "net-remote-providers", label: "Remote Providers",visible: () => networkMode.value === "consumer" },
+  { id: "net-privacy",          label: "Privacy",         visible: () => networkMode.value === "consumer" },
+  { id: "net-orchestration",    label: "Orchestration",   visible: () => networkMode.value === "consumer" || networkMode.value === "provider" },
+  { id: "net-pricing",          label: "Pricing",         visible: () => networkMode.value === "provider" && p2pStatus.value?.started },
+  { id: "net-self-test",        label: "Self-Test",       visible: () => p2pStatus.value?.started },
+  { id: "net-peer-test",        label: "Peer Test",       visible: () => p2pStatus.value?.started },
+  { id: "net-service-time",     label: "Service Time",    visible: () => networkMode.value === "provider" },
+  { id: "net-appearance",       label: "Appearance",      visible: () => true },
+];
+const sections = computed(() => _allSections.filter((s) => s.visible()));
+const activeSection = ref("net-mode");
+const paneEl = ref(null);
+let _sectionObserver = null;
+
+function goToSection(id) {
+  const el = document.getElementById(id);
+  if (!el) return;
+  el.scrollIntoView({ behavior: "smooth", block: "start" });
+  activeSection.value = id;
+}
 
 // State
 const isLoadingSettings = ref(true);
@@ -1574,6 +1663,31 @@ onMounted(async () => {
       refreshStatus();
     }
   }, 10000);
+
+  // IntersectionObserver wires the rail's active state to the user's
+  // scroll position. We watch each section heading; the first one
+  // crossing the top quarter of the pane wins. Margins keep the
+  // active highlight from flickering on small scroll deltas.
+  const targets = sections
+    .map((s) => document.getElementById(s.id))
+    .filter(Boolean);
+  if (targets.length && "IntersectionObserver" in window) {
+    _sectionObserver = new IntersectionObserver(
+      (entries) => {
+        for (const entry of entries) {
+          if (entry.isIntersecting) {
+            activeSection.value = entry.target.id;
+          }
+        }
+      },
+      {
+        root: paneEl.value || null,
+        rootMargin: "-15% 0px -65% 0px",
+        threshold: 0,
+      },
+    );
+    for (const t of targets) _sectionObserver.observe(t);
+  }
 });
 
 let lanPeerCleanup = null;
@@ -1582,6 +1696,7 @@ onUnmounted(() => {
   if (statusInterval) clearInterval(statusInterval);
   if (lanPollInterval) clearInterval(lanPollInterval);
   if (lanPeerCleanup) lanPeerCleanup();
+  if (_sectionObserver) { _sectionObserver.disconnect(); _sectionObserver = null; }
 });
 </script>
 
@@ -1595,7 +1710,7 @@ onUnmounted(() => {
   --bonzai-purple: #8b5cf6;
   --bonzai-text: #f0f0f5;
   --bonzai-text-muted: rgba(240, 240, 245, 0.7);
-  --bonzai-border: rgba(255, 255, 255, 0.1);
+  --bonzai-border: var(--bz-border);
   --bonzai-radius: 12px;
 }
 
@@ -1612,7 +1727,7 @@ onUnmounted(() => {
 .loading-spinner {
   width: 48px;
   height: 48px;
-  border: 3px solid rgba(255, 255, 255, 0.1);
+  border: 3px solid var(--bz-border);
   border-top-color: var(--bonzai-green);
   border-radius: 50%;
   animation: spin 0.8s linear infinite;
@@ -1620,7 +1735,7 @@ onUnmounted(() => {
 
 .loading-text {
   margin-top: 16px;
-  color: rgba(255, 255, 255, 0.7);
+  color: var(--bz-fg-mid);
   font-size: 1rem;
 }
 
@@ -1641,7 +1756,7 @@ hr {
   padding: 24px;
   overflow-y: auto;
   background: transparent;
-  color: #fff;
+  color: var(--bz-fg);
 }
 
 .panel {
@@ -1655,22 +1770,38 @@ hr {
 }
 
 .panel-header .subtitle {
-  color: rgba(255, 255, 255, 0.7);
+  color: var(--bz-fg-mid);
   font-size: 1rem;
   line-height: 1.5;
 }
 
+/* Section heading — carries the BRAND VOICE (Fira Sans Condensed
+   Black Italic). Section titles are exactly where the brand cadence
+   belongs; the class name is preserved so the existing 11 template
+   references continue to work unchanged. Composes with .bz-h2 sizing
+   from tokens.css. */
 .section-title {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  font-size: 1.25rem;
-  color: #fff;
-  margin-bottom: 16px;
+  font-family: 'Fira Sans Condensed', sans-serif;
+  font-weight: 900;
+  font-style: italic;
+  font-size: var(--bz-size-h2);
+  line-height: var(--bz-line-tight);
+  letter-spacing: -0.005em;
+  color: var(--bz-fg);
+  margin: 0 0 var(--bz-space-4) 0;
+  /* Rail anchor-jumps land here; offset so the heading isn't flush
+     against the pane top when the user clicks a rail button. */
+  scroll-margin-top: var(--bz-space-5);
 }
 
+/* Inline icon next to a section title remains the original emerald
+   accent — the icon names the section's territory (security, network,
+   pipeline, etc.). Sized to match the heading's optical line. */
 .section-title .material-symbols-outlined {
-  color: var(--bonzai-green);
+  color: var(--bz-emerald-500);
+  font-size: 24px;
+  vertical-align: -0.15em;
+  margin-right: var(--bz-space-2);
 }
 
 /* Network Mode Selector - Generative Style */
@@ -1684,8 +1815,8 @@ hr {
 
 .mode-selector input[type="radio"] + label {
   padding: 8px 16px 12px;
-  color: rgba(255, 255, 255, 0.3) !important;
-  border: 1px solid rgba(255, 255, 255, 0.3);
+  color: var(--bz-fg-faint) !important;
+  border: 1px solid var(--bz-fg-faint);
   border-radius: 4px;
   cursor: pointer;
   transition: all 0.2s;
@@ -1695,14 +1826,14 @@ hr {
 }
 
 .mode-selector input[type="radio"] + label:hover {
-  color: rgba(255, 255, 255, 0.6) !important;
-  border-color: rgba(255, 255, 255, 0.5);
+  color: var(--bz-fg-mid) !important;
+  border-color: var(--bz-fg-low);
 }
 
 .mode-selector input[type="radio"]:checked + label {
   color: rgba(255, 255, 255, 1) !important;
   border: 1px solid rgba(255, 255, 255, 1) !important;
-  background: rgba(97, 55, 142, 0.33) !important;
+  background: var(--bz-purple-soft) !important;
   backdrop-filter: blur(64px) !important;
 }
 
@@ -1720,25 +1851,25 @@ hr {
   align-items: flex-start;
   gap: 12px;
   padding: 16px;
-  background: rgba(255, 255, 255, 0.04);
+  background: var(--bz-canvas);
   border: 1px solid var(--bonzai-border);
   border-radius: 10px;
 }
 
 .description-card .material-symbols-outlined {
-  color: rgba(255, 255, 255, 0.5);
+  color: var(--bz-fg-low);
   font-size: 24px;
   flex-shrink: 0;
 }
 
 .description-card strong {
-  color: #fff;
+  color: var(--bz-fg);
   display: block;
   margin-bottom: 4px;
 }
 
 .description-card p {
-  color: rgba(255, 255, 255, 0.7);
+  color: var(--bz-fg-mid);
   font-size: 0.9rem;
   margin: 0;
   line-height: 1.5;
@@ -1766,7 +1897,7 @@ hr {
 .pricing-currency-selector {
   padding: 12px 16px;
   border-radius: 10px;
-  background: rgba(255, 255, 255, 0.04);
+  background: var(--bz-canvas);
   border: 1px dashed var(--bonzai-border);
 }
 
@@ -1802,7 +1933,7 @@ hr {
 }
 
 .control-help {
-  color: rgba(255, 255, 255, 0.5);
+  color: var(--bz-fg-low);
   font-size: 0.8rem;
   line-height: 1.5;
   margin: 0;
@@ -1814,7 +1945,7 @@ hr {
   width: 100%;
   height: 6px;
   border-radius: 3px;
-  background: rgba(255, 255, 255, 0.12);
+  background: var(--bz-border-strong);
   outline: none;
   cursor: pointer;
 }
@@ -1826,9 +1957,9 @@ hr {
   height: 20px;
   border-radius: 50%;
   background: #39d582;
-  border: 2px solid rgba(255, 255, 255, 0.3);
+  border: 2px solid var(--bz-fg-faint);
   cursor: pointer;
-  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.3);
+  box-shadow: 0 2px 6px var(--bz-overlay);
 }
 
 .pipeline-slider::-webkit-slider-thumb:hover {
@@ -1841,13 +1972,13 @@ hr {
   justify-content: space-between;
   margin-top: 6px;
   font-size: 0.75rem;
-  color: rgba(255, 255, 255, 0.4);
+  color: var(--bz-fg-low);
 }
 
 .orchestration-controls {
   padding: 12px 16px;
   border-radius: 10px;
-  background: rgba(255, 255, 255, 0.04);
+  background: var(--bz-canvas);
   border: 1px dashed var(--bonzai-border);
 }
 
@@ -1858,7 +1989,7 @@ hr {
 .orchestration-label {
   font-weight: 700;
   font-size: 0.85rem;
-  color: rgba(255, 255, 255, 0.6);
+  color: var(--bz-fg-mid);
   text-transform: uppercase;
   letter-spacing: 0.5px;
   margin-bottom: 8px;
@@ -1880,12 +2011,12 @@ hr {
 .orchestration-status.not-installed {
   display: flex;
   align-items: center;
-  color: rgba(255, 255, 255, 0.5);
+  color: var(--bz-fg-low);
   font-size: 0.9rem;
 }
 
 .icon-muted {
-  color: rgba(255, 255, 255, 0.3);
+  color: var(--bz-fg-faint);
 }
 
 /* Consumer Mode - Provider Selection */
@@ -1896,7 +2027,7 @@ hr {
 .no-providers {
   text-align: center;
   padding: 40px 20px;
-  background: rgba(255, 255, 255, 0.04);
+  background: var(--bz-canvas);
   border: 1px dashed var(--bonzai-border);
   border-radius: 10px;
 }
@@ -1906,7 +2037,7 @@ hr {
 }
 
 .no-providers p {
-  color: rgba(255, 255, 255, 0.6);
+  color: var(--bz-fg-mid);
   margin: 0;
 }
 
@@ -1917,7 +2048,7 @@ hr {
 }
 
 .provider-card {
-  background: rgba(255, 255, 255, 0.04);
+  background: var(--bz-canvas);
   border: 1px solid var(--bonzai-border);
   border-radius: 10px;
   padding: 16px;
@@ -1926,8 +2057,8 @@ hr {
 }
 
 .provider-card:hover {
-  border-color: rgba(255, 255, 255, 0.3);
-  background: rgba(255, 255, 255, 0.06);
+  border-color: var(--bz-fg-faint);
+  background: var(--bz-canvas);
 }
 
 .provider-card.selected {
@@ -1944,7 +2075,7 @@ hr {
 
 .provider-icon {
   font-size: 32px;
-  color: rgba(255, 255, 255, 0.6);
+  color: var(--bz-fg-mid);
 }
 
 .provider-card.selected .provider-icon {
@@ -1958,7 +2089,7 @@ hr {
 }
 
 .provider-id {
-  color: #fff;
+  color: var(--bz-fg);
   font-family: "JetBrains Mono", monospace;
   font-size: 0.9rem;
   font-weight: 600;
@@ -1966,7 +2097,7 @@ hr {
 
 .provider-status {
   font-size: 0.75rem;
-  color: rgba(255, 255, 255, 0.5);
+  color: var(--bz-fg-low);
 }
 
 .provider-status.online {
@@ -1982,11 +2113,11 @@ hr {
   justify-content: space-between;
   font-size: 0.85rem;
   padding: 4px 0;
-  color: rgba(255, 255, 255, 0.7);
+  color: var(--bz-fg-mid);
 }
 
 .price-row span:last-child {
-  color: #fff;
+  color: var(--bz-fg);
   font-family: "JetBrains Mono", monospace;
 }
 
@@ -2009,8 +2140,8 @@ hr {
 }
 
 .more-tag {
-  background: rgba(255, 255, 255, 0.1);
-  color: rgba(255, 255, 255, 0.6);
+  background: var(--bz-border);
+  color: var(--bz-fg-mid);
   font-size: 0.75rem;
   padding: 4px 8px;
   border-radius: 999px;
@@ -2019,12 +2150,12 @@ hr {
 .provider-performance {
   margin-top: 10px;
   padding-top: 10px;
-  border-top: 1px solid rgba(255, 255, 255, 0.08);
+  border-top: 1px solid var(--bz-card);
 }
 
 .performance-header {
   font-size: 0.75rem;
-  color: rgba(255, 255, 255, 0.5);
+  color: var(--bz-fg-low);
   margin-bottom: 6px;
   display: flex;
   align-items: center;
@@ -2045,8 +2176,8 @@ hr {
   font-family: "Fira Sans Condensed", sans-serif;
   font-style: italic;
   font-weight: 900;
-  color: rgba(255, 255, 255, 0.85);
-  background: rgba(255, 255, 255, 0.06);
+  color: var(--bz-fg);
+  background: var(--bz-canvas);
   padding: 2px 8px;
   border-radius: 6px;
 }
@@ -2069,7 +2200,7 @@ hr {
 }
 
 .status-panel {
-  background: rgba(255, 255, 255, 0.04);
+  background: var(--bz-canvas);
   border: 1px solid var(--bonzai-border);
   border-radius: 10px;
   padding: 20px;
@@ -2114,7 +2245,7 @@ hr {
   justify-content: space-between;
   align-items: center;
   padding: 10px 0;
-  color: #fff !important;
+  color: var(--bz-fg) !important;
 }
 
 .status-row:last-child {
@@ -2122,11 +2253,11 @@ hr {
 }
 
 .status-label {
-  color: rgba(255, 255, 255, 0.7);
+  color: var(--bz-fg-mid);
 }
 
 .status-value {
-  color: #fff;
+  color: var(--bz-fg);
   font-weight: 500;
   display: flex;
   align-items: center;
@@ -2179,7 +2310,7 @@ hr {
   color: #f59e0b;
 }
 .nat-unknown {
-  color: rgba(255, 255, 255, 0.5);
+  color: var(--bz-fg-low);
 }
 
 .multiaddrs {
@@ -2196,8 +2327,8 @@ hr {
 
 .addr {
   font-size: 0.75rem;
-  color: rgba(255, 255, 255, 0.6);
-  background: rgba(0, 0, 0, 0.3);
+  color: var(--bz-fg-mid);
+  background: var(--bz-overlay);
   padding: 6px 10px;
   border-radius: 6px;
   word-break: break-all;
@@ -2205,7 +2336,7 @@ hr {
 }
 
 .more-addrs {
-  color: rgba(255, 255, 255, 0.4);
+  color: var(--bz-fg-low);
   font-size: 0.8rem;
 }
 
@@ -2219,8 +2350,8 @@ hr {
 .loader {
   width: 16px;
   height: 16px;
-  border: 2px solid rgba(255, 255, 255, 0.3);
-  border-top-color: #fff;
+  border: 2px solid var(--bz-fg-faint);
+  border-top-color: var(--bz-fg);
   border-radius: 50%;
   animation: spin 0.8s linear infinite;
 }
@@ -2248,7 +2379,7 @@ hr {
 }
 
 .pricing-item {
-  background: rgba(255, 255, 255, 0.04);
+  background: var(--bz-canvas);
   border: 1px solid var(--bonzai-border);
   border-radius: 10px;
   padding: 16px;
@@ -2256,7 +2387,7 @@ hr {
 }
 
 .pricing-item:hover {
-  border-color: rgba(255, 255, 255, 0.2);
+  border-color: var(--bz-border-strong);
 }
 
 .pricing-item.featured {
@@ -2272,7 +2403,7 @@ hr {
 }
 
 .pricing-header .material-symbols-outlined {
-  color: rgba(255, 255, 255, 0.7);
+  color: var(--bz-fg-mid);
   font-size: 24px;
 }
 
@@ -2281,7 +2412,7 @@ hr {
 }
 
 .pricing-name {
-  color: #fff;
+  color: var(--bz-fg);
   font-weight: 600;
   font-size: 1rem;
 }
@@ -2311,20 +2442,20 @@ hr {
 }
 
 .pricing-unit {
-  color: rgba(255, 255, 255, 0.5);
+  color: var(--bz-fg-low);
   font-size: 0.8rem;
   white-space: nowrap;
 }
 
 .pricing-note {
   display: block;
-  color: rgba(255, 255, 255, 0.4);
+  color: var(--bz-fg-low);
   font-size: 0.75rem;
   margin-top: 8px;
 }
 
 .setting-group {
-  background: rgba(255, 255, 255, 0.04);
+  background: var(--bz-canvas);
   border: 1px solid var(--bonzai-border);
   border-radius: 10px;
   padding: 16px;
@@ -2335,7 +2466,7 @@ hr {
   display: flex;
   align-items: center;
   gap: 8px;
-  color: rgba(255, 255, 255, 0.9);
+  color: var(--bz-fg);
   margin-bottom: 12px;
   font-weight: 500;
 }
@@ -2373,7 +2504,7 @@ hr {
   position: absolute;
   cursor: pointer;
   inset: 0;
-  background: rgba(255, 255, 255, 0.1);
+  background: var(--bz-border);
   border-radius: 26px;
   transition: 0.3s;
 }
@@ -2404,11 +2535,11 @@ hr {
 }
 
 .toggle-label {
-  color: #fff;
+  color: var(--bz-fg);
 }
 
 .toggle-note {
-  color: rgba(255, 255, 255, 0.5);
+  color: var(--bz-fg-low);
   font-size: 0.85rem;
 }
 
@@ -2434,11 +2565,11 @@ hr {
 .test-result.error {
   background: rgba(170, 170, 170, 0.12);
   border: 1px solid rgba(241, 70, 104, 0.25);
-  color: #f14668;
+  color: var(--bz-danger);
 }
 
 .test-description {
-  color: rgba(255, 255, 255, 0.7);
+  color: var(--bz-fg-mid);
   margin-bottom: 16px;
   font-size: 0.95rem;
   line-height: 1.5;
@@ -2462,7 +2593,7 @@ hr {
 }
 
 .test-result-row.error {
-  background: rgba(241, 70, 104, 0.12);
+  background: var(--bz-danger-soft);
   border: 1px solid rgba(241, 70, 104, 0.25);
 }
 
@@ -2477,7 +2608,7 @@ hr {
 }
 
 .test-icon.icon-error {
-  color: #f14668 !important;
+  color: var(--bz-danger) !important;
 }
 
 .test-icon.icon-warning {
@@ -2496,11 +2627,11 @@ hr {
 }
 
 .test-result-content strong {
-  color: #fff;
+  color: var(--bz-fg);
 }
 
 .test-result-detail {
-  color: rgba(255, 255, 255, 0.6);
+  color: var(--bz-fg-mid);
   font-size: 0.85rem;
 }
 
@@ -2512,8 +2643,8 @@ hr {
 }
 
 .pipeline-tag {
-  background: rgba(255, 255, 255, 0.08);
-  color: rgba(255, 255, 255, 0.5);
+  background: var(--bz-card);
+  color: var(--bz-fg-low);
   font-size: 0.75rem;
   padding: 4px 10px;
   border-radius: 999px;
@@ -2549,10 +2680,10 @@ hr {
 
 /* Input styling to match modal */
 .input {
-  background: rgba(0, 0, 0, 0.3);
+  background: var(--bz-overlay);
   border: 1px solid var(--bonzai-border);
   border-radius: 8px;
-  color: #fff;
+  color: var(--bz-fg);
   padding: 10px 14px;
   font-size: 1rem;
   transition: border-color 0.2s;
@@ -2564,7 +2695,7 @@ hr {
 }
 
 .input::placeholder {
-  color: rgba(255, 255, 255, 0.4);
+  color: var(--bz-fg-low);
 }
 
 /* Field addons */
@@ -2588,5 +2719,180 @@ hr {
 .field.has-addons .control:last-child .button {
   border-top-left-radius: 0;
   border-bottom-left-radius: 0;
+}
+
+/* ════════════════════════════════════════════════════════════════
+   NETWORK SETTINGS — left rail + scrollable detail pane
+   Milestone 3 layout discipline. Mirrors the rail-and-canvas
+   pattern picker uses; section discovery + active state driven by
+   IntersectionObserver in setup().
+   ════════════════════════════════════════════════════════════════ */
+
+.bz-net-shell {
+  display: grid;
+  grid-template-columns: 220px minmax(0, 1fr);
+  gap: var(--bz-space-6);
+  align-items: start;
+  height: 100%;
+  min-height: 480px;
+}
+
+/* Rail — left, sticky-ish on long pages, never the focal point. */
+.bz-net-rail {
+  position: sticky;
+  top: var(--bz-space-4);
+  align-self: start;
+  padding: var(--bz-space-4) var(--bz-space-3);
+  border-right: 1px solid var(--bz-border);
+  max-height: calc(100vh - 160px);
+  overflow-y: auto;
+}
+.bz-net-rail__head {
+  margin: 0 0 var(--bz-space-3) var(--bz-space-3);
+  color: var(--bz-fg-low);
+}
+.bz-net-rail__list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.bz-net-rail__btn {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: var(--bz-space-3);
+  padding: var(--bz-space-2) var(--bz-space-3);
+  background: transparent;
+  border: 0;
+  border-radius: var(--bz-r);
+  text-align: left;
+  color: var(--bz-fg-mid);
+  font-family: var(--bz-font-body);
+  font-size: var(--bz-size-body);
+  cursor: pointer;
+  transition:
+    color var(--bz-dur-fast) var(--bz-ease-out),
+    background var(--bz-dur-fast) var(--bz-ease-out);
+}
+.bz-net-rail__btn:hover {
+  color: var(--bz-fg);
+  background: var(--bz-canvas);
+}
+.bz-net-rail__btn--active {
+  color: var(--bz-fg);
+  background: var(--bz-purple-soft);
+}
+.bz-net-rail__btn--active .bz-net-rail__dot {
+  background: var(--bz-purple-300);
+  box-shadow: 0 0 0 3px var(--bz-purple-soft);
+}
+.bz-net-rail__dot {
+  width: 6px; height: 6px;
+  border-radius: var(--bz-r-pill);
+  background: var(--bz-fg-faint);
+  flex-shrink: 0;
+  transition: background var(--bz-dur-fast) var(--bz-ease-out);
+}
+
+/* Detail pane — single scrolling column carrying the existing
+   sections unchanged. Just pushes them into the right column of
+   the grid and gives them breathing room between groups. */
+.bz-net-pane {
+  min-width: 0;
+  padding: var(--bz-space-4) var(--bz-space-5) var(--bz-space-7) 0;
+}
+
+/* Section spacing — first section flush to top, each subsequent
+   one gets a generous gap so the rail's anchor jumps land on a
+   clean visual break instead of mid-content. */
+.bz-net-pane > * + * {
+  margin-top: var(--bz-space-7);
+}
+.bz-net-pane > .status-section,
+.bz-net-pane > .nat-section,
+.bz-net-pane > .pricing-section,
+.bz-net-pane > .privacy-pipeline-section,
+.bz-net-pane > .orchestration-section,
+.bz-net-pane > .self-test-section,
+.bz-net-pane > .network-test-section,
+.bz-net-pane > .service-time-section,
+.bz-net-pane > .provider-section {
+  scroll-margin-top: var(--bz-space-5);
+}
+
+/* Theme picker grid — Appearance section. */
+.bz-theme-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+  gap: var(--bz-space-3);
+}
+.bz-theme-card {
+  text-align: left;
+  background: var(--bz-card);
+  border: 1px solid var(--bz-border);
+  border-radius: var(--bz-r);
+  padding: var(--bz-space-3) var(--bz-space-4);
+  display: grid;
+  grid-template-columns: auto 1fr;
+  grid-template-rows: auto auto;
+  column-gap: var(--bz-space-3);
+  row-gap: 4px;
+  cursor: pointer;
+  color: var(--bz-fg);
+  font-family: var(--bz-font-body);
+  font-size: var(--bz-size-body);
+  transition:
+    background var(--bz-dur-fast) var(--bz-ease-out),
+    border-color var(--bz-dur-fast) var(--bz-ease-out);
+}
+.bz-theme-card:hover {
+  background: var(--bz-raised);
+  border-color: var(--bz-border-strong);
+}
+.bz-theme-card--active {
+  border-color: var(--bz-border-brand);
+  background: var(--bz-purple-soft);
+  box-shadow: var(--bz-elev-brand);
+}
+.bz-theme-card__swatch {
+  grid-row: 1 / span 2;
+  display: inline-flex;
+  flex-direction: column;
+  width: 26px;
+  height: 36px;
+  border-radius: var(--bz-r-sm);
+  overflow: hidden;
+  border: 1px solid var(--bz-border);
+}
+.bz-theme-card__swatch > span {
+  flex: 1;
+  display: block;
+}
+.bz-theme-card__title {
+  font-weight: 400;
+  color: var(--bz-fg);
+}
+.bz-theme-card__blurb { color: var(--bz-fg-low); }
+
+/* Mobile / narrow — collapse rail under the pane. */
+@media (max-width: 880px) {
+  .bz-net-shell { grid-template-columns: 1fr; }
+  .bz-net-rail {
+    position: static;
+    border-right: 0;
+    border-bottom: 1px solid var(--bz-border);
+    max-height: none;
+  }
+  .bz-net-rail__list {
+    flex-direction: row;
+    flex-wrap: wrap;
+    gap: var(--bz-space-2);
+  }
+  .bz-net-pane {
+    padding: var(--bz-space-4) 0 var(--bz-space-7) 0;
+  }
 }
 </style>

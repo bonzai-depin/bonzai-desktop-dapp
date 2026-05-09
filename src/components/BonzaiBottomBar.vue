@@ -228,21 +228,15 @@
         >
           <div class="network-modal">
             <div class="network-modal-header">
-              <h1
-                class="fira-sans-condensed-black-italic is-size-1 has-text-white"
-              >
-                <span class="material-symbols-outlined mr-2 is-size-1">
-                  p2p
-                </span>
-                Peer-to-Peer Network
-              </h1>
-              <button
-                class="button is-danger"
+              <div class="bz-modal-titleblock">
+                <p class="bz-eyebrow">Network</p>
+                <h1 class="bz-display">Peer-to-Peer Network</h1>
+              </div>
+              <BzCloseButton
+                size="md"
+                aria-label="Close network settings"
                 @click="showNetworkModal = false"
-                title="Close"
-              >
-                <span class="material-symbols-outlined">close</span>
-              </button>
+              />
             </div>
             <div class="network-modal-body">
               <NetworkSettings />
@@ -262,19 +256,15 @@
         >
           <div class="auth-modal">
             <div class="auth-modal-header">
-              <h2
-                class="fira-sans-condensed-black-italic is-size-3 has-text-white"
-              >
-                <span class="material-symbols-outlined mr-2">security</span>
-                Session Status
-              </h2>
-              <button
-                class="button is-danger is-small"
+              <div class="bz-modal-titleblock">
+                <p class="bz-eyebrow">Session</p>
+                <h2 class="bz-h1">Session Status</h2>
+              </div>
+              <BzCloseButton
+                size="md"
+                aria-label="Close session status"
                 @click="showAuthModal = false"
-                title="Close"
-              >
-                <span class="material-symbols-outlined">close</span>
-              </button>
+              />
             </div>
 
             <div class="auth-modal-body">
@@ -371,13 +361,15 @@
         >
           <div class="privy-modal">
             <div class="privy-modal-header">
-              <h3 class="fira-sans-condensed-black-italic">
-                <span class="material-symbols-outlined mr-2" style="font-size: 24px; vertical-align: middle">login</span>
-                Sign In
-              </h3>
-              <button class="button is-danger is-small" @click="closePrivyLogin" title="Close">
-                <span class="material-symbols-outlined">close</span>
-              </button>
+              <div class="bz-modal-titleblock">
+                <p class="bz-eyebrow">Account</p>
+                <h2 class="bz-h1">Sign In</h2>
+              </div>
+              <BzCloseButton
+                size="md"
+                aria-label="Close sign-in"
+                @click="closePrivyLogin"
+              />
             </div>
 
             <div class="privy-modal-body">
@@ -425,6 +417,7 @@ import NetworkSettings from "./NetworkSettings.vue";
 import RewardsModal from "./RewardsModal.vue";
 import { mintStore } from "../stores/mintStore.js";
 import { modelPicker } from "../services/modelPicker.service.js";
+import BzCloseButton from "./BzCloseButton.vue";
 import { switchNetwork } from "../services/web3.service.js";
 import { modelStore } from "../stores/modelStore.js";
 
@@ -915,7 +908,19 @@ onMounted(async () => {
       }
     });
   }
+
+  // Command palette / global keyboard surfaces dispatch these events
+  // to flip our local modal state without needing a parent prop drill.
+  const openNetwork = () => { showNetworkModal.value = true; };
+  const openRewards = () => { showRewardsModal.value = true; };
+  window.addEventListener("bonzai:open-network", openNetwork);
+  window.addEventListener("bonzai:open-rewards", openRewards);
+  // Stash on the component so the unmount handler can pull them back.
+  _onOpenNetwork = openNetwork;
+  _onOpenRewards = openRewards;
 });
+let _onOpenNetwork = null;
+let _onOpenRewards = null;
 
 onUnmounted(() => {
   if (p2pStatusInterval) {
@@ -923,6 +928,8 @@ onUnmounted(() => {
   }
   window.removeEventListener("auth:needs-reauth", handleNeedsReauth);
   window.removeEventListener("auth:expired", handleNeedsReauth);
+  if (_onOpenNetwork) window.removeEventListener("bonzai:open-network", _onOpenNetwork);
+  if (_onOpenRewards) window.removeEventListener("bonzai:open-rewards", _onOpenRewards);
 });
 
 watch([isConnected, walletAddress], async ([connected, addr]) => {
@@ -956,16 +963,21 @@ watch(
 
 <style scoped>
 /* BonzAI Design System */
+/* Legacy aliases — these used to define the design system locally.
+   Now they're aliases for the canonical --bz-* tokens (see
+   src/assets/tokens.css and /DESIGN.md). Kept so the 17 var(--bonzai-*)
+   references inside this file resolve without touching every line.
+   Migrate them to --bz-* over time and delete this block. */
 :root {
-  --bonzai-bg-dark: #0a0a0f;
-  --bonzai-bg-card: rgba(20, 20, 30, 0.92);
-  --bonzai-green: #10b981;
-  --bonzai-green-glow: rgba(16, 185, 129, 0.3);
-  --bonzai-purple: #8b5cf6;
-  --bonzai-text: #f0f0f5;
-  --bonzai-text-muted: rgba(240, 240, 245, 0.7);
-  --bonzai-border: rgba(255, 255, 255, 0.1);
-  --bonzai-radius: 12px;
+  --bonzai-bg-dark: var(--bz-canvas);
+  --bonzai-bg-card: var(--bz-card);
+  --bonzai-green: var(--bz-emerald-500);
+  --bonzai-green-glow: var(--bz-purple-glow);  /* glow now brand-colored */
+  --bonzai-purple: var(--bz-purple-300);
+  --bonzai-text: var(--bz-fg);
+  --bonzai-text-muted: var(--bz-fg-mid);
+  --bonzai-border: var(--bz-border);
+  --bonzai-radius: var(--bz-r);
 }
 
 .bonzai-bottom-bar {
@@ -974,14 +986,35 @@ watch(
   left: 0;
   right: 0;
   z-index: 9999;
-  height: 7.66vh;
-  color: #fff;
-  background: #61378e;
-  backdrop-filter: blur(20px);
-  box-shadow: 10px 0 25px #000;
-  transition: all 0.3s ease;
+  height: 80px;
+  color: var(--bz-fg);
+  background: var(--bz-panel);
+  border-top: 1px solid var(--bz-border);
+  box-shadow:
+    0 -1px 0 var(--bz-border-strong),
+    0 -8px 32px rgba(0, 0, 0, 0.32);
+  transition:
+    background var(--bz-dur-base) var(--bz-ease-out),
+    border-color var(--bz-dur-base) var(--bz-ease-out);
   display: flex;
   align-items: center;
+  position: relative;
+}
+.bonzai-bottom-bar::before {
+  content: "";
+  position: fixed;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  height: 80px;
+  background:
+    radial-gradient(
+      ellipse 50% 100% at 50% 100%,
+      var(--bz-purple-soft),
+      transparent 70%
+    );
+  pointer-events: none;
+  z-index: -1;
 }
 
 /* Main Bar Content */
@@ -1667,20 +1700,18 @@ hr {
 
 .network-modal-header {
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   justify-content: space-between;
-  padding: 16px 24px;
-  background: rgba(0, 0, 0, 0.3);
-  border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+  padding: var(--bz-space-5) var(--bz-space-7);
+  border-bottom: 1px solid var(--bz-border);
 }
 
-.network-modal-header h2 {
-  display: flex;
-  align-items: center;
-  font-size: 1.5rem;
-  color: #fff;
-  margin: 0;
-}
+/* Shared title-block: eyebrow above a display heading. Used in
+   network, session-status, and privy-login modals. */
+.bz-modal-titleblock { display: grid; gap: var(--bz-space-2); }
+.bz-modal-titleblock h1,
+.bz-modal-titleblock h2 { margin: 0; color: var(--bz-fg); }
+.bz-modal-titleblock .bz-eyebrow { margin: 0; }
 
 .network-modal-body {
   flex: 1;
@@ -1709,11 +1740,11 @@ hr {
   border-radius: 12px;
   cursor: pointer;
   transition: all 0.2s;
-  background: rgba(0, 0, 0, 0.2);
+  background: var(--bz-scrim-soft);
 }
 
 .auth-indicator:hover {
-  background: rgba(0, 0, 0, 0.4);
+  background: var(--bz-scrim);
 }
 
 .auth-dot {
@@ -1724,20 +1755,20 @@ hr {
 }
 
 .auth-indicator.is-success .auth-dot {
-  background: #48c78e;
-  box-shadow: 0 0 6px #48c78e;
+  background: var(--bz-emerald-500);
+  box-shadow: 0 0 6px var(--bz-emerald-500);
   animation: status-blink 1.5s ease-in-out infinite;
 }
 
 .auth-indicator.is-warning .auth-dot {
-  background: #ffe08a;
-  box-shadow: 0 0 6px #ffe08a;
+  background: var(--bz-warning);
+  box-shadow: 0 0 6px var(--bz-warning);
   animation: status-blink 1.5s ease-in-out infinite;
 }
 
 .auth-indicator.is-danger .auth-dot {
-  background: #f14668;
-  box-shadow: 0 0 6px #f14668;
+  background: var(--bz-danger);
+  box-shadow: 0 0 6px var(--bz-danger);
   animation: status-blink 1s ease-in-out infinite;
 }
 
@@ -1754,7 +1785,7 @@ hr {
 .pending-count {
   font-size: 10px;
   font-weight: bold;
-  color: #f14668;
+  color: var(--bz-danger);
 }
 
 /* Auth Modal */
@@ -1780,17 +1811,10 @@ hr {
 
 .auth-modal-header {
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   justify-content: space-between;
-  padding: 16px 20px;
-  background: rgba(0, 0, 0, 0.3);
-  border-bottom: 1px solid rgba(255, 255, 255, 0.1);
-}
-
-.auth-modal-header h2 {
-  display: flex;
-  align-items: center;
-  margin: 0;
+  padding: var(--bz-space-4) var(--bz-space-5);
+  border-bottom: 1px solid var(--bz-border);
 }
 
 .auth-modal-body {
@@ -1808,18 +1832,18 @@ hr {
 }
 
 .auth-status-banner.is-success {
-  background: rgba(72, 199, 142, 0.15);
-  border: 1px solid rgba(72, 199, 142, 0.3);
+  background: var(--bz-emerald-soft);
+  border: 1px solid var(--bz-emerald-soft);
 }
 
 .auth-status-banner.is-warning {
   background: rgba(255, 224, 138, 0.15);
-  border: 1px solid rgba(255, 224, 138, 0.3);
+  border: 1px solid var(--bz-warning-soft);
 }
 
 .auth-status-banner.is-danger {
-  background: rgba(241, 70, 104, 0.15);
-  border: 1px solid rgba(241, 70, 104, 0.3);
+  background: var(--bz-danger-soft);
+  border: 1px solid var(--bz-danger-soft);
 }
 
 .status-dot-large {
@@ -1829,18 +1853,18 @@ hr {
 }
 
 .status-dot-large.is-success {
-  background: #48c78e;
-  box-shadow: 0 0 12px #48c78e;
+  background: var(--bz-emerald-500);
+  box-shadow: 0 0 12px var(--bz-emerald-500);
 }
 
 .status-dot-large.is-warning {
-  background: #ffe08a;
-  box-shadow: 0 0 12px #ffe08a;
+  background: var(--bz-warning);
+  box-shadow: 0 0 12px var(--bz-warning);
 }
 
 .status-dot-large.is-danger {
-  background: #f14668;
-  box-shadow: 0 0 12px #f14668;
+  background: var(--bz-danger);
+  box-shadow: 0 0 12px var(--bz-danger);
 }
 
 .status-label {
@@ -1947,18 +1971,9 @@ hr {
 .privy-modal-header {
   display: flex;
   justify-content: space-between;
-  align-items: center;
-  padding: 16px 24px;
-  background: rgba(0, 0, 0, 0.3);
-  border-bottom: 1px solid rgba(255, 255, 255, 0.1);
-}
-
-.privy-modal-header h3 {
-  font-size: 18px;
-  color: #fff;
-  margin: 0;
-  display: flex;
-  align-items: center;
+  align-items: flex-start;
+  padding: var(--bz-space-4) var(--bz-space-5);
+  border-bottom: 1px solid var(--bz-border);
 }
 
 .privy-modal-body {
@@ -2008,7 +2023,7 @@ hr {
   display: flex;
   align-items: center;
   gap: 10px;
-  background: rgba(72, 199, 142, 0.08);
+  background: var(--bz-emerald-soft);
   border: 1px solid rgba(72, 199, 142, 0.2);
   border-radius: 10px;
   padding: 12px 14px;
@@ -2018,7 +2033,7 @@ hr {
 }
 
 .privy-otp-banner .material-symbols-outlined {
-  color: #48c78e;
+  color: var(--bz-emerald-500);
 }
 
 .privy-otp-banner strong {
@@ -2073,9 +2088,9 @@ hr {
   font-size: 9px;
   padding: 1px 6px;
   border-radius: 3px;
-  background: rgba(72, 199, 142, 0.15);
-  color: #48c78e;
-  border: 1px solid rgba(72, 199, 142, 0.3);
+  background: var(--bz-emerald-soft);
+  color: var(--bz-emerald-500);
+  border: 1px solid var(--bz-emerald-soft);
   font-weight: 800;
   letter-spacing: 0.5px;
   margin-left: 6px;
@@ -2090,7 +2105,7 @@ hr {
   border: 1px solid rgba(241, 70, 104, 0.25);
   border-radius: 10px;
   padding: 10px 14px;
-  color: #f14668;
+  color: var(--bz-danger);
   font-size: 13px;
 }
 
@@ -2106,8 +2121,8 @@ hr {
   width: 8px;
   height: 8px;
   border-radius: 50%;
-  background: #48c78e;
-  box-shadow: 0 0 6px #48c78e;
+  background: var(--bz-emerald-500);
+  box-shadow: 0 0 6px var(--bz-emerald-500);
   animation: status-blink 1.5s ease-in-out infinite;
 }
 </style>

@@ -284,7 +284,7 @@
           <span class="tag is-dark ml-2">{{ item.type }}</span>
         </div>
         <div class="queue-card-prompt">{{ item.prompt }}</div>
-        <button class="delete" @click="removeFromQueue(index)" title="Remove"></button>
+        <BzCloseButton size="sm" aria-label="Remove" @click="removeFromQueue(index)" />
       </div>
 
       <button v-if="queue.length > 0" class="button is-danger mt-4" @click="clearQueue">
@@ -634,11 +634,13 @@
 <script>
 import { ref, reactive, computed, onMounted, onUnmounted } from 'vue';
 import { hasPurchasedSkill, isDevMode } from '../../services/agent.service.js';
+import BzCloseButton from '../BzCloseButton.vue';
 
 const SKILL_ID = 'live-streaming-v1.0.0';
 
 export default {
   name: 'LiveStreamerSkill',
+  components: { BzCloseButton },
   props: {
     skill: { type: Object, default: null },
     modelAvailable: { type: [Function, Boolean], default: true },
@@ -1244,9 +1246,9 @@ hr {
   font-weight: 600;
   font-size: 14px;
   background: transparent;
-  border: 1px solid rgba(255, 255, 255, 0.3);
+  border: 1px solid var(--bz-fg-faint);
   border-radius: 4px;
-  color: rgba(255, 255, 255, 0.3);
+  color: var(--bz-fg-faint);
   cursor: pointer;
   transition: all 0.3s ease;
   white-space: nowrap;
@@ -1255,9 +1257,9 @@ hr {
 
 .category-selector input[type='radio'] + label.radio.category:hover,
 .category-selector input[type='checkbox'] + label.radio.category:hover {
-  background: rgba(241, 70, 104, 0.15);
-  border-color: rgba(255, 255, 255, 0.5);
-  color: rgba(255, 255, 255, 0.8);
+  background: var(--bz-danger-soft);
+  border-color: var(--bz-fg-low);
+  color: var(--bz-fg-mid);
 }
 
 .category-selector input[type='radio']:checked + label.radio.category,
@@ -1271,7 +1273,7 @@ hr {
 /* ═══ Common Styles (matches Meditation Forge) ═══ */
 .models__activity--payouts {
   padding: 2em;
-  border: 1px solid rgba(255, 255, 255, 0.1);
+  border: 1px solid var(--bz-border);
   backdrop-filter: blur(32px);
   border-radius: 4px !important;
 }
@@ -1287,7 +1289,7 @@ hr {
 }
 
 .skill-description {
-  color: rgba(255, 255, 255, 0.8);
+  color: var(--bz-fg-mid);
   margin-bottom: 0.5em;
   text-align: left;
 }
@@ -1318,8 +1320,8 @@ hr {
   border-radius: 10px;
   overflow: hidden;
   background: linear-gradient(135deg, #1a0a1e 0%, #1e1030 50%, #0f1a3a 100%);
-  border: 1px solid rgba(255, 255, 255, 0.15);
-  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.6);
+  border: 1px solid var(--bz-border-strong);
+  box-shadow: 0 8px 32px var(--bz-scrim-deep);
 }
 
 .pip-bg {
@@ -1458,14 +1460,14 @@ hr {
   height: 48px;
   border-radius: 50%;
   object-fit: cover;
-  border: 2px solid rgba(255, 255, 255, 0.15);
+  border: 2px solid var(--bz-border-strong);
   flex-shrink: 0;
 }
 
 /* ═══ Poll ═══ */
 .poll-header {
   font-size: 12px;
-  color: #ffe08a;
+  color: var(--bz-warning);
   margin-bottom: 8px;
   display: flex;
   align-items: center;
@@ -1533,39 +1535,39 @@ hr {
 
 /* ═══ Config Cards (transparent glass) ═══ */
 .config-card {
-  background: rgba(255, 255, 255, 0.04) !important;
-  border: 1px solid rgba(255, 255, 255, 0.1) !important;
+  background: var(--bz-canvas) !important;
+  border: 1px solid var(--bz-border) !important;
   backdrop-filter: blur(32px);
-  color: rgba(255, 255, 255, 0.8) !important;
+  color: var(--bz-fg-mid) !important;
 }
 
 .config-card.is-live {
-  border-color: rgba(72, 199, 142, 0.3) !important;
+  border-color: var(--bz-emerald-soft) !important;
   background: rgba(72, 199, 142, 0.06) !important;
 }
 
 .config-card h4 {
-  color: #fff;
+  color: var(--bz-fg);
 }
 
 .config-card .label {
-  color: rgba(255, 255, 255, 0.6) !important;
+  color: var(--bz-fg-mid) !important;
   font-size: 13px;
 }
 
 .config-card .help {
-  color: rgba(255, 255, 255, 0.35);
+  color: var(--bz-fg-faint);
 }
 
 .config-card .help a {
-  color: #3e8ed0;
+  color: var(--bz-info);
 }
 
 /* ═══ Config Inputs ═══ */
 .config-input {
   background: rgba(255,255,255,0.06) !important;
   border-color: rgba(255,255,255,0.12) !important;
-  color: #fff !important;
+  color: var(--bz-fg) !important;
 }
 
 .config-input:focus {
@@ -1607,9 +1609,9 @@ hr {
   z-index: 9999;
 }
 
-.stream-toast.success { background: rgba(72, 199, 142, 0.15); border: 1px solid rgba(72, 199, 142, 0.3); color: #48c78e; }
-.stream-toast.error { background: rgba(241, 70, 104, 0.15); border: 1px solid rgba(241, 70, 104, 0.3); color: #f14668; }
-.stream-toast.info { background: rgba(62, 142, 208, 0.15); border: 1px solid rgba(62, 142, 208, 0.3); color: #3e8ed0; }
+.stream-toast.success { background: var(--bz-emerald-soft); border: 1px solid var(--bz-emerald-soft); color: var(--bz-emerald-500); }
+.stream-toast.error { background: var(--bz-danger-soft); border: 1px solid var(--bz-danger-soft); color: var(--bz-danger); }
+.stream-toast.info { background: rgba(62, 142, 208, 0.15); border: 1px solid rgba(62, 142, 208, 0.3); color: var(--bz-info); }
 
 /* ═══ Animations ═══ */
 .rotating { animation: rotate 1s linear infinite; }

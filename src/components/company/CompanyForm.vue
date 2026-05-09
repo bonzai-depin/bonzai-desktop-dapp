@@ -407,7 +407,7 @@ hr {
 .form-shell {
   max-width: 1100px;
   margin: 0 auto;
-  color: #fff;
+  color: var(--bz-fg);
   padding-bottom: 4em;
 }
 
@@ -422,7 +422,7 @@ hr {
 .form-header h1 {
   font-size: 32px !important;
   margin: 0 !important;
-  color: #fff;
+  color: var(--bz-fg);
   text-align: left !important;
   display: flex;
   align-items: center;
@@ -433,7 +433,7 @@ hr {
 .form-intro {
   font-size: 17px !important;
   margin: 0 0 1em !important;
-  color: rgba(255, 255, 255, 0.8) !important;
+  color: var(--bz-fg-mid) !important;
   text-align: left !important;
 }
 
@@ -441,14 +441,14 @@ hr {
 .form-section {
   margin-bottom: 1.5em;
   padding: 2em 2.5em !important;
-  border: 1px solid rgba(255, 255, 255, 0.1);
+  border: 1px solid var(--bz-border);
   backdrop-filter: blur(32px) !important;
   border-radius: 4px !important;
-  background: rgba(0, 0, 0, 0.3);
+  background: var(--bz-scrim);
 }
 .section-title {
   font-size: 24px !important;
-  color: #fff !important;
+  color: var(--bz-fg) !important;
   margin: 0 0 1em !important;
   text-align: left !important;
   display: flex;
@@ -457,7 +457,7 @@ hr {
 }
 .section-title .material-symbols-outlined {
   font-size: 32px;
-  color: #48c78e;
+  color: var(--bz-emerald-500);
 }
 .section-intro {
   font-size: 14px !important;
@@ -469,18 +469,18 @@ hr {
 
 /* ───────── Form fields (glass inputs) ───────── */
 .label {
-  color: rgba(255, 255, 255, 0.85) !important;
+  color: var(--bz-fg) !important;
   font-style: italic;
 }
 .input, .textarea, .select select {
-  background: rgba(255, 255, 255, 0.08) !important;
+  background: var(--bz-card) !important;
   border: 2px solid rgba(255, 255, 255, 0.18) !important;
-  color: #fff !important;
+  color: var(--bz-fg) !important;
   backdrop-filter: blur(8px);
 }
 .input:focus, .textarea:focus, .select select:focus {
-  border-color: #48c78e !important;
-  box-shadow: 0 0 0 0.125em rgba(72, 199, 142, 0.25) !important;
+  border-color: var(--bz-emerald-500) !important;
+  box-shadow: 0 0 0 0.125em var(--bz-emerald-soft) !important;
 }
 .field-row {
   display: grid;
@@ -497,12 +497,12 @@ hr {
 }
 .chip, .mode-chip {
   padding: 0.5em 1em;
-  border: 2px solid rgba(255, 255, 255, 0.2);
+  border: 2px solid var(--bz-border-strong);
   border-radius: 4px;
-  background: rgba(255, 255, 255, 0.05);
+  background: var(--bz-canvas);
   cursor: pointer;
   font-size: 14px;
-  color: rgba(255, 255, 255, 0.85);
+  color: var(--bz-fg);
   transition: all 0.15s ease;
   text-transform: capitalize;
   font-style: italic;
@@ -510,31 +510,31 @@ hr {
 }
 .chip input, .mode-chip input { display: none; }
 .chip:hover, .mode-chip:hover {
-  background: rgba(255, 255, 255, 0.1);
-  border-color: rgba(255, 255, 255, 0.4);
+  background: var(--bz-border);
+  border-color: var(--bz-fg-low);
 }
 .chip.is-on, .mode-chip.is-on {
-  background: rgba(72, 199, 142, 0.25);
-  border-color: #48c78e;
-  color: #fff;
-  box-shadow: 0 0 8px rgba(72, 199, 142, 0.3);
+  background: var(--bz-emerald-soft);
+  border-color: var(--bz-emerald-500);
+  color: var(--bz-fg);
+  box-shadow: 0 0 8px var(--bz-emerald-soft);
 }
 
 .hint {
   margin-top: 1em;
   padding: 0.85em 1em;
-  background: rgba(62, 142, 208, 0.1);
-  border-left: 3px solid #3e8ed0;
+  background: var(--bz-info-soft);
+  border-left: 3px solid var(--bz-info);
   border-radius: 4px;
   display: flex;
   align-items: flex-start;
   gap: 0.6em;
   font-size: 13px;
-  color: rgba(255, 255, 255, 0.85);
+  color: var(--bz-fg);
   line-height: 1.5;
 }
 .hint .material-symbols-outlined {
-  color: #3e8ed0;
+  color: var(--bz-info);
   flex-shrink: 0;
 }
 
@@ -551,8 +551,8 @@ hr {
   gap: 1em;
   align-items: center;
   padding: 0.75em 1em;
-  background: rgba(255, 255, 255, 0.04);
-  border: 1px solid rgba(255, 255, 255, 0.08);
+  background: var(--bz-canvas);
+  border: 1px solid var(--bz-card);
   border-radius: 4px;
 }
 .role-row:hover {
@@ -569,7 +569,7 @@ hr {
   padding: 0.3em 1em;
 }
 .col-role strong {
-  color: #fff;
+  color: var(--bz-fg);
   display: block;
   font-style: italic;
 }
@@ -596,9 +596,9 @@ hr {
 /* ───────── Notification override ───────── */
 .notification.is-danger {
   background: rgba(241, 70, 104, 0.18) !important;
-  border: 1px solid #f14668 !important;
+  border: 1px solid var(--bz-danger) !important;
   backdrop-filter: blur(32px);
-  color: #fff !important;
+  color: var(--bz-fg) !important;
 }
 .notification.is-danger ul {
   margin: 0;

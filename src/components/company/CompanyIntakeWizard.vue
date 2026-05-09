@@ -13,9 +13,7 @@
             tools your company needs to run.
           </p>
         </div>
-        <button class="button is-medium is-light icon-only-btn" @click="confirmCancel" aria-label="Close">
-          <span class="material-symbols-outlined">close</span>
-        </button>
+        <BzCloseButton size="md" aria-label="Close" @click="confirmCancel" />
       </div>
 
       <!-- Step rail -->
@@ -321,6 +319,7 @@
 <script>
 import { reactive, ref, computed, onMounted } from "vue";
 import companyStore from "../../stores/companyStore.js";
+import BzCloseButton from "../BzCloseButton.vue";
 
 /**
  * The five-step intake wizard. Self-contained — opens, runs, returns
@@ -356,6 +355,7 @@ const CONNECTOR_CATALOG = [
 
 export default {
   name: "CompanyIntakeWizard",
+  components: { BzCloseButton },
   emits: ["done", "cancel"],
   setup(_props, { emit }) {
     const store = companyStore;
@@ -575,7 +575,7 @@ hr {
 .icon-only-btn { width: 40px; padding: 0; display: inline-flex; align-items: center; justify-content: center; }
 .panel-subtitle {
   font-size: 1.15rem;
-  color: #fff;
+  color: var(--bz-fg);
   display: flex;
   align-items: center;
   gap: 0.5em;
@@ -591,13 +591,13 @@ hr {
   z-index: 9998;
   display: flex; align-items: center; justify-content: center;
   padding: 2em;
-  color: #fff;
+  color: var(--bz-fg);
 }
 .wiz {
   width: 100%; max-width: 900px;
   max-height: calc(100vh - 4em); overflow-y: auto;
   padding: 2em 2.5em !important;
-  background: rgba(0, 0, 0, 0.55) !important;
+  background: var(--bz-scrim-strong) !important;
   border: 1px solid rgba(255, 255, 255, 0.18) !important;
   backdrop-filter: blur(32px) !important;
   border-radius: 8px !important;
@@ -636,8 +636,8 @@ hr {
   transition: all 0.2s ease;
 }
 .wiz-step.is-active {
-  border-color: #fff;
-  background: rgba(97, 55, 142, 0.33);
+  border-color: var(--bz-fg);
+  background: var(--bz-purple-soft);
 }
 .wiz-step.is-done {
   cursor: pointer;
@@ -666,7 +666,7 @@ hr {
 }
 .tpl-card {
   background: rgba(0, 0, 0, 0.32);
-  border: 1px solid rgba(255, 255, 255, 0.12);
+  border: 1px solid var(--bz-border-strong);
   backdrop-filter: blur(32px);
   border-radius: 6px;
   padding: 1.25em;
@@ -720,7 +720,7 @@ hr {
 .wiz-toggle__track {
   display: inline-block;
   width: 40px; height: 22px;
-  background: rgba(255, 255, 255, 0.15);
+  background: var(--bz-border-strong);
   border-radius: 999px;
   position: relative;
   transition: background 0.2s;
@@ -747,7 +747,7 @@ hr {
   gap: 0.5em;
   align-items: center;
 }
-.roster-row .input { background: rgba(0, 0, 0, 0.45); }
+.roster-row .input { background: var(--bz-scrim); }
 .roster-row__hybrid {
   display: flex; align-items: center; gap: 0.4em;
   font-size: 0.85em;
@@ -779,7 +779,7 @@ hr {
 .conn-tile {
   position: relative;
   background: rgba(0, 0, 0, 0.32);
-  border: 1px solid rgba(255, 255, 255, 0.12);
+  border: 1px solid var(--bz-border-strong);
   border-radius: 6px;
   padding: 1em 0.75em;
   cursor: pointer;
@@ -791,14 +791,14 @@ hr {
   gap: 0.35em;
   backdrop-filter: blur(32px);
 }
-.conn-tile:hover { border-color: rgba(255, 255, 255, 0.3); }
+.conn-tile:hover { border-color: var(--bz-fg-faint); }
 .conn-tile.is-required {
   border-color: rgba(255, 153, 51, 0.6);
   background: rgba(255, 153, 51, 0.07);
 }
 .conn-tile.is-selected {
-  border-color: #fff !important;
-  background: rgba(97, 55, 142, 0.33) !important;
+  border-color: var(--bz-fg) !important;
+  background: var(--bz-purple-soft) !important;
 }
 .conn-tile__icon .material-symbols-outlined {
   font-size: 30px;
@@ -882,22 +882,22 @@ hr {
 .wiz__actions-right { display: flex; gap: 0.5em; }
 
 :deep(.input), :deep(.textarea) {
-  background: rgba(0, 0, 0, 0.45) !important;
+  background: var(--bz-scrim) !important;
   border: 1px solid rgba(255, 255, 255, 0.22) !important;
-  color: #fff !important;
+  color: var(--bz-fg) !important;
   backdrop-filter: blur(32px) !important;
 }
 :deep(.input::placeholder), :deep(.textarea::placeholder) {
-  color: rgba(255, 255, 255, 0.4) !important;
+  color: var(--bz-fg-low) !important;
 }
 :deep(.select select) {
-  background: rgba(0, 0, 0, 0.45) !important;
+  background: var(--bz-scrim) !important;
   border: 1px solid rgba(255, 255, 255, 0.22) !important;
-  color: #fff !important;
+  color: var(--bz-fg) !important;
   backdrop-filter: blur(32px) !important;
 }
 :deep(.tag.is-light) {
-  background: rgba(255, 255, 255, 0.12) !important;
-  color: rgba(255, 255, 255, 0.85) !important;
+  background: var(--bz-border-strong) !important;
+  color: var(--bz-fg) !important;
 }
 </style>

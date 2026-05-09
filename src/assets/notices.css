@@ -1,0 +1,104 @@
+/**
+ * BonzAI notice / banner system
+ * ─────────────────────────────
+ * Small inline banner used in modals, dashboards, and forms to surface
+ * a state without a full notification widget (which Bulma calls
+ * `notification is-X`). Replaces ad-hoc `<div class="notification …"
+ * style="background: …; border: …">` patterns.
+ *
+ * Variants — name what's true, never decoration:
+ *   .bz-notice                    neutral (white-on-card-tint)
+ *   .bz-notice--info              brand purple soft tint
+ *   .bz-notice--success           emerald soft tint
+ *   .bz-notice--warning           amber soft tint
+ *   .bz-notice--danger            red soft tint
+ *
+ * Slots:
+ *   .bz-notice__icon              optional 22px material symbol
+ *   .bz-notice__title             one-line shout
+ *   .bz-notice__body              body text (.bz-fg-mid)
+ *   .bz-notice__cta               trailing button cluster
+ */
+
+.bz-notice {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--bz-space-3);
+  padding: var(--bz-space-3) var(--bz-space-4);
+  background: var(--bz-card);
+  border: 1px solid var(--bz-border);
+  border-left-width: 3px;
+  border-radius: var(--bz-r);
+  position: relative;
+  color: var(--bz-fg);
+}
+.bz-notice__icon {
+  flex-shrink: 0;
+  width: 22px;
+  height: 22px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--bz-fg-mid);
+}
+.bz-notice__icon .material-symbols-outlined {
+  font-size: 20px !important;
+  font-variation-settings: "FILL" 1;
+}
+.bz-notice__body { flex: 1; min-width: 0; }
+.bz-notice__title {
+  margin: 0 0 2px 0;
+  font-family: 'Fira Sans Condensed', sans-serif;
+  font-style: italic;
+  font-weight: 900;
+  font-size: var(--bz-size-h3);
+  line-height: 1.3;
+  color: var(--bz-fg);
+}
+.bz-notice__text {
+  margin: 0;
+  font-size: var(--bz-size-meta);
+  color: var(--bz-fg-mid);
+  line-height: var(--bz-line-body);
+}
+.bz-notice__cta {
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: var(--bz-space-2);
+}
+
+.bz-notice--info {
+  border-left-color: var(--bz-purple-500);
+  background: var(--bz-purple-soft);
+}
+.bz-notice--info .bz-notice__icon { color: var(--bz-purple-100); }
+.bz-notice--info .bz-notice__title { color: var(--bz-fg); }
+
+.bz-notice--success {
+  border-left-color: var(--bz-emerald-500);
+  background: var(--bz-emerald-soft);
+}
+.bz-notice--success .bz-notice__icon { color: var(--bz-emerald-300); }
+
+.bz-notice--warning {
+  border-left-color: var(--bz-warning);
+  background: var(--bz-warning-soft);
+}
+.bz-notice--warning .bz-notice__icon { color: var(--bz-warning); }
+
+.bz-notice--danger {
+  border-left-color: var(--bz-danger);
+  background: var(--bz-danger-soft);
+}
+.bz-notice--danger .bz-notice__icon { color: var(--bz-danger); }
+
+/* Stacked layout — for narrow modals or when CTA needs to wrap. */
+.bz-notice--stacked {
+  flex-direction: column;
+  align-items: stretch;
+}
+.bz-notice--stacked .bz-notice__cta {
+  width: 100%;
+  margin-top: var(--bz-space-2);
+}

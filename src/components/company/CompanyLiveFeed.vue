@@ -448,7 +448,7 @@ hr {
   color: rgba(255, 255, 255, 0.65);
   font-size: 0.82em;
 }
-.live__rate.is-active { color: #48c78e; }
+.live__rate.is-active { color: var(--bz-emerald-500); }
 .live__rate small { font-weight: 400; opacity: 0.7; }
 
 /* ───────── Filter chips — agentic-skills selector pattern ───────── */
@@ -477,14 +477,14 @@ hr {
   gap: 0.4em;
 }
 .live__chip:hover {
-  background: rgba(97, 55, 142, 0.2);
+  background: var(--bz-purple-soft);
   border-color: rgba(255, 255, 255, 0.5);
   color: #fff;
 }
 .live__chip.is-active {
   color: #fff !important;
   border-color: #fff !important;
-  background: rgba(97, 55, 142, 0.33) !important;
+  background: var(--bz-purple-soft) !important;
 }
 .live__chip-count {
   font-size: 0.85em;
@@ -519,11 +519,11 @@ hr {
 }
 .live-entry:hover { border-color: rgba(255, 255, 255, 0.22); }
 
-.live-entry.is-vetoed       { border-left: 3px solid #ffe08a; }
-.live-entry.is-error        { border-left: 3px solid #f14668; }
-.live-entry.is-parse_error  { border-left: 3px solid #f14668; }
-.live-entry.is-queued       { border-left: 3px solid #3e8ed0; }
-.live-entry.is-executed     { border-left: 3px solid #48c78e; }
+.live-entry.is-vetoed       { border-left: 3px solid var(--bz-warning); }
+.live-entry.is-error        { border-left: 3px solid var(--bz-danger); }
+.live-entry.is-parse_error  { border-left: 3px solid var(--bz-danger); }
+.live-entry.is-queued       { border-left: 3px solid var(--bz-info); }
+.live-entry.is-executed     { border-left: 3px solid var(--bz-emerald-500); }
 .live-entry--llm.is-executed {
   border-left-color: rgb(155, 109, 200);
   background: rgba(155, 109, 200, 0.07);
@@ -646,7 +646,7 @@ hr {
   word-break: break-word;
   max-height: 320px;
   overflow-y: auto;
-  background: rgba(0, 0, 0, 0.45);
+  background: var(--bz-scrim);
 }
 .live-entry__response::-webkit-scrollbar { width: 4px; }
 .live-entry__response::-webkit-scrollbar-thumb {
@@ -667,7 +667,7 @@ hr {
 }
 .live-entry__response--streaming {
   /* No collapsing details — show the streaming text inline */
-  background: rgba(0, 0, 0, 0.45);
+  background: var(--bz-scrim);
   margin-top: 0.4em;
   border: 1px solid rgba(155, 109, 200, 0.35);
   border-radius: 4px;
@@ -687,7 +687,7 @@ hr {
   align-items: flex-start;
   gap: 0.4em;
   padding: 0.6em 1em;
-  background: rgba(241, 70, 104, 0.12);
+  background: var(--bz-danger-soft);
   border-top: 1px solid rgba(241, 70, 104, 0.4);
   color: #ffd0d8;
   font-size: 0.82em;
@@ -695,8 +695,8 @@ hr {
 }
 .live-entry__parse-error .material-symbols-outlined {
   font-size: 16px !important;
-  color: #f14668 !important;
-  -webkit-text-fill-color: #f14668 !important;
+  color: var(--bz-danger) !important;
+  -webkit-text-fill-color: var(--bz-danger) !important;
   background: none !important;
 }
 

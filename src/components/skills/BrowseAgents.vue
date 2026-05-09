@@ -68,11 +68,11 @@
       <div class="modal-card" style="max-width: 700px">
         <header class="modal-card-head">
           <p class="modal-card-title">{{ selectedCompanion?.name }}</p>
-          <button
-            class="delete"
-            aria-label="close"
+          <BzCloseButton
+            size="sm"
+            aria-label="Close companion details"
             @click="closeCompanionModal"
-          ></button>
+          />
         </header>
         <section class="modal-card-body" v-if="selectedCompanion">
           <!-- Wallet Info -->
@@ -332,7 +332,7 @@
       <div class="modal-card" style="max-width: 550px">
         <header class="modal-card-head">
           <p class="modal-card-title">Backup Private Key</p>
-          <button class="delete" aria-label="close" @click="closeBackupModal"></button>
+          <BzCloseButton size="sm" aria-label="Close" @click="closeBackupModal" />
         </header>
         <section class="modal-card-body">
           <div class="notification is-danger is-light mb-4">
@@ -371,7 +371,7 @@
       <div class="modal-card" style="max-width: 550px">
         <header class="modal-card-head">
           <p class="modal-card-title">Register for Skill</p>
-          <button class="delete" aria-label="close" @click="showRegisterModal = false"></button>
+          <BzCloseButton size="sm" aria-label="Close" @click="showRegisterModal = false" />
         </header>
         <section class="modal-card-body">
           <p class="mb-3 is-size-7 has-text-grey-light">
@@ -430,7 +430,7 @@
       <div class="modal-card" style="max-width: 450px">
         <header class="modal-card-head">
           <p class="modal-card-title">Add Wallet Policy</p>
-          <button class="delete" aria-label="close" @click="showPolicyModal = false"></button>
+          <BzCloseButton size="sm" aria-label="Close" @click="showPolicyModal = false" />
         </header>
         <section class="modal-card-body">
           <div class="field">
@@ -460,7 +460,7 @@
       <div class="modal-card" style="max-width: 500px">
         <header class="modal-card-head">
           <p class="modal-card-title">API Key Created</p>
-          <button class="delete" aria-label="close" @click="showNewApiKeyModal = false; newApiKeyToken = null"></button>
+          <BzCloseButton size="sm" aria-label="Close" @click="showNewApiKeyModal = false; newApiKeyToken = null" />
         </header>
         <section class="modal-card-body">
           <div class="notification is-warning is-light mb-3">
@@ -490,7 +490,7 @@
             <span class="material-symbols-outlined mr-1" style="vertical-align: middle">build</span>
             Set Up Companion #{{ setupTarget?.tokenId }}
           </p>
-          <button class="delete" aria-label="close" @click="closeSetupWizard"></button>
+          <BzCloseButton size="sm" aria-label="Close" @click="closeSetupWizard" />
         </header>
         <section class="modal-card-body">
           <!-- Progress bar -->
@@ -825,11 +825,13 @@ import { owsMigrationService } from "../../services/owsMigration.service.js";
 import { SKILL_CATEGORY_META } from "../../skills/types.js";
 import { validateCompanionAge } from "../../skills/flagship.js";
 import ContextBanner from "../ContextBanner.vue";
+import BzCloseButton from "../BzCloseButton.vue";
 
 export default {
   name: "BrowseAgents",
   components: {
     ContextBanner,
+    BzCloseButton,
   },
   props: {
     skills: {
@@ -1571,7 +1573,7 @@ hr {
   transition: background-color 0.15s;
 }
 .is-clickable:hover {
-  background-color: rgba(255, 255, 255, 0.05);
+  background-color: var(--bz-canvas);
 }
 
 .attach-up-btn {

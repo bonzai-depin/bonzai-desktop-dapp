@@ -1,0 +1,205 @@
+/**
+ * BonzAI Theme Variants
+ * ─────────────────────
+ * Each theme overrides the --bz-* color tokens declared in tokens.css.
+ * Apply by setting `data-theme="<name>"` on the document root:
+ *
+ *     document.documentElement.dataset.theme = "midnight";
+ *
+ * STRUCTURAL tokens (spacing, type scale, radii, motion durations,
+ * shadow elevations) are NOT themed — they belong to the system, not
+ * to the look. A theme only changes the palette + a couple of weight
+ * choices that follow from it.
+ *
+ * The default (no `data-theme` attribute, or `data-theme="default"`)
+ * is the BonzAI brand: dark canvas + purple primary + emerald spark.
+ *
+ * THEMES SHIPPED:
+ *   default    Brand · dark + purple + emerald (no override needed)
+ *   midnight   OLED-friendly · darker canvas + cooler purples
+ *   terminal   Void-black + emerald-only · no purple (VoltAgent-shaped)
+ *   mistral    Purple minimalism · light cream canvas + dark text
+ *   warm       Cream canvas + terracotta accents (Claude × Mastercard)
+ *   nocturne   Higher-contrast pure dark · monochrome with single accent
+ */
+
+/* ─── MIDNIGHT — same brand, deeper canvas, cooler accents ──────── */
+[data-theme="midnight"] {
+  --bz-canvas:        #050608;
+  --bz-panel:         #0a0d14;
+  --bz-card:          #0f131c;
+  --bz-raised:        #161b27;
+  --bz-overlay:       rgba(2, 4, 8, 0.86);
+
+  --bz-purple-100:    #d4b8ff;
+  --bz-purple-300:    #a78bfa;
+  --bz-purple-500:    #6b46c1;
+  --bz-purple-700:    #2d1b50;
+  --bz-purple-900:    #14081f;
+  --bz-purple-glow:   rgba(167, 139, 250, 0.36);
+  --bz-purple-soft:   rgba(107, 70, 193, 0.18);
+  --bz-gradient-brand:
+    linear-gradient(135deg, #6b46c1 0%, #a78bfa 100%);
+
+  --bz-fg:            #f8fafc;
+  --bz-fg-mid:        #cbd5e1;
+  --bz-fg-low:        #64748b;
+  --bz-fg-faint:      #334155;
+
+  --bz-border:        rgba(203, 213, 225, 0.07);
+  --bz-border-strong: rgba(203, 213, 225, 0.14);
+  --bz-border-brand:  rgba(167, 139, 250, 0.5);
+}
+
+/* ─── TERMINAL — VoltAgent-shaped void-black + emerald-only ─────── */
+[data-theme="terminal"] {
+  --bz-canvas:        #000000;
+  --bz-panel:         #050505;
+  --bz-card:          #0a0a0a;
+  --bz-raised:        #121212;
+  --bz-overlay:       rgba(0, 0, 0, 0.88);
+
+  /* The brand purple is REMAPPED to emerald in this theme — every
+     "brand moment" still works, just rendered in green. The strict
+     emerald-only feel reads as terminal-native. */
+  --bz-purple-100:    #6ee7b7;
+  --bz-purple-300:    #34d399;
+  --bz-purple-500:    #10b981;
+  --bz-purple-700:    #047857;
+  --bz-purple-900:    #022c22;
+  --bz-purple-glow:   rgba(52, 211, 153, 0.32);
+  --bz-purple-soft:   rgba(16, 185, 129, 0.14);
+  --bz-gradient-brand:
+    linear-gradient(135deg, #047857 0%, #34d399 100%);
+
+  --bz-emerald-300:   #6ee7b7;
+  --bz-emerald-500:   #34d399;
+  --bz-emerald-700:   #047857;
+
+  --bz-fg:            #e5e7eb;
+  --bz-fg-mid:        #9ca3af;
+  --bz-fg-low:        #4b5563;
+  --bz-fg-faint:      #1f2937;
+
+  --bz-border:        rgba(229, 231, 235, 0.06);
+  --bz-border-strong: rgba(229, 231, 235, 0.12);
+  --bz-border-brand:  rgba(52, 211, 153, 0.5);
+
+  --bz-font-display:  ui-monospace, 'SF Mono', 'Menlo', 'JetBrains Mono', 'Fira Code', monospace;
+  --bz-font-body:     ui-monospace, 'SF Mono', 'Menlo', 'JetBrains Mono', 'Fira Code', monospace;
+}
+[data-theme="terminal"] .bz-shout,
+[data-theme="terminal"] .bz-h1,
+[data-theme="terminal"] .bz-h2,
+[data-theme="terminal"] .fira-sans-condensed-black-italic {
+  font-family: ui-monospace, 'SF Mono', 'Menlo', monospace !important;
+  font-style: normal !important;
+  font-weight: 500 !important;
+  letter-spacing: 0.02em !important;
+  text-transform: uppercase;
+}
+
+/* ─── MISTRAL — purple minimalism on light cream ─────────────── */
+[data-theme="mistral"] {
+  --bz-canvas:        #faf7f2;
+  --bz-panel:         #f3eee5;
+  --bz-card:          #ffffff;
+  --bz-raised:        #efe9dc;
+  --bz-overlay:       rgba(40, 30, 60, 0.32);
+
+  --bz-purple-100:    #b794f4;
+  --bz-purple-300:    #805ad5;
+  --bz-purple-500:    #553c9a;
+  --bz-purple-700:    #322659;
+  --bz-purple-900:    #1a103e;
+  --bz-purple-glow:   rgba(85, 60, 154, 0.28);
+  --bz-purple-soft:   rgba(85, 60, 154, 0.10);
+  --bz-gradient-brand:
+    linear-gradient(135deg, #553c9a 0%, #805ad5 100%);
+
+  --bz-fg:            #1a1530;
+  --bz-fg-mid:        #4c4866;
+  --bz-fg-low:        #837e9e;
+  --bz-fg-faint:      #c2bdd6;
+
+  --bz-border:        rgba(26, 21, 48, 0.10);
+  --bz-border-strong: rgba(26, 21, 48, 0.18);
+  --bz-border-brand:  rgba(85, 60, 154, 0.45);
+
+  --bz-emerald-soft:  rgba(16, 185, 129, 0.12);
+  --bz-danger-soft:   rgba(226, 85, 85, 0.10);
+  --bz-warning-soft:  rgba(212, 160, 23, 0.10);
+  --bz-info-soft:     rgba(90, 169, 232, 0.10);
+}
+
+/* ─── WARM — Claude × Mastercard cream + terracotta ────────────── */
+[data-theme="warm"] {
+  --bz-canvas:        #fbf8f4;
+  --bz-panel:         #f5efe3;
+  --bz-card:          #ffffff;
+  --bz-raised:        #ede4d2;
+  --bz-overlay:       rgba(60, 30, 18, 0.28);
+
+  /* Brand in this theme is terracotta — the Claude warm accent. */
+  --bz-purple-100:    #e8b89e;
+  --bz-purple-300:    #d97757;
+  --bz-purple-500:    #b3603e;
+  --bz-purple-700:    #6f3a23;
+  --bz-purple-900:    #36180c;
+  --bz-purple-glow:   rgba(217, 119, 87, 0.28);
+  --bz-purple-soft:   rgba(217, 119, 87, 0.10);
+  --bz-gradient-brand:
+    linear-gradient(135deg, #b3603e 0%, #e8b89e 100%);
+
+  --bz-fg:            #2a1a0e;
+  --bz-fg-mid:        #5d4534;
+  --bz-fg-low:        #97836f;
+  --bz-fg-faint:      #d2c5b1;
+
+  --bz-border:        rgba(42, 26, 14, 0.10);
+  --bz-border-strong: rgba(42, 26, 14, 0.18);
+  --bz-border-brand:  rgba(217, 119, 87, 0.42);
+}
+
+/* ─── NOCTURNE — pure dark monochrome, single accent ───────────── */
+[data-theme="nocturne"] {
+  --bz-canvas:        #0c0c10;
+  --bz-panel:         #131318;
+  --bz-card:          #1a1a22;
+  --bz-raised:        #232330;
+  --bz-overlay:       rgba(8, 8, 12, 0.84);
+
+  --bz-purple-100:    #d8d8e2;
+  --bz-purple-300:    #b0b0c0;
+  --bz-purple-500:    #8a8aa0;
+  --bz-purple-700:    #4a4a5e;
+  --bz-purple-900:    #1f1f2c;
+  --bz-purple-glow:   rgba(176, 176, 192, 0.18);
+  --bz-purple-soft:   rgba(138, 138, 160, 0.08);
+  --bz-gradient-brand:
+    linear-gradient(135deg, #8a8aa0 0%, #d8d8e2 100%);
+
+  --bz-fg:            #f4f4f8;
+  --bz-fg-mid:        #b8b8c8;
+  --bz-fg-low:        #6a6a7a;
+  --bz-fg-faint:      #3a3a48;
+
+  --bz-border:        rgba(244, 244, 248, 0.05);
+  --bz-border-strong: rgba(244, 244, 248, 0.12);
+  --bz-border-brand:  rgba(216, 216, 226, 0.32);
+}
+
+/* ─── Reduced motion preference — disables non-essential animations
+   regardless of theme. Pulse, sweep, modal-in stay (they're how
+   loading states communicate); decorative motion stops. ────────── */
+@media (prefers-reduced-motion: reduce) {
+  :root {
+    --bz-dur-fast: 0ms;
+    --bz-dur-base: 0ms;
+    --bz-dur-slow: 0ms;
+  }
+  .bz-generating,
+  .bz-pulse-dot {
+    animation: none !important;
+  }
+}

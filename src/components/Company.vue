@@ -319,7 +319,7 @@ hr {
   position: absolute;
   width: 100% !important;
   height: 100% !important;
-  background: rgba(0, 0, 0, 0.55);
+  background: var(--bz-scrim-strong);
   z-index: -1;
   pointer-events: none;
 }
@@ -357,7 +357,7 @@ hr {
 .company-topbar h1 {
   font-size: 36px !important;
   margin: 0 !important;
-  color: #fff !important;
+  color: var(--bz-fg) !important;
   text-align: left !important;
   display: flex;
   align-items: center;
@@ -367,7 +367,7 @@ hr {
   /* keep the icon white — gradient applies only to the name text */
   -webkit-text-fill-color: initial;
   background: none;
-  color: #fff;
+  color: var(--bz-fg);
 }
 /* Apply the brand gradient to the company name (the text node only,
    not the icon — the wrapping <h1> would otherwise gradient-fill the
@@ -401,7 +401,7 @@ hr {
 .welcome-header h1 {
   font-size: 36px !important;
   margin: 0 !important;
-  color: #fff !important;
+  color: var(--bz-fg) !important;
   text-align: left !important;
   display: flex;
   align-items: center;
@@ -426,10 +426,10 @@ hr {
   gap: 0.5em;
   padding: 6px 12px;
   border-radius: 4px;
-  border: 1px solid rgba(255, 255, 255, 0.3);
+  border: 1px solid var(--bz-fg-faint);
   background: transparent;
   backdrop-filter: blur(32px);
-  color: rgba(255, 255, 255, 0.3);
+  color: var(--bz-fg-faint);
   cursor: pointer;
   transition: all 0.2s ease;
   font-family: "Fira Sans", sans-serif !important;
@@ -438,14 +438,14 @@ hr {
   white-space: nowrap;
 }
 .company-switcher__chip:hover {
-  background: rgba(97, 55, 142, 0.2);
-  border-color: rgba(255, 255, 255, 0.5);
-  color: rgba(255, 255, 255, 0.8);
+  background: var(--bz-purple-soft);
+  border-color: var(--bz-fg-low);
+  color: var(--bz-fg-mid);
 }
 .company-switcher__chip.is-active {
   color: rgba(255, 255, 255, 1) !important;
   border: 1px solid rgba(255, 255, 255, 1) !important;
-  background: rgba(97, 55, 142, 0.33) !important;
+  background: var(--bz-purple-soft) !important;
   backdrop-filter: blur(64px) !important;
 }
 .company-switcher__name {
@@ -456,9 +456,9 @@ hr {
   width: 8px; height: 8px; border-radius: 50%;
   display: inline-block;
 }
-.status-active { background: #48c78e; box-shadow: 0 0 6px #48c78e; }
-.status-paused { background: #ffe08a; box-shadow: 0 0 6px #ffe08a; }
-.status-dissolved { background: #f14668; box-shadow: 0 0 6px #f14668; }
+.status-active { background: var(--bz-emerald-500); box-shadow: 0 0 6px var(--bz-emerald-500); }
+.status-paused { background: var(--bz-warning); box-shadow: 0 0 6px var(--bz-warning); }
+.status-dissolved { background: var(--bz-danger); box-shadow: 0 0 6px var(--bz-danger); }
 
 .company-mission {
   color: rgba(255, 255, 255, 0.75) !important;
@@ -479,7 +479,7 @@ hr {
   margin-left: 0.7em;
   padding: 4px 12px;
   border-radius: 999px;
-  border: 1px solid rgba(255, 255, 255, 0.3);
+  border: 1px solid var(--bz-fg-faint);
   background: transparent;
   cursor: pointer;
   transition: all 0.18s ease;
@@ -493,16 +493,16 @@ hr {
   vertical-align: middle;
 }
 .company-demo-pill:hover {
-  background: rgba(97, 55, 142, 0.2);
-  border-color: rgba(255, 255, 255, 0.5);
-  -webkit-text-fill-color: #fff !important;
+  background: var(--bz-purple-soft);
+  border-color: var(--bz-fg-low);
+  -webkit-text-fill-color: var(--bz-fg) !important;
 }
 .company-demo-pill .material-symbols-outlined {
   font-size: 14px !important;
   -webkit-text-fill-color: rgba(255, 255, 255, 0.65) !important;
   background: none !important;
 }
-.company-demo-pill:hover .material-symbols-outlined { -webkit-text-fill-color: #fff !important; }
+.company-demo-pill:hover .material-symbols-outlined { -webkit-text-fill-color: var(--bz-fg) !important; }
 .company-demo-pill.is-on {
   background: linear-gradient(135deg, rgb(155, 109, 200), rgb(255, 153, 51)) !important;
   border-color: transparent !important;
@@ -523,7 +523,7 @@ hr {
   text-align: center;
   padding: 4em 3em !important;
   margin-top: 2em;
-  color: #fff;
+  color: var(--bz-fg);
   max-width: 760px;
   margin-left: auto;
   margin-right: auto;
@@ -536,14 +536,14 @@ hr {
 .company-welcome h2 {
   font-size: 42px !important;
   margin-bottom: 0.5em !important;
-  color: #fff !important;
+  color: var(--bz-fg) !important;
   text-align: center !important;
 }
 .company-welcome p {
   font-size: 18px !important;
   margin-bottom: 1em !important;
   text-align: center !important;
-  color: rgba(255, 255, 255, 0.85) !important;
+  color: var(--bz-fg) !important;
 }
 .welcome-features {
   display: grid;
@@ -558,11 +558,11 @@ hr {
   align-items: center;
   gap: 0.6em;
   font-size: 16px;
-  color: rgba(255, 255, 255, 0.85);
+  color: var(--bz-fg);
 }
 .welcome-feature .material-symbols-outlined {
   font-size: 24px;
-  color: #48c78e;
+  color: var(--bz-emerald-500);
   flex-shrink: 0;
 }
 .welcome-actions {
@@ -576,9 +576,9 @@ hr {
 /* ───────── Glass card (shared) ───────── */
 :deep(.models__activity--payouts) {
   padding: 4em;
-  border: 1px solid rgba(255, 255, 255, 0.1);
+  border: 1px solid var(--bz-border);
   backdrop-filter: blur(32px) !important;
   border-radius: 4px !important;
-  background: rgba(0, 0, 0, 0.25);
+  background: var(--bz-scrim);
 }
 </style>

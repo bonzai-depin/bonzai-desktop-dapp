@@ -17,13 +17,11 @@
               <span class="network-pill" :class="networkClass">
                 {{ networkConfig.label }} &middot; {{ networkConfig.standard }}
               </span>
-              <button
-                class="button is-danger is-small"
+              <BzCloseButton
+                size="md"
+                aria-label="Close mint dialog"
                 @click="handleClose"
-                title="Close"
-              >
-                <span class="material-symbols-outlined">close</span>
-              </button>
+              />
             </div>
           </div>
 
@@ -101,29 +99,29 @@
             <!-- Editable Fields (before minting) -->
             <div v-if="stage === 'ready'" class="mint-fields">
               <!-- Wallet not connected -->
-              <div v-if="!isWalletConnected" class="notification is-danger mb-4" style="background: rgba(241, 70, 104, 0.12); border: 1px solid rgba(241, 70, 104, 0.3);">
-                <p class="has-text-weight-bold has-text-danger fira-sans-condensed-black-italic">
-                  <span class="material-symbols-outlined mr-1" style="font-size: 18px; vertical-align: middle;">account_balance_wallet</span>
-                  Wallet Not Connected
-                </p>
-                <p class="has-text-white-ter" style="font-size: 13px; margin-top: 4px;">Connect your wallet to mint your content as a collectible.</p>
+              <div v-if="!isWalletConnected" class="bz-notice bz-notice--danger mb-4">
+                <span class="bz-notice__icon"><span class="material-symbols-outlined">account_balance_wallet</span></span>
+                <div class="bz-notice__body">
+                  <p class="bz-notice__title">Wallet not connected</p>
+                  <p class="bz-notice__text">Connect your wallet to mint your content as a collectible.</p>
+                </div>
               </div>
 
               <!-- Checking levels -->
-              <div v-else-if="isCheckingLevels" class="notification mb-4" style="background: rgba(255, 255, 255, 0.06); border: 1px solid rgba(255, 255, 255, 0.1);">
-                <p class="has-text-white fira-sans-condensed-black-italic">
-                  <span class="material-symbols-outlined mr-1" style="font-size: 18px; vertical-align: middle;">sync</span>
-                  Checking mint access...
-                </p>
+              <div v-else-if="isCheckingLevels" class="bz-notice mb-4">
+                <span class="bz-notice__icon"><span class="material-symbols-outlined rotating">sync</span></span>
+                <div class="bz-notice__body">
+                  <p class="bz-notice__title">Checking mint access&hellip;</p>
+                </div>
               </div>
 
               <!-- Level gate banner -->
-              <div v-else-if="!mintAccess.canMint" class="notification is-warning mb-4" style="background: rgba(255, 224, 138, 0.12); border: 1px solid rgba(255, 224, 138, 0.3);">
-                <p class="has-text-weight-bold has-text-warning fira-sans-condensed-black-italic">
-                  <span class="material-symbols-outlined mr-1" style="font-size: 18px; vertical-align: middle;">lock</span>
-                  {{ mintAccess.levelRequired }} Required
-                </p>
-                <p class="has-text-white-ter" style="font-size: 13px; margin-top: 4px;">{{ mintAccess.reason }}.</p>
+              <div v-else-if="!mintAccess.canMint" class="bz-notice bz-notice--warning mb-4">
+                <span class="bz-notice__icon"><span class="material-symbols-outlined">lock</span></span>
+                <div class="bz-notice__body">
+                  <p class="bz-notice__title">{{ mintAccess.levelRequired }} required</p>
+                  <p class="bz-notice__text">{{ mintAccess.reason }}.</p>
+                </div>
               </div>
 
               <div class="field mb-5">
@@ -149,15 +147,16 @@
               <hr />
               <div class="has-text-centered">
                 <button
-                  class="button is-warning is-large mt-4 mb-5"
+                  type="button"
+                  class="bz-btn bz-btn--primary bz-btn--lg mt-4 mb-5"
                   @click="startMint"
                   :disabled="isMinting || !mintAccess.canMint || isCheckingLevels || !isWalletConnected || !hasValidFields"
                 >
-                  <span class="material-symbols-outlined mr-2">token</span>
-                  <template v-if="!isWalletConnected">Connect Wallet to Mint</template>
-                  <template v-else-if="isCheckingLevels">Checking Access...</template>
-                  <template v-else-if="!hasValidFields">Enter a Title</template>
-                  <template v-else>Mint Collectible &middot; {{ networkConfig.fee }} {{ networkConfig.currency }}</template>
+                  <span class="material-symbols-outlined">token</span>
+                  <template v-if="!isWalletConnected">Connect wallet to mint</template>
+                  <template v-else-if="isCheckingLevels">Checking access&hellip;</template>
+                  <template v-else-if="!hasValidFields">Enter a title</template>
+                  <template v-else>Mint collectible &middot; {{ networkConfig.fee }} {{ networkConfig.currency }}</template>
                 </button>
               </div>
             </div>
@@ -190,8 +189,8 @@
               </progress>
               <p class="progress-message">{{ progressMessage }}</p>
               <div class="has-text-centered mt-4">
-                <button class="button is-danger is-small" @click="cancelMint">
-                  <span class="material-symbols-outlined mr-1" style="font-size: 16px;">close</span>
+                <button type="button" class="bz-btn bz-btn--destructive bz-btn--sm" @click="cancelMint">
+                  <span class="material-symbols-outlined">close</span>
                   Cancel
                 </button>
               </div>
@@ -202,13 +201,13 @@
               <div class="result-icon success">
                 <span
                   class="material-symbols-outlined"
-                  style="font-size: 48px; color: #48c78e"
+                  style="font-size: 48px; color: var(--bz-emerald-500)"
                 >
                   check_circle
                 </span>
               </div>
-              <h3 class="has-text-white has-text-centered mb-4">
-                Minted Successfully!
+              <h3 class="bz-h2 has-text-centered mb-4 fira-sans-condensed-black-italic">
+                Minted successfully
               </h3>
 
               <div class="result-details">
@@ -257,7 +256,9 @@
               </div>
 
               <button
-                class="button is-success is-fullwidth mt-4"
+                type="button"
+                class="bz-btn bz-btn--success bz-btn--lg mt-4"
+                style="width: 100%;"
                 @click="handleClose"
               >
                 Done
@@ -266,19 +267,20 @@
 
             <!-- Error -->
             <div v-else-if="stage === 'error'" class="mint-error">
-              <div class="notification is-danger error">
-                <span class="material-symbols-outlined" style="font-size: 48px">
-                  error
-                </span>
-                <p>There was an error during the minting of your collectible, please retry.</p>
+              <div class="bz-notice bz-notice--danger bz-notice--stacked">
+                <span class="bz-notice__icon"><span class="material-symbols-outlined">error</span></span>
+                <div class="bz-notice__body">
+                  <p class="bz-notice__title">Mint failed</p>
+                  <p class="bz-notice__text">There was an error during the minting of your collectible. Please retry.</p>
+                </div>
               </div>
               <hr />
               <div class="error-actions">
-                <button class="button is-warning mr-3" @click="startMint">
-                  <span class="material-symbols-outlined mr-1">refresh</span>
+                <button type="button" class="bz-btn bz-btn--primary mr-3" @click="startMint">
+                  <span class="material-symbols-outlined">refresh</span>
                   Retry
                 </button>
-                <button class="button is-danger" @click="handleClose">
+                <button type="button" class="bz-btn bz-btn--destructive" @click="handleClose">
                   Cancel
                 </button>
               </div>
@@ -295,11 +297,11 @@
           <span class="material-symbols-outlined wallet-sign-icon pulse">
             account_balance_wallet
           </span>
-          <h3 class="has-text-white fira-sans-condensed-black-italic mt-3 mb-2">
-            Wallet Confirmation Required
+          <h3 class="bz-h2 fira-sans-condensed-black-italic mt-3 mb-2">
+            Wallet confirmation required
           </h3>
-          <p class="has-text-grey-light" style="font-size: 14px;">
-            Please confirm the transaction in your wallet (MetaMask / WalletConnect).
+          <p class="bz-body" style="color: var(--bz-fg-mid);">
+            Confirm the transaction in your wallet (MetaMask / WalletConnect).
           </p>
         </div>
       </div>
@@ -309,6 +311,7 @@
 
 <script setup>
 import { ref, computed, watch, onBeforeUnmount } from "vue";
+import BzCloseButton from "./BzCloseButton.vue";
 import { mintStore } from "../stores/mintStore.js";
 import { mintContent, extractUserCode, buildInteractive3DViewer } from "../services/contentNFT.service.js";
 import { canMintContentType, checkAllLevels } from "../services/level.service.js";
@@ -588,7 +591,7 @@ function handleClose() {
   width: 90%;
   max-width: 640px;
   max-height: 90vh;
-  border: 1px solid rgba(255, 255, 255, 0.1);
+  border: 1px solid var(--bz-border);
   border-radius: 16px;
   overflow-y: auto;
   overflow-x: hidden;
@@ -599,8 +602,8 @@ function handleClose() {
   align-items: center;
   justify-content: space-between;
   padding: 16px 20px;
-  background: rgba(0, 0, 0, 0.3);
-  border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+  background: var(--bz-scrim);
+  border-bottom: 1px solid var(--bz-border);
 }
 
 .mint-modal-header h2 {
@@ -655,7 +658,7 @@ hr {
   border-radius: 4px !important;
   overflow: hidden;
   background: rgba(255, 255, 255, 0.03);
-  border: 1px solid rgba(255, 255, 255, 0.06);
+  border: 1px solid var(--bz-canvas);
 }
 
 .preview-image {
@@ -674,7 +677,7 @@ hr {
 .preview-shade {
   position: absolute;
   inset: 0;
-  background: rgba(0, 0, 0, 0.6);
+  background: var(--bz-scrim-deep);
   z-index: 1;
   pointer-events: none;
 }
@@ -718,7 +721,7 @@ hr {
 }
 
 .preview-audio .preview-type {
-  color: #fff;
+  color: var(--bz-fg);
   font-size: 13px;
   text-transform: uppercase;
   margin-bottom: 12px;
@@ -768,11 +771,11 @@ hr {
   position: absolute;
   top: 8px;
   right: 10px;
-  color: #fff;
+  color: var(--bz-fg);
   font-size: 11px;
   text-transform: uppercase;
   opacity: 0.7;
-  background: rgba(0, 0, 0, 0.5);
+  background: var(--bz-scrim-strong);
   padding: 2px 8px;
   border-radius: 3px;
 }
@@ -798,11 +801,11 @@ hr {
   position: absolute;
   top: 8px;
   right: 10px;
-  color: #fff;
+  color: var(--bz-fg);
   font-size: 11px;
   text-transform: uppercase;
   opacity: 0.7;
-  background: rgba(0, 0, 0, 0.5);
+  background: var(--bz-scrim-strong);
   padding: 2px 8px;
   border-radius: 3px;
   z-index: 1;
@@ -815,7 +818,7 @@ hr {
   margin-bottom: auto;
   margin-top: 0;
   padding-top: 5%;
-  filter: drop-shadow(0 2px 8px rgba(0, 0, 0, 0.5));
+  filter: drop-shadow(0 2px 8px var(--bz-scrim-strong));
 }
 
 .preview-text {
@@ -847,7 +850,7 @@ hr {
   max-height: 45%;
   width: auto;
   z-index: 2;
-  filter: drop-shadow(0 2px 8px rgba(0, 0, 0, 0.5));
+  filter: drop-shadow(0 2px 8px var(--bz-scrim-strong));
 }
 
 .preview-text .text-snippet {
@@ -856,7 +859,7 @@ hr {
   left: 50%;
   transform: translate(-50%, 0);
   width: 80%;
-  color: rgba(255, 255, 255, 0.85);
+  color: var(--bz-fg);
   font-size: 13px;
   line-height: 1.5;
   text-align: center;
@@ -870,7 +873,7 @@ hr {
   bottom: 12px;
   left: 50%;
   transform: translateX(-50%);
-  color: #fff;
+  color: var(--bz-fg);
   font-size: 13px;
   text-transform: uppercase;
   opacity: 0.8;
@@ -890,7 +893,7 @@ hr {
   align-items: center;
   justify-content: center;
   cursor: pointer;
-  color: #fff;
+  color: var(--bz-fg);
   z-index: 3;
   transition: opacity 0.2s, transform 0.2s;
 }
@@ -924,7 +927,7 @@ hr {
   align-items: center;
   justify-content: center;
   padding: 24px;
-  color: rgba(255, 255, 255, 0.5);
+  color: var(--bz-fg-low);
 }
 
 .preview-type {
@@ -947,16 +950,16 @@ hr {
 
 .mint-fields .input,
 .mint-fields .textarea {
-  background: rgba(255, 255, 255, 0.06);
-  border: 1px solid rgba(255, 255, 255, 0.12);
-  color: #fff;
+  background: var(--bz-canvas);
+  border: 1px solid var(--bz-border-strong);
+  color: var(--bz-fg);
   border-radius: 4px;
   resize: none;
 }
 
 .mint-fields .input:focus,
 .mint-fields .textarea:focus {
-  border-color: rgba(255, 255, 255, 0.3);
+  border-color: var(--bz-fg-faint);
   box-shadow: none;
 }
 
@@ -966,18 +969,18 @@ hr {
   align-items: center;
   justify-content: space-between;
   padding: 12px 16px;
-  background: rgba(255, 255, 255, 0.04);
+  background: var(--bz-canvas);
   border-radius: 8px;
-  border: 1px solid rgba(255, 255, 255, 0.08);
+  border: 1px solid var(--bz-card);
 }
 
 .fee-label {
-  color: rgba(255, 255, 255, 0.6);
+  color: var(--bz-fg-mid);
   font-size: 13px;
 }
 
 .fee-amount {
-  color: #ffe08a;
+  color: var(--bz-warning);
   font-size: 16px;
 }
 
@@ -1010,16 +1013,16 @@ hr {
 }
 
 .progress-stage.done .stage-icon {
-  color: #48c78e;
+  color: var(--bz-emerald-500);
 }
 
 .stage-icon {
   font-size: 24px;
-  color: rgba(255, 255, 255, 0.8);
+  color: var(--bz-fg-mid);
 }
 
 .progress-stage.active .stage-icon {
-  color: #ffe08a;
+  color: var(--bz-warning);
   animation: pulse-icon 1.5s ease-in-out infinite;
 }
 
@@ -1035,7 +1038,7 @@ hr {
 
 .stage-label {
   font-size: 11px;
-  color: rgba(255, 255, 255, 0.7);
+  color: var(--bz-fg-mid);
 }
 
 .progress {
@@ -1045,7 +1048,7 @@ hr {
 }
 
 .progress-message {
-  color: rgba(255, 255, 255, 0.6);
+  color: var(--bz-fg-mid);
   font-size: 13px;
 }
 
@@ -1069,7 +1072,7 @@ hr {
   justify-content: space-between;
   align-items: center;
   padding: 10px 0;
-  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+  border-bottom: 1px solid var(--bz-card);
 }
 
 .result-details .detail-row:last-child {
@@ -1077,12 +1080,12 @@ hr {
 }
 
 .result-details .label {
-  color: rgba(255, 255, 255, 0.5);
+  color: var(--bz-fg-low);
   font-size: 12px;
 }
 
 .result-details .value {
-  color: #fff;
+  color: var(--bz-fg);
   font-size: 13px;
   font-weight: 600;
 }
@@ -1106,7 +1109,7 @@ hr {
 
 /* Error */
 .error-message {
-  color: #f14668;
+  color: var(--bz-danger);
   margin: 12px 0;
   font-size: 14px;
 }
@@ -1133,7 +1136,7 @@ hr {
 .wallet-sign-card {
   text-align: center;
   padding: 40px 48px;
-  background: rgba(255, 255, 255, 0.04);
+  background: var(--bz-canvas);
   border: 1px solid rgba(255, 224, 138, 0.25);
   border-radius: 20px;
   max-width: 400px;
@@ -1141,7 +1144,7 @@ hr {
 
 .wallet-sign-icon {
   font-size: 56px;
-  color: #ffe08a;
+  color: var(--bz-warning);
 }
 
 .wallet-sign-icon.pulse {

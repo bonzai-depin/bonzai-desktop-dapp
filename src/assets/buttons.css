@@ -1,0 +1,165 @@
+/**
+ * BonzAI button + icon-button system
+ * ──────────────────────────────────
+ * Global, unscoped — these are primitives, every component reaches
+ * for them. Components that need a tweak should add a modifier class
+ * (e.g., `.bz-btn.my-special-cta`) rather than re-declaring `.bz-btn`
+ * in their own scoped block.
+ *
+ * Variants:
+ *   .bz-btn              ghost-by-default, used for secondary CTAs
+ *   .bz-btn--primary     brand-gradient, the one moment per turn
+ *   .bz-btn--ghost       canvas-flat, used inside busy clusters
+ *   .bz-btn--success     emerald, used for "go" / "claim" / "registered"
+ *   .bz-btn--warning     amber, used for "needs auth" / "danger ahead"
+ *   .bz-btn--destructive danger ramp, used for "delete" / "revoke"
+ *   .bz-btn--running     marker for buttons currently running an op
+ *
+ * Sizes follow the canonical 36px height. Use modifiers --sm (28px),
+ * --lg (44px) sparingly — most clusters look better staying at 36px.
+ *
+ * Icon button:
+ *   .bz-iconbtn          square 36px button for icon-only actions
+ */
+
+.bz-btn {
+  height: 36px;
+  padding: 0 var(--bz-space-4);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--bz-space-2);
+  background: transparent;
+  border: 1px solid var(--bz-border-strong);
+  color: var(--bz-fg);
+  border-radius: var(--bz-r);
+  font-family: var(--bz-font-body);
+  font-size: var(--bz-size-body);
+  font-weight: 400;
+  cursor: pointer;
+  position: relative;
+  overflow: hidden;
+  text-decoration: none;
+  white-space: nowrap;
+  transition:
+    background var(--bz-dur-fast) var(--bz-ease-out),
+    border-color var(--bz-dur-fast) var(--bz-ease-out),
+    color var(--bz-dur-fast) var(--bz-ease-out),
+    filter var(--bz-dur-fast) var(--bz-ease-out);
+}
+.bz-btn:hover:not(:disabled) {
+  background: var(--bz-raised);
+  border-color: var(--bz-purple-300);
+}
+.bz-btn:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+.bz-btn .material-symbols-outlined {
+  font-size: 18px !important;
+}
+
+/* PRIMARY — the brand gradient. One per surface; reach for it for the
+   *primary* action of the screen and never twice in a row. */
+.bz-btn--primary {
+  background: var(--bz-gradient-brand);
+  border-color: transparent;
+  color: #fff;
+}
+.bz-btn--primary:hover:not(:disabled) {
+  filter: brightness(1.08);
+  border-color: transparent;
+  background: var(--bz-gradient-brand);
+}
+
+/* GHOST — same shape, recessed canvas tint. Use inside busy CTA rows. */
+.bz-btn--ghost {
+  background: var(--bz-canvas);
+  border-color: var(--bz-border);
+}
+.bz-btn--ghost:hover:not(:disabled) {
+  background: var(--bz-raised);
+  border-color: var(--bz-border-strong);
+  color: var(--bz-fg);
+}
+
+/* STATUS variants — reserved for state, never decoration. */
+.bz-btn--success {
+  background: var(--bz-emerald-500);
+  border-color: var(--bz-emerald-500);
+  color: #fff;
+}
+.bz-btn--success:hover:not(:disabled) {
+  filter: brightness(1.06);
+  background: var(--bz-emerald-500);
+  border-color: var(--bz-emerald-500);
+}
+.bz-btn--warning {
+  background: var(--bz-warning);
+  border-color: var(--bz-warning);
+  color: #1a1006;
+}
+.bz-btn--warning:hover:not(:disabled) {
+  filter: brightness(1.06);
+  background: var(--bz-warning);
+  border-color: var(--bz-warning);
+}
+.bz-btn--destructive {
+  background: transparent;
+  border-color: var(--bz-danger-soft);
+  color: var(--bz-danger);
+}
+.bz-btn--destructive:hover:not(:disabled) {
+  background: var(--bz-danger-soft);
+  border-color: var(--bz-danger);
+  color: var(--bz-danger);
+}
+
+/* RUNNING — leaves room at the bottom edge for a 2px progress bar. */
+.bz-btn--running { padding-bottom: 4px; }
+.bz-btn__progress {
+  position: absolute;
+  left: 0; right: 0; bottom: 0;
+  height: 2px;
+  border-radius: 0 0 var(--bz-r) var(--bz-r);
+  background: rgba(255, 255, 255, 0.4);
+  overflow: hidden;
+}
+.bz-btn__progress::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.6), transparent);
+  animation: bz-gradient-sweep 1.4s linear infinite;
+}
+
+/* Size modifiers — use sparingly. */
+.bz-btn--sm { height: 28px; padding: 0 var(--bz-space-3); font-size: var(--bz-size-meta); }
+.bz-btn--sm .material-symbols-outlined { font-size: 16px !important; }
+.bz-btn--lg { height: 44px; padding: 0 var(--bz-space-5); font-size: var(--bz-size-h3); }
+
+/* ─── Icon-only button ───────────────────────────────────────────── */
+.bz-iconbtn {
+  width: 36px; height: 36px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: transparent;
+  border: 1px solid var(--bz-border);
+  color: var(--bz-fg-mid);
+  border-radius: var(--bz-r);
+  cursor: pointer;
+  transition: background var(--bz-dur-fast), color var(--bz-dur-fast);
+}
+.bz-iconbtn:hover {
+  background: var(--bz-raised);
+  color: var(--bz-fg);
+  border-color: var(--bz-border-strong);
+}
+.bz-iconbtn:disabled {
+  cursor: not-allowed;
+  opacity: 0.5;
+}
+.bz-iconbtn .material-symbols-outlined { font-size: 18px !important; }
+.bz-iconbtn--sm { width: 28px; height: 28px; }
+.bz-iconbtn--sm .material-symbols-outlined { font-size: 14px !important; }

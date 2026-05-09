@@ -5583,7 +5583,7 @@ export default {
   position: absolute;
   bottom: 20px;
   right: 20px;
-  background: rgba(0, 0, 0, 0.7);
+  background: var(--bz-scrim-deep);
   padding: 10px 16px;
   border-radius: 4px;
   backdrop-filter: blur(16px);

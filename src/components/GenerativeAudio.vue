@@ -913,24 +913,20 @@
                   </div>
                 </div>
 
-                <!-- PROMPT (hidden for music mode - uses explicit generate button) -->
-                <form v-if="mode !== 'music'" ref="promptForm" @submit.prevent>
-                  <input
-                    ref="promptInput"
-                    class="input is-large is-fullwidth"
-                    type="text"
-                    :placeholder="promptPlaceholder"
-                    v-model="form.prompt"
-                    @keyup.enter="
-                      canGenerateWithAccess && sendMessage(form.prompt)
-                    "
-                    :disabled="isLoading || !canGenerateWithAccess"
-                  />
-                  <button
-                    class="button chat is-loading is-outlined is-info is-large is-fullwidth"
-                    v-if="isLoading"
-                  ></button>
-                </form>
+                <!-- PROMPT — Milestone 6 unified <GenerativeInput>.
+                     Hidden in music mode where the dedicated lyrics
+                     editor + explicit Generate button take over. -->
+                <GenerativeInput
+                  v-if="mode !== 'music'"
+                  v-model="form.prompt"
+                  :placeholder="promptPlaceholder"
+                  submit-label="Generate"
+                  running-label="Synthesising"
+                  :running="isLoading"
+                  :disabled="!canGenerateWithAccess"
+                  shortcut-hint="⌘⏎"
+                  @submit="sendMessage(form.prompt)"
+                />
 
                 <hr class="mt-5" />
 
@@ -1040,44 +1036,10 @@
                       </p>
 
                       <hr />
-
-                      <button
-                        class="button is-medium is-success copy is-pulled-right ml-5 mr-0 p-0 pl-1 pr-4"
-                        @click="downloadAudio(inference._originalIndex)"
-                      >
-                        <span class="material-symbols-outlined is-size-2 mr-1">
-                          save
-                        </span>
-                        Download
-                      </button>
-                      <button
-                        class="button is-medium is-danger is-pulled-right ml-2 p-0 pl-1 pr-1"
-                        @click="removeInference(inference._originalIndex)"
-                        title="Remove this result"
-                      >
-                        <span class="material-symbols-outlined is-size-2">
-                          delete
-                        </span>
-                      </button>
-                      <button
-                        class="button is-medium is-success copy is-pulled-left p-0 pl-1 pr-1"
-                        @click="restoreFromHistory(inference)"
-                        title="Restore all parameters from this generation"
-                      >
-                        <span class="material-symbols-outlined is-size-2">
-                          content_copy
-                        </span>
-                      </button>
-                      <button
-                        class="button is-medium is-warning copy is-pulled-left ml-5 pl-2"
-                        @click="openMint(inference)"
-                        :disabled="!!inference.nft"
-                      >
-                        <span class="material-symbols-outlined is-size-2 mr-1">
-                          {{ inference.nft ? "check_circle" : "token" }}
-                        </span>
-                        {{ inference.nft ? "Minted" : "Mint" }}
-                      </button>
+                      <GenerativeActions
+                        :actions="actionsFor(inference)"
+                        @action="(id) => handleAction(id, inference)"
+                      />
                     </div>
                   </li>
                 </ol>
@@ -1136,6 +1098,8 @@ import {
 } from "../stores/generationStore";
 import AccessRequirements from "./AccessRequirements.vue";
 import MintModal from "./MintModal.vue";
+import GenerativeActions from "./generative/GenerativeActions.vue";
+import GenerativeInput from "./generative/GenerativeInput.vue";
 import { requestOpenNetworkModal } from "../services/level.service.js";
 import { addAudioInference } from "../stores/inferenceStore.js";
 
@@ -1152,6 +1116,8 @@ export default {
   components: {
     AccessRequirements,
     MintModal,
+    GenerativeActions,
+    GenerativeInput,
   },
   setup() {
     const { inferenceRequest } = useInferenceRouter();
@@ -2891,6 +2857,33 @@ Remember: 6-10 syllables per line, use all appropriate structure tags. Write in 
       persistInferences([...inferences.value]);
     };
 
+    // Unified action descriptors fed into <GenerativeActions>.
+    // Replaces 4 inline Bulma buttons in the audio history items.
+    const actionsFor = (inference) => {
+      const hasAudio = !!inference?.answer?.data?.audio_path;
+      const minted = !!inference?.nft;
+      return [
+        { id: "download", icon: "save", label: "Download", variant: "primary", disabled: !hasAudio },
+        { id: "restore",  icon: "content_copy", label: "Reuse",
+          title: "Restore all parameters from this generation", variant: "default" },
+        { id: "mint",
+          icon: minted ? "check_circle" : "token",
+          label: minted ? "Minted" : "Mint",
+          variant: minted ? "success" : "default",
+          disabled: minted },
+        { id: "delete", icon: "delete", label: "Delete", variant: "destructive",
+          title: "Remove this result" },
+      ];
+    };
+    const handleAction = (id, inference) => {
+      switch (id) {
+        case "download": downloadAudio(inference._originalIndex); break;
+        case "restore":  restoreFromHistory(inference); break;
+        case "mint":     openMint(inference); break;
+        case "delete":   removeInference(inference._originalIndex); break;
+      }
+    };
+
     const clearHistory = async () => {
       inferences.value = [];
       hasCopy.value = [];
@@ -3051,6 +3044,8 @@ Remember: 6-10 syllables per line, use all appropriate structure tags. Write in 
       setCopied,
       downloadAudio,
       removeInference,
+      actionsFor,
+      handleAction,
       clearHistory,
       exportHistory,
       importHistory,
@@ -3161,29 +3156,29 @@ Remember: 6-10 syllables per line, use all appropriate structure tags. Write in 
   overflow-y: auto;
   padding: 6em;
   height: 100vh;
-  background: rgba(0, 0, 0, 0.5);
+  background: var(--bz-scrim-strong);
 }
 .models__activity--payouts {
   padding: 4em;
-  border: 1px solid rgba(255, 255, 255, 0.1);
+  border: 1px solid var(--bz-border);
   backdrop-filter: blur(32px);
   border-radius: 4px !important;
 }
 .models__activity--payouts h2 {
   font-size: 48px;
-  color: #fff;
+  color: var(--bz-fg);
   text-align: right;
 }
 h1 {
   margin-top: 0 !important;
   font-size: 64px;
-  color: #fff;
+  color: var(--bz-fg);
   text-align: right;
 }
 p {
   margin-bottom: 1em;
   font-size: 24px;
-  color: #fff;
+  color: var(--bz-fg);
   text-align: justify;
   font-family: "Fira Sans", sans-serif;
   font-weight: 100;
@@ -3194,7 +3189,7 @@ div.question {
   margin-top: 2em !important;
   margin-bottom: 1em !important;
   font-weight: 700;
-  background-color: rgba(255, 255, 255, 0.1);
+  background-color: var(--bz-border);
   box-shadow: none;
   border-radius: 4px;
   backdrop-filter: blur(26px);
@@ -3210,7 +3205,7 @@ div.question {
   width: 100%;
   height: 40px;
   border-radius: 4px;
-  /* background: rgba(97, 55, 142, 0.3); */
+  /* background: var(--bz-purple-soft); */
 }
 
 .audio-player::-webkit-media-controls-panel {
@@ -3221,7 +3216,7 @@ div.question {
   font-family: "Fira Sans Condensed", sans-serif;
   font-weight: 600;
   font-size: 14px;
-  color: rgba(255, 255, 255, 0.8);
+  color: var(--bz-fg-mid);
   margin-top: 4px;
 }
 .audio-meta {
@@ -3233,7 +3228,7 @@ div.question {
 }
 .prompt-text {
   font-size: 16px !important;
-  color: rgba(255, 255, 255, 0.7);
+  color: var(--bz-fg-mid);
   display: flex;
   align-items: center;
 }
@@ -3259,13 +3254,13 @@ hr {
 }
 .input,
 .textarea {
-  color: #fff;
-  background: rgba(255, 255, 255, 0.1);
+  color: var(--bz-fg);
+  background: var(--bz-border);
   box-shadow: none !important;
   transition: 200ms ease-in;
 }
 ::placeholder {
-  color: rgba(255, 255, 255, 0.1) !important;
+  color: var(--bz-border) !important;
   opacity: 1 !important;
 }
 .button.chat.is-loading {
@@ -3282,8 +3277,8 @@ input[type="radio"] {
 }
 input[type="radio"] + label {
   padding: 3px 12px 9px;
-  color: rgba(255, 255, 255, 0.3) !important;
-  border: 1px solid rgba(255, 255, 255, 0.3);
+  color: var(--bz-fg-faint) !important;
+  border: 1px solid var(--bz-fg-faint);
   border-radius: 4px;
   cursor: pointer;
   transition: all 0.2s ease;
@@ -3295,7 +3290,7 @@ input[type="radio"] + label.is-disabled {
 input[type="radio"]:checked + label {
   color: rgba(255, 255, 255, 1) !important;
   border: 1px solid rgba(255, 255, 255, 1) !important;
-  background: rgba(97, 55, 142, 0.33) !important;
+  background: var(--bz-purple-soft) !important;
   backdrop-filter: blur(64px) !important;
 }
 
@@ -3305,8 +3300,8 @@ input.music-toggle[type="checkbox"] {
 }
 input.music-toggle[type="checkbox"] + label {
   padding: 3px 12px 9px;
-  color: rgba(255, 255, 255, 0.3) !important;
-  border: 1px solid rgba(255, 255, 255, 0.3);
+  color: var(--bz-fg-faint) !important;
+  border: 1px solid var(--bz-fg-faint);
   border-radius: 4px;
   cursor: pointer;
   transition: all 0.2s ease;
@@ -3314,26 +3309,26 @@ input.music-toggle[type="checkbox"] + label {
 input.music-toggle[type="checkbox"]:checked + label {
   color: rgba(255, 255, 255, 1) !important;
   border: 1px solid rgba(255, 255, 255, 1) !important;
-  background: rgba(97, 55, 142, 0.33) !important;
+  background: var(--bz-purple-soft) !important;
   backdrop-filter: blur(64px) !important;
 }
 .select.is-dark select {
-  background: rgba(255, 255, 255, 0.1);
-  border-color: rgba(255, 255, 255, 0.3);
+  background: var(--bz-border);
+  border-color: var(--bz-fg-faint);
   height: 48px;
-  color: #fff;
+  color: var(--bz-fg);
 }
 .select.is-dark select:hover {
-  border-color: rgba(255, 255, 255, 0.5);
+  border-color: var(--bz-fg-low);
 }
 .file-label {
   width: 100%;
 }
 .file-cta,
 .file-name {
-  background: rgba(255, 255, 255, 0.1);
-  border-color: rgba(255, 255, 255, 0.3);
-  color: #fff;
+  background: var(--bz-border);
+  border-color: var(--bz-fg-faint);
+  color: var(--bz-fg);
 }
 .file-name {
   max-width: none;
@@ -3346,7 +3341,7 @@ input.music-toggle[type="checkbox"]:checked + label {
   -webkit-appearance: none;
   appearance: none;
   height: 4px;
-  background: rgba(255, 255, 255, 0.3);
+  background: var(--bz-fg-faint);
   border-radius: 2px;
   cursor: pointer;
 }
@@ -3360,8 +3355,8 @@ input.music-toggle[type="checkbox"]:checked + label {
   cursor: pointer;
 }
 .tag.is-dark {
-  background: rgba(0, 0, 0, 0.5);
-  color: #fff;
+  background: var(--bz-scrim-strong);
+  color: var(--bz-fg);
 }
 .tag.is-warning {
   background: rgba(255, 221, 87, 0.8);
@@ -3389,10 +3384,10 @@ ol.chat li {
 }
 .notification.is-warning.is-light {
   background: rgba(255, 221, 87, 0.15);
-  color: #fff;
+  color: var(--bz-fg);
 }
 .label.has-text-white {
-  color: #fff !important;
+  color: var(--bz-fg) !important;
 }
 
 /* Fade-in animation for history items */
@@ -3424,23 +3419,23 @@ ol.chat li {
   width: 48px;
   height: 48px;
   border-radius: 50%;
-  background: rgba(97, 55, 142, 0.9);
-  border: 2px solid rgba(255, 255, 255, 0.3);
-  color: #fff;
+  background: var(--bz-purple-500);
+  border: 2px solid var(--bz-fg-faint);
+  color: var(--bz-fg);
   cursor: pointer;
   display: flex;
   align-items: center;
   justify-content: center;
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+  box-shadow: 0 4px 12px var(--bz-scrim);
   transition: all 0.2s ease;
   z-index: 100;
   animation: fadeInUp 0.3s ease-out;
 }
 
 .scroll-to-top-btn:hover {
-  background: rgba(97, 55, 142, 1);
+  background: var(--bz-purple-500);
   transform: translateY(-2px);
-  box-shadow: 0 6px 16px rgba(0, 0, 0, 0.4);
+  box-shadow: 0 6px 16px var(--bz-scrim);
 }
 
 .scroll-to-top-btn .material-symbols-outlined {
@@ -3468,8 +3463,8 @@ ol.chat li {
    ══════════════════════════════════════════════════════════════ */
 
 .music-section {
-  background: rgba(255, 255, 255, 0.05);
-  border: 1px solid rgba(255, 255, 255, 0.1);
+  background: var(--bz-canvas);
+  border: 1px solid var(--bz-border);
   border-radius: 8px;
   padding: 1rem;
 }
@@ -3480,11 +3475,11 @@ ol.chat li {
   gap: 0.5rem;
   margin-bottom: 1rem;
   padding-bottom: 0.5rem;
-  border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+  border-bottom: 1px solid var(--bz-border);
   font-family: "Fira Sans Condensed", sans-serif;
   font-weight: 700;
   font-size: 14px;
-  color: rgba(255, 255, 255, 0.9);
+  color: var(--bz-fg);
   text-transform: uppercase;
   letter-spacing: 1px;
 }
@@ -3557,7 +3552,7 @@ ol.chat li {
 
 .structure-tags-help .help-label {
   font-size: 11px;
-  color: rgba(255, 255, 255, 0.5);
+  color: var(--bz-fg-low);
   margin-right: 4px;
 }
 
@@ -3570,7 +3565,7 @@ ol.chat li {
 }
 
 .structure-tags-help .tag:hover {
-  background: rgba(97, 55, 142, 0.6) !important;
+  background: var(--bz-border-brand) !important;
   transform: scale(1.05);
 }
 
@@ -3591,7 +3586,7 @@ ol.chat li {
   min-width: 80px;
   font-size: 11px;
   font-weight: 600;
-  color: rgba(255, 255, 255, 0.6);
+  color: var(--bz-fg-mid);
   text-transform: uppercase;
   letter-spacing: 0.5px;
   padding-top: 4px;
@@ -3648,14 +3643,14 @@ ol.chat li {
   /* Deep 3D box shadow stack */
   box-shadow:
     /* Inner top-left highlight (convex surface) */
-    inset 3px 3px 6px rgba(255, 255, 255, 0.12),
+    inset 3px 3px 6px var(--bz-border-strong),
     /* Inner bottom-right shadow (depth) */ inset -3px -3px 8px
-      rgba(0, 0, 0, 0.3),
-    /* Inner top edge shine */ inset 0 2px 4px rgba(255, 255, 255, 0.08),
-    /* Inner bottom shadow well */ inset 0 -4px 8px rgba(0, 0, 0, 0.2),
-    /* Outer elevation shadow */ 0 4px 8px rgba(0, 0, 0, 0.35),
-    /* Outer soft ambient */ 0 2px 4px rgba(0, 0, 0, 0.2),
-    /* Base contact shadow */ 0 1px 2px rgba(0, 0, 0, 0.15);
+      var(--bz-scrim),
+    /* Inner top edge shine */ inset 0 2px 4px var(--bz-card),
+    /* Inner bottom shadow well */ inset 0 -4px 8px var(--bz-scrim-soft),
+    /* Outer elevation shadow */ 0 4px 8px var(--bz-scrim),
+    /* Outer soft ambient */ 0 2px 4px var(--bz-scrim-soft),
+    /* Base contact shadow */ 0 1px 2px var(--bz-scrim-soft);
 }
 
 /* 3D rim highlight pseudo-element */
@@ -3667,9 +3662,9 @@ ol.chat li {
   background: transparent;
   border: 1px solid transparent;
   border-top-color: rgba(255, 255, 255, 0.18);
-  border-left-color: rgba(255, 255, 255, 0.1);
-  border-bottom-color: rgba(0, 0, 0, 0.15);
-  border-right-color: rgba(0, 0, 0, 0.1);
+  border-left-color: var(--bz-border);
+  border-bottom-color: var(--bz-scrim-soft);
+  border-right-color: var(--bz-scrim-soft);
   pointer-events: none;
 }
 
@@ -3681,7 +3676,7 @@ ol.chat li {
   border-radius: 3px;
   background: linear-gradient(
     180deg,
-    rgba(255, 255, 255, 0.05) 0%,
+    var(--bz-canvas) 0%,
     transparent 40%
   );
   pointer-events: none;
@@ -3691,13 +3686,13 @@ ol.chat li {
 .dimension-tags .tag:hover {
   transform: translateY(-2px) scale(1.03);
   box-shadow:
-    inset 3px 3px 6px rgba(255, 255, 255, 0.15),
-    inset -3px -3px 8px rgba(0, 0, 0, 0.25),
-    inset 0 2px 4px rgba(255, 255, 255, 0.1),
-    inset 0 -4px 8px rgba(0, 0, 0, 0.15),
-    0 8px 16px rgba(0, 0, 0, 0.4),
-    0 4px 8px rgba(0, 0, 0, 0.25),
-    0 2px 4px rgba(0, 0, 0, 0.15);
+    inset 3px 3px 6px var(--bz-border-strong),
+    inset -3px -3px 8px var(--bz-scrim),
+    inset 0 2px 4px var(--bz-border),
+    inset 0 -4px 8px var(--bz-scrim-soft),
+    0 8px 16px var(--bz-scrim),
+    0 4px 8px var(--bz-scrim),
+    0 2px 4px var(--bz-scrim-soft);
 }
 
 /* Active/pressed - pushed in 3D effect */
@@ -3705,10 +3700,10 @@ ol.chat li {
   transform: translateY(2px) scale(0.96);
   box-shadow:
     /* Inverted for pressed-in look */
-    inset -2px -2px 4px rgba(255, 255, 255, 0.08),
-    inset 4px 4px 10px rgba(0, 0, 0, 0.4),
-    inset 0 4px 8px rgba(0, 0, 0, 0.3),
-    0 1px 2px rgba(0, 0, 0, 0.2);
+    inset -2px -2px 4px var(--bz-card),
+    inset 4px 4px 10px var(--bz-scrim),
+    inset 0 4px 8px var(--bz-scrim),
+    0 1px 2px var(--bz-scrim-soft);
 }
 
 /* ─────────────────────────────────────────────────────────────────────────────
@@ -3734,9 +3729,9 @@ ol.chat li {
 .dimension-tags .tag.is-info {
   background-color: rgba(255, 94, 98, 0.55);
   border: 1px solid rgba(255, 150, 150, 0.5);
-  color: #fff;
+  color: var(--bz-fg);
   text-shadow:
-    0 1px 3px rgba(0, 0, 0, 0.6),
+    0 1px 3px var(--bz-scrim-deep),
     0 0 8px rgba(255, 94, 98, 0.5);
   box-shadow:
     /* 3D inner shading with color */
@@ -3748,7 +3743,7 @@ ol.chat li {
     0 0 30px rgba(255, 94, 98, 0.4),
     0 0 45px rgba(255, 94, 98, 0.25),
     0 0 60px rgba(255, 94, 98, 0.15),
-    /* Drop shadow */ 0 4px 8px rgba(0, 0, 0, 0.3);
+    /* Drop shadow */ 0 4px 8px var(--bz-scrim);
 }
 
 .dimension-tags .tag.is-info:hover {
@@ -3762,7 +3757,7 @@ ol.chat li {
     0 0 40px rgba(255, 94, 98, 0.5),
     0 0 60px rgba(255, 94, 98, 0.3),
     0 0 80px rgba(255, 94, 98, 0.15),
-    0 8px 16px rgba(0, 0, 0, 0.35);
+    0 8px 16px var(--bz-scrim);
 }
 
 /* Mood - Ableton Gold */
@@ -3770,7 +3765,7 @@ ol.chat li {
   background-color: rgba(255, 195, 0, 0.55);
   border: 1px solid rgba(255, 220, 100, 0.5);
   color: #0a0a0a;
-  text-shadow: 0 1px 2px rgba(255, 255, 255, 0.4);
+  text-shadow: 0 1px 2px var(--bz-fg-low);
   box-shadow:
     inset 3px 3px 8px rgba(255, 245, 180, 0.35),
     inset -3px -3px 10px rgba(160, 120, 0, 0.5),
@@ -3780,7 +3775,7 @@ ol.chat li {
     0 0 30px rgba(255, 195, 0, 0.4),
     0 0 45px rgba(255, 195, 0, 0.25),
     0 0 60px rgba(255, 195, 0, 0.15),
-    0 4px 8px rgba(0, 0, 0, 0.3);
+    0 4px 8px var(--bz-scrim);
 }
 
 .dimension-tags .tag.is-warning:hover {
@@ -3794,16 +3789,16 @@ ol.chat li {
     0 0 40px rgba(255, 195, 0, 0.5),
     0 0 60px rgba(255, 195, 0, 0.3),
     0 0 80px rgba(255, 195, 0, 0.15),
-    0 8px 16px rgba(0, 0, 0, 0.35);
+    0 8px 16px var(--bz-scrim);
 }
 
 /* Instruments - Ableton Cyan */
 .dimension-tags .tag.is-success {
   background-color: rgba(0, 210, 211, 0.55);
   border: 1px solid rgba(100, 240, 240, 0.5);
-  color: #fff;
+  color: var(--bz-fg);
   text-shadow:
-    0 1px 3px rgba(0, 0, 0, 0.6),
+    0 1px 3px var(--bz-scrim-deep),
     0 0 8px rgba(0, 210, 211, 0.5);
   box-shadow:
     inset 3px 3px 8px rgba(180, 255, 255, 0.25),
@@ -3814,7 +3809,7 @@ ol.chat li {
     0 0 30px rgba(0, 210, 211, 0.4),
     0 0 45px rgba(0, 210, 211, 0.25),
     0 0 60px rgba(0, 210, 211, 0.15),
-    0 4px 8px rgba(0, 0, 0, 0.3);
+    0 4px 8px var(--bz-scrim);
 }
 
 .dimension-tags .tag.is-success:hover {
@@ -3828,16 +3823,16 @@ ol.chat li {
     0 0 40px rgba(0, 210, 211, 0.5),
     0 0 60px rgba(0, 210, 211, 0.3),
     0 0 80px rgba(0, 210, 211, 0.15),
-    0 8px 16px rgba(0, 0, 0, 0.35);
+    0 8px 16px var(--bz-scrim);
 }
 
 /* Vocals - Ableton Pink */
 .dimension-tags .tag.is-link {
   background-color: rgba(255, 100, 177, 0.55);
   border: 1px solid rgba(255, 160, 210, 0.5);
-  color: #fff;
+  color: var(--bz-fg);
   text-shadow:
-    0 1px 3px rgba(0, 0, 0, 0.6),
+    0 1px 3px var(--bz-scrim-deep),
     0 0 8px rgba(255, 100, 177, 0.5);
   box-shadow:
     inset 3px 3px 8px rgba(255, 210, 235, 0.25),
@@ -3848,7 +3843,7 @@ ol.chat li {
     0 0 30px rgba(255, 100, 177, 0.4),
     0 0 45px rgba(255, 100, 177, 0.25),
     0 0 60px rgba(255, 100, 177, 0.15),
-    0 4px 8px rgba(0, 0, 0, 0.3);
+    0 4px 8px var(--bz-scrim);
 }
 
 .dimension-tags .tag.is-link:hover {
@@ -3862,16 +3857,16 @@ ol.chat li {
     0 0 40px rgba(255, 100, 177, 0.5),
     0 0 60px rgba(255, 100, 177, 0.3),
     0 0 80px rgba(255, 100, 177, 0.15),
-    0 8px 16px rgba(0, 0, 0, 0.35);
+    0 8px 16px var(--bz-scrim);
 }
 
 /* Production - Ableton Purple */
 .dimension-tags .tag.is-primary {
   background-color: rgba(155, 89, 182, 0.55);
   border: 1px solid rgba(195, 150, 215, 0.5);
-  color: #fff;
+  color: var(--bz-fg);
   text-shadow:
-    0 1px 3px rgba(0, 0, 0, 0.6),
+    0 1px 3px var(--bz-scrim-deep),
     0 0 8px rgba(155, 89, 182, 0.5);
   box-shadow:
     inset 3px 3px 8px rgba(220, 195, 235, 0.25),
@@ -3882,7 +3877,7 @@ ol.chat li {
     0 0 30px rgba(155, 89, 182, 0.4),
     0 0 45px rgba(155, 89, 182, 0.25),
     0 0 60px rgba(155, 89, 182, 0.15),
-    0 4px 8px rgba(0, 0, 0, 0.3);
+    0 4px 8px var(--bz-scrim);
 }
 
 .dimension-tags .tag.is-primary:hover {
@@ -3896,7 +3891,7 @@ ol.chat li {
     0 0 40px rgba(155, 89, 182, 0.5),
     0 0 60px rgba(155, 89, 182, 0.3),
     0 0 80px rgba(155, 89, 182, 0.15),
-    0 8px 16px rgba(0, 0, 0, 0.35);
+    0 8px 16px var(--bz-scrim);
 }
 
 /* Subtle glow pulse for selected pads */
@@ -3943,7 +3938,7 @@ ol.chat li {
   gap: 4px;
   font-size: 11px;
   font-weight: 600;
-  color: rgba(255, 255, 255, 0.7);
+  color: var(--bz-fg-mid);
   text-transform: uppercase;
   letter-spacing: 0.5px;
 }
@@ -3968,7 +3963,7 @@ ol.chat li {
   min-width: 50px;
   font-size: 12px;
   font-weight: 600;
-  color: rgba(255, 255, 255, 0.9);
+  color: var(--bz-fg);
   text-align: right;
   font-family: "Fira Sans Condensed", sans-serif;
 }
@@ -3988,8 +3983,8 @@ ol.chat li {
   padding: 4px 8px;
   height: 28px;
   background: rgba(50, 50, 50, 0.6);
-  border: 1px solid rgba(255, 255, 255, 0.2);
-  color: #fff;
+  border: 1px solid var(--bz-border-strong);
+  color: var(--bz-fg);
 }
 
 .param-control .input {
@@ -3997,43 +3992,43 @@ ol.chat li {
   padding: 4px 8px;
   height: 28px;
   background: rgba(50, 50, 50, 0.6);
-  border: 1px solid rgba(255, 255, 255, 0.2);
-  color: #fff;
+  border: 1px solid var(--bz-border-strong);
+  color: var(--bz-fg);
   width: 100%;
 }
 
 .param-help {
   font-size: 10px !important;
-  color: rgba(255, 255, 255, 0.4) !important;
+  color: var(--bz-fg-low) !important;
   margin: 0 !important;
   text-align: left !important;
 }
 
 .advanced-params {
   padding-top: 1rem;
-  border-top: 1px dashed rgba(255, 255, 255, 0.1);
+  border-top: 1px dashed var(--bz-border);
 }
 
 /* Small textarea and input overrides for music mode */
 .music-section .textarea.is-small {
   font-size: 13px;
   background: rgba(50, 50, 50, 0.4);
-  border: 1px solid rgba(255, 255, 255, 0.15);
-  color: #fff;
+  border: 1px solid var(--bz-border-strong);
+  color: var(--bz-fg);
   resize: vertical;
 }
 
 .music-section .input.is-small {
   font-size: 13px;
   background: rgba(50, 50, 50, 0.4);
-  border: 1px solid rgba(255, 255, 255, 0.15);
-  color: #fff;
+  border: 1px solid var(--bz-border-strong);
+  color: var(--bz-fg);
   padding-right: 80px; /* Space for the generate button */
 }
 
 .music-section .textarea.is-small::placeholder,
 .music-section .input.is-small::placeholder {
-  color: rgba(255, 255, 255, 0.3) !important;
+  color: var(--bz-fg-faint) !important;
 }
 
 .music-section .label {
@@ -4053,16 +4048,33 @@ ol.chat li {
 .button.is-ghost {
   background: transparent;
   border: none;
-  color: rgba(255, 255, 255, 0.6);
+  color: var(--bz-fg-mid);
   padding: 0;
 }
 
 .button.is-ghost:hover {
-  color: rgba(255, 255, 255, 0.9);
+  color: var(--bz-fg);
   background: transparent;
 }
 
 .button.is-ghost .material-symbols-outlined {
   border: none;
+}
+
+/* ════════════════════════════════════════════════════════════════
+   Milestone 6 — canvas-first grid for audio history.
+   ════════════════════════════════════════════════════════════════ */
+
+ol.chat {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: var(--bz-space-5);
+  list-style: none;
+  padding: 0;
+  margin: var(--bz-space-5) 0;
+}
+@media (min-width: 880px) {
+  ol.chat { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  ol.chat .history-item:first-child { grid-column: 1 / -1; }
 }
 </style>

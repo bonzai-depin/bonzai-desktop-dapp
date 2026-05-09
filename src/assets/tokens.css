@@ -1,0 +1,305 @@
+/**
+ * BonzAI Design Tokens
+ * ─────────────────────
+ * Single source of truth for color, type, spacing, motion, elevation.
+ * Always reach for a token before introducing a literal value in
+ * component CSS. New tokens land here first; DESIGN.md must be
+ * updated in the same change.
+ *
+ * See /DESIGN.md for the rationale, the brand essence, and the
+ * proportions (60/30/10, the spacing rhythm, motion vocabulary).
+ */
+
+:root {
+  /* ─── 1. CANVAS · the 60% ─────────────────────────────────────── */
+  /* Five levels of dark surface, never glassmorphic. Pick by depth:
+     canvas is the page; panel is the persistent rail; card is the
+     content unit; raised is hover/focus; overlay is modal backdrop. */
+  --bz-canvas:        #0a0a0f;   /* page background */
+  --bz-panel:         #11141d;   /* persistent panels (sidebar, bottom bar) */
+  --bz-card:          #161a26;   /* content cards, modal shells */
+  --bz-raised:        #1d2230;   /* card on hover / active row */
+  --bz-overlay:       rgba(8, 10, 16, 0.78);  /* modal backdrop */
+
+  /* ─── 2. BRAND PURPLE · the 30% ───────────────────────────────── */
+  --bz-purple-100:    #c4a8e8;   /* tints — chip backgrounds, focus rings on dark */
+  --bz-purple-300:    #8b5cf6;   /* highlight / hover-on-brand */
+  --bz-purple-500:    #61378e;   /* canonical brand primary */
+  --bz-purple-700:    #3a1f5c;   /* deepening — pressed states, dark gradient stop */
+  --bz-purple-900:    #1c0d2c;   /* near-black purple bias for bg overlays */
+
+  --bz-purple-glow:   rgba(139, 92, 246, 0.32);
+  --bz-purple-soft:   rgba(97, 55, 142, 0.14);
+
+  /* The brand gradient — used only for hero CTAs, generation in
+     progress, identity moments. Never decorative chrome. */
+  --bz-gradient-brand:
+    linear-gradient(135deg, #61378e 0%, #8b5cf6 100%);
+  --bz-gradient-brand-soft:
+    linear-gradient(135deg, rgba(97, 55, 142, 0.18) 0%, rgba(139, 92, 246, 0.18) 100%);
+
+  /* ─── 3. ENERGY ACCENT · the 10% (semantic ONLY) ──────────────── */
+  /* Emerald means "good / done / online / ready". Never "primary
+     button", never "section accent". If you're tempted to use it as
+     decoration, reach for purple instead. */
+  --bz-emerald-300:   #34d399;
+  --bz-emerald-500:   #10b981;   /* canonical success */
+  --bz-emerald-700:   #047857;
+  --bz-emerald-soft:  rgba(16, 185, 129, 0.14);
+
+  /* ─── 4. TEXT SCALE · 4 stops, no opacity hierarchy ─────────────
+     Replace every `rgba(255,255,255,0.7)` you see with --bz-fg-mid. */
+  --bz-fg:            #f0f0f5;   /* primary text */
+  --bz-fg-mid:        #c2c2cc;   /* secondary — labels, captions */
+  --bz-fg-low:        #74748a;   /* tertiary — metadata, helper text */
+  --bz-fg-faint:      #4a4a55;   /* placeholder, disabled, divider hint */
+
+  /* ─── 5. STATUS · semantic, never decorative ──────────────────── */
+  --bz-danger:        #e25555;
+  --bz-danger-soft:   rgba(226, 85, 85, 0.12);
+  --bz-warning:       #d4a017;
+  --bz-warning-soft:  rgba(212, 160, 23, 0.12);
+  --bz-info:          #5aa9e8;
+  --bz-info-soft:     rgba(90, 169, 232, 0.12);
+
+  /* ─── 6. BORDER + DIVIDER ─────────────────────────────────────── */
+  --bz-border:        rgba(255, 255, 255, 0.07);   /* default hairline */
+  --bz-border-strong: rgba(255, 255, 255, 0.14);   /* emphasis on dark cards */
+  --bz-border-brand:  rgba(139, 92, 246, 0.45);    /* selection, focus */
+
+  /* ─── 7. RADIUS ───────────────────────────────────────────────── */
+  --bz-r-sm:    6px;
+  --bz-r:       10px;
+  --bz-r-lg:    14px;
+  --bz-r-pill:  999px;
+
+  /* ─── 8. ELEVATION (shadow scale) ──────────────────────────────
+     Three steps + a brand glow. Cards never use shadow at rest;
+     only on hover or active states. */
+  --bz-elev-1: 0 1px 2px rgba(0, 0, 0, 0.35);
+  --bz-elev-2: 0 8px 24px rgba(0, 0, 0, 0.45);
+  --bz-elev-3: 0 24px 64px rgba(0, 0, 0, 0.55);
+  --bz-elev-brand:
+    0 0 0 1px var(--bz-border-brand),
+    0 0 32px var(--bz-purple-glow);
+
+  /* Scrim — translucent black layers used over images, video, and
+     modal backdrops. Replaces ad-hoc rgba(0,0,0,0.X) literals. */
+  --bz-scrim-soft:    rgba(0, 0, 0, 0.2);
+  --bz-scrim:         rgba(0, 0, 0, 0.35);
+  --bz-scrim-strong:  rgba(0, 0, 0, 0.55);
+  --bz-scrim-deep:    rgba(0, 0, 0, 0.75);
+
+  /* ─── 9. SPACING RHYTHM (multiples of 4) ──────────────────────── */
+  --bz-space-1:   4px;
+  --bz-space-2:   8px;
+  --bz-space-3:   12px;
+  --bz-space-4:   16px;
+  --bz-space-5:   24px;
+  --bz-space-6:   32px;
+  --bz-space-7:   48px;
+  --bz-space-8:   64px;
+
+  /* ─── 10. TYPE SCALE ──────────────────────────────────────────── */
+  /* Available weights bundled today: Fira Sans 100 + 400; Fira Sans
+     Condensed 100 italic + 900 italic. The black-italic is rationed
+     to 3 surfaces per screen — hero, primary CTA, brand moment. */
+  --bz-font-display: 'Fira Sans', system-ui, sans-serif;
+  --bz-font-body:    'Fira Sans', system-ui, sans-serif;
+  --bz-font-mono:    ui-monospace, 'SF Mono', 'Menlo', 'JetBrains Mono', 'Fira Code', Consolas, monospace;
+
+  /* Sizes — restrained scale (1.25 ratio).
+     display → eyebrow → h1..h3 → body → meta */
+  --bz-size-display:  40px;
+  --bz-size-h1:       28px;
+  --bz-size-h2:       22px;
+  --bz-size-h3:       17px;
+  --bz-size-body:     14px;
+  --bz-size-meta:     12px;
+  --bz-size-micro:    11px;
+
+  --bz-line-display:  1.15;
+  --bz-line-tight:    1.3;
+  --bz-line-body:     1.55;
+
+  /* Tracking — looser on display, tighter on caps eyebrows. */
+  --bz-track-display: -0.02em;
+  --bz-track-eyebrow:  0.10em;   /* uppercase category labels */
+  --bz-track-mono:    -0.01em;
+
+  /* ─── 11. MOTION ──────────────────────────────────────────────── */
+  /* One language across the whole app. Six keyframes max. */
+  --bz-dur-fast:    140ms;
+  --bz-dur-base:    220ms;
+  --bz-dur-slow:    420ms;
+
+  --bz-ease-out:    cubic-bezier(0.22, 1, 0.36, 1);   /* enters / settles */
+  --bz-ease-in:     cubic-bezier(0.4, 0, 1, 1);        /* exits */
+  --bz-ease-stand:  cubic-bezier(0.4, 0, 0.2, 1);      /* default */
+
+  /* ─── 12. Z-INDEX SCALE ───────────────────────────────────────── */
+  --bz-z-base:     0;
+  --bz-z-raised:   10;
+  --bz-z-overlay:  100;
+  --bz-z-modal:    1000;
+  --bz-z-toast:    2000;
+}
+
+/* ─── BASELINE TYPOGRAPHY ────────────────────────────────────────
+   Body styles are set on :root so every text element inherits.
+   Display + heading classes layer on top. */
+:root {
+  font-family: var(--bz-font-body);
+  font-size: var(--bz-size-body);
+  font-weight: 400;
+  line-height: var(--bz-line-body);
+  color: var(--bz-fg);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+/* ─── TYPE PRIMITIVES ───────────────────────────────────────────
+   Use these classes instead of inline font-size/font-weight.
+   Composes with color + spacing tokens for everything else. */
+
+.bz-display {
+  font-family: var(--bz-font-display);
+  font-weight: 100;
+  font-size: var(--bz-size-display);
+  line-height: var(--bz-line-display);
+  letter-spacing: var(--bz-track-display);
+}
+
+/* H1 + H2 — section headings carry the BRAND VOICE.
+   Fira Sans Condensed Black Italic is the BonzAI cadence on titles,
+   not a rationed accent. Use freely on section / sub-section headers
+   across every screen. The display tier above stays calm so the
+   page-level hero contrasts with the section drumbeat. */
+.bz-h1 {
+  font-family: 'Fira Sans Condensed', sans-serif;
+  font-weight: 900;
+  font-style: italic;
+  font-size: var(--bz-size-h1);
+  line-height: var(--bz-line-tight);
+  letter-spacing: -0.01em;
+}
+
+.bz-h2 {
+  font-family: 'Fira Sans Condensed', sans-serif;
+  font-weight: 900;
+  font-style: italic;
+  font-size: var(--bz-size-h2);
+  line-height: var(--bz-line-tight);
+  letter-spacing: -0.005em;
+}
+
+/* H3 stays calm — row titles, card titles, inline label headings.
+   The brand voice doesn't apply at this scale; if it did, every list
+   row would shout. */
+.bz-h3 {
+  font-family: var(--bz-font-display);
+  font-weight: 400;
+  font-size: var(--bz-size-h3);
+  line-height: var(--bz-line-tight);
+}
+
+.bz-eyebrow {
+  font-family: var(--bz-font-body);
+  font-weight: 400;
+  font-size: var(--bz-size-micro);
+  line-height: 1;
+  letter-spacing: var(--bz-track-eyebrow);
+  text-transform: uppercase;
+  color: var(--bz-fg-low);
+}
+
+.bz-body  { font-size: var(--bz-size-body); }
+.bz-meta  { font-size: var(--bz-size-meta); color: var(--bz-fg-low); }
+.bz-micro { font-size: var(--bz-size-micro); color: var(--bz-fg-faint); }
+
+.bz-mono {
+  font-family: var(--bz-font-mono);
+  font-feature-settings: "tnum" 1, "calt" 0; /* tabular nums, plain ligatures */
+  letter-spacing: var(--bz-track-mono);
+}
+
+/* The brand voice — Fira Sans Condensed Black Italic.
+   This is BonzAI's cadence on titles, emphatic copy, and primary CTA
+   labels. .bz-h1 and .bz-h2 already render in this voice; reach for
+   .bz-shout directly when an inline element (a value, a tag, a CTA)
+   wants the same treatment without being a heading. */
+.bz-shout {
+  font-family: 'Fira Sans Condensed', sans-serif;
+  font-style: italic;
+  font-weight: 900;
+  letter-spacing: -0.01em;
+}
+
+/* The legacy class is the same render as .bz-shout — it predates the
+   token system and remains used across NetworkSettings / Generative
+   components / BonzaiBottomBar. Both classes are valid; new code
+   should prefer `.bz-shout` (or the heading primitives that already
+   carry the voice). */
+.fira-sans-condensed-black-italic {
+  font-family: 'Fira Sans Condensed', sans-serif;
+  font-style: italic;
+  font-weight: 900;
+  letter-spacing: -0.01em;
+}
+
+/* ─── SHARED ANIMATIONS ────────────────────────────────────────── */
+
+@keyframes bz-fade-in {
+  from { opacity: 0; }
+  to   { opacity: 1; }
+}
+
+@keyframes bz-rise {
+  from { opacity: 0; transform: translateY(8px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes bz-modal-in {
+  from { opacity: 0; transform: scale(0.96); }
+  to   { opacity: 1; transform: scale(1); }
+}
+
+@keyframes bz-pulse {
+  0%, 100% { opacity: 0.55; }
+  50%      { opacity: 1; }
+}
+
+@keyframes bz-gradient-sweep {
+  0%   { background-position: 0% 50%; }
+  100% { background-position: 200% 50%; }
+}
+
+/* The one rotation primitive for spinners. Replaces the 19+ local
+   `@keyframes rotate` / `spin` definitions scattered across legacy
+   components. New code uses `animation: bz-spin 1.2s linear infinite`. */
+@keyframes bz-spin {
+  from { transform: rotate(0deg); }
+  to   { transform: rotate(360deg); }
+}
+
+/* The "generation in progress" brand moment. Apply to a 1-2px tall
+   strip to signal active work without a spinner. */
+.bz-generating {
+  background-image: linear-gradient(
+    90deg,
+    var(--bz-purple-500) 0%,
+    var(--bz-purple-300) 50%,
+    var(--bz-purple-500) 100%
+  );
+  background-size: 200% 100%;
+  animation: bz-gradient-sweep 2.4s linear infinite;
+}
+
+/* ─── FOCUS RING ────────────────────────────────────────────────
+   Uniform across all interactive elements. Don't ship a button or
+   input that doesn't get this on :focus-visible. */
+:focus-visible {
+  outline: 2px solid var(--bz-border-brand);
+  outline-offset: 2px;
+  border-radius: var(--bz-r-sm);
+}

@@ -769,9 +769,9 @@ export default {
   font-weight: 600;
   font-size: 14px;
   background: transparent;
-  border: 1px solid rgba(255, 255, 255, 0.3);
+  border: 1px solid var(--bz-fg-faint);
   border-radius: 4px;
-  color: rgba(255, 255, 255, 0.3);
+  color: var(--bz-fg-faint);
   cursor: pointer;
   transition: all 0.2s ease;
   white-space: nowrap;
@@ -779,15 +779,15 @@ export default {
 }
 
 .category-selector input[type='radio'] + label.radio.category:hover {
-  background: rgba(97, 55, 142, 0.2);
-  border-color: rgba(255, 255, 255, 0.5);
-  color: rgba(255, 255, 255, 0.8);
+  background: var(--bz-purple-soft);
+  border-color: var(--bz-fg-low);
+  color: var(--bz-fg-mid);
 }
 
 .category-selector input[type='radio']:checked + label.radio.category {
   color: rgba(255, 255, 255, 1);
   border: 1px solid rgba(255, 255, 255, 1);
-  background: rgba(97, 55, 142, 0.33);
+  background: var(--bz-purple-soft);
   backdrop-filter: blur(64px);
 }
 
@@ -803,27 +803,27 @@ export default {
 
 /* Market card */
 .market-card {
-  background: rgba(0, 0, 0, 0.3);
+  background: var(--bz-scrim);
   border-radius: 8px;
-  border: 1px solid rgba(255, 255, 255, 0.1);
+  border: 1px solid var(--bz-border);
 }
 
 /* Severity tiers */
 .severity-tiers {
-  background: rgba(0, 0, 0, 0.2);
+  background: var(--bz-scrim-soft);
   padding: 1rem;
   border-radius: 8px;
 }
 
 /* Data sources */
 .data-sources {
-  background: rgba(0, 0, 0, 0.2);
+  background: var(--bz-scrim-soft);
   padding: 1rem;
   border-radius: 8px;
 }
 
 .data-source-item {
-  border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+  border-bottom: 1px solid var(--bz-border);
   padding-bottom: 1rem;
 }
 
@@ -834,13 +834,13 @@ export default {
 /* Form inputs */
 .input,
 .select select {
-  background: rgba(0, 0, 0, 0.3);
-  border-color: rgba(255, 255, 255, 0.2);
+  background: var(--bz-scrim);
+  border-color: var(--bz-border-strong);
   color: white;
 }
 
 .input::placeholder {
-  color: rgba(255, 255, 255, 0.4);
+  color: var(--bz-fg-low);
 }
 
 .label {
@@ -864,7 +864,7 @@ export default {
 
 .models__activity--payouts {
   padding: 2em;
-  border: 1px solid rgba(255, 255, 255, 0.1);
+  border: 1px solid var(--bz-border);
   backdrop-filter: blur(32px);
   border-radius: 4px !important;
 }
@@ -887,7 +887,7 @@ export default {
 }
 
 .skill-description {
-  color: rgba(255, 255, 255, 0.8);
+  color: var(--bz-fg-mid);
   margin-bottom: 0.5em;
   text-align: left;
 }

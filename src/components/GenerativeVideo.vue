@@ -334,35 +334,21 @@
                   @access-changed="onAccessChanged"
                 />
 
-                <form ref="promptForm" @submit.prevent>
-                  <div class="columns">
-                    <div class="column is-8">
-                      <input
-                        class="input is-large"
-                        type="text"
-                        :placeholder="mode === 't2v' ? 'Describe your video...' : 'Describe your animation...'"
-                        v-model="form.prompt"
-                        @keyup.enter="
-                          canGenerate && hasAccess && sendMessage(form.prompt)
-                        "
-                        :disabled="isLoading || !hasAccess"
-                      />
-                    </div>
-                    <div class="column is-4">
-                      <button
-                        class="button is-warning is-large pl-2 is-fullwidth"
-                        :disabled="!canGenerate || !hasAccess"
-                        @click="sendMessage(form.prompt)"
-                        :title="mode === 't2v' ? 'Generate video from text' : 'Generate video from image'"
-                      >
-                        <span class="material-symbols-outlined is-size-2 mr-1">
-                          {{ mode === 't2v' ? 'movie' : 'animation' }}
-                        </span>
-                        {{ mode === 't2v' ? 'Generate' : 'Animate' }}
-                      </button>
-                    </div>
-                  </div>
-                </form>
+                <!-- Composer — Milestone 6 unified <GenerativeInput>. -->
+                <GenerativeInput
+                  v-model="form.prompt"
+                  :placeholder="
+                    mode === 't2v'
+                      ? 'Describe your video…'
+                      : 'Describe your animation…'
+                  "
+                  :submit-label="mode === 't2v' ? 'Generate' : 'Animate'"
+                  running-label="Crafting"
+                  :running="isLoading"
+                  :disabled="!canGenerate || !hasAccess"
+                  shortcut-hint="⌘⏎"
+                  @submit="sendMessage(form.prompt)"
+                />
               </div>
             </div>
             <hr class="mt-5" />
@@ -437,82 +423,16 @@
                           border-radius: 4px;
                         "
                       ></video>
-                      <div class="pb-5 mb-5 mt-5">
-                        <span v-if="inference.networkMode && inference.networkMode !== 'local'" class="tag mr-3" :class="inference.networkMode === 'private' ? 'is-success is-light' : 'is-info is-light'">
-                          <span class="material-symbols-outlined is-size-6 mr-1">{{ inference.networkMode === 'private' ? 'lock' : 'cloud' }}</span>
+                      <div class="bz-img-meta" v-if="inference.networkMode && inference.networkMode !== 'local'">
+                        <span class="bz-origin-pill" :class="`bz-origin-pill--${inference.networkMode}`">
+                          <span class="bz-origin-pill__dot"></span>
                           {{ inference.networkMode === 'private' ? 'Private' : 'Remote' }}
                         </span>
-                        <button
-                          class="button is-medium is-success copy is-pulled-right ml-5 mr-0 p-0 pl-1 pr-4"
-                          @click="downloadVideo(inference._originalIndex)"
-                          title="Save video"
-                        >
-                          <span
-                            class="material-symbols-outlined is-size-2 mr-2"
-                          >
-                            save
-                          </span>
-                          Download
-                        </button>
-                        <button
-                          class="button is-medium is-danger is-pulled-right ml-2 p-0 pl-1 pr-1"
-                          @click="removeInference(inference._originalIndex)"
-                          title="Remove this result"
-                        >
-                          <span class="material-symbols-outlined is-size-2">
-                            delete
-                          </span>
-                        </button>
-                        <button
-                          class="button is-medium is-success copy is-pulled-left p-0 pl-1 pr-1"
-                          @click="
-                            form.prompt = inference.question;
-                            copy(inference.question);
-                            setCopied(inference._originalIndex);
-                            scrollToTop();
-                          "
-                          title="Reuse this prompt"
-                        >
-                          <span
-                            class="material-symbols-outlined is-size-2"
-                            v-if="!hasCopy[inference._originalIndex]"
-                          >
-                            content_copy
-                          </span>
-                          <span
-                            class="material-symbols-outlined is-size-2"
-                            v-else
-                          >
-                            check
-                          </span>
-                        </button>
-                        <button
-                          class="button is-medium is-link copy is-pulled-left ml-5 pl-2"
-                          @click="enhanceInference(inference)"
-                          :disabled="!!inference.answer?.data?.enhanced || !!enhancingIds[inference.id] || !inference.answer?.data?.video_path"
-                          :title="inference.answer?.data?.enhanced ? 'Already enhanced (×4 spatial + 4× temporal)' : 'Upscale ×4 + interpolate to 4× framerate (Real-ESRGAN + RIFE)'"
-                        >
-                          <span
-                            class="material-symbols-outlined is-size-2 mr-1"
-                            :class="{ 'is-rotating': enhancingIds[inference.id] }"
-                          >
-                            {{ inference.answer?.data?.enhanced ? 'check_circle' : (enhancingIds[inference.id] ? 'progress_activity' : 'high_quality') }}
-                          </span>
-                          {{ inference.answer?.data?.enhanced ? 'Enhanced' : (enhancingIds[inference.id] ? 'Enhancing…' : 'Upscale ×4') }}
-                        </button>
-                        <button
-                          class="button is-medium is-warning copy is-pulled-left ml-5 pl-2"
-                          @click="openMint(inference)"
-                          :disabled="!!inference.nft"
-                        >
-                          <span
-                            class="material-symbols-outlined is-size-2 mr-1"
-                          >
-                            {{ inference.nft ? 'check_circle' : 'token' }}
-                          </span>
-                          {{ inference.nft ? 'Minted' : 'Mint' }}
-                        </button>
                       </div>
+                      <GenerativeActions
+                        :actions="actionsFor(inference)"
+                        @action="(id) => handleAction(id, inference)"
+                      />
                     </div>
                   </li>
                 </ol>
@@ -563,6 +483,8 @@ import { io } from "socket.io-client";
 import { useInferenceRouter } from "../composables/useInferenceRouter.js";
 import AccessRequirements from "./AccessRequirements.vue";
 import MintModal from "./MintModal.vue";
+import GenerativeActions from "./generative/GenerativeActions.vue";
+import GenerativeInput from "./generative/GenerativeInput.vue";
 import { requestOpenNetworkModal } from "../services/level.service.js";
 import { addVideoInference } from "../stores/inferenceStore.js";
 
@@ -610,7 +532,7 @@ const WS_GEN = `${API_BASE}/generation`;
 
 export default {
   name: "GenerativeVideo",
-  components: { AccessRequirements, MintModal },
+  components: { AccessRequirements, MintModal, GenerativeActions, GenerativeInput },
   props: { existingImageBase64: { type: String, default: "" } },
   setup(props) {
     const { inferenceRequest } = useInferenceRouter();
@@ -1890,6 +1812,51 @@ export default {
       probeCurrentMode();
     });
 
+    // Unified action descriptors for the video history items, fed
+    // into <GenerativeActions>. Replaces 5 inline Bulma buttons.
+    const actionsFor = (inference) => {
+      const hasVideo = !!inference?.answer?.data?.video_path;
+      const enhanced = !!inference?.answer?.data?.enhanced;
+      const enhancing = !!enhancingIds[inference.id];
+      const minted = !!inference?.nft;
+      return [
+        { id: "download", icon: "save", label: "Download", variant: "primary", disabled: !hasVideo, title: "Save video" },
+        { id: "copy",     icon: hasCopy[inference._originalIndex] ? "check" : "content_copy",
+          label: hasCopy[inference._originalIndex] ? "Copied" : "Reuse",
+          title: "Reuse this prompt", variant: "default" },
+        { id: "enhance",
+          icon: enhanced ? "check_circle" : (enhancing ? "progress_activity" : "high_quality"),
+          label: enhanced ? "Enhanced" : (enhancing ? "Enhancing…" : "Upscale ×4"),
+          variant: enhanced ? "success" : "default",
+          disabled: enhanced || enhancing || !hasVideo,
+          title: enhanced ? "Already enhanced (×4 spatial + 4× temporal)" : "Upscale ×4 + interpolate to 4× framerate" },
+        { id: "mint",
+          icon: minted ? "check_circle" : "token",
+          label: minted ? "Minted" : "Mint",
+          variant: minted ? "success" : "default",
+          disabled: minted },
+        { id: "delete",
+          icon: "delete",
+          label: "Delete",
+          variant: "destructive",
+          title: "Remove this result" },
+      ];
+    };
+    const handleAction = (id, inference) => {
+      switch (id) {
+        case "download": downloadVideo(inference._originalIndex); break;
+        case "copy":
+          form.prompt = inference.question;
+          copy(inference.question);
+          setCopied(inference._originalIndex);
+          scrollToTop();
+          break;
+        case "enhance": enhanceInference(inference); break;
+        case "mint":    openMint(inference); break;
+        case "delete":  removeInference(inference._originalIndex); break;
+      }
+    };
+
     return {
       mode,
       videoModel,
@@ -1934,6 +1901,8 @@ export default {
       setCopied,
       downloadVideo,
       removeInference,
+      actionsFor,
+      handleAction,
       clearHistory,
       exportHistory,
       importHistory,
@@ -1981,7 +1950,7 @@ export default {
   padding: 1.25rem 1.5rem 1.25rem 1.5rem;
 }
 .preview {
-  box-shadow: 8px 8px 0 rgba(97, 55, 142, 0.66);
+  box-shadow: 8px 8px 0 var(--bz-purple-glow);
 }
 .material-symbols-outlined {
   font-variation-settings:
@@ -2013,29 +1982,29 @@ export default {
   overflow-y: auto;
   padding: 6em;
   height: 100vh;
-  background: rgba(0, 0, 0, 0.5);
+  background: var(--bz-scrim-strong);
 }
 .models__activity--payouts {
   padding: 4em;
-  border: 1px solid rgba(255, 255, 255, 0.1);
+  border: 1px solid var(--bz-border);
   backdrop-filter: blur(32px);
   border-radius: 4px !important;
 }
 .models__activity--payouts h2 {
   font-size: 48px;
-  color: #fff;
+  color: var(--bz-fg);
   text-align: right;
 }
 h1 {
   margin-top: 0 !important;
   font-size: 64px;
-  color: #fff;
+  color: var(--bz-fg);
   text-align: right;
 }
 p {
   margin-bottom: 1em;
   font-size: 24px;
-  color: #fff;
+  color: var(--bz-fg);
   text-align: justify;
   font-family: "Fira Sans", sans-serif;
   font-weight: 100;
@@ -2044,12 +2013,12 @@ p {
   transform: translate3d(0, 0, 0);
 }
 div.question {
-  border: 1px solid rgba(255, 255, 255, 0.25);
+  border: 1px solid var(--bz-border-strong);
   padding: 1em 1em 2em;
   margin-top: 2em !important;
   margin-bottom: 1em !important;
   font-weight: 700;
-  box-shadow: 8px 8px 0 rgba(97, 55, 142, 0.66);
+  box-shadow: 8px 8px 0 var(--bz-purple-glow);
   border-radius: 4px;
   backdrop-filter: blur(6px);
 }
@@ -2066,14 +2035,14 @@ hr {
   );
 }
 .input {
-  color: #fff;
-  background: rgba(255, 255, 255, 0.1);
-  box-shadow: 8px 8px 0 rgba(97, 55, 142, 0.66);
+  color: var(--bz-fg);
+  background: var(--bz-border);
+  box-shadow: 8px 8px 0 var(--bz-purple-glow);
   transition: 200ms ease-in;
   transform: translate3d(0, 0, 0);
 }
 ::placeholder {
-  color: rgba(255, 255, 255, 0.1) !important;
+  color: var(--bz-border) !important;
   opacity: 1 !important;
 }
 .button.chat.is-loading {
@@ -2093,14 +2062,14 @@ input[type="radio"] {
 }
 input[type="radio"] + label {
   padding: 3px 12px 9px;
-  color: rgba(255, 255, 255, 0.3) !important;
-  border: 1px solid rgba(255, 255, 255, 0.3);
+  color: var(--bz-fg-faint) !important;
+  border: 1px solid var(--bz-fg-faint);
   border-radius: 4px;
 }
 input[type="radio"]:checked + label {
   color: rgba(255, 255, 255, 1) !important;
   border: 1px solid rgba(255, 255, 255, 1) !important;
-  background: rgba(97, 55, 142, 0.33) !important;
+  background: var(--bz-purple-soft) !important;
   backdrop-filter: blur(64px) !important;
 }
 label.radio.quality,
@@ -2171,23 +2140,23 @@ ol.chat li {
   width: 48px;
   height: 48px;
   border-radius: 50%;
-  background: rgba(97, 55, 142, 0.9);
-  border: 2px solid rgba(255, 255, 255, 0.3);
-  color: #fff;
+  background: var(--bz-purple-500);
+  border: 2px solid var(--bz-fg-faint);
+  color: var(--bz-fg);
   cursor: pointer;
   display: flex;
   align-items: center;
   justify-content: center;
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+  box-shadow: 0 4px 12px var(--bz-scrim);
   transition: all 0.2s ease;
   z-index: 100;
   animation: fadeInUp 0.3s ease-out;
 }
 
 .scroll-to-top-btn:hover {
-  background: rgba(97, 55, 142, 1);
+  background: var(--bz-purple-500);
   transform: translateY(-2px);
-  box-shadow: 0 6px 16px rgba(0, 0, 0, 0.4);
+  box-shadow: 0 6px 16px var(--bz-scrim);
 }
 
 .scroll-to-top-btn .material-symbols-outlined {
@@ -2209,4 +2178,62 @@ ol.chat li {
     transform-origin: bottom left;
   }
 }
+
+/* ════════════════════════════════════════════════════════════════
+   Milestone 6 — canvas-first grid + unified action vocabulary.
+   Same pattern as GenerativeImage: latest video is hero, history
+   wraps into a 2-column grid on desktop, single column narrow.
+   ════════════════════════════════════════════════════════════════ */
+
+ol.chat {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: var(--bz-space-5);
+  list-style: none;
+  padding: 0;
+  margin: var(--bz-space-5) 0;
+}
+@media (min-width: 880px) {
+  ol.chat { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  ol.chat .history-item:first-child { grid-column: 1 / -1; }
+}
+ol.chat .history-item:first-child video {
+  width: 100%;
+  max-width: min(880px, 70vh);
+  height: auto;
+  display: block;
+  margin: 0 auto;
+}
+ol.chat .history-item:not(:first-child) video {
+  width: 100%;
+  max-width: 100%;
+  height: auto;
+}
+
+.bz-img-meta {
+  display: flex;
+  align-items: center;
+  gap: var(--bz-space-3);
+  margin: var(--bz-space-3) 0;
+}
+.bz-origin-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--bz-space-2);
+  padding: 4px var(--bz-space-3);
+  border-radius: var(--bz-r-pill);
+  font-size: var(--bz-size-micro);
+  letter-spacing: var(--bz-track-eyebrow);
+  text-transform: uppercase;
+  border: 1px solid var(--bz-border);
+}
+.bz-origin-pill__dot {
+  width: 6px; height: 6px;
+  border-radius: var(--bz-r-pill);
+  background: var(--bz-fg-low);
+}
+.bz-origin-pill--consumer { color: var(--bz-info); border-color: var(--bz-info-soft); }
+.bz-origin-pill--consumer .bz-origin-pill__dot { background: var(--bz-info); }
+.bz-origin-pill--private  { color: var(--bz-purple-300); border-color: var(--bz-border-brand); background: var(--bz-purple-soft); }
+.bz-origin-pill--private .bz-origin-pill__dot { background: var(--bz-purple-300); }
 </style>
