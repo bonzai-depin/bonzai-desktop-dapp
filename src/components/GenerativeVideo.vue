@@ -416,12 +416,7 @@
                         v-if="getVideoUrl(inference)"
                         :src="getVideoUrl(inference)"
                         controls
-                        style="
-                          width: 100vh;
-                          object-fit: contain;
-                          border: 1px solid rgba(255, 255, 255, 1);
-                          border-radius: 4px;
-                        "
+                        class="generated__video"
                       ></video>
                       <div class="bz-img-meta" v-if="inference.networkMode && inference.networkMode !== 'local'">
                         <span class="bz-origin-pill" :class="`bz-origin-pill--${inference.networkMode}`">
@@ -2021,6 +2016,15 @@ div.question {
   border: 1px solid var(--bz-border);
   border-radius: var(--bz-r);
 }
+
+.generated__video {
+  width: 100%;
+  height: auto;
+  max-height: var(--bz-content-max-h);
+  object-fit: contain;
+  border-radius: var(--bz-content-radius);
+  display: block;
+}
 hr {
   margin: 12px 0;
   width: 100%;
@@ -2223,6 +2227,25 @@ ol.chat .history-item:first-child .bz-gen-actions {
   bottom: var(--bz-space-4);
   right: var(--bz-space-4);
   z-index: 1;
+  background: rgba(0, 0, 0, 0.55);
+  padding: var(--bz-space-2);
+  border-radius: var(--bz-r-sm);
+  backdrop-filter: blur(4px);
+  gap: var(--bz-space-2);
+}
+ol.chat .history-item:first-child .bz-gen-actions .bz-gen-action {
+  border-color: rgba(255, 255, 255, 0.18);
+  color: var(--bz-fg);
+}
+ol.chat .history-item:first-child .bz-gen-actions .bz-gen-action:hover {
+  background: rgba(255, 255, 255, 0.12);
+  border-color: rgba(255, 255, 255, 0.35);
+}
+ol.chat .history-item:first-child .bz-origin-pill {
+  background: rgba(0, 0, 0, 0.65);
+  border-color: transparent;
+  color: var(--bz-fg);
+  backdrop-filter: blur(4px);
 }
 
 /* History grid */

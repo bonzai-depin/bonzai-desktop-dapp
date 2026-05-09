@@ -156,24 +156,23 @@ watch(
 }
 
 .bz-chat__header {
-  padding: var(--bz-space-4) var(--bz-space-6);
+  padding: var(--bz-space-3) var(--bz-space-4);
   border-bottom: 1px solid var(--bz-border);
   background: var(--bz-canvas);
-  position: sticky;
-  top: 0;
   z-index: 1;
 }
 
 /* Message stream — scrolls; max-width applied to the message column
-   so wide screens don't render uncomfortable line-lengths. */
+    so wide screens don't render uncomfortable line-lengths. */
 .bz-chat__stream {
   overflow-y: auto;
   padding: 0;
+  min-height: 0;
 }
 .bz-chat__messages {
   max-width: 760px;
   margin: 0 auto;
-  padding: var(--bz-space-4) var(--bz-space-4) var(--bz-space-6);
+  padding: var(--bz-space-4);
 }
 
 .bz-chat__stream--empty {
@@ -182,11 +181,10 @@ watch(
   justify-content: center;
 }
 
-/* Composer dock — the input lives in a constrained column matching
-    the stream's width above. Bordered top to read as part of the
-    chat surface, not as a separate band. */
+/* Composer dock — sticks to the bottom of the main column.
+   Never scrolls away. */
 .bz-chat__input {
-  padding: var(--bz-space-3) var(--bz-space-4) var(--bz-space-4);
+  padding: var(--bz-space-3) var(--bz-space-4);
   border-top: 1px solid var(--bz-border);
   background: var(--bz-canvas);
 }

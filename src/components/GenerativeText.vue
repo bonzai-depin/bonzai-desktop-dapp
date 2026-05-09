@@ -2,122 +2,15 @@
   <div class="background"></div>
 
   <div class="bz-tab-shell">
-    <div
-      class="models__deployment-install"
-      :class="{ 'models__deployment-install--chat': isModel && (!currentModel.isMultimodal || isMmprojAvailable) }"
-    >
+    <div class="models__deployment-install models__deployment-install--chat">
       <!-- ─────────────────────────────────────────────────────────────
-           SETUP STATE — model not yet downloaded (or vision file
-           missing for a multimodal model). Editorial card with the
-           model identity, hardware footprint, and a single primary
-           CTA. Hidden once the model is ready; the chat workspace
-           (ChatLayout below) takes over the surface. -->
-      <div
-        v-if="!isModel || (currentModel.isMultimodal && !isMmprojAvailable)"
-        class="bz-text-setup"
-      >
-        <div class="bz-text-setup__head">
-          <div>
-            <span class="bz-eyebrow">Model</span>
-            <h1 class="bz-display fira-sans-condensed-black-italic">
-              {{ currentModel.modelname }}
-            </h1>
-            <p class="bz-body bz-text-setup__desc" v-if="currentModel.modeldesc">
-              {{ currentModel.modeldesc }}
-            </p>
-          </div>
-          <div class="bz-text-setup__head-actions">
-            <button
-              type="button"
-              class="bz-btn"
-              @click="openModelPicker"
-              title="Browse model catalog"
-            >
-              <span class="material-symbols-outlined">folder_open</span>
-              Browse models
-            </button>
-          </div>
-        </div>
-
-        <div class="bz-text-setup__specs">
-          <span class="bz-eyebrow" style="color: var(--bz-fg-low);">Hardware footprint</span>
-          <div class="bz-text-setup__chips">
-            <span class="bz-chip bz-mono">
-              <span class="material-symbols-outlined">memory</span>
-              {{ computeMemoryRequirements(currentModel).vramGB }} GB VRAM
-            </span>
-            <span class="bz-chip bz-mono">
-              <span class="material-symbols-outlined">developer_board</span>
-              {{ computeMemoryRequirements(currentModel).ramGB }} GB RAM
-            </span>
-            <span class="bz-chip bz-mono">
-              <span class="material-symbols-outlined">data_object</span>
-              {{ computeMemoryRequirements(currentModel).breakdown.contextSize }} ctx
-            </span>
-            <span class="bz-chip bz-mono">
-              <span class="material-symbols-outlined">database</span>
-              {{ currentModel.filesize }}
-            </span>
-          </div>
-        </div>
-
-        <div class="bz-text-setup__cta">
-          <!-- Download (model not yet local) -->
-          <button
-            v-if="!isModel"
-            type="button"
-            class="bz-btn bz-btn--primary bz-btn--lg"
-            :class="{ 'bz-btn--running': isLoading }"
-            :disabled="isLoading"
-            @click="downloadModel(currentModel.url, currentModel.filename)"
-          >
-            <span class="material-symbols-outlined">deployed_code_update</span>
-            <span v-if="isLoading && downloadProgress">
-              Downloading · {{ downloadProgress }}%
-            </span>
-            <span v-else>Download · {{ currentModel.filesize }}</span>
-          </button>
-          <!-- Delete (model is local; we're in setup because vision file is missing) -->
-          <button
-            v-if="isModel"
-            type="button"
-            class="bz-btn bz-btn--destructive"
-            :disabled="isLoading"
-            @click="deleteModel(currentModel.filename)"
-          >
-            <span class="material-symbols-outlined">delete</span>
-            Delete · {{ currentModel.filesize }}
-          </button>
-          <!-- Vision file (multimodal models only, when missing) -->
-          <button
-            v-if="isModel && currentModel.isMultimodal && !isMmprojAvailable"
-            type="button"
-            class="bz-btn bz-btn--primary bz-btn--lg"
-            :class="{ 'bz-btn--running': isLoading }"
-            :disabled="isLoading"
-            @click="downloadMmproj(currentModel)"
-          >
-            <span class="material-symbols-outlined">visibility</span>
-            <span v-if="isLoading && mmprojDownloadProgress">
-              Downloading vision · {{ mmprojDownloadProgress }}%
-            </span>
-            <span v-else>
-              Download vision · {{ currentModel.mmprojFilesize }}
-            </span>
-          </button>
-        </div>
-      </div>
-      <!-- ─────────────────────────────────────────────────────────────
-           CHAT WORKSPACE — three-column editorial shell
-           Shown once the loaded model is ready (downloaded + vision
-           file present if multimodal). Replaces both the legacy
-           "browse history" panel and the openChat overlay. The same
-           composer is always docked at the bottom — the Mistral /
-           Claude / Stripe pattern. The left rail groups past
-           inferences by date so the user can pick up any thread; the
-           right inspector mounts globally via GenerationInspector. -->
+           CHAT WORKSPACE — three-column editorial shell.
+           Always visible. When no model is downloaded the stream shows
+           a setup card; when a model is ready the composer is live.
+           History never auto-loads — only appears when a rail item is
+           explicitly clicked or a new message is being streamed.
+           ───────────────────────────────────────────────────────────── -->
       <ChatLayout
-        v-if="isModel && (!currentModel.isMultimodal || isMmprojAvailable)"
         class="bz-text-chat"
         :messages="[]"
         :autoscroll="false"
@@ -180,8 +73,50 @@
             </div>
           </div>
 
+          <!-- Model not available — prompt to download before chatting -->
+          <div v-if="!isModel || (currentModel.isMultimodal && !isMmprojAvailable)" class="bz-text-chat__setup">
+            <EmptyChat
+              :model-name="currentModel.modelname"
+              headline="Model required"
+              :subhead="`Download ${currentModel.modelname} (${currentModel.filesize}) to start chatting.`"
+              @pick="pickPrompt"
+              @browse-models="openModelPicker"
+            />
+            <div class="bz-text-chat__setup-cta">
+              <button
+                v-if="!isModel"
+                type="button"
+                class="bz-btn bz-btn--primary bz-btn--lg"
+                :class="{ 'bz-btn--running': isLoading }"
+                :disabled="isLoading"
+                @click="downloadModel(currentModel.url, currentModel.filename)"
+              >
+                <span class="material-symbols-outlined">deployed_code_update</span>
+                <span v-if="isLoading && downloadProgress">
+                  Downloading · {{ downloadProgress }}%
+                </span>
+                <span v-else>Download · {{ currentModel.filesize }}</span>
+              </button>
+              <button
+                v-if="isModel && currentModel.isMultimodal && !isMmprojAvailable"
+                type="button"
+                class="bz-btn bz-btn--primary bz-btn--lg"
+                :class="{ 'bz-btn--running': isLoading }"
+                :disabled="isLoading"
+                @click="downloadMmproj(currentModel)"
+              >
+                <span class="material-symbols-outlined">visibility</span>
+                <span v-if="isLoading && mmprojDownloadProgress">
+                  Downloading vision · {{ mmprojDownloadProgress }}%
+                </span>
+                <span v-else>Download vision · {{ currentModel.mmprojFilesize }}</span>
+              </button>
+            </div>
+          </div>
+
+          <!-- Default empty state when model is ready but no conversation is active -->
           <EmptyChat
-            v-if="!inferences || inferences.length === 0"
+            v-else-if="!activeInference"
             :model-name="currentModel.modelname"
             :headline="`What are we making with ${currentModel.modelname}?`"
             subhead="Streaming, vision, code, roleplay — same input. Local first, remote if you want to."
@@ -189,7 +124,8 @@
             @browse-models="openModelPicker"
           />
 
-          <div v-else-if="activeInference" class="bz-text-chat__messages">
+          <!-- Active conversation (rail selection or currently streaming) -->
+          <div v-else class="bz-text-chat__messages">
             <!-- User -->
             <ChatMessage
               :data-inference-id="activeInference.id"
@@ -1180,6 +1116,7 @@ export default {
 
     async function resetChat() {
       inferences.value = [];
+      activeRailId.value = null;
       // Clear persisted text inferences
       try {
         await window.electronAPI?.store?.set?.("textInferences", []);
@@ -1275,7 +1212,7 @@ export default {
       };
       inferences.value = [...inferences.value, newInference];
       hasCopy.value = [...hasCopy.value, false];
-      activeRailId.value = null; // snap to the new inference
+      activeRailId.value = newInference.id; // show the new conversation
 
       try {
         let assistantResult;
@@ -1572,17 +1509,16 @@ export default {
       activeRailId.value = entry.id;
     };
 
-    // The inference currently shown in the main stream. When the user
-    // picks an item from the history rail, only that conversation is
-    // rendered. Otherwise the most recent inference is shown.
+    // The inference currently shown in the main stream. History is
+    // never auto-loaded — only renders when the user explicitly clicks
+    // a rail item OR when a message is actively streaming.
     const activeInference = computed(() => {
       if (!inferences.value?.length) return null;
       if (activeRailId.value) {
         const found = inferences.value.find((inf) => inf.id === activeRailId.value);
         if (found) return found;
       }
-      // Default to most recent (reversedInferences is newest-first)
-      return reversedInferences.value[0] || null;
+      return null;
     });
 
     const pickPrompt = (p) => {
@@ -1863,15 +1799,24 @@ export default {
 }
 
 .bz-text-chat__gate {
-  margin-bottom: var(--bz-space-5);
+  padding: var(--bz-space-4) var(--bz-space-4) 0;
 }
 
 .bz-text-chat__messages {
-  max-width: 760px;
-  margin: 0 auto;
   display: flex;
   flex-direction: column;
   gap: var(--bz-space-5);
+  padding: var(--bz-space-4);
+  min-height: 0;
+}
+
+.bz-text-chat__setup {
+  padding: var(--bz-space-4);
+}
+.bz-text-chat__setup-cta {
+  display: flex;
+  justify-content: center;
+  margin-top: var(--bz-space-5);
 }
 
 hr {

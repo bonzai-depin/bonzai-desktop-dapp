@@ -2150,11 +2150,27 @@ ol.chat .history-item:first-child .bz-gen-actions {
   right: var(--bz-space-4);
   z-index: 1;
 }
-/* Dark-backed pills for readability over images */
+/* Dark-backed pills + action buttons for readability over images */
 ol.chat .history-item:first-child .bz-origin-pill {
-  background: var(--bz-scrim-deep);
+  background: rgba(0, 0, 0, 0.65);
   border-color: transparent;
   color: var(--bz-fg);
+  backdrop-filter: blur(4px);
+}
+ol.chat .history-item:first-child .bz-gen-actions {
+  background: rgba(0, 0, 0, 0.55);
+  padding: var(--bz-space-2);
+  border-radius: var(--bz-r-sm);
+  backdrop-filter: blur(4px);
+  gap: var(--bz-space-2);
+}
+ol.chat .history-item:first-child .bz-gen-actions .bz-gen-action {
+  border-color: rgba(255, 255, 255, 0.18);
+  color: var(--bz-fg);
+}
+ol.chat .history-item:first-child .bz-gen-actions .bz-gen-action:hover {
+  background: rgba(255, 255, 255, 0.12);
+  border-color: rgba(255, 255, 255, 0.35);
 }
 
 /* ── HISTORY GRID ───────────────────────────────────────────── */
