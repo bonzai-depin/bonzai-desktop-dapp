@@ -135,6 +135,9 @@
   --bz-warning-soft:  rgba(180, 83, 9, 0.08);
   --bz-info:          #2563eb;
   --bz-info-soft:     rgba(37, 99, 235, 0.08);
+  --bz-on-warning:    #ffffff;
+  --bz-on-info:       #ffffff;
+  --bz-on-danger:     #ffffff;
 
   --bz-border:        rgba(15, 23, 42, 0.08);
   --bz-border-strong: rgba(15, 23, 42, 0.14);
@@ -192,10 +195,16 @@
   --bz-border-strong: rgba(26, 21, 48, 0.18);
   --bz-border-brand:  rgba(85, 60, 154, 0.45);
 
+  --bz-danger:        #c73232;
+  --bz-warning:       #8f5f05;
+  --bz-info:          #2563eb;
   --bz-emerald-soft:  rgba(16, 185, 129, 0.12);
-  --bz-danger-soft:   rgba(226, 85, 85, 0.10);
-  --bz-warning-soft:  rgba(212, 160, 23, 0.10);
-  --bz-info-soft:     rgba(90, 169, 232, 0.10);
+  --bz-danger-soft:   rgba(199, 50, 50, 0.10);
+  --bz-warning-soft:  rgba(143, 95, 5, 0.10);
+  --bz-info-soft:     rgba(37, 99, 235, 0.10);
+  --bz-on-warning:    #ffffff;
+  --bz-on-info:       #ffffff;
+  --bz-on-danger:     #ffffff;
 }
 
 /* ─── WARM — Claude × Mastercard cream + terracotta ────────────── */
@@ -215,12 +224,22 @@
   --bz-purple-glow:   rgba(217, 119, 87, 0.28);
   --bz-purple-soft:   rgba(217, 119, 87, 0.10);
   --bz-gradient-brand:
-    linear-gradient(135deg, #b3603e 0%, #e8b89e 100%);
+    linear-gradient(135deg, #8f4a2d 0%, #b3603e 100%);
 
   --bz-fg:            #2a1a0e;
   --bz-fg-mid:        #5d4534;
   --bz-fg-low:        #97836f;
   --bz-fg-faint:      #d2c5b1;
+
+  --bz-danger:        #c73232;
+  --bz-warning:       #8f5f05;
+  --bz-info:          #2563eb;
+  --bz-danger-soft:   rgba(199, 50, 50, 0.10);
+  --bz-warning-soft:  rgba(143, 95, 5, 0.10);
+  --bz-info-soft:     rgba(37, 99, 235, 0.10);
+  --bz-on-warning:    #ffffff;
+  --bz-on-info:       #ffffff;
+  --bz-on-danger:     #ffffff;
 
   --bz-border:        rgba(42, 26, 14, 0.10);
   --bz-border-strong: rgba(42, 26, 14, 0.18);

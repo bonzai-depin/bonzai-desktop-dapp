@@ -117,12 +117,12 @@ function isIconOnly(a) {
 .bz-gen-action--primary {
   background: var(--bz-gradient-brand);
   border-color: transparent;
-  color: var(--bz-fg);
+  color: var(--bz-on-accent);
 }
 .bz-gen-action--primary:hover:not(:disabled) {
   filter: brightness(1.08);
   background: var(--bz-gradient-brand);
-  color: var(--bz-fg);
+  color: var(--bz-on-accent);
 }
 .bz-gen-action--success {
   color: var(--bz-emerald-500);
@@ -130,8 +130,8 @@ function isIconOnly(a) {
   background: var(--bz-emerald-soft);
 }
 .bz-gen-action--success:hover:not(:disabled) {
-  color: var(--bz-emerald-300);
-  border-color: var(--bz-emerald-300);
+  color: var(--bz-emerald-700);
+  border-color: var(--bz-emerald-500);
 }
 .bz-gen-action--warning {
   color: var(--bz-warning);

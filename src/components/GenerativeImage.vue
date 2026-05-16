@@ -2215,6 +2215,29 @@ div.question > .bz-gen-actions {
   backdrop-filter: blur(10px);
 }
 
+div.question > .bz-gen-actions :deep(.bz-gen-action) {
+  color: var(--bz-on-accent);
+  border-color: rgba(255, 255, 255, 0.24);
+  background: rgba(255, 255, 255, 0.08);
+}
+
+div.question > .bz-gen-actions :deep(.bz-gen-action--primary) {
+  color: var(--bz-on-accent);
+  border-color: transparent;
+  background: var(--bz-gradient-brand);
+}
+
+div.question > .bz-gen-actions :deep(.bz-gen-action:hover:not(:disabled)) {
+  color: var(--bz-on-accent);
+  border-color: rgba(255, 255, 255, 0.42);
+  background: rgba(255, 255, 255, 0.16);
+}
+
+div.question > .bz-gen-actions :deep(.bz-gen-action--primary:hover:not(:disabled)) {
+  background: var(--bz-gradient-brand);
+  border-color: transparent;
+}
+
 .bz-image-card__caption + .bz-gen-actions {
   max-width: calc(100% - 132px);
 }

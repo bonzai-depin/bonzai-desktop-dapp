@@ -36,7 +36,7 @@
             <div class="bz-text-chat__head-left">
               <span class="bz-eyebrow">Chat</span>
               <h1 class="bz-h1 fira-sans-condensed-black-italic">
-                {{ currentModel.modelname }}
+                {{ chatHeaderTitle }}
               </h1>
             </div>
             <div class="bz-text-chat__head-actions">
@@ -139,8 +139,8 @@
           <!-- Default empty state when model is ready but no conversation is active -->
           <div v-else-if="!threadInferences.length" class="bz-text-chat__empty">
             <EmptyChat
-              :model-name="currentModel.modelname"
-              :headline="`What are we making with ${currentModel.modelname}?`"
+              :model-name="loadedModel?.modelname || currentModel.modelname"
+              :headline="`What are we making with ${loadedModel?.modelname || currentModel.modelname}?`"
               subhead=""
               @pick="pickPrompt"
               @browse-models="openModelPicker"
@@ -812,13 +812,9 @@ export default {
     // Hardware-fit ranking: load once on mount, then re-sort when it lands.
     // Sort key, low → high:
     //   1. fitTier            (0=comfortable, 1=tight, 2=offload, 3=won't fit)
-    //   2. -parameters        (within each tier, prefer the largest model that
-    //                          still fits — better quality at the same compute)
-    //   3. modelname          (alphabetical tiebreaker for stable ordering)
-    //
-    // Until sysInfo arrives we use a placeholder that returns tier=1 for all,
-    // collapsing the sort to "biggest first". After mount the computed re-runs
-    // and the fit tiering takes over.
+    //   2. vramGB / filesize  (smaller, faster local models first)
+    //   3. -parameters        (quality tiebreaker when footprint is similar)
+    //   4. modelname          (stable alphabetical tiebreaker)
     const sysInfo = ref(null);
     const sortedModels = computed(() => {
       const info = sysInfo.value;
@@ -829,6 +825,12 @@ export default {
       });
       enriched.sort((a, b) => {
         if (a.fitTier !== b.fitTier) return a.fitTier - b.fitTier;
+        const av = a.vramGB || Number.MAX_SAFE_INTEGER;
+        const bv = b.vramGB || Number.MAX_SAFE_INTEGER;
+        if (av !== bv) return av - bv;
+        const as = a.filesizeBytes || Number.MAX_SAFE_INTEGER;
+        const bs = b.filesizeBytes || Number.MAX_SAFE_INTEGER;
+        if (as !== bs) return as - bs;
         const pa = a.parameters || 0, pb = b.parameters || 0;
         if (pa !== pb) return pb - pa;
         return a.modelname.localeCompare(b.modelname);
@@ -845,10 +847,12 @@ export default {
       return (fitting.length ? fitting : sortedModels.value).slice(0, 3);
     });
 
-    // Default model sourced from the registry — Qwen3.5 0.8B Q4 is the
-    // lightest option and always has a single tier, so it's safe as a start.
+    // Internal fallback only. The UI does not present this as selected or
+    // loaded until the user explicitly picks/loads a model or IPC reports one.
     const currentModel = ref(_entryFromResolved(resolveLLM("qwen3_5_0_8b")));
     const loadedModel = ref(null);
+    const hasUserSelectedModel = ref(false);
+    const chatHeaderTitle = computed(() => loadedModel.value?.modelname || (hasUserSelectedModel.value ? currentModel.value?.modelname : "Choose a model"));
 
     const sameModelFile = (a, b) =>
       !!a && !!b && String(a).toLowerCase() === String(b).toLowerCase();
@@ -860,13 +864,16 @@ export default {
     const isChatReady = computed(() => isCurrentModelLoaded.value);
 
     const modelRequiredSubhead = computed(() => {
+      if (!hasUserSelectedModel.value && !loadedModel.value) {
+        return "Choose any local model that fits your hardware to start chatting.";
+      }
       if (!isModel.value) {
-        return `Download ${currentModel.value.modelname} (${currentModel.value.filesize}) to start chatting.`;
+        return `Download ${currentModel.value.modelname} (${currentModel.value.filesize}) or choose another model to start chatting.`;
       }
       if (currentModel.value.isMultimodal && !isMmprojAvailable.value) {
-        return `Download vision support for ${currentModel.value.modelname} to start chatting.`;
+        return `Download vision support for ${currentModel.value.modelname}, or choose a text model instead.`;
       }
-      return `Load ${currentModel.value.modelname} to start chatting.`;
+      return `Load ${currentModel.value.modelname}, or choose another model that fits your task.`;
     });
 
     const syncCurrentModelFromLoaded = (loaded) => {
@@ -883,6 +890,7 @@ export default {
       const loaded = await window.electronAPI?.getLoadedModel?.();
       loadedModel.value = loaded || null;
       if (loaded) {
+        hasUserSelectedModel.value = true;
         syncCurrentModelFromLoaded(loaded);
         isModel.value = true;
         if (currentModel.value.isMultimodal && currentModel.value.mmproj) {
@@ -895,6 +903,7 @@ export default {
     };
 
     const pickModel = async (model) => {
+      hasUserSelectedModel.value = true;
       currentModel.value = { ...model };
       const available = await isModelAvailable(model.filename);
       await checkMmprojAvailability(model);
@@ -1197,6 +1206,7 @@ export default {
 
     const handleRecommendedModel = async (model) => {
       if (!model?.filename) return;
+      hasUserSelectedModel.value = true;
       if (modelDownloading[model.filename]) {
         await window.electronAPI?.cancelModelDownload?.(model.filename);
         return;
@@ -2134,7 +2144,7 @@ export default {
 
     // Sync modelStore when user picks a model locally
     watch(currentModel, (model) => {
-      if (model?.filename) {
+      if (hasUserSelectedModel.value && model?.filename) {
         modelStore.setCurrent(model);
       }
     });
@@ -2149,6 +2159,7 @@ export default {
             (m) => m.filename === storeModel.filename,
           );
           if (match) {
+            hasUserSelectedModel.value = true;
             currentModel.value = { ...match };
           }
         }
@@ -2195,6 +2206,7 @@ export default {
       modelChangedUnsub = window.electronAPI?.onModelChanged?.((model) => {
         loadedModel.value = model || null;
         if (model) {
+          hasUserSelectedModel.value = true;
           syncCurrentModelFromLoaded(model);
           isModel.value = true;
         }
@@ -2394,6 +2406,7 @@ export default {
       isCurrentModelLoaded,
       isChatReady,
       modelRequiredSubhead,
+      chatHeaderTitle,
       recommendedModels,
       recommendedModelAction,
       handleRecommendedModel,

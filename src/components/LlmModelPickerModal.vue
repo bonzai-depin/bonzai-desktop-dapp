@@ -287,6 +287,7 @@ const allModels = computed(() => {
         filename: e.filename,
         modelname: e.name,
         filesize: e.size,
+        filesizeBytes: e.filesizeBytes,
         parameters: e.parameters,
         activeParameters: e.activeParameters,
         isMoE: e.isMoE,
@@ -302,6 +303,12 @@ const allModels = computed(() => {
     })
     .sort((a, b) => {
       if (a.fitTier !== b.fitTier) return a.fitTier - b.fitTier;
+      const av = a.mem?.vramGB || Number.MAX_SAFE_INTEGER;
+      const bv = b.mem?.vramGB || Number.MAX_SAFE_INTEGER;
+      if (av !== bv) return av - bv;
+      const as = a.filesizeBytes || Number.MAX_SAFE_INTEGER;
+      const bs = b.filesizeBytes || Number.MAX_SAFE_INTEGER;
+      if (as !== bs) return as - bs;
       if ((b.parameters || 0) !== (a.parameters || 0)) return (b.parameters || 0) - (a.parameters || 0);
       return a.modelname.localeCompare(b.modelname);
     });
@@ -813,7 +820,7 @@ onUnmounted(() => {
   gap: var(--bz-space-2);
   padding: 6px var(--bz-space-3);
   background: var(--bz-gradient-brand);
-  color: var(--bz-fg);
+  color: var(--bz-on-accent);
   border-radius: var(--bz-r-pill);
   font-size: var(--bz-size-micro);
   letter-spacing: var(--bz-track-eyebrow);
@@ -855,7 +862,7 @@ onUnmounted(() => {
 .bz-btn--primary {
   background: var(--bz-gradient-brand);
   border-color: transparent;
-  color: var(--bz-fg);
+  color: var(--bz-on-accent);
 }
 .bz-btn--primary:hover:not(:disabled) {
   filter: brightness(1.08);

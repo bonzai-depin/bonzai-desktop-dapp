@@ -2533,9 +2533,9 @@ ol.chat li {
   width: 48px;
   height: 48px;
   border-radius: 50%;
-  background: var(--bz-purple-500);
-  border: 2px solid var(--bz-fg-faint);
-  color: var(--bz-fg);
+  background: var(--bz-control-selected-bg);
+  border: 2px solid var(--bz-control-selected-border);
+  color: var(--bz-control-selected-fg);
   cursor: pointer;
   display: flex;
   align-items: center;
@@ -2547,7 +2547,7 @@ ol.chat li {
 }
 
 .scroll-to-top-btn:hover {
-  background: var(--bz-purple-500);
+  background: var(--bz-control-selected-bg);
   transform: translateY(-2px);
   box-shadow: 0 6px 16px var(--bz-scrim);
 }
@@ -2654,14 +2654,26 @@ ol.chat li {
   display: none;
 }
 
-.history-item .bz-gen-actions .bz-gen-action {
-  border-color: rgba(255, 255, 255, 0.18);
-  color: var(--bz-fg);
+.history-item .bz-gen-actions :deep(.bz-gen-action) {
+  color: var(--bz-on-accent);
+  border-color: rgba(255, 255, 255, 0.24);
+  background: rgba(255, 255, 255, 0.08);
+}
+.history-item .bz-gen-actions :deep(.bz-gen-action--primary) {
+  color: var(--bz-on-accent);
+  border-color: transparent;
+  background: var(--bz-gradient-brand);
 }
 
-.history-item .bz-gen-actions .bz-gen-action:hover {
-  background: rgba(255, 255, 255, 0.12);
-  border-color: rgba(255, 255, 255, 0.35);
+.history-item .bz-gen-actions :deep(.bz-gen-action:hover:not(:disabled)) {
+  color: var(--bz-on-accent);
+  background: rgba(255, 255, 255, 0.16);
+  border-color: rgba(255, 255, 255, 0.42);
+}
+
+.history-item .bz-gen-actions :deep(.bz-gen-action--primary:hover:not(:disabled)) {
+  background: var(--bz-gradient-brand);
+  border-color: transparent;
 }
 
 .bz-img-meta {

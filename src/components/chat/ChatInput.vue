@@ -715,7 +715,7 @@ defineExpose({
   padding: 0 var(--bz-space-4);
   background: var(--bz-gradient-brand);
   border: 0;
-  color: var(--bz-fg);
+  color: var(--bz-on-accent);
   border-radius: var(--bz-r);
   font-family: var(--bz-font-body);
   font-size: var(--bz-size-body);

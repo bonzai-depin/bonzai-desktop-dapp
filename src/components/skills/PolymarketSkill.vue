@@ -805,8 +805,9 @@ Be direct and analytical.`;
 .category-selector input[type='radio']:checked + .radio,
 .timeperiod-selector input[type='radio']:checked + .radio,
 .conviction-selector input[type='radio']:checked + .radio {
-  background: var(--bz-purple-500);
-  border-color: var(--bz-purple-500);
+  background: var(--bz-control-selected-bg);
+  border-color: var(--bz-control-selected-border);
+  color: var(--bz-control-selected-fg);
 }
 
 .market-card {

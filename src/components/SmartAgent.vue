@@ -107,7 +107,6 @@
                 class="agent-market-card"
                 :class="{
                   'is-owned': canRunSkill(skill.id).canRun,
-                  featured: skill.featured,
                 }"
               >
                 <div class="agent-market-card__main">
@@ -3873,10 +3872,6 @@ h1.bz-h1 {
   background: var(--bz-card);
 }
 
-.agent-market-card.featured {
-  border-color: var(--bz-border-brand);
-  box-shadow: inset 3px 0 0 var(--bz-purple-300);
-}
 
 .agent-market-card.is-owned {
   box-shadow: inset 3px 0 0 var(--bz-success);
@@ -3926,9 +3921,6 @@ h1.bz-h1 {
   text-wrap: balance;
 }
 
-.agent-market-card.featured .agent-market-card__meta h3 {
-  color: var(--bz-purple-100);
-}
 
 .agent-market-card__meta p,
 .agent-market-card__description {
@@ -4244,9 +4236,9 @@ p {
 }
 
 .category-selector input[type="radio"]:checked + label.radio.category {
-  color: var(--bz-fg) !important;
-  border: 1px solid var(--bz-fg) !important;
-  background: var(--bz-purple-soft) !important;
+  color: var(--bz-control-selected-fg) !important;
+  border: 1px solid var(--bz-control-selected-border) !important;
+  background: var(--bz-control-selected-bg) !important;
 }
 
 .category-selector label.radio.category .material-symbols-outlined {
@@ -4506,14 +4498,10 @@ p {
 }
 
 .visual-selector input[type="radio"]:checked + .radio {
-  background: linear-gradient(
-    135deg,
-    rgba(62, 142, 208, 0.6),
-    rgba(102, 126, 234, 0.6)
-  );
-  border-color: var(--bz-info);
-  color: var(--bz-fg);
-  box-shadow: 0 2px 8px rgba(62, 142, 208, 0.3);
+  background: var(--bz-control-selected-bg);
+  border-color: var(--bz-control-selected-border);
+  color: var(--bz-control-selected-fg);
+  box-shadow: 0 2px 8px var(--bz-purple-glow);
 }
 
 /* Toggle Switch */
@@ -4712,9 +4700,9 @@ input:checked + .slider:before {
 }
 
 .agent-selector input[type="radio"]:checked + .radio {
-  background: rgba(62, 142, 208, 0.5);
-  border-color: var(--bz-info);
-  color: var(--bz-fg);
+  background: var(--bz-control-selected-bg);
+  border-color: var(--bz-control-selected-border);
+  color: var(--bz-control-selected-fg);
 }
 
 /* Time period and conviction selectors */
@@ -4792,9 +4780,9 @@ input:checked + .slider:before {
 .usecase-selector input[type="radio"]:checked + .radio,
 .collection-selector input[type="radio"]:checked + .radio,
 .polymarket-category input[type="radio"]:checked + .radio {
-  background: rgba(62, 142, 208, 0.5);
-  border-color: var(--bz-info);
-  color: var(--bz-fg);
+  background: var(--bz-control-selected-bg);
+  border-color: var(--bz-control-selected-border);
+  color: var(--bz-control-selected-fg);
 }
 
 /* Market card */
@@ -5087,7 +5075,7 @@ input:checked + .slider:before {
 .input:focus,
 .textarea:focus,
 .select select:focus {
-  border-color: var(--bz-info);
+  border-color: var(--bz-control-selected-border);
   box-shadow: 0 0 0 2px rgba(62, 142, 208, 0.25);
 }
 

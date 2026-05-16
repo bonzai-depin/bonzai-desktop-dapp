@@ -727,8 +727,15 @@ export default {
   cursor: not-allowed;
 }
 .ticker-pill.is-selected {
-  border: 1px solid var(--bz-fg);
-  background: var(--bz-purple-soft);
+  border: 1px solid var(--bz-control-selected-border);
+  background: var(--bz-control-selected-bg);
+  color: var(--bz-control-selected-fg);
+}
+.ticker-pill.is-selected .ticker-symbol,
+.ticker-pill.is-selected .ticker-name {
+  background: none;
+  color: var(--bz-control-selected-fg);
+  -webkit-text-fill-color: currentColor;
 }
 /* Brand-gradient ticker labels — match the skill title color treatment. */
 .ticker-symbol {
@@ -876,9 +883,9 @@ export default {
   color: var(--bz-fg-mid);
 }
 .category-selector input[type='radio']:checked + label.radio.category {
-  color: var(--bz-fg);
-  border: 1px solid var(--bz-fg);
-  background: var(--bz-purple-soft);
+  color: var(--bz-control-selected-fg);
+  border: 1px solid var(--bz-control-selected-border);
+  background: var(--bz-control-selected-bg);
 }
 .category-selector input[type='radio']:disabled + label.radio.category {
   opacity: 0.35;

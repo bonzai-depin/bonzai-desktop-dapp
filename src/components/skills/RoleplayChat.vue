@@ -10635,7 +10635,7 @@ hr {
   position: absolute;
   bottom: -8px;
   right: -8px;
-  background: var(--bz-purple-500);
+  background: var(--bz-control-selected-bg);
   border: none;
   border-radius: 50%;
   width: 28px;
@@ -10646,7 +10646,7 @@ hr {
   cursor: pointer;
   opacity: 0;
   transition: opacity 0.2s;
-  color: var(--bz-fg);
+  color: var(--bz-control-selected-fg);
 }
 
 .companion-card:hover .regenerate-image-btn,
@@ -11145,12 +11145,13 @@ hr {
 }
 
 .image-action-btn:hover {
-  background: var(--bz-purple-500);
+  background: var(--bz-control-selected-bg);
+  color: var(--bz-control-selected-fg);
 }
 
 .image-action-btn .material-symbols-outlined {
   font-size: 18px;
-  color: var(--bz-fg);
+  color: currentColor;
 }
 
 @keyframes mediaFadeIn {
@@ -11369,12 +11370,13 @@ hr {
 }
 
 .media-action-btn:hover {
-  background: var(--bz-purple-500);
+  background: var(--bz-control-selected-bg);
+  color: var(--bz-control-selected-fg);
 }
 
 .media-action-btn .material-symbols-outlined {
   font-size: 18px;
-  color: var(--bz-fg);
+  color: currentColor;
 }
 
 /* Text delete button */

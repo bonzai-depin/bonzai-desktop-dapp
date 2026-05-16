@@ -2335,7 +2335,7 @@ input[type="radio"]:checked + label {
   background: linear-gradient(135deg, var(--bz-purple-500) 0%, var(--bz-purple-700) 100%);
   border-radius: 20px;
   font-weight: 900;
-  color: var(--bz-fg);
+  color: var(--bz-on-accent);
   margin-bottom: 10px;
 }
 
@@ -2559,7 +2559,7 @@ input[type="radio"]:checked + label {
 .dataset-primary-btn {
   background: linear-gradient(135deg, var(--bz-purple-500) 0%, var(--bz-purple-700) 100%);
   border: none;
-  color: var(--bz-fg);
+  color: var(--bz-on-accent);
 }
 
 .dataset-primary-btn:hover:not(:disabled) {

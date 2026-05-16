@@ -254,73 +254,64 @@
           </div>
 
           <!-- ENVIRONMENT CONTROLS -->
-          <div class="environment-controls models__activity--payouts mt-5">
-            <div class="columns is-multiline">
-              <div class="column is-5">
-                <label class="control-label fira-sans-condensed-black-italic">
-                  Lighting
-                </label>
-                <div class="time-buttons">
-                  <button
-                    v-for="preset in lightingPresets"
-                    :key="preset.id"
-                    class="time-btn"
-                    :class="{ active: currentTime === preset.id }"
-                    @click="setTimeOfDay(preset.id)"
-                    :title="preset.label"
-                  >
-                    <span class="time-icon">
-                      <span class="material-symbols-outlined is-size-3">
-                        {{ preset.class }}
-                      </span>
-                    </span>
-                    <span class="time-label">{{ preset.label }}</span>
-                  </button>
-                </div>
+          <div class="environment-controls bz-3d-environment mt-5">
+            <div class="bz-3d-control-group bz-3d-control-group--lighting">
+              <div class="bz-3d-control-head">
+                <span class="material-symbols-outlined">wb_sunny</span>
+                <span>Lighting</span>
               </div>
-              <div class="column is-7">
-                <label class="control-label fira-sans-condensed-black-italic">
-                  Weather
-                </label>
-                <div class="weather-buttons">
-                  <button
-                    v-for="weather in weatherOptions"
-                    :key="weather.id"
-                    class="weather-btn"
-                    :class="{ active: currentWeather === weather.id }"
-                    @click="setWeather(weather.id)"
-                    :title="weather.label"
-                  >
-                    <span class="weather-icon">
-                      <span class="material-symbols-outlined is-size-3">
-                        {{ weather.class }}
-                      </span>
-                    </span>
-                    <span class="weather-label">{{ weather.label }}</span>
-                  </button>
-                </div>
+              <div class="bz-3d-selector" role="group" aria-label="Lighting preset">
+                <button
+                  v-for="preset in lightingPresets"
+                  :key="preset.id"
+                  class="bz-3d-option"
+                  :class="{ 'is-selected': currentTime === preset.id }"
+                  @click="setTimeOfDay(preset.id)"
+                  :title="preset.label"
+                >
+                  <span class="material-symbols-outlined">{{ preset.class }}</span>
+                  <span>{{ preset.label }}</span>
+                </button>
               </div>
-              <div class="column is-12">
-                <label class="control-label fira-sans-condensed-black-italic">
-                  Performance
-                </label>
-                <div class="time-buttons">
-                  <button
-                    v-for="preset in performancePresets"
-                    :key="preset.id"
-                    class="time-btn"
-                    :class="{ active: currentPerformance === preset.id }"
-                    @click="setPerformance(preset.id)"
-                    :title="preset.label"
-                  >
-                    <span class="time-icon">
-                      <span class="material-symbols-outlined is-size-3">
-                        {{ preset.class }}
-                      </span>
-                    </span>
-                    <span class="time-label">{{ preset.label }}</span>
-                  </button>
-                </div>
+            </div>
+
+            <div class="bz-3d-control-group bz-3d-control-group--weather">
+              <div class="bz-3d-control-head">
+                <span class="material-symbols-outlined">cloud</span>
+                <span>Weather</span>
+              </div>
+              <div class="bz-3d-selector" role="group" aria-label="Weather preset">
+                <button
+                  v-for="weather in weatherOptions"
+                  :key="weather.id"
+                  class="bz-3d-option"
+                  :class="{ 'is-selected': currentWeather === weather.id }"
+                  @click="setWeather(weather.id)"
+                  :title="weather.label"
+                >
+                  <span class="material-symbols-outlined">{{ weather.class }}</span>
+                  <span>{{ weather.label }}</span>
+                </button>
+              </div>
+            </div>
+
+            <div class="bz-3d-control-group bz-3d-control-group--performance">
+              <div class="bz-3d-control-head">
+                <span class="material-symbols-outlined">speed</span>
+                <span>Performance</span>
+              </div>
+              <div class="bz-3d-selector" role="group" aria-label="Performance preset">
+                <button
+                  v-for="preset in performancePresets"
+                  :key="preset.id"
+                  class="bz-3d-option"
+                  :class="{ 'is-selected': currentPerformance === preset.id }"
+                  @click="setPerformance(preset.id)"
+                  :title="preset.label"
+                >
+                  <span class="material-symbols-outlined">{{ preset.class }}</span>
+                  <span>{{ preset.label }}</span>
+                </button>
               </div>
             </div>
           </div>
@@ -4305,65 +4296,95 @@ p {
 .notification {
   opacity: 0.8;
 }
-.environment-controls {
-  padding: 1.5em 2em !important;
+.environment-controls.bz-3d-environment {
+  display: grid;
+  grid-template-columns: minmax(0, 1.05fr) minmax(0, 1.45fr);
+  gap: var(--bz-space-4, 16px);
+  padding: var(--bz-space-5, 20px) !important;
+  border: 1px solid var(--bz-border);
+  border-radius: var(--bz-radius-lg, 8px);
+  background: var(--bz-surface);
 }
-.control-label {
-  display: flex;
-  align-items: center;
-  color: var(--bz-fg);
-  font-size: 16px;
-  margin-bottom: 0.75em;
-}
-.control-label .material-symbols-outlined {
-  font-size: 22px;
-  color: var(--bz-purple-500);
-}
-.time-buttons,
-.weather-buttons {
-  display: flex;
-  gap: 0.6em;
-  flex-wrap: wrap;
-}
-.time-btn,
-.weather-btn {
-  width: 4.2em;
-  font-size: 1em !important;
-  font-weight: 400;
+.bz-3d-control-group {
+  min-width: 0;
   display: flex;
   flex-direction: column;
+  gap: var(--bz-space-3, 12px);
+}
+.bz-3d-control-group--performance {
+  grid-column: 1 / -1;
+}
+.bz-3d-control-head {
+  display: flex;
   align-items: center;
-  padding: 9px 12px 9px;
-  color: var(--bz-fg-faint) !important;
-  border: 1px solid var(--bz-fg-faint);
-  border-radius: 4px;
-  background: transparent;
+  gap: var(--bz-space-2, 8px);
+  color: var(--bz-fg);
+  font-size: var(--bz-size-meta, 13px);
+  font-weight: 700;
+  line-height: 1;
+  text-transform: uppercase;
+  letter-spacing: 0;
+}
+.bz-3d-control-head .material-symbols-outlined {
+  font-size: 19px;
+  color: var(--bz-accent);
+}
+.bz-3d-selector {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(92px, 1fr));
+  gap: var(--bz-space-2, 8px);
+}
+.bz-3d-control-group--weather .bz-3d-selector {
+  grid-template-columns: repeat(auto-fit, minmax(86px, 1fr));
+}
+.bz-3d-control-group--performance .bz-3d-selector {
+  grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+}
+.bz-3d-option {
+  min-width: 0;
+  min-height: 54px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--bz-space-2, 8px);
+  padding: 10px 12px;
+  color: var(--bz-fg-muted);
+  border: 1px solid var(--bz-border);
+  border-radius: var(--bz-radius-md, 8px);
+  background: var(--bz-panel-soft, var(--bz-surface-alt));
   cursor: pointer;
-  transition: 400ms ease-in;
-  transform: translate3d(0, 0, 0);
-}
-.time-btn:hover,
-.weather-btn:hover {
-  color: var(--bz-fg) !important;
-  background: var(--bz-purple-soft);
-  border-color: var(--bz-fg);
-}
-.time-btn.active,
-.weather-btn.active {
-  color: var(--bz-fg) !important;
-  border: 1px solid var(--bz-fg) !important;
-  background: var(--bz-purple-soft) !important;
-}
-.time-icon,
-.weather-icon {
-  font-size: 1.6em;
-}
-.time-label,
-.weather-label {
-  font-size: 0.75em;
   font-family: "Fira Sans", sans-serif;
-  font-weight: 500;
-  margin-top: 0.25em;
+  font-size: var(--bz-size-body, 14px);
+  font-weight: 650;
+  line-height: 1.1;
+  transition: border-color 160ms ease, background 160ms ease, color 160ms ease, transform 160ms ease;
+}
+.bz-3d-option:hover {
+  color: var(--bz-fg);
+  border-color: var(--bz-border-strong, var(--bz-accent));
+  background: var(--bz-surface-raised, var(--bz-surface));
+  transform: translateY(-1px);
+}
+.bz-3d-option.is-selected {
+  color: var(--bz-control-selected-fg);
+  border-color: var(--bz-control-selected-border);
+  background: var(--bz-control-selected-bg);
+}
+.bz-3d-option .material-symbols-outlined {
+  flex: 0 0 auto;
+  font-size: 20px;
+  color: currentColor;
+}
+.bz-3d-option span:last-child {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+@media (max-width: 980px) {
+  .environment-controls.bz-3d-environment {
+    grid-template-columns: 1fr;
+  }
 }
 .mode-buttons {
   display: flex;
@@ -4392,9 +4413,9 @@ p {
   border-color: var(--bz-fg);
 }
 .mode-btn.active {
-  color: var(--bz-fg) !important;
-  border: 1px solid var(--bz-fg) !important;
-  background: var(--bz-purple-soft) !important;
+  color: var(--bz-control-selected-fg) !important;
+  border: 1px solid var(--bz-control-selected-border) !important;
+  background: var(--bz-control-selected-bg) !important;
 }
 .mode-icon {
   font-size: 1.6em;
@@ -4448,9 +4469,9 @@ p {
   color: var(--bz-fg);
 }
 .iteration-pill.active {
-  background: linear-gradient(135deg, var(--bz-purple-500) 0%, #8b5fbf 100%);
-  border-color: transparent;
-  color: var(--bz-fg);
+  background: var(--bz-control-selected-bg);
+  border-color: var(--bz-control-selected-border);
+  color: var(--bz-control-selected-fg);
 }
 
 /* Strategy Info Notification */
@@ -4903,9 +4924,9 @@ ol.chat .history-item:not(:first-child) hr {
   width: 48px;
   height: 48px;
   border-radius: 50%;
-  background: var(--bz-purple-500);
-  border: 2px solid var(--bz-fg-faint);
-  color: var(--bz-fg);
+  background: var(--bz-control-selected-bg);
+  border: 2px solid var(--bz-control-selected-border);
+  color: var(--bz-control-selected-fg);
   cursor: pointer;
   display: flex;
   align-items: center;
@@ -4917,7 +4938,7 @@ ol.chat .history-item:not(:first-child) hr {
 }
 
 .scroll-to-top-btn:hover {
-  background: var(--bz-purple-500);
+  background: var(--bz-control-selected-bg);
   transform: translateY(-2px);
   box-shadow: 0 6px 16px var(--bz-scrim);
 }

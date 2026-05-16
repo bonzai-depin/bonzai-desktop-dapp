@@ -42,6 +42,17 @@
   --bz-purple-glow:   rgba(139, 92, 246, 0.32);
   --bz-purple-soft:   rgba(97, 55, 142, 0.14);
 
+  /* Text colors used on saturated fills. These must not follow --bz-fg,
+     because light themes flip --bz-fg dark while buttons stay saturated. */
+  --bz-on-accent:     #ffffff;
+  --bz-on-success:    #04130b;
+  --bz-on-warning:    #1a1006;
+  --bz-on-info:       #050505;
+  --bz-on-danger:     #180606;
+  --bz-control-selected-bg:     var(--bz-purple-500);
+  --bz-control-selected-border: var(--bz-purple-500);
+  --bz-control-selected-fg:     var(--bz-on-accent);
+
   /* The brand gradient — used only for hero CTAs, generation in
      progress, identity moments. Never decorative chrome. */
   --bz-gradient-brand:
@@ -572,6 +583,31 @@
 }
 .skill-table tr:last-child td { border-bottom: 0; }
 .skill-table th { color: var(--bz-fg-low); font-size: var(--bz-size-micro); text-transform: uppercase; }
+
+/* Shared segmented/radio control selected state. Component-local
+   selectors still exist while we migrate, but they should resolve to
+   these on-fill tokens instead of --bz-fg for light theme readability. */
+.category-selector input[type='radio']:checked + label.radio.category,
+.category-selector input[type='checkbox']:checked + label.radio.category,
+.category-selector input[type="radio"]:checked + label.radio.category,
+.category-selector input[type="checkbox"]:checked + label.radio.category,
+.timeperiod-selector input[type='radio']:checked + .radio,
+.timeperiod-selector input[type="radio"]:checked + .radio,
+.conviction-selector input[type='radio']:checked + .radio,
+.conviction-selector input[type="radio"]:checked + .radio,
+.usecase-selector input[type='radio']:checked + .radio,
+.usecase-selector input[type="radio"]:checked + .radio,
+.collection-selector input[type='radio']:checked + .radio,
+.collection-selector input[type="radio"]:checked + .radio,
+.polymarket-category input[type='radio']:checked + .radio,
+.polymarket-category input[type="radio"]:checked + .radio,
+.visual-selector input[type="radio"]:checked + .radio,
+.agent-selector input[type="radio"]:checked + .radio,
+.ticker-pill.is-selected {
+  background: var(--bz-control-selected-bg);
+  border-color: var(--bz-control-selected-border);
+  color: var(--bz-control-selected-fg);
+}
 .skill-unit {
   display: inline-flex;
   align-items: center;

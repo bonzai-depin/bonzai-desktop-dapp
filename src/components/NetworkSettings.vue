@@ -32,57 +32,34 @@
           Network Mode
         </h2>
 
-        <div class="control mb-5 has-text-left mode-selector">
-          <input
-            v-model="networkMode"
-            value="local"
-            id="mode_local"
-            type="radio"
-            name="networkMode"
-          />
-          <label for="mode_local" class="radio mr-3">
-            <span
-              class="material-symbols-outlined"
-              style="font-size: 32px !important"
-            >
-              wifi_off
-            </span>
-            Local
-          </label>
-
-          <input
-            v-model="networkMode"
-            value="consumer"
-            id="mode_consumer"
-            type="radio"
-            name="networkMode"
-          />
-          <label for="mode_consumer" class="radio mr-3">
-            <span
-              class="material-symbols-outlined"
-              style="font-size: 32px !important"
-            >
-              cloud_download
-            </span>
-            Consumer
-          </label>
-
-          <input
-            v-model="networkMode"
-            value="provider"
-            id="mode_provider"
-            type="radio"
-            name="networkMode"
-          />
-          <label for="mode_provider" class="radio mr-3">
-            <span
-              class="material-symbols-outlined"
-              style="font-size: 32px !important"
-            >
-              cloud_upload
-            </span>
-            Provider
-          </label>
+        <div class="mode-selector mb-5" role="group" aria-label="Network mode">
+          <button
+            type="button"
+            class="mode-option"
+            :class="{ 'is-selected': networkMode === 'local' }"
+            @click="networkMode = 'local'"
+          >
+            <span class="material-symbols-outlined">wifi_off</span>
+            <span>Local</span>
+          </button>
+          <button
+            type="button"
+            class="mode-option"
+            :class="{ 'is-selected': networkMode === 'consumer' }"
+            @click="networkMode = 'consumer'"
+          >
+            <span class="material-symbols-outlined">cloud_download</span>
+            <span>Consumer</span>
+          </button>
+          <button
+            type="button"
+            class="mode-option"
+            :class="{ 'is-selected': networkMode === 'provider' }"
+            @click="networkMode = 'provider'"
+          >
+            <span class="material-symbols-outlined">cloud_upload</span>
+            <span>Provider</span>
+          </button>
         </div>
 
         <!-- Mode Descriptions -->
@@ -105,8 +82,7 @@
             <div>
               <strong>Consumer Mode</strong>
               <p>
-                All generation requests are offloaded to remote BonzAI
-                providers. Pay for completed requests with USDC.
+                Generation requests can be offloaded to BonzAI providers when local capacity is not the right fit.
               </p>
             </div>
           </div>
@@ -118,8 +94,7 @@
             <div>
               <strong>Provider Mode</strong>
               <p>
-                Run generation locally and serve remote requests from other
-                users. Earn USDC or ETH for each completed request.
+                Run generation locally and serve free inference capacity to the peer network.
               </p>
             </div>
           </div>
@@ -361,21 +336,9 @@
                 </div>
               </div>
               <div class="provider-pricing">
-                <div class="price-row" v-if="provider.pricing?.llm">
-                  <span>Chat:</span>
-                  <span>{{ provider.pricing.llm }} {{ provider.currency || 'ETH' }}/1K tokens</span>
-                </div>
-                <div class="price-row" v-if="provider.pricing?.image">
-                  <span>Image:</span>
-                  <span>{{ provider.pricing.image }} {{ provider.currency || 'ETH' }}/image</span>
-                </div>
-                <div class="price-row" v-if="provider.pricing?.audio">
-                  <span>Audio:</span>
-                  <span>{{ provider.pricing.audio }} {{ provider.currency || 'ETH' }}/sec</span>
-                </div>
-                <div class="price-row" v-if="provider.pricing?.video">
-                  <span>Video:</span>
-                  <span>{{ provider.pricing.video }} {{ provider.currency || 'ETH' }}/sec</span>
+                <div class="price-row">
+                  <span>Pricing:</span>
+                  <span>Free inference</span>
                 </div>
               </div>
               <div class="provider-pipelines" v-if="provider.pipelines?.length">
@@ -542,146 +505,6 @@
         </div>
       </div>
 
-      <!-- Provider Settings (when in provider mode) -->
-      <hr v-if="networkMode === 'provider' && p2pStatus.started" />
-
-      <div
-        class="provider-section mt-5"
-        v-if="networkMode === 'provider' && p2pStatus.started"
-      >
-        <h2 id="net-pricing" class="section-title">
-          Pricing
-        </h2>
-
-        <div class="control mb-4 has-text-left mode-selector">
-          <input v-model="pricingCurrency" value="FREE" id="currency_free" type="radio" name="pricingCurrency" />
-          <label for="currency_free" class="radio mr-3">
-            <span class="material-symbols-outlined" style="font-size: 32px !important">money_off</span>
-            Free
-          </label>
-
-          <input v-model="pricingCurrency" value="ETH" id="currency_eth" type="radio" name="pricingCurrency" />
-          <label for="currency_eth" class="radio mr-3">
-            <span class="material-symbols-outlined" style="font-size: 32px !important">currency_exchange</span>
-            ETH
-          </label>
-
-          <input v-model="pricingCurrency" value="USDC" id="currency_usdc" type="radio" name="pricingCurrency" />
-          <label for="currency_usdc" class="radio mr-3">
-            <span class="material-symbols-outlined" style="font-size: 32px !important">paid</span>
-            USDC
-          </label>
-        </div>
-
-        <div v-if="pricingCurrency !== 'FREE'" class="pricing-grid" lang="en">
-          <!-- LLM -->
-          <div class="pricing-item">
-            <div class="pricing-header">
-              <span class="material-symbols-outlined">chat</span>
-              <span class="pricing-name">Chat</span>
-            </div>
-            <div class="pricing-input">
-              <input
-                type="text" inputmode="decimal" pattern="[0-9.]*"
-                class="input"
-                v-model.number="pipelinePricing.llm"
-                placeholder="0.0001"
-              />
-              <span class="pricing-unit">{{ pricingCurrency }} / 1K tokens</span>
-            </div>
-          </div>
-
-          <!-- Image -->
-          <div class="pricing-item">
-            <div class="pricing-header">
-              <span class="material-symbols-outlined">image</span>
-              <span class="pricing-name">Image</span>
-            </div>
-            <div class="pricing-input">
-              <input
-                type="text" inputmode="decimal" pattern="[0-9.]*"
-                class="input"
-                v-model.number="pipelinePricing.image"
-                placeholder="0.01"
-              />
-              <span class="pricing-unit">{{ pricingCurrency }} / image</span>
-            </div>
-          </div>
-
-          <!-- Audio (TTS) -->
-          <div class="pricing-item">
-            <div class="pricing-header">
-              <span class="material-symbols-outlined">record_voice_over</span>
-              <span class="pricing-name">Audio</span>
-            </div>
-            <div class="pricing-input">
-              <input
-                type="text" inputmode="decimal" pattern="[0-9.]*"
-                class="input"
-                v-model.number="pipelinePricing.audio"
-                placeholder="0.001"
-              />
-              <span class="pricing-unit">{{ pricingCurrency }} / second</span>
-            </div>
-          </div>
-
-          <!-- Music -->
-          <div class="pricing-item">
-            <div class="pricing-header">
-              <span class="material-symbols-outlined">music_note</span>
-              <span class="pricing-name">Music</span>
-            </div>
-            <div class="pricing-input">
-              <input
-                type="text" inputmode="decimal" pattern="[0-9.]*"
-                class="input"
-                v-model.number="pipelinePricing.music"
-                placeholder="0.05"
-              />
-              <span class="pricing-unit">{{ pricingCurrency }} / second</span>
-            </div>
-          </div>
-
-          <!-- Video -->
-          <div class="pricing-item">
-            <div class="pricing-header">
-              <span class="material-symbols-outlined">movie</span>
-              <span class="pricing-name">Video</span>
-            </div>
-            <div class="pricing-input">
-              <input
-                type="text" inputmode="decimal" pattern="[0-9.]*"
-                class="input"
-                v-model.number="pipelinePricing.video"
-                placeholder="0.10"
-              />
-              <span class="pricing-unit">{{ pricingCurrency }} / second</span>
-            </div>
-          </div>
-
-          <!-- Vision -->
-          <div class="pricing-item">
-            <div class="pricing-header">
-              <span class="material-symbols-outlined">visibility</span>
-              <span class="pricing-name">Vision</span>
-            </div>
-            <div class="pricing-input">
-              <input
-                type="text" inputmode="decimal" pattern="[0-9.]*"
-                class="input"
-                v-model.number="pipelinePricing.vision"
-                placeholder="0.005"
-              />
-              <span class="pricing-unit">{{ pricingCurrency }} / image</span>
-            </div>
-          </div>
-
-          <!-- Companions removed — billed per content type consumed -->
-        </div>
-
-        <!-- Companions removed — billed per content type consumed -->
-      </div>
-
       <hr />
 
       <!-- Network Test -->
@@ -771,8 +594,8 @@
               <span class="material-symbols-outlined mr-2 test-icon" :class="selfTestResults.ready ? 'icon-success' : 'icon-warning'">
                 {{ selfTestResults.ready ? "rocket_launch" : "warning" }}
               </span>
-              <span class="has-text-white" v-if="selfTestResults.ready">
-                {{ networkMode === 'consumer' ? 'Ready to consume inference!' : 'Ready to serve inference!' }}
+              <span class="overall-status__text" v-if="selfTestResults.ready">
+                {{ networkMode === 'consumer' ? 'Ready to consume providers' : 'Ready to serve providers' }}
               </span>
               <span v-else>
                 {{ selfTestResults.readyMessage || "Some services need attention" }}
@@ -790,28 +613,22 @@
         </h2>
 
         <div class="test-panel">
-          <div class="field has-addons">
-            <div class="control is-expanded">
-              <input
-                type="text"
-                class="input is-large"
-                v-model="testPeerId"
-                placeholder="Enter peer ID to test connection (12D3KooW...)"
-              />
-            </div>
-            <div class="control">
-              <button
-                class="bz-btn bz-btn--success is-large"
-                @click="testConnection"
-                :disabled="!testPeerId || isTesting"
-                style="box-shadow: none"
-              >
-                <span v-if="isTesting" class="loader mr-2"></span>
-                <span class="material-symbols-outlined">
-                  {{ isTesting ? "hourglass_empty" : "cable" }}
-                </span>
-              </button>
-            </div>
+          <div class="peer-test-row">
+            <input
+              type="text"
+              class="input peer-test-input"
+              v-model="testPeerId"
+              placeholder="Peer ID, e.g. 12D3KooW..."
+            />
+            <button
+              class="bz-btn bz-btn--success peer-test-button"
+              @click="testConnection"
+              :disabled="!testPeerId || isTesting"
+            >
+              <span v-if="isTesting" class="loader"></span>
+              <span v-else class="material-symbols-outlined">cable</span>
+              <span>{{ isTesting ? "Testing" : "Test" }}</span>
+            </button>
           </div>
 
           <div
@@ -832,35 +649,6 @@
         </div>
       </div>
 
-      <!-- Appearance — theme picker. Always visible regardless of
-           network mode; lives in the rail under "Appearance". -->
-      <hr />
-      <div class="theme-section mt-5" id="net-appearance">
-        <h2 class="section-title">Appearance</h2>
-        <p class="has-text-grey is-size-7 mb-4">
-          Same components, different palette. Pick the theme that suits
-          your eyes — it persists across launches.
-        </p>
-        <div class="bz-theme-grid">
-          <button
-            v-for="t in themeOptions"
-            :key="t.id"
-            type="button"
-            class="bz-theme-card"
-            :class="{ 'bz-theme-card--active': themeService.state.current === t.id }"
-            @click="themeService.set(t.id)"
-          >
-            <span class="bz-theme-card__swatch">
-              <span :style="{ background: t.swatch[0] }"></span>
-              <span :style="{ background: t.swatch[1] }"></span>
-              <span :style="{ background: t.swatch[2] }"></span>
-            </span>
-            <span class="bz-theme-card__title">{{ t.name }}</span>
-            <span class="bz-theme-card__blurb bz-meta">{{ t.blurb }}</span>
-          </button>
-        </div>
-      </div>
-
       <!-- ServiceTime / MintPool rewards (provider-only) -->
       <hr v-if="networkMode === 'provider'" />
       <div
@@ -870,23 +658,43 @@
         <h2 id="net-service-time" class="section-title">
           Service Time
         </h2>
-        <p class="has-text-grey is-size-7 mb-3">
-          Seconds you've served as a shard provider, queued for submission
-          to <code>BonzaiServiceTime</code> on Arbitrum. Rewards land at
-          epoch close from the relevant MintPool's provider-side share.
-        </p>
+        <div class="service-time-hero">
+          <div>
+            <p class="bz-eyebrow">Provider contribution</p>
+            <p class="service-time-copy">
+              Served seconds are queued locally, then submitted to BonzaiServiceTime for epoch rewards when the contract is available.
+            </p>
+          </div>
+          <span class="service-time-pill" :class="serviceTimeReady ? 'is-ready' : 'is-pending'">
+            <span class="material-symbols-outlined">{{ serviceTimeReady ? "verified" : "pending" }}</span>
+            {{ serviceTimeReady ? "Contract ready" : "Awaiting deploy" }}
+          </span>
+        </div>
 
-        <div v-if="!serviceTimeReady" class="bz-notice bz-notice--warning">
+        <div class="service-time-grid">
+          <div class="service-time-stat">
+            <span class="service-time-stat__label">Queued sessions</span>
+            <strong>{{ serviceTimePending?.rows || 0 }}</strong>
+          </div>
+          <div class="service-time-stat">
+            <span class="service-time-stat__label">Total service</span>
+            <strong>{{ formatSeconds(serviceTimeTotalSeconds) }}</strong>
+          </div>
+          <div class="service-time-stat">
+            <span class="service-time-stat__label">Ledger size</span>
+            <strong>{{ (((serviceTimePending?.bytes || 0) / 1024).toFixed(1)) }} KB</strong>
+          </div>
+        </div>
+
+        <div v-if="!serviceTimeReady" class="bz-notice bz-notice--warning mt-3">
           <strong>Pending audit deploy.</strong>
-          The on-chain BonzaiServiceTime address isn't populated yet.
-          Sessions still accumulate locally — they'll submit when the
-          contract goes live and the address lands in <code>web3.config.js</code>.
+          Sessions still accumulate locally and can be submitted once the contract address is populated.
         </div>
 
         <div v-if="serviceTimePending && serviceTimePending.rows > 0" class="pending-summary mt-3">
           <div class="pending-row">
-            <strong>{{ serviceTimePending.rows }} sessions</strong>
-            <span class="ml-2 has-text-grey">({{ (serviceTimePending.bytes / 1024).toFixed(1) }} KB ledger)</span>
+            <span class="material-symbols-outlined">schedule</span>
+            <strong>Pending pipeline ledger</strong>
           </div>
           <ul class="pipeline-list mt-2">
             <li
@@ -899,11 +707,12 @@
             </li>
           </ul>
         </div>
-        <div v-else class="has-text-grey is-italic mt-2">
-          No pending service-time rows.
+        <div v-else class="service-time-empty mt-3">
+          <span class="material-symbols-outlined">hourglass_empty</span>
+          <span>No pending service-time rows.</span>
         </div>
 
-        <div class="mt-4 buttons">
+        <div class="service-time-actions mt-4">
           <button
             class="bz-btn bz-btn--primary"
             :disabled="!serviceTimeReady || serviceTimeFlushing || !serviceTimePending?.rows"
@@ -947,9 +756,6 @@ import {
   flushPending as serviceTimeFlush,
   checkEligibility as serviceTimeCheckEligibility,
 } from "../services/serviceTime.service.js";
-import { themeService } from "../services/theme.service.js";
-
-const themeOptions = themeService.list();
 
 // ─── Section rail navigation ───────────────────────────────────
 //
@@ -970,11 +776,9 @@ const _allSections = [
   { id: "net-remote-providers", label: "Remote Providers",visible: () => networkMode.value === "consumer" },
   { id: "net-privacy",          label: "Privacy",         visible: () => networkMode.value === "consumer" },
   { id: "net-orchestration",    label: "Orchestration",   visible: () => networkMode.value === "consumer" || networkMode.value === "provider" },
-  { id: "net-pricing",          label: "Pricing",         visible: () => networkMode.value === "provider" && p2pStatus.value?.started },
   { id: "net-self-test",        label: "Self-Test",       visible: () => p2pStatus.value?.started },
   { id: "net-peer-test",        label: "Peer Test",       visible: () => p2pStatus.value?.started },
   { id: "net-service-time",     label: "Service Time",    visible: () => networkMode.value === "provider" },
-  { id: "net-appearance",       label: "Appearance",      visible: () => true },
 ];
 const sections = computed(() => _allSections.filter((s) => s.visible()));
 const activeSection = ref("net-mode");
@@ -1153,20 +957,6 @@ const toggleHermes = async () => {
   }
 };
 
-// Payment currency (ETH or USDC)
-const pricingCurrency = ref("FREE");
-
-// Per-pipeline pricing
-const pipelinePricing = ref({
-  llm: 0.0001, // per 1K tokens
-  image: 0.01, // per image
-  audio: 0.001, // per second
-  music: 0.05, // per second
-  video: 0.1, // per second
-  vision: 0.005, // per image
-  companions: 0.02, // per message (includes LLM + optional media)
-});
-
 const selfTestResults = ref(null);
 const enableRelay = ref(false);
 const relayFee = ref(5);
@@ -1208,6 +998,11 @@ const formatSeconds = (s) => {
   if (n < 3600) return `${(n / 60).toFixed(1)}m`;
   return `${(n / 3600).toFixed(2)}h`;
 };
+
+const serviceTimeTotalSeconds = computed(() => {
+  const pending = serviceTimePending.value?.pendingSeconds || {};
+  return Object.values(pending).reduce((sum, secs) => sum + (Number(secs) || 0), 0);
+});
 
 const refreshServiceTime = async () => {
   serviceTimeReady.value = serviceTimeIsConfigured();
@@ -1339,12 +1134,10 @@ const startP2P = async () => {
         }
       }
 
-      // Save pipeline pricing and currency
-      await window.electronAPI.store.set(
-        "p2p.pipelinePricing",
-        JSON.stringify(pipelinePricing.value),
-      );
-      await window.electronAPI.store.set("p2p.pricingCurrency", pricingCurrency.value);
+      // Provider inference is free; persist zero-price legacy values so
+      // older installs don't keep stale paid-provider settings around.
+      await window.electronAPI.store.set("p2p.pipelinePricing", JSON.stringify({}));
+      await window.electronAPI.store.set("p2p.pricingCurrency", "FREE");
       await window.electronAPI.store.set("p2p.enableRelay", enableRelay.value);
       await window.electronAPI.store.set("p2p.relayFee", relayFee.value);
     } else {
@@ -1555,33 +1348,17 @@ const loadSettings = async () => {
       "p2p.networkMode",
       "local",
     );
-    const savedPricing = await window.electronAPI.store.get(
-      "p2p.pipelinePricing",
-      null,
-    );
     const savedRelay = await window.electronAPI.store.get(
       "p2p.enableRelay",
       false,
     );
     const savedRelayFee = await window.electronAPI.store.get("p2p.relayFee", 5);
-    const savedCurrency = await window.electronAPI.store.get("p2p.pricingCurrency", "FREE");
     const savedProviders = await window.electronAPI.store.get(
       "p2p.selectedProviders",
       null,
     );
 
     networkMode.value = savedMode;
-    pricingCurrency.value = savedCurrency;
-
-    // Load pipeline pricing (merge with defaults to handle new pipelines)
-    if (savedPricing) {
-      try {
-        const parsed = JSON.parse(savedPricing);
-        pipelinePricing.value = { ...pipelinePricing.value, ...parsed };
-      } catch (e) {
-        console.warn("[NetworkSettings] Failed to parse saved pricing:", e);
-      }
-    }
 
     // Load selected providers for consumer mode
     if (savedProviders) {
@@ -1804,40 +1581,52 @@ hr {
   margin-right: var(--bz-space-2);
 }
 
-/* Network Mode Selector - Generative Style */
+/* Network Mode Selector */
 .network-mode-section {
   margin-bottom: 32px;
 }
 
-.mode-selector input[type="radio"] {
-  display: none;
+.mode-selector {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: var(--bz-space-2, 8px);
 }
 
-.mode-selector input[type="radio"] + label {
-  padding: 8px 16px 12px;
-  color: var(--bz-fg-faint) !important;
-  border: 1px solid var(--bz-fg-faint);
-  border-radius: 4px;
-  cursor: pointer;
-  transition: all 0.2s;
+.mode-option {
+  min-width: 0;
+  min-height: 54px;
   display: inline-flex;
   align-items: center;
-  gap: 8px;
+  justify-content: center;
+  gap: var(--bz-space-2, 8px);
+  padding: 10px 14px;
+  color: var(--bz-fg-muted);
+  border: 1px solid var(--bz-border);
+  border-radius: var(--bz-radius-md, 8px);
+  background: var(--bz-surface);
+  cursor: pointer;
+  font-family: var(--bz-font-body);
+  font-size: var(--bz-size-body);
+  font-weight: 700;
+  transition: border-color 160ms ease, background 160ms ease, color 160ms ease, transform 160ms ease;
 }
 
-.mode-selector input[type="radio"] + label:hover {
-  color: var(--bz-fg-mid) !important;
-  border-color: var(--bz-fg-low);
+.mode-option:hover {
+  color: var(--bz-fg);
+  border-color: var(--bz-border-strong);
+  background: var(--bz-raised, var(--bz-card));
+  transform: translateY(-1px);
 }
 
-.mode-selector input[type="radio"]:checked + label {
-  color: var(--bz-fg) !important;
-  border: 1px solid var(--bz-fg) !important;
-  background: var(--bz-purple-soft) !important;
+.mode-option.is-selected {
+  color: var(--bz-control-selected-fg);
+  border-color: var(--bz-control-selected-border);
+  background: var(--bz-control-selected-bg);
 }
 
-.mode-selector input[type="radio"] + label .material-symbols-outlined {
-  color: inherit;
+.mode-option .material-symbols-outlined {
+  color: currentColor;
+  font-size: 22px !important;
 }
 
 /* Mode Descriptions */
@@ -1892,26 +1681,6 @@ hr {
   color: var(--bonzai-green);
 }
 
-/* Currency Selector */
-.pricing-currency-selector {
-  padding: 12px 16px;
-  border-radius: 10px;
-  background: var(--bz-canvas);
-  border: 1px dashed var(--bonzai-border);
-}
-
-.currency-toggle {
-  display: flex;
-  gap: 8px;
-  margin-top: 8px;
-  margin-bottom: 4px;
-}
-
-.currency-toggle .button {
-  box-shadow: none;
-  min-width: 60px;
-}
-
 /* Agentic Orchestration Section */
 .description-card.orchestration {
   border-color: rgba(168, 85, 247, 0.3);
@@ -1958,7 +1727,6 @@ hr {
   background: #39d582;
   border: 2px solid var(--bz-fg-faint);
   cursor: pointer;
-  box-shadow: 0 2px 6px var(--bz-overlay);
 }
 
 .pipeline-slider::-webkit-slider-thumb:hover {
@@ -1982,7 +1750,6 @@ hr {
 }
 
 .orchestration-controls .button {
-  box-shadow: none;
 }
 
 .orchestration-label {
@@ -2042,82 +1809,122 @@ hr {
 
 .provider-cards {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
-  gap: 16px;
+  grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+  gap: var(--bz-space-3, 12px);
 }
 
 .provider-card {
-  background: var(--bz-canvas);
-  border: 1px solid var(--bonzai-border);
-  border-radius: 10px;
-  padding: 16px;
+  min-width: 0;
+  display: grid;
+  gap: var(--bz-space-3, 12px);
+  background: var(--bz-surface);
+  border: 1px solid var(--bz-border);
+  border-radius: var(--bz-radius-md, 8px);
+  padding: var(--bz-space-4, 16px);
   cursor: pointer;
-  transition: all 0.2s;
+  transition: border-color 160ms ease, background 160ms ease, transform 160ms ease;
 }
 
 .provider-card:hover {
-  border-color: var(--bz-fg-faint);
-  background: var(--bz-canvas);
+  border-color: var(--bz-border-strong);
+  background: var(--bz-raised, var(--bz-card));
+  transform: translateY(-1px);
 }
 
 .provider-card.selected {
-  border-color: var(--bonzai-green);
-  background: rgba(16, 185, 129, 0.1);
+  color: var(--bz-control-selected-fg);
+  border-color: var(--bz-control-selected-border);
+  background: var(--bz-control-selected-bg);
 }
 
 .provider-header {
   display: flex;
   align-items: center;
-  gap: 12px;
-  margin-bottom: 12px;
+  gap: var(--bz-space-3, 12px);
+  margin: 0;
 }
 
 .provider-icon {
-  font-size: 32px;
-  color: var(--bz-fg-mid);
+  flex: 0 0 auto;
+  display: grid;
+  place-items: center;
+  width: 38px;
+  height: 38px;
+  border: 1px solid var(--bz-border);
+  border-radius: var(--bz-radius-md, 8px);
+  color: var(--bz-accent);
+  background: var(--bz-canvas);
+  font-size: 22px !important;
 }
 
 .provider-card.selected .provider-icon {
-  color: var(--bonzai-green);
+  color: var(--bz-control-selected-fg);
+  border-color: color-mix(in srgb, var(--bz-control-selected-fg), transparent 55%);
+  background: color-mix(in srgb, var(--bz-control-selected-fg), transparent 86%);
 }
 
 .provider-info {
+  min-width: 0;
   display: flex;
   flex-direction: column;
-  gap: 2px;
+  gap: 4px;
 }
 
 .provider-id {
-  color: var(--bz-fg);
+  min-width: 0;
+  color: inherit;
   font-family: "JetBrains Mono", monospace;
-  font-size: 0.9rem;
-  font-weight: 600;
+  font-size: 0.88rem;
+  font-weight: 700;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .provider-status {
-  font-size: 0.75rem;
-  color: var(--bz-fg-low);
+  width: fit-content;
+  padding: 3px 8px;
+  border: 1px solid var(--bz-border);
+  border-radius: var(--bz-r-pill, 999px);
+  color: var(--bz-fg-mid);
+  background: var(--bz-canvas);
+  font-size: var(--bz-size-micro, 11px);
+  font-weight: 800;
+  text-transform: uppercase;
+  letter-spacing: 0;
 }
 
 .provider-status.online {
-  color: var(--bonzai-green);
+  color: var(--bz-on-success);
+  border-color: var(--bz-success, var(--bz-emerald-500));
+  background: var(--bz-success, var(--bz-emerald-500));
 }
 
 .provider-pricing {
-  margin-bottom: 12px;
+  margin: 0;
+  padding: 10px 12px;
+  border: 1px solid var(--bz-border);
+  border-radius: var(--bz-radius-sm, 6px);
+  background: var(--bz-canvas);
 }
 
 .price-row {
   display: flex;
   justify-content: space-between;
-  font-size: 0.85rem;
-  padding: 4px 0;
+  gap: var(--bz-space-3, 12px);
+  font-size: var(--bz-size-meta, 13px);
   color: var(--bz-fg-mid);
 }
 
 .price-row span:last-child {
   color: var(--bz-fg);
   font-family: "JetBrains Mono", monospace;
+  font-weight: 800;
+}
+
+.provider-card.selected .price-row,
+.provider-card.selected .price-row span:last-child {
+  color: var(--bz-control-selected-fg);
 }
 
 .provider-selected-badge {
@@ -2127,70 +1934,6 @@ hr {
   padding: 6px 10px;
   border-radius: 6px;
   background: rgba(16, 185, 129, 0.12);
-  color: #39d582;
-  font-size: 12px;
-  font-weight: 600;
-}
-
-.provider-pipelines {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
-}
-
-.more-tag {
-  background: var(--bz-border);
-  color: var(--bz-fg-mid);
-  font-size: 0.75rem;
-  padding: 4px 8px;
-  border-radius: 999px;
-}
-
-.provider-performance {
-  margin-top: 10px;
-  padding-top: 10px;
-  border-top: 1px solid var(--bz-card);
-}
-
-.performance-header {
-  font-size: 0.75rem;
-  color: var(--bz-fg-low);
-  margin-bottom: 6px;
-  display: flex;
-  align-items: center;
-  gap: 4px;
-}
-
-.performance-metrics {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
-}
-
-.perf-metric {
-  display: inline-flex;
-  align-items: center;
-  gap: 3px;
-  font-size: 0.8rem;
-  font-family: "Fira Sans Condensed", sans-serif;
-  font-style: italic;
-  font-weight: 900;
-  color: var(--bz-fg);
-  background: var(--bz-canvas);
-  padding: 2px 8px;
-  border-radius: 6px;
-}
-
-.performance-hw {
-  margin-top: 4px;
-}
-
-.selected-provider-info .notification {
-  display: flex;
-  align-items: center;
-  background: rgba(16, 185, 129, 0.12);
-  border: 1px solid rgba(16, 185, 129, 0.3);
-  color: var(--bonzai-green);
 }
 
 /* Status Panel */
@@ -2199,60 +1942,54 @@ hr {
 }
 
 .status-panel {
-  background: var(--bz-canvas);
-  border: 1px solid var(--bonzai-border);
-  border-radius: 10px;
-  padding: 20px;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--bz-space-3, 12px);
+  background: var(--bz-card);
+  border: 1px solid var(--bz-border);
+  border-radius: var(--bz-radius-lg, 8px);
+  padding: var(--bz-space-4, 16px);
 }
 
 .status-panel.online {
-  border-color: rgba(16, 185, 129, 0.25);
-  animation: bz-pulse 2s infinite;
+  border-color: color-mix(in srgb, var(--bz-success, var(--bz-emerald-500)), var(--bz-border) 60%);
 }
 
 .status-panel.offline {
-  border-color: rgba(241, 70, 104, 0.25);
-  animation: bz-pulse 2s infinite;
+  border-color: color-mix(in srgb, var(--bz-danger), var(--bz-border) 64%);
 }
 
-@keyframes pulseGreen {
-  0% {
-    box-shadow: 0 0 0 0 rgba(16, 185, 129, 0.1);
-  }
-  50% {
-    box-shadow: 0 0 0 64px rgba(16, 185, 129, 0);
-  }
-  100% {
-    box-shadow: 0 0 0 0 rgba(16, 185, 129, 0);
-  }
-}
-
-@keyframes pulseRed {
-  0% {
-    box-shadow: 0 0 0 0 rgba(241, 70, 104, 0.1);
-  }
-  50% {
-    box-shadow: 0 0 0 8px rgba(241, 70, 104, 0);
-  }
-  100% {
-    box-shadow: 0 0 0 0 rgba(241, 70, 104, 0);
-  }
+.status-panel hr {
+  display: none;
 }
 
 .status-row {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  padding: 10px 0;
+  min-width: 0;
+  display: grid;
+  gap: 6px;
+  padding: var(--bz-space-3, 12px);
+  border: 1px solid var(--bz-border);
+  border-radius: var(--bz-radius-md, 8px);
+  background: var(--bz-surface);
   color: var(--bz-fg) !important;
 }
 
+.status-row:first-child {
+  grid-column: 1 / -1;
+  grid-template-columns: auto 1fr;
+  align-items: center;
+}
+
 .status-row:last-child {
-  border-bottom: none;
+  border-bottom: 1px solid var(--bz-border);
 }
 
 .status-label {
-  color: var(--bz-fg-mid);
+  color: var(--bz-fg-low);
+  font-size: var(--bz-size-meta, 12px);
+  font-weight: 800;
+  text-transform: uppercase;
+  letter-spacing: 0;
 }
 
 .status-value {
@@ -2365,94 +2102,6 @@ hr {
   animation: bz-spin 1s linear infinite;
 }
 
-/* Provider Settings */
-.provider-section {
-  margin-bottom: 32px;
-}
-
-/* Pipeline Pricing Grid */
-.pricing-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
-  gap: 16px;
-}
-
-.pricing-item {
-  background: var(--bz-canvas);
-  border: 1px solid var(--bonzai-border);
-  border-radius: 10px;
-  padding: 16px;
-  transition: all 0.2s;
-}
-
-.pricing-item:hover {
-  border-color: var(--bz-border-strong);
-}
-
-.pricing-item.featured {
-  border-color: rgba(16, 185, 129, 0.3);
-  background: rgba(16, 185, 129, 0.05);
-}
-
-.pricing-header {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  margin-bottom: 12px;
-}
-
-.pricing-header .material-symbols-outlined {
-  color: var(--bz-fg-mid);
-  font-size: 24px;
-}
-
-.pricing-item.featured .pricing-header .material-symbols-outlined {
-  color: var(--bonzai-green);
-}
-
-.pricing-name {
-  color: var(--bz-fg);
-  font-weight: 600;
-  font-size: 1rem;
-}
-
-.pricing-badge {
-  background: var(--bonzai-green);
-  color: #000;
-  font-size: 0.65rem;
-  padding: 2px 6px;
-  border-radius: 4px;
-  font-weight: 700;
-  text-transform: uppercase;
-  margin-left: auto;
-}
-
-.pricing-input {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-}
-
-.pricing-input .input {
-  flex: 1;
-  min-width: 0;
-  padding: 8px 12px;
-  font-size: 0.95rem;
-}
-
-.pricing-unit {
-  color: var(--bz-fg-low);
-  font-size: 0.8rem;
-  white-space: nowrap;
-}
-
-.pricing-note {
-  display: block;
-  color: var(--bz-fg-low);
-  font-size: 0.75rem;
-  margin-top: 8px;
-}
-
 .setting-group {
   background: var(--bz-canvas);
   border: 1px solid var(--bonzai-border);
@@ -2547,24 +2196,31 @@ hr {
   margin-bottom: 32px;
 }
 
+.test-panel {
+  padding: var(--bz-space-4, 16px);
+  border: 1px solid var(--bz-border);
+  border-radius: var(--bz-radius-lg, 8px);
+  background: var(--bz-card);
+}
+
 .test-result {
   display: flex;
   align-items: center;
+  gap: var(--bz-space-2, 8px);
   margin-top: 12px;
-  padding: 12px 16px;
-  border-radius: 8px;
+  padding: 12px 14px;
+  border: 1px solid var(--bz-border);
+  border-radius: var(--bz-radius-md, 8px);
+  color: var(--bz-fg);
+  background: var(--bz-surface);
 }
 
 .test-result.success {
-  background: rgba(16, 185, 129, 0.12);
-  border: 1px solid rgba(16, 185, 129, 0.25);
-  color: var(--bonzai-green);
+  border-color: color-mix(in srgb, var(--bz-success, var(--bz-emerald-500)), var(--bz-border) 55%);
 }
 
 .test-result.error {
-  background: rgba(170, 170, 170, 0.12);
-  border: 1px solid rgba(241, 70, 104, 0.25);
-  color: var(--bz-danger);
+  border-color: color-mix(in srgb, var(--bz-danger), var(--bz-border) 60%);
 }
 
 .test-description {
@@ -2575,35 +2231,50 @@ hr {
 }
 
 .self-test-results {
-  padding-top: 16px;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--bz-space-3, 12px);
+  padding-top: var(--bz-space-4, 16px);
 }
 
 .test-result-row {
+  min-width: 0;
   display: flex;
   align-items: flex-start;
-  padding: 14px;
-  border-radius: 10px;
-  margin-bottom: 10px;
+  gap: var(--bz-space-3, 12px);
+  padding: var(--bz-space-3, 12px);
+  border: 1px solid var(--bz-border);
+  border-radius: var(--bz-radius-md, 8px);
+  background: var(--bz-surface);
 }
 
 .test-result-row.success {
-  background: rgba(16, 185, 129, 0.12);
-  border: 1px solid rgba(16, 185, 129, 0.25);
+  border-color: color-mix(in srgb, var(--bz-success, var(--bz-emerald-500)), var(--bz-border) 55%);
 }
 
 .test-result-row.error {
+  border-color: color-mix(in srgb, var(--bz-danger), var(--bz-border) 60%);
   background: var(--bz-danger-soft);
-  border: 1px solid rgba(241, 70, 104, 0.25);
+}
+
+.test-result-row.warning {
+  border-color: color-mix(in srgb, var(--bz-warning), var(--bz-border) 55%);
+  background: color-mix(in srgb, var(--bz-warning), transparent 88%);
 }
 
 .test-result-row .material-symbols-outlined {
-  flex-shrink: 0;
-  margin-top: 2px;
+  flex: 0 0 auto;
+  display: grid;
+  place-items: center;
+  width: 30px;
+  height: 30px;
+  margin: 0;
+  border-radius: var(--bz-radius-sm, 6px);
+  background: var(--bz-canvas);
 }
 
-/* Test Icon Colors */
 .test-icon.icon-success {
-  color: var(--bz-emerald-500) !important;
+  color: var(--bz-success, var(--bz-emerald-500)) !important;
 }
 
 .test-icon.icon-error {
@@ -2614,24 +2285,23 @@ hr {
   color: var(--bz-warning) !important;
 }
 
-.test-result-row.warning {
-  background: rgba(245, 158, 11, 0.12);
-  border: 1px solid rgba(245, 158, 11, 0.25);
-}
-
 .test-result-content {
+  min-width: 0;
   display: flex;
   flex-direction: column;
-  gap: 4px;
+  gap: 5px;
 }
 
 .test-result-content strong {
   color: var(--bz-fg);
+  font-size: var(--bz-size-body, 14px);
 }
 
 .test-result-detail {
   color: var(--bz-fg-mid);
-  font-size: 0.85rem;
+  font-size: var(--bz-size-meta, 13px);
+  line-height: 1.35;
+  overflow-wrap: anywhere;
 }
 
 .pipeline-tags {
@@ -2642,39 +2312,61 @@ hr {
 }
 
 .pipeline-tag {
-  background: var(--bz-card);
-  color: var(--bz-fg-low);
+  background: var(--bz-canvas);
+  color: var(--bz-fg-mid);
+  border: 1px solid var(--bz-border);
   font-size: 0.75rem;
   padding: 4px 10px;
   border-radius: 999px;
   font-family: "JetBrains Mono", monospace;
-  font-weight: 600;
+  font-weight: 700;
 }
 
 .pipeline-tag.ready {
-  background: rgba(16, 185, 129, 0.2);
-  color: var(--bonzai-green);
+  background: var(--bz-success, var(--bz-emerald-500));
+  color: var(--bz-on-success);
+  border-color: var(--bz-success, var(--bz-emerald-500));
 }
 
 .overall-status {
+  grid-column: 1 / -1;
   display: flex;
   align-items: center;
-  padding: 16px;
-  border-radius: 10px;
-  font-weight: 600;
+  gap: var(--bz-space-2, 8px);
+  padding: var(--bz-space-4, 16px);
+  border: 1px solid var(--bz-border);
+  border-radius: var(--bz-radius-md, 8px);
+  color: var(--bz-fg);
+  background: var(--bz-surface);
+  font-weight: 800;
 }
 
 .overall-status.ready {
-  background: rgba(16, 185, 129, 0.12);
-  border: 1px solid rgba(16, 185, 129, 0.3);
-  color: var(--bonzai-green);
-  animation: bz-pulse 2s infinite;
+  color: var(--bz-on-success);
+  border-color: var(--bz-success, var(--bz-emerald-500));
+  background: var(--bz-success, var(--bz-emerald-500));
 }
 
 .overall-status.not-ready {
-  background: rgba(245, 158, 11, 0.12);
-  border: 1px solid rgba(245, 158, 11, 0.3);
-  color: var(--bz-warning);
+  color: var(--bz-on-warning);
+  border-color: var(--bz-warning);
+  background: var(--bz-warning);
+}
+
+.overall-status__text {
+  color: inherit;
+}
+
+@media (max-width: 760px) {
+  .mode-selector,
+  .status-panel,
+  .self-test-results {
+    grid-template-columns: 1fr;
+  }
+  .status-row:first-child,
+  .overall-status {
+    grid-column: auto;
+  }
 }
 
 /* Input styling to match modal */
@@ -2697,27 +2389,187 @@ hr {
   color: var(--bz-fg-low);
 }
 
-/* Field addons */
-.field.has-addons {
+.peer-test-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: stretch;
+  gap: var(--bz-space-2, 8px);
+}
+
+.peer-test-input {
+  width: 100%;
+  height: 44px;
+}
+
+.peer-test-button {
+  min-width: 112px;
+  height: 44px;
+  justify-content: center;
+  gap: var(--bz-space-2, 8px);
+}
+
+.service-time-section {
+  padding: var(--bz-space-4, 16px);
+  border: 1px solid var(--bz-border);
+  border-radius: var(--bz-radius-lg, 8px);
+  background: var(--bz-card);
+}
+
+.service-time-hero {
   display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: var(--bz-space-4, 16px);
+  padding: var(--bz-space-4, 16px);
+  border: 1px solid var(--bz-border);
+  border-radius: var(--bz-radius-md, 8px);
+  background: var(--bz-surface);
 }
 
-.field.has-addons input {
-  height: 58px;
+.service-time-copy {
+  max-width: 66ch;
+  margin: var(--bz-space-2, 8px) 0 0;
+  color: var(--bz-fg-mid);
+  font-size: var(--bz-size-body, 14px);
+  line-height: var(--bz-line-body, 1.45);
 }
 
-.field.has-addons .control.is-expanded {
-  flex: 1;
+.service-time-pill {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  gap: var(--bz-space-2, 8px);
+  min-height: 34px;
+  padding: 7px 10px;
+  border: 1px solid var(--bz-border);
+  border-radius: var(--bz-r-pill, 999px);
+  color: var(--bz-fg);
+  background: var(--bz-canvas);
+  font-size: var(--bz-size-meta, 13px);
+  font-weight: 700;
 }
 
-.field.has-addons .control.is-expanded .input {
-  border-top-right-radius: 0;
-  border-bottom-right-radius: 0;
+.service-time-pill .material-symbols-outlined {
+  font-size: 18px;
 }
 
-.field.has-addons .control:last-child .button {
-  border-top-left-radius: 0;
-  border-bottom-left-radius: 0;
+.service-time-pill.is-ready {
+  color: var(--bz-on-success);
+  border-color: var(--bz-success, var(--bz-emerald-500));
+  background: var(--bz-success, var(--bz-emerald-500));
+}
+
+.service-time-pill.is-pending {
+  color: var(--bz-on-warning);
+  border-color: var(--bz-warning);
+  background: var(--bz-warning);
+}
+
+.service-time-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: var(--bz-space-3, 12px);
+  margin-top: var(--bz-space-3, 12px);
+}
+
+.service-time-stat {
+  min-width: 0;
+  padding: var(--bz-space-3, 12px);
+  border: 1px solid var(--bz-border);
+  border-radius: var(--bz-radius-md, 8px);
+  background: var(--bz-surface);
+}
+
+.service-time-stat__label {
+  display: block;
+  color: var(--bz-fg-low);
+  font-size: var(--bz-size-meta, 12px);
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0;
+}
+
+.service-time-stat strong {
+  display: block;
+  margin-top: var(--bz-space-1, 4px);
+  color: var(--bz-fg);
+  font-size: 1.35rem;
+  line-height: 1.1;
+}
+
+.pending-summary {
+  padding: var(--bz-space-3, 12px);
+  border: 1px solid var(--bz-border);
+  border-radius: var(--bz-radius-md, 8px);
+  background: var(--bz-surface);
+}
+
+.pending-row {
+  display: flex;
+  align-items: center;
+  gap: var(--bz-space-2, 8px);
+  color: var(--bz-fg);
+}
+
+.pending-row .material-symbols-outlined {
+  color: var(--bz-accent);
+  font-size: 20px;
+}
+
+.pipeline-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: var(--bz-space-2, 8px);
+}
+
+.pipeline-row {
+  display: flex;
+  justify-content: space-between;
+  gap: var(--bz-space-3, 12px);
+  padding: 10px 12px;
+  border: 1px solid var(--bz-border);
+  border-radius: var(--bz-radius-sm, 6px);
+  background: var(--bz-canvas);
+}
+
+.pipeline-name {
+  color: var(--bz-fg-mid);
+  font-weight: 700;
+}
+
+.pipeline-seconds {
+  color: var(--bz-fg);
+  font-family: var(--bz-font-mono, monospace);
+  font-weight: 700;
+}
+
+.service-time-empty {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--bz-space-2, 8px);
+  color: var(--bz-fg-low);
+  font-size: var(--bz-size-body, 14px);
+}
+
+.service-time-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--bz-space-2, 8px);
+}
+
+@media (max-width: 760px) {
+  .peer-test-row,
+  .service-time-grid {
+    grid-template-columns: 1fr;
+  }
+  .peer-test-button {
+    width: 100%;
+  }
+  .service-time-hero {
+    flex-direction: column;
+  }
 }
 
 /* ════════════════════════════════════════════════════════════════
@@ -2786,7 +2638,6 @@ hr {
 }
 .bz-net-rail__btn--active .bz-net-rail__dot {
   background: var(--bz-purple-300);
-  box-shadow: 0 0 0 3px var(--bz-purple-soft);
 }
 .bz-net-rail__dot {
   width: 6px; height: 6px;
@@ -2812,7 +2663,6 @@ hr {
 }
 .bz-net-pane > .status-section,
 .bz-net-pane > .nat-section,
-.bz-net-pane > .pricing-section,
 .bz-net-pane > .privacy-pipeline-section,
 .bz-net-pane > .orchestration-section,
 .bz-net-pane > .self-test-section,
@@ -2821,60 +2671,6 @@ hr {
 .bz-net-pane > .provider-section {
   scroll-margin-top: var(--bz-space-5);
 }
-
-/* Theme picker grid — Appearance section. */
-.bz-theme-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
-  gap: var(--bz-space-3);
-}
-.bz-theme-card {
-  text-align: left;
-  background: var(--bz-card);
-  border: 1px solid var(--bz-border);
-  border-radius: var(--bz-r);
-  padding: var(--bz-space-3) var(--bz-space-4);
-  display: grid;
-  grid-template-columns: auto 1fr;
-  grid-template-rows: auto auto;
-  column-gap: var(--bz-space-3);
-  row-gap: 4px;
-  cursor: pointer;
-  color: var(--bz-fg);
-  font-family: var(--bz-font-body);
-  font-size: var(--bz-size-body);
-  transition:
-    background var(--bz-dur-fast) var(--bz-ease-out),
-    border-color var(--bz-dur-fast) var(--bz-ease-out);
-}
-.bz-theme-card:hover {
-  background: var(--bz-raised);
-  border-color: var(--bz-border-strong);
-}
-.bz-theme-card--active {
-  border-color: var(--bz-border-brand);
-  background: var(--bz-purple-soft);
-  box-shadow: var(--bz-elev-brand);
-}
-.bz-theme-card__swatch {
-  grid-row: 1 / span 2;
-  display: inline-flex;
-  flex-direction: column;
-  width: 26px;
-  height: 36px;
-  border-radius: var(--bz-r-sm);
-  overflow: hidden;
-  border: 1px solid var(--bz-border);
-}
-.bz-theme-card__swatch > span {
-  flex: 1;
-  display: block;
-}
-.bz-theme-card__title {
-  font-weight: 400;
-  color: var(--bz-fg);
-}
-.bz-theme-card__blurb { color: var(--bz-fg-low); }
 
 /* Mobile / narrow — collapse rail under the pane. */
 @media (max-width: 880px) {

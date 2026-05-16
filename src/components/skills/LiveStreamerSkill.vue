@@ -1361,9 +1361,9 @@ hr {
 
 .category-selector input[type='radio']:checked + label.radio.category,
 .category-selector input[type='checkbox']:checked + label.radio.category {
-  color: var(--bz-fg);
-  border: 1px solid var(--bz-fg);
-  background: rgba(241, 70, 104, 0.25);
+  color: var(--bz-control-selected-fg);
+  border: 1px solid var(--bz-control-selected-border);
+  background: var(--bz-control-selected-bg);
 }
 
 /* ═══ Common Styles (matches Meditation Forge) ═══ */
@@ -1658,14 +1658,14 @@ hr {
 
 /* ═══ Config Inputs ═══ */
 .config-input {
-  background: rgba(255,255,255,0.06) !important;
-  border-color: rgba(255,255,255,0.12) !important;
+  background: var(--bz-card) !important;
+  border-color: var(--bz-border-strong) !important;
   color: var(--bz-fg) !important;
 }
 
 .config-input:focus {
-  border-color: rgba(241, 70, 104, 0.5) !important;
-  box-shadow: none !important;
+  border-color: var(--bz-control-selected-border) !important;
+  box-shadow: 0 0 0 2px var(--bz-purple-soft) !important;
 }
 
 /* ═══ Activity Log ═══ */

@@ -172,9 +172,12 @@
       <div v-if="showNetworkModal" class="network-modal-overlay" @click.self="showNetworkModal = false">
         <div class="network-modal">
           <div class="network-modal-header">
-            <div class="bz-modal-titleblock">
+            <div class="network-titleblock">
               <p class="bz-eyebrow">Network</p>
-              <h1 class="bz-display">Peer-to-Peer Network</h1>
+              <h2 class="bz-h2">
+                <span class="material-symbols-outlined">hub</span>
+                Peer-to-Peer Network
+              </h2>
             </div>
             <BzCloseButton size="md" aria-label="Close network settings" @click="showNetworkModal = false" />
           </div>
@@ -1197,9 +1200,8 @@ html, body {
 }
 
 .network-modal {
-  width: 95%;
-  max-width: 900px;
-  max-height: 90vh;
+  width: min(1180px, calc(100vw - 32px));
+  max-height: min(920px, 92vh);
   background: var(--bz-card);
   border: 1px solid var(--bz-border);
   border-radius: var(--bz-r-lg);
@@ -1210,22 +1212,46 @@ html, body {
 
 .network-modal-header {
   display: flex;
-  align-items: flex-start;
+  align-items: center;
   justify-content: space-between;
-  padding: var(--bz-space-5) var(--bz-space-7);
+  gap: var(--bz-space-4);
+  padding: var(--bz-space-5);
+  background: var(--bz-panel);
   border-bottom: 1px solid var(--bz-border);
+}
+
+.network-titleblock {
+  display: grid;
+  gap: var(--bz-space-1);
+}
+
+.network-titleblock .bz-eyebrow,
+.network-titleblock h2 {
+  margin: 0;
+}
+
+.network-titleblock h2 {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--bz-space-2);
+  color: var(--bz-fg);
+}
+
+.network-titleblock .material-symbols-outlined {
+  color: var(--bz-purple-300);
+  font-size: 24px !important;
 }
 
 .network-modal-body {
   flex: 1;
   overflow-y: auto;
-  padding: 0;
+  padding: var(--bz-space-5);
 }
 
 .network-modal-body :deep(.network-settings) {
   height: auto;
-  max-height: 70vh;
-  padding: 24px;
+  max-height: none;
+  padding: 0;
 }
 
 .network-modal-body :deep(.panel) {

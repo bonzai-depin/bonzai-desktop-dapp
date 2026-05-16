@@ -3811,9 +3811,9 @@ ol.chat li {
   width: 48px;
   height: 48px;
   border-radius: 50%;
-  background: var(--bz-purple-500);
-  border: 2px solid var(--bz-fg-faint);
-  color: var(--bz-fg);
+  background: var(--bz-control-selected-bg);
+  border: 2px solid var(--bz-control-selected-border);
+  color: var(--bz-control-selected-fg);
   cursor: pointer;
   display: flex;
   align-items: center;
@@ -3825,7 +3825,7 @@ ol.chat li {
 }
 
 .scroll-to-top-btn:hover {
-  background: var(--bz-purple-500);
+  background: var(--bz-control-selected-bg);
   transform: translateY(-2px);
   box-shadow: 0 6px 16px var(--bz-scrim);
 }

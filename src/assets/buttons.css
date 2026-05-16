@@ -64,7 +64,7 @@
 .bz-btn--primary {
   background: var(--bz-gradient-brand);
   border-color: transparent;
-  color: var(--bz-fg);
+  color: var(--bz-on-accent);
 }
 .bz-btn--primary:hover:not(:disabled) {
   filter: brightness(1.08);
@@ -87,7 +87,7 @@
 .bz-btn--success {
   background: var(--bz-emerald-500);
   border-color: var(--bz-emerald-500);
-  color: var(--bz-fg);
+  color: var(--bz-on-success);
 }
 .bz-btn--success:hover:not(:disabled) {
   filter: brightness(1.06);
@@ -97,7 +97,7 @@
 .bz-btn--warning {
   background: var(--bz-warning);
   border-color: var(--bz-warning);
-  color: #1a1006;
+  color: var(--bz-on-warning);
 }
 .bz-btn--warning:hover:not(:disabled) {
   filter: brightness(1.06);
@@ -113,6 +113,52 @@
   background: var(--bz-danger-soft);
   border-color: var(--bz-danger);
   color: var(--bz-danger);
+}
+
+/* Bulma compatibility: older screens still combine .bz-btn with
+   is-* status classes. Keep filled states readable in light themes without
+   overriding BonzAI ghost/destructive modifiers. */
+.bz-btn.is-primary:not(.bz-btn--ghost):not(.bz-btn--destructive),
+.button.is-primary:not(.bz-btn--ghost):not(.bz-btn--destructive) {
+  background: var(--bz-gradient-brand);
+  border-color: transparent;
+  color: var(--bz-on-accent);
+}
+.bz-btn.is-success:not(.bz-btn--ghost):not(.bz-btn--destructive),
+.button.is-success:not(.bz-btn--ghost):not(.bz-btn--destructive) {
+  background: var(--bz-emerald-500);
+  border-color: var(--bz-emerald-500);
+  color: var(--bz-on-success);
+}
+.bz-btn.is-warning:not(.bz-btn--ghost):not(.bz-btn--destructive),
+.button.is-warning:not(.bz-btn--ghost):not(.bz-btn--destructive) {
+  background: var(--bz-warning);
+  border-color: var(--bz-warning);
+  color: var(--bz-on-warning);
+}
+.bz-btn.is-danger:not(.bz-btn--ghost):not(.bz-btn--destructive),
+.button.is-danger:not(.bz-btn--ghost):not(.bz-btn--destructive) {
+  background: var(--bz-danger);
+  border-color: var(--bz-danger);
+  color: var(--bz-on-danger);
+}
+.bz-btn.is-info:not(.bz-btn--ghost):not(.bz-btn--destructive),
+.button.is-info:not(.bz-btn--ghost):not(.bz-btn--destructive) {
+  background: var(--bz-info);
+  border-color: var(--bz-info);
+  color: var(--bz-on-info);
+}
+.bz-btn.is-primary:not(.bz-btn--ghost):not(.bz-btn--destructive):hover:not(:disabled),
+.button.is-primary:not(.bz-btn--ghost):not(.bz-btn--destructive):hover:not(:disabled),
+.bz-btn.is-info:not(.bz-btn--ghost):not(.bz-btn--destructive):hover:not(:disabled),
+.button.is-info:not(.bz-btn--ghost):not(.bz-btn--destructive):hover:not(:disabled),
+.bz-btn.is-success:not(.bz-btn--ghost):not(.bz-btn--destructive):hover:not(:disabled),
+.button.is-success:not(.bz-btn--ghost):not(.bz-btn--destructive):hover:not(:disabled),
+.bz-btn.is-warning:not(.bz-btn--ghost):not(.bz-btn--destructive):hover:not(:disabled),
+.button.is-warning:not(.bz-btn--ghost):not(.bz-btn--destructive):hover:not(:disabled),
+.bz-btn.is-danger:not(.bz-btn--ghost):not(.bz-btn--destructive):hover:not(:disabled),
+.button.is-danger:not(.bz-btn--ghost):not(.bz-btn--destructive):hover:not(:disabled) {
+  filter: brightness(1.06);
 }
 
 /* RUNNING — leaves room at the bottom edge for a 2px progress bar. */

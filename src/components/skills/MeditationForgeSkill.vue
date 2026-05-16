@@ -1273,9 +1273,9 @@ Output ONLY the meditation script text, nothing else.`;
 }
 
 .category-selector input[type='radio']:checked + label.radio.category {
-  color: var(--bz-fg);
-  border: 1px solid var(--bz-fg);
-  background: var(--bz-purple-soft);
+  color: var(--bz-control-selected-fg);
+  border: 1px solid var(--bz-control-selected-border);
+  background: var(--bz-control-selected-bg);
 }
 
 /* Meditation Display Area */
@@ -1452,7 +1452,7 @@ Output ONLY the meditation script text, nothing else.`;
   width: 20px;
   height: 20px;
   border-radius: 50%;
-  background: var(--bz-purple-500);
+  background: var(--bz-control-selected-bg);
   cursor: pointer;
 }
 

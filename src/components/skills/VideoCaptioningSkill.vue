@@ -1214,9 +1214,9 @@ export default {
 }
 
 .category-selector input[type="radio"]:checked + label.radio.category {
-  color: var(--bz-fg);
-  border: 1px solid var(--bz-fg);
-  background: var(--bz-purple-soft);
+  color: var(--bz-control-selected-fg);
+  border: 1px solid var(--bz-control-selected-border);
+  background: var(--bz-control-selected-bg);
 }
 
 /* ─── Model Status Bar ────────────────────────────────────────────── */
